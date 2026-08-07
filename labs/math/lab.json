@@ -1,0 +1,26 @@
+{
+  "schema_version": "openlabs.lab.v1",
+  "lab_id": "math",
+  "domain": "math",
+  "name": "OpenLabs Mathematics Lab",
+  "runner": {
+    "command": ["{python}", "../../packages/research-core/lab_runner.py"]
+  },
+  "skills": [
+    {
+      "skill_id": "amra-research-loop",
+      "path": "skills/amra-research-loop/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-math-paper",
+      "path": "../../workflows/paper/skills/openlabs-math-paper/SKILL.md"
+    }
+  ],
+  "capabilities": [
+    "open-problem-selection",
+    "mechanism-falsification",
+    "counterexample-search",
+    "symbolic-computation",
+    "lean-verification"
+  ]
+}

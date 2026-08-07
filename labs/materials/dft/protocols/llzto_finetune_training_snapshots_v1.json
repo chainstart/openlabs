@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "selection_id": "llzto-finetune-training-v1",
+  "expected_snapshot_count": 50,
+  "selection_blinding": "Frozen before any final-setting feasibility label, universal-model domain error, fallback trajectory, or fallback DFT label existed. Two time-separated, farthest-point frames are selected from every occupancy-temperature stratum without reading energies, forces, stresses, or model errors.",
+  "sampling_campaign_template": "protocols/llzto_finetune_training_sampling_template_v1.json",
+  "sampling_scope": "Bootstrap-model trajectories generate coordinates for fine-tuning only; no transport estimate from this campaign is evidence.",
+  "trajectory_matrices": [
+    {
+      "id_prefix_template": "finetune-train-occ{occupancy_seed:02d}-t{temperature_k}",
+      "trajectory_template": "runs/campaigns/llzto_finetune_training_sampling_v1/finetune-train-occ{occupancy_seed:02d}/T{temperature_k}.traj",
+      "occupancy_seeds": [0, 1, 2, 3, 4],
+      "temperatures_k": [700, 750, 800, 850, 900],
+      "frame_spacing_ps": 0.1,
+      "count": 2,
+      "start_fraction": 0.2,
+      "stop_fraction": 0.8,
+      "min_frame_separation": 50,
+      "min_rmsd_angstrom": 0.03,
+      "metadata": {"set_role": "fine-tuning-expansion"}
+    }
+  ]
+}

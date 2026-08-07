@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-research-publication-watchdog-v2",
+  "claim_boundary": "This watchdog may restart the branch-aware publication supervisor only while it is hash-verified and waiting for upstream analysis or the final CPU lock. It never restarts active figure, manuscript, test, regeneration, audit, or readiness work; never changes branch selection; and never converts a failed or scientifically negative outcome into a pass.",
+  "poll_seconds": 30,
+  "state_stale_seconds": 180,
+  "managed": [
+    {
+      "process_id": "research-publication-v2",
+      "marker": "matfactory.research_final_queue",
+      "policy": "restart-waiting-only",
+      "state_path": "runs/supervisor/research-publication-supervisor-v2.json",
+      "expected_protocol_sha256": "0f186774c5361351396de503cd49e1fb9f1242523f9d1663164b0724fc689255",
+      "module": "matfactory.research_final_queue",
+      "args": [
+        "--protocol",
+        "analysis/protocols/llzto_research_publication_supervisor_v2.json",
+        "--state",
+        "runs/supervisor/research-publication-supervisor-v2.json"
+      ],
+      "log_path": "runs/supervisor/research-publication-supervisor-v2.log"
+    }
+  ]
+}

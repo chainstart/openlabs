@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-finetuned-rerun-watchdog-v1",
+  "claim_boundary": "This auxiliary watchdog may restart the conditional fine-tuned rerun supervisor only while its hash-verified state is waiting for the frozen fine-tuning decision. It never restarts an active training, MD, DFT, or mechanism calculation; changes no model, trajectory, threshold, or scientific result; and treats every failure or blocker as terminal evidence.",
+  "poll_seconds": 30,
+  "state_stale_seconds": 180,
+  "managed": [
+    {
+      "process_id": "finetuned-full-rerun",
+      "marker": "matfactory.finetuned_rerun",
+      "policy": "restart-waiting-only",
+      "state_path": "runs/supervisor/finetuned-rerun-supervisor-v1.json",
+      "expected_protocol_sha256": "2adc6830b88b170571725ec98b491acb359b1a09f413149d0de57eed39d1e204",
+      "module": "matfactory.finetuned_rerun",
+      "args": [
+        "--protocol",
+        "analysis/protocols/llzto_finetuned_rerun_supervisor_v1.json",
+        "--state",
+        "runs/supervisor/finetuned-rerun-supervisor-v1.json",
+        "--gpu-lock",
+        "runs/supervisor/md-gpu.lock"
+      ],
+      "log_path": "runs/supervisor/finetuned-rerun-supervisor-v1.log"
+    }
+  ]
+}

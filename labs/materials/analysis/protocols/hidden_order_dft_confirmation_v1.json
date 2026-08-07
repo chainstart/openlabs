@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "confirmation_id": "hidden-order-dft-confirmation-v1",
+  "root_dir": "runs/dft-discovery/hidden-order-dft-confirmation-v1",
+  "enabled": false,
+  "source_manifest": "runs/soft-modes/hidden-order-soft-modes-v1/soft-mode-manifest.json",
+  "approved_source_manifest_fingerprint": "",
+  "selected_structures": [],
+  "execution": {
+    "manifest": "dft/manifests/qe_7.5_conda_linux64.json",
+    "manifest_sha256": "d0102f9182d8f99b47e0deff4f63eb4259a92bf4488c693705af834d9258d658",
+    "explicit_lock": "dft/qe-7.5-linux-64.lock",
+    "explicit_lock_sha256": "382affc8d291ddc36dea0c4d6cad52112300f4f4a998f1ea1524c741d3614385",
+    "pw_executable": "/home/biostar/.local/share/matfactory/qe-7.5/bin/pw.x",
+    "pw_executable_sha256": "1d66c7856f5d6b3cd9c66b8578e01512b16bbe907b4360e54234890712ccd6a1"
+  },
+  "sssp": {
+    "index": "/home/biostar/.local/share/matfactory/pseudos/SSSP_1.3.0_PBE_precision/SSSP_1.3.0_PBE_precision.json",
+    "index_sha256": "7b7b648915e54c8397cd8143a7385c17eeed3104ad1236cecd905126d338a4e3",
+    "archive": "/home/biostar/.local/share/matfactory/pseudos/SSSP_1.3.0_PBE_precision/SSSP_1.3.0_PBE_precision.tar.gz",
+    "archive_sha256": "d91db6b4b3788501d535a5b84ebabf3859ea3e3ac6ea154c4be3718da50f0c85"
+  },
+  "budget": {
+    "max_structures": 4,
+    "max_atoms": 256
+  },
+  "physics_review": {
+    "approved_model": "unreviewed",
+    "magnetism_reviewed": false,
+    "hubbard_u_reviewed": false,
+    "metallicity_reviewed": false,
+    "spin_orbit_reviewed": false,
+    "exchange_correlation": "PBE",
+    "spin": "not yet approved",
+    "hubbard_u": "not yet approved",
+    "occupations": "fixed",
+    "symmetry": "disabled consistently"
+  },
+  "numerics": {
+    "cutoff_multipliers": [1.0, 1.2, 1.4],
+    "kpoint_mesh": [2, 2, 2],
+    "scf_thresholds_ry": [1e-8, 1e-10],
+    "relative_energy_mev_atom": 1.0,
+    "force_component_ev_a": 0.01,
+    "stress_component_gpa": 0.1
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Research Loop"
+  short_description: "Run evidence-bound autonomous AI/ML experiments"
+  default_prompt: "Use $ai-research-loop to advance one falsifiable AI/ML research step."

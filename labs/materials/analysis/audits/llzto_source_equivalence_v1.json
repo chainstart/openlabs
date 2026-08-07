@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.0",
+  "certificate_id": "llzto-source-equivalence-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "status": "pass",
+  "equivalence_scope": "scientific values and gates; added provenance metadata retained",
+  "protocol": {
+    "path": "/home/biostar/work/projects/goai/matfactory/analysis/protocols/llzto_source_equivalence_v1.json",
+    "sha256": "c69a6aafb84b21cdf7c1f9f55b411eebe76d235c4c83023e361b5265aadc994f"
+  },
+  "implementation": {
+    "path": "/home/biostar/work/projects/goai/matfactory/src/matfactory/source_equivalence.py",
+    "sha256": "397490ea89e9c836ee0752452e6d2e103672f404641a9132c1277475b6d73771"
+  },
+  "source_transition": {
+    "baseline_git_commit": "508f8cab203715a6d8de7fba6d87c04b8e93373b",
+    "amendment_git_commit": "cb83da53ccb32456d8858bc64c66f93bbc57f257",
+    "baseline_is_ancestor": true,
+    "changed_files": [
+      "src/matfactory/mlipmd.py",
+      "src/matfactory/transport.py"
+    ],
+    "binary_diff_sha256": "071b558fe00f0b4e32b8799bd8990ba379735f944ccbb9db56b6fb3e57b27919",
+    "source_files": [
+      {
+        "path": "src/matfactory/mlipmd.py",
+        "baseline_sha256": "bcef3a3dc2984e0d73c785a75862aa37e4230bcbeef4927c1e3ecb2eee53e365",
+        "amendment_sha256": "fa16ca7302b7cddc9e4c5c66ace4dbb44ca032c0e3fbe450e39853462b7f5501",
+        "current_sha256": "fa16ca7302b7cddc9e4c5c66ace4dbb44ca032c0e3fbe450e39853462b7f5501"
+      },
+      {
+        "path": "src/matfactory/transport.py",
+        "baseline_sha256": "876ac664d4b43da53733511f92e4bf4f6c156c60240f798396d9d087873435de",
+        "amendment_sha256": "e3e9bd3c55f534dbcbf045cec654d5fcd069bcf7ec76e23a6f10d24f1fb82b4a",
+        "current_sha256": "e3e9bd3c55f534dbcbf045cec654d5fcd069bcf7ec76e23a6f10d24f1fb82b4a"
+      }
+    ]
+  },
+  "structure_preparation": {
+    "input_kind": "raw_cif",
+    "stored_structure_sha256": "dd0acf1176114fa836667787d162680e5a498a17771a99a10d616593e00a8948",
+    "stored_structure_fingerprint": "188bff6c58f2f7f442b605a74db93b2a7bc23fe708f5b68fa4e64430680bd389",
+    "current_structure_fingerprint": "188bff6c58f2f7f442b605a74db93b2a7bc23fe708f5b68fa4e64430680bd389",
+    "exact_fingerprint_match": true,
+    "derived_structure_provenance_branch_used": false
+  },
+  "transport_recomputation": {
+    "temperature_k": 700,
+    "n_frames": 5002,
+    "legacy_tree_sha256": "33d0dec1867643409fb899c94761602313b0f5f3334175007e3b063366e4b97b",
+    "current_legacy_tree_sha256": "33d0dec1867643409fb899c94761602313b0f5f3334175007e3b063366e4b97b",
+    "all_legacy_transport_fields_exactly_equal": true,
+    "maximum_absolute_legacy_numeric_difference": 0.0,
+    "paired_block_count": 5,
+    "paired_records_reproduce_legacy_block_arrays": true,
+    "point_identity_checks": {
+      "tracer_diffusivity": true,
+      "collective_diffusivity": true,
+      "ratio": true,
+      "tracer_resolved": true,
+      "collective_resolved": true
+    },
+    "point_identity_matches_transport": true,
+    "legacy_pairing_is_recoverable_by_position": true
+  },
+  "evidence": {
+    "trajectory": {
+      "path": "/home/biostar/work/projects/goai/matfactory/runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/T700.traj",
+      "sha256": "7285a383bec92866712fe69806e697af6ce753e41ddbaece615fb5fdf29bbb06"
+    },
+    "transport": {
+      "path": "/home/biostar/work/projects/goai/matfactory/runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/T700.transport.json",
+      "sha256": "e816e81d03310145d856221c8b78b13361c26bf742b1a35dc4d95b8b13a63336"
+    },
+    "point": {
+      "path": "/home/biostar/work/projects/goai/matfactory/runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/points/T700.json",
+      "sha256": "d61c9e8b290c31dbbedd78fe24730514987d124ec4888d87651ed251498deef6"
+    },
+    "prepared_structure": {
+      "path": "/home/biostar/work/projects/goai/matfactory/runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/input.structure.json",
+      "sha256": "dd0acf1176114fa836667787d162680e5a498a17771a99a10d616593e00a8948"
+    }
+  },
+  "checks": {
+    "baseline_git_commit_matches_run_manifest": true,
+    "baseline_source_blobs_match_manifest": true,
+    "current_source_blobs_match_amendment_commit": true,
+    "changed_files_equal_declared_set": true,
+    "binary_diff_hash_matches": true,
+    "current_raw_cif_preparation_matches_stored_structure": true,
+    "all_legacy_transport_fields_exactly_equal": true,
+    "paired_records_reproduce_legacy_block_arrays": true,
+    "point_identity_matches_transport": true
+  },
+  "claim_boundary": "This audit establishes source-transition equivalence only for the already-running universal-model formal-occ00-vel1701 trajectory series. It does not validate CHGNet against DFT, establish transport convergence at unfinished temperatures, or permit pooling universal and fine-tuned trajectories.",
+  "reproduction_command": "uv run python -m matfactory.source_equivalence --protocol analysis/protocols/llzto_source_equivalence_v1.json --output analysis/audits/llzto_source_equivalence_v1.json",
+  "certificate_fingerprint": "8cd205543a3a5b466e18c09e593a6f2a65a5afa540e683ba68a0d88f18f07b9a"
+}

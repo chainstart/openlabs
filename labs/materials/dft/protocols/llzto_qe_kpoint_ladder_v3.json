@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-qe-kpoint-ladder-v3-medium-io",
+  "reference_code": "Quantum ESPRESSO 7.5 pw.x",
+  "amendment_kind": "resource-only execution amendment",
+  "preregistration_note": "Frozen after the model-blind Gamma-to-2x2x2 force comparison failed, after the default-low-I/O 3x3x3 input reported unsafe memory, and before any 3x3x3 SCF iteration or DFT label existed. The k mesh, structures, cutoffs, SCF threshold, diagonalizer, acceptance limits, and decision rule are unchanged. Only Quantum ESPRESSO wavefunction I/O residency is changed from low to medium after two pre-SCF resource probes.",
+  "parent_protocol": "dft/protocols/llzto_qe_kpoint_ladder_v2.json",
+  "parent_protocol_sha256": "3732fe4ccc8d02428af75f7a255db1f88a45fba23ad0811283cf2370f1755e91",
+  "parent_campaign_manifest": "runs/dft/llzto-qe-kpoint-convergence-v1/dft_campaign_manifest.json",
+  "parent_campaign_manifest_sha256": "9bfea055e69dcbce8f3320ac30e2fdcdac93b9b0eaf2cd48816a5ebc873433bf",
+  "selection_is_model_blind": true,
+  "baseline_runs": {
+    "gamma": {
+      "conv-relaxed-occ00": "runs/dft/llzto-qe-cutoff-convergence-v1/conv-relaxed-occ00--ecut90-gamma-scf1e8",
+      "conv-t800-farthest": "runs/dft/llzto-qe-cutoff-convergence-v1/conv-t800-farthest--ecut90-gamma-scf1e8"
+    },
+    "2x2x2": {
+      "conv-relaxed-occ00": "runs/dft/llzto-qe-kpoint-convergence-v1/conv-relaxed-occ00--ecut90-k2x2x2-scf1e8",
+      "conv-t800-farthest": "runs/dft/llzto-qe-kpoint-convergence-v1/conv-t800-farthest--ecut90-k2x2x2-scf1e8"
+    }
+  },
+  "execution_environment": {
+    "manifest": "dft/manifests/qe_7.5_conda_linux64.json",
+    "manifest_sha256": "d0102f9182d8f99b47e0deff4f63eb4259a92bf4488c693705af834d9258d658",
+    "explicit_lock": "dft/qe-7.5-linux-64.lock",
+    "explicit_lock_sha256": "382affc8d291ddc36dea0c4d6cad52112300f4f4a998f1ea1524c741d3614385",
+    "pw_executable_sha256": "1d66c7856f5d6b3cd9c66b8578e01512b16bbe907b4360e54234890712ccd6a1",
+    "qe_package_sha256": "4f21a746fcc644d2170caf28e6b620716e993f8a994a9810dce694c49a3f03da",
+    "mpi": "Open MPI 5.0.10",
+    "omp_num_threads": 1,
+    "kpoint_pools": 1
+  },
+  "physics": {
+    "exchange_correlation": "PBE",
+    "spin": "non-spin-polarized",
+    "hubbard_u": false,
+    "dispersion_correction": false,
+    "spin_orbit": false,
+    "occupations": "fixed",
+    "symmetry": "disabled"
+  },
+  "calculations": [
+    {
+      "label": "ecut90-k3x3x3-scf1e8-mediumio",
+      "purpose": "resource-safe conditional upper comparison against 2x2x2 after the model-blind first pair failed",
+      "ecutwfc_ry": 90.0,
+      "ecutrho_ry": 720.0,
+      "kpoints": [
+        3,
+        3,
+        3
+      ],
+      "conv_thr_ry": 1e-8,
+      "electron_maxstep": 250,
+      "mixing_mode": "plain",
+      "mixing_beta": 0.3,
+      "diagonalization": "david",
+      "disk_io": "medium"
+    }
+  ],
+  "acceptance": {
+    "relative_energy_mev_atom_max": 1.0,
+    "force_component_max_abs_change_ev_angstrom": 0.01,
+    "stress_component_max_abs_change_gpa": 0.1,
+    "decision_rule": "First evaluate Gamma versus 2x2x2. Because that pair failed its frozen force limit, compare 2x2x2 versus 3x3x3 on both structures and select 2x2x2 only if the second comparison passes. A second failure blocks progression; thresholds cannot change and CHGNet error cannot enter the decision. disk_io is an execution-resource setting and cannot enter numerical selection."
+  },
+  "resource_guard": {
+    "minimum_available_memory_gib_before_launch": 36,
+    "maximum_concurrent_qe_jobs": 1,
+    "unsafe_default_attempt_interruption": {
+      "path": "runs/dft/llzto-qe-kpoint-extension-v2/conv-relaxed-occ00--ecut90-k3x3x3-scf1e8/interruption.json",
+      "sha256": "ab1766c589a1d1106175a2dc0dabcc4d13b1d4a93efd8af7f87eac0d30b70cfd",
+      "qe_estimated_total_dynamical_ram_gb": 42.29
+    },
+    "pre_scf_probes": [
+      {
+        "probe_id": "medium-io-npool1",
+        "input_path": "runs/dft/resource-probes/k3-disk-medium-npool1-v1/pw.in",
+        "input_sha256": "f5b571755135b60b8abacc2529c3e29948862821669542f428f3c7916f8084b8",
+        "output_path": "runs/dft/resource-probes/k3-disk-medium-npool1-v1/pw.out",
+        "output_sha256": "42ed4660735d2dfe8506c7cfde40ce6407274aa43f6d3b1b939fc3d178a0e221",
+        "qe_estimated_total_dynamical_ram_gb": 29.45,
+        "selected": true
+      },
+      {
+        "probe_id": "medium-io-npool2",
+        "input_path": "runs/dft/resource-probes/k3-disk-medium-npool2-v1/pw.in",
+        "input_sha256": "5d6a685cf949e00f293839fe196b05b17c0b3584ef205e3df703563cadd74ab2",
+        "output_path": "runs/dft/resource-probes/k3-disk-medium-npool2-v1/pw.out",
+        "output_sha256": "87da465029722f8d44f040c9cec0a25de580e98a010c37f621b1c9725118ff82",
+        "qe_estimated_total_dynamical_ram_gb": 32.95,
+        "selected": false
+      }
+    ],
+    "official_qe_memory_guidance": "https://www.quantum-espresso.org/Doc/pw_user_guide/node16.html",
+    "failure_action": "Do not launch below 36 GiB available memory. Monitor live memory and stop before scientific work if the generated input reports more than 30 GiB total dynamical RAM or if available memory falls below 6 GiB without recoverable page cache."
+  }
+}

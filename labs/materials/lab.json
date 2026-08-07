@@ -1,0 +1,26 @@
+{
+  "schema_version": "openlabs.lab.v1",
+  "lab_id": "materials",
+  "domain": "materials",
+  "name": "OpenLabs Materials Lab",
+  "runner": {
+    "command": ["{python}", "../../packages/research-core/lab_runner.py"]
+  },
+  "skills": [
+    {
+      "skill_id": "materials-research-loop",
+      "path": "skills/materials-research-loop/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-materials-paper",
+      "path": "../../workflows/paper/skills/openlabs-materials-paper/SKILL.md"
+    }
+  ],
+  "capabilities": [
+    "materials-literature-audit",
+    "structure-preparation",
+    "mlip-molecular-dynamics",
+    "dft-reference-validation",
+    "transport-and-mechanism-analysis"
+  ]
+}

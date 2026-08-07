@@ -1,0 +1,23 @@
+{
+  "schema_version": "openlabs.task.v2",
+  "task_id": "smoke-math-001",
+  "attempt_id": "00000000-0000-0000-0000-000000000001",
+  "campaign_id": "factory-smoke",
+  "lab_id": "math",
+  "domain": "math",
+  "task_type": "smoke",
+  "attempt": 1,
+  "objective": "Verify the file-only lab contract.",
+  "input_path": null,
+  "output_path": "/tmp/openlabs-smoke-result.json",
+  "agent_workspace": "/tmp/openlabs-smoke-campaign",
+  "run_metadata_path": "/tmp/run-metadata.json",
+  "skill_path": "labs/math/skills/amra-research-loop/SKILL.md",
+  "lab_manifest": "/tmp/openlabs/labs/math/lab.json",
+  "agent": {
+    "role": "researcher",
+    "session_mode": "resume",
+    "session_id": null
+  },
+  "budget": {"wall_seconds": 60}
+}

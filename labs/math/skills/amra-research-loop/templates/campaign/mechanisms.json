@@ -1,0 +1,13 @@
+{
+  "mechanisms": [
+    {
+      "id": "M001",
+      "representation_id": "R001",
+      "family": "",
+      "decisive_claim": "",
+      "would_close": [],
+      "kill_test": "",
+      "status": "candidate"
+    }
+  ]
+}

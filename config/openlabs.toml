@@ -1,0 +1,14 @@
+[factory]
+max_concurrent_jobs = 2
+lease_seconds = 600
+heartbeat_seconds = 30
+max_attempts = 3
+retry_backoff_seconds = 120
+auto_continue = true
+max_auto_tasks_per_campaign = 24
+max_task_wall_seconds = 14400
+max_campaign_agent_seconds = 86400
+launch_jobs = true
+
+[retention]
+archive_result_receipts = true

@@ -1,0 +1,120 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-mechanism-transport-association-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "claim_boundary": "The analysis tests repeated-measures associations between preregistered trajectory-level mechanism descriptors and transport after accounting for occupancy-realization fixed intercepts and Arrhenius temperature dependence. A passing result supports an association only; it does not establish a causal elementary mechanism. With five occupancy realizations, between-configuration rank summaries remain descriptive.",
+  "preregistration_note": "Frozen while the first formal 500 ps trajectory was still incomplete, before any formal transport estimate or formal mechanism descriptor existed. Descriptor definitions were inherited from the already frozen mechanism protocol and were not selected after inspecting formal outcomes.",
+  "formal_campaign": {
+    "protocol_path": "protocols/llzto_q1_v1.json",
+    "protocol_sha256": "e06400ba9cdc82afe8ae3a988b5f2b3e0ee99618db0336c123c4d0469b14fab0",
+    "campaign_id": "llzto-q1-v1",
+    "campaign_root": "runs/campaigns/llzto_q1_v1",
+    "run_ids": [
+      "formal-occ00-vel1701",
+      "formal-occ01-vel2701",
+      "formal-occ02-vel3701",
+      "formal-occ03-vel4701",
+      "formal-occ04-vel5701"
+    ],
+    "temperatures_k": [700, 750, 800, 850, 900]
+  },
+  "mechanism_inputs": {
+    "protocol_path": "analysis/protocols/llzto_mechanisms_v1.json",
+    "protocol_sha256": "e193611fdced52c3abc968bb5fff315290fd1a846d644c099f8ca44e5c8c1e1e",
+    "analysis_root": "runs/analysis/mechanisms-formal-v1",
+    "relative_report_pattern": "{run_id}/T{temperature_k}.sensitivity.json",
+    "all_assignment_settings_must_pass_quality": true,
+    "string_interpretation_rule": "If the mechanism sensitivity report does not support cooperative strings across its complete grid, the string excess remains a null-corrected temporal-clustering descriptor and cannot be called cooperative motion. Its association result is retained with that negative qualification."
+  },
+  "descriptors": {
+    "log_jump_rate": {
+      "source": "jump_rate_per_ion_ps",
+      "transform": "natural_log",
+      "primary_assignment_cutoff_angstrom": 1.2,
+      "primary_min_dwell_ps": 0.3,
+      "sensitivity_grid": "all assignment-cutoff by minimum-dwell rows"
+    },
+    "tetrahedral_population_fraction": {
+      "source": "mean_mobile_population_by_site_type[tetrahedral-24d] divided by the summed assigned mobile population",
+      "transform": "identity",
+      "primary_assignment_cutoff_angstrom": 1.2,
+      "primary_min_dwell_ps": 0.3,
+      "sensitivity_grid": "all assignment-cutoff by minimum-dwell rows"
+    },
+    "reverse_pair_fraction": {
+      "source": "reverse_pair_fraction_by_window_ps",
+      "transform": "identity",
+      "primary_assignment_cutoff_angstrom": 1.2,
+      "primary_min_dwell_ps": 0.3,
+      "primary_reverse_window_ps": 2.0,
+      "sensitivity_grid": "all assignment-cutoff by minimum-dwell by reverse-window combinations"
+    },
+    "string_excess": {
+      "source": "primary_string.observed_minus_null_mean",
+      "transform": "identity",
+      "primary_assignment_cutoff_angstrom": 1.2,
+      "primary_min_dwell_ps": 0.3,
+      "primary_string_window_ps": 0.4,
+      "sensitivity_grid": "all assignment-cutoff by minimum-dwell rows at the frozen primary string window"
+    }
+  },
+  "responses": {
+    "log_tracer_diffusivity": {
+      "source": "transport.tracer.diffusivity_cm2_s",
+      "transform": "natural_log",
+      "resolved_field": "resolved_after_all_checks",
+      "measurement_variance": "(stderr(D_tracer)/D_tracer)^2"
+    },
+    "log_collective_diffusivity": {
+      "source": "transport.collective.diffusivity_cm2_s",
+      "transform": "natural_log",
+      "resolved_field": "collective_resolved_after_all_checks",
+      "measurement_variance": "(stderr(D_collective)/D_collective)^2"
+    },
+    "log_collective_to_tracer_ratio": {
+      "source": "paired block log(D_collective/D_tracer)",
+      "transform": "natural_log",
+      "resolved_field": "both tracer and collective resolved_after_all_checks",
+      "measurement_variance": "sample variance of paired block log ratios divided by the number of valid paired blocks",
+      "minimum_paired_blocks": 4
+    }
+  },
+  "primary_model": {
+    "formula": "log transport = occupancy-realization fixed intercept + centered 1/(k_B*T) + standardized mechanism descriptor",
+    "reason_for_fixed_intercepts": "Each formal NVT cell has one configuration-specific fixed volume, so occupancy fixed intercepts absorb both persistent configuration and volume differences without pretending that five clusters identify a reliable random-effect covariance.",
+    "weighting": "inverse declared trajectory-level log-response measurement variance with residual variance inflation no smaller than one",
+    "permutation_test": {
+      "method": "Freedman-Lane Monte Carlo permutation of measurement-standardized reduced-model residuals independently within each occupancy realization",
+      "iterations": 10000,
+      "seed": 20260820,
+      "two_sided": true
+    },
+    "cluster_bootstrap": {
+      "iterations": 5000,
+      "seed": 20260821,
+      "resampling_unit": "occupancy realization",
+      "within_trajectory_draw": "Normal(log response, declared measurement variance)",
+      "quantiles": [0.025, 0.5, 0.975],
+      "minimum_valid_fraction": 0.95
+    },
+    "leave_one_occupancy_out": true,
+    "sensitivity_requirement": "Refit every frozen mechanism-analysis setting. The descriptor slope must keep the primary sign across the complete setting grid.",
+    "multiplicity": {
+      "family": "all 4 descriptors by all 3 responses",
+      "method": "Holm family-wise error correction",
+      "alpha": 0.05
+    },
+    "association_support_rule": "Support requires complete resolved inputs, Holm-adjusted permutation p<=0.05, a cluster-bootstrap 95% interval excluding zero, invariant slope sign under leave-one-occupancy-out deletion, and invariant sign over the complete mechanism sensitivity grid."
+  },
+  "secondary_between_configuration_summary": {
+    "method": "Spearman rank correlation within each temperature",
+    "inference": "effect-size description only; no p-value or causal claim with n=5 configurations"
+  },
+  "hard_rules": {
+    "complete_5_by_5_grid_required": true,
+    "unresolved_transport_action": "Block only the affected response family and extend the exact trajectory under a newly fingerprinted protocol; never drop the point.",
+    "failed_assignment_quality_action": "Block the affected descriptor association and retain the quality failure as a negative result.",
+    "missing_input_action": "Emit an explicit blocked analysis result; never silently reduce the grid.",
+    "post_hoc_descriptor_addition": "Requires a separately versioned exploratory protocol and cannot enter the confirmatory family."
+  }
+}

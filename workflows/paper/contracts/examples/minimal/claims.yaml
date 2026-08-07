@@ -1,0 +1,8 @@
+claims:
+  - claim_id: result-accuracy
+    claim: The recorded evaluation reports an accuracy of 0.81.
+    status: supported
+    supported_by: [summary-table]
+    limitations:
+      - This example does not establish generalization beyond the recorded evaluation.
+    evidence_level: descriptive_result

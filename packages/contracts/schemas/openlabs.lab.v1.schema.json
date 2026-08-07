@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.lab.v1.schema.json",
+  "title": "OpenLabs lab manifest v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "lab_id", "domain", "runner", "skills", "capabilities"],
+  "properties": {
+    "schema_version": {"const": "openlabs.lab.v1"},
+    "lab_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "domain": {"enum": ["math", "ai", "materials"]},
+    "runner": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["skill_id", "path"],
+        "properties": {
+          "skill_id": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  }
+}

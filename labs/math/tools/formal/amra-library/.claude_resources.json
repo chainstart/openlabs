@@ -1,0 +1,63 @@
+{
+  "timestamp": "2026-06-13T23:57:26.626110",
+  "os": {
+    "system": "Linux",
+    "release": "6.6.87.2-microsoft-standard-WSL2",
+    "version": "#1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025",
+    "machine": "x86_64",
+    "python_version": "3.12.3"
+  },
+  "cpu": {
+    "physical_cores": 4,
+    "logical_cores": 8,
+    "max_frequency_mhz": 0.0,
+    "architecture": "x86_64",
+    "processor": "x86_64",
+    "current_frequency_mhz": 2112.009
+  },
+  "memory": {
+    "total_gb": 31.35,
+    "available_gb": 22.77,
+    "used_gb": 8.58,
+    "percent_used": 27.4,
+    "swap_total_gb": 48.0,
+    "swap_available_gb": 47.63
+  },
+  "disk": {
+    "path": "/home/biostar/work/projects/amra/amra_library/formal",
+    "total_gb": 2014.79,
+    "available_gb": 1409.44,
+    "used_gb": 502.93,
+    "percent_used": 26.3
+  },
+  "gpu": {
+    "nvidia_gpus": [],
+    "amd_gpus": [],
+    "apple_silicon": null,
+    "total_gpus": 0,
+    "available_backends": []
+  },
+  "recommendations": {
+    "parallel_processing": {
+      "strategy": "high_parallelism",
+      "suggested_workers": 6,
+      "libraries": [
+        "joblib",
+        "multiprocessing",
+        "dask"
+      ]
+    },
+    "memory_strategy": {
+      "strategy": "memory_abundant",
+      "note": "Can load most datasets into memory"
+    },
+    "gpu_acceleration": {
+      "available": false,
+      "note": "No GPU detected, use CPU-based libraries"
+    },
+    "large_data_handling": {
+      "strategy": "disk_abundant",
+      "note": "Sufficient space for large intermediate files"
+    }
+  }
+}

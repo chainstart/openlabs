@@ -1,0 +1,86 @@
+{
+  "schema_version": "1.0",
+  "study_id": "materials-discovery-literature-v1",
+  "root_dir": "runs/literature/materials-discovery-literature-v1",
+  "cache_dir": "cache/openalex/materials-discovery-literature-v1",
+  "from_date": "2020-01-01",
+  "to_date": "2026-08-07",
+  "results_per_query": 50,
+  "manual_review_limit": 60,
+  "queries": [
+    {
+      "query_id": "partial-occupancy",
+      "query": "partial occupancy crystal structure ordering functional materials"
+    },
+    {
+      "query_id": "occupational-disorder",
+      "query": "occupational disorder hidden order crystallography materials"
+    },
+    {
+      "query_id": "vacancy-cation-order",
+      "query": "vacancy ordering cation ordering structure property materials"
+    },
+    {
+      "query_id": "hydrogen-proton-order",
+      "query": "missing hydrogen proton ordering crystal structure diffraction"
+    },
+    {
+      "query_id": "soft-mode",
+      "query": "imaginary phonon soft mode low symmetry phase materials discovery"
+    },
+    {
+      "query_id": "mlip-structure-discovery",
+      "query": "machine learning interatomic potential structure discovery symmetry breaking"
+    },
+    {
+      "query_id": "order-disorder-transition",
+      "query": "order disorder transition average crystal structure local ordering"
+    }
+  ],
+  "seed_dois": [
+    "10.1038/s41524-026-02090-1",
+    "10.1038/s41524-025-01650-1",
+    "10.1038/s41524-026-02033-w",
+    "10.1038/s43588-026-01019-4",
+    "10.1038/s41524-026-02116-8",
+    "10.1038/s42256-023-00716-3"
+  ],
+  "primary_terms": [
+    "partial occupancy",
+    "occupational disorder",
+    "site disorder",
+    "vacancy ordering",
+    "cation ordering",
+    "anion ordering",
+    "hydrogen ordering",
+    "proton ordering",
+    "missing hydrogen",
+    "soft mode",
+    "imaginary phonon",
+    "imaginary frequency",
+    "low-symmetry phase",
+    "low symmetry phase",
+    "symmetry breaking",
+    "order-disorder transition"
+  ],
+  "supporting_terms": [
+    "crystal structure",
+    "diffraction",
+    "structure prediction",
+    "machine learning potential",
+    "interatomic potential",
+    "phonon",
+    "polarity",
+    "ferroelectric",
+    "ionic conductivity",
+    "phase transition"
+  ],
+  "exclusion_terms": [
+    "protein",
+    "peptide",
+    "genome",
+    "neural activity",
+    "social disorder",
+    "psychiatric"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "amra-research-loop/mechanism.schema.json",
+  "title": "Research Mechanism",
+  "type": "object",
+  "required": ["id", "representation_id", "family", "decisive_claim", "would_close", "kill_test", "status"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "representation_id": {"type": "string", "minLength": 1},
+    "family": {"type": "string", "minLength": 1},
+    "decisive_claim": {"type": "string", "minLength": 1},
+    "would_close": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "kill_test": {"type": "string", "minLength": 1},
+    "status": {"enum": ["candidate", "killed", "surviving", "proved", "frozen"]},
+    "status_evidence": {"type": "string"}
+  },
+  "additionalProperties": true
+}

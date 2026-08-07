@@ -1,0 +1,10 @@
+{
+  "independent_reconstruction": {
+    "status": "not_started",
+    "auditor": "",
+    "evidence": []
+  },
+  "statement_match": "unchecked",
+  "dependency_check": "unchecked",
+  "novelty_check": "unchecked"
+}

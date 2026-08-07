@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "soft_mode_id": "hidden-order-soft-modes-v1",
+  "root_dir": "runs/soft-modes/hidden-order-soft-modes-v1",
+  "enabled": false,
+  "relaxation_manifest": "runs/relaxation/hidden-order-dual-relaxation-v1/relaxation-manifest.json",
+  "approved_relaxation_manifest_fingerprint": "",
+  "model_registry": "cache/models/discovery-model-registry-v1/model-registry.json",
+  "approved_registry_content_fingerprint": "ec05f2dac942b03436addd4c54a77d9e27348ed2abffe4f53393358c10ae39ab",
+  "selected_job_fingerprints": [],
+  "dynamical_model_id": "mace-mp-0-small",
+  "device": "cuda",
+  "model_dtype": "float32",
+  "budget": {
+    "wall_time_hours": 20.0,
+    "gpu_hours": 18.0,
+    "max_selected_structures": 3,
+    "max_atoms_per_supercell": 384,
+    "max_force_calls": 600,
+    "estimated_seconds_per_force_call": 60.0
+  },
+  "phonons": {
+    "supercell_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    "mesh": [2, 2, 2],
+    "displacement_distance_angstrom": 0.01,
+    "plus_minus_displacements": true,
+    "imaginary_threshold_thz": -0.3,
+    "max_modes_per_structure": 6,
+    "mode_amplitudes_angstrom": [-0.1, 0.1]
+  }
+}

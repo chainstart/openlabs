@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "benchmark_id": "llzto-single-crystal-haven-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "sample_type": "single crystal",
+  "temperature_k": 298.0,
+  "reported_haven_ratio": 0.4,
+  "reported_haven_definition": "D_tracer/D_sigma",
+  "simulation_reciprocal_definition": "D_collective/D_tracer",
+  "simulation_comparator": 2.5,
+  "experimental_uncertainty": null,
+  "supporting_measurements": {
+    "tracer_diffusivity": {
+      "value": 1.9e-13,
+      "unit": "m2/s",
+      "method": "7Li pulsed-field-gradient NMR"
+    },
+    "ionic_conductivity": {
+      "value": 0.0007,
+      "unit": "S/cm",
+      "method": "impedance spectroscopy on the single crystal"
+    },
+    "activation_energy_tracer": {
+      "value": 0.43,
+      "unit": "eV"
+    },
+    "activation_energy_conductivity": {
+      "value": 0.43,
+      "unit": "eV"
+    }
+  },
+  "source": {
+    "doi": "10.1016/j.ssi.2018.10.016",
+    "url": "https://www.sciencedirect.com/science/article/pii/S0167273818307598",
+    "title": "Diffusion coefficient of lithium ions in garnet-type Li6.5La3Zr1.5Ta0.5O12 single crystal probed by 7Li pulsed field gradient-NMR spectroscopy",
+    "journal": "Solid State Ionics",
+    "volume": 327,
+    "pages": "18-26",
+    "year": 2018
+  },
+  "interpretation": "The publication reports D_tracer below the conductivity-derived D_sigma and calls their ratio 0.4. The simulation stores the reciprocal D_collective/D_tracer, so 2.5 is the like-for-like transformed point. No experimental uncertainty is inferred."
+}

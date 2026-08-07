@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-research-analysis-watchdog-v2",
+  "claim_boundary": "This auxiliary watchdog may restart the branch-routing research supervisor only in a hash-verified waiting state. It never restarts active statistical work, changes branch selection, converts non-equivalence or incompatibility into a pass, or restarts any failed or scientifically blocked state.",
+  "poll_seconds": 30,
+  "state_stale_seconds": 180,
+  "managed": [
+    {
+      "process_id": "research-analysis-v2",
+      "marker": "matfactory.research_analysis_queue",
+      "policy": "restart-waiting-only",
+      "state_path": "runs/supervisor/research-analysis-supervisor-v2.json",
+      "expected_protocol_sha256": "766fa50af0207ca5ad10dd9dacea6dd2e333629ae96c79479477d02dd3ebedc2",
+      "module": "matfactory.research_analysis_queue",
+      "args": [
+        "--protocol",
+        "analysis/protocols/llzto_research_analysis_supervisor_v2.json",
+        "--state",
+        "runs/supervisor/research-analysis-supervisor-v2.json"
+      ],
+      "log_path": "runs/supervisor/research-analysis-supervisor-v2.log"
+    }
+  ]
+}

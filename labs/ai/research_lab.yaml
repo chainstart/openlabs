@@ -1,0 +1,183 @@
+lab_id: aira
+system_name: AIRA
+full_name: AI Research Agent Lab
+domain: ai_ml
+legacy:
+  repo_names:
+    - ara
+  lab_ids:
+    - ai_ml
+entrypoints:
+  agent_cli:
+    - python3 -m aira
+  direct_tools:
+    - python3 -m aira bundles validate
+    - python3 -m aira migrate inventory
+    - python3 -m aira run-fixture-benchmark
+    - python3 -m aira run-local-benchmark
+    - python3 -m aira agent smoke
+    - python3 -m aira agent production-smoke
+    - python3 -m aira registry audit --profile production-local
+    - python3 -m aira registry audit --profile production-open
+    - python3 -m aira experiments run --profile production-local
+    - python3 -m aira experiments run --profile production-open
+    - python3 -m aira experiments deepen --profile production-open
+    - python3 -m aira experiments build-deepening-plan
+    - python3 -m aira experiments evaluate
+commands:
+  allow_prefixes:
+    - python3 -m aira
+  deny_patterns:
+    - rm -rf
+    - git reset --hard
+    - git checkout --
+    - PRIVATE_KEY
+    - MNEMONIC
+  smoke:
+    argv:
+      - python3
+      - -m
+      - aira
+      - labs
+      - inspect
+      - --json
+    side_effect_free: true
+    description: Inspect the AIRA lab manifest without running experiments.
+artifacts:
+  include:
+    - tests/fixtures/aira_result_bundle/**
+    - runs/*/aira_result_bundle/**
+    - runs/*/local_benchmark/**
+    - runs/*/agent/**
+    - runs/*/production_local/**
+    - runs/*/production_open/**
+    - runs/*/production_ara/**
+  exclude:
+    - '**/__pycache__/**'
+bundles:
+  produced:
+    - aira_result_bundle
+  handoff_profiles:
+    - profile: ara-public-bundle-reproduction-gate.v1
+      bundle_schema_version: ara.result_bundle.v1
+      validation_command: python3 -m aira bundles validate <bundle> --json
+      smoke_command: python3 -m aira agent smoke --out <bundle> --json
+      required_artifacts:
+        - bundle_manifest.json
+        - artifact_manifest.json
+        - claims.json
+        - artifacts/ara_handoff.json
+        - artifacts/reproducibility_notes.md
+        - artifacts/reproduction_status.json
+        - artifacts/provenance.json
+        - artifacts/ablation_report.json
+        - artifacts/error_analysis.json
+        - artifacts/run_ledger_entry.json
+        - memory/run_ledger.jsonl
+        - memory/experiment_memory.json
+        - memory/experiment_memory.jsonl
+    - profile: ara-production
+      gate_profile: ara-public-bundle-reproduction-gate.v1
+      bundle_schema_version: ara.result_bundle.v1
+      validation_command: python3 -m aira bundles validate <bundle> --profile ara-production --json
+      smoke_command: python3 -m aira agent production-smoke --out <bundle> --json
+      dispatch:
+        lab_id: aira
+        manifest_path: research_lab.yaml
+        bundle_type: aira_result_bundle
+        profile: production-local
+        allowed_interfaces:
+          - research_lab.yaml
+          - aira_result_bundle
+      required_artifacts:
+        - bundle_manifest.json
+        - artifact_manifest.json
+        - claims.json
+        - artifacts/ara_handoff.json
+        - artifacts/reproducibility_notes.md
+        - artifacts/production_plan.json
+        - artifacts/policy_report.json
+        - artifacts/execution_trace.json
+        - artifacts/task_summary.json
+        - artifacts/provenance.json
+        - artifacts/reproduction_status.json
+        - artifacts/run_ledger_entry.json
+        - artifacts/production_evaluation/metrics.json
+        - artifacts/production_evaluation/ablation_matrix.json
+        - artifacts/production_evaluation/error_taxonomy.json
+        - artifacts/production_evaluation/statistical_tests.json
+        - artifacts/production_evaluation/report_summary.json
+        - memory/run_ledger.jsonl
+        - memory/production_index/memory_index.json
+        - memory/production_index/runs.jsonl
+        - memory/production_index/failures.jsonl
+        - memory/production_index/fingerprints.json
+        - memory/production_index/outcomes.json
+        - memory/production_index/reflections.json
+    - profile: ara-production-open
+      gate_profile: ara-public-bundle-reproduction-gate.v1
+      bundle_schema_version: ara.result_bundle.v1
+      validation_command: python3 -m aira bundles validate <bundle> --profile ara-production-open --json
+      smoke_command: python3 -m aira experiments deepen --profile production-open --task <task> --source-bundle <source_bundle> --out <bundle> --json
+      dispatch:
+        lab_id: aira
+        manifest_path: research_lab.yaml
+        bundle_type: aira_result_bundle
+        profile: production-open
+        allowed_interfaces:
+          - research_lab.yaml
+          - aira_result_bundle
+      required_artifacts:
+        - bundle_manifest.json
+        - artifact_manifest.json
+        - claims.json
+        - artifacts/policy_report.json
+        - artifacts/execution_trace.json
+        - artifacts/task_summary.json
+        - artifacts/provenance.json
+        - artifacts/reproduction_status.json
+        - artifacts/run_ledger_entry.json
+        - memory/run_ledger.jsonl
+registries:
+  datasets: aira/registries/datasets.json
+  models: aira/registries/models.json
+  benchmarks: aira/registries/benchmarks.json
+environment:
+  required: []
+  optional: []
+safety:
+  max_wall_time_minutes: 5
+  network_policy: unrestricted
+  destructive_commands: false
+  live_model_calls: true
+profiles:
+  production-local:
+    runner: aira.production_runner
+    command: python3 -m aira experiments run --profile production-local --plan <plan> --out <bundle> --json
+    registry_audit_command: python3 -m aira registry audit --profile production-local --json
+    network_policy: none
+    live_model_calls: false
+    external_datasets_required: false
+    gpu_required: false
+    package_installation: false
+    registry_adapters:
+      - local_cache
+      - operator_supplied_artifact
+      - optional_external_disabled
+    max_task_timeout_seconds: 30
+  production-open:
+    runner: aira.production_runner
+    command: python3 -m aira experiments run --profile production-open --plan <plan> --out <bundle> --json
+    registry_audit_command: python3 -m aira registry audit --profile production-open --json
+    network_policy: unrestricted
+    live_model_calls: true
+    external_datasets_required: true
+    gpu_required: true
+    package_installation: true
+    registry_adapters:
+      - local_cache
+      - operator_supplied_artifact
+      - external_dataset_download
+      - external_model_download
+      - hosted_model_api
+    max_task_timeout_seconds: 3600

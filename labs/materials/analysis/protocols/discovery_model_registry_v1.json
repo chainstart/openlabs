@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "discovery-model-registry-v1",
+  "root_dir": "cache/models/discovery-model-registry-v1",
+  "models": [
+    {
+      "model_id": "chgnet-mptrj-0.3.0",
+      "family": "chgnet",
+      "package": "chgnet",
+      "expected_package_version": "0.4.2",
+      "source_type": "python-package",
+      "source": "chgnet:pretrained/0.3.0/chgnet_0.3.0_e29f68s314m37.pth.tar",
+      "filename": "chgnet_0.3.0_e29f68s314m37.pth.tar",
+      "license_id": "BSD-3-Clause",
+      "training_lineage": "Materials Project MPTrj (MPtrj) trajectory data",
+      "intended_use": "Within-model geometry optimization and energy ranking only"
+    },
+    {
+      "model_id": "mace-mp-0-small",
+      "family": "mace",
+      "package": "mace-torch",
+      "expected_package_version": "0.3.16",
+      "source_type": "https",
+      "source": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/2023-12-10-mace-128-L0_energy_epoch-249.model",
+      "filename": "mace-mp-0-small.model",
+      "license_id": "MIT",
+      "training_lineage": "Materials Project MPTrj (MPtrj) trajectory data",
+      "intended_use": "Within-model geometry optimization and energy ranking only"
+    }
+  ]
+}

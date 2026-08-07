@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "amra-research-loop/campaign-state.schema.json",
+  "title": "AMRA Research Loop Campaign State",
+  "type": "object",
+  "required": ["schema_version", "campaign_id", "problem_id", "phase", "gates", "artifacts", "history"],
+  "properties": {
+    "schema_version": {"const": "amra-research-loop.v1"},
+    "campaign_id": {"type": "string", "minLength": 1},
+    "problem_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string"},
+    "phase": {
+      "enum": [
+        "target_selection",
+        "obstruction_analysis",
+        "representation_search",
+        "mechanism_falsification",
+        "survivor_deepening",
+        "independent_audit",
+        "promotion",
+        "frozen"
+      ]
+    },
+    "gates": {"type": "object"},
+    "artifacts": {"type": "object"},
+    "history": {"type": "array"}
+  },
+  "additionalProperties": true
+}

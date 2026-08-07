@@ -1,0 +1,198 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-research-publication-supervisor-v3",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "claim_boundary": "This supervisor waits for exactly one complete branch-isolated research-analysis manifest, derives an outcome-aware publication/manuscript/audit dossier, and never treats physical non-equivalence, a null association, or experimental incompatibility as missing evidence. Its v3 provenance amendment additionally requires every hash-frozen 3x3x3 memory-safety artifact. It may authorize a later qualitative journal-level review but cannot guarantee a CAS Q1 classification or acceptance.",
+  "preregistration_note": "Versioned from v2 after Gamma-to-2x2x2 failed its frozen force limit and the resource-only medium-I/O amendment was released, but before any 3x3x3 DFT label, universal-domain outcome, conditional fine-tuned model, formal mechanism/sensitivity result, or publication result existed. Branch rules, scientific gates, figure/table inventory, manuscript rules, and outcome semantics are unchanged; only explicit G0 coverage of the resource amendment and the observed test floor are added.",
+  "parent_protocol": "analysis/protocols/llzto_research_publication_supervisor_v2.json",
+  "parent_protocol_sha256": "0f186774c5361351396de503cd49e1fb9f1242523f9d1663164b0724fc689255",
+  "upstream": {
+    "state": "runs/supervisor/research-analysis-supervisor-v2.json",
+    "protocol": "analysis/protocols/llzto_research_analysis_supervisor_v2.json",
+    "protocol_sha256": "766fa50af0207ca5ad10dd9dacea6dd2e333629ae96c79479477d02dd3ebedc2",
+    "complete_disposition": "complete_analysis_ready_for_publication_v2"
+  },
+  "templates": {
+    "publication": {
+      "path": "analysis/protocols/llzto_publication_package_v1.json",
+      "sha256": "ae85a354fe6267ebe7dcf0d3bccb06a60655db01b9975b3e0bea1a9bd583471e"
+    },
+    "manuscript": {
+      "path": "analysis/protocols/llzto_manuscript_v1.json",
+      "sha256": "ee97931ba38b81054d009029e930f6bb73a15b08acb3df5794a25557219e294c"
+    },
+    "evidence_audit": {
+      "path": "analysis/protocols/llzto_q1_evidence_audit_v1.json",
+      "sha256": "e10bd5012b40a2314cbbc8688b2285f2227610faca2de0548fd5802f8316042f"
+    },
+    "exclusion_ledger": {
+      "path": "analysis/protocols/llzto_exclusions_v1.json",
+      "sha256": "67603f732c448e72de7531c621aedd33b4b6c6761043704fc950c2907500c257"
+    }
+  },
+  "environment": {
+    "qe_manifest": "dft/manifests/qe_7.5_conda_linux64.json",
+    "qe_manifest_sha256": "d0102f9182d8f99b47e0deff4f63eb4259a92bf4488c693705af834d9258d658",
+    "python_lock": "uv.lock",
+    "python_lock_sha256": "44b4027d13693eb95534ea60d7351227708f40328c30e56c23b31e114264c393",
+    "qe_lock": "dft/qe-7.5-linux-64.lock",
+    "qe_lock_sha256": "382affc8d291ddc36dea0c4d6cad52112300f4f4a998f1ea1524c741d3614385",
+    "minimum_tests_passed": 329
+  },
+  "numerical_resource_amendment": {
+    "amendment_kind": "provenance-only publication amendment",
+    "numerical_supervisor_protocol_sha256": "d153a770d1b121e1f887585f941fcbb20777cf0e4c1ebc4f524569d05ed3874e",
+    "artifacts": [
+      {
+        "artifact_id": "dft-numerical-supervisor-v2-protocol",
+        "path": "analysis/protocols/llzto_dft_numerical_supervisor_v2.json",
+        "sha256": "d153a770d1b121e1f887585f941fcbb20777cf0e4c1ebc4f524569d05ed3874e",
+        "format": "file"
+      },
+      {
+        "artifact_id": "kpoint-ladder-v3-medium-io-protocol",
+        "path": "dft/protocols/llzto_qe_kpoint_ladder_v3.json",
+        "sha256": "138e3405ebef6175f20d010ceb0858fe3446a6ebf79ab5a5e6afb4b47803817a",
+        "format": "file"
+      },
+      {
+        "artifact_id": "unsafe-default-io-interruption",
+        "path": "runs/dft/llzto-qe-kpoint-extension-v2/conv-relaxed-occ00--ecut90-k3x3x3-scf1e8/interruption.json",
+        "sha256": "ab1766c589a1d1106175a2dc0dabcc4d13b1d4a93efd8af7f87eac0d30b70cfd",
+        "format": "file"
+      },
+      {
+        "artifact_id": "medium-io-npool1-probe-input",
+        "path": "runs/dft/resource-probes/k3-disk-medium-npool1-v1/pw.in",
+        "sha256": "f5b571755135b60b8abacc2529c3e29948862821669542f428f3c7916f8084b8",
+        "format": "file"
+      },
+      {
+        "artifact_id": "medium-io-npool1-probe-output",
+        "path": "runs/dft/resource-probes/k3-disk-medium-npool1-v1/pw.out",
+        "sha256": "42ed4660735d2dfe8506c7cfde40ce6407274aa43f6d3b1b939fc3d178a0e221",
+        "format": "file"
+      },
+      {
+        "artifact_id": "medium-io-npool2-probe-input",
+        "path": "runs/dft/resource-probes/k3-disk-medium-npool2-v1/pw.in",
+        "sha256": "5d6a685cf949e00f293839fe196b05b17c0b3584ef205e3df703563cadd74ab2",
+        "format": "file"
+      },
+      {
+        "artifact_id": "medium-io-npool2-probe-output",
+        "path": "runs/dft/resource-probes/k3-disk-medium-npool2-v1/pw.out",
+        "sha256": "87da465029722f8d44f040c9cec0a25de580e98a010c37f621b1c9725118ff82",
+        "format": "file"
+      },
+      {
+        "artifact_id": "medium-io-resource-assessment",
+        "path": "runs/dft/resource-probes/k3-mediumio-resource-assessment-v2.json",
+        "sha256": "9d4f575c48e4c00a34fc9b390f095a12caacf239c468e6e88c26ed0e2efd94b8",
+        "format": "json",
+        "fingerprint_field": "assessment_fingerprint",
+        "assertions": [
+          {
+            "json_path": "assessment_pass",
+            "operator": "is_true"
+          },
+          {
+            "json_path": "selected_execution.qe_estimated_total_dynamical_ram_gb",
+            "operator": "equals",
+            "value": 29.45
+          }
+        ]
+      },
+      {
+        "artifact_id": "medium-io-resource-release",
+        "path": "runs/supervisor/kpoint-3x3x3-mediumio-resource-release-v2.json",
+        "sha256": "35117b7ea46f622d0a22b1559e7785d1d3e91c74a38dc92f84615dc1e5256c19",
+        "format": "json",
+        "fingerprint_field": "gate_fingerprint",
+        "assertions": [
+          {
+            "json_path": "status",
+            "operator": "equals",
+            "value": "pass"
+          },
+          {
+            "json_path": "maximum_concurrent_qe_jobs",
+            "operator": "equals",
+            "value": 1
+          },
+          {
+            "json_path": "swap_counted_as_capacity",
+            "operator": "is_false"
+          }
+        ]
+      }
+    ]
+  },
+  "branches": {
+    "universal": {
+      "formal_campaign_protocol": "protocols/llzto_q1_v1.json",
+      "formal_campaign_root": "runs/campaigns/llzto_q1_v1",
+      "formal_run_id": "formal-occ00-vel1701",
+      "mechanism_root": "runs/analysis/mechanisms-formal-v1",
+      "g2_release": "runs/supervisor/g2-release-v1.json",
+      "g2_release_id": "g2-potential-domain",
+      "domain_evidence": [
+        {
+          "kind": "domain:feasibility",
+          "set_id": "feasibility",
+          "publication_claim_gate": false
+        },
+        {
+          "kind": "domain:publication-heldout",
+          "set_id": "publication-heldout",
+          "publication_claim_gate": true
+        }
+      ],
+      "model_branch": {
+        "model_name": "CHGNet-default",
+        "training_records": 0,
+        "fresh_heldout_records": 30,
+        "universal_domain_failure_retained": false
+      }
+    },
+    "finetuned": {
+      "formal_campaign_protocol": "runs/protocols/llzto_q1_finetuned_v1.json",
+      "formal_campaign_root": "runs/campaigns/llzto_q1_finetuned_v1",
+      "formal_run_id": "formal-occ00-vel1701",
+      "mechanism_root": "runs/analysis/mechanisms-formal-finetuned-v1",
+      "g2_release": "runs/supervisor/g2-finetuned-release-v1.json",
+      "g2_release_id": "g2-finetuned-potential-domain",
+      "domain_evidence": [
+        {
+          "kind": "fine-tuned-domain",
+          "set_id": "fine-tuned-publication-heldout",
+          "publication_claim_gate": true
+        }
+      ],
+      "model_branch": {
+        "model_name": "CHGNet-LLZTO-finetuned-v1",
+        "training_records": 62,
+        "fresh_heldout_records": 30,
+        "universal_domain_failure_retained": true
+      },
+      "fine_tuning_state": "runs/supervisor/chgnet-finetune-contingency-v1.json",
+      "fine_rerun_state": "runs/supervisor/finetuned-rerun-supervisor-v1.json",
+      "training_report": "runs/models/llzto-chgnet-finetuned-v1/training-report.json",
+      "fine_domain_report": "runs/dft/llzto-chgnet-finetuned-domain-v1/fresh-heldout-report.json",
+      "universal_domain_state": "runs/supervisor/dft-domain-supervisor-v1.json",
+      "universal_heldout_report": "runs/dft/llzto-chgnet-domain-v1/publication-heldout-report.json"
+    }
+  },
+  "paths": {
+    "analysis_root_template": "runs/analysis/research-v2/{branch}",
+    "derived_protocol_root_template": "runs/protocols/research-publication-v3/{branch}",
+    "publication_root_template": "runs/analysis/publication-v3/{branch}",
+    "manuscript_root_template": "manuscript/llzto_q1_v1/research-v3/{branch}"
+  },
+  "resources": {
+    "poll_seconds": 30,
+    "cpu_lock": "runs/supervisor/final-publication-cpu.lock",
+    "parallel_attestations": 2
+  },
+  "output_state": "runs/supervisor/research-publication-supervisor-v3.json"
+}

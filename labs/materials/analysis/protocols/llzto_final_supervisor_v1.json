@@ -1,0 +1,199 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-final-supervisor-v1",
+  "claim_boundary": "This state machine may analyze and package only the complete preregistered LLZTO runs released by G2. It preserves failed scientific gates as blockers, never removes unresolved or negative outcomes, and permits Q1-readiness scoring only after the full G0-G7 audit passes.",
+  "preregistration_note": "Frozen while the first formal 500 ps trajectory and Gamma-to-2x2x2 comparison were incomplete and before any formal DFT-domain, transport, sensitivity, mechanism-association, experimental-comparison, or manuscript outcome existed.",
+  "upstream_states": [
+    {
+      "state_id": "dft-domain-supervisor",
+      "path": "runs/supervisor/dft-domain-supervisor-v1.json",
+      "expected_protocol_sha256": "9151e08899605895be5d019b0dccc7ebb0d9429b1bd39b8fa57c6df20e766965"
+    },
+    {
+      "state_id": "formal-and-npt-md",
+      "path": "runs/supervisor/md-formal-queue-v5.json",
+      "expected_protocol_sha256": "e06400ba9cdc82afe8ae3a988b5f2b3e0ee99618db0336c123c4d0469b14fab0",
+      "expected_run_ids": [
+        "formal-occ01-vel2701",
+        "formal-occ02-vel3701",
+        "formal-occ03-vel4701",
+        "formal-occ04-vel5701",
+        "volume-npt-equilibrated-occ00"
+      ]
+    },
+    {
+      "state_id": "finite-size-md",
+      "path": "runs/supervisor/md-size-matched-queue-v2.json",
+      "expected_protocol_sha256": "8252983264e7c40626210c3dc1229fc4918a70f758d51d8c3f40a5736c7a144d",
+      "expected_run_ids": [
+        "size-matched-conventional-occ00-800k"
+      ]
+    },
+    {
+      "state_id": "nested-velocity-md",
+      "path": "runs/supervisor/md-velocity-matched-queue-v1.json",
+      "expected_protocol_sha256": "e1edad8e891a9cef395683664553c29927388f02d61f47a6273b79af3f929da9",
+      "expected_run_ids": [
+        "velocity-matched-occ00-vel1702-800k",
+        "velocity-matched-occ00-vel1703-800k",
+        "velocity-matched-occ01-vel2702-800k",
+        "velocity-matched-occ01-vel2703-800k",
+        "velocity-matched-occ02-vel3702-800k",
+        "velocity-matched-occ02-vel3703-800k",
+        "velocity-matched-occ03-vel4702-800k",
+        "velocity-matched-occ03-vel4703-800k",
+        "velocity-matched-occ04-vel5702-800k",
+        "velocity-matched-occ04-vel5703-800k"
+      ]
+    },
+    {
+      "state_id": "fixed-volume-md",
+      "path": "runs/supervisor/md-volume-fixed-matched-queue-v1.json",
+      "expected_protocol_sha256": "18ea9b075e9949d676e202e3d59a1c8ac8cf40d543ad6e1b1dc876c4f24c8bdf",
+      "expected_run_ids": [
+        "volume-fixed-experimental-matched-occ00-800k"
+      ]
+    },
+    {
+      "state_id": "formal-mechanisms",
+      "path": "runs/supervisor/mechanism-analysis-queue-v1.json",
+      "expected_protocol_sha256": "2e84d0a52b327fd398d5e48f8197a9cc031d1f35adb7d00f127c88ca84233476",
+      "expected_job_ids": [
+        "formal-occ00-vel1701/T700",
+        "formal-occ00-vel1701/T750",
+        "formal-occ00-vel1701/T800",
+        "formal-occ00-vel1701/T850",
+        "formal-occ00-vel1701/T900",
+        "formal-occ01-vel2701/T700",
+        "formal-occ01-vel2701/T750",
+        "formal-occ01-vel2701/T800",
+        "formal-occ01-vel2701/T850",
+        "formal-occ01-vel2701/T900",
+        "formal-occ02-vel3701/T700",
+        "formal-occ02-vel3701/T750",
+        "formal-occ02-vel3701/T800",
+        "formal-occ02-vel3701/T850",
+        "formal-occ02-vel3701/T900",
+        "formal-occ03-vel4701/T700",
+        "formal-occ03-vel4701/T750",
+        "formal-occ03-vel4701/T800",
+        "formal-occ03-vel4701/T850",
+        "formal-occ03-vel4701/T900",
+        "formal-occ04-vel5701/T700",
+        "formal-occ04-vel5701/T750",
+        "formal-occ04-vel5701/T800",
+        "formal-occ04-vel5701/T850",
+        "formal-occ04-vel5701/T900"
+      ]
+    }
+  ],
+  "declared_files": [
+    {
+      "file_id": "formal-campaign-protocol",
+      "path": "protocols/llzto_q1_v1.json",
+      "sha256": "e06400ba9cdc82afe8ae3a988b5f2b3e0ee99618db0336c123c4d0469b14fab0"
+    },
+    {
+      "file_id": "finite-size-protocol",
+      "path": "protocols/llzto_size_matched_v1.json",
+      "sha256": "8252983264e7c40626210c3dc1229fc4918a70f758d51d8c3f40a5736c7a144d"
+    },
+    {
+      "file_id": "nested-velocity-protocol",
+      "path": "protocols/llzto_velocity_nested_v2.json",
+      "sha256": "e1edad8e891a9cef395683664553c29927388f02d61f47a6273b79af3f929da9"
+    },
+    {
+      "file_id": "fixed-volume-protocol",
+      "path": "protocols/llzto_volume_fixed_matched_v1.json",
+      "sha256": "18ea9b075e9949d676e202e3d59a1c8ac8cf40d543ad6e1b1dc876c4f24c8bdf"
+    },
+    {
+      "file_id": "hierarchical-analysis-protocol",
+      "path": "analysis/protocols/llzto_hierarchical_transport_v1.json",
+      "sha256": "09268d745bd9359ceedbe6abee173c397b4459f334b7471e0b9317da667b67e0"
+    },
+    {
+      "file_id": "mechanism-association-protocol",
+      "path": "analysis/protocols/llzto_mechanism_transport_association_v1.json",
+      "sha256": "2e84d0a52b327fd398d5e48f8197a9cc031d1f35adb7d00f127c88ca84233476"
+    },
+    {
+      "file_id": "publication-protocol",
+      "path": "analysis/protocols/llzto_publication_package_v1.json",
+      "sha256": "ae85a354fe6267ebe7dcf0d3bccb06a60655db01b9975b3e0bea1a9bd583471e"
+    },
+    {
+      "file_id": "manuscript-protocol",
+      "path": "analysis/protocols/llzto_manuscript_v1.json",
+      "sha256": "ee97931ba38b81054d009029e930f6bb73a15b08acb3df5794a25557219e294c"
+    },
+    {
+      "file_id": "q1-readiness-protocol",
+      "path": "analysis/protocols/llzto_q1_readiness_v1.json",
+      "sha256": "af64a8b7c8427e26fb734213c0f7e87ebb5c0cebc0a8959921b2a7f034c803aa"
+    },
+    {
+      "file_id": "experimental-benchmarks",
+      "path": "data/experimental/llzto_matched_v1.json",
+      "sha256": "61a27cb9d4582c2841f275adf0d5955de3864d2a96971165d61a85bc62508d20"
+    },
+    {
+      "file_id": "exclusion-ledger",
+      "path": "analysis/protocols/llzto_exclusions_v1.json",
+      "sha256": "67603f732c448e72de7531c621aedd33b4b6c6761043704fc950c2907500c257"
+    },
+    {
+      "file_id": "qe-environment-manifest",
+      "path": "dft/manifests/qe_7.5_conda_linux64.json",
+      "sha256": "d0102f9182d8f99b47e0deff4f63eb4259a92bf4488c693705af834d9258d658"
+    },
+    {
+      "file_id": "python-lock",
+      "path": "uv.lock",
+      "sha256": "44b4027d13693eb95534ea60d7351227708f40328c30e56c23b31e114264c393"
+    }
+  ],
+  "analysis": {
+    "formal_campaign_root": "runs/campaigns/llzto_q1_v1",
+    "hierarchical_protocol": "analysis/protocols/llzto_hierarchical_transport_v1.json",
+    "mechanism_root": "runs/analysis/mechanisms-formal-v1",
+    "mechanism_association_protocol": "analysis/protocols/llzto_mechanism_transport_association_v1.json",
+    "experimental_benchmarks": "data/experimental/llzto_matched_v1.json"
+  },
+  "publication": {
+    "protocol": "analysis/protocols/llzto_publication_package_v1.json",
+    "manuscript_protocol": "analysis/protocols/llzto_manuscript_v1.json",
+    "evidence_audit_protocol": "analysis/protocols/llzto_q1_evidence_audit_v1.json",
+    "q1_readiness_protocol": "analysis/protocols/llzto_q1_readiness_v1.json",
+    "qe_environment_manifest": "dft/manifests/qe_7.5_conda_linux64.json",
+    "formal_run_manifest": "runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/run_manifest.json"
+  },
+  "outputs": {
+    "campaign_report": "runs/campaigns/llzto_q1_v1/analysis/campaign_report.json",
+    "hierarchical_transport": "runs/analysis/hierarchical-transport-v1.json",
+    "nested_velocity": "runs/analysis/nested-velocity-v1.json",
+    "transport_sensitivity": "runs/analysis/transport-sensitivity-v1.json",
+    "mechanism_association": "runs/analysis/mechanism-transport-association-v1.json",
+    "experimental_validation": "runs/analysis/hierarchical-experimental-validation-v1.json",
+    "publication_manifest": "runs/analysis/publication-v1/artifact-manifest.json",
+    "manuscript_manifest": "runs/analysis/publication-v1/manuscript-manifest.json",
+    "test_attestation": "runs/analysis/publication-v1/test-attestation.json",
+    "environment_attestation": "runs/analysis/publication-v1/environment-attestation.json",
+    "clean_regeneration_attestation": "runs/analysis/publication-v1/clean-regeneration-attestation.json",
+    "evidence_audit": "runs/analysis/publication-v1/evidence-audit.json",
+    "q1_readiness": "runs/analysis/publication-v1/q1-readiness-assessment.json"
+  },
+  "resources": {
+    "poll_seconds": 30,
+    "parallel_analysis_workers": 4,
+    "cpu_lock": "runs/supervisor/final-analysis-cpu.lock"
+  },
+  "failure_rules": {
+    "upstream_terminal_failure": "Remain visibly blocked and require a separately fingerprinted intervention; do not reinterpret the failed gate.",
+    "unresolved_transport": "Preserve the report and extend only the exact unresolved trajectory under a new protocol.",
+    "sensitivity_failure": "Retain the physical sensitivity and narrow the claim under a new publication protocol; never relax the equivalence margin.",
+    "analysis_failure": "Preserve logs and immutable partial outputs; repair under a new committed supervisor version rather than overwriting evidence.",
+    "audit_failure": "Do not execute Q1-readiness scoring until every blocker is resolved and a newly generated audit passes."
+  }
+}

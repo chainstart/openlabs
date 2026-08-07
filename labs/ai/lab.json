@@ -1,0 +1,26 @@
+{
+  "schema_version": "openlabs.lab.v1",
+  "lab_id": "ai",
+  "domain": "ai",
+  "name": "OpenLabs AI/ML Lab",
+  "runner": {
+    "command": ["{python}", "../../packages/research-core/lab_runner.py"]
+  },
+  "skills": [
+    {
+      "skill_id": "ai-research-loop",
+      "path": "skills/ai-research-loop/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-ai-paper",
+      "path": "../../workflows/paper/skills/openlabs-ai-paper/SKILL.md"
+    }
+  ],
+  "capabilities": [
+    "literature-grounded-hypotheses",
+    "benchmark-design",
+    "controlled-experiments",
+    "ablation-and-error-analysis",
+    "reproducibility-audit"
+  ]
+}

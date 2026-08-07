@@ -1,0 +1,45 @@
+schema_version: openlabs.paper_writing.skill_lock.v1
+updated_at: '2026-08-02'
+sources:
+  ai-research-writing-skill:
+    repository: https://github.com/jin-s13/ai-research-writing-skill
+    commit: 5d6e4244e532189099ca5a9c5585b23febcae955
+    source_path: .
+    installed_path: skills/vendor/ai-research-writing-skill
+    license: MIT
+    audit_status: approved
+    pruned_paths: [.github, examples]
+    note: Upstream demo binaries and CI configuration are not runtime profile inputs.
+  scientific-writing:
+    repository: https://github.com/K-Dense-AI/scientific-agent-skills
+    commit: ad21a3868923628330734375dddbf7b86ea84222
+    source_path: skills/scientific-writing
+    installed_path: skills/vendor/scientific-writing
+    license: MIT
+    audit_status: approved
+    local_patches: [moved compatibility frontmatter under metadata for current Codex validation]
+  statistical-analysis:
+    repository: https://github.com/K-Dense-AI/scientific-agent-skills
+    commit: ad21a3868923628330734375dddbf7b86ea84222
+    source_path: skills/statistical-analysis
+    installed_path: skills/vendor/statistical-analysis
+    license: MIT
+    audit_status: approved
+    note: Optional third-party analysis dependencies are not installed by the profile.
+  peer-review:
+    repository: https://github.com/K-Dense-AI/scientific-agent-skills
+    commit: ad21a3868923628330734375dddbf7b86ea84222
+    source_path: skills/peer-review
+    installed_path: skills/vendor/peer-review
+    license: MIT
+    audit_status: approved
+    local_patches: [moved compatibility frontmatter under metadata for current Codex validation]
+  sympy:
+    repository: https://github.com/K-Dense-AI/scientific-agent-skills
+    commit: ad21a3868923628330734375dddbf7b86ea84222
+    source_path: skills/sympy
+    installed_path: skills/vendor/sympy
+    license: MIT
+    audit_status: approved_with_boundary
+    local_patches: [moved compatibility frontmatter under metadata for current Codex validation]
+    note: Symbolic checks cover only explicitly encoded statements and never certify a proof.

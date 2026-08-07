@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openlabs"
+version = "0.1.0"
+description = "A small, recoverable control plane for autonomous research labs"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["orchestrator/src"]
+
+[tool.pytest.ini_options]
+testpaths = ["orchestrator/tests", "tests/contracts"]
+pythonpath = ["orchestrator/src"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+include = [
+    "orchestrator/src/**/*.py",
+    "orchestrator/tests/**/*.py",
+    "packages/research-core/lab_runner.py",
+    "tests/contracts/**/*.py",
+    "tools/*.py",
+]

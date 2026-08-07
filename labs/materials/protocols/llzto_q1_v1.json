@@ -1,0 +1,259 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "llzto-q1-v1",
+  "root_dir": "runs/campaigns/llzto_q1_v1",
+  "title": "Configuration-aware tracer and collective lithium transport in exact-composition Li6.5La3Zr1.5Ta0.5O12",
+  "research_question": "How much do crystallographic occupancy realization, velocity initialization, cell representation, and thermal volume alter tracer and collective Li transport predicted for experimentally matched LLZTO?",
+  "primary_estimands": [
+    "tracer diffusivity and activation energy",
+    "collective charge diffusivity and activation energy",
+    "collective-to-tracer diffusivity ratio",
+    "room-temperature extrapolation versus exact-composition NMR and impedance benchmarks"
+  ],
+  "stopping_rule": "A temperature point is usable only when tracer and, separately, collective MSD have a 0.8-1.2 log-log exponent, at least 20 A^2 displacement at the maximum analyzed lag, at least four valid non-overlapping blocks, and relative block standard error no larger than 0.5. Unresolved points are reported and rerun under a longer, newly fingerprinted protocol; they are never dropped from an Arrhenius series.",
+  "base_config": {
+    "schema_version": "2.1",
+    "protocol_name": "llzto-transport-v3",
+    "formula": "Li6.5La3Zr1.5Ta0.5O12",
+    "structure_file": "data/structures/raw/cod_1545083.cif",
+    "structure_id": "COD-1545083",
+    "primitive_cell": true,
+    "min_initial_li_li_distance_angstrom": 1.6,
+    "supercell": [1, 1, 1],
+    "timestep_fs": 2.0,
+    "equilibration_steps": 5000,
+    "production_steps": 250000,
+    "loginterval": 50,
+    "equilibration_ensemble": "nvt",
+    "production_ensemble": "nvt",
+    "thermostat": "Nose-Hoover",
+    "thermostat_tau_fs": 100.0,
+    "pressure_gpa": 0.000101325,
+    "barostat_tau_fs": 1000.0,
+    "relax_structure": true,
+    "relax_cell": true,
+    "relax_fmax_ev_a": 0.05,
+    "relax_steps": 1000,
+    "mobile_species": "Li",
+    "fit_from_fraction": 0.2,
+    "fit_to_fraction": 0.8,
+    "max_lags": 500,
+    "uncertainty_blocks": 5,
+    "min_final_msd_a2": 20.0,
+    "min_diffusive_exponent": 0.8,
+    "max_diffusive_exponent": 1.2,
+    "max_relative_diffusivity_stderr": 0.5,
+    "max_abs_nve_energy_drift_mev_atom_ps": 1.0,
+    "device": "cuda",
+    "model_name": "CHGNet-default",
+    "expected_model_state_dict_sha256": "9484ac3e09d17e40e8df63f307c85fc0277981f9418f50d0bc7379c40b198b2c"
+  },
+  "gates": [
+    {
+      "gate_id": "g0-code-and-provenance",
+      "criterion": "Full test suite, compilation, package lock, pinned input hashes, model-weight hash, and clean diff checks pass before new production data are accepted."
+    },
+    {
+      "gate_id": "g1-time-step",
+      "criterion": "At 800 K, 1 fs and 2 fs NVE pilots remain structurally stable; the selected step has absolute total-energy drift no larger than 1 meV atom-1 ps-1, and transport estimates are compared without treating a short pilot as converged."
+    },
+    {
+      "gate_id": "g2-potential-domain",
+      "criterion": "Representative relaxed and finite-temperature snapshots must be checked against a consistent DFT reference set. Target errors are documented before looking at transport agreement; failure blocks publication claims from the universal potential."
+    },
+    {
+      "gate_id": "g3-trajectory-convergence",
+      "criterion": "Every Arrhenius temperature independently passes the preregistered tracer and collective adequacy checks. Literature precedent uses 0.5 ns over 700-900 K; shorter runs are pilots only."
+    },
+    {
+      "gate_id": "g4-replication-and-size",
+      "criterion": "Report between-occupancy and velocity-seed variation, and compare the 94-atom primitive realization with the 188-atom conventional cubic realization at 800 K."
+    },
+    {
+      "gate_id": "g5-experimental-validation",
+      "criterion": "Compare NMR tracer diffusion only with tracer predictions and impedance conductivity only with collective predictions; retain phase, density, sample type, temperature extrapolation, and DOI provenance."
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "numerics-dt1fs-800k-nve",
+      "stage": "numerics",
+      "purpose": "Ten-picosecond NVE energy-conservation reference after ten-picosecond NVT equilibration.",
+      "enabled": true,
+      "config": {
+        "protocol_tier": "numerics",
+        "occupancy_seed": 0,
+        "seed": 1701,
+        "temperatures": [800],
+        "timestep_fs": 1.0,
+        "equilibration_steps": 10000,
+        "production_steps": 10000,
+        "loginterval": 20,
+        "production_ensemble": "nve",
+        "min_final_msd_a2": 0.0
+      }
+    },
+    {
+      "run_id": "numerics-dt2fs-800k-nve",
+      "stage": "numerics",
+      "purpose": "Matched ten-picosecond NVE test for the more efficient two-femtosecond step.",
+      "enabled": true,
+      "config": {
+        "protocol_tier": "numerics",
+        "occupancy_seed": 0,
+        "seed": 1701,
+        "temperatures": [800],
+        "timestep_fs": 2.0,
+        "equilibration_steps": 5000,
+        "production_steps": 5000,
+        "loginterval": 10,
+        "production_ensemble": "nve",
+        "min_final_msd_a2": 0.0
+      }
+    },
+    {
+      "run_id": "pilot-occ00-20ps",
+      "stage": "transport-pilot",
+      "purpose": "Catch temperature, stability, and analysis failures before committing to 0.5 ns trajectories; not a publication Arrhenius result.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "pilot",
+        "occupancy_seed": 0,
+        "seed": 1701,
+        "temperatures": [700, 800, 900],
+        "equilibration_steps": 5000,
+        "production_steps": 10000,
+        "loginterval": 25
+      }
+    },
+    {
+      "run_id": "formal-occ00-vel1701",
+      "stage": "formal-configurations",
+      "purpose": "Primary 0.5 ns temperature series, occupancy realization 0.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "formal",
+        "occupancy_seed": 0,
+        "seed": 1701,
+        "temperatures": [700, 750, 800, 850, 900],
+        "equilibration_steps": 10000
+      }
+    },
+    {
+      "run_id": "formal-occ01-vel2701",
+      "stage": "formal-configurations",
+      "purpose": "Primary 0.5 ns temperature series, occupancy realization 1.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "formal",
+        "occupancy_seed": 1,
+        "seed": 2701,
+        "temperatures": [700, 750, 800, 850, 900],
+        "equilibration_steps": 10000
+      }
+    },
+    {
+      "run_id": "formal-occ02-vel3701",
+      "stage": "formal-configurations",
+      "purpose": "Primary 0.5 ns temperature series, occupancy realization 2.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "formal",
+        "occupancy_seed": 2,
+        "seed": 3701,
+        "temperatures": [700, 750, 800, 850, 900],
+        "equilibration_steps": 10000
+      }
+    },
+    {
+      "run_id": "formal-occ03-vel4701",
+      "stage": "formal-configurations",
+      "purpose": "Primary 0.5 ns temperature series, occupancy realization 3.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "formal",
+        "occupancy_seed": 3,
+        "seed": 4701,
+        "temperatures": [700, 750, 800, 850, 900],
+        "equilibration_steps": 10000
+      }
+    },
+    {
+      "run_id": "formal-occ04-vel5701",
+      "stage": "formal-configurations",
+      "purpose": "Primary 0.5 ns temperature series, occupancy realization 4.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "formal",
+        "occupancy_seed": 4,
+        "seed": 5701,
+        "temperatures": [700, 750, 800, 850, 900],
+        "equilibration_steps": 10000
+      }
+    },
+    {
+      "run_id": "replicate-occ00-vel1702-800k",
+      "stage": "velocity-replicates",
+      "purpose": "Independent velocity realization at fixed occupancy and temperature.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "formal-sensitivity",
+        "occupancy_seed": 0,
+        "seed": 1702,
+        "temperatures": [800]
+      }
+    },
+    {
+      "run_id": "replicate-occ00-vel1703-800k",
+      "stage": "velocity-replicates",
+      "purpose": "Second independent velocity realization at fixed occupancy and temperature.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "formal-sensitivity",
+        "occupancy_seed": 0,
+        "seed": 1703,
+        "temperatures": [800]
+      }
+    },
+    {
+      "run_id": "size-conventional-occ00-800k",
+      "stage": "finite-size",
+      "purpose": "Compare the 188-atom conventional cubic cell with the 94-atom primitive realization.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "formal-sensitivity",
+        "occupancy_seed": 0,
+        "primitive_cell": false,
+        "seed": 1701,
+        "temperatures": [800]
+      }
+    },
+    {
+      "run_id": "volume-fixed-experimental-occ00-800k",
+      "stage": "volume-sensitivity",
+      "purpose": "Atomic relaxation and MD at the experimental lattice volume.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "formal-sensitivity",
+        "occupancy_seed": 0,
+        "seed": 1701,
+        "temperatures": [800],
+        "relax_cell": false
+      }
+    },
+    {
+      "run_id": "volume-npt-equilibrated-occ00",
+      "stage": "volume-sensitivity",
+      "purpose": "Thermally equilibrate isotropic volume under MTK NPT before fixed-cell production at each temperature.",
+      "enabled": false,
+      "config": {
+        "protocol_tier": "formal-sensitivity",
+        "occupancy_seed": 0,
+        "seed": 1701,
+        "temperatures": [700, 750, 800, 850, 900],
+        "equilibration_steps": 10000,
+        "equilibration_ensemble": "npt"
+      }
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+{
+  "schema_version": "1.0",
+  "study_id": "hidden-order-soft-mode-pilot-v1",
+  "title": "隐藏有序结构与软模发现试点",
+  "hypothesis": "公开实验平均结构中的部分占位、混占和软模能够指向被平均表示掩盖的稳定低对称结构及可检验性质变化。",
+  "root_dir": "runs/discovery/hidden-order-soft-mode-pilot-v1",
+  "budget": {
+    "wall_time_hours": 24.0,
+    "gpu_hours": 20.0,
+    "max_candidates": 50,
+    "max_orderings_per_candidate": 24,
+    "max_soft_modes": 6,
+    "mode_amplitudes": [-0.25, 0.25],
+    "estimated_relax_minutes_per_model": 6.0
+  },
+  "screening": {
+    "cif_occupancy_tolerance": 1.01,
+    "rationalization_max_denominator": 16,
+    "rationalization_absolute_tolerance": 0.01,
+    "composition_warning_absolute_atoms": 0.1,
+    "composition_block_absolute_atoms": 1.0,
+    "max_atoms_per_relaxation": 256,
+    "soft_mode_max_atoms": 96
+  },
+  "models": [
+    {
+      "model_id": "chgnet-0.4.2",
+      "family": "chgnet",
+      "package": "chgnet",
+      "artifact": "unfrozen"
+    },
+    {
+      "model_id": "mace-mp-candidate",
+      "family": "mace",
+      "package": "mace-torch",
+      "artifact": "unfrozen"
+    }
+  ],
+  "stages": {
+    "structure_audit": {
+      "enabled": true,
+      "resource": "cpu",
+      "purpose": "Parse structures, diagnose occupational disorder, check exact composition, and estimate downstream cost."
+    },
+    "novelty_review": {
+      "enabled": false,
+      "resource": "manual-and-literature",
+      "purpose": "Confirm that a candidate and proposed ordered phase are not prior art."
+    },
+    "ordering_enumeration": {
+      "enabled": false,
+      "resource": "cpu",
+      "purpose": "Generate exact-composition orderings after candidate review."
+    },
+    "dual_model_relaxation": {
+      "enabled": false,
+      "resource": "single-gpu",
+      "purpose": "Relax every retained realization with two independent frozen model families."
+    },
+    "soft_mode_followup": {
+      "enabled": false,
+      "resource": "single-gpu",
+      "purpose": "Perturb selected unstable modes and test for stable lower-symmetry minima."
+    },
+    "dft_confirmation": {
+      "enabled": false,
+      "resource": "cpu-or-external",
+      "purpose": "Confirm only the top screened structures and energy orderings."
+    }
+  },
+  "gates": [
+    {
+      "gate_id": "g0-input",
+      "criterion": "Source, license, structure hash, exact composition, and parser warnings are recorded."
+    },
+    {
+      "gate_id": "g1-novelty",
+      "criterion": "Original paper and structure databases have been manually checked before GPU work."
+    },
+    {
+      "gate_id": "g2-models",
+      "criterion": "Two independent model artifacts are installed, frozen, and identified by hashes."
+    },
+    {
+      "gate_id": "g3-budget",
+      "criterion": "The materialized task list remains below 20 GPU-hours and 24 wall-clock hours."
+    },
+    {
+      "gate_id": "g4-confirmation",
+      "criterion": "A paper candidate requires model agreement, novelty evidence, and independent DFT or experimental confirmation."
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "cod-1545083-average",
+      "path": "data/structures/raw/cod_1545083.cif",
+      "source_url": "https://www.crystallography.net/cod/1545083.html",
+      "source_license": "COD public domain dedication",
+      "role": "calibration-average-structure",
+      "eligible_for_novelty": false,
+      "expected_composition_per_cell": {
+        "Li": 52,
+        "La": 24,
+        "Zr": 12,
+        "Ta": 4,
+        "O": 96
+      },
+      "notes": "Known LLZTO average structure used only to validate disorder and exact-composition diagnostics."
+    },
+    {
+      "candidate_id": "llzto-occ00-ordered-reference",
+      "path": "data/structures/derived/llzto_occ00_conventional_matched_v1.cif",
+      "source_url": "https://www.crystallography.net/cod/1545083.html",
+      "source_license": "Derived locally from a COD public-domain input; redistribution of generated workflow code is not otherwise licensed.",
+      "role": "calibration-ordered-reference",
+      "eligible_for_novelty": false,
+      "expected_composition_per_cell": {
+        "Li": 52,
+        "La": 24,
+        "Zr": 12,
+        "Ta": 4,
+        "O": 96
+      },
+      "notes": "Existing exact-composition ordered realization used to check the ordered-structure route."
+    }
+  ]
+}

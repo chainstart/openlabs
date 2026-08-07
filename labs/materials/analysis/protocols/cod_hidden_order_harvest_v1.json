@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "harvest_id": "cod-li-na-2025-hidden-order-v1",
+  "root_dir": "runs/screening/cod-li-na-2025-hidden-order-v1",
+  "cache_dir": "cache/cod/cod-li-na-2025-hidden-order-v1",
+  "selected_dir": "data/structures/candidates/cod-li-na-2025-hidden-order-v1",
+  "discovery_template": "protocols/hidden_order_soft_mode_pilot_v1.json",
+  "queries": [
+    {
+      "year": "2025",
+      "el1": "Li",
+      "nel1": "C",
+      "nel2": "H"
+    },
+    {
+      "year": "2025",
+      "el1": "Na",
+      "nel1": "C",
+      "nel2": "H"
+    }
+  ],
+  "max_downloads": 100,
+  "max_selected": 30,
+  "max_workers": 4,
+  "min_interval_seconds": 0.2,
+  "timeout_seconds": 30.0,
+  "max_retries": 3,
+  "occupancy_tolerance": 1.05,
+  "max_expected_ordered_atoms": 160,
+  "composition_block_absolute_atoms": 1.0,
+  "excluded_elements": ["C", "H"],
+  "max_per_reduced_formula": 1
+}

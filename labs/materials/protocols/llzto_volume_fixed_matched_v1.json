@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "llzto-q1-volume-fixed-matched-v1",
+  "root_dir": "runs/campaigns/llzto_q1_volume_fixed_matched_v1",
+  "title": "Matched fixed-experimental-volume sensitivity for LLZTO occupancy realization 0",
+  "research_question": "At 800 K, how does retaining the experimental lattice volume instead of relaxing the cell alter tracer, collective, and correlated lithium transport?",
+  "primary_estimands": [
+    "fixed-experimental versus relaxed-cell tracer diffusivity ratio",
+    "fixed-experimental versus relaxed-cell collective diffusivity ratio",
+    "fixed-experimental versus relaxed-cell collective-to-tracer ratio contrast"
+  ],
+  "stopping_rule": "The sensitivity is interpretable only when both matched 800 K arms independently pass the corresponding estimator's convergence rules; no unresolved estimator is dropped.",
+  "base_config": {
+    "schema_version": "2.1",
+    "protocol_name": "llzto-volume-fixed-matched-v1",
+    "protocol_tier": "formal-sensitivity",
+    "formula": "Li6.5La3Zr1.5Ta0.5O12",
+    "structure_file": "data/structures/raw/cod_1545083.cif",
+    "structure_id": "COD-1545083",
+    "primitive_cell": true,
+    "min_initial_li_li_distance_angstrom": 1.6,
+    "occupancy_seed": 0,
+    "supercell": [1, 1, 1],
+    "temperatures": [800],
+    "timestep_fs": 2.0,
+    "equilibration_steps": 10000,
+    "production_steps": 250000,
+    "loginterval": 50,
+    "equilibration_ensemble": "nvt",
+    "production_ensemble": "nvt",
+    "thermostat": "Nose-Hoover",
+    "thermostat_tau_fs": 100.0,
+    "pressure_gpa": 0.000101325,
+    "barostat_tau_fs": 1000.0,
+    "relax_structure": true,
+    "relax_cell": false,
+    "relax_fmax_ev_a": 0.05,
+    "relax_steps": 1000,
+    "seed": 1701,
+    "mobile_species": "Li",
+    "fit_from_fraction": 0.2,
+    "fit_to_fraction": 0.8,
+    "max_lags": 500,
+    "uncertainty_blocks": 5,
+    "min_final_msd_a2": 20.0,
+    "min_diffusive_exponent": 0.8,
+    "max_diffusive_exponent": 1.2,
+    "max_relative_diffusivity_stderr": 0.5,
+    "max_abs_nve_energy_drift_mev_atom_ps": 1.0,
+    "device": "cuda",
+    "model_name": "CHGNet-default",
+    "expected_model_state_dict_sha256": "9484ac3e09d17e40e8df63f307c85fc0277981f9418f50d0bc7379c40b198b2c"
+  },
+  "gates": [
+    {
+      "gate_id": "g2-potential-domain",
+      "criterion": "Run only after the full universal-potential domain gate passes."
+    },
+    {
+      "gate_id": "g4-matched-fixed-volume",
+      "criterion": "Use the same occupancy, velocity seed, 20 ps equilibration, 500 ps production, thermostat, timestep, and estimator settings as the relaxed-cell 800 K reference; only cell relaxation is disabled."
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "volume-fixed-experimental-matched-occ00-800k",
+      "stage": "volume-sensitivity",
+      "purpose": "Matched fixed-experimental-volume control for formal-occ00-vel1701 at 800 K.",
+      "enabled": false,
+      "config": {}
+    }
+  ]
+}

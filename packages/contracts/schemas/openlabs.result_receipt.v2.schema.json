@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.result_receipt.v2.schema.json",
+  "title": "OpenLabs result receipt v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "attempt_id",
+    "campaign_id",
+    "lab_id",
+    "domain",
+    "agent_role",
+    "result_path",
+    "sha256",
+    "runtime"
+  ],
+  "properties": {
+    "schema_version": {"const": "openlabs.result_receipt.v2"},
+    "task_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "attempt_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "campaign_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "lab_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "domain": {"type": "string", "minLength": 1},
+    "agent_role": {"enum": ["researcher", "experimenter", "writer", "reviewer"]},
+    "result_path": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "runtime": {
+      "type": "object",
+      "required": ["duration_seconds", "exit_code"],
+      "properties": {
+        "duration_seconds": {"type": "number", "minimum": 0},
+        "exit_code": {"type": "integer"},
+        "session_id": {"type": ["string", "null"]},
+        "model": {"type": "string"},
+        "provider": {"type": "string"},
+        "input_tokens": {"type": "integer", "minimum": 0},
+        "cached_input_tokens": {"type": "integer", "minimum": 0},
+        "output_tokens": {"type": "integer", "minimum": 0},
+        "cost_usd": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "llzto-domain-sampling-v1",
+  "root_dir": "runs/campaigns/llzto_domain_sampling_v1",
+  "title": "Label-blind coordinate sampling for the LLZTO CHGNet-DFT publication test",
+  "research_question": "Generate short, composition-matched coordinate strata across occupancy and temperature without treating their transport estimates as publication results.",
+  "base_config": {
+    "schema_version": "2.1",
+    "protocol_name": "llzto-domain-sampling-v1",
+    "protocol_tier": "domain-sampling-only",
+    "formula": "Li6.5La3Zr1.5Ta0.5O12",
+    "structure_file": "data/structures/raw/cod_1545083.cif",
+    "structure_id": "COD-1545083",
+    "primitive_cell": true,
+    "min_initial_li_li_distance_angstrom": 1.6,
+    "supercell": [1, 1, 1],
+    "temperatures": [700, 750, 800, 850, 900],
+    "timestep_fs": 2.0,
+    "equilibration_steps": 5000,
+    "production_steps": 10000,
+    "loginterval": 50,
+    "equilibration_ensemble": "nvt",
+    "production_ensemble": "nvt",
+    "thermostat": "Nose-Hoover",
+    "thermostat_tau_fs": 100.0,
+    "pressure_gpa": 0.000101325,
+    "barostat_tau_fs": 1000.0,
+    "relax_structure": true,
+    "relax_cell": true,
+    "relax_fmax_ev_a": 0.05,
+    "relax_steps": 1000,
+    "mobile_species": "Li",
+    "fit_from_fraction": 0.2,
+    "fit_to_fraction": 0.8,
+    "max_lags": 100,
+    "uncertainty_blocks": 5,
+    "min_final_msd_a2": 0.0,
+    "min_diffusive_exponent": 0.8,
+    "max_diffusive_exponent": 1.2,
+    "max_relative_diffusivity_stderr": 0.5,
+    "max_abs_nve_energy_drift_mev_atom_ps": 1.0,
+    "device": "cuda",
+    "model_name": "CHGNet-default",
+    "expected_model_state_dict_sha256": "9484ac3e09d17e40e8df63f307c85fc0277981f9418f50d0bc7379c40b198b2c"
+  },
+  "gates": [
+    {
+      "gate_id": "g2-feasibility-domain-sampling",
+      "criterion": "Launch only after numerical convergence and the 12-snapshot feasibility domain report pass. These trajectories authorize coordinate selection only."
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "domain-occ00",
+      "stage": "heldout-coordinate-sampling",
+      "purpose": "Occupancy seed 0; one relaxed and one temperature-stratified coordinate per temperature will enter the frozen test set.",
+      "enabled": false,
+      "config": {"occupancy_seed": 0, "seed": 6101}
+    },
+    {
+      "run_id": "domain-occ01",
+      "stage": "heldout-coordinate-sampling",
+      "purpose": "Occupancy seed 1; held-out coordinate sampling only.",
+      "enabled": false,
+      "config": {"occupancy_seed": 1, "seed": 7101}
+    },
+    {
+      "run_id": "domain-occ02",
+      "stage": "heldout-coordinate-sampling",
+      "purpose": "Occupancy seed 2; held-out coordinate sampling only.",
+      "enabled": false,
+      "config": {"occupancy_seed": 2, "seed": 8101}
+    },
+    {
+      "run_id": "domain-occ03",
+      "stage": "heldout-coordinate-sampling",
+      "purpose": "Occupancy seed 3; held-out coordinate sampling only.",
+      "enabled": false,
+      "config": {"occupancy_seed": 3, "seed": 9101}
+    },
+    {
+      "run_id": "domain-occ04",
+      "stage": "heldout-coordinate-sampling",
+      "purpose": "Occupancy seed 4; held-out coordinate sampling only.",
+      "enabled": false,
+      "config": {"occupancy_seed": 4, "seed": 10101}
+    }
+  ]
+}

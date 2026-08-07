@@ -1,0 +1,6 @@
+interface:
+  display_name: "OpenLabs Math Paper"
+  short_description: "Evidence-bound mathematical manuscript workflow"
+  default_prompt: "Use $openlabs-math-paper to audit and revise the selected mathematics manuscript without treating symbolic checks as proof."
+policy:
+  allow_implicit_invocation: false

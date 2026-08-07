@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "llzto-q1-size-matched-v1",
+  "root_dir": "runs/campaigns/llzto_q1_size_matched_v1",
+  "title": "Exact-supercell finite-size sensitivity for LLZTO occupancy realization 0",
+  "research_question": "Does doubling the periodic cell at fixed occupancy topology alter the 800 K tracer or collective transport estimate?",
+  "primary_estimands": [
+    "188-atom versus 94-atom tracer diffusivity ratio at 800 K",
+    "188-atom versus 94-atom collective diffusivity ratio at 800 K",
+    "188-atom versus 94-atom collective-to-tracer ratio difference at 800 K"
+  ],
+  "stopping_rule": "The sensitivity is interpretable only when both the 94-atom reference point and the matched 188-atom point independently pass all tracer or collective convergence criteria for the corresponding estimator.",
+  "base_config": {
+    "schema_version": "2.1",
+    "protocol_name": "llzto-size-matched-v1",
+    "protocol_tier": "formal-sensitivity",
+    "formula": "Li6.5La3Zr1.5Ta0.5O12",
+    "structure_file": "data/structures/derived/llzto_occ00_conventional_matched_v1.structure.json",
+    "structure_id": "derived-COD-1545083-occ00-exact-supercell",
+    "primitive_cell": false,
+    "occupancy_seed": 0,
+    "supercell": [1, 1, 1],
+    "temperatures": [800],
+    "timestep_fs": 2.0,
+    "equilibration_steps": 10000,
+    "production_steps": 250000,
+    "loginterval": 50,
+    "equilibration_ensemble": "nvt",
+    "production_ensemble": "nvt",
+    "thermostat": "Nose-Hoover",
+    "thermostat_tau_fs": 100.0,
+    "pressure_gpa": 0.000101325,
+    "barostat_tau_fs": 1000.0,
+    "relax_structure": true,
+    "relax_cell": true,
+    "relax_fmax_ev_a": 0.05,
+    "relax_steps": 1000,
+    "seed": 1701,
+    "mobile_species": "Li",
+    "fit_from_fraction": 0.2,
+    "fit_to_fraction": 0.8,
+    "max_lags": 500,
+    "uncertainty_blocks": 5,
+    "min_final_msd_a2": 20.0,
+    "min_diffusive_exponent": 0.8,
+    "max_diffusive_exponent": 1.2,
+    "max_relative_diffusivity_stderr": 0.5,
+    "max_abs_nve_energy_drift_mev_atom_ps": 1.0,
+    "device": "cuda",
+    "model_name": "CHGNet-default",
+    "expected_model_state_dict_sha256": "9484ac3e09d17e40e8df63f307c85fc0277981f9418f50d0bc7379c40b198b2c"
+  },
+  "gates": [
+    {
+      "gate_id": "g2-potential-domain",
+      "criterion": "Run only after the full universal-potential domain gate passes."
+    },
+    {
+      "gate_id": "g4-matched-finite-size",
+      "criterion": "The 188-atom structure must be an exact integer-matrix replication of the same ordered 94-atom occupancy realization, not a second occupancy draw."
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "size-matched-conventional-occ00-800k",
+      "stage": "finite-size",
+      "purpose": "Matched 188-atom exact supercell control for formal-occ00-vel1701 at 800 K.",
+      "enabled": false,
+      "config": {}
+    }
+  ]
+}

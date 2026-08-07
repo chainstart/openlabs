@@ -1,0 +1,533 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-q1-evidence-audit-v1",
+  "claim_boundary": "Passing this audit means the preregistered LLZTO evidence chain is complete, internally traceable, and ready for a final qualitative journal-level assessment. It does not guarantee acceptance or a CAS journal quartile. Scientific incompatibility or a null mechanism association is retained as a result and does not by itself fail completeness; failed numerical, domain, convergence, or reproducibility gates do.",
+  "gates": [
+    {
+      "gate_id": "G0-provenance-and-reproducibility",
+      "hard_gate": true,
+      "artifacts": [
+        {
+          "artifact_id": "python-lock",
+          "path": "uv.lock",
+          "format": "file",
+          "expected_sha256": "44b4027d13693eb95534ea60d7351227708f40328c30e56c23b31e114264c393",
+          "minimum_bytes": 1000
+        },
+        {
+          "artifact_id": "qe-lock",
+          "path": "dft/qe-7.5-linux-64.lock",
+          "format": "file",
+          "expected_sha256": "382affc8d291ddc36dea0c4d6cad52112300f4f4a998f1ea1524c741d3614385",
+          "minimum_bytes": 100
+        },
+        {
+          "artifact_id": "formal-campaign-protocol",
+          "path": "protocols/llzto_q1_v1.json",
+          "format": "json",
+          "expected_sha256": "e06400ba9cdc82afe8ae3a988b5f2b3e0ee99618db0336c123c4d0469b14fab0"
+        },
+        {
+          "artifact_id": "domain-protocol",
+          "path": "analysis/protocols/llzto_chgnet_domain_v1.json",
+          "format": "json",
+          "expected_sha256": "75c258918102e635f095beb5755dfc8bcd3ddf93dbbe1f89c188d2c2f3aa73a7"
+        },
+        {
+          "artifact_id": "dft-numerical-supervisor-protocol",
+          "path": "analysis/protocols/llzto_dft_numerical_supervisor_v1.json",
+          "format": "json",
+          "expected_sha256": "d03723663b60d1ada6c3403b6c3edf32b44d99a6ec67dd22d3c69e0ae80e26f4"
+        },
+        {
+          "artifact_id": "dft-domain-supervisor-protocol",
+          "path": "analysis/protocols/llzto_dft_domain_supervisor_v1.json",
+          "format": "json",
+          "expected_sha256": "9151e08899605895be5d019b0dccc7ebb0d9429b1bd39b8fa57c6df20e766965"
+        },
+        {
+          "artifact_id": "final-supervisor-protocol",
+          "path": "analysis/protocols/llzto_final_supervisor_v1.json",
+          "format": "json",
+          "expected_sha256": "3d5f26751ccb75fcfd6fade6f2fa3d5a8495829461e7ce8bfb364ace8c00531c"
+        },
+        {
+          "artifact_id": "q1-readiness-protocol",
+          "path": "analysis/protocols/llzto_q1_readiness_v1.json",
+          "format": "json",
+          "expected_sha256": "af64a8b7c8427e26fb734213c0f7e87ebb5c0cebc0a8959921b2a7f034c803aa"
+        },
+        {
+          "artifact_id": "kpoint-conditional-ladder-protocol",
+          "path": "dft/protocols/llzto_qe_kpoint_ladder_v2.json",
+          "format": "json",
+          "expected_sha256": "3732fe4ccc8d02428af75f7a255db1f88a45fba23ad0811283cf2370f1755e91"
+        },
+        {
+          "artifact_id": "scf-gamma-protocol",
+          "path": "dft/protocols/llzto_qe_scf_gamma_v1.json",
+          "format": "json",
+          "expected_sha256": "b856750451ed16ca24d6c653a9f1114a4418164f2cde304649b6a119e4192bab"
+        },
+        {
+          "artifact_id": "scf-k2x2x2-protocol",
+          "path": "dft/protocols/llzto_qe_scf_k2x2x2_v1.json",
+          "format": "json",
+          "expected_sha256": "32b2b254add0614757da4816a747ca3f78145801e8ebae60b0ec0a27ed95b4eb"
+        },
+        {
+          "artifact_id": "hierarchical-protocol",
+          "path": "analysis/protocols/llzto_hierarchical_transport_v1.json",
+          "format": "json",
+          "expected_sha256": "09268d745bd9359ceedbe6abee173c397b4459f334b7471e0b9317da667b67e0"
+        },
+        {
+          "artifact_id": "mechanism-protocol",
+          "path": "analysis/protocols/llzto_mechanisms_v1.json",
+          "format": "json",
+          "expected_sha256": "e193611fdced52c3abc968bb5fff315290fd1a846d644c099f8ca44e5c8c1e1e"
+        },
+        {
+          "artifact_id": "mechanism-association-protocol",
+          "path": "analysis/protocols/llzto_mechanism_transport_association_v1.json",
+          "format": "json",
+          "expected_sha256": "2e84d0a52b327fd398d5e48f8197a9cc031d1f35adb7d00f127c88ca84233476"
+        },
+        {
+          "artifact_id": "publication-package-protocol",
+          "path": "analysis/protocols/llzto_publication_package_v1.json",
+          "format": "json",
+          "expected_sha256": "ae85a354fe6267ebe7dcf0d3bccb06a60655db01b9975b3e0bea1a9bd583471e"
+        },
+        {
+          "artifact_id": "manuscript-protocol",
+          "path": "analysis/protocols/llzto_manuscript_v1.json",
+          "format": "json",
+          "expected_sha256": "ee97931ba38b81054d009029e930f6bb73a15b08acb3df5794a25557219e294c"
+        },
+        {
+          "artifact_id": "exclusion-ledger",
+          "path": "analysis/protocols/llzto_exclusions_v1.json",
+          "format": "exclusion_ledger",
+          "expected_sha256": "67603f732c448e72de7531c621aedd33b4b6c6761043704fc950c2907500c257",
+          "assertions": [
+            {
+              "json_path": "schema_version",
+              "operator": "equals",
+              "value": "1.0"
+            },
+            {
+              "json_path": "entries",
+              "operator": "length_at_least",
+              "value": 10
+            }
+          ]
+        },
+        {
+          "artifact_id": "test-attestation",
+          "path": "runs/analysis/publication-v1/test-attestation.json",
+          "format": "json",
+          "fingerprint_field": "attestation_fingerprint",
+          "assertions": [
+            {
+              "json_path": "tests_failed",
+              "operator": "equals",
+              "value": 0
+            },
+            {
+              "json_path": "tests_passed",
+              "operator": "at_least",
+              "value": 241
+            },
+            {
+              "json_path": "git_dirty",
+              "operator": "is_false"
+            }
+          ]
+        },
+        {
+          "artifact_id": "environment-attestation",
+          "path": "runs/analysis/publication-v1/environment-attestation.json",
+          "format": "json",
+          "fingerprint_field": "attestation_fingerprint",
+          "assertions": [
+            {
+              "json_path": "environment_gate_pass",
+              "operator": "is_true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "G1-time-step",
+      "hard_gate": true,
+      "artifacts": [
+        {
+          "artifact_id": "campaign-report",
+          "path": "runs/campaigns/llzto_q1_v1/analysis/campaign_report.json",
+          "format": "json",
+          "assertions": [
+            {
+              "json_path": "numerical_gate.all_energy_drift_checks_pass",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "numerical_gate.selected_timestep_fs",
+              "operator": "equals",
+              "value": 2.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "G2-dft-and-potential-domain",
+      "hard_gate": true,
+      "artifacts": [
+        {
+          "artifact_id": "dft-numerical-supervisor",
+          "path": "runs/supervisor/dft-numerical-supervisor-v1.json",
+          "format": "json",
+          "assertions": [
+            {
+              "json_path": "status",
+              "operator": "equals",
+              "value": "complete"
+            }
+          ]
+        },
+        {
+          "artifact_id": "dft-domain-supervisor",
+          "path": "runs/supervisor/dft-domain-supervisor-v1.json",
+          "format": "json",
+          "assertions": [
+            {
+              "json_path": "status",
+              "operator": "equals",
+              "value": "complete"
+            }
+          ]
+        },
+        {
+          "artifact_id": "cutoff-decision",
+          "path": "runs/dft/llzto-qe-cutoff-convergence-v1/cutoff-decision.json",
+          "format": "json",
+          "fingerprint_field": "decision_fingerprint",
+          "assertions": [
+            {
+              "json_path": "can_continue",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "stage",
+              "operator": "equals",
+              "value": "cutoff"
+            }
+          ]
+        },
+        {
+          "artifact_id": "kpoint-decision",
+          "path": "runs/dft/llzto-qe-kpoint-convergence-v1/kpoint-decision.json",
+          "format": "json",
+          "fingerprint_field": "decision_fingerprint",
+          "assertions": [
+            {
+              "json_path": "can_continue",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "stage",
+              "operator": "equals",
+              "value": "kpoint"
+            }
+          ]
+        },
+        {
+          "artifact_id": "scf-decision",
+          "path": "runs/dft/llzto-qe-scf-convergence-v1/scf-decision.json",
+          "format": "json",
+          "fingerprint_field": "decision_fingerprint",
+          "assertions": [
+            {
+              "json_path": "can_continue",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "stage",
+              "operator": "equals",
+              "value": "scf"
+            }
+          ]
+        },
+        {
+          "artifact_id": "mpi-reproducibility",
+          "path": "runs/dft/llzto-qe-mpi-reproducibility-v1/mpi-reproducibility.json",
+          "format": "json",
+          "fingerprint_field": "report_fingerprint",
+          "assertions": [
+            {
+              "json_path": "mpi_equivalence_gate_pass",
+              "operator": "is_true"
+            }
+          ]
+        },
+        {
+          "artifact_id": "g2-release",
+          "path": "runs/supervisor/g2-release-v1.json",
+          "format": "json",
+          "fingerprint_field": "gate_fingerprint",
+          "assertions": [
+            {
+              "json_path": "gate_id",
+              "operator": "equals",
+              "value": "g2-potential-domain"
+            },
+            {
+              "json_path": "status",
+              "operator": "equals",
+              "value": "pass"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "G3-formal-trajectory-convergence",
+      "hard_gate": true,
+      "artifacts": [
+        {
+          "artifact_id": "hierarchical-transport",
+          "path": "runs/analysis/hierarchical-transport-v1.json",
+          "format": "json",
+          "fingerprint_field": "report_fingerprint",
+          "assertions": [
+            {
+              "json_path": "hierarchical_gate_pass",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "estimators.tracer.n_configurations",
+              "operator": "equals",
+              "value": 5
+            },
+            {
+              "json_path": "estimators.collective.n_configurations",
+              "operator": "equals",
+              "value": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "G4-replication-size-and-volume",
+      "hard_gate": true,
+      "artifacts": [
+        {
+          "artifact_id": "nested-velocity",
+          "path": "runs/analysis/nested-velocity-v1.json",
+          "format": "json",
+          "fingerprint_field": "report_fingerprint",
+          "assertions": [
+            {
+              "json_path": "result.nested_velocity_gate_pass",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "records",
+              "operator": "length_equals",
+              "value": 15
+            }
+          ]
+        },
+        {
+          "artifact_id": "transport-sensitivity",
+          "path": "runs/analysis/transport-sensitivity-v1.json",
+          "format": "json",
+          "fingerprint_field": "report_fingerprint",
+          "assertions": [
+            {
+              "json_path": "sensitivity_gate_pass",
+              "operator": "is_true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "G5-experimental-comparison",
+      "hard_gate": true,
+      "artifacts": [
+        {
+          "artifact_id": "hierarchical-experimental-validation",
+          "path": "runs/analysis/hierarchical-experimental-validation-v1.json",
+          "format": "json",
+          "fingerprint_field": "report_fingerprint",
+          "assertions": [
+            {
+              "json_path": "n_eligible_measurements",
+              "operator": "equals",
+              "value": 9
+            },
+            {
+              "json_path": "n_evaluated",
+              "operator": "equals",
+              "value": 9
+            },
+            {
+              "json_path": "n_blocked",
+              "operator": "equals",
+              "value": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "G6-formal-mechanisms",
+      "hard_gate": true,
+      "artifacts": [
+        {
+          "artifact_id": "mechanism-analysis-queue",
+          "path": "runs/supervisor/mechanism-analysis-queue-v1.json",
+          "format": "json",
+          "assertions": [
+            {
+              "json_path": "status",
+              "operator": "equals",
+              "value": "complete"
+            },
+            {
+              "json_path": "jobs",
+              "operator": "length_equals",
+              "value": 25
+            }
+          ]
+        },
+        {
+          "artifact_id": "mechanism-transport-association",
+          "path": "runs/analysis/mechanism-transport-association-v1.json",
+          "format": "json",
+          "fingerprint_field": "report_fingerprint",
+          "assertions": [
+            {
+              "json_path": "input_gate_pass",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "analysis.grid_gate_pass",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "analysis.family_size",
+              "operator": "equals",
+              "value": 12
+            },
+            {
+              "json_path": "analysis_records",
+              "operator": "length_equals",
+              "value": 25
+            },
+            {
+              "json_path": "analysis.causal_mechanism_claim_allowed",
+              "operator": "is_false"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "G7-publication-evidence-package",
+      "hard_gate": true,
+      "artifacts": [
+        {
+          "artifact_id": "artifact-manifest",
+          "path": "runs/analysis/publication-v1/artifact-manifest.json",
+          "format": "json",
+          "fingerprint_field": "manifest_fingerprint",
+          "assertions": [
+            {
+              "json_path": "manifest_gate_pass",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "figures",
+              "operator": "length_at_least",
+              "value": 8
+            },
+            {
+              "json_path": "tables",
+              "operator": "length_at_least",
+              "value": 8
+            }
+          ]
+        },
+        {
+          "artifact_id": "manuscript-manifest",
+          "path": "runs/analysis/publication-v1/manuscript-manifest.json",
+          "format": "json",
+          "fingerprint_field": "manifest_fingerprint",
+          "assertions": [
+            {
+              "json_path": "manuscript_gate_pass",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "documents",
+              "operator": "length_equals",
+              "value": 3
+            },
+            {
+              "json_path": "publication_logical_output_hashes_verified",
+              "operator": "equals",
+              "value": 45
+            }
+          ]
+        },
+        {
+          "artifact_id": "main-manuscript",
+          "path": "manuscript/llzto_q1_v1/main.md",
+          "format": "file",
+          "minimum_bytes": 5000
+        },
+        {
+          "artifact_id": "supplement",
+          "path": "manuscript/llzto_q1_v1/supplement.md",
+          "format": "file",
+          "minimum_bytes": 5000
+        },
+        {
+          "artifact_id": "data-availability",
+          "path": "manuscript/llzto_q1_v1/data_availability.md",
+          "format": "file",
+          "minimum_bytes": 500
+        },
+        {
+          "artifact_id": "clean-regeneration-attestation",
+          "path": "runs/analysis/publication-v1/clean-regeneration-attestation.json",
+          "format": "json",
+          "fingerprint_field": "attestation_fingerprint",
+          "assertions": [
+            {
+              "json_path": "all_commands_exit_zero",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "all_declared_artifact_hashes_verified",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "comparison.all_hashes_match",
+              "operator": "is_true"
+            },
+            {
+              "json_path": "manuscript_comparison.all_hashes_match",
+              "operator": "is_true"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "exact_statement": "",
+  "source": "",
+  "success_conditions": ["original_problem_closed"],
+  "non_success_conditions": [
+    "additional_local_branch",
+    "finite_verification_only",
+    "conditional_bridge",
+    "another_normal_form",
+    "file_or_test_volume"
+  ],
+  "scope_notes": []
+}

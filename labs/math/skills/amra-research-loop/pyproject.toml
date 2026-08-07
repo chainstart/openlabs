@@ -1,0 +1,9 @@
+[project]
+name = "amra-research-loop"
+version = "0.1.0"
+description = "Independent mechanism-first mathematics research campaign state machine"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

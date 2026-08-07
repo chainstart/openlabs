@@ -1,0 +1,151 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "llzto-q1-velocity-nested-v1",
+  "root_dir": "runs/campaigns/llzto_q1_velocity_nested_v1",
+  "title": "Balanced velocity-within-occupancy sensitivity for LLZTO at 800 K",
+  "research_question": "At 800 K, is between-occupancy transport variation distinguishable from within-occupancy velocity-initialization variation?",
+  "primary_estimands": [
+    "between-occupancy variance of log tracer diffusivity",
+    "within-occupancy velocity variance of log tracer diffusivity",
+    "between-occupancy variance of log collective diffusivity",
+    "within-occupancy velocity variance of log collective diffusivity",
+    "between-occupancy and within-occupancy variance of the log collective-to-tracer ratio"
+  ],
+  "stopping_rule": "All 15 planned 800 K cells (five occupancies times three velocity initializations, including five reference points from the primary campaign) remain in the analysis. An unresolved point blocks the corresponding estimator rather than being dropped.",
+  "design": {
+    "temperature_k": 800,
+    "occupancy_realizations": 5,
+    "velocity_initializations_per_occupancy": 3,
+    "reference_campaign_root": "runs/campaigns/llzto_q1_v1",
+    "reference_run_ids": [
+      "formal-occ00-vel1701",
+      "formal-occ01-vel2701",
+      "formal-occ02-vel3701",
+      "formal-occ03-vel4701",
+      "formal-occ04-vel5701"
+    ],
+    "supplemental_cells": 10,
+    "analysis_role": "Balanced nested variance decomposition at 800 K only; it does not identify separate occupancy and velocity effects for full Arrhenius activation energies."
+  },
+  "base_config": {
+    "schema_version": "2.1",
+    "protocol_name": "llzto-velocity-nested-v1",
+    "protocol_tier": "formal-sensitivity",
+    "formula": "Li6.5La3Zr1.5Ta0.5O12",
+    "structure_file": "data/structures/raw/cod_1545083.cif",
+    "structure_id": "COD-1545083",
+    "primitive_cell": true,
+    "min_initial_li_li_distance_angstrom": 1.6,
+    "supercell": [1, 1, 1],
+    "temperatures": [800],
+    "timestep_fs": 2.0,
+    "equilibration_steps": 10000,
+    "production_steps": 250000,
+    "loginterval": 50,
+    "equilibration_ensemble": "nvt",
+    "production_ensemble": "nvt",
+    "thermostat": "Nose-Hoover",
+    "thermostat_tau_fs": 100.0,
+    "pressure_gpa": 0.000101325,
+    "barostat_tau_fs": 1000.0,
+    "relax_structure": true,
+    "relax_cell": true,
+    "relax_fmax_ev_a": 0.05,
+    "relax_steps": 1000,
+    "mobile_species": "Li",
+    "fit_from_fraction": 0.2,
+    "fit_to_fraction": 0.8,
+    "max_lags": 500,
+    "uncertainty_blocks": 5,
+    "min_final_msd_a2": 20.0,
+    "min_diffusive_exponent": 0.8,
+    "max_diffusive_exponent": 1.2,
+    "max_relative_diffusivity_stderr": 0.5,
+    "max_abs_nve_energy_drift_mev_atom_ps": 1.0,
+    "device": "cuda",
+    "model_name": "CHGNet-default",
+    "expected_model_state_dict_sha256": "9484ac3e09d17e40e8df63f307c85fc0277981f9418f50d0bc7379c40b198b2c"
+  },
+  "gates": [
+    {
+      "gate_id": "g2-potential-domain",
+      "criterion": "Run only after the full universal-potential domain gate passes."
+    },
+    {
+      "gate_id": "g4-balanced-velocity-within-occupancy",
+      "criterion": "Every occupancy has exactly three matched 20 ps equilibration plus 500 ps production points at 800 K, and unresolved estimator-specific points are not removed."
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "velocity-occ00-vel1702-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Second velocity initialization for occupancy realization 0.",
+      "enabled": false,
+      "config": {"occupancy_seed": 0, "seed": 1702}
+    },
+    {
+      "run_id": "velocity-occ00-vel1703-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Third velocity initialization for occupancy realization 0.",
+      "enabled": false,
+      "config": {"occupancy_seed": 0, "seed": 1703}
+    },
+    {
+      "run_id": "velocity-occ01-vel2702-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Second velocity initialization for occupancy realization 1.",
+      "enabled": false,
+      "config": {"occupancy_seed": 1, "seed": 2702}
+    },
+    {
+      "run_id": "velocity-occ01-vel2703-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Third velocity initialization for occupancy realization 1.",
+      "enabled": false,
+      "config": {"occupancy_seed": 1, "seed": 2703}
+    },
+    {
+      "run_id": "velocity-occ02-vel3702-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Second velocity initialization for occupancy realization 2.",
+      "enabled": false,
+      "config": {"occupancy_seed": 2, "seed": 3702}
+    },
+    {
+      "run_id": "velocity-occ02-vel3703-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Third velocity initialization for occupancy realization 2.",
+      "enabled": false,
+      "config": {"occupancy_seed": 2, "seed": 3703}
+    },
+    {
+      "run_id": "velocity-occ03-vel4702-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Second velocity initialization for occupancy realization 3.",
+      "enabled": false,
+      "config": {"occupancy_seed": 3, "seed": 4702}
+    },
+    {
+      "run_id": "velocity-occ03-vel4703-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Third velocity initialization for occupancy realization 3.",
+      "enabled": false,
+      "config": {"occupancy_seed": 3, "seed": 4703}
+    },
+    {
+      "run_id": "velocity-occ04-vel5702-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Second velocity initialization for occupancy realization 4.",
+      "enabled": false,
+      "config": {"occupancy_seed": 4, "seed": 5702}
+    },
+    {
+      "run_id": "velocity-occ04-vel5703-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Third velocity initialization for occupancy realization 4.",
+      "enabled": false,
+      "config": {"occupancy_seed": 4, "seed": 5703}
+    }
+  ]
+}

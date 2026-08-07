@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-mechanism-temperature-robustness-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "claim_boundary": "This prespecified robustness analysis asks whether any association supported by the primary Arrhenius-temperature model survives arbitrary common effects of the five simulated temperatures. It can retain or downgrade a primary association but can never rescue a failed primary test, establish causality, or turn a null mechanism result into a completeness failure.",
+  "preregistration_note": "Frozen while the first 500 ps formal trajectory was incomplete and before any formal transport or formal mechanism descriptor existed. A null-model stress test showed that a shared nonlinear temperature curve can confound the primary linear inverse-temperature adjustment, motivating this outcome-blind robustness model.",
+  "input": {
+    "primary_protocol_path": "analysis/protocols/llzto_mechanism_transport_association_v1.json",
+    "primary_protocol_sha256": "2e84d0a52b327fd398d5e48f8197a9cc031d1f35adb7d00f127c88ca84233476",
+    "primary_report_path": "runs/analysis/mechanism-transport-association-v1.json",
+    "complete_primary_5_by_5_grid_required": true,
+    "all_declared_source_hashes_must_verify": true
+  },
+  "descriptor_names": [
+    "log_jump_rate",
+    "tetrahedral_population_fraction",
+    "reverse_pair_fraction",
+    "string_excess"
+  ],
+  "response_names": [
+    "log_tracer_diffusivity",
+    "log_collective_diffusivity",
+    "log_collective_to_tracer_ratio"
+  ],
+  "robustness_model": {
+    "formula": "log transport = occupancy-realization fixed intercept + categorical temperature fixed effect + standardized primary mechanism descriptor",
+    "temperature_adjustment": "Four indicators represent the five common temperature levels; no linear or Arrhenius functional form is imposed.",
+    "weighting": "inverse declared trajectory-level log-response measurement variance with residual variance inflation no smaller than one",
+    "permutation_test": {
+      "method": "Freedman-Lane Monte Carlo permutation of measurement-standardized reduced-model residuals independently within occupancy realization after categorical temperature adjustment",
+      "iterations": 10000,
+      "seed": 20260822,
+      "two_sided": true
+    },
+    "cluster_bootstrap": {
+      "iterations": 5000,
+      "seed": 20260823,
+      "resampling_unit": "occupancy realization",
+      "within_trajectory_draw": "Normal(log response, declared measurement variance)",
+      "quantiles": [
+        0.025,
+        0.5,
+        0.975
+      ],
+      "minimum_valid_fraction": 0.95
+    },
+    "leave_one_occupancy_out": true,
+    "multiplicity": {
+      "family": "all 4 descriptors by all 3 responses",
+      "method": "Holm family-wise error correction",
+      "alpha": 0.05
+    }
+  },
+  "claim_rule": "A primary v1 association is retained only if the categorical-temperature slope has the same sign, its Holm-adjusted permutation p value is no larger than 0.05, its occupancy-cluster bootstrap interval excludes zero, and its sign survives deletion of each occupancy. Otherwise it is reported as temperature-model-sensitive and downgraded to not supported. Robustness support without primary v1 support is not a positive claim.",
+  "hard_rules": {
+    "missing_or_unresolved_primary_input": "Block the affected robustness cell and retain the primary result; never silently reduce the family.",
+    "temperature_model_sensitive_primary_result": "Downgrade the mechanism association claim without failing computational completeness.",
+    "null_primary_family": "Retain the complete null result as publishable; the all-primary-supported-associations-survive field is then vacuously true and must not be presented as positive mechanism evidence.",
+    "causal_language_allowed": false
+  },
+  "output_path": "runs/analysis/mechanism-temperature-robustness-v1.json"
+}

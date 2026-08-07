@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.task.v2.schema.json",
+  "title": "OpenLabs task v2",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "task_id",
+    "attempt_id",
+    "campaign_id",
+    "lab_id",
+    "domain",
+    "task_type",
+    "objective",
+    "output_path",
+    "lab_manifest",
+    "agent_workspace",
+    "run_metadata_path",
+    "attempt",
+    "agent",
+    "budget"
+  ],
+  "properties": {
+    "schema_version": {"const": "openlabs.task.v2"},
+    "task_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "attempt_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "campaign_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "lab_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "domain": {"type": "string", "minLength": 1},
+    "task_type": {"type": "string", "minLength": 1},
+    "objective": {"type": "string", "minLength": 1},
+    "input_path": {"type": ["string", "null"]},
+    "output_path": {"type": "string", "minLength": 1},
+    "lab_manifest": {"type": "string", "minLength": 1},
+    "agent_workspace": {"type": "string", "minLength": 1},
+    "run_metadata_path": {"type": "string", "minLength": 1},
+    "skill_path": {"type": ["string", "null"]},
+    "attempt": {"type": "integer", "minimum": 1},
+    "agent": {
+      "type": "object",
+      "required": ["role", "session_mode", "session_id"],
+      "properties": {
+        "role": {"enum": ["researcher", "experimenter", "writer", "reviewer"]},
+        "session_mode": {"enum": ["resume", "fresh"]},
+        "session_id": {"type": ["string", "null"]}
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": ["wall_seconds"],
+      "properties": {
+        "wall_seconds": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

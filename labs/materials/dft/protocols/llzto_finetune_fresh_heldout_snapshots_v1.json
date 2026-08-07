@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "selection_id": "llzto-finetune-fresh-heldout-v1",
+  "expected_snapshot_count": 30,
+  "selection_blinding": "Frozen before any final-setting feasibility label, universal-model error, fine-tuned-model weight, fallback trajectory, or fallback DFT label existed. The publication test uses independent velocity seeds and is never used for training, checkpoint selection, threshold selection, or model-family choice.",
+  "sampling_campaign_template": "protocols/llzto_finetune_heldout_sampling_template_v1.json",
+  "sampling_scope": "Final fine-tuned-model trajectories generate a new model-relevant test distribution only; their transport estimates are not publication observations.",
+  "trajectory_matrices": [
+    {
+      "id_prefix_template": "finetune-test-occ{occupancy_seed:02d}-t{temperature_k}",
+      "trajectory_template": "runs/campaigns/llzto_finetune_heldout_sampling_v1/finetune-test-occ{occupancy_seed:02d}/T{temperature_k}.traj",
+      "occupancy_seeds": [0, 1, 2, 3, 4],
+      "temperatures_k": [650, 700, 750, 800, 850, 900],
+      "frame_spacing_ps": 0.1,
+      "count": 1,
+      "start_fraction": 0.4,
+      "stop_fraction": 0.6,
+      "min_frame_separation": 1,
+      "min_rmsd_angstrom": 0.0,
+      "metadata": {"set_role": "fine-tuned-publication-heldout"}
+    }
+  ]
+}

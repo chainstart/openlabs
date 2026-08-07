@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "amra-research-loop/closure-contract.schema.json",
+  "title": "Research Closure Contract",
+  "type": "object",
+  "required": ["exact_statement", "source", "success_conditions", "non_success_conditions"],
+  "properties": {
+    "exact_statement": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "minLength": 1},
+    "success_conditions": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "original_problem_closed",
+          "main_term_improved",
+          "main_exponent_improved",
+          "global_interface_closed",
+          "standalone_decisive_lemma"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "non_success_conditions": {"type": "array", "items": {"type": "string"}},
+    "scope_notes": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

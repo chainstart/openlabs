@@ -1,0 +1,73 @@
+schema_version: openlabs.paper_writing.skill_profiles.v1
+selection_policy:
+  invocation: explicit
+  maximum_active_components: 3
+  roles: [primary_writing, domain, review_or_citation]
+profiles:
+  ai_ml:
+    entry_skill: openlabs-ai-paper
+    entry_path: skills/openlabs-ai-paper
+    domains: [ai]
+    components:
+      primary_writing: ai-research-writing-skill
+      domain: statistical-analysis
+      review_or_citation: peer-review
+  mathematics:
+    entry_skill: openlabs-math-paper
+    entry_path: skills/openlabs-math-paper
+    domains: [math]
+    components:
+      primary_writing: scientific-writing
+      domain: sympy
+      review_or_citation: peer-review
+  materials:
+    entry_skill: openlabs-materials-paper
+    entry_path: skills/openlabs-materials-paper
+    domains: [materials]
+    components:
+      primary_writing: scientific-writing
+      domain: statistical-analysis
+      review_or_citation: peer-review
+quality_gate:
+  review_mode: local_llm_three_agent_panel
+  review_panel_size: 3
+  parallel_execution: required
+  independent_contexts: required
+  prior_reviews_hidden: required
+  score_aggregation: coordinatewise_median
+  decision_aggregation: ordinal_median
+  review_skill: openlabs-paper-review
+  review_skill_path: skills/openlabs-paper-review
+  score_field: scores.overall
+  score_type: integer
+  score_range: [1, 10]
+  require_dual_simulated_decisions: true
+  score_standard:
+    ai: top_conference
+    cs: top_conference
+    se: top_conference
+    math: four_top_math_journals
+    materials: leading_materials_journals
+  recommendation_views:
+    ai: [top_conference, cas_zone_1_journal]
+    cs: [top_conference, cas_zone_1_journal]
+    se: [top_conference, cas_zone_1_journal]
+    math: [four_top_math_journals, cas_zone_1_journal]
+    materials: [leading_materials_journals, cas_zone_1_journal]
+  gate_decision_standard: cas_zone_1_journal
+  cas_zone_1_scope: major_category
+  reviewer_roles:
+    ai: cs_top_tier
+    cs: cs_top_tier
+    se: cs_top_tier
+    math: math
+    materials: materials
+  reviewer_rubric_ids:
+    ai: ara.revision-agent.cs-top-tier.v1
+    cs: ara.revision-agent.cs-top-tier.v1
+    se: ara.revision-agent.cs-top-tier.v1
+    math: ara.paper-writing.math-four-journals.v1
+    materials: openlabs.paper-writing.materials-leading-journals.v1
+  settings_path: registry/settings.yaml
+  settings_key: quality_gate
+  required_before_submission_consideration: true

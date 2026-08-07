@@ -1,0 +1,154 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-research-analysis-supervisor-v2",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "claim_boundary": "This outcome-aware supervisor selects exactly one model branch after the frozen DFT-domain decision, never pools universal and fine-tuned trajectories, and distinguishes an incomplete estimator from a complete negative robustness result. Only missing, unresolved, provenance-invalid, or numerically unstable inputs block completeness; physical non-equivalence, null association, or experimental incompatibility is retained and narrows the claim.",
+  "preregistration_note": "Frozen while the first universal 500 ps trajectory and the 800 K 2x2x2 QE calculation were incomplete, before the universal final-domain outcome, before any fallback model, and before every formal transport, mechanism, ensemble, Haven, or experimental result.",
+  "routing": {
+    "universal_domain_state": "runs/supervisor/dft-domain-supervisor-v1.json",
+    "universal_domain_protocol": "analysis/protocols/llzto_dft_domain_supervisor_v1.json",
+    "universal_domain_protocol_sha256": "9151e08899605895be5d019b0dccc7ebb0d9429b1bd39b8fa57c6df20e766965",
+    "universal_pass_status": "complete",
+    "universal_failure_statuses": [
+      "blocked_feasibility_domain_failure",
+      "blocked_heldout_domain_failure"
+    ],
+    "fine_tuning_state": "runs/supervisor/chgnet-finetune-contingency-v1.json",
+    "fine_tuning_protocol": "analysis/protocols/llzto_chgnet_finetune_contingency_v1.json",
+    "fine_tuning_protocol_sha256": "f198f9d40b44d1d87e0b19ac6509e133e09d5c96ac49aec405d1221e4cc089b7",
+    "fine_rerun_state": "runs/supervisor/finetuned-rerun-supervisor-v1.json",
+    "fine_rerun_protocol": "analysis/protocols/llzto_finetuned_rerun_supervisor_v1.json",
+    "fine_rerun_protocol_sha256": "2adc6830b88b170571725ec98b491acb359b1a09f413149d0de57eed39d1e204",
+    "fine_rerun_complete_disposition": "fine_tuned_transport_and_mechanisms_complete_requires_versioned_final_analysis"
+  },
+  "universal_upstreams": [
+    {
+      "state_id": "formal-and-npt-md",
+      "path": "runs/supervisor/md-formal-queue-v5.json",
+      "expected_protocol_sha256": "e06400ba9cdc82afe8ae3a988b5f2b3e0ee99618db0336c123c4d0469b14fab0",
+      "expected_run_ids": [
+        "formal-occ01-vel2701",
+        "formal-occ02-vel3701",
+        "formal-occ03-vel4701",
+        "formal-occ04-vel5701",
+        "volume-npt-equilibrated-occ00"
+      ]
+    },
+    {
+      "state_id": "finite-size-md",
+      "path": "runs/supervisor/md-size-matched-queue-v2.json",
+      "expected_protocol_sha256": "8252983264e7c40626210c3dc1229fc4918a70f758d51d8c3f40a5736c7a144d",
+      "expected_run_ids": ["size-matched-conventional-occ00-800k"]
+    },
+    {
+      "state_id": "nested-velocity-md",
+      "path": "runs/supervisor/md-velocity-matched-queue-v1.json",
+      "expected_protocol_sha256": "e1edad8e891a9cef395683664553c29927388f02d61f47a6273b79af3f929da9",
+      "expected_run_ids": [
+        "velocity-matched-occ00-vel1702-800k",
+        "velocity-matched-occ00-vel1703-800k",
+        "velocity-matched-occ01-vel2702-800k",
+        "velocity-matched-occ01-vel2703-800k",
+        "velocity-matched-occ02-vel3702-800k",
+        "velocity-matched-occ02-vel3703-800k",
+        "velocity-matched-occ03-vel4702-800k",
+        "velocity-matched-occ03-vel4703-800k",
+        "velocity-matched-occ04-vel5702-800k",
+        "velocity-matched-occ04-vel5703-800k"
+      ]
+    },
+    {
+      "state_id": "fixed-volume-md",
+      "path": "runs/supervisor/md-volume-fixed-matched-queue-v1.json",
+      "expected_protocol_sha256": "18ea9b075e9949d676e202e3d59a1c8ac8cf40d543ad6e1b1dc876c4f24c8bdf",
+      "expected_run_ids": ["volume-fixed-experimental-matched-occ00-800k"]
+    },
+    {
+      "state_id": "formal-mechanisms",
+      "path": "runs/supervisor/mechanism-analysis-queue-v1.json",
+      "expected_protocol_sha256": "2e84d0a52b327fd398d5e48f8197a9cc031d1f35adb7d00f127c88ca84233476",
+      "expected_job_count": 25
+    },
+    {
+      "state_id": "ensemble-nve-md",
+      "path": "runs/supervisor/md-ensemble-nve-matched-queue-v1.json",
+      "expected_protocol_sha256": "465c742f300608404877c0666a575b24be37e1a57abf53251e96495e5ad5cf47",
+      "expected_run_ids": ["ensemble-nve-matched-occ00-vel1701-800k"]
+    }
+  ],
+  "source_protocols": {
+    "hierarchical": {
+      "path": "analysis/protocols/llzto_hierarchical_transport_v1.json",
+      "sha256": "09268d745bd9359ceedbe6abee173c397b4459f334b7471e0b9317da667b67e0"
+    },
+    "mechanism_association": {
+      "path": "analysis/protocols/llzto_mechanism_transport_association_v1.json",
+      "sha256": "2e84d0a52b327fd398d5e48f8197a9cc031d1f35adb7d00f127c88ca84233476"
+    },
+    "ensemble": {
+      "path": "analysis/protocols/llzto_ensemble_sensitivity_v1.json",
+      "sha256": "7e8d70829faad7fb12cb324d82cfc712a8a46b285950cc63afbafaa3e2d9e09d"
+    },
+    "mechanism_temperature": {
+      "path": "analysis/protocols/llzto_mechanism_temperature_robustness_v1.json",
+      "sha256": "cc3fa9f9868f7484631fed2f31acd0351fe38a30e1496d40cabb110acf917b61"
+    },
+    "haven": {
+      "path": "analysis/protocols/llzto_haven_convention_validation_v1.json",
+      "sha256": "3418c8cdd44611c31809835e63ce08c7a9a528e82478a285105e596d253fa83a"
+    },
+    "experimental_benchmarks": {
+      "path": "data/experimental/llzto_matched_v1.json",
+      "sha256": "61a27cb9d4582c2841f275adf0d5955de3864d2a96971165d61a85bc62508d20"
+    },
+    "exclusion_ledger": {
+      "path": "analysis/protocols/llzto_exclusions_v1.json",
+      "sha256": "67603f732c448e72de7531c621aedd33b4b6c6761043704fc950c2907500c257"
+    }
+  },
+  "branches": {
+    "universal": {
+      "formal_campaign_protocol": "protocols/llzto_q1_v1.json",
+      "formal_campaign_root": "runs/campaigns/llzto_q1_v1",
+      "size_campaign_protocol": "protocols/llzto_size_matched_v1.json",
+      "velocity_campaign_protocol": "protocols/llzto_velocity_nested_v2.json",
+      "fixed_campaign_protocol": "protocols/llzto_volume_fixed_matched_v1.json",
+      "ensemble_campaign_protocol": "protocols/llzto_ensemble_nve_matched_v1.json",
+      "ensemble_campaign_root": "runs/campaigns/llzto_q1_ensemble_nve_matched_v1",
+      "mechanism_root": "runs/analysis/mechanisms-formal-v1",
+      "g2_release": "runs/supervisor/g2-release-v1.json",
+      "g2_release_id": "g2-potential-domain"
+    },
+    "finetuned": {
+      "formal_campaign_protocol": "runs/protocols/llzto_q1_finetuned_v1.json",
+      "formal_campaign_root": "runs/campaigns/llzto_q1_finetuned_v1",
+      "size_campaign_protocol": "runs/protocols/llzto_size_matched_finetuned_v1.json",
+      "velocity_campaign_protocol": "runs/protocols/llzto_velocity_nested_finetuned_v1.json",
+      "fixed_campaign_protocol": "runs/protocols/llzto_volume_fixed_matched_finetuned_v1.json",
+      "ensemble_campaign_protocol": "runs/protocols/llzto_ensemble_nve_matched_finetuned_v1.json",
+      "ensemble_campaign_root": "runs/campaigns/llzto_q1_ensemble_nve_matched_finetuned_v1",
+      "mechanism_root": "runs/analysis/mechanisms-formal-finetuned-v1",
+      "g2_release": "runs/supervisor/g2-finetuned-release-v1.json",
+      "g2_release_id": "g2-finetuned-potential-domain"
+    }
+  },
+  "outputs": {
+    "root_template": "runs/analysis/research-v2/{branch}",
+    "protocol_root_template": "runs/protocols/research-v2/{branch}",
+    "campaign_report": "campaign-report.json",
+    "hierarchical": "hierarchical-transport.json",
+    "nested_velocity": "nested-velocity.json",
+    "transport_sensitivity": "transport-sensitivity.json",
+    "mechanism_association": "mechanism-transport-association.json",
+    "experimental_validation": "hierarchical-experimental-validation.json",
+    "ensemble": "ensemble-sensitivity.json",
+    "mechanism_temperature": "mechanism-temperature-robustness.json",
+    "haven": "haven-convention-validation.json",
+    "analysis_manifest": "analysis-manifest.json"
+  },
+  "resources": {
+    "poll_seconds": 30,
+    "cpu_lock": "runs/supervisor/final-analysis-cpu.lock"
+  },
+  "output_state": "runs/supervisor/research-analysis-supervisor-v2.json"
+}

@@ -1,0 +1,57 @@
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments and build outputs
+.venv/
+**/.venv/
+build/
+dist/
+*.egg-info/
+
+# Local agent and editor state
+.agents/
+.codex/
+.vscode/
+.idea/
+.DS_Store
+*:Zone.Identifier
+
+# Credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*
+*secret*
+
+# Runtime material must stay outside the OpenLabs code monorepo
+/runtime/
+/workspaces/
+/runs/
+/logs/
+/outputs/
+/artifacts/
+/database/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# LaTeX build products
+*.aux
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.xdv

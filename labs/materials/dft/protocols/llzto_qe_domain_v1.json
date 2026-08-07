@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-qe-domain-v1",
+  "reference_code": "Quantum ESPRESSO 7.5 pw.x",
+  "execution_environment": {
+    "manifest": "dft/manifests/qe_7.5_conda_linux64.json",
+    "manifest_sha256": "d0102f9182d8f99b47e0deff4f63eb4259a92bf4488c693705af834d9258d658",
+    "explicit_lock": "dft/qe-7.5-linux-64.lock",
+    "explicit_lock_sha256": "382affc8d291ddc36dea0c4d6cad52112300f4f4a998f1ea1524c741d3614385",
+    "pw_executable_sha256": "1d66c7856f5d6b3cd9c66b8578e01512b16bbe907b4360e54234890712ccd6a1",
+    "qe_package_sha256": "4f21a746fcc644d2170caf28e6b620716e993f8a994a9810dce694c49a3f03da",
+    "mpi": "Open MPI 5.0.10",
+    "omp_num_threads": 1
+  },
+  "physics": {
+    "exchange_correlation": "PBE",
+    "spin": "non-spin-polarized",
+    "hubbard_u": false,
+    "dispersion_correction": false,
+    "spin_orbit": false,
+    "occupations": "fixed",
+    "symmetry": "disabled consistently for ordered and thermally distorted snapshots"
+  },
+  "calculations": [
+    {
+      "label": "recommended-gamma",
+      "purpose": "12-snapshot feasibility and timing set; not the final 30-snapshot publication test set",
+      "ecutwfc_ry": 75.0,
+      "ecutrho_ry": 600.0,
+      "kpoints": "gamma",
+      "conv_thr_ry": 1e-8,
+      "electron_maxstep": 250,
+      "mixing_mode": "plain",
+      "mixing_beta": 0.3,
+      "diagonalization": "david"
+    }
+  ],
+  "numerical_convergence_preregistration": {
+    "cutoff_pairs_ry": [
+      [75.0, 600.0],
+      [90.0, 720.0],
+      [105.0, 840.0]
+    ],
+    "kpoint_meshes": ["gamma", [2, 2, 2]],
+    "scf_thresholds_ry": [1e-8, 1e-10],
+    "test_structures": "one relaxed and one 800 K distorted snapshot, chosen by the frozen feasibility manifest",
+    "freeze_rule": "Select the cheapest setting for which raising cutoffs, k-point density, and SCF strictness changes relative energy by <=1 meV/atom, every force component by <=0.01 eV/A, and every stress component by <=0.1 GPa."
+  },
+  "model_domain_acceptance": {
+    "centered_energy_mae_ev_atom_max": 0.015,
+    "force_component_mae_ev_angstrom_max": 0.1,
+    "force_component_rmse_ev_angstrom_max": 0.2,
+    "stress_component_mae_gpa_max": 0.25,
+    "systematic_failure_rule": "No temperature-, occupancy-, or element-specific monotonic bias large enough to reverse the scientific conclusion.",
+    "failure_action": "Do not relax thresholds. Fine-tune a separately versioned potential with a disjoint held-out test set, or narrow/withdraw the transport claim."
+  }
+}

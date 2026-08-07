@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the OpenLabs research factory continuously
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+AccuracySec=15s
+Persistent=true
+RandomizedDelaySec=15s
+Unit=openlabs-tick.service
+
+[Install]
+WantedBy=timers.target

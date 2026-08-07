@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "relaxation_id": "hidden-order-dual-relaxation-v1",
+  "root_dir": "runs/relaxation/hidden-order-dual-relaxation-v1",
+  "enabled": false,
+  "ordering_manifest": "runs/orderings/hidden-order-enumeration-v1/ordering_manifest.json",
+  "approved_ordering_content_fingerprint": "",
+  "model_registry": "cache/models/discovery-model-registry-v1/model-registry.json",
+  "approved_registry_content_fingerprint": "ec05f2dac942b03436addd4c54a77d9e27348ed2abffe4f53393358c10ae39ab",
+  "device": "cuda",
+  "model_dtype": "float32",
+  "budget": {
+    "wall_time_hours": 20.0,
+    "gpu_hours": 18.0,
+    "max_structures": 24,
+    "max_atoms": 256,
+    "estimated_minutes_per_job": 6.0
+  },
+  "optimizer": {
+    "name": "FIRE",
+    "fmax_ev_a": 0.05,
+    "max_steps": 1000,
+    "relax_cell": false
+  },
+  "agreement": {
+    "minimum_pairs": 3,
+    "minimum_spearman": 0.6,
+    "top_k": 3,
+    "minimum_top_k_overlap": 0.6666666666666666,
+    "maximum_median_rmsd_angstrom": 0.35,
+    "maximum_median_cell_strain": 0.03
+  }
+}

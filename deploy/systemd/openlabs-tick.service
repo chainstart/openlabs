@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenLabs one-shot research factory tick
+After=default.target
+
+[Service]
+Type=oneshot
+# Detached workers outlive this one-shot tick; SQLite leases supervise them.
+KillMode=process
+WorkingDirectory=%h/work/projects/openlabs/openlabs
+Environment=OPENLABS_WORKSPACE=%h/work/projects/openlabs
+EnvironmentFile=-%h/.config/openlabs/env
+ExecStart=/usr/bin/env PYTHONPATH=%h/work/projects/openlabs/openlabs/orchestrator/src /usr/bin/python3 -m openlabs tick
+Nice=5
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=default.target

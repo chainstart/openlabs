@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "collection": "SSSP PBE Precision",
+  "collection_version": "1.3.0",
+  "exchange_correlation": "PBE",
+  "relativity_policy": "scalar-relativistic where supplied; the selected Li GBRV potential is non-relativistic",
+  "source_record": {
+    "provider": "Materials Cloud",
+    "record_id": "rcyfm-68h65",
+    "doi": "10.24435/materialscloud:f3-ym",
+    "website": "https://sssp.materialscloud.org/",
+    "manifest_url": "https://archive.materialscloud.org/api/records/rcyfm-68h65/files/SSSP_1.3.0_PBE_precision.json/content",
+    "manifest_sha256": "7b7b648915e54c8397cd8143a7385c17eeed3104ad1236cecd905126d338a4e3",
+    "archive_url": "https://archive.materialscloud.org/api/records/rcyfm-68h65/files/SSSP_1.3.0_PBE_precision.tar.gz/content",
+    "archive_sha256": "d91db6b4b3788501d535a5b84ebabf3859ea3e3ac6ea154c4be3718da50f0c85",
+    "citation_doi": "10.1038/s41524-018-0127-2"
+  },
+  "license_policy": "Each UPF retains its upstream license. Files are kept in the local immutable run artefact store and are not redistributed by this repository.",
+  "recommended_global_cutoffs": {
+    "ecutwfc_ry": 75.0,
+    "ecutrho_ry": 600.0,
+    "selection_rule": "maximum SSSP Precision recommendation over all five elements"
+  },
+  "elements": {
+    "Li": {
+      "filename": "li_pbe_v1.4.uspp.F.UPF",
+      "md5": "e912e257baa3777c20ea3d68f190483c",
+      "sha256": "02cc4b3810e28a43b570277840d9631ca24f634d922928200c047b72c0a86bf5",
+      "sssp_identifier": "GBRV-1.4",
+      "upstream_library": "GBRV 1.x",
+      "upstream_license": "GNU General Public License version 3",
+      "upstream_citation_doi": "10.1016/j.commatsci.2013.08.053",
+      "valence_electrons": 3,
+      "relativistic": "non-relativistic",
+      "cutoff_wfc_ry": 40.0,
+      "cutoff_rho_ry": 320.0
+    },
+    "La": {
+      "filename": "La.paw.z_11.atompaw.wentzcovitch.v1.2.upf",
+      "md5": "754494e15ae71f30e5b5f678af019e01",
+      "sha256": "8d610fb41db376d5e24de33648147b807d560114cebc0041310599c9333eafa2",
+      "sssp_identifier": "Wentzcovitch",
+      "upstream_library": "TW14",
+      "upstream_license": "not specified in the SSSP library metadata; do not redistribute",
+      "upstream_citation_doi": "10.1016/j.commatsci.2014.07.030",
+      "valence_electrons": 11,
+      "relativistic": "scalar-relativistic",
+      "cutoff_wfc_ry": 40.0,
+      "cutoff_rho_ry": 320.0
+    },
+    "Zr": {
+      "filename": "Zr_pbe_v1.uspp.F.UPF",
+      "md5": "5db81b1e868ab7776c4564c113de050b",
+      "sha256": "d56e2997788a4b3d90bb829416161ff9eb6ccdfe377cb52acfbdd2175f4b4acf",
+      "sssp_identifier": "GBRV-1.2",
+      "upstream_library": "GBRV 1.x",
+      "upstream_license": "GNU General Public License version 3",
+      "upstream_citation_doi": "10.1016/j.commatsci.2013.08.053",
+      "valence_electrons": 12,
+      "relativistic": "scalar-relativistic",
+      "cutoff_wfc_ry": 30.0,
+      "cutoff_rho_ry": 240.0
+    },
+    "Ta": {
+      "filename": "Ta_pbe_v1.uspp.F.UPF",
+      "md5": "f8bbe9446314a3b8ea5d9f3e3836c939",
+      "sha256": "e0850b94d7007d47691d131db1fa5ffdaaa6f6a573c1ebf1fb425e46ed891ee1",
+      "sssp_identifier": "GBRV-1.2",
+      "upstream_library": "GBRV 1.x",
+      "upstream_license": "GNU General Public License version 3",
+      "upstream_citation_doi": "10.1016/j.commatsci.2013.08.053",
+      "valence_electrons": 13,
+      "relativistic": "scalar-relativistic",
+      "cutoff_wfc_ry": 50.0,
+      "cutoff_rho_ry": 400.0
+    },
+    "O": {
+      "filename": "O.pbe-n-kjpaw_psl.0.1.UPF",
+      "md5": "0234752ac141de4415c5fc33072bef88",
+      "sha256": "7c4b6ed541f83d0afdf5c1d3a8c611340f073f3e2b11e95b7963bb2ee26929aa",
+      "sssp_identifier": "031PAW",
+      "upstream_library": "Pslibrary 0.3.1",
+      "upstream_license": "GNU General Public License version 2 or later",
+      "upstream_citation": "E. Kucukbenli et al., arXiv:1404.3015 (2014)",
+      "valence_electrons": 6,
+      "relativistic": "scalar-relativistic",
+      "cutoff_wfc_ry": 75.0,
+      "cutoff_rho_ry": 600.0
+    }
+  }
+}

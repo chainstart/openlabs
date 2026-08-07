@@ -1,0 +1,6 @@
+interface:
+  display_name: "OpenLabs AI/ML Paper"
+  short_description: "Evidence-backed AI/ML manuscript workflow"
+  default_prompt: "Use $openlabs-ai-paper to revise the selected AI/ML manuscript from verified evidence through the local quality gate."
+policy:
+  allow_implicit_invocation: false

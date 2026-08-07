@@ -1,0 +1,4 @@
+interface:
+  display_name: "AMRA Research Loop"
+  short_description: "Mechanism-first research campaigns with hard phase gates"
+  default_prompt: "Use $amra-research-loop to initialize or continue a mechanism-first AMRA mathematics campaign."

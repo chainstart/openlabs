@@ -1,0 +1,99 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-ensemble-sensitivity-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "claim_boundary": "This matched sensitivity asks whether the 800 K transport estimators change materially when the production thermostat is removed after identical NVT equilibration. It is one configuration and one temperature, so a pass supports robustness only within that scope; a failure requires thermostat-sensitive wording rather than deletion of either arm.",
+  "preregistration_note": "Frozen while the first formal 700 K trajectory was incomplete and before any formal 800 K transport estimate existed.",
+  "reference": {
+    "campaign_root": "runs/campaigns/llzto_q1_v1",
+    "campaign_protocol_path": "protocols/llzto_q1_v1.json",
+    "campaign_protocol_sha256": "e06400ba9cdc82afe8ae3a988b5f2b3e0ee99618db0336c123c4d0469b14fab0",
+    "campaign_id": "llzto-q1-v1",
+    "run_id": "formal-occ00-vel1701",
+    "production_ensemble": "nvt"
+  },
+  "comparison": {
+    "campaign_root": "runs/campaigns/llzto_q1_ensemble_nve_matched_v1",
+    "campaign_protocol_path": "protocols/llzto_ensemble_nve_matched_v1.json",
+    "campaign_protocol_sha256": "465c742f300608404877c0666a575b24be37e1a57abf53251e96495e5ad5cf47",
+    "campaign_id": "llzto-q1-ensemble-nve-matched-v1",
+    "run_id": "ensemble-nve-matched-occ00-vel1701-800k",
+    "production_ensemble": "nve"
+  },
+  "temperature_k": 800,
+  "matched_design": {
+    "exact_reference_relaxed_structure_required": true,
+    "required_equal_config_fields": [
+      "formula",
+      "primitive_cell",
+      "supercell",
+      "occupancy_seed",
+      "seed",
+      "timestep_fs",
+      "equilibration_steps",
+      "loginterval",
+      "equilibration_ensemble",
+      "thermostat",
+      "thermostat_tau_fs",
+      "pressure_gpa",
+      "barostat_tau_fs",
+      "production_steps",
+      "fit_from_fraction",
+      "fit_to_fraction",
+      "max_lags",
+      "uncertainty_blocks",
+      "min_final_msd_a2",
+      "min_diffusive_exponent",
+      "max_diffusive_exponent",
+      "max_relative_diffusivity_stderr",
+      "max_abs_nve_energy_drift_mev_atom_ps",
+      "mobile_species",
+      "model_name",
+      "expected_model_state_dict_sha256"
+    ],
+    "expected_config_differences": [
+      "production_ensemble",
+      "protocol_name",
+      "protocol_tier",
+      "provenance",
+      "relax_cell",
+      "relax_structure",
+      "structure_file",
+      "structure_id",
+      "temperatures"
+    ],
+    "temperature_scope": "The reference series must contain 800 K and the comparison must contain exactly 800 K.",
+    "only_intended_dynamical_difference": "production_ensemble: nvt versus nve; protocol identity, temperature-list scope, and preparation fields differ only to reuse the already-relaxed reference structure without relaxing it again"
+  },
+  "estimators": [
+    "tracer",
+    "collective",
+    "collective_to_tracer_ratio"
+  ],
+  "block_bootstrap": {
+    "iterations": 10000,
+    "seed": 20260825,
+    "quantiles": [
+      0.025,
+      0.5,
+      0.975
+    ],
+    "minimum_positive_blocks_per_estimator": 4,
+    "resampling": "independent non-overlapping blocks within each arm, centered on the full-trajectory log effect"
+  },
+  "equivalence": {
+    "ratio_margin": 1.5,
+    "required_for_each_estimator": "The complete 95% bootstrap interval for NVE/NVT lies inside [2/3, 3/2]."
+  },
+  "nve_stability": {
+    "maximum_absolute_energy_drift_mev_atom_ps": 1.0,
+    "temperature_relative_deviation_max": 0.1,
+    "hard_rule": "A failed NVE stability or transport-resolution check blocks the comparison and triggers a separately fingerprinted extension or diagnostic run."
+  },
+  "decision_rules": {
+    "ensemble_robustness_pass": "Both arms resolve all three estimators, the NVE stability checks pass, and every estimator meets the equivalence interval.",
+    "failed_equivalence_action": "Retain both results and qualify the production-ensemble sensitivity; do not average the arms or claim thermostat-independent dynamics.",
+    "scientific_failure_fails_computational_completeness": false
+  },
+  "output_path": "runs/analysis/ensemble-sensitivity-v1.json"
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "selection_id": "llzto-dft-feasibility-v1",
+  "expected_snapshot_count": 12,
+  "selection_blinding": "Coordinates and CHGNet trajectory metadata may be read; no DFT energy, force, stress, or model-minus-DFT error may be read before this manifest is frozen.",
+  "static_snapshots": [
+    {
+      "snapshot_id": "relaxed-occ00",
+      "structure": "runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/relaxed.cif",
+      "temperature_k": null
+    }
+  ],
+  "trajectory_strata": [
+    {
+      "id_prefix": "pilot-t700",
+      "trajectory": "runs/campaigns/llzto_q1_v1/pilot-occ00-20ps/T700.traj",
+      "temperature_k": 700,
+      "frame_spacing_ps": 0.05,
+      "count": 3,
+      "start_fraction": 0.1,
+      "stop_fraction": 0.9,
+      "min_frame_separation": 40,
+      "min_rmsd_angstrom": 0.08
+    },
+    {
+      "id_prefix": "pilot-t800",
+      "trajectory": "runs/campaigns/llzto_q1_v1/pilot-occ00-20ps/T800.traj",
+      "temperature_k": 800,
+      "frame_spacing_ps": 0.05,
+      "count": 4,
+      "start_fraction": 0.1,
+      "stop_fraction": 0.9,
+      "min_frame_separation": 40,
+      "min_rmsd_angstrom": 0.08
+    },
+    {
+      "id_prefix": "pilot-t900",
+      "trajectory": "runs/campaigns/llzto_q1_v1/pilot-occ00-20ps/T900.traj",
+      "temperature_k": 900,
+      "frame_spacing_ps": 0.05,
+      "count": 4,
+      "start_fraction": 0.1,
+      "stop_fraction": 0.9,
+      "min_frame_separation": 40,
+      "min_rmsd_angstrom": 0.08
+    }
+  ]
+}

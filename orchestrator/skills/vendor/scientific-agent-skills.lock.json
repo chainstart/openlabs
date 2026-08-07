@@ -1,0 +1,87 @@
+{
+  "source_repository": "K-Dense-AI/scientific-agent-skills",
+  "source_url": "https://github.com/K-Dense-AI/scientific-agent-skills",
+  "source_ref": "v2.38.0",
+  "downloaded_on": "2026-05-10",
+  "selection_policy": "Low-risk, general-purpose skills aligned with ARA's ML research workflow; critical/high upstream security findings excluded.",
+  "skills": [
+    {
+      "name": "paper-lookup",
+      "source_path": "scientific-skills/paper-lookup",
+      "security_scan_severity": "LOW",
+      "stages": ["ideation", "planning"],
+      "rationale": "Improves scholarly source selection and cross-database literature search planning."
+    },
+    {
+      "name": "database-lookup",
+      "source_path": "scientific-skills/database-lookup",
+      "security_scan_severity": "LOW",
+      "stages": ["ideation", "planning"],
+      "rationale": "Helps select public scientific databases and APIs for data acquisition tasks."
+    },
+    {
+      "name": "statistical-analysis",
+      "source_path": "scientific-skills/statistical-analysis",
+      "security_scan_severity": "LOW",
+      "stages": ["planning", "experiment", "writing", "revision"],
+      "rationale": "Strengthens test selection, effect-size reporting, diagnostics, and review remediation."
+    },
+    {
+      "name": "exploratory-data-analysis",
+      "source_path": "scientific-skills/exploratory-data-analysis",
+      "security_scan_severity": "LOW",
+      "stages": ["experiment", "revision"],
+      "rationale": "Useful for robust artifact inspection and schema-aware data analysis."
+    },
+    {
+      "name": "scientific-visualization",
+      "source_path": "scientific-skills/scientific-visualization",
+      "security_scan_severity": "LOW",
+      "stages": ["writing", "revision"],
+      "rationale": "Improves publication-quality figure generation guidance."
+    },
+    {
+      "name": "matplotlib",
+      "source_path": "scientific-skills/matplotlib",
+      "security_scan_severity": "LOW",
+      "stages": ["experiment", "writing"],
+      "rationale": "Supports robust Python figure code generation."
+    },
+    {
+      "name": "seaborn",
+      "source_path": "scientific-skills/seaborn",
+      "security_scan_severity": "LOW",
+      "stages": ["experiment"],
+      "rationale": "Supports statistical visualization in generated experiment scripts."
+    },
+    {
+      "name": "scikit-learn",
+      "source_path": "scientific-skills/scikit-learn",
+      "security_scan_severity": "LOW",
+      "stages": ["planning", "experiment"],
+      "rationale": "Matches ARA's current tabular/ML experiment workload and baseline generation."
+    }
+  ],
+  "not_selected": [
+    {
+      "name": "literature-review",
+      "security_scan_severity": "CRITICAL",
+      "reason": "Contains mandatory cross-skill figure generation guidance and broad external-search assumptions."
+    },
+    {
+      "name": "scientific-writing",
+      "security_scan_severity": "CRITICAL",
+      "reason": "ARA already has a constrained writing stage; upstream skill carries broader external-generation behavior."
+    },
+    {
+      "name": "citation-management",
+      "security_scan_severity": "CRITICAL",
+      "reason": "Flagged for environment-variable and external API data-flow patterns."
+    },
+    {
+      "name": "peer-review",
+      "security_scan_severity": "CRITICAL",
+      "reason": "ARA already has review/revision logic; upstream skill expands external generation surface."
+    }
+  ]
+}

@@ -1,0 +1,156 @@
+{
+  "schema_version": "1.0",
+  "ledger_id": "llzto-exclusions-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "rule": "Every interrupted, development-only, mismatched, or superseded artifact remains visible here and is excluded from formal estimators and publication figures unless an entry explicitly says retained_negative_result. No row may be silently deleted because its result is unfavorable.",
+  "entries": [
+    {
+      "entry_id": "interrupted-formal-occ00-t700-26p2ps",
+      "disposition": "excluded",
+      "scope": "all transport, mechanism, and publication estimators",
+      "reason": "The WSL resource-reconfiguration interruption occurred after only 26.2 ps of the planned 500 ps production trajectory and before a complete temperature checkpoint existed. The clean restart began 700 K from zero.",
+      "identifiers": {
+        "run_id": "formal-occ00-vel1701",
+        "temperature_k": 700,
+        "recorded_production_ps": 26.2
+      },
+      "artifacts": [
+        {
+          "path": "runs/campaigns/llzto_q1_v1/_interruptions/20260806T201727HKT_formal-occ00-vel1701/interruption_manifest.json",
+          "sha256": "ed830a3141892d71d03e0368d74ac2cdd194659e7921b48771383ad995009ed6"
+        }
+      ]
+    },
+    {
+      "entry_id": "legacy-velocity-repeats-short-equilibration",
+      "disposition": "excluded",
+      "scope": "nested occupancy-versus-velocity inference",
+      "reason": "The original occupancy-0 repeats used 10 ps equilibration while primary formal points use 20 ps and did not form a balanced occupancy-by-velocity design. Exact-structure matched replacements are frozen in llzto_velocity_nested_v2.json.",
+      "identifiers": {
+        "run_ids": [
+          "replicate-occ00-vel1702-800k",
+          "replicate-occ00-vel1703-800k"
+        ],
+        "execution_status": "not_executed"
+      },
+      "artifacts": []
+    },
+    {
+      "entry_id": "velocity-nested-v1-independent-relaxation",
+      "disposition": "superseded_before_execution",
+      "scope": "nested occupancy-versus-velocity inference",
+      "reason": "Version 1 independently repeated structural relaxation for each velocity cell and therefore did not isolate velocity initialization. Version 2 reuses each primary run's exact hashed relaxed structure.",
+      "identifiers": {
+        "protocol_id": "llzto-velocity-nested-v1",
+        "execution_status": "not_executed"
+      },
+      "artifacts": [
+        {
+          "path": "protocols/llzto_velocity_nested_v1.json",
+          "sha256": "9f6d7a4970a0b38c01f4898e60a5939a4c18ea95756979ba626ff31627f86034"
+        }
+      ]
+    },
+    {
+      "entry_id": "legacy-finite-size-unmatched-occupancy",
+      "disposition": "excluded",
+      "scope": "finite-size equivalence inference",
+      "reason": "The conventional-cell task independently ordered disorder and was not an exact periodic supercell of the primary occupancy realization, confounding size with Li/Ta configuration. The exact determinant-two matched supercell replaces it.",
+      "identifiers": {
+        "run_id": "size-conventional-occ00-800k",
+        "execution_status": "not_executed"
+      },
+      "artifacts": []
+    },
+    {
+      "entry_id": "legacy-fixed-volume-short-equilibration",
+      "disposition": "excluded",
+      "scope": "fixed-experimental-volume sensitivity inference",
+      "reason": "The original fixed-volume task used 10 ps equilibration rather than the primary run's 20 ps. A matched 20 ps replacement is frozen separately.",
+      "identifiers": {
+        "run_id": "volume-fixed-experimental-occ00-800k",
+        "execution_status": "not_executed"
+      },
+      "artifacts": []
+    },
+    {
+      "entry_id": "mechanism-pilot-v1-pre-correction",
+      "disposition": "excluded",
+      "scope": "mechanism conclusions",
+      "reason": "The first pilot predates the corrected reverse-jump risk set and deterministic crystallographic site-model fingerprint. Its large reverse fraction is invalid and must not be quoted.",
+      "identifiers": {
+        "analysis_id": "mechanisms-pilot-v1"
+      },
+      "artifacts": [
+        {
+          "path": "runs/analysis/mechanisms-pilot-v1/T800.json",
+          "sha256": "aa715cb4e2e420e89bc44e62818360e72af5697365a87998ff4fa528c126394a"
+        },
+        {
+          "path": "runs/analysis/mechanisms-pilot-v1/T800.sensitivity.json",
+          "sha256": "8ed4e8ae43405b1d49dc2da11fa1c8bb0d6c8b72822d40f0f98da5acc1a13792"
+        }
+      ]
+    },
+    {
+      "entry_id": "mechanism-pilot-v2-v3-intermediate-corrections",
+      "disposition": "superseded",
+      "scope": "mechanism conclusions",
+      "reason": "These intermediate reruns were created during the reverse-risk-set and circular-null audit. Version 4 is the final corrected pilot sensitivity result.",
+      "identifiers": {
+        "analysis_ids": [
+          "mechanisms-pilot-v2",
+          "mechanisms-pilot-v3"
+        ]
+      },
+      "artifacts": [
+        {
+          "path": "runs/analysis/mechanisms-pilot-v2/T800.sensitivity.json",
+          "sha256": "727d481a493df92930c0769b8016c979c52770ab48165d36662b8cebfff39e11"
+        },
+        {
+          "path": "runs/analysis/mechanisms-pilot-v3/T800.sensitivity.json",
+          "sha256": "dac4ef68912c2cdcd6bafa1e4481a0b41739c4094ed5647dd9f4e74d1da73aaf"
+        }
+      ]
+    },
+    {
+      "entry_id": "corrected-mechanism-pilot-v4-negative-result",
+      "disposition": "retained_negative_result",
+      "scope": "method qualification only; not a formal transport or mechanism estimate",
+      "reason": "All nine assignment settings pass quality, but string-excess significance is not stable across the frozen grid (empirical p spans approximately 0.005 to 0.423). This negative robustness result is retained and forbids a pilot cooperative-string claim.",
+      "identifiers": {
+        "analysis_id": "mechanisms-pilot-v4",
+        "formal_claim_eligible": false
+      },
+      "artifacts": [
+        {
+          "path": "runs/analysis/mechanisms-pilot-v4/T800.sensitivity.json",
+          "sha256": "53433773760ddc50da826891e9b90a31545eeec5053df20c7640f87fb20cc7a9"
+        }
+      ]
+    },
+    {
+      "entry_id": "twenty-picosecond-transport-pilot",
+      "disposition": "development_only",
+      "scope": "transport estimates and Arrhenius inference",
+      "reason": "The 20 ps series was used to validate execution and adequacy diagnostics. Its unresolved diffusion values are not combined with 500 ps formal trajectories.",
+      "identifiers": {
+        "run_id": "pilot-occ00-20ps",
+        "formal_claim_eligible": false
+      },
+      "artifacts": []
+    },
+    {
+      "entry_id": "dft-feasibility-domain-set",
+      "disposition": "development_only",
+      "scope": "CHGNet publication-domain claim",
+      "reason": "The 12-snapshot feasibility set may guide pass, domain narrowing, or fine-tuning design. Only the disjoint 30-snapshot publication-heldout set can authorize publication claims.",
+      "identifiers": {
+        "set_id": "feasibility",
+        "publication_claim_gate": false
+      },
+      "artifacts": []
+    }
+  ]
+}

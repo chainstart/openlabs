@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-ensemble-watchdog-v1",
+  "claim_boundary": "This auxiliary watchdog covers only the preregistered matched NVE production waiter and its downstream ensemble-sensitivity waiter. It may restart either process solely while its hash-verified state is waiting; an active calculation, completed result, failed exception, or scientific blocker is never restarted or converted into a pass.",
+  "poll_seconds": 30,
+  "state_stale_seconds": 180,
+  "managed": [
+    {
+      "process_id": "matched-nve-production-md",
+      "marker": "matfactory.md_queue protocols/llzto_ensemble_nve_matched_v1.json",
+      "policy": "restart-waiting-only",
+      "state_path": "runs/supervisor/md-ensemble-nve-matched-queue-v1.json",
+      "expected_protocol_sha256": "465c742f300608404877c0666a575b24be37e1a57abf53251e96495e5ad5cf47",
+      "module": "matfactory.md_queue",
+      "args": [
+        "protocols/llzto_ensemble_nve_matched_v1.json",
+        "--run",
+        "ensemble-nve-matched-occ00-vel1701-800k",
+        "--release-gate",
+        "runs/supervisor/g2-release-v1.json",
+        "--release-gate-id",
+        "g2-potential-domain",
+        "--poll-seconds",
+        "30",
+        "--state",
+        "runs/supervisor/md-ensemble-nve-matched-queue-v1.json",
+        "--gpu-lock",
+        "runs/supervisor/md-gpu.lock"
+      ],
+      "log_path": "runs/supervisor/md-ensemble-nve-matched-queue-v1.log"
+    },
+    {
+      "process_id": "matched-ensemble-analysis",
+      "marker": "matfactory.ensemble_analysis_queue",
+      "policy": "restart-waiting-only",
+      "state_path": "runs/supervisor/ensemble-analysis-queue-v1.json",
+      "expected_protocol_sha256": "7e8d70829faad7fb12cb324d82cfc712a8a46b285950cc63afbafaa3e2d9e09d",
+      "module": "matfactory.ensemble_analysis_queue",
+      "args": [
+        "--protocol",
+        "analysis/protocols/llzto_ensemble_sensitivity_v1.json",
+        "--state",
+        "runs/supervisor/ensemble-analysis-queue-v1.json",
+        "--poll-seconds",
+        "30"
+      ],
+      "log_path": "runs/supervisor/ensemble-analysis-queue-v1.log"
+    }
+  ]
+}

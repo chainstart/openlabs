@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-haven-convention-validation-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "claim_boundary": "This supplementary analysis makes the experimental and simulated Haven conventions explicit and compares the reported single-crystal point with a configuration-level prediction for the reciprocal ratio. The 298 K prediction is a long extrapolation from 700-900 K, the experimental point has no reported uncertainty here, and compatibility is descriptive rather than proof of model validity.",
+  "preregistration_note": "Frozen while the first formal 500 ps trajectory was incomplete and before any formal tracer, collective, or ratio estimate existed. The benchmark and reciprocal mapping were selected from the exact-composition single-crystal publication without inspecting simulation outcomes.",
+  "primary_hierarchical_input": {
+    "report_path": "runs/analysis/hierarchical-transport-v1.json",
+    "analysis_protocol_path": "analysis/protocols/llzto_hierarchical_transport_v1.json",
+    "analysis_protocol_sha256": "09268d745bd9359ceedbe6abee173c397b4459f334b7471e0b9317da667b67e0",
+    "hierarchical_gate_must_pass": true
+  },
+  "formal_campaign": {
+    "root": "runs/campaigns/llzto_q1_v1",
+    "protocol_path": "protocols/llzto_q1_v1.json",
+    "protocol_sha256": "e06400ba9cdc82afe8ae3a988b5f2b3e0ee99618db0336c123c4d0469b14fab0",
+    "campaign_id": "llzto-q1-v1",
+    "run_ids": [
+      "formal-occ00-vel1701",
+      "formal-occ01-vel2701",
+      "formal-occ02-vel3701",
+      "formal-occ03-vel4701",
+      "formal-occ04-vel5701"
+    ],
+    "temperatures_k": [
+      700,
+      750,
+      800,
+      850,
+      900
+    ]
+  },
+  "ratio_estimator": {
+    "simulation_definition": "D_collective/D_tracer",
+    "experimental_haven_definition": "D_tracer/D_sigma",
+    "mapping": "H_R = 1/(D_collective/D_tracer) for one monovalent mobile species when D_collective is the conductivity diffusion coefficient D_sigma",
+    "central_value": "full-trajectory D_collective/D_tracer",
+    "measurement_variance": "sample variance of paired non-overlapping-block log(D_collective/D_tracer) divided by the number of valid paired blocks",
+    "minimum_paired_blocks": 4,
+    "complete_5_by_5_grid_required": true
+  },
+  "ratio_temperature_model": {
+    "response": "log(D_collective/D_tracer)",
+    "predictor": "1/(k_B*T)",
+    "interpretation_of_slope": "difference between collective and tracer activation energies",
+    "configuration_fit": "weighted least squares with conservative chi-square covariance scaling",
+    "population_fit": "configuration bootstrap and REML summary; configuration is the inferential unit",
+    "confidence_level": 0.95,
+    "bootstrap": {
+      "iterations": 10000,
+      "seed": 20260824,
+      "quantiles": [
+        0.025,
+        0.5,
+        0.975
+      ],
+      "experimental_prediction_temperatures_k": [
+        298.0
+      ]
+    },
+    "non_arrhenius_diagnostic": {
+      "aicc_improvement_min": 6.0,
+      "quadratic_bootstrap_interval_must_exclude_zero": true
+    }
+  },
+  "experimental_benchmark": {
+    "path": "data/experimental/llzto_haven_v1.json",
+    "sha256": "16bbd6414ec08a31cf37f9b3befe623b06b3553dd7cd3d0bbab5280f7283c799",
+    "required_doi": "10.1016/j.ssi.2018.10.016",
+    "temperature_k": 298.0,
+    "reported_haven_ratio": 0.4,
+    "transformed_collective_to_tracer_ratio": 2.5
+  },
+  "decision_rules": {
+    "analysis_completeness": "All 25 tracer and collective points and at least four paired positive blocks per point are required; no cell may be dropped.",
+    "experimental_compatibility": "Report whether H_R=0.4, equivalently D_collective/D_tracer=2.5, lies inside the 95% new-configuration predictive interval at 298 K.",
+    "incompatibility_action": "Retain the incompatibility as a scientific result; it does not fail computational completeness.",
+    "terminology": "Every ratio must be labelled by numerator and denominator; bare 'Haven ratio' is forbidden without its equation."
+  },
+  "output_path": "runs/analysis/haven-convention-validation-v1.json"
+}

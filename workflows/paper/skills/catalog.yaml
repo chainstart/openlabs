@@ -1,0 +1,36 @@
+schema_version: openlabs.paper_writing.skills.v1
+selection_policy:
+  maximum_active_skills: 3
+  roles: [primary_writing, domain, review_or_citation]
+skills:
+  scientific-agent-skills:
+    repository: https://github.com/K-Dense-AI/scientific-agent-skills
+    observed_commit: ad21a3868923628330734375dddbf7b86ea84222
+    license: MIT
+    status: partially_approved
+    approved_components: [scientific-writing, statistical-analysis, peer-review, sympy]
+    note: Only the pinned, audited components in skills/lock.yaml are installed; the collection as a whole is not approved.
+  ai-research-writing-skill:
+    repository: https://github.com/jin-s13/ai-research-writing-skill
+    observed_commit: 5d6e4244e532189099ca5a9c5585b23febcae955
+    license: MIT
+    domains: [ai]
+    status: approved
+  econ-writing-skill:
+    repository: https://github.com/hanlulong/econ-writing-skill
+    observed_commit: f2bf7a22c5e3b37921a5e6c73bd1fb380a5e00e8
+    license: MIT
+    domains: [economics]
+    status: candidate
+  sciwrite:
+    repository: https://github.com/labarba/sciwrite
+    observed_commit: 8a57fa73d541bdcf7d8501db61c018cb454e9afa
+    license: CC-BY-4.0
+    status: candidate
+    note: Writing-quality review only; it does not validate scientific claims.
+  openjudge-paper-review:
+    repository: https://github.com/agentscope-ai/OpenJudge
+    observed_commit: 2151def3553e5521ff8b3e2fea837561c57255f9
+    license: Apache-2.0
+    status: candidate
+    note: Optional external review engine; requires separate model API configuration.

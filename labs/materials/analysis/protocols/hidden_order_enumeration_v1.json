@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "ordering_id": "hidden-order-enumeration-v1",
+  "candidate_protocol": "protocols/hidden_order_soft_mode_pilot_v1.json",
+  "root_dir": "runs/orderings/hidden-order-enumeration-v1",
+  "enabled": false,
+  "approved_candidate_ids": [],
+  "max_orderings_per_candidate": 24,
+  "seed_start": 41001,
+  "max_attempts_multiplier": 20,
+  "objective_jitter": 0.001,
+  "minimum_distance_by_species": {
+    "Li": 1.6,
+    "Na": 1.8,
+    "H": 0.7
+  },
+  "symmetry_deduplicate": true,
+  "matcher_stol": 0.25
+}

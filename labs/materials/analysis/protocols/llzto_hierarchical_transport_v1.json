@@ -1,0 +1,159 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-hierarchical-transport-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "inferential_unit": "independently generated crystallographic occupancy realization paired with one independent velocity initialization",
+  "design_limit": "The five primary temperature-series runs pair each occupancy with one velocity seed, so activation-energy heterogeneity is configuration-plus-velocity heterogeneity rather than pure occupancy variance. A separate balanced five-occupancy by three-velocity design identifies between-occupancy and within-occupancy variance at 800 K only.",
+  "formal_campaign_protocol_path": "protocols/llzto_q1_v1.json",
+  "formal_campaign_root": "runs/campaigns/llzto_q1_v1",
+  "formal_run_ids": [
+    "formal-occ00-vel1701",
+    "formal-occ01-vel2701",
+    "formal-occ02-vel3701",
+    "formal-occ03-vel4701",
+    "formal-occ04-vel5701"
+  ],
+  "required_temperatures_k": [700, 750, 800, 850, 900],
+  "estimators": {
+    "tracer": {
+      "diffusivity_field": "diffusivity_cm2_s",
+      "stderr_field": "diffusivity_stderr_cm2_s",
+      "resolved_field": "resolved",
+      "compute_nernst_einstein_conductivity": false
+    },
+    "collective": {
+      "diffusivity_field": "collective_diffusivity_cm2_s",
+      "stderr_field": "collective_diffusivity_stderr_cm2_s",
+      "resolved_field": "collective_resolved",
+      "compute_nernst_einstein_conductivity": true
+    }
+  },
+  "hard_rules": {
+    "complete_grid_required": true,
+    "unresolved_point_action": "Block that estimator's hierarchical fit and extend the corresponding trajectory under a newly fingerprinted protocol; never drop the point or temperature.",
+    "positive_diffusivity_and_stderr_required": true,
+    "frame_pseudoreplication_forbidden": true
+  },
+  "arrhenius_model": {
+    "response": "log(diffusivity_cm2_s)",
+    "predictor": "1/(k_B*T)",
+    "within_run_uncertainty": "delta-method stderr(log D) = stderr(D)/D",
+    "configuration_fit": "weighted least squares with conservative chi-square covariance scaling",
+    "population_fit": "REML random-effects meta-analysis of paired configuration/velocity activation energies with modified Hartung-Knapp interval",
+    "confidence_level": 0.95
+  },
+  "bootstrap": {
+    "iterations": 10000,
+    "seed": 20260806,
+    "resampling_unit": "occupancy realization",
+    "within_run_draw": "Normal(log D, stderr(D)/D)",
+    "reported_intervals": [0.025, 0.5, 0.975],
+    "room_temperature_k": 300,
+    "experimental_prediction_temperatures_k": [297.0, 298.0, 298.15, 300.15, 333.0],
+    "prediction_targets": {
+      "population_mean": "uncertainty in the configuration-population geometric mean",
+      "new_configuration": "empirical configuration-plus-velocity predictive distribution with within-trajectory uncertainty"
+    }
+  },
+  "non_arrhenius_test": {
+    "models": "occupancy fixed intercepts plus common linear term versus the same model plus a common quadratic term in centered 1/(k_B*T)",
+    "aicc_improvement_min": 6.0,
+    "quadratic_bootstrap_interval_must_exclude_zero": true,
+    "claim_rule": "Claim curvature only when both criteria pass; otherwise retain the linear Arrhenius primary model and report the diagnostic."
+  },
+  "nested_velocity_inference": {
+    "temperature_k": 800,
+    "response_scale": "natural logarithm",
+    "model": "heteroskedastic REML random occupancy intercept plus within-occupancy velocity variance and known trajectory-measurement variance",
+    "measurement_variance": {
+      "tracer": "delta-method variance (stderr(D_tracer)/D_tracer)^2",
+      "collective": "delta-method variance (stderr(D_collective)/D_collective)^2",
+      "collective_to_tracer_ratio": "variance of paired per-block log(D_collective/D_tracer) divided by the number of valid paired blocks"
+    },
+    "confidence_level": 0.95,
+    "occupancy_variance_test": {
+      "method": "REML likelihood-ratio statistic with parametric-bootstrap null distribution at the zero-variance boundary",
+      "iterations": 10000,
+      "seed": 20260817,
+      "alpha": 0.05
+    },
+    "variance_interval_bootstrap": {
+      "method": "parametric bootstrap from the fitted full nested model",
+      "iterations": 5000,
+      "seed": 20260818,
+      "quantiles": [0.025, 0.5, 0.975]
+    },
+    "hard_rules": {
+      "balanced_grid_required": true,
+      "all_estimator_points_resolved": true,
+      "minimum_paired_ratio_blocks": 4,
+      "unresolved_action": "Block that estimator's nested analysis and extend the exact trajectory under a separately fingerprinted protocol; never remove the cell.",
+      "claim_rule": "An occupancy-level effect is supported only when the boundary-aware bootstrap p-value is no larger than alpha. Point estimates or range comparisons alone are descriptive."
+    }
+  },
+  "sensitivity_inference": {
+    "temperature_k": 800,
+    "block_bootstrap": {
+      "iterations": 10000,
+      "seed": 20260819,
+      "quantiles": [0.025, 0.5, 0.975],
+      "minimum_positive_blocks_per_estimator": 4,
+      "resampling_rule": "resample non-overlapping trajectory blocks independently within each physical run and form the comparison-minus-reference mean log effect"
+    },
+    "finite_size_equivalence": {
+      "ratio_margin": 2.0,
+      "claim_rule": "Finite-size convergence is supported for an estimator only when the full 95% block-bootstrap interval for D_188/D_94, or for the collective-to-tracer ratio contrast, lies inside [1/2,2]."
+    },
+    "volume_robustness": {
+      "ratio_margin": 2.0,
+      "activation_energy_difference_margin_ev": 0.05,
+      "claim_rule": "Fixed-experimental and NPT-volume effects are reported at every planned temperature. Robustness requires all estimator effect intervals inside [1/2,2] and the absolute NPT-minus-fixed activation-energy difference no larger than 0.05 eV; failure changes the claim rather than deleting the sensitivity."
+    },
+    "hard_rules": {
+      "resolved_estimator_required_in_both_runs": true,
+      "missing_or_unresolved_action": "Block only the affected estimator/comparison and extend the exact trajectory under a separately fingerprinted protocol.",
+      "equivalence_margin_is_study_specific": true
+    }
+  },
+  "sensitivity_roles": {
+    "velocity_design": {
+      "temperature_k": 800,
+      "reference_campaign_root": "runs/campaigns/llzto_q1_v1",
+      "reference_protocol_path": "protocols/llzto_q1_v1.json",
+      "supplemental_campaign_root": "runs/campaigns/llzto_q1_velocity_nested_v2",
+      "supplemental_protocol_path": "protocols/llzto_velocity_nested_v2.json",
+      "occupancy_realizations": 5,
+      "velocity_initializations_per_occupancy": 3,
+      "matched_structure_required": true,
+      "analysis": "nested random-effects variance decomposition with a boundary-aware parametric-bootstrap test for the occupancy variance"
+    },
+    "excluded_velocity_runs": {
+      "run_ids": [
+        "replicate-occ00-vel1702-800k",
+        "replicate-occ00-vel1703-800k"
+      ],
+      "reason": "These original entries used 10 ps equilibration while the primary points use 20 ps; exact-structure matched replacements are frozen in llzto_velocity_nested_v2.json."
+    },
+    "superseded_velocity_protocol": {
+      "path": "protocols/llzto_velocity_nested_v1.json",
+      "reason": "It independently repeated numerical relaxation for each velocity cell. Version 2 instead reuses the exact byte-hashed relaxed structure from the corresponding primary run and is the only velocity protocol to execute."
+    },
+    "finite_size_reference_run_id": "formal-occ00-vel1701",
+    "finite_size_campaign_root": "runs/campaigns/llzto_q1_size_matched_v1",
+    "finite_size_protocol_path": "protocols/llzto_size_matched_v1.json",
+    "finite_size_run_id": "size-matched-conventional-occ00-800k",
+    "excluded_finite_size_run": {
+      "run_id": "size-conventional-occ00-800k",
+      "reason": "The conventional CIF was independently re-ordered and therefore confounds cell size with a different Li/Ta occupancy realization. It is not run or used for a finite-size claim."
+    },
+    "fixed_experimental_volume_campaign_root": "runs/campaigns/llzto_q1_volume_fixed_matched_v1",
+    "fixed_experimental_volume_protocol_path": "protocols/llzto_volume_fixed_matched_v1.json",
+    "fixed_experimental_volume_run_id": "volume-fixed-experimental-matched-occ00-800k",
+    "excluded_fixed_volume_run": {
+      "run_id": "volume-fixed-experimental-occ00-800k",
+      "reason": "The original entry used 10 ps equilibration while the primary reference uses 20 ps. It is not run or used for a volume-effect claim."
+    },
+    "npt_volume_run_id": "volume-npt-equilibrated-occ00"
+  },
+  "preregistration_note": "Frozen while the first formal trajectory was still incomplete and before any formal diffusivity or activation-energy result existed. The balanced 800 K velocity-within-occupancy amendment was added after a design audit, still before the first formal point completed."
+}

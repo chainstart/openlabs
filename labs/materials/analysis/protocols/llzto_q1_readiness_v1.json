@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-q1-readiness-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "claim_boundary": "This rubric may be executed only after the frozen G0-G7 evidence audit is complete. It scores the strength and completeness of the computational evidence package; it cannot guarantee acceptance, assign a journal quartile, or replace a current external novelty and journal-fit review.",
+  "preregistration_note": "Frozen before completion of the first formal trajectory, the k-point comparison, any final DFT-domain label, and every formal statistical outcome.",
+  "audit": {
+    "protocol": "analysis/protocols/llzto_q1_evidence_audit_v1.json",
+    "report": "runs/analysis/publication-v1/evidence-audit.json",
+    "required_hard_gates": 8
+  },
+  "sources": {
+    "dft_numerical_supervisor": "runs/supervisor/dft-numerical-supervisor-v1.json",
+    "dft_domain_supervisor": "runs/supervisor/dft-domain-supervisor-v1.json",
+    "mpi_report": "runs/dft/llzto-qe-mpi-reproducibility-v1/mpi-reproducibility.json",
+    "g2_release": "runs/supervisor/g2-release-v1.json",
+    "hierarchical_transport": "runs/analysis/hierarchical-transport-v1.json",
+    "nested_velocity": "runs/analysis/nested-velocity-v1.json",
+    "transport_sensitivity": "runs/analysis/transport-sensitivity-v1.json",
+    "mechanism_association": "runs/analysis/mechanism-transport-association-v1.json",
+    "experimental_validation": "runs/analysis/hierarchical-experimental-validation-v1.json",
+    "artifact_manifest": "runs/analysis/publication-v1/artifact-manifest.json",
+    "manuscript_manifest": "runs/analysis/publication-v1/manuscript-manifest.json",
+    "test_attestation": "runs/analysis/publication-v1/test-attestation.json",
+    "environment_attestation": "runs/analysis/publication-v1/environment-attestation.json",
+    "clean_regeneration_attestation": "runs/analysis/publication-v1/clean-regeneration-attestation.json"
+  },
+  "dimensions": {
+    "independent_reference_and_applicability": {
+      "maximum": 20,
+      "rule": "Complete numerical and domain supervisors, MPI equivalence, and a full two-domain G2 release."
+    },
+    "transport_design_and_inference": {
+      "maximum": 20,
+      "rule": "Complete five-by-five hierarchical transport and balanced five-by-three nested velocity inference."
+    },
+    "robustness_and_sensitivity": {
+      "maximum": 15,
+      "rule": "The preregistered finite-size, fixed-volume, and NPT-volume robustness gate passes without changing margins."
+    },
+    "mechanistic_depth": {
+      "maximum": 15,
+      "rule": "All 25 mechanism grids and all twelve multiplicity-controlled associations are retained; robust supported associations add evidence but a complete null result remains publishable."
+    },
+    "experimental_relevance": {
+      "maximum": 15,
+      "rule": "All nine eligible exact-composition comparisons are evaluated with scope, direct/derived role, and prediction intervals retained. Compatibility itself is an outcome, not a scoring requirement."
+    },
+    "reproducibility_and_reporting": {
+      "maximum": 15,
+      "rule": "All publication/manuscript artifacts, tests, environment checks, and clean byte-identical regeneration attestations pass."
+    }
+  },
+  "thresholds": {
+    "q1_target_evidence_candidate_minimum": 85,
+    "strong_specialist_journal_evidence_minimum": 70
+  },
+  "hard_rules": {
+    "complete_evidence_audit_required_before_scoring": true,
+    "all_eight_hard_gates_required": true,
+    "scientific_negative_results_must_not_be_deleted": true,
+    "cas_q1_acceptance_or_classification_guarantee_forbidden": true,
+    "current_external_novelty_and_journal_fit_review_required_for_final_judgment": true
+  },
+  "output": "runs/analysis/publication-v1/q1-readiness-assessment.json"
+}

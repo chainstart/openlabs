@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "selection_id": "llzto-convergence-snapshots-v1",
+  "expected_snapshot_count": 2,
+  "selection_blinding": "Coordinates and the already-frozen feasibility manifest may be read. No CHGNet-minus-DFT error is used. The 800 K structure is the member of the frozen 800 K feasibility stratum with the largest periodic RMSD from relaxed-occ00.",
+  "source_feasibility_manifest": "runs/dft/llzto-dft-feasibility-v1/snapshot_manifest.json",
+  "source_feasibility_manifest_sha256": "8a0c5a05ed3aef2016892802c5cad752149981c35a26b9b1f087179665974e6a",
+  "selection_audit": {
+    "metric": "matfactory.dft.periodic_rmsd",
+    "candidate_rmsd_angstrom": {
+      "pilot-t800-00": 0.507815827461173,
+      "pilot-t800-01": 0.5728950892818048,
+      "pilot-t800-02": 0.6906512384869249,
+      "pilot-t800-03": 0.8759864054734339
+    },
+    "selected_800k_snapshot": "pilot-t800-03"
+  },
+  "static_snapshots": [
+    {
+      "snapshot_id": "conv-relaxed-occ00",
+      "structure": "runs/dft/llzto-dft-feasibility-v1/snapshots/relaxed-occ00.extxyz",
+      "temperature_k": null
+    },
+    {
+      "snapshot_id": "conv-t800-farthest",
+      "structure": "runs/dft/llzto-dft-feasibility-v1/snapshots/pilot-t800-03.extxyz",
+      "temperature_k": 800
+    }
+  ],
+  "trajectory_strata": []
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Materials Research Loop"
+  short_description: "Run auditable simulation-led materials research"
+  default_prompt: "Use $materials-research-loop to advance one validated materials research step."

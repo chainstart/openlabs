@@ -1,0 +1,28 @@
+{
+  "schema_version": "openlabs.result_bundle.v1",
+  "task_id": "smoke-math-001",
+  "campaign_id": "factory-smoke",
+  "lab_id": "math",
+  "domain": "math",
+  "status": "completed",
+  "summary": "The lab accepted a task and emitted a result.",
+  "artifacts": [
+    {
+      "artifact_id": "smoke-evidence",
+      "uri": "file:///tmp/openlabs-smoke-evidence.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "kind": "test_result"
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "file-contract",
+      "text": "The file contract was exercised.",
+      "status": "verified",
+      "evidence": ["smoke-evidence"],
+      "limitations": ["This is not a scientific claim."]
+    }
+  ],
+  "next_actions": [],
+  "paper_candidate": false
+}

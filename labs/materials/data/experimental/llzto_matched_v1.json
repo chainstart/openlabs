@@ -1,0 +1,150 @@
+{
+  "schema_version": "1.0",
+  "material_id": "LLZTO-Ta0.5",
+  "nominal_formula": "Li6.5La3Zr1.5Ta0.5O12",
+  "scope": "Exact-composition experimental benchmarks; ceramic and single-crystal measurements are not pooled as exchangeable replicates.",
+  "records": [
+    {
+      "record_id": "inada-2016-polycrystal-x0",
+      "sample_type": "polycrystalline ceramic",
+      "phase": "cubic Ia-3d reported without secondary phase",
+      "processing": "solid-state reaction, Pt-Au crucible, 1150 C for 15 h",
+      "relative_density_percent": 92.8,
+      "measurements": [
+        {
+          "property": "total_ionic_conductivity",
+          "value": 0.000794,
+          "unit": "S/cm",
+          "temperature_k": 300.15,
+          "method": "AC impedance, Au blocking electrodes, bulk plus grain boundary"
+        },
+        {
+          "property": "activation_energy",
+          "value": 0.42,
+          "unit": "eV",
+          "method": "Arrhenius fit of total conductivity from 27 to 100 C"
+        }
+      ],
+      "source": {
+        "doi": "10.3389/fenrg.2016.00028",
+        "url": "https://www.frontiersin.org/journals/energy-research/articles/10.3389/fenrg.2016.00028/full",
+        "title": "Development of Lithium-Stuffed Garnet-Type Oxide Solid Electrolytes with High Ionic Conductivity for Application to All-Solid-State Batteries",
+        "year": 2016,
+        "local_doc_id": "143d8c37b0ed1d8293cf31eff78145f8a48cba05caad71242e7bcbbc7298128f",
+        "local_doc_sha256": "5cb3175c194e653cbd1485e6e742756a19bc5c7ef6d3b207db990508303df7ea",
+        "table_index": 1,
+        "table_offset_utf8_byte": 35172
+      }
+    },
+    {
+      "record_id": "hamao-2016-polycrystal-x0.5",
+      "sample_type": "polycrystalline ceramic",
+      "phase": "0.98 cubic Ia-3d plus 0.02 tetragonal I41/acd by Rietveld weight ratio",
+      "processing": "Al-free solid-state synthesis",
+      "measurements": [
+        {
+          "property": "total_ionic_conductivity",
+          "value": 0.00084,
+          "unit": "S/cm",
+          "temperature_k": 297.0,
+          "method": "AC impedance, unresolved bulk plus grain-boundary semicircle"
+        },
+        {
+          "property": "cubic_lattice_parameter",
+          "value": 12.9481,
+          "unit": "angstrom",
+          "temperature_k": 298.0,
+          "uncertainty": 0.0001
+        },
+        {
+          "property": "cubic_phase_weight_fraction",
+          "value": 0.98,
+          "unit": "fraction"
+        }
+      ],
+      "source": {
+        "doi": "10.2109/jcersj2.16019",
+        "url": "https://www.jstage.jst.go.jp/article/jcersj2/124/6/124_16019/_article",
+        "title": "Synthesis, crystal structure and conductive properties of garnet-type lithium ion conductor Al-free Li7-xLa3Zr2-xTaxO12 (0<=x<=0.6)",
+        "year": 2016,
+        "pages": "678-683",
+        "structure_repository_id": "COD-1545083",
+        "structure_file_sha256": "cbcb4f83b3ee0be0ce7a4e05a9e02bf429f8bb5aee317690678af02939c92ba3"
+      }
+    },
+    {
+      "record_id": "kataoka-2018-single-crystal",
+      "sample_type": "floating-zone-grown single crystal",
+      "phase": "cubic Ia-3d",
+      "measurements": [
+        {
+          "property": "total_ionic_conductivity",
+          "value": 0.00127,
+          "unit": "S/cm",
+          "temperature_k": 298.0,
+          "method": "AC impedance"
+        },
+        {
+          "property": "tracer_diffusivity",
+          "value": 1.57e-13,
+          "unit": "m2/s",
+          "temperature_k": 298.0,
+          "method": "NMR"
+        },
+        {
+          "property": "tracer_diffusivity",
+          "value": 7.96e-13,
+          "unit": "m2/s",
+          "temperature_k": 333.0,
+          "method": "NMR"
+        },
+        {
+          "property": "activation_energy",
+          "value": 0.39662347192236935,
+          "unit": "eV",
+          "method": "two-point value derived from the two reported NMR tracer diffusivities",
+          "derived": true,
+          "derivation": "Ea=kB*ln(D333/D298)/(1/298-1/333); no uncertainty inferred"
+        }
+      ],
+      "source": {
+        "doi": "10.1002/celc.201800679",
+        "url": "https://chemistry-europe.onlinelibrary.wiley.com/doi/10.1002/celc.201800679",
+        "title": "High Ionic Conductor Member of Garnet-Type Oxide Li6.5La3Zr1.5Ta0.5O12",
+        "year": 2018,
+        "pages": "2551-2557",
+        "provenance_note": "The publisher abstract directly reports the conductivity and both NMR diffusivities. The later detailed PGSE-NMR study (doi:10.1063/1.5089576) is supporting methodological context, not a replacement source for these values."
+      }
+    },
+    {
+      "record_id": "li-2020-cuo-polycrystal",
+      "sample_type": "polycrystalline ceramic with 1 wt% CuO sintering aid",
+      "phase": "cubic garnet; processing additive makes this a secondary benchmark",
+      "processing": "solid-state reactive sintering, 1100 C for 20 h",
+      "relative_density_percent": 90.38,
+      "measurements": [
+        {
+          "property": "total_ionic_conductivity",
+          "value": 0.000106,
+          "unit": "S/cm",
+          "temperature_k": 298.15,
+          "method": "AC impedance"
+        },
+        {
+          "property": "activation_energy",
+          "value": 0.43,
+          "unit": "eV",
+          "method": "Arrhenius fit of total conductivity"
+        }
+      ],
+      "source": {
+        "doi": "10.1007/s10853-020-05221-1",
+        "url": "https://link.springer.com/article/10.1007/s10853-020-05221-1",
+        "title": "Solid-state reactive sintering of dense and highly conductive Ta-doped Li7La3Zr2O12 using CuO as a sintering aid",
+        "year": 2020,
+        "pages": "16470-16481",
+        "table": 2
+      }
+    }
+  ]
+}

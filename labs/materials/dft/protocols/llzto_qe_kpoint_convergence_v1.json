@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-qe-kpoint-convergence-v1",
+  "reference_code": "Quantum ESPRESSO 7.5 pw.x",
+  "parent_cutoff_protocol": "dft/protocols/llzto_qe_cutoff_convergence_v1.json",
+  "parent_cutoff_protocol_sha256": "bdc8401a1f1490e3dc899c8cf4a904649046186db86af5ea61bf3fb965f500ff",
+  "cutoff_decision": "runs/dft/llzto-qe-cutoff-convergence-v1/cutoff-decision.json",
+  "cutoff_decision_sha256": "865a3716ec681126e58e285c96cfcc82b2e379e7ab8ed066f37e8fd9c1c931ec",
+  "cutoff_decision_fingerprint": "a6edd07b9794cac7e87a4bdcae0b30cf5b85b092fcc2d775c1248c1f99205d1a",
+  "selection_is_model_blind": true,
+  "baseline_runs": {
+    "conv-relaxed-occ00": "runs/dft/llzto-qe-cutoff-convergence-v1/conv-relaxed-occ00--ecut90-gamma-scf1e8",
+    "conv-t800-farthest": "runs/dft/llzto-qe-cutoff-convergence-v1/conv-t800-farthest--ecut90-gamma-scf1e8"
+  },
+  "execution_environment": {
+    "manifest": "dft/manifests/qe_7.5_conda_linux64.json",
+    "manifest_sha256": "d0102f9182d8f99b47e0deff4f63eb4259a92bf4488c693705af834d9258d658",
+    "explicit_lock": "dft/qe-7.5-linux-64.lock",
+    "explicit_lock_sha256": "382affc8d291ddc36dea0c4d6cad52112300f4f4a998f1ea1524c741d3614385",
+    "pw_executable_sha256": "1d66c7856f5d6b3cd9c66b8578e01512b16bbe907b4360e54234890712ccd6a1",
+    "qe_package_sha256": "4f21a746fcc644d2170caf28e6b620716e993f8a994a9810dce694c49a3f03da",
+    "mpi": "Open MPI 5.0.10",
+    "omp_num_threads": 1
+  },
+  "physics": {
+    "exchange_correlation": "PBE",
+    "spin": "non-spin-polarized",
+    "hubbard_u": false,
+    "dispersion_correction": false,
+    "spin_orbit": false,
+    "occupations": "fixed",
+    "symmetry": "disabled"
+  },
+  "stage": "Gamma versus 2x2x2 k-point sampling at the selected 90/720 Ry cutoff and 1e-8 Ry SCF threshold",
+  "calculations": [
+    {
+      "label": "ecut90-k2x2x2-scf1e8",
+      "purpose": "upper k-point comparison against the frozen 90/720 Ry gamma-point baseline",
+      "ecutwfc_ry": 90.0,
+      "ecutrho_ry": 720.0,
+      "kpoints": [2, 2, 2],
+      "conv_thr_ry": 1e-8,
+      "electron_maxstep": 250,
+      "mixing_mode": "plain",
+      "mixing_beta": 0.3,
+      "diagonalization": "david"
+    }
+  ],
+  "acceptance": {
+    "relative_energy_mev_atom_max": 1.0,
+    "force_component_max_abs_change_ev_angstrom": 0.01,
+    "stress_component_max_abs_change_gpa": 0.1,
+    "decision_rule": "Select gamma only if gamma versus 2x2x2 passes every criterion on both frozen structures. If it fails, stop and freeze a separately versioned 2x2x2-versus-denser comparison before selecting any mesh. Do not inspect CHGNet errors."
+  }
+}

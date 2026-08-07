@@ -1,0 +1,10 @@
+schema_version: ara.result_bundle.v1
+bundle_id: example-minimal-v1
+producer:
+  repository: example-domain-repository
+  commit: 0123456789abcdef0123456789abcdef01234567
+claims_file: claims.yaml
+artifacts:
+  - id: summary-table
+    path: results.csv
+    sha256: cfc9051e26d0b3bc96962d3cc30a0f1759786f84ba76368c7931b492565a04a5

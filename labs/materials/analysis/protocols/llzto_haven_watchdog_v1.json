@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-haven-watchdog-v1",
+  "claim_boundary": "This auxiliary watchdog covers only the convention-explicit Haven validation waiter. It may restart the process solely while its hash-verified state is waiting; a running analysis, completed result, failed exception, or scientific blocker is never restarted or converted into a pass.",
+  "poll_seconds": 30,
+  "state_stale_seconds": 180,
+  "managed": [
+    {
+      "process_id": "haven-convention-validation",
+      "marker": "matfactory.haven_queue",
+      "policy": "restart-waiting-only",
+      "state_path": "runs/supervisor/haven-validation-queue-v1.json",
+      "expected_protocol_sha256": "3418c8cdd44611c31809835e63ce08c7a9a528e82478a285105e596d253fa83a",
+      "module": "matfactory.haven_queue",
+      "args": [
+        "--protocol",
+        "analysis/protocols/llzto_haven_convention_validation_v1.json",
+        "--state",
+        "runs/supervisor/haven-validation-queue-v1.json",
+        "--poll-seconds",
+        "30"
+      ],
+      "log_path": "runs/supervisor/haven-validation-queue-v1.log"
+    }
+  ]
+}

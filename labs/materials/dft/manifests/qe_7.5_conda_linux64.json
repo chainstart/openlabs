@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "code": "Quantum ESPRESSO pw.x",
+  "version": "7.5",
+  "installation_method": "isolated micromamba prefix from an explicit conda-forge lock",
+  "installed_prefix": "/home/biostar/.local/share/matfactory/qe-7.5",
+  "executable": "/home/biostar/.local/share/matfactory/qe-7.5/bin/pw.x",
+  "executable_sha256": "1d66c7856f5d6b3cd9c66b8578e01512b16bbe907b4360e54234890712ccd6a1",
+  "package": {
+    "name": "qe",
+    "version": "7.5",
+    "build": "h19104ac_2",
+    "url": "https://conda.anaconda.org/conda-forge/linux-64/qe-7.5-h19104ac_2.conda",
+    "sha256": "4f21a746fcc644d2170caf28e6b620716e993f8a994a9810dce694c49a3f03da",
+    "license": "GPL-2.0-only"
+  },
+  "mpi": {
+    "implementation": "Open MPI",
+    "version": "5.0.10",
+    "package_build": "h67ed482_1"
+  },
+  "major_numeric_libraries": {
+    "elpa": "2025.06.001 mpi_openmpi_h335e491_1",
+    "scalapack": "2.2.0 h606478a_6",
+    "hdf5": "1.14.6 mpi_openmpi_h8367ee7_10",
+    "fftw": "3.3.11 nompi_h3b011a4_100",
+    "openblas": "0.3.33 pthreads_h94d23a6_0"
+  },
+  "explicit_lock": "dft/qe-7.5-linux-64.lock",
+  "explicit_lock_sha256": "382affc8d291ddc36dea0c4d6cad52112300f4f4a998f1ea1524c741d3614385",
+  "execution_policy": {
+    "omp_num_threads": 1,
+    "openblas_num_threads": 1,
+    "rank_benchmarks": [8, 12, 16],
+    "selection_rule": "Use the fastest tested rank count that avoids swap and leaves at least 6 GiB available memory for the host and the concurrent GPU MD process."
+  }
+}

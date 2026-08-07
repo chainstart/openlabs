@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "llzto-q1-ensemble-nve-matched-v1",
+  "root_dir": "runs/campaigns/llzto_q1_ensemble_nve_matched_v1",
+  "title": "Matched NVE-production sensitivity for LLZTO occupancy realization 0 at 800 K",
+  "research_question": "Does replacing the 100 fs Nose-Hoover production thermostat with energy-conserving dynamics materially alter tracer, collective, or collective-to-tracer transport after the same NVT equilibration?",
+  "primary_estimands": [
+    "NVE versus NVT tracer diffusivity ratio",
+    "NVE versus NVT collective diffusivity ratio",
+    "NVE versus NVT collective-to-tracer ratio contrast",
+    "500 ps NVE energy drift"
+  ],
+  "stopping_rule": "The matched 800 K NVE point must pass the same tracer and collective diffusion rules as the NVT reference, remain within ten percent of 800 K, and satisfy the frozen absolute energy-drift limit. An unresolved point is extended under a separately fingerprinted protocol rather than dropped.",
+  "preregistration_note": "Frozen while the first formal 700 K trajectory was incomplete and before any formal 800 K transport result existed.",
+  "base_config": {
+    "schema_version": "2.1",
+    "protocol_name": "llzto-ensemble-nve-matched-v1",
+    "protocol_tier": "formal-sensitivity",
+    "formula": "Li6.5La3Zr1.5Ta0.5O12",
+    "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/relaxed.structure.json",
+    "structure_id": "formal-occ00-vel1701-relaxed",
+    "primitive_cell": true,
+    "min_initial_li_li_distance_angstrom": 1.6,
+    "occupancy_seed": 0,
+    "supercell": [
+      1,
+      1,
+      1
+    ],
+    "temperatures": [
+      800
+    ],
+    "timestep_fs": 2.0,
+    "equilibration_steps": 10000,
+    "production_steps": 250000,
+    "loginterval": 50,
+    "equilibration_ensemble": "nvt",
+    "production_ensemble": "nve",
+    "thermostat": "Nose-Hoover",
+    "thermostat_tau_fs": 100.0,
+    "pressure_gpa": 0.000101325,
+    "barostat_tau_fs": 1000.0,
+    "relax_structure": false,
+    "relax_cell": false,
+    "relax_fmax_ev_a": 0.05,
+    "relax_steps": 1000,
+    "seed": 1701,
+    "mobile_species": "Li",
+    "fit_from_fraction": 0.2,
+    "fit_to_fraction": 0.8,
+    "max_lags": 500,
+    "uncertainty_blocks": 5,
+    "min_final_msd_a2": 20.0,
+    "min_diffusive_exponent": 0.8,
+    "max_diffusive_exponent": 1.2,
+    "max_relative_diffusivity_stderr": 0.5,
+    "max_abs_nve_energy_drift_mev_atom_ps": 1.0,
+    "device": "cuda",
+    "model_name": "CHGNet-default",
+    "expected_model_state_dict_sha256": "9484ac3e09d17e40e8df63f307c85fc0277981f9418f50d0bc7379c40b198b2c"
+  },
+  "gates": [
+    {
+      "gate_id": "g2-potential-domain",
+      "criterion": "Run only after the full universal-potential domain gate passes."
+    },
+    {
+      "gate_id": "g4-matched-production-ensemble",
+      "criterion": "Reuse the exact primary relaxed structure, occupancy seed, velocity seed, 20 ps NVT equilibration, 500 ps length, timestep, sampling interval, and estimator settings; change only production_ensemble from nvt to nve."
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "ensemble-nve-matched-occ00-vel1701-800k",
+      "stage": "production-ensemble-sensitivity",
+      "purpose": "Matched 500 ps NVE production control for formal-occ00-vel1701 at 800 K.",
+      "enabled": false,
+      "config": {}
+    }
+  ]
+}

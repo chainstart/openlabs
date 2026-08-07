@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-finetune-watchdog-v1",
+  "claim_boundary": "This auxiliary watchdog covers only the outcome-blind fine-tuning contingency supervisor. It may restart the supervisor solely in a hash-verified waiting state. It never triggers fine-tuning before a frozen universal-domain failure, restarts active training/MD/DFT, changes a threshold, reuses a heldout label, or converts a failure into a pass.",
+  "poll_seconds": 30,
+  "state_stale_seconds": 180,
+  "managed": [
+    {
+      "process_id": "chgnet-finetune-contingency",
+      "marker": "matfactory.finetune_queue",
+      "policy": "restart-waiting-only",
+      "state_path": "runs/supervisor/chgnet-finetune-contingency-v1.json",
+      "expected_protocol_sha256": "f198f9d40b44d1d87e0b19ac6509e133e09d5c96ac49aec405d1221e4cc089b7",
+      "module": "matfactory.finetune_queue",
+      "args": [
+        "--protocol",
+        "analysis/protocols/llzto_chgnet_finetune_contingency_v1.json",
+        "--state",
+        "runs/supervisor/chgnet-finetune-contingency-v1.json",
+        "--gpu-lock",
+        "runs/supervisor/md-gpu.lock"
+      ],
+      "log_path": "runs/supervisor/chgnet-finetune-contingency-v1.log"
+    }
+  ]
+}

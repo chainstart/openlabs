@@ -1,0 +1,197 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-chgnet-finetune-contingency-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "claim_boundary": "This is a precommitted fallback, not evidence that fine-tuning is required or will pass. It is triggered only if the frozen universal-CHGNet feasibility or publication-heldout domain gate fails. A passing fallback applies only to exact-composition LLZTO over the tested structure and 650-900 K coordinate domain; every transport trajectory used for publication must then be regenerated with the final fine-tuned weights.",
+  "preregistration_note": "Frozen before the first final-setting feasibility DFT label, before any feasibility or heldout model error, and before any fallback coordinate, label, checkpoint, or model weight existed.",
+  "trigger": {
+    "universal_domain_state": "runs/supervisor/dft-domain-supervisor-v1.json",
+    "universal_domain_protocol": "analysis/protocols/llzto_dft_domain_supervisor_v1.json",
+    "universal_domain_protocol_sha256": "9151e08899605895be5d019b0dccc7ebb0d9429b1bd39b8fa57c6df20e766965",
+    "trigger_statuses": [
+      "blocked_feasibility_domain_failure",
+      "blocked_heldout_domain_failure"
+    ],
+    "not_triggered_status": "complete",
+    "hard_rule": "A universal-domain pass closes this branch as complete-not-triggered. Either frozen domain failure activates the same full fallback from the 12 development labels; the original 30 publication-heldout labels, if they exist, remain diagnostic and are never used for fallback training, checkpoint selection, threshold selection, or final testing."
+  },
+  "baseline_model": {
+    "name": "CHGNet-default",
+    "package_version": "0.4.2",
+    "state_dict_sha256": "9484ac3e09d17e40e8df63f307c85fc0277981f9418f50d0bc7379c40b198b2c",
+    "energy_is_intensive": true
+  },
+  "implementation_locks": {
+    "trainer_source": {
+      "path": ".venv/lib/python3.12/site-packages/chgnet/trainer/trainer.py",
+      "sha256": "c932e54d1edfa506886afac43fd1b0f8fe0561aadb4eaea808f0b16ffaef55d4"
+    },
+    "dataset_source": {
+      "path": ".venv/lib/python3.12/site-packages/chgnet/data/dataset.py",
+      "sha256": "fb53ae559c6d6794780b156c7ad28a381b1a5f8efaf832043495499c3217d60e"
+    },
+    "model_source": {
+      "path": ".venv/lib/python3.12/site-packages/chgnet/model/model.py",
+      "sha256": "767b120ba8b3ee7f75c247416902d1b72e871ba8ffc2916ed76d24809c98fc96"
+    }
+  },
+  "reference_method": {
+    "domain_analysis_protocol": "analysis/protocols/llzto_chgnet_domain_v1.json",
+    "domain_analysis_protocol_sha256": "75c258918102e635f095beb5755dfc8bcd3ddf93dbbe1f89c188d2c2f3aa73a7",
+    "runtime_dft_protocol": "runs/dft/llzto-qe-final-domain-v1/final-dft-protocol.json",
+    "pseudopotential_manifest": "dft/manifests/sssp_1.3.0_pbe_precision_llzto.json",
+    "qe_prefix": "/home/biostar/.local/share/matfactory/qe-7.5",
+    "mpi_ranks": 8,
+    "minimum_memory_gib": 20,
+    "poll_seconds": 30
+  },
+  "energy_reference_alignment": {
+    "method": "minimum-L2 AtomRef shift at fixed exact composition",
+    "fit_data": "training partition only during checkpoint selection; every non-heldout training record during final refit",
+    "rule": "Compute the pretrained interaction contribution as predicted energy minus the old AtomRef contribution. Shift the old AtomRef weights by the minimum-L2 vector parallel to the exact-composition fraction vector so that mean(shifted AtomRef + pretrained interaction) equals mean DFT energy per atom. Freeze AtomRef after this deterministic shift.",
+    "scope_limit": "Because every training structure has the same composition, the shifted AtomRef is not validated for any other stoichiometry."
+  },
+  "transfer_learning": {
+    "targets": "efs",
+    "energy_label": "QE total energy divided by atom count, in eV/atom",
+    "force_label": "QE force in eV/angstrom",
+    "stress_label": "The repository positive-tension stress in GPa is multiplied by -10 before StructureData, which converts VASP-style kbar back by -0.1.",
+    "frozen_layers": [
+      "atom_embedding",
+      "bond_embedding",
+      "angle_embedding",
+      "bond_basis_expansion",
+      "angle_basis_expansion",
+      "atom_conv_layers[:-1]",
+      "bond_conv_layers",
+      "angle_layers",
+      "composition_model_after_deterministic_alignment"
+    ],
+    "trainable_scope": "last atom convolution plus downstream readout/output layers",
+    "optimizer": "Adam",
+    "scheduler": "CosLR",
+    "criterion": "MSE",
+    "learning_rate": 0.001,
+    "energy_loss_ratio": 1.0,
+    "force_loss_ratio": 1.0,
+    "stress_loss_ratio": 0.1,
+    "batch_size": 2,
+    "checkpoint_score": "max(validation energy MAE/0.015 eV atom-1, force-component MAE/0.10 eV A-1, stress-component MAE/0.25 GPa); choose the earliest minimum",
+    "checkpoint_normalizers": {
+      "e": 0.015,
+      "f": 0.1,
+      "s": 0.25
+    }
+  },
+  "bootstrap_phase": {
+    "expected_records": 12,
+    "sources": [
+      {
+        "selection_id": "llzto-dft-feasibility-v1",
+        "snapshot_manifest": "runs/dft/llzto-dft-feasibility-v1/snapshot_manifest.json",
+        "snapshot_manifest_sha256": "8a0c5a05ed3aef2016892802c5cad752149981c35a26b9b1f087179665974e6a",
+        "dft_campaign_root": "runs/dft/llzto-qe-final-domain-v1/feasibility"
+      }
+    ],
+    "validation_ids": [
+      "relaxed-occ00",
+      "pilot-t700-01",
+      "pilot-t800-01",
+      "pilot-t900-02"
+    ],
+    "training_rule": "All remaining eight records.",
+    "max_epochs": 30,
+    "torch_seed": 20260830,
+    "data_seed": 20260830,
+    "output_model": "runs/models/llzto-chgnet-bootstrap-v1/model.pth.tar",
+    "output_report": "runs/models/llzto-chgnet-bootstrap-v1/training-report.json",
+    "release_gate": "runs/supervisor/g2-finetune-bootstrap-v1.json"
+  },
+  "expansion_phase": {
+    "sampling_template": "protocols/llzto_finetune_training_sampling_template_v1.json",
+    "sampling_template_sha256": "10cf66b812444cfd1e6a81ee612f7e28a661aa7b3f450d4c7f234f1fd0196357",
+    "derived_sampling_protocol": "runs/protocols/llzto_finetune_training_sampling_v1.json",
+    "sampling_campaign_root": "runs/campaigns/llzto_finetune_training_sampling_v1",
+    "sampling_queue_state": "runs/supervisor/md-finetune-training-sampling-queue-v1.json",
+    "snapshot_selection_protocol": "dft/protocols/llzto_finetune_training_snapshots_v1.json",
+    "snapshot_selection_protocol_sha256": "32dbab46a1ab1f80790f71803b62fadf589bc5d358808c2e050cbf84c8df6cd0",
+    "snapshot_selection_root": "runs/dft/llzto-finetune-training-v1",
+    "expected_new_records": 50,
+    "dft_campaign_root": "runs/dft/llzto-qe-finetune-training-v1",
+    "dft_queue_state": "runs/supervisor/dft-finetune-training-queue-v1.json"
+  },
+  "final_training_phase": {
+    "expected_records": 62,
+    "sources": [
+      {
+        "selection_id": "llzto-dft-feasibility-v1",
+        "snapshot_manifest": "runs/dft/llzto-dft-feasibility-v1/snapshot_manifest.json",
+        "snapshot_manifest_sha256": "8a0c5a05ed3aef2016892802c5cad752149981c35a26b9b1f087179665974e6a",
+        "dft_campaign_root": "runs/dft/llzto-qe-final-domain-v1/feasibility"
+      },
+      {
+        "selection_id": "llzto-finetune-training-v1",
+        "snapshot_manifest": "runs/dft/llzto-finetune-training-v1/snapshot_manifest.json",
+        "selection_protocol": "dft/protocols/llzto_finetune_training_snapshots_v1.json",
+        "selection_protocol_sha256": "32dbab46a1ab1f80790f71803b62fadf589bc5d358808c2e050cbf84c8df6cd0",
+        "dft_campaign_root": "runs/dft/llzto-qe-finetune-training-v1"
+      }
+    ],
+    "validation_rule": {
+      "kind": "latin-diagonal-entire-occupancy-temperature-strata",
+      "occupancy_to_temperature_k": {"0": 700, "1": 750, "2": 800, "3": 850, "4": 900},
+      "expected_validation_records": 10,
+      "hard_rule": "Both selected frames in each of the five diagonal strata are validation records; all 12 feasibility records and the other 40 expansion records train checkpoint selection."
+    },
+    "refit_rule": "After choosing the earliest minimum normalized validation score, reload the untouched pretrained model, realign AtomRef on all 62 non-heldout records, and train for exactly selected_epoch_plus_one epochs on all 62 records.",
+    "max_epochs": 50,
+    "torch_seed": 20260831,
+    "data_seed": 20260831,
+    "output_model": "runs/models/llzto-chgnet-finetuned-v1/model.pth.tar",
+    "output_report": "runs/models/llzto-chgnet-finetuned-v1/training-report.json",
+    "release_gate": "runs/supervisor/g2-finetune-final-model-v1.json"
+  },
+  "fresh_publication_test": {
+    "sampling_template": "protocols/llzto_finetune_heldout_sampling_template_v1.json",
+    "sampling_template_sha256": "d244d50ef707015369405537de5c0ae62e9c97f1a3fb743f8fa85a151cf321eb",
+    "derived_sampling_protocol": "runs/protocols/llzto_finetune_heldout_sampling_v1.json",
+    "sampling_campaign_root": "runs/campaigns/llzto_finetune_heldout_sampling_v1",
+    "sampling_queue_state": "runs/supervisor/md-finetune-heldout-sampling-queue-v1.json",
+    "snapshot_selection_protocol": "dft/protocols/llzto_finetune_fresh_heldout_snapshots_v1.json",
+    "snapshot_selection_protocol_sha256": "34ad19a20903e9695c9d381c8a335e906f7f4aa9f962c2ea8fd0dec56a93612c",
+    "snapshot_selection_root": "runs/dft/llzto-finetune-fresh-heldout-v1",
+    "expected_records": 30,
+    "temperatures_k": [650, 700, 750, 800, 850, 900],
+    "occupancy_seeds": [0, 1, 2, 3, 4],
+    "dft_campaign_root": "runs/dft/llzto-qe-finetune-fresh-heldout-v1",
+    "dft_queue_state": "runs/supervisor/dft-finetune-heldout-queue-v1.json",
+    "prediction_root": "runs/dft/llzto-chgnet-finetuned-domain-v1/fresh-heldout",
+    "analysis_protocol": "runs/protocols/llzto_chgnet_finetuned_domain_v1.json",
+    "domain_report": "runs/dft/llzto-chgnet-finetuned-domain-v1/fresh-heldout-report.json",
+    "acceptance_rule": "Apply unchanged aggregate and robustness thresholds from the locked universal-domain analysis protocol. No fallback threshold may be relaxed after seeing results."
+  },
+  "release_and_rerun": {
+    "release_gate": "runs/supervisor/g2-finetuned-release-v1.json",
+    "gate_id": "g2-finetuned-potential-domain",
+    "hard_rule": "A passing fresh publication test releases only campaigns whose manifests embed the final fine-tuned state-dictionary hash and model artifact hash. It never creates the universal-model g2-release-v1 token.",
+    "required_reruns": [
+      "five-occupancy formal 700-900 K transport",
+      "nested velocity sensitivity",
+      "matched finite-size sensitivity",
+      "fixed and thermal volume sensitivity",
+      "matched 500 ps NVE production-ensemble sensitivity",
+      "all downstream mechanism, statistics, experiment, publication, manuscript, attestation, and evidence-audit products"
+    ]
+  },
+  "output_state": "runs/supervisor/chgnet-finetune-contingency-v1.json",
+  "sources": [
+    {
+      "role": "official CHGNet fine-tuning documentation and stress/energy-label conventions",
+      "url": "https://github.com/CederGroupHub/chgnet/blob/main/examples/fine_tuning.ipynb"
+    },
+    {
+      "role": "pretrained-model and data-efficient fine-tuning basis",
+      "doi": "10.1038/s42256-023-00716-3"
+    }
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-dft-numerical-supervisor-v1",
+  "claim_boundary": "This state machine executes only preregistered model-blind QE numerical decisions. It may select a cheaper member of a passing adjacent pair but cannot relax thresholds, inspect CHGNet errors, skip a structure, or use MPI timing to waive equivalence.",
+  "preregistration_note": "Frozen while the first Gamma-to-2x2x2 upper calculation was still incomplete and before any final k-point energy, force, stress, or pass/fail result. Both SCF branches and the optional 1e-12 Ry continuation were fixed before the k-point decision.",
+  "convergence_structures": [
+    "conv-relaxed-occ00",
+    "conv-t800-farthest"
+  ],
+  "snapshot_manifest": {
+    "path": "runs/dft/llzto-convergence-snapshots-v1/snapshot_manifest.json",
+    "sha256": "5240cc729e7a16b4d2d41875ea3935305d77f15bcbb3c54b831a712144e7bfdd"
+  },
+  "pseudopotential_manifest": {
+    "path": "dft/manifests/sssp_1.3.0_pbe_precision_llzto.json",
+    "sha256": "f79ec71820d23fc225b192ce52c8d154e95cf16070074cfba27cc0d23140eed4",
+    "local_directory": "/home/biostar/.local/share/matfactory/pseudos/SSSP_1.3.0_PBE_precision/selected"
+  },
+  "execution_environment": {
+    "qe_prefix": "/home/biostar/.local/share/matfactory/qe-7.5",
+    "manifest": "dft/manifests/qe_7.5_conda_linux64.json",
+    "manifest_sha256": "d0102f9182d8f99b47e0deff4f63eb4259a92bf4488c693705af834d9258d658",
+    "explicit_lock": "dft/qe-7.5-linux-64.lock",
+    "explicit_lock_sha256": "382affc8d291ddc36dea0c4d6cad52112300f4f4a998f1ea1524c741d3614385",
+    "pw_executable_sha256": "1d66c7856f5d6b3cd9c66b8578e01512b16bbe907b4360e54234890712ccd6a1",
+    "qe_package_sha256": "4f21a746fcc644d2170caf28e6b620716e993f8a994a9810dce694c49a3f03da",
+    "mpi": "Open MPI 5.0.10",
+    "omp_num_threads": 1
+  },
+  "physics": {
+    "exchange_correlation": "PBE",
+    "spin": "non-spin-polarized",
+    "hubbard_u": false,
+    "dispersion_correction": false,
+    "spin_orbit": false,
+    "occupations": "fixed",
+    "symmetry": "disabled"
+  },
+  "kpoint": {
+    "protocol": "dft/protocols/llzto_qe_kpoint_ladder_v2.json",
+    "protocol_sha256": "3732fe4ccc8d02428af75f7a255db1f88a45fba23ad0811283cf2370f1755e91",
+    "current_queue_state": "runs/supervisor/kpoint-queue-v1.json",
+    "gamma_runs": {
+      "conv-relaxed-occ00": "runs/dft/llzto-qe-cutoff-convergence-v1/conv-relaxed-occ00--ecut90-gamma-scf1e8",
+      "conv-t800-farthest": "runs/dft/llzto-qe-cutoff-convergence-v1/conv-t800-farthest--ecut90-gamma-scf1e8"
+    },
+    "k2x2x2_runs": {
+      "conv-relaxed-occ00": "runs/dft/llzto-qe-kpoint-convergence-v1/conv-relaxed-occ00--ecut90-k2x2x2-scf1e8",
+      "conv-t800-farthest": "runs/dft/llzto-qe-kpoint-convergence-v1/conv-t800-farthest--ecut90-k2x2x2-scf1e8"
+    },
+    "extension_root": "runs/dft/llzto-qe-kpoint-extension-v2",
+    "extension_label": "ecut90-k3x3x3-scf1e8",
+    "extension_queue_state": "runs/supervisor/kpoint-extension-queue-v2.json",
+    "extension_resource_release": "runs/supervisor/kpoint-3x3x3-resource-release-v1.json",
+    "extension_resource_reason": "A 3x3x3 mesh contains 27 k-points versus 8 for 2x2x2 and may exceed the 43 GiB host. Release requires a read-only peak-memory assessment or migration to a larger-memory QE host."
+  },
+  "scf": {
+    "gamma_protocol": "dft/protocols/llzto_qe_scf_gamma_v1.json",
+    "gamma_protocol_sha256": "b856750451ed16ca24d6c653a9f1114a4418164f2cde304649b6a119e4192bab",
+    "k2x2x2_protocol": "dft/protocols/llzto_qe_scf_k2x2x2_v1.json",
+    "k2x2x2_protocol_sha256": "32b2b254add0614757da4816a747ca3f78145801e8ebae60b0ec0a27ed95b4eb",
+    "output_root": "runs/dft/llzto-qe-scf-convergence-v1",
+    "queue_states": [
+      "runs/supervisor/scf-tight-queue-v1.json",
+      "runs/supervisor/scf-tighter-queue-v1.json"
+    ],
+    "report_paths": [
+      "runs/dft/llzto-qe-scf-convergence-v1/convergence-1e8-1e10.json",
+      "runs/dft/llzto-qe-scf-convergence-v1/convergence-1e10-1e12.json"
+    ]
+  },
+  "mpi": {
+    "output_root": "runs/dft/llzto-qe-mpi-reproducibility-v1",
+    "runtime_protocol": "runs/dft/llzto-qe-mpi-reproducibility-v1/mpi-protocol.json",
+    "queue_state_pattern": "runs/supervisor/mpi-rank{rank}-queue-v1.json",
+    "required_ranks": [1, 2, 4, 8],
+    "baseline_rank": 1,
+    "acceptance": {
+      "energy_abs_change_mev_atom_max": 0.001,
+      "force_component_max_abs_change_ev_angstrom": 1e-5,
+      "stress_component_max_abs_change_gpa": 1e-5
+    }
+  },
+  "resources": {
+    "production_mpi_ranks": 8,
+    "standard_min_memory_gib": 20,
+    "kpoint_extension_min_memory_gib": 30,
+    "poll_seconds": 30
+  },
+  "outputs": {
+    "kpoint_gamma_2x2x2_report": "runs/dft/llzto-qe-kpoint-convergence-v1/convergence-gamma-2x2x2.json",
+    "kpoint_2x2x2_3x3x3_report": "runs/dft/llzto-qe-kpoint-extension-v2/convergence-2x2x2-3x3x3.json",
+    "kpoint_decision": "runs/dft/llzto-qe-kpoint-convergence-v1/kpoint-decision.json",
+    "scf_decision": "runs/dft/llzto-qe-scf-convergence-v1/scf-decision.json",
+    "mpi_report": "runs/dft/llzto-qe-mpi-reproducibility-v1/mpi-reproducibility.json"
+  },
+  "failure_rules": {
+    "no_passing_kpoint_pair": "Block progression; freeze a denser comparison on an adequate-memory host.",
+    "no_passing_scf_pair": "Block progression; freeze a stricter threshold without changing limits.",
+    "mpi_nonequivalence": "Block the affected rank configuration; timing cannot waive numerical equivalence.",
+    "partial_output": "Never overwrite. Archive the interrupted directory and materialize a newly fingerprinted run."
+  }
+}

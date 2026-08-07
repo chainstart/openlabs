@@ -1,0 +1,137 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-publication-package-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "preregistration_note": "Figure and table identities were frozen while the first formal 500 ps trajectory and k-point convergence calculation were still incomplete. Layout may be improved without changing estimands, source rows, acceptance gates, or the mandatory inclusion of negative and unresolved outcomes.",
+  "claim_boundary": "Every plot and table must be regenerated from hash-verified reports. Filled/open or pass/fail encodings must retain rejected points. Room-temperature predictions must be visually marked as extrapolations. Experimental compatibility is descriptive, and mechanism associations are not causal claims.",
+  "sources": {
+    "campaign_root": "runs/campaigns/llzto_q1_v1",
+    "campaign_report": "runs/campaigns/llzto_q1_v1/analysis/campaign_report.json",
+    "cutoff_decision": "runs/dft/llzto-qe-cutoff-convergence-v1/cutoff-decision.json",
+    "kpoint_decision": "runs/dft/llzto-qe-kpoint-convergence-v1/kpoint-decision.json",
+    "scf_decision": "runs/dft/llzto-qe-scf-convergence-v1/scf-decision.json",
+    "mpi_report": "runs/dft/llzto-qe-mpi-reproducibility-v1/mpi-reproducibility.json",
+    "g2_release": "runs/supervisor/g2-release-v1.json",
+    "hierarchical_transport": "runs/analysis/hierarchical-transport-v1.json",
+    "nested_velocity": "runs/analysis/nested-velocity-v1.json",
+    "transport_sensitivity": "runs/analysis/transport-sensitivity-v1.json",
+    "mechanism_root": "runs/analysis/mechanisms-formal-v1",
+    "mechanism_association": "runs/analysis/mechanism-transport-association-v1.json",
+    "experimental_validation": "runs/analysis/hierarchical-experimental-validation-v1.json",
+    "exclusion_ledger": "analysis/protocols/llzto_exclusions_v1.json",
+    "evidence_audit_protocol": "analysis/protocols/llzto_q1_evidence_audit_v1.json"
+  },
+  "output": {
+    "root": "runs/analysis/publication-v1",
+    "figure_directory": "runs/analysis/publication-v1/figures",
+    "table_directory": "runs/analysis/publication-v1/tables",
+    "artifact_manifest": "runs/analysis/publication-v1/artifact-manifest.json",
+    "figure_formats": ["svg", "pdf", "png"],
+    "table_formats": ["csv", "json"],
+    "png_dpi": 300
+  },
+  "figures": [
+    {
+      "figure_id": "fig01-workflow-and-gates",
+      "title": "Auditable LLZTO evidence workflow and gate disposition",
+      "required_content": "G0-G7 dependency chain, source hashes, and pass/block state"
+    },
+    {
+      "figure_id": "fig02-dft-numerical-convergence",
+      "title": "QE cutoff, k-point, SCF, and MPI numerical convergence",
+      "required_content": "relative-energy, force, and stress changes with frozen limits and selected settings"
+    },
+    {
+      "figure_id": "fig03-chgnet-dft-domain",
+      "title": "CHGNet versus DFT domain diagnostics",
+      "required_content": "centered relative energy, force, and stress parity/error diagnostics for development and publication-heldout sets"
+    },
+    {
+      "figure_id": "fig04-all-msd-diagnostics",
+      "title": "Tracer and collective MSD adequacy for every formal point",
+      "required_content": "all 25 formal temperature points, fit windows, exponents, displacement thresholds, uncertainty, and accepted/rejected status"
+    },
+    {
+      "figure_id": "fig05-hierarchical-arrhenius",
+      "title": "Configuration-resolved tracer and collective Arrhenius transport",
+      "required_content": "five occupancy/velocity series, point uncertainty, fitted domain, population uncertainty, prediction interval, and explicit room-temperature extrapolation"
+    },
+    {
+      "figure_id": "fig06-nested-velocity",
+      "title": "Occupancy and velocity contributions at 800 K",
+      "required_content": "balanced 5 by 3 point grid and variance decomposition for tracer, collective, and their ratio"
+    },
+    {
+      "figure_id": "fig07-size-and-volume-sensitivity",
+      "title": "Finite-size and volume sensitivity",
+      "required_content": "block-bootstrap effect intervals and preregistered equivalence bounds for all estimators"
+    },
+    {
+      "figure_id": "fig08-mechanisms-and-haven-relation",
+      "title": "Site, reverse-jump, string, and Haven-type association diagnostics",
+      "required_content": "primary descriptors for all 25 points, assignment sensitivity, Holm-adjusted association results, and cooperative-string qualification"
+    },
+    {
+      "figure_id": "fig09-experiment-comparison",
+      "title": "Like-for-like exact-composition experimental comparison",
+      "required_content": "NMR tracer, impedance conductivity, activation energy, population interval, new-configuration prediction interval, direct/derived and sample-type distinctions"
+    }
+  ],
+  "tables": [
+    {
+      "table_id": "table01-provenance",
+      "title": "Protocols, source reports, implementations, and SHA-256 identifiers"
+    },
+    {
+      "table_id": "table02-dft-convergence",
+      "title": "QE numerical and MPI convergence metrics and decisions"
+    },
+    {
+      "table_id": "table03-domain-errors",
+      "title": "CHGNet-DFT aggregate, temperature, occupancy, element, and outlier diagnostics"
+    },
+    {
+      "table_id": "table04-formal-transport-points",
+      "title": "All formal tracer/collective transport estimates and adequacy outcomes"
+    },
+    {
+      "table_id": "table05-hierarchical-arrhenius",
+      "title": "Configuration fits, population inference, curvature, and extrapolated predictions"
+    },
+    {
+      "table_id": "table06-replication-and-sensitivity",
+      "title": "Velocity variance, finite-size, fixed-volume, and NPT-volume effects"
+    },
+    {
+      "table_id": "table07-mechanism-descriptors",
+      "title": "Configuration/temperature site, jump, reverse, string, and Haven-type descriptors"
+    },
+    {
+      "table_id": "table08-mechanism-associations",
+      "title": "All twelve mechanism-transport association tests and robustness gates"
+    },
+    {
+      "table_id": "table09-experiment-and-exclusions",
+      "title": "Experimental comparisons plus excluded, development-only, superseded, and retained-negative artifacts"
+    }
+  ],
+  "style": {
+    "accepted_color": "#0072B2",
+    "collective_color": "#D55E00",
+    "negative_or_blocked_color": "#666666",
+    "equivalence_color": "#009E73",
+    "font_family": "DejaVu Sans",
+    "minimum_axis_font_pt": 8,
+    "minimum_panel_label_font_pt": 10,
+    "colorblind_safe": true
+  },
+  "hard_rules": {
+    "complete_source_reports_required": true,
+    "overwrite_forbidden": true,
+    "all_declared_figures_required_in_all_formats": true,
+    "all_declared_tables_required_in_all_formats": true,
+    "rejected_and_negative_rows_retained": true,
+    "manifest_must_hash_every_source_and_output": true,
+    "generation_command_must_be_recorded": true
+  }
+}

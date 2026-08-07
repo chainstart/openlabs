@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-mechanisms-v1",
+  "claim_boundary": "Crystallographic basin occupancy, persistent reverse jumps, and temporally connected multi-ion strings are reported descriptively. Cooperative motion is claimed only when the observed connected-event fraction exceeds the preregistered per-ion circular-time null model and remains robust to the stated sensitivity grid.",
+  "site_model": {
+    "source": "data/structures/raw/cod_1545083.cif",
+    "source_sha256": "cbcb4f83b3ee0be0ce7a4e05a9e02bf429f8bb5aee317690678af02939c92ba3",
+    "primitive": true,
+    "split_site_cutoff_angstrom": 1.2,
+    "oxygen_coordination_cutoff_angstrom": 3.0
+  },
+  "analysis": {
+    "frame_spacing_ps": 0.1,
+    "assignment_cutoff_angstrom": 1.2,
+    "min_dwell_ps": 0.3,
+    "max_unassigned_gap_ps": 0.2,
+    "max_transition_gap_ps": 0.5,
+    "reverse_window_ps": 2.0,
+    "string_windows_ps": [0.2, 0.4, 0.8],
+    "primary_string_window_ps": 0.4,
+    "null_model": "independent uniform circular time shift for each labelled ion",
+    "null_replicates": 200,
+    "null_seed": 20260806
+  },
+  "sensitivity": {
+    "assignment_cutoff_angstrom": [1.0, 1.2, 1.4],
+    "min_dwell_ps": [0.2, 0.3, 0.5],
+    "reverse_window_ps": [1.0, 2.0, 5.0],
+    "require_qualitative_conclusion_stability": true
+  },
+  "quality_gate": {
+    "min_assignment_fraction": 0.95,
+    "max_collision_frame_fraction": 0.01,
+    "failure_action": "Do not interpret site, reverse-jump, or string statistics. Refine a separately versioned assignment model without inspecting configuration-level transport correlations, then rerun the sensitivity grid."
+  }
+}

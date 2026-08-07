@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-mechanism-temperature-watchdog-v1",
+  "claim_boundary": "This auxiliary watchdog covers only the post-primary categorical-temperature robustness waiter. It may restart that process solely while its hash-verified state is waiting; a running analysis, completed result, failed exception, or scientific blocker is never restarted or converted into a pass.",
+  "poll_seconds": 30,
+  "state_stale_seconds": 180,
+  "managed": [
+    {
+      "process_id": "mechanism-temperature-robustness",
+      "marker": "matfactory.mechanism_temperature_queue",
+      "policy": "restart-waiting-only",
+      "state_path": "runs/supervisor/mechanism-temperature-robustness-queue-v1.json",
+      "expected_protocol_sha256": "cc3fa9f9868f7484631fed2f31acd0351fe38a30e1496d40cabb110acf917b61",
+      "module": "matfactory.mechanism_temperature_queue",
+      "args": [
+        "--protocol",
+        "analysis/protocols/llzto_mechanism_temperature_robustness_v1.json",
+        "--state",
+        "runs/supervisor/mechanism-temperature-robustness-queue-v1.json",
+        "--poll-seconds",
+        "30"
+      ],
+      "log_path": "runs/supervisor/mechanism-temperature-robustness-queue-v1.log"
+    }
+  ]
+}

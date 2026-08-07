@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.result_bundle.v1.schema.json",
+  "title": "OpenLabs result bundle v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "task_id",
+    "campaign_id",
+    "lab_id",
+    "domain",
+    "status",
+    "summary",
+    "artifacts",
+    "claims",
+    "next_actions"
+  ],
+  "properties": {
+    "schema_version": {"const": "openlabs.result_bundle.v1"},
+    "task_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "campaign_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "lab_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "domain": {"type": "string", "minLength": 1},
+    "status": {
+      "enum": ["completed", "succeeded", "failed", "needs_replan", "needs_human", "quarantined"]
+    },
+    "summary": {"type": "string", "minLength": 1},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifact_id", "uri"],
+        "properties": {
+          "artifact_id": {"type": "string", "minLength": 1},
+          "uri": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "kind": {"type": "string"}
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim_id", "text", "status", "evidence", "limitations"],
+        "properties": {
+          "claim_id": {"type": "string", "minLength": 1},
+          "text": {"type": "string", "minLength": 1},
+          "status": {"enum": ["hypothesis", "unsupported", "supported", "verified", "refuted"]},
+          "evidence": {"type": "array", "items": {"type": "string"}},
+          "limitations": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        }
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {"type": "string", "minLength": 1},
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["objective", "agent_role", "session_mode"],
+            "properties": {
+              "objective": {"type": "string", "minLength": 1},
+              "agent_role": {
+                "enum": ["researcher", "experimenter", "writer", "reviewer"]
+              },
+              "session_mode": {"enum": ["resume", "fresh"]}
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {"agent_role": {"const": "reviewer"}},
+                  "required": ["agent_role"]
+                },
+                "then": {"properties": {"session_mode": {"const": "fresh"}}}
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "paper_candidate": {"type": "boolean"}
+  }
+}

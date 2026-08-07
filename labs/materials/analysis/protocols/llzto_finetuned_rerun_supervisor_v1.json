@@ -1,0 +1,141 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-finetuned-rerun-supervisor-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "claim_boundary": "This conditional supervisor is inert when the universal CHGNet domain gate passes. If and only if the frozen fine-tuning contingency releases a fresh-heldout-tested exact-composition model, it regenerates every publication transport trajectory with that one hash-locked artifact. Universal-model trajectories remain preserved as excluded negative evidence and are never mixed with the fine-tuned branch.",
+  "preregistration_note": "Frozen before the universal-model final domain result, before any fallback training label beyond the twelve development labels, before a fine-tuned weight existed, and before any fine-tuned transport outcome existed.",
+  "trigger": {
+    "contingency_protocol": "analysis/protocols/llzto_chgnet_finetune_contingency_v1.json",
+    "contingency_protocol_sha256": "f198f9d40b44d1d87e0b19ac6509e133e09d5c96ac49aec405d1221e4cc089b7",
+    "contingency_state": "runs/supervisor/chgnet-finetune-contingency-v1.json",
+    "not_triggered_disposition": "not_triggered_universal_domain_pass",
+    "triggered_disposition": "fine_tuned_domain_pass_requires_all_transport_reruns",
+    "final_training_report": "runs/models/llzto-chgnet-finetuned-v1/training-report.json",
+    "release_gate": "runs/supervisor/g2-finetuned-release-v1.json",
+    "release_gate_id": "g2-finetuned-potential-domain"
+  },
+  "model": {
+    "configured_name": "LLZTO-CHGNet-finetuned-v1",
+    "universal_state_dict_sha256": "9484ac3e09d17e40e8df63f307c85fc0277981f9418f50d0bc7379c40b198b2c"
+  },
+  "campaigns": {
+    "formal": {
+      "source_protocol": "protocols/llzto_q1_v1.json",
+      "source_protocol_sha256": "e06400ba9cdc82afe8ae3a988b5f2b3e0ee99618db0336c123c4d0469b14fab0",
+      "derived_protocol": "runs/protocols/llzto_q1_finetuned_v1.json",
+      "campaign_id": "llzto-q1-finetuned-v1",
+      "root_dir": "runs/campaigns/llzto_q1_finetuned_v1",
+      "protocol_name": "llzto-transport-finetuned-v1",
+      "run_ids": [
+        "numerics-dt1fs-800k-nve",
+        "numerics-dt2fs-800k-nve",
+        "formal-occ00-vel1701",
+        "formal-occ01-vel2701",
+        "formal-occ02-vel3701",
+        "formal-occ03-vel4701",
+        "formal-occ04-vel5701",
+        "volume-npt-equilibrated-occ00"
+      ],
+      "queue_state": "runs/supervisor/md-formal-finetuned-queue-v1.json"
+    },
+    "fixed_volume": {
+      "source_protocol": "protocols/llzto_volume_fixed_matched_v1.json",
+      "source_protocol_sha256": "18ea9b075e9949d676e202e3d59a1c8ac8cf40d543ad6e1b1dc876c4f24c8bdf",
+      "derived_protocol": "runs/protocols/llzto_volume_fixed_matched_finetuned_v1.json",
+      "campaign_id": "llzto-q1-volume-fixed-matched-finetuned-v1",
+      "root_dir": "runs/campaigns/llzto_q1_volume_fixed_matched_finetuned_v1",
+      "protocol_name": "llzto-volume-fixed-matched-finetuned-v1",
+      "run_ids": [
+        "volume-fixed-experimental-matched-occ00-800k"
+      ],
+      "queue_state": "runs/supervisor/md-volume-fixed-matched-finetuned-queue-v1.json"
+    },
+    "velocity": {
+      "source_protocol": "protocols/llzto_velocity_nested_v2.json",
+      "source_protocol_sha256": "e1edad8e891a9cef395683664553c29927388f02d61f47a6273b79af3f929da9",
+      "derived_protocol": "runs/protocols/llzto_velocity_nested_finetuned_v1.json",
+      "campaign_id": "llzto-q1-velocity-nested-finetuned-v1",
+      "root_dir": "runs/campaigns/llzto_q1_velocity_nested_finetuned_v1",
+      "protocol_name": "llzto-velocity-nested-finetuned-v1",
+      "string_replacements": {
+        "runs/campaigns/llzto_q1_v1": "runs/campaigns/llzto_q1_finetuned_v1"
+      },
+      "run_ids": [
+        "velocity-matched-occ00-vel1702-800k",
+        "velocity-matched-occ00-vel1703-800k",
+        "velocity-matched-occ01-vel2702-800k",
+        "velocity-matched-occ01-vel2703-800k",
+        "velocity-matched-occ02-vel3702-800k",
+        "velocity-matched-occ02-vel3703-800k",
+        "velocity-matched-occ03-vel4702-800k",
+        "velocity-matched-occ03-vel4703-800k",
+        "velocity-matched-occ04-vel5702-800k",
+        "velocity-matched-occ04-vel5703-800k"
+      ],
+      "queue_state": "runs/supervisor/md-velocity-matched-finetuned-queue-v1.json"
+    },
+    "size": {
+      "source_protocol": "protocols/llzto_size_matched_v1.json",
+      "source_protocol_sha256": "8252983264e7c40626210c3dc1229fc4918a70f758d51d8c3f40a5736c7a144d",
+      "derived_protocol": "runs/protocols/llzto_size_matched_finetuned_v1.json",
+      "campaign_id": "llzto-q1-size-matched-finetuned-v1",
+      "root_dir": "runs/campaigns/llzto_q1_size_matched_finetuned_v1",
+      "protocol_name": "llzto-size-matched-finetuned-v1",
+      "base_config_overrides": {
+        "structure_file": "runs/structures/llzto_finetuned_occ00_conventional_v1.structure.json",
+        "structure_id": "llzto-finetuned-occ00-relaxed-exact-twofold-supercell",
+        "relax_structure": false,
+        "relax_cell": false
+      },
+      "run_ids": [
+        "size-matched-conventional-occ00-800k"
+      ],
+      "queue_state": "runs/supervisor/md-size-matched-finetuned-queue-v1.json"
+    },
+    "ensemble_nve": {
+      "source_protocol": "protocols/llzto_ensemble_nve_matched_v1.json",
+      "source_protocol_sha256": "465c742f300608404877c0666a575b24be37e1a57abf53251e96495e5ad5cf47",
+      "derived_protocol": "runs/protocols/llzto_ensemble_nve_matched_finetuned_v1.json",
+      "campaign_id": "llzto-q1-ensemble-nve-matched-finetuned-v1",
+      "root_dir": "runs/campaigns/llzto_q1_ensemble_nve_matched_finetuned_v1",
+      "protocol_name": "llzto-ensemble-nve-matched-finetuned-v1",
+      "string_replacements": {
+        "runs/campaigns/llzto_q1_v1": "runs/campaigns/llzto_q1_finetuned_v1"
+      },
+      "run_ids": [
+        "ensemble-nve-matched-occ00-vel1701-800k"
+      ],
+      "queue_state": "runs/supervisor/md-ensemble-nve-matched-finetuned-queue-v1.json"
+    }
+  },
+  "matched_supercell": {
+    "parent_structure": "runs/campaigns/llzto_q1_finetuned_v1/formal-occ00-vel1701/relaxed.structure.json",
+    "parent_run_manifest": "runs/campaigns/llzto_q1_finetuned_v1/formal-occ00-vel1701/run_manifest.json",
+    "matrix": [
+      [1, 1, 0],
+      [1, 0, 1],
+      [0, -1, -1]
+    ],
+    "output_prefix": "runs/structures/llzto_finetuned_occ00_conventional_v1",
+    "construction_rule": "Replicate the exact fine-tuned-model relaxed 94-atom occupancy-0 structure by the frozen determinant-two lattice transform; do not reorder, resample, or relax the 188-atom child before the matched production run."
+  },
+  "downstream": {
+    "hierarchical_source_protocol": "analysis/protocols/llzto_hierarchical_transport_v1.json",
+    "hierarchical_source_protocol_sha256": "09268d745bd9359ceedbe6abee173c397b4459f334b7471e0b9317da667b67e0",
+    "hierarchical_derived_protocol": "runs/protocols/llzto_hierarchical_transport_finetuned_v1.json",
+    "mechanism_association_source_protocol": "analysis/protocols/llzto_mechanism_transport_association_v1.json",
+    "mechanism_association_source_protocol_sha256": "2e84d0a52b327fd398d5e48f8197a9cc031d1f35adb7d00f127c88ca84233476",
+    "mechanism_association_derived_protocol": "runs/protocols/llzto_mechanism_transport_association_finetuned_v1.json",
+    "mechanism_root": "runs/analysis/mechanisms-formal-finetuned-v1",
+    "mechanism_queue_state": "runs/supervisor/mechanism-analysis-finetuned-queue-v1.json",
+    "final_analysis_required": true,
+    "hard_rule": "Completion of this raw-rerun supervisor is not publication completion. Versioned hierarchical, mechanism, ensemble, temperature-robustness, Haven, experimental, publication, manuscript, attestation, audit, and readiness artifacts must all consume only this fine-tuned branch."
+  },
+  "resources": {
+    "poll_seconds": 30,
+    "gpu_lock": "runs/supervisor/md-gpu.lock",
+    "cpu_lock": "runs/supervisor/mechanism-analysis-cpu.lock",
+    "minimum_available_memory_gib": 16
+  },
+  "output_state": "runs/supervisor/finetuned-rerun-supervisor-v1.json"
+}

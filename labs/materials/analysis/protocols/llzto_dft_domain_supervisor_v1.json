@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-dft-domain-supervisor-v1",
+  "claim_boundary": "This state machine can release coordinate sampling only after the 12-snapshot development domain passes, and can release formal universal-CHGNet production only after the disjoint 30-snapshot publication-heldout domain also passes. It cannot change thresholds, train on heldout labels, or treat coordinate-sampling transport as evidence.",
+  "preregistration_note": "Frozen before the first 2x2x2 convergence result completed, before final-setting labels for the 12-snapshot feasibility set, and before any heldout coordinate, DFT label, or model error existed.",
+  "numerical_supervisor_state": "runs/supervisor/dft-numerical-supervisor-v1.json",
+  "numerical_reports": {
+    "cutoff": "runs/dft/llzto-qe-cutoff-convergence-v1/convergence-90-105.json"
+  },
+  "analysis_protocol": {
+    "path": "analysis/protocols/llzto_chgnet_domain_v1.json",
+    "sha256": "75c258918102e635f095beb5755dfc8bcd3ddf93dbbe1f89c188d2c2f3aa73a7"
+  },
+  "pseudopotential_manifest": {
+    "path": "dft/manifests/sssp_1.3.0_pbe_precision_llzto.json",
+    "sha256": "f79ec71820d23fc225b192ce52c8d154e95cf16070074cfba27cc0d23140eed4",
+    "local_directory": "/home/biostar/.local/share/matfactory/pseudos/SSSP_1.3.0_PBE_precision/selected"
+  },
+  "execution_environment": {
+    "qe_prefix": "/home/biostar/.local/share/matfactory/qe-7.5",
+    "manifest": "dft/manifests/qe_7.5_conda_linux64.json",
+    "manifest_sha256": "d0102f9182d8f99b47e0deff4f63eb4259a92bf4488c693705af834d9258d658",
+    "explicit_lock": "dft/qe-7.5-linux-64.lock",
+    "explicit_lock_sha256": "382affc8d291ddc36dea0c4d6cad52112300f4f4a998f1ea1524c741d3614385",
+    "pw_executable_sha256": "1d66c7856f5d6b3cd9c66b8578e01512b16bbe907b4360e54234890712ccd6a1",
+    "qe_package_sha256": "4f21a746fcc644d2170caf28e6b620716e993f8a994a9810dce694c49a3f03da",
+    "mpi": "Open MPI 5.0.10",
+    "omp_num_threads": 1
+  },
+  "physics": {
+    "exchange_correlation": "PBE",
+    "spin": "non-spin-polarized",
+    "hubbard_u": false,
+    "dispersion_correction": false,
+    "spin_orbit": false,
+    "occupations": "fixed",
+    "symmetry": "disabled"
+  },
+  "runtime_dft_protocol": "runs/dft/llzto-qe-final-domain-v1/final-dft-protocol.json",
+  "feasibility": {
+    "snapshot_manifest": "runs/dft/llzto-dft-feasibility-v1/snapshot_manifest.json",
+    "snapshot_manifest_sha256": "8a0c5a05ed3aef2016892802c5cad752149981c35a26b9b1f087179665974e6a",
+    "dft_root": "runs/dft/llzto-qe-final-domain-v1/feasibility",
+    "qe_queue_state": "runs/supervisor/dft-feasibility-final-queue-v1.json",
+    "prediction_root": "runs/dft/llzto-chgnet-domain-v1/feasibility",
+    "domain_report": "runs/dft/llzto-chgnet-domain-v1/feasibility-report.json"
+  },
+  "sampling_release_gate": "runs/supervisor/g2-feasibility-sampling-release-v1.json",
+  "heldout": {
+    "selection_protocol": "dft/protocols/llzto_heldout_snapshots_v1.json",
+    "selection_protocol_sha256": "68ee6a3c3af12381318f889ad7f158c307432365819369192d7ad53b456fb252",
+    "md_queue_state": "runs/supervisor/md-domain-sampling-queue-v2.json",
+    "selection_root": "runs/dft/llzto-dft-heldout-v1",
+    "dft_root": "runs/dft/llzto-qe-final-domain-v1/publication-heldout",
+    "qe_queue_state": "runs/supervisor/dft-heldout-final-queue-v1.json",
+    "prediction_root": "runs/dft/llzto-chgnet-domain-v1/publication-heldout",
+    "domain_report": "runs/dft/llzto-chgnet-domain-v1/publication-heldout-report.json"
+  },
+  "g2_release_gate": "runs/supervisor/g2-release-v1.json",
+  "resources": {
+    "mpi_ranks": 8,
+    "minimum_memory_gib": 20,
+    "prediction_device": "cpu",
+    "poll_seconds": 30
+  },
+  "failure_rules": {
+    "feasibility_domain_failure": "Preserve the development failure; do not create the sampling release. Diagnose or fine-tune under a new protocol with a disjoint heldout set.",
+    "heldout_domain_failure": "Preserve the publication test failure; do not create full G2 or release remaining formal MD. Narrow or withdraw the universal-potential claim, or train a separately versioned model without reusing the heldout set.",
+    "unresolved_numerical_or_mpi_gate": "Do not prepare final domain labels until the upstream numerical supervisor is complete.",
+    "partial_qe_output": "Never overwrite; archive the interrupted directory and materialize a newly fingerprinted run."
+  }
+}

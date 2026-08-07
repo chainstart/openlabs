@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-chgnet-domain-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "reference_dft_protocol": "dft/protocols/llzto_qe_domain_v1.json",
+  "reference_dft_protocol_sha256": "ee469877bd241a46b4c910d5c65041bece5e225c81521f236230a70d00a6ee12",
+  "model": {
+    "name": "CHGNet-default",
+    "package_version": "0.4.2",
+    "expected_state_dict_sha256": "9484ac3e09d17e40e8df63f307c85fc0277981f9418f50d0bc7379c40b198b2c",
+    "energy_is_intensive": true,
+    "stress_convention": "positive-tension: (1/V) dE/dstrain"
+  },
+  "blinding": {
+    "selection_rule": "All snapshot identities and strata are frozen without reading model-minus-DFT errors.",
+    "development_set": "The 12-snapshot feasibility set may guide a pass, narrowing decision, or fine-tuning design; it is not the publication test set.",
+    "publication_test": "The 30-snapshot publication-heldout set remains disjoint from all fine-tuning and threshold selection.",
+    "audit_note": "This operational protocol was frozen after the QE/CHGNet stress-convention implementation audit and one unscored CHGNet smoke inference, but before any set-level feasibility report and before creation or DFT labelling of the 30-snapshot publication-heldout set."
+  },
+  "aggregate_limits": {
+    "centered_energy_mae_ev_atom": 0.015,
+    "force_component_mae_ev_angstrom": 0.1,
+    "force_component_rmse_ev_angstrom": 0.2,
+    "stress_component_mae_gpa": 0.25
+  },
+  "robustness_limits": {
+    "relative_energy_spearman_min": 0.8,
+    "force_component_p95_abs_ev_angstrom_max": 0.4,
+    "li_force_component_mae_ev_angstrom_max": 0.12,
+    "any_element_force_component_mae_ev_angstrom_max": 0.2,
+    "any_temperature_force_component_mae_ev_angstrom_max": 0.15,
+    "any_occupancy_force_component_mae_ev_angstrom_max": 0.15,
+    "any_snapshot_force_component_max_abs_ev_angstrom_max": 0.8,
+    "stress_component_max_abs_mean_bias_gpa_max": 0.25
+  },
+  "sets": {
+    "feasibility": {
+      "selection_id": "llzto-dft-feasibility-v1",
+      "expected_snapshots": 12,
+      "required_temperature_strata_k": [700, 800, 900],
+      "required_occupancy_seeds": [0],
+      "default_occupancy_seed": 0,
+      "publication_claim_gate": false
+    },
+    "publication-heldout": {
+      "selection_id": "llzto-dft-heldout-v1",
+      "expected_snapshots": 30,
+      "required_temperature_strata_k": [700, 750, 800, 850, 900],
+      "required_occupancy_seeds": [0, 1, 2, 3, 4],
+      "publication_claim_gate": true
+    }
+  },
+  "sampling_release_requirements": {
+    "gate_id": "g2-feasibility-domain-sampling",
+    "required_domain_set": "feasibility",
+    "required_numerical_stages": ["cutoff", "kpoint", "scf"],
+    "scope": "This gate authorizes only short held-out coordinate-sampling trajectories, not formal transport production or publication claims."
+  },
+  "release_requirements": {
+    "required_domain_sets": ["feasibility", "publication-heldout"],
+    "required_numerical_stages": ["cutoff", "kpoint", "scf"],
+    "failure_action": "Do not release the remaining universal-CHGNet formal trajectories. Preserve the negative result and either narrow the claim or train a separately versioned potential with a disjoint 30-snapshot held-out test."
+  }
+}

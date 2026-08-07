@@ -1,0 +1,6 @@
+interface:
+  display_name: "OpenLabs Materials Paper"
+  short_description: "Evidence-bound computational materials manuscript workflow"
+  default_prompt: "Use $openlabs-materials-paper to audit and revise a materials manuscript from validated simulation evidence."
+policy:
+  allow_implicit_invocation: false

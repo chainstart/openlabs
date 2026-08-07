@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-qe-cutoff-convergence-v1",
+  "reference_code": "Quantum ESPRESSO 7.5 pw.x",
+  "parent_domain_protocol": "dft/protocols/llzto_qe_domain_v1.json",
+  "parent_domain_protocol_sha256": "ee469877bd241a46b4c910d5c65041bece5e225c81521f236230a70d00a6ee12",
+  "baseline_runs": {
+    "conv-relaxed-occ00": "runs/dft/llzto-qe-domain-v1/relaxed-occ00--recommended-gamma",
+    "conv-t800-farthest": "runs/dft/llzto-qe-domain-v1/pilot-t800-03--recommended-gamma"
+  },
+  "execution_environment": {
+    "manifest": "dft/manifests/qe_7.5_conda_linux64.json",
+    "manifest_sha256": "d0102f9182d8f99b47e0deff4f63eb4259a92bf4488c693705af834d9258d658",
+    "explicit_lock": "dft/qe-7.5-linux-64.lock",
+    "explicit_lock_sha256": "382affc8d291ddc36dea0c4d6cad52112300f4f4a998f1ea1524c741d3614385",
+    "pw_executable_sha256": "1d66c7856f5d6b3cd9c66b8578e01512b16bbe907b4360e54234890712ccd6a1",
+    "qe_package_sha256": "4f21a746fcc644d2170caf28e6b620716e993f8a994a9810dce694c49a3f03da",
+    "mpi": "Open MPI 5.0.10",
+    "omp_num_threads": 1
+  },
+  "physics": {
+    "exchange_correlation": "PBE",
+    "spin": "non-spin-polarized",
+    "hubbard_u": false,
+    "dispersion_correction": false,
+    "spin_orbit": false,
+    "occupations": "fixed",
+    "symmetry": "disabled"
+  },
+  "stage": "cutoff ladder at frozen gamma-point and 1e-8 Ry SCF settings",
+  "calculations": [
+    {
+      "label": "ecut90-gamma-scf1e8",
+      "purpose": "first upper-cutoff comparison against the frozen 75/600 Ry baseline",
+      "ecutwfc_ry": 90.0,
+      "ecutrho_ry": 720.0,
+      "kpoints": "gamma",
+      "conv_thr_ry": 1e-8,
+      "electron_maxstep": 250,
+      "mixing_mode": "plain",
+      "mixing_beta": 0.3,
+      "diagonalization": "david"
+    },
+    {
+      "label": "ecut105-gamma-scf1e8",
+      "purpose": "second upper-cutoff comparison used to test 90/720 Ry convergence",
+      "ecutwfc_ry": 105.0,
+      "ecutrho_ry": 840.0,
+      "kpoints": "gamma",
+      "conv_thr_ry": 1e-8,
+      "electron_maxstep": 250,
+      "mixing_mode": "plain",
+      "mixing_beta": 0.3,
+      "diagonalization": "david"
+    }
+  ],
+  "acceptance": {
+    "relative_energy_mev_atom_max": 1.0,
+    "force_component_max_abs_change_ev_angstrom": 0.01,
+    "stress_component_max_abs_change_gpa": 0.1,
+    "decision_rule": "Choose the lowest adjacent cutoff whose comparison with the next higher pair passes every criterion on both frozen structures. Only then prepare the gamma-versus-2x2x2 test at that cutoff; only after the k-point decision prepare the 1e-8-versus-1e-10 Ry SCF test. Do not use CHGNet error in any numerical-setting decision."
+  }
+}

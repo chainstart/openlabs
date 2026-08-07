@@ -1,0 +1,202 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "llzto-q1-velocity-nested-v2",
+  "root_dir": "runs/campaigns/llzto_q1_velocity_nested_v2",
+  "title": "Balanced matched-structure velocity-within-occupancy sensitivity for LLZTO at 800 K",
+  "research_question": "At 800 K, is between-occupancy transport variation distinguishable from within-occupancy velocity-initialization variation when each occupancy reuses exactly one relaxed structure?",
+  "primary_estimands": [
+    "between-occupancy variance of log tracer diffusivity",
+    "within-occupancy velocity variance of log tracer diffusivity",
+    "between-occupancy variance of log collective diffusivity",
+    "within-occupancy velocity variance of log collective diffusivity",
+    "between-occupancy and within-occupancy variance of the log collective-to-tracer ratio"
+  ],
+  "stopping_rule": "All 15 planned 800 K cells (five occupancies times three velocity initializations, including five reference points from the primary campaign) remain in the analysis. An unresolved point blocks the corresponding estimator rather than being dropped.",
+  "design": {
+    "temperature_k": 800,
+    "occupancy_realizations": 5,
+    "velocity_initializations_per_occupancy": 3,
+    "reference_campaign_root": "runs/campaigns/llzto_q1_v1",
+    "reference_run_ids": [
+      "formal-occ00-vel1701",
+      "formal-occ01-vel2701",
+      "formal-occ02-vel3701",
+      "formal-occ03-vel4701",
+      "formal-occ04-vel5701"
+    ],
+    "supplemental_cells": 10,
+    "matched_structure_rule": "Each supplemental run loads the corresponding primary run's immutable relaxed.structure.json and performs no further relaxation.",
+    "analysis_role": "Balanced nested variance decomposition at 800 K only; it does not identify separate occupancy and velocity effects for full Arrhenius activation energies."
+  },
+  "base_config": {
+    "schema_version": "2.1",
+    "protocol_name": "llzto-velocity-nested-v2",
+    "protocol_tier": "formal-sensitivity",
+    "formula": "Li6.5La3Zr1.5Ta0.5O12",
+    "structure_file": null,
+    "structure_id": null,
+    "primitive_cell": true,
+    "min_initial_li_li_distance_angstrom": 1.6,
+    "supercell": [1, 1, 1],
+    "temperatures": [800],
+    "timestep_fs": 2.0,
+    "equilibration_steps": 10000,
+    "production_steps": 250000,
+    "loginterval": 50,
+    "equilibration_ensemble": "nvt",
+    "production_ensemble": "nvt",
+    "thermostat": "Nose-Hoover",
+    "thermostat_tau_fs": 100.0,
+    "pressure_gpa": 0.000101325,
+    "barostat_tau_fs": 1000.0,
+    "relax_structure": false,
+    "relax_cell": false,
+    "relax_fmax_ev_a": 0.05,
+    "relax_steps": 1000,
+    "mobile_species": "Li",
+    "fit_from_fraction": 0.2,
+    "fit_to_fraction": 0.8,
+    "max_lags": 500,
+    "uncertainty_blocks": 5,
+    "min_final_msd_a2": 20.0,
+    "min_diffusive_exponent": 0.8,
+    "max_diffusive_exponent": 1.2,
+    "max_relative_diffusivity_stderr": 0.5,
+    "max_abs_nve_energy_drift_mev_atom_ps": 1.0,
+    "device": "cuda",
+    "model_name": "CHGNet-default",
+    "expected_model_state_dict_sha256": "9484ac3e09d17e40e8df63f307c85fc0277981f9418f50d0bc7379c40b198b2c"
+  },
+  "gates": [
+    {
+      "gate_id": "g2-potential-domain",
+      "criterion": "Run only after the full universal-potential domain gate passes."
+    },
+    {
+      "gate_id": "g4-balanced-matched-velocity-within-occupancy",
+      "criterion": "Every occupancy has exactly three 20 ps equilibration plus 500 ps production points at 800 K, supplemental runs reuse the byte-hashed primary relaxed structure without further relaxation, and unresolved estimator-specific points are not removed."
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "velocity-matched-occ00-vel1702-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Second velocity initialization for the exact relaxed occupancy-0 structure.",
+      "enabled": false,
+      "config": {
+        "occupancy_seed": 0,
+        "seed": 1702,
+        "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/relaxed.structure.json",
+        "structure_id": "formal-occ00-vel1701-relaxed"
+      }
+    },
+    {
+      "run_id": "velocity-matched-occ00-vel1703-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Third velocity initialization for the exact relaxed occupancy-0 structure.",
+      "enabled": false,
+      "config": {
+        "occupancy_seed": 0,
+        "seed": 1703,
+        "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/relaxed.structure.json",
+        "structure_id": "formal-occ00-vel1701-relaxed"
+      }
+    },
+    {
+      "run_id": "velocity-matched-occ01-vel2702-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Second velocity initialization for the exact relaxed occupancy-1 structure.",
+      "enabled": false,
+      "config": {
+        "occupancy_seed": 1,
+        "seed": 2702,
+        "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ01-vel2701/relaxed.structure.json",
+        "structure_id": "formal-occ01-vel2701-relaxed"
+      }
+    },
+    {
+      "run_id": "velocity-matched-occ01-vel2703-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Third velocity initialization for the exact relaxed occupancy-1 structure.",
+      "enabled": false,
+      "config": {
+        "occupancy_seed": 1,
+        "seed": 2703,
+        "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ01-vel2701/relaxed.structure.json",
+        "structure_id": "formal-occ01-vel2701-relaxed"
+      }
+    },
+    {
+      "run_id": "velocity-matched-occ02-vel3702-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Second velocity initialization for the exact relaxed occupancy-2 structure.",
+      "enabled": false,
+      "config": {
+        "occupancy_seed": 2,
+        "seed": 3702,
+        "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ02-vel3701/relaxed.structure.json",
+        "structure_id": "formal-occ02-vel3701-relaxed"
+      }
+    },
+    {
+      "run_id": "velocity-matched-occ02-vel3703-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Third velocity initialization for the exact relaxed occupancy-2 structure.",
+      "enabled": false,
+      "config": {
+        "occupancy_seed": 2,
+        "seed": 3703,
+        "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ02-vel3701/relaxed.structure.json",
+        "structure_id": "formal-occ02-vel3701-relaxed"
+      }
+    },
+    {
+      "run_id": "velocity-matched-occ03-vel4702-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Second velocity initialization for the exact relaxed occupancy-3 structure.",
+      "enabled": false,
+      "config": {
+        "occupancy_seed": 3,
+        "seed": 4702,
+        "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ03-vel4701/relaxed.structure.json",
+        "structure_id": "formal-occ03-vel4701-relaxed"
+      }
+    },
+    {
+      "run_id": "velocity-matched-occ03-vel4703-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Third velocity initialization for the exact relaxed occupancy-3 structure.",
+      "enabled": false,
+      "config": {
+        "occupancy_seed": 3,
+        "seed": 4703,
+        "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ03-vel4701/relaxed.structure.json",
+        "structure_id": "formal-occ03-vel4701-relaxed"
+      }
+    },
+    {
+      "run_id": "velocity-matched-occ04-vel5702-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Second velocity initialization for the exact relaxed occupancy-4 structure.",
+      "enabled": false,
+      "config": {
+        "occupancy_seed": 4,
+        "seed": 5702,
+        "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ04-vel5701/relaxed.structure.json",
+        "structure_id": "formal-occ04-vel5701-relaxed"
+      }
+    },
+    {
+      "run_id": "velocity-matched-occ04-vel5703-800k",
+      "stage": "velocity-within-occupancy",
+      "purpose": "Third velocity initialization for the exact relaxed occupancy-4 structure.",
+      "enabled": false,
+      "config": {
+        "occupancy_seed": 4,
+        "seed": 5703,
+        "structure_file": "runs/campaigns/llzto_q1_v1/formal-occ04-vel5701/relaxed.structure.json",
+        "structure_id": "formal-occ04-vel5701-relaxed"
+      }
+    }
+  ]
+}

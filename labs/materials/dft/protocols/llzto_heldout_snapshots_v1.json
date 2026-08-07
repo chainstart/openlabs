@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "selection_id": "llzto-dft-heldout-v1",
+  "expected_snapshot_count": 30,
+  "selection_blinding": "The occupancy-temperature matrix, midpoint rule, and snapshot count are frozen before the short sampling trajectories exist and before any held-out DFT label or held-out model error is read.",
+  "sampling_campaign": "protocols/llzto_domain_sampling_v1.json",
+  "sampling_scope": "Short CHGNet trajectories generate in-domain coordinates only; their transport estimates are not publication observations.",
+  "static_snapshots": [
+    {
+      "snapshot_id": "heldout-occ00-relaxed",
+      "structure": "runs/campaigns/llzto_domain_sampling_v1/domain-occ00/relaxed.cif",
+      "temperature_k": null,
+      "metadata": {"occupancy_seed": 0}
+    },
+    {
+      "snapshot_id": "heldout-occ01-relaxed",
+      "structure": "runs/campaigns/llzto_domain_sampling_v1/domain-occ01/relaxed.cif",
+      "temperature_k": null,
+      "metadata": {"occupancy_seed": 1}
+    },
+    {
+      "snapshot_id": "heldout-occ02-relaxed",
+      "structure": "runs/campaigns/llzto_domain_sampling_v1/domain-occ02/relaxed.cif",
+      "temperature_k": null,
+      "metadata": {"occupancy_seed": 2}
+    },
+    {
+      "snapshot_id": "heldout-occ03-relaxed",
+      "structure": "runs/campaigns/llzto_domain_sampling_v1/domain-occ03/relaxed.cif",
+      "temperature_k": null,
+      "metadata": {"occupancy_seed": 3}
+    },
+    {
+      "snapshot_id": "heldout-occ04-relaxed",
+      "structure": "runs/campaigns/llzto_domain_sampling_v1/domain-occ04/relaxed.cif",
+      "temperature_k": null,
+      "metadata": {"occupancy_seed": 4}
+    }
+  ],
+  "trajectory_matrices": [
+    {
+      "id_prefix_template": "heldout-occ{occupancy_seed:02d}-t{temperature_k}",
+      "trajectory_template": "runs/campaigns/llzto_domain_sampling_v1/domain-occ{occupancy_seed:02d}/T{temperature_k}.traj",
+      "occupancy_seeds": [0, 1, 2, 3, 4],
+      "temperatures_k": [700, 750, 800, 850, 900],
+      "frame_spacing_ps": 0.1,
+      "count": 1,
+      "start_fraction": 0.25,
+      "stop_fraction": 0.75,
+      "min_frame_separation": 1,
+      "min_rmsd_angstrom": 0.0,
+      "metadata": {"set_role": "publication-heldout"}
+    }
+  ]
+}

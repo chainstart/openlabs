@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-source-equivalence-v1",
+  "material": "Li6.5La3Zr1.5Ta0.5O12",
+  "claim_boundary": "This audit establishes source-transition equivalence only for the already-running universal-model formal-occ00-vel1701 trajectory series. It does not validate CHGNet against DFT, establish transport convergence at unfinished temperatures, or permit pooling universal and fine-tuned trajectories.",
+  "reason": "The formal occupancy-0 process loaded the clean 508f8cab source baseline before two later commits added derived-supercell provenance validation and explicit paired-block metadata. The run manifest preserves the loaded source hashes. This audit freezes the exact source diff and tests the completed T700 trajectory for byte-exact legacy transport equivalence before cross-run analysis.",
+  "baseline": {
+    "git_commit": "508f8cab203715a6d8de7fba6d87c04b8e93373b",
+    "run_manifest": "runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/run_manifest.json",
+    "run_manifest_sha256": "025e0f61f50765279fb0b277692b05dd44615389dbfe2b120b31b0d156b3298e",
+    "source_files": {
+      "src/matfactory/mlipmd.py": "bcef3a3dc2984e0d73c785a75862aa37e4230bcbeef4927c1e3ecb2eee53e365",
+      "src/matfactory/transport.py": "876ac664d4b43da53733511f92e4bf4f6c156c60240f798396d9d087873435de"
+    }
+  },
+  "amendment": {
+    "git_commit": "cb83da53ccb32456d8858bc64c66f93bbc57f257",
+    "changed_files": [
+      "src/matfactory/mlipmd.py",
+      "src/matfactory/transport.py"
+    ],
+    "source_files": {
+      "src/matfactory/mlipmd.py": "fa16ca7302b7cddc9e4c5c66ace4dbb44ca032c0e3fbe450e39853462b7f5501",
+      "src/matfactory/transport.py": "e3e9bd3c55f534dbcbf045cec654d5fcd069bcf7ec76e23a6f10d24f1fb82b4a"
+    },
+    "binary_diff_sha256": "071b558fe00f0b4e32b8799bd8990ba379735f944ccbb9db56b6fb3e57b27919",
+    "scope": {
+      "mlipmd.py": "Adds hash validation and manifest metadata only when a derived .structure.json input has a sibling provenance file; the raw-CIF branch used by formal occupancy realizations is unchanged.",
+      "transport.py": "Computes tracer and collective fits on the same deterministic non-overlapping blocks and emits their indices together; the legacy tracer/collective curves, central fits, block arrays, uncertainty gates, and ratio are unchanged."
+    }
+  },
+  "completed_reference": {
+    "temperature_k": 700,
+    "trajectory": "runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/T700.traj",
+    "trajectory_sha256": "7285a383bec92866712fe69806e697af6ce753e41ddbaece615fb5fdf29bbb06",
+    "transport": "runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/T700.transport.json",
+    "transport_sha256": "e816e81d03310145d856221c8b78b13361c26bf742b1a35dc4d95b8b13a63336",
+    "point": "runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/points/T700.json",
+    "point_sha256": "d61c9e8b290c31dbbedd78fe24730514987d124ec4888d87651ed251498deef6",
+    "prepared_structure": "runs/campaigns/llzto_q1_v1/formal-occ00-vel1701/input.structure.json",
+    "prepared_structure_sha256": "dd0acf1176114fa836667787d162680e5a498a17771a99a10d616593e00a8948",
+    "prepared_structure_fingerprint": "188bff6c58f2f7f442b605a74db93b2a7bc23fe708f5b68fa4e64430680bd389",
+    "expected_frames": 5002,
+    "expected_paired_blocks": 5
+  },
+  "acceptance": {
+    "baseline_git_commit_matches_run_manifest": true,
+    "baseline_source_blobs_match_manifest": true,
+    "current_source_blobs_match_amendment_commit": true,
+    "changed_files_equal_declared_set": true,
+    "binary_diff_hash_matches": true,
+    "current_raw_cif_preparation_matches_stored_structure": true,
+    "all_legacy_transport_fields_exactly_equal": true,
+    "paired_records_reproduce_legacy_block_arrays": true,
+    "point_identity_matches_transport": true
+  },
+  "output": "analysis/audits/llzto_source_equivalence_v1.json",
+  "reproduction_command": "uv run python -m matfactory.source_equivalence --protocol analysis/protocols/llzto_source_equivalence_v1.json --output analysis/audits/llzto_source_equivalence_v1.json"
+}

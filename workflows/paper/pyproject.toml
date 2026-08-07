@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openlabs-paper"
+version = "0.1.0"
+description = "OpenLabs evidence-backed manuscript writing and revision workflow"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx[socks]>=0.27",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+openlabs-paper = "paper_writing.__main__:main"
+paper-writing = "paper_writing.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["paper_writing"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

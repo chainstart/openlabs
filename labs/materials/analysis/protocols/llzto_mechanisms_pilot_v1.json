@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "llzto-mechanisms-pilot-v1",
+  "diagnostic_only": true,
+  "claim_boundary": "This 20 ps pilot validates assignment quality and sensitivity behavior only. It cannot support a publication transport or mechanism claim.",
+  "trajectories": {
+    "T700": "b4697dfbd875b83f17da14867d13d464194b0b21bb650b24b9f0df8617d21968",
+    "T800": "da2ce2f0d435a98914105a5e69f80bb7cd2c976d1ad6f6841f49f073e09f58ea",
+    "T900": "bcc47a2f38d946179ffeae2778ae2e68fc9b1ef0162e3f57df2091c8c921df0a"
+  },
+  "site_model": {
+    "source": "data/structures/raw/cod_1545083.cif",
+    "source_sha256": "cbcb4f83b3ee0be0ce7a4e05a9e02bf429f8bb5aee317690678af02939c92ba3",
+    "primitive": true,
+    "split_site_cutoff_angstrom": 1.2,
+    "oxygen_coordination_cutoff_angstrom": 3.0
+  },
+  "analysis": {
+    "frame_spacing_ps": 0.05,
+    "assignment_cutoff_angstrom": 1.2,
+    "min_dwell_ps": 0.3,
+    "max_unassigned_gap_ps": 0.2,
+    "max_transition_gap_ps": 0.5,
+    "reverse_window_ps": 2.0,
+    "string_windows_ps": [0.2, 0.4, 0.8],
+    "primary_string_window_ps": 0.4,
+    "null_model": "independent uniform circular time shift for each labelled ion",
+    "null_replicates": 200,
+    "null_seed": 20260806
+  },
+  "sensitivity": {
+    "assignment_cutoff_angstrom": [1.0, 1.2, 1.4],
+    "min_dwell_ps": [0.2, 0.3, 0.5],
+    "reverse_window_ps": [1.0, 2.0, 5.0],
+    "require_qualitative_conclusion_stability": true
+  },
+  "quality_gate": {
+    "min_assignment_fraction": 0.95,
+    "max_collision_frame_fraction": 0.01,
+    "failure_action": "Revise a separately versioned site-assignment model before applying it to formal trajectories."
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "schema": "amra.erdos776.adaptive-round4.k4r9-no-fixed-rank-independent-audit.v1",
+  "verdict": "pass",
+  "mathematical_status": "proved",
+  "evidence_strength": "independently reconstructed natural proof with exact direct-orbit replay",
+  "audited_artifacts": {
+    "evidence_markdown": {
+      "path": "evidence/K4_R9_NO_FIXED_RANK_RECOVERY.md",
+      "sha256": "a58f58dd3c70e5114b9a7fbeb8afee809b865738453476df06dfd782250f0c9f"
+    },
+    "evidence_json": {
+      "path": "evidence/K4_R9_NO_FIXED_RANK_RECOVERY.json",
+      "sha256": "540f477629755167337b14ec79c177ef61149678782a9bc8d6f0fbc1e979cc8b"
+    },
+    "author_verifier": {
+      "path": "evidence/verify_k4r9_no_fixed_rank.py",
+      "sha256": "e8e33d0d046ee810f3daad9eebf078caa80301fae5fcecb9d9094b4998b2af0f",
+      "bounded_run": "pass"
+    }
+  },
+  "independent_reconstruction": {
+    "script": "audit/verify_k4r9_no_fixed_rank_independent.py",
+    "sha256": "3057136c0cea72a67c8e31aef9bc91ce7a43290a7cbf685d00781b907effd040",
+    "command": "AMRA_MEMORY_KIB=3145728 AMRA_TIMEOUT_SECONDS=180 LEAN_NUM_THREADS=1 amra-research-loop/scripts/run_bounded.sh python3 amra-research-loop/campaigns/erdos-776-adaptive-round4/audit/verify_k4r9_no_fixed_rank_independent.py",
+    "exit_code": 0,
+    "engine": "standard-library greedy Macaulay direct orbit; no author-verifier import",
+    "actual_odd_j": 2469,
+    "q_bit_length": 2475,
+    "checked_ranks": "3..12",
+    "stable_word_ranks": "4..12",
+    "all_checked_surpluses_negative": true,
+    "all_checked_next_states_nonnegative": true
+  },
+  "statement_match": {
+    "status": "pass",
+    "quantifiers": "for every fixed R>=4 there exists one odd j_R such that the same member has gamma_3,...,gamma_R<0",
+    "exchange_forbidden": "does not assert that one finite member is negative at every rank"
+  },
+  "dependency_checks": {
+    "actual_family": "pass: h_j=112*2^(j-1), q_j=(2h_j+4)/3, b=q+4 gives an integral even q on odd j and satisfies the direct dyadic identity",
+    "raw_base": "pass: direct rank-three orbit raises to the stated A_4=25, B_4=58 words",
+    "pascal_recurrence": "pass: bottom residuals are universally -20n+49 and -20n+52",
+    "constant_positivity": "pass: A_n,B_n>=4n+9 for every n>=4",
+    "canonical_strict_order": "pass after finitely many explicit q lower bounds for each fixed R",
+    "tail_nonnegativity": "pass: each transition is the value of the next strict word",
+    "surplus_formula": "pass: gamma_n=C(B_n,2)-C(A_n+1,2)+2-4q",
+    "actual_unboundedness": "pass: q_(j+2)=4q_j-4>q_j on the odd subsequence"
+  },
+  "author_verifier_assessment": {
+    "mathematical_guards": "pass",
+    "coverage_gap": "does not reconstruct the raw actual orbit/base; numerical word guard uses non-dyadic q=10^1000",
+    "dependency_caveat": "imports sympy, while the independent checker is standard-library-only",
+    "effect_on_verdict": "none; independent reconstruction supplies the missing coverage"
+  },
+  "scope": {
+    "proves": [
+      "no uniform finite recovery rank on the fixed actual K4,r9 odd-j orbit",
+      "no uniform pre-rank-42 seed obtained only by waiting on this orbit"
+    ],
+    "does_not_prove": [
+      "one finite member negative at every rank",
+      "failure of parameter-dependent eventual recovery for each state",
+      "the public Erdos-776 antichain statement"
+    ]
+  },
+  "lean_used": false,
+  "public_problem_changed": false
+}

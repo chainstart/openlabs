@@ -1,0 +1,188 @@
+{
+  "benchmarks": [
+    {
+      "dataset_id": "fixture-ai-classification",
+      "emits_bundle_type": "aira_result_bundle",
+      "id": "fixture-classification-smoke",
+      "metric_ids": [
+        "accuracy",
+        "accuracy_delta"
+      ],
+      "model_ids": [
+        "fixture-threshold-classifier",
+        "fixture-majority-baseline"
+      ],
+      "name": "AIRA deterministic fixture benchmark",
+      "network_required": false,
+      "status": "mvp"
+    },
+    {
+      "dataset_id": "local-experiment-outcomes-v1",
+      "emits_artifact_kinds": [
+        "benchmark_report",
+        "ablation_report",
+        "error_analysis",
+        "provenance",
+        "run_ledger",
+        "experiment_memory"
+      ],
+      "emits_bundle_type": "aira_result_bundle",
+      "entrypoint": "python3 -m aira run-local-benchmark",
+      "external_datasets_required": false,
+      "gpu_required": false,
+      "id": "local-text-outcome-classification",
+      "live_model_calls": false,
+      "metric_ids": [
+        "accuracy",
+        "macro_f1",
+        "baseline_accuracy",
+        "accuracy_delta",
+        "ablation_error_count"
+      ],
+      "model_ids": [
+        "deterministic-keyword-outcome-classifier-v1",
+        "deterministic-pass-prior-baseline-v1",
+        "deterministic-keyword-no-negative-ablation-v1"
+      ],
+      "name": "AIRA deterministic local text outcome benchmark",
+      "network_required": false,
+      "status": "local_deterministic"
+    },
+    {
+      "adapter": {
+        "enabled": true,
+        "entrypoint": "python3 -m aira experiments run --profile production-local",
+        "network_required": false,
+        "type": "production_local_runner"
+      },
+      "dataset_id": "operator-supplied-production-plan",
+      "emits_artifact_kinds": [
+        "production_plan",
+        "policy_report",
+        "execution_trace",
+        "task_summary",
+        "provenance",
+        "reproduction_status",
+        "run_ledger"
+      ],
+      "emits_bundle_type": "aira_result_bundle",
+      "entrypoint": "python3 -m aira experiments run --profile production-local",
+      "external_datasets_required": false,
+      "fingerprint": {
+        "algorithm": "sha256",
+        "material": "benchmark:production-local-plan-execution:1.0.0",
+        "value": "4483c5bf48ad4660065aae8d3c3e3c8f1acff5e8bb90c4b3a89cdc1fd7b38412"
+      },
+      "gpu_required": false,
+      "id": "production-local-plan-execution",
+      "license_policy": {
+        "default_license": "operator_supplied",
+        "redistribution_allowed": "operator_defined",
+        "requires_operator_attestation": true
+      },
+      "live_model_calls": false,
+      "metric_ids": [
+        "task_count",
+        "passed_task_count",
+        "failed_task_count",
+        "skipped_task_count"
+      ],
+      "model_ids": [
+        "production-local-controlled-python-runner-v1",
+        "operator-supplied-model-artifact-v1",
+        "production-local-model-cache-v1"
+      ],
+      "name": "AIRA production-local plan execution benchmark",
+      "network_required": false,
+      "profile": "production-local",
+      "reproducibility_notes": [
+        "The benchmark is reproducible from the production plan, profile policy, materialized task artifacts, and fingerprints.",
+        "External dataset and model adapters remain disabled under production-local."
+      ],
+      "resource_policy": {
+        "external_datasets_required": false,
+        "gpu_required": false,
+        "live_model_calls": false,
+        "max_cpu_threads": 2,
+        "max_task_timeout_seconds": 30,
+        "network_required": false,
+        "package_installation": false
+      },
+      "status": "production_local",
+      "version": "1.0.0",
+      "versioning": {
+        "change_policy": "Plan schema, profile policy, or emitted artifact contract changes require a new fingerprint.",
+        "scheme": "semver",
+        "stability": "profile pinned"
+      }
+    },
+    {
+      "adapter": {
+        "enabled": true,
+        "entrypoint": "python3 -m aira experiments run --profile production-open",
+        "network_required": true,
+        "type": "production_open_runner"
+      },
+      "dataset_id": "external-download-dataset-adapter-v1",
+      "emits_artifact_kinds": [
+        "production_plan",
+        "policy_report",
+        "execution_trace",
+        "task_summary",
+        "provenance",
+        "reproduction_status",
+        "run_ledger"
+      ],
+      "emits_bundle_type": "aira_result_bundle",
+      "entrypoint": "python3 -m aira experiments run --profile production-open",
+      "external_datasets_required": true,
+      "fingerprint": {
+        "algorithm": "sha256",
+        "material": "benchmark:production-open-plan-execution:1.0.0",
+        "value": "411265682ece7469a5052c61e792af8512dd2e68c945924ad8c50f8f4fdc5a6b"
+      },
+      "gpu_required": true,
+      "id": "production-open-plan-execution",
+      "license_policy": {
+        "default_license": "operator_supplied",
+        "redistribution_allowed": "operator_defined",
+        "requires_operator_attestation": true
+      },
+      "live_model_calls": true,
+      "metric_ids": [
+        "task_count",
+        "passed_task_count",
+        "failed_task_count",
+        "skipped_task_count"
+      ],
+      "model_ids": [
+        "production-open-python-runner-v1",
+        "hosted-model-api-adapter-v1"
+      ],
+      "name": "AIRA production-open plan execution benchmark",
+      "network_required": true,
+      "profile": "production-open",
+      "reproducibility_notes": [
+        "Production-open intentionally restores the broad legacy ARA experiment surface inside AIRA.",
+        "Bundles must record external source, package, model/API, and hardware metadata for publishable claims."
+      ],
+      "resource_policy": {
+        "external_datasets_required": true,
+        "gpu_required": true,
+        "live_model_calls": true,
+        "max_cpu_threads": "host_available",
+        "max_task_timeout_seconds": 3600,
+        "network_required": true,
+        "package_installation": true
+      },
+      "status": "production_open",
+      "version": "1.0.0",
+      "versioning": {
+        "change_policy": "Plan schema, open-profile policy, or emitted artifact contract changes require a new fingerprint.",
+        "scheme": "semver",
+        "stability": "profile pinned"
+      }
+    }
+  ],
+  "schema_version": "aira.benchmark_registry.v1"
+}
