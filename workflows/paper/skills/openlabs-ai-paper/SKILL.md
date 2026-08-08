@@ -65,11 +65,11 @@ is opt-in and illustrative only; it cannot supply experimental evidence.
 7. If public support materials are needed, prepare their local deterministic package and record
    missing metadata as a blocker. Creating even a reversible remote draft requires a separate,
    explicit administrator action with OpenLabs external writes enabled.
-8. Hand the compiled, unchanged snapshot to exactly three genuinely fresh agents running in
-   parallel and explicitly invoke `$openlabs-paper-review` in each isolated context. For the `ai`
-   domain they must use the `cs_top_tier` standard, assign integer scores, and return separate
-   simulated top-conference and CAS Zone 1 journal decisions. Use the validated median panel
-   result; do not silently repair the manuscript during scoring.
+8. Hand the compiled, unchanged snapshot to the fresh Codex reviewer and blind Packy Claude Opus 5
+   reviewer defined by `$openlabs-paper-review`. For the `ai` domain they must use the
+   `cs_top_tier` standard, assign integer scores, and return separate simulated top-conference and
+   CAS Zone 1 journal decisions. Use the validated conservative panel result; do not silently
+   repair the manuscript during scoring.
 9. Apply the mandatory local LLM quality gate exactly as specified in
    `workflows/paper/skills/overlays/quality-gate.md`. Any score-bearing edit makes the review stale.
 

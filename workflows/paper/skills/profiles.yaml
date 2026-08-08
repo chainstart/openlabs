@@ -29,13 +29,17 @@ profiles:
       domain: statistical-analysis
       review_or_citation: peer-review
 quality_gate:
-  review_mode: local_llm_three_agent_panel
-  review_panel_size: 3
-  parallel_execution: required
+  review_mode: independent_dual_provider_panel
+  review_panel_size: 2
+  parallel_execution: false
   independent_contexts: required
   prior_reviews_hidden: required
-  score_aggregation: coordinatewise_median
-  decision_aggregation: ordinal_median
+  execution_order: frozen_codex_then_blind_claude
+  reviewers:
+    reviewer-1: {runtime: codex, provider: openai-codex, session: fresh}
+    reviewer-2: {runtime: claude-code, provider: packy, model: claude-opus-5, session: fresh}
+  score_aggregation: coordinatewise_minimum
+  decision_aggregation: strictest_decision
   review_skill: openlabs-paper-review
   review_skill_path: skills/openlabs-paper-review
   score_field: scores.overall

@@ -45,13 +45,27 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     settings = _yaml(repository_root() / profiles["quality_gate"]["settings_path"])
     review_skill = ROOT / profiles["quality_gate"]["review_skill_path"]
 
-    assert profiles["quality_gate"]["review_mode"] == "local_llm_three_agent_panel"
-    assert profiles["quality_gate"]["review_panel_size"] == 3
-    assert profiles["quality_gate"]["parallel_execution"] == "required"
+    assert profiles["quality_gate"]["review_mode"] == "independent_dual_provider_panel"
+    assert profiles["quality_gate"]["review_panel_size"] == 2
+    assert profiles["quality_gate"]["parallel_execution"] is False
     assert profiles["quality_gate"]["independent_contexts"] == "required"
     assert profiles["quality_gate"]["prior_reviews_hidden"] == "required"
-    assert profiles["quality_gate"]["score_aggregation"] == "coordinatewise_median"
-    assert profiles["quality_gate"]["decision_aggregation"] == "ordinal_median"
+    assert profiles["quality_gate"]["execution_order"] == "frozen_codex_then_blind_claude"
+    assert profiles["quality_gate"]["reviewers"] == {
+        "reviewer-1": {
+            "runtime": "codex",
+            "provider": "openai-codex",
+            "session": "fresh",
+        },
+        "reviewer-2": {
+            "runtime": "claude-code",
+            "provider": "packy",
+            "model": "claude-opus-5",
+            "session": "fresh",
+        },
+    }
+    assert profiles["quality_gate"]["score_aggregation"] == "coordinatewise_minimum"
+    assert profiles["quality_gate"]["decision_aggregation"] == "strictest_decision"
     assert profiles["quality_gate"]["review_skill"] == "openlabs-paper-review"
     assert (review_skill / "SKILL.md").is_file()
     assert (review_skill / "references" / "rubrics.md").is_file()
@@ -102,9 +116,9 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert profiles["quality_gate"]["required_before_submission_consideration"] is True
     gate = settings[profiles["quality_gate"]["settings_key"]]
     assert gate["minimum_score"] == 5.0
-    assert gate["review_panel_size"] == 3
-    assert gate["score_aggregation"] == "coordinatewise_median"
-    assert gate["decision_aggregation"] == "ordinal_median"
+    assert gate["review_panel_size"] == 2
+    assert gate["score_aggregation"] == "coordinatewise_minimum"
+    assert gate["decision_aggregation"] == "strictest_decision"
     assert gate["decision_standard"] == "cas_zone_1_journal"
     assert gate["cas_zone_1_scope"] == "major_category"
     assert gate["cas_zone_1_minimum_decision"] == "minor_revision"

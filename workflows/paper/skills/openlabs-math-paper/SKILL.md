@@ -67,8 +67,8 @@ central theorem:
 3. Replay authorized computational or formal artifacts with pinned versions when the claim depends
    on them; record commands, hashes, assumptions, and results without calling the replay a proof of
    anything outside its contract. Use one centralized Lean/mathlib audit workflow per frozen
-   snapshot, outside the three score-bearing reviews, with the resource-capped objective checker
-   defined by `$openlabs-paper-review`; share its immutable receipt with all three reviewers. A diagnosed
+   snapshot, outside the two score-bearing reviews, with the resource-capped objective checker
+   defined by `$openlabs-paper-review`; share its immutable receipt with both reviewers. A diagnosed
    guard interruption may resume the same hash-bound incremental build, but formal axiom validation
    executes at most once across the receipt chain. Never ask each reviewer to rebuild the same
    formal project.
@@ -79,12 +79,12 @@ central theorem:
 6. If public support materials are needed, prepare their local deterministic package and record
    missing metadata as a blocker. Creating even a reversible remote draft requires a separate,
    explicit administrator action with OpenLabs external writes enabled.
-7. Hand the compiled, unchanged snapshot to exactly three genuinely fresh agents running in
-   parallel and explicitly invoke `$openlabs-paper-review` in each isolated context. They must score
+7. Hand the compiled, unchanged snapshot to the fresh Codex reviewer and the blind Packy Claude
+   Opus 5 reviewer defined by `$openlabs-paper-review`. They must score
    against the shared standard of *Annals of Mathematics*,
    *Inventiones Mathematicae*, JAMS, and *Acta Mathematica*, assign integer scores, return separate
    simulated four-leading-journal and CAS Zone 1 journal decisions, omit conference decisions, and
-   record proof risks and specialist limits. Use the validated median panel result. Do not
+   record proof risks and specialist limits. Use the validated conservative panel result. Do not
    silently edit during scoring.
 8. Apply the mandatory local LLM quality gate exactly as specified in
    `workflows/paper/skills/overlays/quality-gate.md`. Any score-bearing edit makes the review stale.

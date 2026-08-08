@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Run one snapshot-bound Lean audit behind conservative resource guards.
 
-This command is intentionally separate from the three score-bearing reviewers.
+This command is intentionally separate from the two score-bearing reviewers.
 It serializes Lean builds across the host, limits Lean's task pool, constrains
 CPU affinity and per-process address space, watches aggregate descendant RSS
 and process count, enforces a wall-clock deadline, and writes one objective
-receipt that all three reviewers may read.
+receipt that both reviewers may read.
 """
 
 from __future__ import annotations

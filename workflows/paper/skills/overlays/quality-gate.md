@@ -33,14 +33,13 @@ the same paths when they do not.
 The quality-gate recorder repeats this check and projects every failure into
 `unresolved_review_blockers`; neither score nor decision can override it.
 
-Then explicitly invoke `$ara-paper-review` and launch exactly
-three fresh agents in parallel against the same frozen manuscript. Each agent must independently
-judge the compiled manuscript, claim–evidence map, relevant evidence, and build result without
-seeing prior reviews or sibling outputs and without changing the manuscript. Take the
-coordinate-wise median of the three integer score vectors, including `overall`, and the ordinal
-median of each simulated decision as the panel result. Deterministic code may verify the sources,
-hashes, and medians but must not originate any scientific judgment. If three genuinely independent
-parallel contexts are unavailable, leave the quality gate pending.
+Then explicitly invoke `$openlabs-paper-review`. Freeze one judgment from a blank Codex reviewer,
+then run a new non-persistent Claude Code process through Packy with model `claude-opus-5`. Claude
+receives the same frozen scientific inputs but no author session, prior review, or reviewer-1
+content. Take the lower of the two values for every integer score, including `overall`, and the
+less favorable of the two simulated decisions. Deterministic code may verify provider identities,
+sources, hashes, and aggregation but must not originate a scientific judgment. If either genuinely
+independent provider is unavailable, leave the quality gate pending.
 
 The full paper registry contains the projected result of earlier panels and is therefore not safe
 review input. The coordinator reads it, but every reviewer receives/reads only an in-memory view
@@ -56,11 +55,11 @@ that context even if it came from a filename the coordinator did not intend as r
 Formal-tool reconstruction is objective evidence preparation, not a score-bearing review. When a
 Lean project is in scope, use one repository resource-capped Lean audit workflow for the frozen
 snapshot before starting the panel. Bind the receipt to the manuscript snapshot, support-package
-hash, toolchain, manifest, configuration, and Lean sources; give the same receipt to all three
+hash, toolchain, manifest, configuration, and Lean sources; give the same receipt to both
 reviewers. They must not independently rebuild Lean or mathlib. The single audit is serialized and
 must stay within the repository CPU, memory, process-count, disk-headroom, and timeout maxima. A
 matching PASS receipt is reused; a resource-limit failure is investigated outside the panel rather
-than multiplied across three reviewer contexts. A diagnosed interruption may continue the same
+than duplicated across reviewer contexts. A diagnosed interruption may continue the same
 incremental build with a hash-linked receipt; the formal validation command may execute at most
 once over the complete receipt chain.
 
@@ -80,7 +79,7 @@ particular journal's current classification has been verified, use a generic Zon
 do not claim that the named target is actually Zone 1. These are internal reviewer recommendations,
 not actual venue decisions.
 
-Write three immutable individual JSON records and one immutable panel result under the same
+Write two immutable individual JSON records and one immutable panel result under the same
 `reviews/<review_run_id>/<paper_id>/` directory. Include at least:
 
 - `scores.clarity`, `scores.soundness`, `scores.significance`, `scores.novelty`, and
@@ -94,15 +93,16 @@ Write three immutable individual JSON records and one immutable panel result und
 - model, reasoning effort, UTC review time, paper ID, canonical main-TeX SHA-256, and whether the
   manuscript tree stayed unchanged during review.
 
-Use the panel median `scores.overall` as the CLI score. It is the median of three conservative
+Use the panel's conservative `scores.overall` as the CLI score. It is the lower of two independent
 holistic judgments, not an arithmetic
 escape hatch: an unsupported central claim, unresolved scientific/proof flaw, stale build, or
 unverified critical artifact must also receive a decision below the configured review threshold or
 remain blocked.
 
-Validate the completed panel with the helper shipped inside `$ara-paper-review`. It checks domain
+Validate the completed panel with the helper shipped inside `$openlabs-paper-review`. It checks domain
 routing, integer score fields, role-specific recommendation schemas, immutable reviewer hashes,
-common manuscript snapshots, and exact medians; it never judges the paper or alters a score.
+common manuscript snapshots, frozen-peer binding, and exact conservative aggregation; it never
+judges the paper or alters a score.
 
 ## Apply the deterministic threshold
 
@@ -126,7 +126,7 @@ A score below 5.0 therefore fails even when the decision label is high enough. T
 decision. Treat the command's nonzero exit on a failed gate as the expected blocked/revision
 outcome, not as a tooling error.
 Do not round a review score before applying the gate. Historical decimal records remain readable,
-but all new `$ara-paper-review` records use integers.
+but all new `$openlabs-paper-review` records use integers.
 
 Any subsequent change to a claim, proof, number, citation, figure, table, abstract, conclusion, or
 other score-bearing text invalidates the review. Run a new fresh-context review and record the gate

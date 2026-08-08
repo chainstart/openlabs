@@ -1,80 +1,89 @@
 ---
 name: openlabs-paper-review
-description: Perform OpenLabs' three-agent, parallel, fresh-context review panel for AI, computer-science, software-engineering, mathematics, or materials-science manuscripts. Use when scoring one frozen manuscript, producing three independent immutable reviews and their median panel result, or rerunning the internal quality gate after score-bearing changes; keep scripts limited to routing, provenance, and exact median validation.
+description: Run OpenLabs' independent dual-provider paper gate for AI, computer-science, software-engineering, mathematics, or materials-science manuscripts. Use when one fresh Codex reviewer and one blind Packy Claude Code Opus 5 reviewer must score the same frozen manuscript, or when validating their conservative panel result.
 ---
 
 # OpenLabs paper review
 
-Make scientific judgments only inside the three reviewer contexts. Use deterministic helpers to
-verify inputs, immutable provenance, output structure, and exact medians; never let a script
-originate, round, raise, or lower an individual score.
+Use exactly two score-bearing reviewers:
+
+- `reviewer-1`: a fresh Codex reviewer with `provider: openai-codex`;
+- `reviewer-2`: a fresh Claude Code process using Packy and exactly `claude-opus-5`.
+
+The reviewers must be independent. Freeze reviewer-1 before Claude starts, never send its content
+to Claude, and never revise it after Claude returns. Deterministic code may validate provenance and
+combine completed judgments; it must never originate or improve a score.
 
 ## Establish the review boundary
 
-1. Resolve the private paper root from `OPENLABS_DATA` (or `$OPENLABS_WORKSPACE/openlabs-data`) and read
-   `registry/settings.yaml`. From the code repository read `workflows/paper/skills/profiles.yaml`
-   and `workflows/paper/skills/overlays/quality-gate.md`. The coordinating context reads the
-   selected paper registry in full. Before launching reviewers it must derive a review-safe view of
-   that same current registry with the top-level `ara_llm_self_review`, `writing_release`, and
-   `review_file` fields removed, and with the nested
-   `support.publication.release_binding` mapping removed in full. Do not retain its snapshot, score,
-   target, decision, or package-binding fields. Each reviewer reads only that review-safe view; it
-   must never open, search, or use Git history to recover the unredacted registry. This preserves
-   authors, evidence, and current support metadata without leaking a prior score, decision,
-   blocker, or review path.
-   Generate the view in memory or print it directly with
-   `paper_writing.review.review_safe_registry`; do not create a parallel registry artifact and do
-   not hand-maintain a second redaction rule in reviewer prompts.
-   Historical preflight/review artifacts may also exist inside `papers/<paper_id>/manuscript/`.
-   Reviewers must not list-and-open or recursively search the whole paper/manuscript tree. Build the
-   review source list from the canonical main file's transitive TeX inputs plus its bibliography,
-   and restrict unresolved-marker searches to that explicit list. Never open a filename containing
-   `review`, `preflight`, `score`, or `decision`; open validation/README metadata only when the
-   coordinator has first confirmed that it contains no prior-review projection.
-   Before launching the panel, the coordinator must also scan every text-readable artifact in the
-   registered review input and current public-support archive for embedded prior judgments. Remove
-   reviewer/editor verdicts, venue or publishability assessments, novelty/gate outcomes, and
-   internal campaign status from the reader-facing package, rebuild the draft, and freeze the new
-   package hash before review. Treat prose such as “potentially publishable,” “suitable for
-   publication,” “publication assessment,” “passed the audit,” venue-tier readiness, and requested
-   accept/revise/reject outcomes as evaluative projections even when no numeric score is present.
-   Exclude a document whose primary purpose is an earlier proof/reviewer audit; do not retain its
-   verdict by merely changing a status label. A deterministic checker reporting its own execution status (for
-   example, `status=PASS` after exact assertions) is evidence replay rather than a prior review and
-   may remain. Do not delegate this hygiene check to reviewers: if an evaluative projection is
-   discovered during review, invalidate that context and restart the complete three-agent panel on
-   a clean, common frozen input.
-   Run the bounded recursive archive checker against every registered ZIP supplied to reviewers
-   and the exact current Zenodo ZIP before launching them:
+1. Resolve the private data root from `OPENLABS_DATA` or the configured workspace. Read
+   `registry/settings.yaml`, `workflows/paper/skills/profiles.yaml`, and the selected paper record.
+   Derive reviewer metadata with `paper_writing.review.review_safe_registry`; do not expose
+   `ara_llm_self_review`, `writing_release`, `review_file`, or
+   `support.publication.release_binding`.
+2. Build an explicit input list from canonical transitive TeX inputs, bibliography, claim-evidence
+   maps, registered evidence, and any objective audit receipt. Do not recursively expose the paper
+   tree. Never include a prior review, preflight verdict, score, decision, editor verdict, venue
+   readiness assessment, or Git history.
+3. Run `scripts/check_input_hygiene.py` on every registered ZIP and the current support ZIP. A
+   nonzero result blocks review. Directly inspect the explicit text inputs as well; the archive
+   checker is not a substitute for that inspection.
+4. Confirm that sending unpublished inputs to Packy is authorized and compatible with venue
+   policy. Installing this integration does not authorize external processing of every future
+   paper; confidentiality and venue constraints still apply per manuscript.
+5. Finish deterministic manuscript checks, then freeze and hash one canonical manuscript
+   snapshot. Neither reviewer may edit the manuscript, evidence, registry, or sibling output.
 
-   ```bash
-   python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-review/scripts/check_input_hygiene.py" \
-     --archive <registered-evidence.zip> --archive <current-support.zip>
-   ```
+If a reviewer sees a prior evaluative projection or the snapshot changes, discard that reviewer
+record and rerun the complete two-review gate on a clean snapshot.
 
-   A nonzero result is a pre-review blocker. The checker supplements, rather than replaces, direct
-   inspection of the explicit review inputs.
-2. Confirm authorization for unpublished material. Do not send it to another service unless the
-   user has explicitly authorized that processing and it is compatible with venue policy.
-3. Freeze and hash one canonical manuscript snapshot after drafting and deterministic checks.
-4. Launch exactly three fresh reviewer agents in parallel. Give each the same paper ID, frozen
-   snapshot, this skill, and repository instructions. Do not give them earlier review prose,
-   scores, suspected defects, intended outcomes, or sibling outputs. Do not run the three reviews
-   sequentially as a substitute for independence. If a reviewer sees any unredacted prior-review
-   projection, discard that entire reviewer context and replace it with a fresh one.
-5. Assign stable IDs `reviewer-1`, `reviewer-2`, and `reviewer-3` and unique immutable output paths
-   under one run directory. Each reviewer must set `independent_context: true`,
-   `prior_reviews_hidden: true`, and its matching `panel_reviewer_id`.
-6. Review only. No reviewer may edit the manuscript, evidence, registry, or another review. Hash
-   the canonical manuscript snapshot before and after every review. If three genuinely fresh
-   parallel agents are unavailable or any snapshot changes, leave the gate pending.
+## Run the two independent reviewers
 
-## Run formal-tool audits once, outside the panel
+### Reviewer 1: Codex
 
-When the frozen evidence includes a Lean project, the coordinator may appoint one separate,
-objective Lean checker or run the bounded checker itself. This checker is not a fourth reviewer,
-does not score the paper, and must finish before the three content reviewers are launched. Use one
-snapshot-bound audit workflow and give its immutable receipt to all three reviewers:
+Start a blank reviewer session. Read the complete frozen paper, relevant evidence, and the selected
+rubric. Write `reviewer-1.json` using `ara.paper_writing.review.v2`, including:
+
+```json
+{
+  "provider": "openai-codex",
+  "model": "<actual Codex model>",
+  "panel_reviewer_id": "reviewer-1",
+  "independent_context": true,
+  "prior_reviews_hidden": true
+}
+```
+
+These keys belong inside `review_metadata`. Validate and freeze the file before starting Claude.
+Do not edit it afterward.
+
+### Reviewer 2: Claude Code Opus 5 through Packy
+
+Use the local Claude settings file containing `ANTHROPIC_BASE_URL` for Packy and either
+`ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY`. Never copy the key into this repository, an
+environment example, a prompt, a log, or a review artifact.
+
+Run the bounded adapter after reviewer-1 is frozen:
+
+```bash
+python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-review/scripts/run_claude_reviewer.py" \
+  --paper-id <paper_id> \
+  --peer-review reviews/<review_run_id>/<paper_id>/reviewer-1.json \
+  --input <transitive-tex-or-bib> \
+  --input <review-safe-evidence-or-objective-receipt>
+```
+
+The adapter automatically includes canonical `main.tex`, redacted registry metadata, and the
+rubric. It accepts only explicit UTF-8 files inside the data repository; prior review paths are
+rejected except objective-audit receipts. It invokes a new non-persistent Claude Code process with
+all tools disabled, structured output enabled, and model fixed to `claude-opus-5`. It verifies the
+Packy endpoint and presence of a local credential without printing the credential. It hashes but
+does not read reviewer-1 into the prompt, checks reviewer-1 and the manuscript remained unchanged,
+and writes `reviewer-2.json` beside reviewer-1.
+
+## Run objective formal checks once
+
+When Lean evidence is in scope, run one snapshot-bound objective audit before either reviewer:
 
 ```bash
 python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-review/scripts/run_lean_audit.py" \
@@ -86,195 +95,113 @@ python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-revie
   --output reviews/objective-audits/<paper_id>/<snapshot>/lean.json
 ```
 
-The command serializes Lean work with a host lock and defaults to two Lean threads, two-core CPU
-affinity, 16 GiB aggregate descendant RSS, 24 GiB per-process virtual address space, 12 descendant
-processes, and a 60-minute wall-clock limit. Repository maxima are four threads, 24 GiB aggregate
-RSS, 32 GiB virtual address space per process, 24 processes, and 60 minutes. Preflight also reserves
-at least 8 GiB or one quarter of total WSL memory, whichever is larger. The virtual-address
-ceiling is intentionally wider than the actual-RSS ceiling because Lean reserves thread stacks and
-memory mappings that are not resident memory. Do not exceed those maxima inside a skill or reviewer
-prompt. The checker also requires memory/disk headroom, lowers scheduling priority, terminates the
-whole process group on a limit breach, and reuses an exact matching PASS receipt instead of
-rebuilding. Do not run `lake update` during review: the frozen `lake-manifest.json` and toolchain are
-inputs, not files to refresh.
+This checker is not a third reviewer and does not score. Give the same immutable receipt to both
+reviewers. Do not run `lake update`, rebuild Lean, or repeat the formal validation in a reviewer
+context. Preserve the existing resource ceilings: at most four threads, 24 GiB aggregate RSS,
+32 GiB virtual address space per process, 24 processes, and 60 minutes, while reserving at least
+8 GiB or one quarter of host memory. If a central claim needs the audit and no valid PASS receipt
+exists, retain an evidence blocker.
 
-Every reviewer receives the same objective receipt and source hashes, but no reviewer runs
-`lake build`, `lake update`, `lake env lean`, or a second formal-tool reconstruction. Reviewers
-independently assess the written proof, formulas, assumptions, novelty, significance, exposition,
-and the stated boundary of the formal certificate. A resource-limit or timeout result is not a
-license to retry in reviewer contexts. The coordinator may resume the same hash-bound incremental
-build after diagnosing a guard failure, but the formal axiom-validation command may execute only
-once across the receipt chain. If a central claim materially
-depends on a successful formal audit and no valid receipt exists, retain an evidence blocker.
+## Select the rubric
 
-## Select the domain rubric
+Read `references/rubrics.md` completely and route from the registry's literal domain:
 
-Read `references/rubrics.md` completely, then select from the registry's literal `domain`:
+- `ai`, `cs`, `se`: `cs_top_tier`, with independent `top_conference` and
+  `cas_zone_1_journal` recommendations;
+- `math`: `math`, judged against *Annals of Mathematics*, *Inventiones Mathematicae*, *Journal of
+  the American Mathematical Society*, and *Acta Mathematica*, with `four_top_math_journals` and
+  `cas_zone_1_journal` recommendations and no conference view;
+- `materials`: `materials`, with `leading_materials_journals` and
+  `cas_zone_1_journal` recommendations;
+- any other domain: stop; do not silently substitute a rubric.
 
-- `ai`, `cs`, or `se`: use `cs_top_tier`. Judge the numeric scores as a top-tier computer-science
-  conference reviewer, such as NeurIPS, ICML, or ACL, even when the paper is currently aimed at a
-  journal. Produce a top-conference recommendation and a separate, less selective CAS Zone 1
-  journal recommendation.
-- `math`: use `math` with rubric `math_four_journals`. Judge every numeric score against the shared
-  standard of *Annals of Mathematics*, *Inventiones Mathematicae*, *Journal of the American
-  Mathematical Society*, and *Acta Mathematica*. Do not replace proof review with computational
-  checks and do not relax the score because the current target venue is less selective. Produce a
-  four-leading-journal recommendation and a separate, less selective CAS Zone 1 journal
-  recommendation. Never produce a conference recommendation for mathematics.
-- `materials`: use `materials` with rubric `materials_leading_journals`. Judge physical validity,
-  structure/model provenance, numerical convergence, independent references, sampling units,
-  uncertainty, mechanistic inference, and reproducibility. Produce a `leading_materials_journals`
-  recommendation and a separate CAS Zone 1 journal recommendation; do not produce a conference
-  or mathematics-journal view.
-- any other domain: stop and add an explicit rubric before scoring.
+Use `cas_zone_1_basis.mode: generic_standard` unless a named target's current major-category
+classification has been verified from an identified source.
 
-A named target journal may add a venue-fit note, but it does not replace the base domain rubric.
-Treat “CAS Zone 1” as the major-category partition configured by the repository. Never claim that a
-specific target is currently Zone 1 unless its current classification and scope were verified from
-an identified source. Otherwise use the generic field-appropriate Zone 1 standard and record lower
-venue-fit confidence.
+## Review the frozen work
 
-## Inspect the complete frozen paper
+Reviewer-1 inspects the compiled PDF, all canonical source inputs, and registered evidence.
+Reviewer-2 receives the same scientific content as explicit UTF-8 source/evidence inputs; include
+all transitive TeX, bibliography, figure/table descriptions, and machine-readable evidence needed
+to assess central claims.
 
-1. Read the compiled PDF and every transitively included canonical LaTeX and bibliography file.
-   Do not substitute a recursive manuscript-directory search, because non-canonical historical
-   review files in that directory are outside the frozen paper and break blinding.
-2. Read the claim-evidence map and validate every registered result bundle. Inspect the registered
-   artifacts needed to test central claims; do not treat a hash alone as scientific validation.
-   For Lean evidence, inspect the coordinator-supplied objective receipt and source binding; do not
-   rebuild Lean or mathlib inside a score-bearing reviewer context.
-3. Check build freshness, citations, unresolved markers, theorem/proof dependencies, statistical
-   design, and reproducibility as applicable to the selected rubric.
-4. Run `python -m paper_writing support-check --paper-id <paper_id>`. Treat internal Zenodo
-   workflow narration, a support-record title that identifies a prior rather than current paper
-   title, a standalone reproducibility heading that names a different paper, an unknown or legacy
-   claim ID in that standalone statement, a stale Version DOI/title/version/creator list, an
-   uncited first support mention, a false public-access claim, a replay/checker/test count that
-   contradicts the exact current package, a false outer-root claim for a nested archive member, or stale record
-   identity inside the exact ZIP's outer or nested CFF/manifest/README, or a README claim that
-   overstates the actual `SHA256SUMS`/manifest inventory coverage, as a formal blocker;
-   reviewers must not ask the paper to explain draft-to-release history.
-5. Treat missing or contradictory evidence, invalid inference, proof gaps, and unsupported central
-   claims as blockers. Do not repair them during scoring.
+Both reviewers independently check claim-evidence correspondence, proof dependencies, statistical
+design, physical validity, citations, build freshness, unresolved markers, reproducibility, and
+support-package claims as applicable. Run `python -m paper_writing support-check --paper-id
+<paper_id>` before scoring. Missing or contradictory evidence, invalid inference, proof gaps, and
+unsupported central claims are blockers; do not repair them during review.
 
-## Assign independent scores and simulated decisions
+## Score independently
 
-Read `references/review-schema.md` completely before writing the result.
+Read `references/review-schema.md` before writing either record.
 
-- Assign `clarity`, `soundness`, `significance`, `novelty`, and `overall` as integers from 1 to 10.
-- Do not use decimals. If the judgment lies between two levels, choose the lower integer and state
-  the uncertainty in the rationale.
-- Treat `overall` as a conservative holistic judgment, not an arithmetic average.
-- Apply the role-specific score anchors in `references/rubrics.md`. For mathematics, technical
-  correctness alone does not establish four-journal novelty, significance, or overall readiness.
-- Do not tune a result to cross the repository floor or coordinate with another reviewer. Most submission-stage papers should score
-  5--7; reserve 8 or above for genuinely strong, well-evidenced work.
-- Produce exactly the two role-specific recommendation views independently:
-  - `ai`, `cs`, `se`: seven-point `top_conference` plus five-point
-    `cas_zone_1_journal`;
-  - `math`: five-point `four_top_math_journals` plus five-point
-    `cas_zone_1_journal`; no conference view.
-- The CAS Zone 1 bar is deliberately lower than the high standard, but it still requires a sound,
-  meaningful, well-supported contribution. Do not mechanically derive it by shifting the high-
-  standard label.
-- Use `minor_revision` only when no new central proof, experiment, data, analysis, or claim is
-  required. A scientific blocker prevents an accept recommendation even if the numeric average is
-  high.
-- Mark both recommendations as simulations. They are not actual editor, program-committee, or
-  external-review decisions.
+- Score `clarity`, `soundness`, `significance`, `novelty`, and holistic `overall` as integers 1--10.
+- When between integers, choose the lower one and explain the uncertainty.
+- Do not tune a result to cross the repository threshold or infer the other reviewer's judgment.
+- Produce exactly the two domain-specific simulated recommendation views.
+- `minor_revision` is allowed only when no new central proof, experiment, data, analysis, or claim
+  is required. A scientific blocker prevents an accept recommendation.
 
-## Aggregate the panel
+## Aggregate conservatively
 
-Only after all three immutable individual records exist may the coordinating context read them.
+Only after both immutable source files exist may the coordinator read reviewer-2.
 
-1. Take the coordinate-wise median of the three integers for `clarity`, `soundness`,
-   `significance`, `novelty`, and `overall`. The final `overall` is the median of the three
-   reviewers' holistic `overall` judgments, not an average and not a value recomputed from the
-   other four medians.
-2. Order each decision vocabulary from most favorable to least favorable exactly as in
-   `references/rubrics.md` and take its ordinal median independently for the high-standard and CAS
-   Zone 1 views. Never convert decisions to scores or shift one venue view mechanically.
-3. Synthesize strengths, weaknesses, section feedback, and required changes without changing the
-   medians. For a blocker raised by only one reviewer, verify the cited artifact: retain it when
-   confirmed or uncertain, and document why it is excluded only when the frozen evidence directly
-   disproves it. Never vote away a real proof or evidence defect.
-4. Write the final panel record with schema `ara.paper_writing.review.v3`, immutable references and
-   SHA-256 hashes for all three `v2` source reviews, and the required panel metadata from the schema
-   reference.
+1. For each score, take the lower of the two integers (`coordinatewise_minimum`).
+2. For each recommendation vocabulary ordered most favorable to least favorable in the rubric,
+   take the less favorable decision (`strictest_decision`).
+3. Retain the union of weaknesses, required changes, change requests, and unresolved blockers.
+   `text_ready` and `scientific_ready` are true only if both reviewers say true and no blocker
+   remains. No vote, average, or coordinator prose may erase a blocker.
+4. Write schema `openlabs.paper_writing.review.v1`. Historical
+   `ara.paper_writing.review.v3` three-review panels remain readable but must not be generated for
+   new work.
 
-The coordinating context may use the auxiliary mechanical aggregator after it has inspected all
-three completed records. The helper calculates only required medians, decision medians, hashes,
-and lossless unions of findings and blockers; it never reads the manuscript or originates a score:
+Use the mechanical aggregator:
 
 ```bash
 python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-review/scripts/aggregate_panel.py" \
-  --paper-id <paper_id> --review-dir reviews/<review_run_id>/<paper_id> \
+  --paper-id <paper_id> \
+  --review-dir reviews/<review_run_id>/<paper_id> \
   --objective-audit reviews/objective-audits/<paper_id>/<snapshot>/lean.json
 ```
 
-Omit `--objective-audit` when Lean is not in scope. When supplied, the panel carries the single
-shared receipt and the validator checks its file hash, frozen-input bindings, one-execution marker,
-source hashes, successful sequential commands, and resource ceilings without rerunning Lean.
+Omit `--objective-audit` when it is not in scope. The aggregator validates provider/model identity,
+the hidden frozen-peer hash, common snapshot, source hashes, and exact conservative aggregation.
 
-Inspect the generated consensus record before applying it. If a duplicated finding needs editorial
-condensation, change only the consensus prose; never change a source judgment, score, decision,
-source hash, or retained blocker.
+## Validate and apply
 
-## Record and validate
+Validate both source files and the panel:
 
-1. Write `reviewer-1.json`, `reviewer-2.json`, and `reviewer-3.json` under
-   `reviews/<review_run_id>/<paper_id>/`, then write the aggregate as `review.json`, using the
-   schema reference. Include model, reasoning effort, UTC time, paper ID, role, main-TeX SHA-256,
-   before/after snapshot hashes, and `manuscript_unchanged` in every source record.
-2. Run the auxiliary validator on each individual `v2` record and then on the aggregate `v3`
-   record. It checks routing, integer scores, metadata, role-specific views, immutable source
-   hashes, common snapshots, and exact medians without judging the paper:
+```bash
+python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-review/scripts/validate_review.py" \
+  --paper-id <paper_id> \
+  --review reviews/<review_run_id>/<paper_id>/reviewer-1.json
 
-   ```bash
-   python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-review/scripts/validate_review.py" \
-     --paper-id <paper_id> \
-     --review reviews/<review_run_id>/<paper_id>/reviewer-1.json
+python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-review/scripts/validate_review.py" \
+  --paper-id <paper_id> \
+  --review reviews/<review_run_id>/<paper_id>/reviewer-2.json
 
-   python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-review/scripts/validate_review.py" \
-     --paper-id <paper_id> --review reviews/<review_run_id>/<paper_id>/review.json
-   ```
+python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-review/scripts/validate_review.py" \
+  --paper-id <paper_id> \
+  --review reviews/<review_run_id>/<paper_id>/review.json
+```
 
-3. If validation fails, fix only structural or transcription errors. Do not change a substantive
-   individual judgment outside a new three-agent panel.
-4. Register the immutable panel result and apply the quality gate with the auxiliary recorder. It
-   validates the skill-authored records and manuscript hashes, copies the median score and
-   recommendations into the registry, and invokes the stable gate; it never originates or changes
-   a score:
+Fix validation-only transcription errors in place. A substantive judgment change requires a new
+reviewer context; any score-bearing manuscript change invalidates both reviews.
 
-   ```bash
-   python -m paper_writing review apply \
-     --paper-id <paper_id> \
-     --review reviews/<review_run_id>/<paper_id>/review.json \
-     --venue-type <conference-or-journal>
-   ```
+Apply the validated panel with:
 
-   Keep `--venue-type` equal to the actual target venue type. The CAS Zone 1 recommendation remains
-   the gate decision regardless of target venue type. Never round the score. By default the helper
-   preserves the registry's completed revision-round count; pass `--revision-rounds` only when a
-   real revision round was completed.
-   A non-empty `unresolved_blockers` list keeps `writing_release` out of `ready` even when the
-   numeric score and CAS decision meet their thresholds. Resolve the evidence/scientific blocker
-   or create a new review after a real revision; never delete a blocker merely to pass the gate.
-5. Any later score-bearing manuscript change invalidates the complete panel and requires three new
-   immutable independent reviews on the new snapshot.
-6. A `ready` gate is internal evidence about manuscript readiness only. It does not authorize a
-   Zenodo release, remote handoff, submission, journal event, or publication fact. Retain blockers
-   based on scientific evidence, not on a desired external outcome.
-7. Do not record a blocker merely because the controlled registry says `status: draft`. Between
-   `zenodo prepare` and `zenodo release`, the active `support.publication.version_doi`,
-   `zenodo.reserved_version_doi`, and `zenodo.version_doi` all identify the prepared current version;
-   any earlier public identity is internal history under `zenodo.previous_published`. A reserved DOI
-   resolving to 404 before release is expected, as is `writing_release.support_package_sha256`
-   lagging until the next `review apply` rebinds it. Check that the manuscript uses neutral,
-   future-stable wording, cites the current DOI, and makes no claim of present public access. The
-   formal manuscript must not narrate the draft/reservation/release transition. See
-   `docs/ZENODO_GUIDE.md`.
+```bash
+python -m paper_writing review apply \
+  --paper-id <paper_id> \
+  --review reviews/<review_run_id>/<paper_id>/review.json \
+  --venue-type <conference-or-journal>
+```
 
-Report all three score vectors, the five integer medians, both median role-specific simulated
-decisions, retained blockers, validation result, quality-gate result, and confirmation that every
-reviewer saw the same unchanged manuscript snapshot.
+The CAS Zone 1 decision remains the internal gate decision. Any unresolved blocker keeps the gate
+out of `ready`. A ready gate does not authorize release, submission, publication, or any external
+action.
+
+Report both score vectors, the five conservative scores, both strictest simulated decisions,
+retained blockers, validation and gate results, actual provider/model identities, and confirmation
+that both reviewers used the same unchanged manuscript snapshot.

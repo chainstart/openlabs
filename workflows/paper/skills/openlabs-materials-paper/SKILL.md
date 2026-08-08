@@ -15,7 +15,7 @@ record, its claim–evidence map, the materials result bundles, and the current 
 - Read `workflows/paper/skills/vendor/statistical-analysis/SKILL.md` when quantitative inference,
   uncertainty, exclusions, hierarchical sampling, or multiplicity is in scope.
 - Read `workflows/paper/skills/vendor/peer-review/SKILL.md` and use
-  `$openlabs-paper-review` for the frozen three-reviewer panel.
+  `$openlabs-paper-review` for the frozen dual-provider panel.
 
 Do not activate additional writing systems or create a second registry.
 
@@ -38,9 +38,10 @@ Do not activate additional writing systems or create a second registry.
 
 Revise the canonical LaTeX only after updating the claim–evidence map. Verify each citation against
 the actual proposition used, compile the frozen manuscript, and run deterministic repository and
-support checks. Give the unchanged snapshot to exactly three independent reviewer contexts using
-the `materials` rubric and the `leading_materials_journals` plus `cas_zone_1_journal` simulated
-views. Apply exact median aggregation; any score-bearing edit makes the panel stale.
+support checks. Give the unchanged snapshot to the independent Codex and blind Packy Claude Opus 5
+reviewers using the `materials` rubric and the `leading_materials_journals` plus
+`cas_zone_1_journal` simulated views. Apply exact conservative aggregation; any score-bearing edit
+makes the panel stale.
 
 A passing gate changes only internal state to `ready`. It never authorizes Zenodo, remote handoff,
 submission, journal communication, or public release. Report remaining physical-model,

@@ -13,6 +13,7 @@ from paper_writing.review import (
     CS_TOP_TIER_REVIEWER_ROLE,
     FOUR_TOP_MATH_JOURNALS_VIEW,
     INDIVIDUAL_REVIEW_SCHEMA_VERSION,
+    LEGACY_REVIEW_SCHEMA_VERSION,
     LEAN_OBJECTIVE_AUDIT_KIND,
     LEAN_OBJECTIVE_AUDIT_SCHEMA_VERSION,
     LEADING_MATERIALS_JOURNALS_VIEW,
@@ -36,6 +37,9 @@ from paper_writing.review import (
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "validate_review.py"
 AGGREGATOR = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "aggregate_panel.py"
+CLAUDE_REVIEWER = (
+    ROOT / "skills" / "openlabs-paper-review" / "scripts" / "run_claude_reviewer.py"
+)
 
 
 def test_review_safe_registry_removes_all_review_projections() -> None:
@@ -176,18 +180,21 @@ def _write_panel(
     panel_dir.mkdir(parents=True, exist_ok=True)
     records = []
     reviewer_payloads = []
-    overall_values = [5, 6, 7]
-    cas_decisions = ["accept", "minor_revision", "major_revision"] if ready else [
-        "minor_revision",
+    overall_values = [6, 7] if ready else [5, 6]
+    cas_decisions = ["accept", "minor_revision"] if ready else [
         "major_revision",
         "reject_and_resubmit",
     ]
-    for index in range(3):
+    for index in range(2):
         reviewer = _review(paper_id=paper_id, role=role)
         reviewer["scores"]["overall"] = overall_values[index]
         reviewer["recommendations"][CAS_ZONE_1_JOURNAL_VIEW]["decision"] = cas_decisions[index]
+        provider = "openai-codex" if index == 0 else "packy"
+        model = "test-codex" if index == 0 else "claude-opus-5"
         reviewer["review_metadata"].update(
             {
+                "provider": provider,
+                "model": model,
                 "main_tex_sha256": main_tex_sha256,
                 "manuscript_snapshot_sha256_before": snapshot,
                 "manuscript_snapshot_sha256_after": snapshot,
@@ -196,6 +203,10 @@ def _write_panel(
                 "prior_reviews_hidden": True,
             }
         )
+        if index == 1:
+            reviewer["review_metadata"]["hidden_peer_review_sha256"] = records[0][
+                "sha256"
+            ]
         if ready:
             reviewer["unresolved_blockers"] = []
             reviewer["publishability_summary"] = {
@@ -208,26 +219,31 @@ def _write_panel(
         records.append(
             {
                 "reviewer_id": f"reviewer-{index + 1}",
+                "provider": provider,
+                "model": model,
                 "source": source_path.relative_to(root).as_posix(),
                 "sha256": sha256_file(source_path),
             }
         )
         reviewer_payloads.append(reviewer)
 
-    panel = deepcopy(reviewer_payloads[1])
+    panel = deepcopy(reviewer_payloads[0])
     panel["schema_version"] = REVIEW_SCHEMA_VERSION
+    panel["scores"]["overall"] = min(overall_values)
+    panel["recommendations"][CAS_ZONE_1_JOURNAL_VIEW]["decision"] = cas_decisions[-1]
     panel["review_metadata"].pop("panel_reviewer_id")
     panel["review_metadata"].pop("independent_context")
     panel["review_metadata"].pop("prior_reviews_hidden")
+    panel["review_metadata"].pop("provider")
     panel["review_metadata"].update(
         {
-            "model": "three-agent-median-panel",
-            "reasoning_effort": "mechanical median aggregation",
+            "model": "codex-plus-claude-opus-5-conservative-panel",
+            "reasoning_effort": "mechanical conservative aggregation",
             "review_panel": {
-                "panel_size": 3,
-                "score_aggregation": "coordinatewise_median",
-                "decision_aggregation": "ordinal_median",
-                "parallel_execution": True,
+                "panel_size": 2,
+                "score_aggregation": "coordinatewise_minimum",
+                "decision_aggregation": "strictest_decision",
+                "parallel_execution": False,
                 "independent_contexts": True,
                 "prior_reviews_hidden": True,
                 "reviewer_records": records,
@@ -405,10 +421,10 @@ latest_pdf: papers/{paper_id}/manuscript/main.pdf
     assert payload["valid"] is True
     assert payload["expected_reviewer_role"] == "math"
     assert payload["rubric_id"] == MATH_FOUR_JOURNALS_RUBRIC_ID
-    assert payload["overall"] == 6
+    assert payload["overall"] == 5
     assert payload["high_standard_view"] == FOUR_TOP_MATH_JOURNALS_VIEW
     assert payload["high_standard_decision"] == "reject"
-    assert payload["cas_zone_1_decision"] == "major_revision"
+    assert payload["cas_zone_1_decision"] == "reject_and_resubmit"
 
     review = json.loads(review_path.read_text(encoding="utf-8"))
     review["review_metadata"]["manuscript_snapshot_sha256_before"] = "c" * 64
@@ -493,7 +509,144 @@ latest_pdf: papers/{paper_id}/manuscript/main.pdf
     assert payload["overall"] == 6
 
 
-def test_panel_validator_rejects_nonmedian_score_and_decision(tmp_path: Path) -> None:
+def test_claude_reviewer_uses_packy_config_and_hides_peer_review(tmp_path: Path) -> None:
+    paper_id = "20260804-ai-llm-claude-test"
+    manuscript = tmp_path / "papers" / paper_id / "manuscript"
+    manuscript.mkdir(parents=True)
+    main_tex = manuscript / "main.tex"
+    main_pdf = manuscript / "main.pdf"
+    main_tex.write_text("\\documentclass{article}\nEvidence only.\n", encoding="utf-8")
+    main_pdf.write_bytes(b"%PDF-1.4 claude reviewer fixture")
+    snapshot = manuscript_snapshot_sha256(manuscript, main_pdf)
+    registry = tmp_path / "registry" / "papers"
+    registry.mkdir(parents=True)
+    (registry / f"{paper_id}.yaml").write_text(
+        f"""paper_id: {paper_id}
+created_at: 2026-08-04
+domain: ai
+subdomain: llm
+manuscript_dir: papers/{paper_id}/manuscript
+latest_source: papers/{paper_id}/manuscript/main.tex
+latest_pdf: papers/{paper_id}/manuscript/main.pdf
+""",
+        encoding="utf-8",
+    )
+    review_dir = tmp_path / "reviews" / "fresh" / paper_id
+    review_dir.mkdir(parents=True)
+    peer = _review(paper_id=paper_id, role=CS_TOP_TIER_REVIEWER_ROLE)
+    peer["weaknesses"] = ["PEER-ONLY-SECRET"]
+    peer["review_metadata"].update(
+        {
+            "provider": "openai-codex",
+            "model": "test-codex",
+            "main_tex_sha256": sha256_file(main_tex),
+            "manuscript_snapshot_sha256_before": snapshot,
+            "manuscript_snapshot_sha256_after": snapshot,
+            "panel_reviewer_id": "reviewer-1",
+            "independent_context": True,
+            "prior_reviews_hidden": True,
+        }
+    )
+    peer_path = review_dir / "reviewer-1.json"
+    peer_path.write_text(json.dumps(peer), encoding="utf-8")
+
+    settings = tmp_path / "claude-settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://www.packyapi.com",
+                    "ANTHROPIC_AUTH_TOKEN": "test-packy-secret",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    fake_claude = tmp_path / "fake-claude"
+    judgment = {
+        "scores": {
+            "clarity": 6,
+            "soundness": 5,
+            "significance": 5,
+            "novelty": 4,
+            "overall": 5,
+        },
+        "strengths": ["The question is explicit."],
+        "weaknesses": ["The evidence is narrow."],
+        "section_feedback": {"main": "Narrow the claim."},
+        "required_changes": ["Narrow the claim."],
+        "change_requests": [],
+        "unresolved_blockers": ["The broad claim is unsupported."],
+        "recommendations": {
+            TOP_CONFERENCE_VIEW: {
+                "seven_point": {
+                    "decision": "reject",
+                    "confidence": "high",
+                    "rationale": "Evidence is insufficient.",
+                }
+            },
+            CAS_ZONE_1_JOURNAL_VIEW: {
+                "decision": "major_revision",
+                "confidence": "high",
+                "rationale": "Substantive repair is required.",
+            },
+        },
+        "publishability_summary": {
+            "text_ready": False,
+            "scientific_ready": False,
+            "blocking_reason": "The broad claim is unsupported.",
+        },
+    }
+    fake_claude.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "prompt = sys.stdin.read()\n"
+        "if 'PEER-ONLY-SECRET' in prompt:\n"
+        "    raise SystemExit(9)\n"
+        f"judgment = {judgment!r}\n"
+        "print(json.dumps({'type': 'result', 'subtype': 'success', "
+        "'is_error': False, 'structured_output': judgment, "
+        "'modelUsage': {'claude-opus-5': {'canonicalModel': 'claude-opus-5'}}, "
+        "'total_cost_usd': 0.01}))\n",
+        encoding="utf-8",
+    )
+    fake_claude.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CLAUDE_REVIEWER),
+            "--paper-id",
+            paper_id,
+            "--peer-review",
+            str(peer_path),
+            "--root",
+            str(tmp_path),
+            "--settings",
+            str(settings),
+            "--claude-command",
+            str(fake_claude),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    review = json.loads((review_dir / "reviewer-2.json").read_text(encoding="utf-8"))
+    assert review["review_metadata"]["provider"] == "packy"
+    assert review["review_metadata"]["model"] == "claude-opus-5"
+    assert review["review_metadata"]["hidden_peer_review_sha256"] == sha256_file(
+        peer_path
+    )
+    assert validate_review_record(
+        review,
+        expected_role=CS_TOP_TIER_REVIEWER_ROLE,
+        expected_paper_id=paper_id,
+    ) == []
+
+
+def test_panel_validator_rejects_nonconservative_score_and_decision(tmp_path: Path) -> None:
     paper_id = "20260804-ai-llm-panel-test"
     review_path = _write_panel(
         tmp_path,
@@ -515,8 +668,8 @@ def test_panel_validator_rejects_nonmedian_score_and_decision(tmp_path: Path) ->
         expected_paper_id=paper_id,
     )
 
-    assert "scores.overall must equal reviewer median 6, got 7" in errors
-    assert any("ordinal median minor_revision" in error for error in errors)
+    assert "scores.overall must equal coordinatewise_minimum 6, got 7" in errors
+    assert any("strictest_decision minor_revision" in error for error in errors)
 
 
 def test_panel_validator_requires_sources_beside_panel_result(tmp_path: Path) -> None:
@@ -547,6 +700,67 @@ def test_panel_validator_requires_sources_beside_panel_result(tmp_path: Path) ->
     )
 
     assert "reviewer record 1 must be stored beside the panel result" in errors
+
+
+def test_panel_validator_keeps_historical_three_reviewer_records_readable(
+    tmp_path: Path,
+) -> None:
+    paper_id = "20260804-ai-llm-legacy-panel-test"
+    review_path = _write_panel(
+        tmp_path,
+        paper_id=paper_id,
+        role=CS_TOP_TIER_REVIEWER_ROLE,
+        snapshot="b" * 64,
+        main_tex_sha256="a" * 64,
+        ready=True,
+    )
+    panel = json.loads(review_path.read_text(encoding="utf-8"))
+    review_dir = review_path.parent
+    reviewer_three = _review(paper_id=paper_id, role=CS_TOP_TIER_REVIEWER_ROLE)
+    reviewer_three["scores"]["overall"] = 5
+    reviewer_three["recommendations"][CAS_ZONE_1_JOURNAL_VIEW][
+        "decision"
+    ] = "major_revision"
+    reviewer_three["unresolved_blockers"] = []
+    reviewer_three["publishability_summary"] = {
+        "text_ready": True,
+        "scientific_ready": True,
+        "blocking_reason": "",
+    }
+    reviewer_three["review_metadata"].update(
+        {
+            "panel_reviewer_id": "reviewer-3",
+            "independent_context": True,
+            "prior_reviews_hidden": True,
+        }
+    )
+    reviewer_three_path = review_dir / "reviewer-3.json"
+    reviewer_three_path.write_text(json.dumps(reviewer_three), encoding="utf-8")
+    panel["schema_version"] = LEGACY_REVIEW_SCHEMA_VERSION
+    panel_metadata = panel["review_metadata"]["review_panel"]
+    panel_metadata.update(
+        {
+            "panel_size": 3,
+            "score_aggregation": "coordinatewise_median",
+            "decision_aggregation": "ordinal_median",
+            "parallel_execution": True,
+        }
+    )
+    panel_metadata["reviewer_records"].append(
+        {
+            "reviewer_id": "reviewer-3",
+            "source": reviewer_three_path.relative_to(tmp_path).as_posix(),
+            "sha256": sha256_file(reviewer_three_path),
+        }
+    )
+
+    assert validate_review_panel_files(
+        panel,
+        review_path=review_path,
+        repo_root=tmp_path,
+        expected_role=CS_TOP_TIER_REVIEWER_ROLE,
+        expected_paper_id=paper_id,
+    ) == []
 
 
 def test_panel_validator_accepts_one_shared_bounded_lean_receipt(tmp_path: Path) -> None:
@@ -648,7 +862,7 @@ def test_panel_validator_accepts_one_shared_bounded_lean_receipt(tmp_path: Path)
     assert any("execution_count must equal 1" in error for error in errors)
 
 
-def test_skill_aggregator_computes_only_required_panel_medians(tmp_path: Path) -> None:
+def test_skill_aggregator_applies_conservative_dual_review_rules(tmp_path: Path) -> None:
     paper_id = "20260804-ai-llm-aggregate-test"
     registry = tmp_path / "registry" / "papers"
     registry.mkdir(parents=True)
@@ -694,10 +908,13 @@ subdomain: llm
         == "minor_revision"
     )
     metadata = panel["review_metadata"]["review_panel"]
-    assert metadata["panel_size"] == 3
-    assert metadata["score_aggregation"] == "coordinatewise_median"
-    assert metadata["decision_aggregation"] == "ordinal_median"
-    assert len(metadata["reviewer_records"]) == 3
+    assert metadata["panel_size"] == 2
+    assert metadata["score_aggregation"] == "coordinatewise_minimum"
+    assert metadata["decision_aggregation"] == "strictest_decision"
+    assert [record["provider"] for record in metadata["reviewer_records"]] == [
+        "openai-codex",
+        "packy",
+    ]
 
 
 def test_apply_review_registers_skill_judgment_and_uses_cas_gate(tmp_path: Path) -> None:
@@ -762,7 +979,7 @@ writing_release:
     assert metadata["ara_llm_self_review"]["score"] == 6
     assert metadata["ara_llm_self_review"]["high_standard_view"] == TOP_CONFERENCE_VIEW
     assert metadata["ara_llm_self_review"]["cas_zone_1_decision"] == "minor_revision"
-    assert metadata["ara_llm_self_review"]["review_panel"]["panel_size"] == 3
+    assert metadata["ara_llm_self_review"]["review_panel"]["panel_size"] == 2
     assert metadata["ara_llm_self_review"]["source"] == (
         f"reviews/fresh/{paper_id}/review.json"
     )

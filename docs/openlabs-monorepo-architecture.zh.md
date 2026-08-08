@@ -397,6 +397,15 @@ systemd 只能保证进程被启动，科学恢复必须由工厂 watchdog 实�
 worker 只执行一个有界节点：Agent 进程在节点结束或等待长实验时退出，确定性实验进程通过
 checkpoint、心跳和租约继续运行。这样保留对话连续性，同时避免把进程存活误当成可靠记忆。
 
+保持 Codex 操作系统进程不退出，不能消除模型再次处理活动上下文的 token 成本；它主要只
+保留本地 RAM、打开的文件句柄和子进程状态，反而会扩大崩溃恢复、租约回收、资源泄漏和凭据
+生命周期。跨节点连续性因此采用“长寿命逻辑 session + 短寿命有界进程”：同角色、同
+campaign、同使命使用 `codex exec resume`；节点输入应优先指向最新 checkpoint、变化清单和
+必要证据，避免重复展开未变化的大文件。若两个所谓节点必须依赖尚未持久化的内存状态，它们
+不是可靠的持久边界，应合并为同一
+有界 Agent 节点，让一个 Codex 进程在节点内部跨越这些微步骤，直到产出原子 checkpoint 后
+退出。外部等待、角色/权限变化、独立复核或科学门禁仍必须切断进程和会话。
+
 | 场景 | 会话规则 | 原因 |
 |---|---|---|
 | 同一 campaign 的研究推进与结果解释 | 同一 `researcher` session | 避免重复读取背景、保留路线记忆 |
@@ -405,12 +414,13 @@ checkpoint、心跳和租约继续运行。这样保留对话连续性，同时�
 | `NEEDS_REPLAN` | 新 `researcher` session | 打断失败路线的锚定和沉没成本偏差 |
 | 同一稿件的连续修订 | 同一 `writer` session | 保留叙事、术语和修改历史 |
 | 从研究/实验切换到写作 | 新 `writer` session | 作者只接收冻结且已验证的证据 |
-| 论文就绪审计、结果审阅、独立复核 | 每次新 `reviewer` session | 禁止自己做自己评和审稿意见串扰 |
+| 论文就绪审计、结果审阅、独立复核 | 每位审阅人一个新 session/process | 禁止自己做自己评和审稿意见串扰 |
 | 审阅通过后进入写作 | 新 `writer` session | 审阅者不直接改写自己刚审的对象 |
 
 控制面硬性保证 session 只能在同一 campaign、同一角色的 parent/child 任务间传递；reviewer
-任务的 session mode 固定为 `fresh`。并行 reviewer 在各自结果冻结前不得读取作者会话、作者
-scratch 或其他 reviewer 输出。角色切换不能在一个对话里靠提示词“扮演”，必须新建任务。
+任务的 session mode 固定为 `fresh`。当前论文门禁先冻结 Codex reviewer-1，再以 Packy 上的
+Claude Code Opus 5 启动 reviewer-2；第二位只能获得同一冻结科学输入和 reviewer-1 的哈希，
+不得读取其内容。角色切换不能在一个对话里靠提示词“扮演”，必须新建任务。
 结果包中的普通字符串 `next_action` 表示当前角色续接；需要换角色或启动独立同角色运行时，
 必须写出含 `objective`、`agent_role`、`session_mode` 的结构化 action。控制面在任何角色切换
 时强制 `fresh`，并且不允许研究/实验结果绕过 paper-readiness 审查直接生成 writer。

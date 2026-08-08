@@ -21,10 +21,18 @@ MATHEMATICS_REVIEWER_ROLE = "math"
 MATERIALS_REVIEWER_ROLE = "materials"
 
 INDIVIDUAL_REVIEW_SCHEMA_VERSION = "ara.paper_writing.review.v2"
-REVIEW_SCHEMA_VERSION = "ara.paper_writing.review.v3"
-REVIEW_PANEL_SIZE = 3
-REVIEW_SCORE_AGGREGATION = "coordinatewise_median"
-REVIEW_DECISION_AGGREGATION = "ordinal_median"
+LEGACY_REVIEW_SCHEMA_VERSION = "ara.paper_writing.review.v3"
+LEGACY_REVIEW_PANEL_SIZE = 3
+LEGACY_REVIEW_SCORE_AGGREGATION = "coordinatewise_median"
+LEGACY_REVIEW_DECISION_AGGREGATION = "ordinal_median"
+REVIEW_SCHEMA_VERSION = "openlabs.paper_writing.review.v1"
+REVIEW_PANEL_SIZE = 2
+REVIEW_SCORE_AGGREGATION = "coordinatewise_minimum"
+REVIEW_DECISION_AGGREGATION = "strictest_decision"
+REVIEWER_PROVIDER_CONTRACTS = {
+    "reviewer-1": {"provider": "openai-codex", "model": None},
+    "reviewer-2": {"provider": "packy", "model": "claude-opus-5"},
+}
 LEAN_OBJECTIVE_AUDIT_SCHEMA_VERSION = "ara.paper_writing.lean_objective_audit.v1"
 LEAN_OBJECTIVE_AUDIT_KIND = "lean_mathlib"
 CS_TOP_TIER_RUBRIC_ID = "ara.revision-agent.cs-top-tier.v1"
@@ -199,6 +207,44 @@ def _decision_median(values: list[str], ordering: tuple[str, ...]) -> str:
     return ordering[indexes[len(indexes) // 2]]
 
 
+def _panel_contract(schema_version: Any) -> tuple[int, str, str, bool] | None:
+    """Return the immutable contract attached to a panel schema."""
+
+    if schema_version == REVIEW_SCHEMA_VERSION:
+        return (
+            REVIEW_PANEL_SIZE,
+            REVIEW_SCORE_AGGREGATION,
+            REVIEW_DECISION_AGGREGATION,
+            False,
+        )
+    if schema_version == LEGACY_REVIEW_SCHEMA_VERSION:
+        return (
+            LEGACY_REVIEW_PANEL_SIZE,
+            LEGACY_REVIEW_SCORE_AGGREGATION,
+            LEGACY_REVIEW_DECISION_AGGREGATION,
+            True,
+        )
+    return None
+
+
+def _aggregate_score(values: list[int], aggregation: str) -> int:
+    if aggregation == REVIEW_SCORE_AGGREGATION:
+        return min(values)
+    if aggregation == LEGACY_REVIEW_SCORE_AGGREGATION:
+        return _median(values)
+    raise ValueError(f"Unknown review score aggregation: {aggregation!r}")
+
+
+def _aggregate_decision(
+    values: list[str], ordering: tuple[str, ...], aggregation: str
+) -> str:
+    if aggregation == REVIEW_DECISION_AGGREGATION:
+        return max(values, key=ordering.index)
+    if aggregation == LEGACY_REVIEW_DECISION_AGGREGATION:
+        return _decision_median(values, ordering)
+    raise ValueError(f"Unknown review decision aggregation: {aggregation!r}")
+
+
 def _validate_text_list(
     review: Mapping[str, Any],
     key: str,
@@ -250,11 +296,16 @@ def validate_review_record(
     errors: list[str] = []
 
     schema_version = review.get("schema_version")
-    if schema_version not in (INDIVIDUAL_REVIEW_SCHEMA_VERSION, REVIEW_SCHEMA_VERSION):
+    if schema_version not in (
+        INDIVIDUAL_REVIEW_SCHEMA_VERSION,
+        LEGACY_REVIEW_SCHEMA_VERSION,
+        REVIEW_SCHEMA_VERSION,
+    ):
         errors.append(
             "schema_version must be "
             f"{INDIVIDUAL_REVIEW_SCHEMA_VERSION} for an individual review or "
-            f"{REVIEW_SCHEMA_VERSION} for a panel result"
+            f"{REVIEW_SCHEMA_VERSION} for a current panel result "
+            f"({LEGACY_REVIEW_SCHEMA_VERSION} remains valid for historical panels)"
         )
 
     scores = _mapping(review.get("scores"))
@@ -456,33 +507,47 @@ def validate_review_record(
     if len(snapshot_hashes) == 2 and snapshot_hashes[0] != snapshot_hashes[1]:
         errors.append("review_metadata before/after manuscript snapshot hashes must match")
 
-    if schema_version == REVIEW_SCHEMA_VERSION:
+    panel_contract = _panel_contract(schema_version)
+    if panel_contract is not None:
+        (
+            expected_panel_size,
+            expected_score_aggregation,
+            expected_decision_aggregation,
+            expected_parallel_execution,
+        ) = panel_contract
         panel = _mapping(metadata.get("review_panel"))
-        if panel.get("panel_size") != REVIEW_PANEL_SIZE:
+        if panel.get("panel_size") != expected_panel_size:
             errors.append(
-                f"review_metadata.review_panel.panel_size must be {REVIEW_PANEL_SIZE}"
+                "review_metadata.review_panel.panel_size must be "
+                f"{expected_panel_size} for {schema_version}"
             )
-        if panel.get("score_aggregation") != REVIEW_SCORE_AGGREGATION:
+        if panel.get("score_aggregation") != expected_score_aggregation:
             errors.append(
                 "review_metadata.review_panel.score_aggregation must be "
-                f"{REVIEW_SCORE_AGGREGATION}"
+                f"{expected_score_aggregation} for {schema_version}"
             )
-        if panel.get("decision_aggregation") != REVIEW_DECISION_AGGREGATION:
+        if panel.get("decision_aggregation") != expected_decision_aggregation:
             errors.append(
                 "review_metadata.review_panel.decision_aggregation must be "
-                f"{REVIEW_DECISION_AGGREGATION}"
+                f"{expected_decision_aggregation} for {schema_version}"
             )
-        if panel.get("parallel_execution") is not True:
-            errors.append("review_metadata.review_panel.parallel_execution must be true")
+        if panel.get("parallel_execution") is not expected_parallel_execution:
+            errors.append(
+                "review_metadata.review_panel.parallel_execution must be "
+                f"{str(expected_parallel_execution).lower()} for {schema_version}"
+            )
         if panel.get("independent_contexts") is not True:
             errors.append("review_metadata.review_panel.independent_contexts must be true")
         if panel.get("prior_reviews_hidden") is not True:
             errors.append("review_metadata.review_panel.prior_reviews_hidden must be true")
         reviewer_records = panel.get("reviewer_records")
-        if not isinstance(reviewer_records, list) or len(reviewer_records) != REVIEW_PANEL_SIZE:
+        if (
+            not isinstance(reviewer_records, list)
+            or len(reviewer_records) != expected_panel_size
+        ):
             errors.append(
                 "review_metadata.review_panel.reviewer_records must contain exactly "
-                f"{REVIEW_PANEL_SIZE} entries"
+                f"{expected_panel_size} entries"
             )
         else:
             reviewer_ids: list[str] = []
@@ -503,6 +568,28 @@ def validate_review_record(
                     sources.append(source)
                 if not isinstance(sha256, str) or _SHA256.fullmatch(sha256) is None:
                     errors.append(f"{path}.sha256 must be a lowercase SHA-256")
+                if schema_version == REVIEW_SCHEMA_VERSION:
+                    expected_reviewer_id = f"reviewer-{index + 1}"
+                    if reviewer_id != expected_reviewer_id:
+                        errors.append(
+                            f"{path}.reviewer_id must be {expected_reviewer_id}"
+                        )
+                    contract = REVIEWER_PROVIDER_CONTRACTS.get(str(reviewer_id))
+                    if contract is None:
+                        errors.append(f"{path}.reviewer_id is not in the current provider contract")
+                    else:
+                        if item.get("provider") != contract["provider"]:
+                            errors.append(
+                                f"{path}.provider must be {contract['provider']}"
+                            )
+                        expected_model = contract["model"]
+                        if expected_model is not None and item.get("model") != expected_model:
+                            errors.append(f"{path}.model must be {expected_model}")
+                        elif expected_model is None and (
+                            not isinstance(item.get("model"), str)
+                            or not str(item.get("model")).strip()
+                        ):
+                            errors.append(f"{path}.model must be a non-empty string")
             if len(set(reviewer_ids)) != len(reviewer_ids):
                 errors.append("review panel reviewer_id values must be unique")
             if len(set(sources)) != len(sources):
@@ -557,10 +644,10 @@ def validate_review_panel_files(
     expected_role: str | None = None,
     expected_paper_id: str | None = None,
 ) -> list[str]:
-    """Validate a three-review panel and its mechanical median aggregation.
+    """Validate a review panel and its schema-bound mechanical aggregation.
 
-    The three agents own the scientific judgments. This function only verifies
-    immutable source records, common snapshot boundaries, and exact medians.
+    Reviewer agents own the scientific judgments. This function only verifies
+    immutable sources, provider separation, common snapshots, and aggregation.
     """
 
     errors = validate_review_record(
@@ -570,9 +657,20 @@ def validate_review_panel_files(
     )
     if not isinstance(payload, Mapping):
         return errors
-    if payload.get("schema_version") != REVIEW_SCHEMA_VERSION:
-        errors.append(f"final review must use panel schema {REVIEW_SCHEMA_VERSION}")
+    schema_version = payload.get("schema_version")
+    panel_contract = _panel_contract(schema_version)
+    if panel_contract is None:
+        errors.append(
+            "final review must use panel schema "
+            f"{REVIEW_SCHEMA_VERSION} or historical {LEGACY_REVIEW_SCHEMA_VERSION}"
+        )
         return errors
+    (
+        expected_panel_size,
+        score_aggregation,
+        decision_aggregation,
+        _,
+    ) = panel_contract
 
     root = Path(repo_root).resolve()
     aggregate_path = Path(review_path).resolve()
@@ -585,7 +683,7 @@ def validate_review_panel_files(
     metadata = _mapping(payload.get("review_metadata"))
     panel = _mapping(metadata.get("review_panel"))
     records = panel.get("reviewer_records")
-    if not isinstance(records, list) or len(records) != REVIEW_PANEL_SIZE:
+    if not isinstance(records, list) or len(records) != expected_panel_size:
         return errors
 
     reviewer_payloads: list[Mapping[str, Any]] = []
@@ -645,6 +743,28 @@ def validate_review_panel_files(
             errors.append(f"reviewer record {index + 1} independent_context must be true")
         if reviewer_metadata.get("prior_reviews_hidden") is not True:
             errors.append(f"reviewer record {index + 1} prior_reviews_hidden must be true")
+        if schema_version == REVIEW_SCHEMA_VERSION:
+            reviewer_id = str(item.get("reviewer_id") or "")
+            provider_contract = REVIEWER_PROVIDER_CONTRACTS.get(reviewer_id)
+            if provider_contract is not None:
+                if reviewer_metadata.get("provider") != provider_contract["provider"]:
+                    errors.append(
+                        f"reviewer record {index + 1} provider must be "
+                        f"{provider_contract['provider']}"
+                    )
+                expected_model = provider_contract["model"]
+                if expected_model is not None and reviewer_metadata.get("model") != expected_model:
+                    errors.append(
+                        f"reviewer record {index + 1} model must be {expected_model}"
+                    )
+                if item.get("provider") != reviewer_metadata.get("provider"):
+                    errors.append(
+                        f"reviewer record {index + 1} provider does not match the panel"
+                    )
+                if item.get("model") != reviewer_metadata.get("model"):
+                    errors.append(
+                        f"reviewer record {index + 1} model does not match the panel"
+                    )
         for key in (
             "main_tex_sha256",
             "manuscript_snapshot_sha256_before",
@@ -656,8 +776,17 @@ def validate_review_panel_files(
                 )
         reviewer_payloads.append(reviewer)
 
-    if len(reviewer_payloads) != REVIEW_PANEL_SIZE:
+    if len(reviewer_payloads) != expected_panel_size:
         return errors
+
+    if schema_version == REVIEW_SCHEMA_VERSION:
+        reviewer_one_hash = str(_mapping(records[0]).get("sha256") or "")
+        reviewer_two_metadata = _mapping(reviewer_payloads[1].get("review_metadata"))
+        if reviewer_two_metadata.get("hidden_peer_review_sha256") != reviewer_one_hash:
+            errors.append(
+                "reviewer record 2 hidden_peer_review_sha256 must bind the frozen "
+                "reviewer-1 record"
+            )
 
     shared_audits = panel.get("shared_objective_audits", [])
     if isinstance(shared_audits, list):
@@ -837,10 +966,10 @@ def validate_review_panel_files(
     for key in ("clarity", "soundness", "significance", "novelty", "overall"):
         values = [_mapping(review.get("scores")).get(key) for review in reviewer_payloads]
         if all(isinstance(value, int) and not isinstance(value, bool) for value in values):
-            expected = _median(values)
+            expected = _aggregate_score(values, score_aggregation)
             if final_scores.get(key) != expected:
                 errors.append(
-                    f"scores.{key} must equal reviewer median {expected}, got "
+                    f"scores.{key} must equal {score_aggregation} {expected}, got "
                     f"{final_scores.get(key)!r}"
                 )
 
@@ -856,14 +985,16 @@ def validate_review_panel_files(
             for review in reviewer_payloads
         ]
         if all(value in CONFERENCE_DECISIONS for value in values):
-            expected = _decision_median(values, CONFERENCE_DECISIONS)
+            expected = _aggregate_decision(
+                values, CONFERENCE_DECISIONS, decision_aggregation
+            )
             actual = _mapping(
                 _mapping(final_recommendations.get(TOP_CONFERENCE_VIEW)).get("seven_point")
             ).get("decision")
             if actual != expected:
                 errors.append(
                     f"recommendations.{TOP_CONFERENCE_VIEW}.seven_point.decision must equal "
-                    f"reviewer ordinal median {expected}"
+                    f"{decision_aggregation} {expected}"
                 )
     elif role == MATHEMATICS_REVIEWER_ROLE:
         values = [
@@ -873,14 +1004,14 @@ def validate_review_panel_files(
             for review in reviewer_payloads
         ]
         if all(value in JOURNAL_DECISIONS for value in values):
-            expected = _decision_median(values, JOURNAL_DECISIONS)
+            expected = _aggregate_decision(values, JOURNAL_DECISIONS, decision_aggregation)
             actual = _mapping(
                 final_recommendations.get(FOUR_TOP_MATH_JOURNALS_VIEW)
             ).get("decision")
             if actual != expected:
                 errors.append(
                     f"recommendations.{FOUR_TOP_MATH_JOURNALS_VIEW}.decision must equal "
-                    f"reviewer ordinal median {expected}"
+                    f"{decision_aggregation} {expected}"
                 )
     elif role == MATERIALS_REVIEWER_ROLE:
         values = [
@@ -890,14 +1021,14 @@ def validate_review_panel_files(
             for review in reviewer_payloads
         ]
         if all(value in JOURNAL_DECISIONS for value in values):
-            expected = _decision_median(values, JOURNAL_DECISIONS)
+            expected = _aggregate_decision(values, JOURNAL_DECISIONS, decision_aggregation)
             actual = _mapping(
                 final_recommendations.get(LEADING_MATERIALS_JOURNALS_VIEW)
             ).get("decision")
             if actual != expected:
                 errors.append(
                     f"recommendations.{LEADING_MATERIALS_JOURNALS_VIEW}.decision must equal "
-                    f"reviewer ordinal median {expected}"
+                    f"{decision_aggregation} {expected}"
                 )
 
     cas_values = [
@@ -907,14 +1038,16 @@ def validate_review_panel_files(
         for review in reviewer_payloads
     ]
     if all(value in JOURNAL_DECISIONS for value in cas_values):
-        expected = _decision_median(cas_values, JOURNAL_DECISIONS)
+        expected = _aggregate_decision(
+            cas_values, JOURNAL_DECISIONS, decision_aggregation
+        )
         actual = _mapping(final_recommendations.get(CAS_ZONE_1_JOURNAL_VIEW)).get(
             "decision"
         )
         if actual != expected:
             errors.append(
                 f"recommendations.{CAS_ZONE_1_JOURNAL_VIEW}.decision must equal "
-                f"reviewer ordinal median {expected}"
+                f"{decision_aggregation} {expected}"
             )
 
     return errors

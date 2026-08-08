@@ -61,6 +61,8 @@ OPENLABS_AGENT_COMMAND_BALANCED_JSON='["codex","exec","--profile","openlabs-bala
 OPENLABS_AGENT_COMMAND_FRONTIER_JSON='["codex","exec","--profile","openlabs-frontier","--skip-git-repo-check","--json","--approve-for-me","--sandbox","workspace-write","-C","{agent_workspace}","-"]'
 OPENLABS_AGENT_RESUME_COMMAND_JSON='["codex","exec","resume","--skip-git-repo-check","--json","{session_id}","-"]'
 OPENLABS_AGENT_TIMEOUT_SECONDS=14400
+OPENLABS_CLAUDE_COMMAND=claude
+# OPENLABS_CLAUDE_SETTINGS=/home/you/.claude/settings.json
 ```
 
 先在本机 Codex 配置中建立三个确实使用不同模型/effort 的 profile；如果只有一个档位，就只
@@ -77,6 +79,11 @@ OPENLABS_AGENT_TIMEOUT_SECONDS=14400
 空白会话；reviewer 不接收作者或其他 reviewer 的 session。
 结果中的普通字符串 `next_action` 续接当前角色；跨角色或独立同角色运行必须使用结果合同中的
 结构化 action。无论 action 如何请求，角色切换和 reviewer 都会被控制面强制为 `fresh`。
+
+论文门禁的第二位审阅人不复用上述 Codex session。它由
+`run_claude_reviewer.py` 启动一次全新的 Claude Code `claude-opus-5` 进程，并从用户自己的
+Claude settings 读取 Packy endpoint 和凭据。仓库、env 示例、prompt 和审阅产物都不得保存
+Packy key。第一位 Codex 审阅结果先冻结；适配器只计算其 SHA-256 绑定，不把内容发给 Claude。
 
 ## systemd user timer
 

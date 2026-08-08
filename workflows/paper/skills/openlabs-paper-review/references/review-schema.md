@@ -1,10 +1,10 @@
 # Review record schema
 
-Each independent agent writes one JSON object using schema `ara.paper_writing.review.v2`. Scores
-are integers. Every source review contains one role-specific high-standard opinion and one CAS
-Zone 1 journal opinion. After all three agents finish, write one panel object using schema
-`ara.paper_writing.review.v3`; it preserves the common review shape, contains the exact medians,
-and identifies the three immutable source records.
+Each independent reviewer writes one JSON object using schema `ara.paper_writing.review.v2`.
+Scores are integers. Every source contains one role-specific high-standard opinion and one CAS
+Zone 1 journal opinion. After the Codex and Packy Claude reviewers finish, write one panel object
+using schema `openlabs.paper_writing.review.v1`; it preserves the common review shape, contains the
+exact conservative aggregation, and identifies both immutable source records.
 
 The individual record shape is:
 
@@ -57,6 +57,7 @@ The individual record shape is:
     "not_external_peer_review": true,
     "simulated_venue_decisions": true,
     "review_only": true,
+    "provider": "openai-codex",
     "model": "<model>",
     "reasoning_effort": "<effort>",
     "reviewed_at_utc": "<ISO-8601 UTC>",
@@ -71,26 +72,27 @@ The individual record shape is:
 }
 ```
 
-Use the same shape for `reviewer-2` and `reviewer-3`, changing only each reviewer's independent
-judgments, metadata, and stable reviewer ID. All three records must describe the same frozen
-manuscript snapshot and must be produced in parallel without access to sibling or historical
-reviews.
+For `reviewer-2`, set `provider: "packy"`, `model: "claude-opus-5"`, and
+`panel_reviewer_id: "reviewer-2"`, and add `hidden_peer_review_sha256` with the frozen SHA-256 of
+`reviewer-1.json`. The adapter hashes that file but never includes its content in Claude's prompt.
+Both records must describe the same frozen manuscript and must not access sibling or historical
+review content.
 
 ## Panel result
 
 Copy the common fields into `review.json`, set `schema_version` to
-`ara.paper_writing.review.v3`, and set every score to the coordinate-wise median of the three
-individual values. Set each role-specific decision to its ordinal median using the decision order
-in the rubric. The coordinating context writes evidence-based consensus prose and retains every
-confirmed or unresolved blocker. Add this object inside `review_metadata`:
+`openlabs.paper_writing.review.v1`, and set every score to the lower of the two individual values.
+Set each role-specific decision to the less favorable of the two using the decision order in the
+rubric. Retain every distinct blocker and required change. Add this object inside
+`review_metadata`:
 
 ```json
 {
   "review_panel": {
-    "panel_size": 3,
-    "score_aggregation": "coordinatewise_median",
-    "decision_aggregation": "ordinal_median",
-    "parallel_execution": true,
+    "panel_size": 2,
+    "score_aggregation": "coordinatewise_minimum",
+    "decision_aggregation": "strictest_decision",
+    "parallel_execution": false,
     "independent_contexts": true,
     "prior_reviews_hidden": true,
     "shared_objective_audits": [
@@ -106,18 +108,17 @@ confirmed or unresolved blocker. Add this object inside `review_metadata`:
     "reviewer_records": [
       {
         "reviewer_id": "reviewer-1",
+        "provider": "openai-codex",
+        "model": "<actual Codex model>",
         "source": "reviews/<run>/<paper_id>/reviewer-1.json",
         "sha256": "<SHA-256 of reviewer-1.json>"
       },
       {
         "reviewer_id": "reviewer-2",
+        "provider": "packy",
+        "model": "claude-opus-5",
         "source": "reviews/<run>/<paper_id>/reviewer-2.json",
         "sha256": "<SHA-256 of reviewer-2.json>"
-      },
-      {
-        "reviewer_id": "reviewer-3",
-        "source": "reviews/<run>/<paper_id>/reviewer-3.json",
-        "sha256": "<SHA-256 of reviewer-3.json>"
       }
     ]
   }
@@ -130,10 +131,11 @@ validator verifies the receipt hash, snapshot and support bindings, one formal-v
 over the hash-linked receipt chain, source hashes, two sequential commands, dynamic host-memory
 headroom, and repository resource ceilings. It does not rerun Lean.
 
-For the panel metadata, use `model: "three-agent-median-panel"` and describe the coordinating
-aggregation in `reasoning_effort`. Do not claim the coordinator is a fourth independent reviewer.
-The validator loads the three sources, verifies their hashes and common snapshots, and checks all
-score and decision medians mechanically.
+For panel metadata, use `model: "codex-plus-claude-opus-5-conservative-panel"` and describe the
+mechanical aggregation in `reasoning_effort`. The validator loads both sources, verifies their
+provider/model identities, hashes, common snapshots, and the frozen-peer binding, then checks all
+score minima and strictest decisions mechanically. Historical `ara.paper_writing.review.v3`
+three-review median panels remain valid read-only records.
 
 For `ai`, `cs`, and `se`, set `reviewer_role` to `cs_top_tier`, set `rubric_id` to
 `ara.revision-agent.cs-top-tier.v1`, and replace `recommendations` with:

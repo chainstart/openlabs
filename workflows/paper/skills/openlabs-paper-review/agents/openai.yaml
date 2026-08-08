@@ -1,6 +1,6 @@
 interface:
-  display_name: "OpenLabs Three-Agent Paper Review"
-  short_description: "Parallel three-reviewer median quality gate"
-  default_prompt: "Use $openlabs-paper-review to run three independent parallel manuscript reviews and validate their median panel result."
+  display_name: "OpenLabs Dual-Provider Paper Review"
+  short_description: "Independent Codex and Claude Opus 5 quality gate"
+  default_prompt: "Use $openlabs-paper-review to freeze one Codex review, run one blind Packy Claude Opus 5 review, and validate the conservative panel result."
 policy:
   allow_implicit_invocation: false

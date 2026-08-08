@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Mechanically aggregate three skill-authored independent review records.
+"""Mechanically aggregate two independent, provider-separated review records.
 
 This helper never judges a manuscript and never derives a score from manuscript
-features.  It verifies three v2 records, takes the required score and decision
-medians, preserves every distinct finding and blocker, binds the source hashes,
-and writes a v3 panel record for the coordinating context to inspect.
+features. It verifies the Codex and Claude v2 records, applies the conservative
+minimum/strictest rules, preserves every finding and blocker, binds source
+hashes, and writes the current OpenLabs panel record.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from paper_writing.review import (  # noqa: E402
     MATERIALS_REVIEWER_ROLE,
     REVIEW_DECISION_AGGREGATION,
     REVIEW_PANEL_SIZE,
+    REVIEWER_PROVIDER_CONTRACTS,
     REVIEW_SCHEMA_VERSION,
     REVIEW_SCORE_AGGREGATION,
     TOP_CONFERENCE_VIEW,
@@ -48,12 +49,12 @@ SCORE_KEYS = ("clarity", "soundness", "significance", "novelty", "overall")
 CONFIDENCE_ORDER = ("high", "medium", "low")
 
 
-def _median(values: list[int]) -> int:
-    return sorted(values)[len(values) // 2]
+def _minimum(values: list[int]) -> int:
+    return min(values)
 
 
-def _decision_median(values: list[str], order: tuple[str, ...]) -> str:
-    return order[_median([order.index(value) for value in values])]
+def _strictest_decision(values: list[str], order: tuple[str, ...]) -> str:
+    return max(values, key=order.index)
 
 
 def _sha256(path: Path) -> str:
@@ -109,10 +110,10 @@ def _aggregate_recommendation(
     entries: list[dict[str, Any]], *, order: tuple[str, ...]
 ) -> dict[str, str]:
     decisions = [str(entry["decision"]) for entry in entries]
-    decision = _decision_median(decisions, order)
+    decision = _strictest_decision(decisions, order)
     source = next(entry for entry in entries if entry["decision"] == decision)
     rationale = (
-        f"Ordinal median of the three independent decisions "
+        f"Strictest of the two independent decisions "
         f"({', '.join(decisions)}). {source['rationale']}"
     )
     return {
@@ -124,7 +125,10 @@ def _aggregate_recommendation(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Aggregate exactly three independent OpenLabs v2 reviews into a v3 panel."
+        description=(
+            "Aggregate one Codex and one Packy Claude Opus 5 review into an "
+            "OpenLabs dual-provider panel."
+        )
     )
     parser.add_argument("--paper-id", required=True)
     parser.add_argument("--review-dir", required=True)
@@ -133,7 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--objective-audit",
         action="append",
         default=[],
-        help="repository-relative objective audit receipt shared with all three reviewers",
+        help="repository-relative objective audit receipt shared with both reviewers",
     )
     parser.add_argument("--root", default=str(repository_root()))
     parser.add_argument("--force", action="store_true")
@@ -154,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     if output.exists() and not args.force:
         raise FileExistsError(f"refusing to overwrite {output}; pass --force explicitly")
     if output.parent != review_dir:
-        raise ValueError("panel output must be stored beside the three reviewer records")
+        raise ValueError("panel output must be stored beside both reviewer records")
 
     metadata = load_paper_metadata(args.paper_id, root)
     expected_role = reviewer_role_for_domain(metadata.get("domain"))
@@ -181,6 +185,14 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(f"{reviewer_id} is not marked independent")
         if review_metadata.get("prior_reviews_hidden") is not True:
             raise ValueError(f"{reviewer_id} did not hide prior reviews")
+        provider_contract = REVIEWER_PROVIDER_CONTRACTS[reviewer_id]
+        if review_metadata.get("provider") != provider_contract["provider"]:
+            raise ValueError(
+                f"{reviewer_id} provider must be {provider_contract['provider']}"
+            )
+        expected_model = provider_contract["model"]
+        if expected_model is not None and review_metadata.get("model") != expected_model:
+            raise ValueError(f"{reviewer_id} model must be {expected_model}")
         current = {
             key: review_metadata[key]
             for key in (
@@ -197,12 +209,20 @@ def main(argv: list[str] | None = None) -> int:
         records.append(
             {
                 "reviewer_id": reviewer_id,
+                "provider": str(review_metadata["provider"]),
+                "model": str(review_metadata["model"]),
                 "source": source_path.relative_to(root).as_posix(),
                 "sha256": _sha256(source_path),
             }
         )
 
     assert common is not None
+    if reviews[1]["review_metadata"].get("hidden_peer_review_sha256") != records[0][
+        "sha256"
+    ]:
+        raise ValueError(
+            "reviewer-2 must bind the frozen reviewer-1 hash without seeing its content"
+        )
     objective_audits: list[dict[str, str]] = []
     for value in args.objective_audit:
         source_path = Path(value)
@@ -226,10 +246,10 @@ def main(argv: list[str] | None = None) -> int:
                 "support_package_sha256": str(receipt.get("support_package_sha256")),
             }
         )
-    panel = deepcopy(reviews[1])
+    panel = deepcopy(reviews[0])
     panel["schema_version"] = REVIEW_SCHEMA_VERSION
     panel["scores"] = {
-        key: _median([int(review["scores"][key]) for review in reviews])
+        key: _minimum([int(review["scores"][key]) for review in reviews])
         for key in SCORE_KEYS
     }
     panel["strengths"] = _distinct_strings(reviews, "strengths")
@@ -286,13 +306,19 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     panel_metadata = panel["review_metadata"]
-    for key in ("panel_reviewer_id", "independent_context", "prior_reviews_hidden"):
+    for key in (
+        "panel_reviewer_id",
+        "independent_context",
+        "prior_reviews_hidden",
+        "hidden_peer_review_sha256",
+        "provider",
+    ):
         panel_metadata.pop(key, None)
     panel_metadata.update(
         {
-            "model": "three-agent-median-panel",
+            "model": "codex-plus-claude-opus-5-conservative-panel",
             "reasoning_effort": (
-                "mechanical coordinatewise and ordinal median aggregation; "
+                "mechanical coordinatewise minimum and strictest-decision aggregation; "
                 "distinct findings and blockers preserved"
             ),
             "reviewed_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -302,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
                 "panel_size": REVIEW_PANEL_SIZE,
                 "score_aggregation": REVIEW_SCORE_AGGREGATION,
                 "decision_aggregation": REVIEW_DECISION_AGGREGATION,
-                "parallel_execution": True,
+                "parallel_execution": False,
                 "independent_contexts": True,
                 "prior_reviews_hidden": True,
                 "reviewer_records": records,
