@@ -10,7 +10,8 @@ research; keep this Skill focused on boundaries, recovery, and handoff.
 
 ## Establish the task
 
-1. Read the complete `openlabs.task.v2` file supplied by the runner.
+1. Read the complete `openlabs.task.v3` file supplied by the runner, including its CPU-thread,
+   memory, scratch-space, and wall-time reservations.
 2. Read the referenced campaign state, latest checkpoint, prior failed routes, and declared inputs.
 3. Read the selected lab manifest and its domain `SKILL.md` completely.
 4. Confirm that the task output is inside the declared campaign workspace or artifact store.
@@ -37,9 +38,11 @@ one bounded task and exits; continuity comes from a resumable logical session pl
 
 Do not simulate a second epistemic role inside the current session. A plain-string next action keeps
 the current role and resumes its session. When another role or an independent same-role run is
-needed, return the structured handoff defined in the result contract; the scheduler starts it from
-a blank session. A replan also starts a blank researcher session, using the frozen failure artifacts
-without inheriting the failed conversation's anchoring.
+needed, return the structured handoff defined in the result contract; the scheduler normally starts
+it from a blank session. A replan also starts a blank researcher session, using the frozen failure
+artifacts without inheriting the failed conversation's anchoring. The sole cross-role resume is a
+`text_revision` returned by a paper reviewer: the scheduler resumes the nearest writer session in
+that task's own ancestry, never the reviewer session.
 
 ## Choose one bounded action
 
@@ -54,6 +57,8 @@ reproduction, proof subgoal, error analysis, or independent audit.
 - Preserve null, refuted, negative, and inconclusive outcomes.
 - Stop when the task crosses an unbounded-cost, irreversible, safety, authorship, publication, or
   submission boundary.
+- Stay inside the task's declared resource reservation. Request a larger successor explicitly only
+  when the next bounded action cannot fit the current reservation.
 
 ## Validate before promotion
 

@@ -139,14 +139,26 @@ def test_sessions_cannot_cross_roles_or_enter_reviewer_tasks(tmp_path) -> None:
     db = FactoryDB(tmp_path / "factory.sqlite")
     db.initialize()
     db.register_campaign("campaign", domain="math", title="Campaign")
+    with pytest.raises(ValueError, match="source task"):
+        db.enqueue_task(
+            task_id="unscoped-session",
+            campaign_id="campaign",
+            domain="math",
+            task_type="research",
+            objective="Must not accept an unscoped session.",
+            agent_session_id="unknown-session",
+        )
     db.enqueue_task(
         task_id="research",
         campaign_id="campaign",
         domain="math",
         task_type="research",
         objective="Research.",
-        agent_session_id="research-session",
     )
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET agent_session_id='research-session' WHERE task_id='research'"
+        )
 
     with pytest.raises(ValueError, match="role"):
         db.enqueue_task(
@@ -242,7 +254,7 @@ def test_global_concurrency_and_campaign_time_budget_are_hard_limits(tmp_path) -
     assert next_task is not None and next_task["campaign_id"] == "campaign-2"
 
 
-def test_overlapping_claims_cannot_exceed_global_capacity(tmp_path) -> None:
+def test_overlapping_claims_cannot_overbook_resources(tmp_path) -> None:
     db = FactoryDB(tmp_path / "factory.sqlite")
     db.initialize()
     for index in (1, 2):
@@ -259,7 +271,16 @@ def test_overlapping_claims_cannot_exceed_global_capacity(tmp_path) -> None:
 
     def claim(owner: str) -> dict | None:
         barrier.wait()
-        return db.claim_next_task(owner=owner, lease_seconds=60, max_active=1)
+        return db.claim_next_task(
+            owner=owner,
+            lease_seconds=60,
+            max_active=8,
+            resource_capacity={
+                "cpu_threads": 2,
+                "memory_mib": 4_096,
+                "scratch_mib": 4_096,
+            },
+        )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         claims = list(executor.map(claim, ("one", "two")))
@@ -295,6 +316,129 @@ def test_one_campaign_cannot_claim_two_simultaneous_tasks(tmp_path) -> None:
 
     assert first is not None and first["campaign_id"] == "campaign-1"
     assert second is not None and second["campaign_id"] == "campaign-2"
+
+
+def test_resource_admission_skips_an_oversized_queue_head(tmp_path) -> None:
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    for campaign_id in ("large", "small"):
+        db.register_campaign(campaign_id, domain="ai", title=campaign_id)
+    db.enqueue_task(
+        task_id="large-task",
+        campaign_id="large",
+        domain="ai",
+        task_type="experiment",
+        objective="Wait for a larger resource window.",
+        priority=10,
+        cpu_threads=8,
+        memory_mib=16_384,
+        scratch_mib=32_768,
+    )
+    db.enqueue_task(
+        task_id="small-task",
+        campaign_id="small",
+        domain="ai",
+        task_type="research",
+        objective="Fit the current resource window.",
+        cpu_threads=1,
+        memory_mib=1_024,
+        scratch_mib=2_048,
+    )
+
+    task = db.claim_next_task(
+        owner="scheduler",
+        lease_seconds=60,
+        max_active=8,
+        resource_capacity={
+            "cpu_threads": 4,
+            "memory_mib": 8_192,
+            "scratch_mib": 16_384,
+        },
+    )
+
+    assert task is not None and task["task_id"] == "small-task"
+    assert db.task("large-task")["status"] == "queued"
+    assert db.active_resource_totals() == {
+        "cpu_threads": 1,
+        "memory_mib": 1_024,
+        "scratch_mib": 2_048,
+    }
+    assert db.task_attempts("small-task")[0]["resources"] == {
+        "cpu_threads": 1,
+        "memory_mib": 1_024,
+        "scratch_mib": 2_048,
+    }
+
+
+def test_cross_role_resume_uses_only_an_ancestor_session(tmp_path) -> None:
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    db.register_campaign("campaign", domain="math", title="Campaign")
+    db.enqueue_task(
+        task_id="writer",
+        campaign_id="campaign",
+        domain="math",
+        task_type="paper_write",
+        objective="Write.",
+        agent_role="writer",
+    )
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET agent_session_id='writer-session' WHERE task_id='writer'"
+        )
+    db.enqueue_task(
+        task_id="review",
+        campaign_id="campaign",
+        domain="math",
+        task_type="paper_review",
+        objective="Review.",
+        parent_task_id="writer",
+        agent_role="reviewer",
+        session_mode="fresh",
+    )
+    db.enqueue_task(
+        task_id="revision",
+        campaign_id="campaign",
+        domain="math",
+        task_type="paper_revision",
+        objective="Revise.",
+        parent_task_id="review",
+        agent_role="writer",
+        session_mode="resume",
+        session_source_task_id="writer",
+    )
+
+    revision = db.task("revision")
+    assert revision["agent_session_id"] == "writer-session"
+    assert revision["session_source_task_id"] == "writer"
+
+    db.enqueue_task(
+        task_id="unrelated-writer",
+        campaign_id="campaign",
+        domain="math",
+        task_type="paper_write",
+        objective="Unrelated draft.",
+        agent_role="writer",
+    )
+    with db.connect() as connection:
+        connection.execute(
+            """
+            UPDATE tasks SET agent_session_id='other-session'
+            WHERE task_id='unrelated-writer'
+            """
+        )
+    with pytest.raises(ValueError, match="parent lineage"):
+        db.enqueue_task(
+            task_id="contaminated-revision",
+            campaign_id="campaign",
+            domain="math",
+            task_type="paper_revision",
+            objective="Must not inherit a sibling conversation.",
+            parent_task_id="review",
+            agent_role="writer",
+            session_mode="resume",
+            session_source_task_id="unrelated-writer",
+        )
 
 
 def test_expired_process_time_counts_against_campaign_budget(tmp_path) -> None:

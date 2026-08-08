@@ -1,5 +1,5 @@
 [factory]
-max_concurrent_jobs = 2
+max_worker_processes = 8
 lease_seconds = 600
 heartbeat_seconds = 30
 max_attempts = 3
@@ -9,6 +9,14 @@ max_auto_tasks_per_campaign = 24
 max_task_wall_seconds = 14400
 max_campaign_agent_seconds = 86400
 launch_jobs = true
+
+[resources]
+reserve_cpu_threads = 2
+reserve_memory_mib = 8192
+reserve_scratch_mib = 65536
+default_task_cpu_threads = 2
+default_task_memory_mib = 4096
+default_task_scratch_mib = 4096
 
 [retention]
 archive_result_receipts = true

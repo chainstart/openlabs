@@ -25,15 +25,22 @@ OpenLabs 是一个面向个人使用、可恢复、可连续运行的轻量科�
   思路的精简重写。旧 ARA 巨型固定流水线没有整体复制。
 
 最小控制面位于 `orchestrator/src/openlabs`，只负责发现实验室、SQLite 状态、attempt/租约、
-心跳、硬预算、有限重试、结果接收和证据门禁。实验室 runner 只读 `openlabs.task.v2` 并输出
+心跳、资源准入、硬预算、有限重试、结果接收和证据门禁。实验室 runner 只读
+`openlabs.task.v3` 并输出
 `openlabs.result_bundle.v1`，不能直接写数据库。
 
 管理员为一个 campaign 播种首个有界任务后，通过门禁的 `next_actions` 可自动续接下一步；
 `needs_replan` 升级到高级 runner，`needs_human`、隔离、无下一步或 campaign 任务上限会停链。
 第一版没有让一个永久“大 Agent”自行扫描全部课题并无限消费预算。
 同 campaign、同角色的研究/实验/写作后继任务可恢复逻辑 session，但每个 OS 进程仍在一个
-节点后退出；普通字符串 action 续接当前角色，结构化 action 才能显式交给另一角色或启动
-独立同角色运行。replan、角色切换和 reviewer 一律从空白 session 启动。
+有界节点后退出；3 分钟 tick 只检查和调度，不会结束仍有租约与心跳的 worker。普通字符串
+action 续接当前角色，结构化 action 才能显式交给另一角色或启动独立同角色运行。replan 和
+reviewer 一律从空白 session 启动；审阅后的文字修订只恢复当前任务祖先链中的原 writer
+session，绝不继承 reviewer 会话。
+
+工厂不再把“全局同时 2 个任务”当作主限制。每个任务声明 CPU 线程、内存和临时盘峰值，tick
+按主机当前余量与活动任务预留量准入；`max_worker_processes` 只是防止错误申报的小任务产生
+过多进程的最后保险。同一 campaign 仍串行运行。
 
 快速检查：
 

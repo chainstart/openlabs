@@ -14,8 +14,9 @@ record, its claim–evidence map, the materials result bundles, and the current 
 - Read `workflows/paper/skills/vendor/scientific-writing/SKILL.md` for evidence-bound drafting.
 - Read `workflows/paper/skills/vendor/statistical-analysis/SKILL.md` when quantitative inference,
   uncertainty, exclusions, hierarchical sampling, or multiplicity is in scope.
-- Read `workflows/paper/skills/vendor/peer-review/SKILL.md` and use
-  `$openlabs-paper-review` for the frozen dual-provider panel.
+- Read `workflows/paper/skills/vendor/peer-review/SKILL.md` only when the assigned role is
+  `reviewer`; a factory `writer` leaves the frozen dual-provider panel to the later
+  `$openlabs-paper-review` task.
 
 Do not activate additional writing systems or create a second registry.
 
@@ -38,10 +39,13 @@ Do not activate additional writing systems or create a second registry.
 
 Revise the canonical LaTeX only after updating the claim–evidence map. Verify each citation against
 the actual proposition used, compile the frozen manuscript, and run deterministic repository and
-support checks. Give the unchanged snapshot to the independent Codex and blind Packy Claude Opus 5
-reviewers using the `materials` rubric and the `leading_materials_journals` plus
-`cas_zone_1_journal` simulated views. Apply exact conservative aggregation; any score-bearing edit
-makes the panel stale.
+support checks. In a factory `writer` task, stop at the frozen `paper_candidate`; do not run or
+impersonate either reviewer. The scheduler gives it to a fresh `$openlabs-paper-review` task, whose
+independent Codex and blind Packy Claude Opus 5 reviewers use the `materials` rubric and the
+`leading_materials_journals` plus `cas_zone_1_journal` simulated views. A `paper_revision` applies
+only the declared request; requests for new physical evidence go through a fresh
+`evidence_remediation` task before returning to the same writer. Every revised candidate receives a
+new panel because any score-bearing edit makes the old panel stale.
 
 A passing gate changes only internal state to `ready`. It never authorizes Zenodo, remote handoff,
 submission, journal communication, or public release. Report remaining physical-model,

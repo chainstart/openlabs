@@ -39,7 +39,8 @@ Read component instructions from their installed paths before using them:
   figure/table, and build guidance.
 - Load `workflows/paper/skills/vendor/statistical-analysis/SKILL.md` only for quantitative claims, test
   selection, assumption checks, effect sizes, power, or statistical reporting.
-- Load `workflows/paper/skills/vendor/peer-review/SKILL.md` for the dedicated review pass.
+- Load `workflows/paper/skills/vendor/peer-review/SKILL.md` only when the assigned role is
+  `reviewer`; a factory `writer` leaves review to the later `paper_review` task.
 
 Never activate more than the three components declared by this profile. Do not install optional
 statistics dependencies merely because the skill lists them; first establish that the paper needs
@@ -65,13 +66,13 @@ is opt-in and illustrative only; it cannot supply experimental evidence.
 7. If public support materials are needed, prepare their local deterministic package and record
    missing metadata as a blocker. Creating even a reversible remote draft requires a separate,
    explicit administrator action with OpenLabs external writes enabled.
-8. Hand the compiled, unchanged snapshot to the fresh Codex reviewer and blind Packy Claude Opus 5
-   reviewer defined by `$openlabs-paper-review`. For the `ai` domain they must use the
-   `cs_top_tier` standard, assign integer scores, and return separate simulated top-conference and
-   CAS Zone 1 journal decisions. Use the validated conservative panel result; do not silently
-   repair the manuscript during scoring.
-9. Apply the mandatory local LLM quality gate exactly as specified in
-   `workflows/paper/skills/overlays/quality-gate.md`. Any score-bearing edit makes the review stale.
+8. In a factory `writer` task, stop after freezing the compiled snapshot and emit it as a
+   `paper_candidate`; do not run or impersonate either reviewer. The scheduler creates a fresh
+   `paper_review` task using `$openlabs-paper-review`, whose Codex and Packy Claude Opus 5 reviewers
+   apply the `cs_top_tier` standard and the mandatory local quality gate.
+9. On a `paper_revision` task, apply only the declared review request. If new scientific evidence
+   is needed, do not invent it; the reviewer must route an `evidence_remediation` task first. Freeze
+   the revised snapshot as a new `paper_candidate` so both reviewers assess it again.
 
 Only a `writing_release.status` of `ready` permits consideration for handoff. It does not mean the
 paper has been submitted or accepted, and it never replaces human scientific judgment.
@@ -83,6 +84,6 @@ guard.
 
 ## Finish
 
-Report the files changed, evidence gaps, checks and build commands run, review record, quality-gate
-result, and remaining scientific risks. If the gate is not ready, state the next bounded revision
-rather than presenting the paper as submission-ready.
+Report the files changed, evidence gaps, checks and build commands run, and remaining scientific
+risks. A reviewer additionally reports the review record and quality-gate result. If the gate is
+not ready, state the next bounded revision rather than presenting the paper as submission-ready.

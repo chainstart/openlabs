@@ -14,6 +14,10 @@
     {
       "skill_id": "openlabs-materials-paper",
       "path": "../../workflows/paper/skills/openlabs-materials-paper/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-paper-review",
+      "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"
     }
   ],
   "capabilities": [

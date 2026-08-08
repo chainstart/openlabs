@@ -1,5 +1,5 @@
 {
-  "schema_version": "openlabs.task.v2",
+  "schema_version": "openlabs.task.v3",
   "task_id": "smoke-math-001",
   "attempt_id": "00000000-0000-0000-0000-000000000001",
   "campaign_id": "factory-smoke",
@@ -18,6 +18,11 @@
     "role": "researcher",
     "session_mode": "resume",
     "session_id": null
+  },
+  "resources": {
+    "cpu_threads": 2,
+    "memory_mib": 4096,
+    "scratch_mib": 4096
   },
   "budget": {"wall_seconds": 60}
 }

@@ -56,7 +56,7 @@ def test_tick_records_and_resumes_one_researcher_session(tmp_path, monkeypatch) 
         runner="balanced",
     )
     settings = FactorySettings(
-        max_concurrent_jobs=1,
+        max_worker_processes=1,
         lease_seconds=30,
         heartbeat_seconds=1,
         retry_backoff_seconds=0,

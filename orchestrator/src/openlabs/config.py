@@ -44,7 +44,9 @@ class WorkspacePaths:
 
 @dataclass(frozen=True)
 class FactorySettings:
-    max_concurrent_jobs: int = 2
+    # Resource admission is the primary concurrency control. This is only a
+    # final process-count fuse for tiny or incorrectly declared tasks.
+    max_worker_processes: int = 8
     lease_seconds: int = 600
     heartbeat_seconds: int = 30
     max_attempts: int = 3
@@ -55,6 +57,12 @@ class FactorySettings:
     max_campaign_agent_seconds: int = 86_400
     launch_jobs: bool = True
     archive_result_receipts: bool = True
+    reserve_cpu_threads: int = 2
+    reserve_memory_mib: int = 8_192
+    reserve_scratch_mib: int = 65_536
+    default_task_cpu_threads: int = 2
+    default_task_memory_mib: int = 4_096
+    default_task_scratch_mib: int = 4_096
 
 
 def _default_workspace() -> Path:
@@ -84,6 +92,14 @@ def _positive_int(value: Any, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def _nonnegative_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
 def load_settings(paths: WorkspacePaths) -> FactorySettings:
     path = paths.code / "config" / "openlabs.toml"
     payload: dict[str, Any] = {}
@@ -91,23 +107,26 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
         with path.open("rb") as handle:
             payload = tomllib.load(handle)
     factory = payload.get("factory") if isinstance(payload.get("factory"), dict) else {}
+    resources = payload.get("resources") if isinstance(payload.get("resources"), dict) else {}
     retention = payload.get("retention") if isinstance(payload.get("retention"), dict) else {}
     return FactorySettings(
-        max_concurrent_jobs=_positive_int(factory.get("max_concurrent_jobs"), 2),
+        max_worker_processes=_positive_int(
+            factory.get("max_worker_processes", factory.get("max_concurrent_jobs")), 8
+        ),
         lease_seconds=_positive_int(factory.get("lease_seconds"), 600),
         heartbeat_seconds=_positive_int(factory.get("heartbeat_seconds"), 30),
         max_attempts=_positive_int(factory.get("max_attempts"), 3),
         retry_backoff_seconds=_positive_int(factory.get("retry_backoff_seconds"), 120),
         auto_continue=bool(factory.get("auto_continue", True)),
-        max_auto_tasks_per_campaign=_positive_int(
-            factory.get("max_auto_tasks_per_campaign"), 24
-        ),
-        max_task_wall_seconds=_positive_int(
-            factory.get("max_task_wall_seconds"), 14_400
-        ),
-        max_campaign_agent_seconds=_positive_int(
-            factory.get("max_campaign_agent_seconds"), 86_400
-        ),
+        max_auto_tasks_per_campaign=_positive_int(factory.get("max_auto_tasks_per_campaign"), 24),
+        max_task_wall_seconds=_positive_int(factory.get("max_task_wall_seconds"), 14_400),
+        max_campaign_agent_seconds=_positive_int(factory.get("max_campaign_agent_seconds"), 86_400),
         launch_jobs=bool(factory.get("launch_jobs", True)),
         archive_result_receipts=bool(retention.get("archive_result_receipts", True)),
+        reserve_cpu_threads=_nonnegative_int(resources.get("reserve_cpu_threads"), 2),
+        reserve_memory_mib=_nonnegative_int(resources.get("reserve_memory_mib"), 8_192),
+        reserve_scratch_mib=_nonnegative_int(resources.get("reserve_scratch_mib"), 65_536),
+        default_task_cpu_threads=_positive_int(resources.get("default_task_cpu_threads"), 2),
+        default_task_memory_mib=_positive_int(resources.get("default_task_memory_mib"), 4_096),
+        default_task_scratch_mib=_positive_int(resources.get("default_task_scratch_mib"), 4_096),
     )

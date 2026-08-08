@@ -45,9 +45,29 @@ role boundary, or to start an independent run of the same role, use one structur
 {
   "objective": "Execute the frozen falsification protocol without changing the hypothesis.",
   "agent_role": "experimenter",
-  "session_mode": "fresh"
+  "session_mode": "fresh",
+  "handoff_kind": "role_handoff"
 }
 ```
 
-Role changes and every `reviewer` handoff are forced to `fresh`. Initial writing is created only by
-the paper-readiness gate; a result cannot hand itself directly to a new writer.
+Allowed `handoff_kind` values are `role_handoff`, `independent_replication`, `text_revision`, and
+`evidence_remediation`. An action may also include a complete `resources` object with positive
+`cpu_threads`, `memory_mib`, and `scratch_mib` values.
+
+Role changes and every `reviewer` handoff are normally forced to `fresh`. Initial writing is created
+only by the paper-readiness gate; a research result cannot hand itself directly to a new writer.
+A `paper_review` reviewer has two safe failure routes:
+
+```json
+{
+  "objective": "Correct the stated limitation without changing the supported claim.",
+  "agent_role": "writer",
+  "session_mode": "resume",
+  "handoff_kind": "text_revision"
+}
+```
+
+This resumes only the closest writer session in the current task ancestry. If new scientific
+evidence is required, return `evidence_remediation` to a fresh `researcher` or `experimenter`.
+After that bounded evidence task completes, the scheduler returns to the ancestral writer; if no
+writer exists yet, it repeats the independent paper-readiness audit.

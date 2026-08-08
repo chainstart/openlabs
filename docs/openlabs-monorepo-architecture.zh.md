@@ -196,12 +196,12 @@ workflows/paper 是所有领域共用、按需调用的下游工作流，不是�
 - 使用确定性代码完成 registry、结果包、构建、引用、质量门和不可变版本校验；
 - 初期默认在投稿、公开发布和产生外部副作用之前等待管理员批准。
 
-对现有 ara-paper-writing 的检查表明，ara-ai-paper 和 ara-math-paper 已能作为 AI/ML 与数学论文的薄协调 Skill，ara-paper-review 已覆盖三 Agent 独立审稿；但它们依赖 vendored 写作/统计/审稿 Skill、仓库 registry、claim-evidence map，以及约 7,400 行 paper_writing 确定性 Python。纯复制 Skill 只能获得写作方法，不能获得可审计论文流水线。
+对现有 ara-paper-writing 的检查表明，ara-ai-paper 和 ara-math-paper 已能作为 AI/ML 与数学论文的薄协调 Skill；审稿现由空白 Codex 与经 Packy 调用的空白 Claude Code Opus 5 组成双供应商面板。它们依赖 vendored 写作/统计/审稿 Skill、仓库 registry、claim-evidence map，以及约 7,400 行 paper_writing 确定性 Python。纯复制 Skill 只能获得写作方法，不能获得可审计论文流水线。
 
 迁入 OpenLabs 时保留“Skill 决策层 + 薄确定性 workflow”：
 
 - skills：领域写作、期刊适配、审稿和修订策略；
-- src：registry、bundle、build、citation、review median 和状态门；
+- src：registry、bundle、build、citation、保守双审阅人聚合和状态门；
 - templates：论文、期刊 overlay、cover letter 和 response 模板；
 - tests：协议、构建、引用和门禁测试。
 
@@ -222,7 +222,7 @@ Zenodo、远程 handoff 和真实投稿属于可选外部适配器，不进入�
 
 | 类型 | 本质 | 示例 |
 |---|---|---|
-| workflow | 把 Skill、确定性代码和状态门组合成可恢复的完整任务 | 论文撰写、三 Agent 审稿和期刊版本构建 |
+| workflow | 把 Skill、确定性代码和状态门组合成可恢复的完整任务 | 论文撰写、双供应商审稿和期刊版本构建 |
 | package | 可导入、可测试、确定性的稳定代码 | Schema、哈希、统计、仿真分析器 |
 | Skill | 告诉 Agent 如何完成某类任务的流程说明、约束和参考材料 | 文献调研、Idea 生成、论文审稿 |
 
@@ -232,7 +232,7 @@ Skill 可以携带少量辅助脚本，但不应承担数据库迁移、并发�
 
 子项目间的耦合只允许存在于显式版本化协议中。初始需要三类协议。
 
-### 4.1 openlabs.task.v2
+### 4.1 openlabs.task.v3
 
 描述控制面交给实验室的任务：
 
@@ -240,7 +240,7 @@ Skill 可以携带少量辅助脚本，但不应承担数据库迁移、并发�
 - Agent 角色、会话策略和仅限同 campaign/同角色的可恢复 session ID；
 - 目标、阶段和成功标准；
 - 输入 artifact URI；
-- 时间、成本、CPU、内存和 GPU 预算；
+- 墙钟时间以及 CPU 线程、内存、临时盘的峰值预留；
 - 允许的工具和外部操作；
 - checkpoint、超时和审批策略；
 - 推荐模型能力等级，而不是写死供应商模型名称。
@@ -356,16 +356,19 @@ systemd 是守护和监督层，factory tick 是短生命周期、幂等的一�
 
 ~~~text
 systemd user timer
-    ↓ 每 2～5 分钟
+    ↓ 每 3 分钟
 python -m openlabs tick
-    ├── 回收过期租约
-    ├── 检查任务心跳和进度
     ├── 接收并验证结果包
+    ├── 回收过期租约
     ├── 恢复或隔离失败任务
     ├── 从通过门禁的 next_actions 续接一个有界任务
     ├── 将 NEEDS_REPLAN 升级到高级 runner
+    ├── 按 CPU/内存/临时盘余量租赁并启动任务
     └── 保存状态并退出
 ~~~
+
+3 分钟只是调度和回收的检查周期，不是 worker 超时。有效租约上的 worker 脱离 tick 运行，
+可以跨越任意多个 tick，直到节点完成、硬超时或失去租约。
 
 第一版把长任务启动为脱离 tick 会话的 worker，并由 SQLite 心跳/租约监督；systemd unit 使用
 `KillMode=process`，因此 oneshot tick 结束不会清理 worker。同一 worker 在退出、超时或主机
@@ -416,14 +419,29 @@ campaign、同使命使用 `codex exec resume`；节点输入应优先指向最�
 | 从研究/实验切换到写作 | 新 `writer` session | 作者只接收冻结且已验证的证据 |
 | 论文就绪审计、结果审阅、独立复核 | 每位审阅人一个新 session/process | 禁止自己做自己评和审稿意见串扰 |
 | 审阅通过后进入写作 | 新 `writer` session | 审阅者不直接改写自己刚审的对象 |
+| 审阅要求文字修改 | 恢复祖先链中原 `writer` session | 保留同一稿件上下文，但不继承 reviewer 会话 |
+| 审阅要求新证据 | 新 `researcher`/`experimenter`，完成后恢复原 `writer` | 让证据生产与写作独立，再重新审阅 |
 
-控制面硬性保证 session 只能在同一 campaign、同一角色的 parent/child 任务间传递；reviewer
+控制面硬性保证 session 只能来自同一 campaign、同一角色且位于当前任务祖先链中的任务；reviewer
 任务的 session mode 固定为 `fresh`。当前论文门禁先冻结 Codex reviewer-1，再以 Packy 上的
 Claude Code Opus 5 启动 reviewer-2；第二位只能获得同一冻结科学输入和 reviewer-1 的哈希，
 不得读取其内容。角色切换不能在一个对话里靠提示词“扮演”，必须新建任务。
 结果包中的普通字符串 `next_action` 表示当前角色续接；需要换角色或启动独立同角色运行时，
-必须写出含 `objective`、`agent_role`、`session_mode` 的结构化 action。控制面在任何角色切换
-时强制 `fresh`，并且不允许研究/实验结果绕过 paper-readiness 审查直接生成 writer。
+必须写出含 `objective`、`agent_role`、`session_mode` 的结构化 action；审阅回流还必须声明
+`text_revision` 或 `evidence_remediation`。控制面在角色切换时默认强制 `fresh`，唯一跨角色
+恢复是从 paper reviewer 返回其祖先 writer；它恢复 writer 自己的 session，不传递 reviewer
+session。研究/实验结果不能绕过 paper-readiness 审查直接生成 writer。
+
+~~~text
+研究/实验 paper_candidate
+  → fresh paper_readiness reviewer
+  → fresh writer
+  → fresh Codex + fresh Packy Claude Opus 5 review panel
+      ├── 通过：内部终止态
+      ├── text_revision：恢复原 writer → 再次 fresh review
+      └── evidence_remediation：fresh researcher/experimenter
+                                → 恢复原 writer → 再次 fresh review
+~~~
 
 无论是否恢复会话，每次节点都必须把下列状态写入文件和结果包：
 
@@ -436,7 +454,7 @@ Claude Code Opus 5 启动 reviewer-2；第二位只能获得同一冻结科学�
 
 模型对话上下文用于减少重复读取，但绝不能成为唯一记忆。
 
-### 6.4 硬预算
+### 6.4 硬预算与资源护栏
 
 每个任务有 `max_task_wall_seconds` 硬超时，每个 campaign 有累计
 `max_campaign_agent_seconds = 86400` 上限。同一 campaign 同时最多运行一个任务，因此预算
@@ -444,6 +462,13 @@ Claude Code Opus 5 启动 reviewer-2；第二位只能获得同一冻结科学�
 campaign 继续运行。每次 attempt 保存实际运行秒数、Agent 适配器版本、runner/profile、
 session ID，以及 runner 能提供的模型、token、缓存和成本字段。控制面不内置会迅速过期的
 价格表，也不伪造 Agent 未返回的成本。
+
+并发不使用固定“全局 2 个任务”。每个任务保存 CPU 线程、内存和临时盘峰值预留；tick 用
+主机总量减管理员保留量，并结合当前可用内存/磁盘压力计算本轮容量。活动任务预留加候选任务
+预留不超过容量时才可启动。放不下的队首任务保持排队，调度器继续查看其他 campaign；资源
+释放后的下一轮 tick 再尝试。`max_worker_processes` 只是不可信资源申报之外的进程数保险，
+同一 campaign 串行规则继续独立生效。第一版不增加 GPU 分配器或 cgroup 服务；当前任务协议
+只声明系统实际执行并测试的三种资源。
 
 ### 6.5 只保留最小程序入口
 
@@ -609,11 +634,12 @@ Agent 负责：
 2. OpenLabs orchestrator 能以相同 task 协议启动三个实验室的 smoke task。
 3. 所有结果均通过统一 bundle adapter、证据门和契约测试。
 4. task/campaign/lab/domain/角色、attempt 和精确输出路径任一不匹配时，结果不能入库。
-5. 并发 tick 不会突破全局并发上限，同一 campaign 不会并行启动两个任务。
+5. 并发 tick 不会突破 CPU/内存/临时盘预留或进程数保险，同一 campaign 不会并行启动两个任务。
 6. 杀死控制面后长任务继续运行；恢复 tick 后能够接收结果或回收租约。
 7. 杀死长任务后，任务只能有限重试并最终隔离，迟到 attempt 回执不能污染新尝试。
 8. 任一 campaign 进入 `NEEDS_HUMAN`、隔离或耗尽 24 小时预算时，其他 campaign 仍可推进。
-9. session 只在同 campaign、同角色的连续任务间恢复；replan 和所有 reviewer 使用空白会话。
+9. session 只从同 campaign、同角色的任务祖先恢复；replan 和所有 reviewer 使用空白会话，
+   reviewer 的文字意见只能返回原 writer session。
 10. 每个 attempt 留存适配器版本、runner/profile、session、墙钟时间、可得 token/成本、门禁和路由原因；未提供的成本不猜测。
 
 代码验收通过后，还需在目标机器启用 timer 做一次真实 24 小时 soak run；这是部署验证，不能

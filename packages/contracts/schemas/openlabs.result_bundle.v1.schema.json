@@ -67,7 +67,25 @@
               "agent_role": {
                 "enum": ["researcher", "experimenter", "writer", "reviewer"]
               },
-              "session_mode": {"enum": ["resume", "fresh"]}
+              "session_mode": {"enum": ["resume", "fresh"]},
+              "handoff_kind": {
+                "enum": [
+                  "role_handoff",
+                  "text_revision",
+                  "evidence_remediation",
+                  "independent_replication"
+                ]
+              },
+              "resources": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["cpu_threads", "memory_mib", "scratch_mib"],
+                "properties": {
+                  "cpu_threads": {"type": "integer", "minimum": 1},
+                  "memory_mib": {"type": "integer", "minimum": 1},
+                  "scratch_mib": {"type": "integer", "minimum": 1}
+                }
+              }
             },
             "allOf": [
               {

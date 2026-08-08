@@ -37,7 +37,8 @@ Read component instructions from their installed paths before using them:
   consistency, references, declarations, and integrity guidance.
 - Load `workflows/paper/skills/vendor/sympy/SKILL.md` only when an exact symbolic calculation can check a clearly
   encoded identity, recurrence, algebraic reduction, boundary case, or finite certificate.
-- Load `workflows/paper/skills/vendor/peer-review/SKILL.md` for the dedicated review pass.
+- Load `workflows/paper/skills/vendor/peer-review/SKILL.md` only when the assigned role is
+  `reviewer`; a factory `writer` leaves review to the later `paper_review` task.
 
 Never activate more than the three declared components. Do not install SymPy or optional numeric
 packages unless the manuscript needs the check and the current environment lacks the dependency.
@@ -79,15 +80,14 @@ central theorem:
 6. If public support materials are needed, prepare their local deterministic package and record
    missing metadata as a blocker. Creating even a reversible remote draft requires a separate,
    explicit administrator action with OpenLabs external writes enabled.
-7. Hand the compiled, unchanged snapshot to the fresh Codex reviewer and the blind Packy Claude
-   Opus 5 reviewer defined by `$openlabs-paper-review`. They must score
-   against the shared standard of *Annals of Mathematics*,
-   *Inventiones Mathematicae*, JAMS, and *Acta Mathematica*, assign integer scores, return separate
-   simulated four-leading-journal and CAS Zone 1 journal decisions, omit conference decisions, and
-   record proof risks and specialist limits. Use the validated conservative panel result. Do not
-   silently edit during scoring.
-8. Apply the mandatory local LLM quality gate exactly as specified in
-   `workflows/paper/skills/overlays/quality-gate.md`. Any score-bearing edit makes the review stale.
+7. In a factory `writer` task, stop after freezing the compiled snapshot and emit it as a
+   `paper_candidate`; do not run or impersonate either reviewer. The scheduler creates a fresh
+   `paper_review` task using `$openlabs-paper-review`, whose Codex and Packy Claude Opus 5 reviewers
+   apply the four-leading-journal and CAS Zone 1 standards plus the mandatory local quality gate.
+8. On a `paper_revision` task, apply only the declared review request. If a new proof, computation,
+   or other scientific evidence is needed, do not invent it; the reviewer must route an
+   `evidence_remediation` task first. Freeze the revised snapshot as a new `paper_candidate` so both
+   reviewers assess it again.
 
 Only a `writing_release.status` of `ready` permits consideration for handoff. The LLM score is a
 necessary local gate, not proof, external peer review, acceptance, or authorization to submit.

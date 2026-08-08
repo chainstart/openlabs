@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 ACTIVE_STATUSES = ("leased", "running")
 AGENT_ROLES = ("researcher", "experimenter", "writer", "reviewer")
 SESSION_MODES = ("resume", "fresh")
@@ -31,8 +31,10 @@ def utc_now() -> str:
 
 def utc_after(seconds: int) -> str:
     return (
-        datetime.now(UTC) + timedelta(seconds=seconds)
-    ).isoformat(timespec="seconds").replace("+00:00", "Z")
+        (datetime.now(UTC) + timedelta(seconds=seconds))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def retry_not_before(attempt: int, base_seconds: int) -> str | None:
@@ -125,6 +127,7 @@ class FactoryDB:
                     agent_role TEXT NOT NULL DEFAULT 'researcher',
                     session_mode TEXT NOT NULL DEFAULT 'resume',
                     agent_session_id TEXT,
+                    session_source_task_id TEXT,
                     status TEXT NOT NULL DEFAULT 'queued',
                     priority INTEGER NOT NULL DEFAULT 0,
                     attempt INTEGER NOT NULL DEFAULT 0,
@@ -135,6 +138,9 @@ class FactoryDB:
                     worker_pid INTEGER,
                     current_attempt_id TEXT,
                     max_wall_seconds INTEGER NOT NULL DEFAULT 14400,
+                    cpu_threads INTEGER NOT NULL DEFAULT 2,
+                    memory_mib INTEGER NOT NULL DEFAULT 4096,
+                    scratch_mib INTEGER NOT NULL DEFAULT 4096,
                     result_path TEXT,
                     result_sha256 TEXT,
                     last_error TEXT,
@@ -181,6 +187,7 @@ class FactoryDB:
                     result_sha256 TEXT,
                     run_seconds REAL NOT NULL DEFAULT 0,
                     runtime_json TEXT NOT NULL DEFAULT '{}',
+                    resources_json TEXT NOT NULL DEFAULT '{}',
                     error TEXT,
                     created_at TEXT NOT NULL,
                     UNIQUE(task_id, attempt_number)
@@ -203,6 +210,7 @@ class FactoryDB:
                 """
             )
             self._migrate_v3(connection)
+            self._migrate_v4(connection)
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS task_attempts_task_idx
@@ -223,8 +231,7 @@ class FactoryDB:
     ) -> None:
         name = definition.split()[0]
         columns = {
-            str(row["name"])
-            for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+            str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
         }
         if name not in columns:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
@@ -260,6 +267,23 @@ class FactoryDB:
             UPDATE tasks SET requested_output_path=output_path
             WHERE requested_output_path IS NULL AND output_path IS NOT NULL
             """
+        )
+
+    @classmethod
+    def _migrate_v4(cls, connection: sqlite3.Connection) -> None:
+        """Add explicit resource reservations and resumable-session provenance."""
+
+        for definition in (
+            "session_source_task_id TEXT",
+            "cpu_threads INTEGER NOT NULL DEFAULT 2",
+            "memory_mib INTEGER NOT NULL DEFAULT 4096",
+            "scratch_mib INTEGER NOT NULL DEFAULT 4096",
+        ):
+            cls._add_column(connection, "tasks", definition)
+        cls._add_column(
+            connection,
+            "task_attempts",
+            "resources_json TEXT NOT NULL DEFAULT '{}'",
         )
 
     @staticmethod
@@ -307,7 +331,9 @@ class FactoryDB:
             budget = (
                 max(1, int(max_agent_seconds))
                 if max_agent_seconds is not None
-                else int(existing["max_agent_seconds"]) if existing is not None else 86_400
+                else int(existing["max_agent_seconds"])
+                if existing is not None
+                else 86_400
             )
             desired = (domain, title, status, priority, state_path, source, budget)
             if existing is not None and tuple(existing) == desired:
@@ -364,7 +390,11 @@ class FactoryDB:
         agent_role: str = "researcher",
         session_mode: str | None = None,
         agent_session_id: str | None = None,
+        session_source_task_id: str | None = None,
         max_wall_seconds: int = 14_400,
+        cpu_threads: int = 2,
+        memory_mib: int = 4_096,
+        scratch_mib: int = 4_096,
     ) -> str:
         identifier = task_id or str(uuid.uuid4())
         now = utc_now()
@@ -377,6 +407,15 @@ class FactoryDB:
             raise ValueError("reviewer tasks must use a fresh session")
         if mode == "fresh":
             agent_session_id = None
+            session_source_task_id = None
+        resources = {
+            "cpu_threads": cpu_threads,
+            "memory_mib": memory_mib,
+            "scratch_mib": scratch_mib,
+        }
+        for name, value in resources.items():
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
         with self.connect() as connection:
             campaign = connection.execute(
                 "SELECT domain, status FROM campaigns WHERE campaign_id=?",
@@ -402,23 +441,60 @@ class FactoryDB:
                     raise KeyError(f"Unknown parent task: {parent_task_id}")
                 if str(parent["campaign_id"]) != campaign_id:
                     raise ValueError("A successor cannot cross campaign boundaries")
-                if mode == "resume":
-                    if str(parent["agent_role"]) != agent_role:
-                        raise ValueError("A session cannot cross agent-role boundaries")
-                    parent_session = parent["agent_session_id"]
-                    if agent_session_id and agent_session_id != parent_session:
-                        raise ValueError("Successor session differs from its parent session")
-                    agent_session_id = str(parent_session) if parent_session else None
+                if (
+                    mode == "resume"
+                    and session_source_task_id is None
+                    and str(parent["agent_role"]) == agent_role
+                ):
+                    session_source_task_id = parent_task_id
+            if mode == "resume" and session_source_task_id:
+                if not parent_task_id:
+                    raise ValueError("A session source requires a parent task")
+                source = connection.execute(
+                    """
+                    SELECT campaign_id, agent_role, agent_session_id
+                    FROM tasks WHERE task_id=?
+                    """,
+                    (session_source_task_id,),
+                ).fetchone()
+                if source is None:
+                    raise KeyError(f"Unknown session source task: {session_source_task_id}")
+                if str(source["campaign_id"]) != campaign_id:
+                    raise ValueError("A session source cannot cross campaign boundaries")
+                if str(source["agent_role"]) != agent_role:
+                    raise ValueError("A session cannot cross agent-role boundaries")
+                source_session = source["agent_session_id"]
+                if not source_session:
+                    raise ValueError("A session source task has no recorded session")
+                if agent_session_id and agent_session_id != source_session:
+                    raise ValueError("Successor session differs from its source session")
+                if parent_task_id and not self._is_ancestor(
+                    connection,
+                    ancestor_task_id=session_source_task_id,
+                    descendant_task_id=parent_task_id,
+                ):
+                    raise ValueError("A session source must belong to the parent lineage")
+                agent_session_id = str(source_session)
+            elif mode == "resume" and parent_task_id:
+                parent = connection.execute(
+                    "SELECT agent_role FROM tasks WHERE task_id=?",
+                    (parent_task_id,),
+                ).fetchone()
+                if parent is not None and str(parent["agent_role"]) != agent_role:
+                    raise ValueError("A cross-role resume requires a same-role session source")
+            elif mode == "resume" and agent_session_id:
+                raise ValueError("A resumed session must come from a source task")
             connection.execute(
                 """
                 INSERT INTO tasks(
                     task_id, campaign_id, domain, task_type, objective, input_path,
                     requested_output_path, skill_path, runner, routing_reason,
                     parent_task_id, agent_role, session_mode, agent_session_id,
-                    status, priority, max_attempts, not_before, max_wall_seconds,
+                    session_source_task_id, status, priority, max_attempts, not_before,
+                    max_wall_seconds, cpu_threads, memory_mib, scratch_mib,
                     created_at, updated_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                         'queued', ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                         'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -435,10 +511,14 @@ class FactoryDB:
                     agent_role,
                     mode,
                     agent_session_id,
+                    session_source_task_id,
                     priority,
                     max(1, int(max_attempts)),
                     not_before,
                     max(1, int(max_wall_seconds)),
+                    cpu_threads,
+                    memory_mib,
+                    scratch_mib,
                     now,
                     now,
                 ),
@@ -451,11 +531,71 @@ class FactoryDB:
                 {
                     "agent_role": agent_role,
                     "session_mode": mode,
+                    "session_source_task_id": session_source_task_id,
                     "parent_task_id": parent_task_id,
                     "routing_reason": routing_reason,
+                    "resources": resources,
                 },
             )
         return identifier
+
+    @staticmethod
+    def _is_ancestor(
+        connection: sqlite3.Connection,
+        *,
+        ancestor_task_id: str,
+        descendant_task_id: str,
+    ) -> bool:
+        row = connection.execute(
+            """
+            WITH RECURSIVE lineage(task_id, parent_task_id) AS (
+                SELECT task_id, parent_task_id FROM tasks WHERE task_id=?
+                UNION ALL
+                SELECT parent.task_id, parent.parent_task_id
+                FROM tasks parent
+                JOIN lineage child ON parent.task_id=child.parent_task_id
+            )
+            SELECT 1 FROM lineage WHERE task_id=? LIMIT 1
+            """,
+            (descendant_task_id, ancestor_task_id),
+        ).fetchone()
+        return row is not None
+
+    def nearest_session_source(
+        self,
+        task_id: str,
+        *,
+        agent_role: str,
+    ) -> dict[str, Any] | None:
+        """Find the closest task in this lineage that owns a role's session."""
+
+        if agent_role not in AGENT_ROLES:
+            raise ValueError(f"agent_role must be one of {AGENT_ROLES}")
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                WITH RECURSIVE lineage(
+                    task_id, parent_task_id, agent_role, agent_session_id, depth
+                ) AS (
+                    SELECT task_id, parent_task_id, agent_role, agent_session_id, 0
+                    FROM tasks WHERE task_id=?
+                    UNION ALL
+                    SELECT parent.task_id, parent.parent_task_id, parent.agent_role,
+                           parent.agent_session_id, child.depth + 1
+                    FROM tasks parent
+                    JOIN lineage child ON parent.task_id=child.parent_task_id
+                )
+                SELECT task_id, agent_session_id, depth
+                FROM lineage
+                WHERE agent_role=?
+                  AND agent_session_id IS NOT NULL
+                  AND agent_session_id != ''
+                ORDER BY depth
+                LIMIT 1
+                """,
+                (task_id, agent_role),
+            ).fetchone()
+        return dict(row) if row else None
 
     def task(self, task_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
@@ -476,6 +616,22 @@ class FactoryDB:
             ).fetchone()
         return int(row["n"])
 
+    def active_resource_totals(self) -> dict[str, int]:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(SUM(cpu_threads), 0) AS cpu_threads,
+                       COALESCE(SUM(memory_mib), 0) AS memory_mib,
+                       COALESCE(SUM(scratch_mib), 0) AS scratch_mib
+                FROM tasks WHERE status IN ('leased', 'running')
+                """
+            ).fetchone()
+        return {
+            "cpu_threads": int(row["cpu_threads"]),
+            "memory_mib": int(row["memory_mib"]),
+            "scratch_mib": int(row["scratch_mib"]),
+        }
+
     def task_count(self, campaign_id: str) -> int:
         with self.connect() as connection:
             row = connection.execute(
@@ -490,6 +646,7 @@ class FactoryDB:
         owner: str,
         lease_seconds: int,
         max_active: int | None = None,
+        resource_capacity: Mapping[str, int] | None = None,
     ) -> dict[str, Any] | None:
         now = utc_now()
         expires = utc_after(lease_seconds)
@@ -501,7 +658,7 @@ class FactoryDB:
                 ).fetchone()
                 if int(active["n"]) >= max(1, int(max_active)):
                     return None
-            row = connection.execute(
+            rows = connection.execute(
                 """
                 SELECT tasks.*, campaigns.max_agent_seconds, campaigns.agent_seconds_used
                 FROM tasks
@@ -514,12 +671,30 @@ class FactoryDB:
                       SELECT 1 FROM tasks active
                       WHERE active.campaign_id=tasks.campaign_id
                         AND active.status IN ('leased', 'running')
-                  )
+                )
                 ORDER BY tasks.priority DESC, tasks.created_at, tasks.task_id
-                LIMIT 1
                 """,
                 (now,),
-            ).fetchone()
+            ).fetchall()
+            row = None
+            if resource_capacity is None:
+                row = rows[0] if rows else None
+            else:
+                keys = ("cpu_threads", "memory_mib", "scratch_mib")
+                capacity = {key: int(resource_capacity[key]) for key in keys}
+                active = connection.execute(
+                    """
+                    SELECT COALESCE(SUM(cpu_threads), 0) AS cpu_threads,
+                           COALESCE(SUM(memory_mib), 0) AS memory_mib,
+                           COALESCE(SUM(scratch_mib), 0) AS scratch_mib
+                    FROM tasks WHERE status IN ('leased', 'running')
+                    """
+                ).fetchone()
+                used = {key: int(active[key]) for key in keys}
+                for candidate in rows:
+                    if all(used[key] + int(candidate[key]) <= capacity[key] for key in keys):
+                        row = candidate
+                        break
             if row is None:
                 return None
             task_id = str(row["task_id"])
@@ -537,10 +712,25 @@ class FactoryDB:
             connection.execute(
                 """
                 INSERT INTO task_attempts(
-                    attempt_id, task_id, attempt_number, status, lease_owner, created_at
-                ) VALUES(?, ?, ?, 'leased', ?, ?)
+                    attempt_id, task_id, attempt_number, status, lease_owner,
+                    resources_json, created_at
+                ) VALUES(?, ?, ?, 'leased', ?, ?, ?)
                 """,
-                (attempt_id, task_id, attempt_number, owner, now),
+                (
+                    attempt_id,
+                    task_id,
+                    attempt_number,
+                    owner,
+                    json.dumps(
+                        {
+                            "cpu_threads": int(row["cpu_threads"]),
+                            "memory_mib": int(row["memory_mib"]),
+                            "scratch_mib": int(row["scratch_mib"]),
+                        },
+                        sort_keys=True,
+                    ),
+                    now,
+                ),
             )
             self._event(
                 connection,
@@ -552,6 +742,11 @@ class FactoryDB:
                     "lease_expires_at": expires,
                     "attempt_id": attempt_id,
                     "attempt": attempt_number,
+                    "resources": {
+                        "cpu_threads": int(row["cpu_threads"]),
+                        "memory_mib": int(row["memory_mib"]),
+                        "scratch_mib": int(row["scratch_mib"]),
+                    },
                 },
             )
             claimed = connection.execute(
@@ -748,11 +943,7 @@ class FactoryDB:
             ).fetchone()
             if row is None:
                 raise KeyError(task_id)
-            status = (
-                "quarantined"
-                if int(row["attempt"]) >= int(row["max_attempts"])
-                else "queued"
-            )
+            status = "quarantined" if int(row["attempt"]) >= int(row["max_attempts"]) else "queued"
             not_before = (
                 None
                 if status == "quarantined"
@@ -825,9 +1016,7 @@ class FactoryDB:
                 (task_id, attempt_id),
             ).fetchone()
             if row is None:
-                raise ValueError(
-                    f"Task {task_id} is not running for current attempt {attempt_id}"
-                )
+                raise ValueError(f"Task {task_id} is not running for current attempt {attempt_id}")
             attempt = connection.execute(
                 """
                 SELECT status FROM task_attempts
@@ -839,9 +1028,7 @@ class FactoryDB:
                 raise ValueError(f"Attempt {attempt_id} is not ingestible")
             if final_status == "failed":
                 final_status = (
-                    "queued"
-                    if int(row["attempt"]) < int(row["max_attempts"])
-                    else "quarantined"
+                    "queued" if int(row["attempt"]) < int(row["max_attempts"]) else "quarantined"
                 )
             not_before = (
                 retry_not_before(int(row["attempt"]), retry_backoff_seconds)
@@ -850,9 +1037,7 @@ class FactoryDB:
             )
             session_id = runtime.get("session_id")
             stored_session = (
-                str(session_id)
-                if isinstance(session_id, str) and session_id.strip()
-                else None
+                str(session_id) if isinstance(session_id, str) and session_id.strip() else None
             )
             prior_session = row["agent_session_id"]
             if (
@@ -985,7 +1170,10 @@ class FactoryDB:
                     (now, campaign_id),
                 )
                 connection.execute(
-                    "UPDATE campaigns SET status='budget_exhausted', updated_at=? WHERE campaign_id=?",
+                    """
+                    UPDATE campaigns SET status='budget_exhausted', updated_at=?
+                    WHERE campaign_id=?
+                    """,
                     (now, campaign_id),
                 )
                 for row in rows:
@@ -1023,6 +1211,7 @@ class FactoryDB:
         for row in rows:
             item = dict(row)
             item["runtime"] = json.loads(str(item.pop("runtime_json")))
+            item["resources"] = json.loads(str(item.pop("resources_json")))
             attempts.append(item)
         return attempts
 

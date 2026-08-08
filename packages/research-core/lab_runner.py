@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-TASK_SCHEMA = "openlabs.task.v2"
+TASK_SCHEMA = "openlabs.task.v3"
 RESULT_SCHEMA = "openlabs.result_bundle.v1"
 
 
@@ -98,8 +98,7 @@ def _smoke(task: dict[str, Any], manifest: dict[str, Any], output: Path) -> None
                 {
                     "claim_id": "lab-file-contract-smoke",
                     "text": (
-                        "The lab accepted a versioned task and emitted a hash-bound "
-                        "result bundle."
+                        "The lab accepted a versioned task and emitted a hash-bound result bundle."
                     ),
                     "status": "verified",
                     "evidence": ["smoke-capabilities"],
@@ -130,18 +129,19 @@ def _agent_request(task: dict[str, Any], manifest: dict[str, Any], output: Path)
     return f"""# OpenLabs bounded research task
 
 Read and follow the factory coordinator at `{factory_skill}` and the domain skill at
-`{task.get('skill_path')}`. Work only on this task and its declared inputs.
+`{task.get("skill_path")}`. Work only on this task and its declared inputs.
 
-- task file: `{task.get('_task_file')}`
-- task id: `{task['task_id']}`
-- attempt id: `{task['attempt_id']}`
-- campaign id: `{task['campaign_id']}`
-- domain: `{manifest['domain']}`
-- agent role: `{agent['role']}`
-- session policy: `{agent['session_mode']}`
-- runner tier: `{task.get('runner') or 'balanced'}`
-- objective: {task['objective']}
-- input state: `{task.get('input_path')}`
+- task file: `{task.get("_task_file")}`
+- task id: `{task["task_id"]}`
+- attempt id: `{task["attempt_id"]}`
+- campaign id: `{task["campaign_id"]}`
+- domain: `{manifest["domain"]}`
+- agent role: `{agent["role"]}`
+- session policy: `{agent["session_mode"]}`
+- runner tier: `{task.get("runner") or "balanced"}`
+- reserved resources: `{json.dumps(task["resources"], sort_keys=True)}`
+- objective: {task["objective"]}
+- input state: `{task.get("input_path")}`
 - required result path: `{output}`
 
 {independence}
@@ -256,9 +256,7 @@ def _run_agent(
     output: Path,
 ) -> dict[str, Any]:
     runner = str(task.get("runner") or "balanced")
-    runner_key = "".join(
-        character if character.isalnum() else "_" for character in runner
-    ).upper()
+    runner_key = "".join(character if character.isalnum() else "_" for character in runner).upper()
     agent = task["agent"]
     session_id = (
         str(agent.get("session_id") or "").strip()
@@ -266,12 +264,8 @@ def _run_agent(
         else ""
     )
     command_kind = "RESUME_COMMAND" if session_id else "COMMAND"
-    raw_command = os.environ.get(
-        f"OPENLABS_AGENT_{command_kind}_{runner_key}_JSON", ""
-    ).strip()
-    raw_command = raw_command or os.environ.get(
-        f"OPENLABS_AGENT_{command_kind}_JSON", ""
-    ).strip()
+    raw_command = os.environ.get(f"OPENLABS_AGENT_{command_kind}_{runner_key}_JSON", "").strip()
+    raw_command = raw_command or os.environ.get(f"OPENLABS_AGENT_{command_kind}_JSON", "").strip()
     output.parent.mkdir(parents=True, exist_ok=True)
     request_path = output.parent / "agent-request.md"
     request = _agent_request(task, manifest, output)

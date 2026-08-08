@@ -41,7 +41,7 @@ def test_tick_launches_and_ingests_smoke_task(tmp_path, monkeypatch, domain: str
         objective="Exercise the complete file contract.",
     )
     settings = FactorySettings(
-        max_concurrent_jobs=1,
+        max_worker_processes=1,
         lease_seconds=30,
         heartbeat_seconds=1,
         max_attempts=2,

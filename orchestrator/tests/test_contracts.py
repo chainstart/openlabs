@@ -67,3 +67,29 @@ def test_result_contract_accepts_fresh_role_handoff_but_not_resumed_reviewer() -
     validation = validate_result_bundle(result)
     assert not validation.valid
     assert any("reviewer handoffs must start fresh" in error for error in validation.errors)
+
+
+def test_contract_accepts_typed_review_remediation_resources() -> None:
+    result = json.loads(
+        (CODE_ROOT / "packages/contracts/examples/smoke-result.json").read_text(encoding="utf-8")
+    )
+    result["next_actions"] = [
+        {
+            "objective": "Run the exact missing ablation.",
+            "agent_role": "experimenter",
+            "session_mode": "fresh",
+            "handoff_kind": "evidence_remediation",
+            "resources": {
+                "cpu_threads": 4,
+                "memory_mib": 8192,
+                "scratch_mib": 16384,
+            },
+        }
+    ]
+
+    assert validate_result_bundle(result).valid
+
+    result["next_actions"][0]["resources"]["memory_mib"] = 0
+    validation = validate_result_bundle(result)
+    assert not validation.valid
+    assert any("memory_mib" in error for error in validation.errors)

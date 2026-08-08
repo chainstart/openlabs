@@ -202,6 +202,27 @@ The CAS Zone 1 decision remains the internal gate decision. Any unresolved block
 out of `ready`. A ready gate does not authorize release, submission, publication, or any external
 action.
 
+## Return one factory decision
+
+When this Skill runs inside an OpenLabs `paper_review` task, write the required
+`openlabs.result_bundle.v1` without editing the manuscript:
+
+- If the validated conservative panel passes, set `paper_candidate: true` and leave
+  `next_actions` empty. This is the terminal internal review state.
+- If the evidence is sufficient and only prose, organization, citation presentation, or claim
+  narrowing must change, set `paper_candidate: false` and return exactly one structured action with
+  `agent_role: writer`, `session_mode: resume`, and `handoff_kind: text_revision`. The scheduler
+  resumes the ancestral writer session; it never passes this reviewer session to the writer.
+- If a new proof, experiment, analysis, literature determination, or other scientific evidence is
+  required, return exactly one `evidence_remediation` action to a fresh `researcher` or
+  `experimenter`. Choose `experimenter` only for execution of an already frozen protocol. Include a
+  `resources` object only when the bounded remediation genuinely needs a reservation different
+  from the default.
+
+Do not combine text revision and evidence remediation in one action, ask the writer to manufacture
+missing evidence, or request another reviewer. After either repair path, the scheduler freezes a
+new manuscript candidate and starts a new independent two-reviewer panel.
+
 Report both score vectors, the five conservative scores, both strictest simulated decisions,
 retained blockers, validation and gate results, actual provider/model identities, and confirmation
 that both reviewers used the same unchanged manuscript snapshot.

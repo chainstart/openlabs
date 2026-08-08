@@ -15,9 +15,10 @@
 | `ara-paper-writing` | `workflows/paper` | 保留 registry/bundle/build/review/support 的确定性代码、三套协调 Skill 和已审计 vendored Skills；默认关闭 Zenodo 与远程 handoff 写操作 |
 | `ara` | 新 `orchestrator` 与 `orchestrator/skills/vendor` | 复用经审计的 paper/database lookup Skill；manifest、dispatcher、bundle ingest、阶段限制和事件思路被精简重写，没有复制旧巨型固定流水线、dashboard、历史 projects 或重复论文逻辑 |
 
-旧包名 `aira`、`matfactory` 和若干 `ara.*` Schema 暂时作为兼容标识保留；OpenLabs 对外边界统一为
-`lab.json`、带 attempt/Agent 边界的 `openlabs.task.v2` 和 `openlabs.result_bundle.v1`。结果包
-保持 v1，避免改写已有证据哈希；任务协议升级不修改历史结果。
+旧包名 `aira`、`matfactory` 和若干 `ara.*` Schema 暂时作为兼容标识保留。首次迁入时的任务
+边界是 `openlabs.task.v2`；当前控制面已以加法迁移升级为带 attempt、Agent 和资源预留的
+`openlabs.task.v3`。结果包保持 `openlabs.result_bundle.v1`，避免改写已有证据哈希；任务协议
+升级不修改历史结果。
 
 ## 2. 新写的最小控制面
 

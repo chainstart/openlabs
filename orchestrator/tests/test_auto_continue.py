@@ -3,7 +3,7 @@ from __future__ import annotations
 from openlabs.config import FactorySettings, WorkspacePaths
 from openlabs.contracts import RECEIPT_SCHEMA, RESULT_SCHEMA, atomic_write_json, sha256_file
 from openlabs.db import FactoryDB
-from openlabs.engine import TickReport, ingest_results
+from openlabs.engine import TickReport, _next_action_plan, ingest_results
 
 
 def _start_task(db: FactoryDB, task_id: str, output: str, *, lab_id: str) -> dict:
@@ -43,6 +43,21 @@ def _receipt(task: dict, result: str, digest: str, *, session_id: str | None = N
             "session_id": session_id,
         },
     }
+
+
+def test_independent_replication_forces_a_fresh_same_role_session() -> None:
+    plan = _next_action_plan(
+        {
+            "objective": "Repeat the frozen experiment without inheriting its interpretation.",
+            "agent_role": "experimenter",
+            "session_mode": "resume",
+            "handoff_kind": "independent_replication",
+        },
+        current_role="experimenter",
+    )
+
+    assert plan is not None
+    assert plan.session_mode == "fresh"
 
 
 def test_valid_next_action_enqueues_one_bounded_successor(tmp_path) -> None:
@@ -189,12 +204,7 @@ def test_structured_handoff_starts_an_independent_experimenter(tmp_path) -> None
         runner="balanced",
     )
     result = atomic_write_json(
-        paths.data
-        / "workspaces"
-        / "ai"
-        / "campaign-handoff"
-        / "design-experiment"
-        / "result.json",
+        paths.data / "workspaces" / "ai" / "campaign-handoff" / "design-experiment" / "result.json",
         {
             "schema_version": RESULT_SCHEMA,
             "task_id": "design-experiment",
@@ -257,12 +267,7 @@ def test_creator_cannot_handoff_directly_to_a_new_writer(tmp_path) -> None:
         skill_path="ai-research-loop",
     )
     result = atomic_write_json(
-        paths.data
-        / "workspaces"
-        / "ai"
-        / "campaign-no-self-promotion"
-        / "creator"
-        / "result.json",
+        paths.data / "workspaces" / "ai" / "campaign-no-self-promotion" / "creator" / "result.json",
         {
             "schema_version": RESULT_SCHEMA,
             "task_id": "creator",
@@ -348,3 +353,136 @@ def test_fresh_role_must_return_a_session_before_resumable_followup(tmp_path) ->
     assert report.enqueued == []
     assert db.task("draft")["status"] == "needs_human"
     assert "no session_id" in db.task("draft")["last_error"]
+
+
+def test_review_evidence_request_returns_to_the_prior_writer(tmp_path) -> None:
+    paths = WorkspacePaths(
+        workspace=tmp_path,
+        code=tmp_path / "openlabs",
+        data=tmp_path / "data",
+        artifacts=tmp_path / "artifacts",
+        database=tmp_path / "database",
+        database_file=tmp_path / "database" / "live" / "factory.sqlite",
+    )
+    paths.ensure_runtime_directories()
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign("campaign-remediation", domain="ai", title="Campaign")
+    db.enqueue_task(
+        task_id="writer",
+        campaign_id="campaign-remediation",
+        domain="ai",
+        task_type="paper_write",
+        objective="Write the frozen draft.",
+        skill_path="openlabs-ai-paper",
+        agent_role="writer",
+    )
+    with db.connect() as connection:
+        connection.execute(
+            """
+            UPDATE tasks SET status='succeeded', agent_session_id='writer-session'
+            WHERE task_id='writer'
+            """
+        )
+    db.enqueue_task(
+        task_id="panel",
+        campaign_id="campaign-remediation",
+        domain="ai",
+        task_type="paper_review",
+        objective="Review the frozen draft.",
+        skill_path="openlabs-paper-review",
+        parent_task_id="writer",
+        agent_role="reviewer",
+        session_mode="fresh",
+    )
+    panel_result = atomic_write_json(
+        paths.data / "workspaces" / "ai" / "campaign-remediation" / "panel.json",
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": "panel",
+            "campaign_id": "campaign-remediation",
+            "lab_id": "ai",
+            "domain": "ai",
+            "status": "completed",
+            "summary": "The panel found one decisive missing ablation.",
+            "artifacts": [],
+            "claims": [],
+            "next_actions": [
+                {
+                    "objective": "Run only the frozen missing ablation and report all outcomes.",
+                    "agent_role": "experimenter",
+                    "session_mode": "fresh",
+                    "handoff_kind": "evidence_remediation",
+                    "resources": {
+                        "cpu_threads": 4,
+                        "memory_mib": 8192,
+                        "scratch_mib": 16384,
+                    },
+                }
+            ],
+            "paper_candidate": False,
+        },
+    )
+    panel = _start_task(db, "panel", str(panel_result), lab_id="ai")
+    atomic_write_json(
+        paths.result_inbox / "panel.json",
+        _receipt(panel, str(panel_result), sha256_file(panel_result)),
+    )
+
+    panel_report = TickReport()
+    ingest_results(db, paths, FactorySettings(), panel_report)
+
+    assert len(panel_report.enqueued) == 1
+    remediation = db.task(panel_report.enqueued[0])
+    assert remediation is not None
+    assert remediation["task_type"] == "evidence_remediation"
+    assert remediation["agent_role"] == "experimenter"
+    assert remediation["session_mode"] == "fresh"
+    assert remediation["skill_path"] == "ai-research-loop"
+    assert remediation["cpu_threads"] == 4
+    assert remediation["memory_mib"] == 8192
+    assert remediation["scratch_mib"] == 16384
+
+    evidence_result = atomic_write_json(
+        paths.data / "workspaces" / "ai" / "campaign-remediation" / "remediation.json",
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": remediation["task_id"],
+            "campaign_id": "campaign-remediation",
+            "lab_id": "ai",
+            "domain": "ai",
+            "status": "completed",
+            "summary": "The requested ablation completed and all outcomes were recorded.",
+            "artifacts": [],
+            "claims": [],
+            "next_actions": [],
+            "paper_candidate": False,
+        },
+    )
+    running_remediation = _start_task(
+        db,
+        str(remediation["task_id"]),
+        str(evidence_result),
+        lab_id="ai",
+    )
+    atomic_write_json(
+        paths.result_inbox / "remediation.json",
+        _receipt(
+            running_remediation,
+            str(evidence_result),
+            sha256_file(evidence_result),
+            session_id="experiment-session",
+        ),
+    )
+
+    evidence_report = TickReport()
+    ingest_results(db, paths, FactorySettings(), evidence_report)
+
+    assert len(evidence_report.enqueued) == 1
+    revision = db.task(evidence_report.enqueued[0])
+    assert revision is not None
+    assert revision["task_type"] == "paper_revision"
+    assert revision["agent_role"] == "writer"
+    assert revision["session_mode"] == "resume"
+    assert revision["agent_session_id"] == "writer-session"
+    assert revision["session_source_task_id"] == "writer"

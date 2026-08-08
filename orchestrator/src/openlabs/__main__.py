@@ -11,6 +11,7 @@ from pathlib import Path
 from .config import load_settings, workspace_paths
 from .db import FactoryDB
 from .engine import tick
+from .resources import effective_capacity
 from .worker import run_worker
 
 
@@ -47,6 +48,9 @@ def _parser() -> argparse.ArgumentParser:
         help="Defaults from task type; reviewers always start blank",
     )
     enqueue.add_argument("--max-wall-seconds", type=int)
+    enqueue.add_argument("--cpu-threads", type=int)
+    enqueue.add_argument("--memory-mib", type=int)
+    enqueue.add_argument("--scratch-mib", type=int)
     enqueue.add_argument("--input", help="Campaign directory or immutable input file")
     enqueue.add_argument("--output", help="Explicit result path inside this campaign workspace")
     enqueue.add_argument(
@@ -76,10 +80,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == "tick":
         payload = tick(paths, load_settings(paths)).to_dict()
     elif args.command == "status":
+        reserved = db.active_resource_totals()
         payload = {
             "schema_version": "openlabs.status.v1",
             "tasks": db.status_counts(),
             "research_records": db.research_record_counts(),
+            "resources": {
+                "capacity": effective_capacity(
+                    paths.workspace,
+                    settings,
+                    reserved,
+                ).to_dict(),
+                "reserved": reserved,
+                "max_worker_processes": settings.max_worker_processes,
+            },
             "campaigns": [
                 {
                     "campaign_id": item["campaign_id"],
@@ -119,6 +133,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_attempts=settings.max_attempts,
             agent_role=args.agent_role or _agent_role(args.task_type),
             max_wall_seconds=args.max_wall_seconds or settings.max_task_wall_seconds,
+            cpu_threads=(
+                args.cpu_threads
+                if args.cpu_threads is not None
+                else settings.default_task_cpu_threads
+            ),
+            memory_mib=(
+                args.memory_mib if args.memory_mib is not None else settings.default_task_memory_mib
+            ),
+            scratch_mib=(
+                args.scratch_mib
+                if args.scratch_mib is not None
+                else settings.default_task_scratch_mib
+            ),
         )
         payload = {"schema_version": "openlabs.enqueue.v1", "task_id": task_id}
     else:  # pragma: no cover - argparse enforces the command set.

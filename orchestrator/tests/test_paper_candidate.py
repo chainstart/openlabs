@@ -182,3 +182,151 @@ def test_valid_paper_candidate_enqueues_one_frontier_readiness_task(tmp_path) ->
     assert writer["session_mode"] == "fresh"
     assert writer["agent_session_id"] is None
     assert writer["parent_task_id"] == paper_task["task_id"]
+
+    claimed_writer = db.claim_next_task(owner="writer", lease_seconds=60)
+    assert claimed_writer is not None and claimed_writer["task_id"] == writer["task_id"]
+    writer_attempt = str(claimed_writer["current_attempt_id"])
+    writer_result = atomic_write_json(
+        result_root / "writer-result.json",
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": writer["task_id"],
+            "campaign_id": "campaign-1",
+            "lab_id": "math",
+            "domain": "math",
+            "status": "completed",
+            "summary": "A bounded manuscript snapshot is ready for independent review.",
+            "artifacts": [
+                {
+                    "artifact_id": "manuscript-evidence",
+                    "uri": evidence.resolve().as_uri(),
+                    "sha256": sha256_file(evidence),
+                }
+            ],
+            "claims": [
+                {
+                    "claim_id": "draft-claim",
+                    "text": "The draft preserves the bounded evidence claim.",
+                    "status": "supported",
+                    "evidence": ["manuscript-evidence"],
+                    "limitations": ["The review panel has not yet accepted the draft."],
+                }
+            ],
+            "next_actions": [],
+            "paper_candidate": True,
+        },
+    )
+    db.bind_attempt_spec(
+        str(writer["task_id"]),
+        attempt_id=writer_attempt,
+        lab_id="math",
+        output_path=str(writer_result),
+    )
+    db.mark_running(
+        str(writer["task_id"]),
+        attempt_id=writer_attempt,
+        owner="writer",
+        pid=125,
+        lease_seconds=60,
+    )
+    atomic_write_json(
+        paths.result_inbox / "writer.json",
+        {
+            "schema_version": RECEIPT_SCHEMA,
+            "task_id": writer["task_id"],
+            "attempt_id": writer_attempt,
+            "campaign_id": "campaign-1",
+            "lab_id": "math",
+            "domain": "math",
+            "agent_role": "writer",
+            "result_path": str(writer_result),
+            "sha256": sha256_file(writer_result),
+            "runtime": {
+                "duration_seconds": 1.0,
+                "exit_code": 0,
+                "session_id": "writer-session",
+            },
+        },
+    )
+
+    writer_report = TickReport()
+    ingest_results(db, paths, FactorySettings(), writer_report)
+
+    assert len(writer_report.enqueued) == 1
+    paper_review = db.task(writer_report.enqueued[0])
+    assert paper_review is not None
+    assert paper_review["task_type"] == "paper_review"
+    assert paper_review["agent_role"] == "reviewer"
+    assert paper_review["session_mode"] == "fresh"
+    assert paper_review["skill_path"] == "openlabs-paper-review"
+
+    claimed_panel = db.claim_next_task(owner="panel", lease_seconds=60)
+    assert claimed_panel is not None and claimed_panel["task_id"] == paper_review["task_id"]
+    panel_attempt = str(claimed_panel["current_attempt_id"])
+    panel_result = atomic_write_json(
+        result_root / "panel-result.json",
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": paper_review["task_id"],
+            "campaign_id": "campaign-1",
+            "lab_id": "math",
+            "domain": "math",
+            "status": "completed",
+            "summary": "The panel requests a bounded text-only correction.",
+            "artifacts": [],
+            "claims": [],
+            "next_actions": [
+                {
+                    "objective": "Correct the stated limitation without changing the claim.",
+                    "agent_role": "writer",
+                    "session_mode": "resume",
+                    "handoff_kind": "text_revision",
+                }
+            ],
+            "paper_candidate": False,
+        },
+    )
+    db.bind_attempt_spec(
+        str(paper_review["task_id"]),
+        attempt_id=panel_attempt,
+        lab_id="math",
+        output_path=str(panel_result),
+    )
+    db.mark_running(
+        str(paper_review["task_id"]),
+        attempt_id=panel_attempt,
+        owner="panel",
+        pid=126,
+        lease_seconds=60,
+    )
+    atomic_write_json(
+        paths.result_inbox / "panel.json",
+        {
+            "schema_version": RECEIPT_SCHEMA,
+            "task_id": paper_review["task_id"],
+            "attempt_id": panel_attempt,
+            "campaign_id": "campaign-1",
+            "lab_id": "math",
+            "domain": "math",
+            "agent_role": "reviewer",
+            "result_path": str(panel_result),
+            "sha256": sha256_file(panel_result),
+            "runtime": {
+                "duration_seconds": 1.0,
+                "exit_code": 0,
+                "session_id": "discarded-review-session",
+            },
+        },
+    )
+
+    panel_report = TickReport()
+    ingest_results(db, paths, FactorySettings(), panel_report)
+
+    assert len(panel_report.enqueued) == 1
+    revision = db.task(panel_report.enqueued[0])
+    assert revision is not None
+    assert revision["task_type"] == "paper_revision"
+    assert revision["agent_role"] == "writer"
+    assert revision["session_mode"] == "resume"
+    assert revision["agent_session_id"] == "writer-session"
+    assert revision["session_source_task_id"] == writer["task_id"]

@@ -42,10 +42,7 @@ def test_agent_runs_from_campaign_workspace(tmp_path, monkeypatch) -> None:
     command = [
         sys.executable,
         "-c",
-        (
-            "import json,os,sys; "
-            "open(sys.argv[1],'w').write(json.dumps({'cwd': os.getcwd()}))"
-        ),
+        ("import json,os,sys; open(sys.argv[1],'w').write(json.dumps({'cwd': os.getcwd()}))"),
         "{output_file}",
     ]
     monkeypatch.setenv("OPENLABS_WORKSPACE", str(tmp_path))
@@ -61,6 +58,11 @@ def test_agent_runs_from_campaign_workspace(tmp_path, monkeypatch) -> None:
         "runner": "balanced",
         "input_path": str(output.parent),
         "agent_workspace": str(campaign_workspace),
+        "resources": {
+            "cpu_threads": 2,
+            "memory_mib": 4096,
+            "scratch_mib": 4096,
+        },
         "budget": {"wall_seconds": 60},
         "agent": {
             "role": "researcher",
@@ -101,6 +103,11 @@ def test_agent_resume_uses_only_the_declared_role_session(tmp_path, monkeypatch)
         "runner": "balanced",
         "input_path": str(campaign_workspace),
         "agent_workspace": str(campaign_workspace),
+        "resources": {
+            "cpu_threads": 2,
+            "memory_mib": 4096,
+            "scratch_mib": 4096,
+        },
         "budget": {"wall_seconds": 60},
         "agent": {
             "role": "writer",

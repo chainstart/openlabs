@@ -24,6 +24,12 @@ from .contracts import (
 from .db import FactoryDB
 from .gates import evaluate_result_bundle
 from .labs import discover_labs, lab_for_domain
+from .resources import (
+    ResourceVector,
+    default_task_resources,
+    effective_capacity,
+    task_resources,
+)
 
 
 def _timestamp_token() -> str:
@@ -33,25 +39,39 @@ def _timestamp_token() -> str:
 def _inside(path: Path, roots: tuple[Path, ...]) -> bool:
     resolved = path.resolve()
     return any(
-        resolved == root.resolve() or resolved.is_relative_to(root.resolve())
-        for root in roots
+        resolved == root.resolve() or resolved.is_relative_to(root.resolve()) for root in roots
     )
+
+
+@dataclass(frozen=True)
+class ActionPlan:
+    objective: str
+    agent_role: str
+    session_mode: str
+    handoff_kind: str
+    resources: ResourceVector | None = None
 
 
 def _next_action_plan(
     action: object,
     *,
     current_role: str,
-) -> tuple[str, str, str] | None:
-    """Return objective, role, and effective session mode for one bounded successor."""
+) -> ActionPlan | None:
+    """Normalize one bounded successor without weakening role boundaries."""
 
     if isinstance(action, str) and action.strip():
-        return action.strip(), current_role, "resume"
+        return ActionPlan(
+            objective=action.strip(),
+            agent_role=current_role,
+            session_mode="resume",
+            handoff_kind="role_handoff",
+        )
     if not isinstance(action, Mapping):
         return None
     objective = str(action.get("objective") or "").strip()
     target_role = str(action.get("agent_role") or "").strip()
     requested_mode = str(action.get("session_mode") or "").strip()
+    handoff_kind = str(action.get("handoff_kind") or "role_handoff").strip()
     if not objective or target_role not in {
         "researcher",
         "experimenter",
@@ -63,12 +83,26 @@ def _next_action_plan(
     # conversation merely because a result bundle requested it.
     effective_mode = (
         "fresh"
-        if target_role != current_role or target_role == "reviewer"
+        if target_role != current_role
+        or target_role == "reviewer"
+        or handoff_kind == "independent_replication"
         else requested_mode
     )
     if effective_mode not in {"resume", "fresh"}:
         return None
-    return objective, target_role, effective_mode
+    resources = None
+    if isinstance(action.get("resources"), Mapping):
+        try:
+            resources = ResourceVector.from_mapping(action["resources"])
+        except ValueError:
+            return None
+    return ActionPlan(
+        objective=objective,
+        agent_role=target_role,
+        session_mode=effective_mode,
+        handoff_kind=handoff_kind,
+        resources=resources,
+    )
 
 
 def _continuation_task_type(role: str) -> str:
@@ -78,6 +112,49 @@ def _continuation_task_type(role: str) -> str:
         "writer": "paper_revision",
         "reviewer": "independent_review",
     }[role]
+
+
+def _successor_resources(
+    task: Mapping[str, Any],
+    settings: FactorySettings,
+    *,
+    target_role: str,
+    requested: ResourceVector | None = None,
+) -> ResourceVector:
+    if requested is not None:
+        return requested
+    if target_role == str(task.get("agent_role") or "researcher"):
+        return task_resources(task)
+    return default_task_resources(settings)
+
+
+def _derived_task_id(parent_task_id: str, suffix: str, digest: str) -> str:
+    candidate = f"{parent_task_id}:{suffix}"
+    return candidate if len(candidate) <= 128 else f"{suffix}:{digest[:32]}"
+
+
+def _paper_skill(domain: str) -> str | None:
+    return {
+        "math": "openlabs-math-paper",
+        "ai": "openlabs-ai-paper",
+        "materials": "openlabs-materials-paper",
+    }.get(domain)
+
+
+def _research_skill(domain: str) -> str | None:
+    return {
+        "math": "amra-research-loop",
+        "ai": "ai-research-loop",
+        "materials": "materials-research-loop",
+    }.get(domain)
+
+
+def _has_auto_task_room(
+    db: FactoryDB,
+    campaign_id: str,
+    settings: FactorySettings,
+) -> bool:
+    return db.task_count(campaign_id) < settings.max_auto_tasks_per_campaign
 
 
 @dataclass
@@ -90,6 +167,8 @@ class TickReport:
     budget_stopped: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     status_counts: dict[str, int] = field(default_factory=dict)
+    resource_capacity: dict[str, int] = field(default_factory=dict)
+    resource_reserved: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,7 +181,52 @@ class TickReport:
             "budget_stopped": self.budget_stopped,
             "errors": self.errors,
             "status_counts": self.status_counts,
+            "resource_capacity": self.resource_capacity,
+            "resource_reserved": self.resource_reserved,
         }
+
+
+def _enqueue_paper_task(
+    db: FactoryDB,
+    report: TickReport,
+    settings: FactorySettings,
+    parent: Mapping[str, Any],
+    *,
+    task_id: str,
+    domain: str,
+    task_type: str,
+    objective: str,
+    input_path: str,
+    skill_path: str | None,
+    routing_reason: str,
+    agent_role: str,
+    session_mode: str = "fresh",
+    session_source_task_id: str | None = None,
+    resources: ResourceVector | None = None,
+) -> bool:
+    if db.task(task_id) is not None:
+        return False
+    db.enqueue_task(
+        task_id=task_id,
+        campaign_id=str(parent["campaign_id"]),
+        domain=domain,
+        task_type=task_type,
+        objective=objective,
+        input_path=input_path,
+        skill_path=skill_path,
+        runner="frontier",
+        routing_reason=routing_reason,
+        parent_task_id=str(parent["task_id"]),
+        agent_role=agent_role,
+        session_mode=session_mode,
+        session_source_task_id=session_source_task_id,
+        priority=int(parent.get("priority") or 0) + 1,
+        max_attempts=settings.max_attempts,
+        max_wall_seconds=settings.max_task_wall_seconds,
+        **(resources or default_task_resources(settings)).to_dict(),
+    )
+    report.enqueued.append(task_id)
+    return True
 
 
 def _archive_receipt(receipt: Path, paths: WorkspacePaths, *, keep: bool) -> None:
@@ -195,10 +319,15 @@ def ingest_results(
             continuity_required = (
                 result_status in {"completed", "succeeded"}
                 and current_role != "reviewer"
-                and payload.get("paper_candidate") is not True
-                and next_plan is not None
-                and next_plan[1] == current_role
-                and next_plan[2] == "resume"
+                and (
+                    (current_role == "writer" and payload.get("paper_candidate") is True)
+                    or (
+                        payload.get("paper_candidate") is not True
+                        and next_plan is not None
+                        and next_plan.agent_role == current_role
+                        and next_plan.session_mode == "resume"
+                    )
+                )
             )
             if continuity_required and not runtime.get("session_id"):
                 result_status = "needs_human"
@@ -254,70 +383,261 @@ def ingest_results(
                         "limitations": claim.get("limitations", []),
                     },
                 )
+            campaign_id = str(payload["campaign_id"])
+            task_type = str(task.get("task_type") or "")
+            successful = final_status == "succeeded" and gate.passed
+            successor_handled = False
+            has_room = _has_auto_task_room(db, campaign_id, settings)
+
+            # Evidence requested by a paper reviewer returns to the prior writer
+            # session when one exists. A pre-writing evidence repair is audited
+            # again before a writer is ever created.
             if (
-                final_status == "succeeded"
-                and gate.passed
-                and payload.get("paper_candidate") is True
+                settings.auto_continue
+                and successful
+                and task_type == "evidence_remediation"
+                and task.get("routing_reason") == "review_evidence_remediation"
             ):
-                reviewer_passed = (
-                    task.get("agent_role") == "reviewer"
-                    and task.get("task_type") == "paper_readiness"
-                )
-                suffix = ":paper-write" if reviewer_passed else ":paper-readiness"
-                paper_task_id = f"{task_id}{suffix}"
-                if len(paper_task_id) > 128:
-                    prefix = "paper-write" if reviewer_passed else "paper-readiness"
-                    paper_task_id = f"{prefix}:{actual_sha[:32]}"
-                if db.task(paper_task_id) is None:
-                    paper_skills = {
-                        "math": "openlabs-math-paper",
-                        "ai": "openlabs-ai-paper",
-                        "materials": "openlabs-materials-paper",
-                    }
-                    skill = paper_skills.get(domain)
-                    if skill:
-                        db.enqueue_task(
-                            task_id=paper_task_id,
-                            campaign_id=str(payload["campaign_id"]),
+                successor_handled = True
+                if not has_room:
+                    report.errors.append(
+                        f"Campaign {campaign_id} reached its automatic-task safety limit"
+                    )
+                else:
+                    writer_source = db.nearest_session_source(
+                        task_id,
+                        agent_role="writer",
+                    )
+                    if writer_source is not None:
+                        successor_id = _derived_task_id(task_id, "paper-revision", actual_sha)
+                        source_task = db.task(str(writer_source["task_id"])) or {}
+                        _enqueue_paper_task(
+                            db,
+                            report,
+                            settings,
+                            task,
+                            task_id=successor_id,
                             domain=domain,
-                            task_type="paper_write" if reviewer_passed else "paper_readiness",
+                            task_type="paper_revision",
                             objective=(
-                                "Write from the independently validated, frozen evidence only. "
-                                "Do not broaden claims beyond the audit."
-                                if reviewer_passed
-                                else "Independently audit the frozen campaign evidence for a "
-                                "defensible paper. Return only a readiness verdict and exact "
-                                "evidence gaps; do not draft or revise the manuscript."
+                                "Resume the same manuscript after the requested evidence "
+                                "work. Incorporate only the new hash-bound evidence, preserve "
+                                "contrary results, and do not answer beyond the review. "
+                                f"The original review is at {task.get('input_path')}."
                             ),
                             input_path=str(result_path),
-                            skill_path=skill,
-                            runner="frontier",
-                            routing_reason=(
-                                "independent_audit_passed"
-                                if reviewer_passed
-                                else "paper_evidence_audit"
-                            ),
-                            parent_task_id=task_id,
-                            agent_role="writer" if reviewer_passed else "reviewer",
-                            session_mode="fresh",
-                            priority=int(task.get("priority") or 0) + 1,
-                            max_attempts=settings.max_attempts,
-                            max_wall_seconds=settings.max_task_wall_seconds,
+                            skill_path=_paper_skill(domain),
+                            routing_reason="review_evidence_completed",
+                            agent_role="writer",
+                            session_mode="resume",
+                            session_source_task_id=str(writer_source["task_id"]),
+                            resources=(task_resources(source_task) if source_task else None),
                         )
-                        report.enqueued.append(paper_task_id)
+                    else:
+                        successor_id = _derived_task_id(task_id, "paper-readiness", actual_sha)
+                        _enqueue_paper_task(
+                            db,
+                            report,
+                            settings,
+                            task,
+                            task_id=successor_id,
+                            domain=domain,
+                            task_type="paper_readiness",
+                            objective=(
+                                "Independently re-audit the frozen campaign evidence after "
+                                "the requested remediation. Return a readiness verdict and "
+                                "exact remaining evidence gaps; do not draft the manuscript. "
+                                f"The prior readiness review is at {task.get('input_path')}."
+                            ),
+                            input_path=str(result_path),
+                            skill_path=_paper_skill(domain),
+                            routing_reason="readiness_evidence_completed",
+                            agent_role="reviewer",
+                        )
+
+            # A paper candidate advances through explicit epistemic stages. A
+            # successful paper_review is terminal: it does not create another
+            # writer and therefore cannot loop on paper_candidate=true.
+            if (
+                successful
+                and settings.auto_continue
+                and not successor_handled
+                and payload.get("paper_candidate") is True
+            ):
+                successor_handled = True
+                transition: dict[str, str] | None = None
+                if current_role in {"researcher", "experimenter"}:
+                    transition = {
+                        "suffix": "paper-readiness",
+                        "task_type": "paper_readiness",
+                        "objective": (
+                            "Independently audit the frozen campaign evidence for a defensible "
+                            "paper. Return only a readiness verdict and exact evidence gaps; "
+                            "do not draft or revise the manuscript."
+                        ),
+                        "skill": _paper_skill(domain) or "",
+                        "routing_reason": "paper_evidence_audit",
+                        "agent_role": "reviewer",
+                    }
+                elif current_role == "reviewer" and task_type == "paper_readiness":
+                    transition = {
+                        "suffix": "paper-write",
+                        "task_type": "paper_write",
+                        "objective": (
+                            "Write from the independently validated, frozen evidence only. "
+                            "Do not broaden claims beyond the audit."
+                        ),
+                        "skill": _paper_skill(domain) or "",
+                        "routing_reason": "independent_audit_passed",
+                        "agent_role": "writer",
+                    }
+                elif current_role == "writer" and task_type in {
+                    "paper_write",
+                    "paper_revision",
+                }:
+                    transition = {
+                        "suffix": "paper-review",
+                        "task_type": "paper_review",
+                        "objective": (
+                            "Review the frozen manuscript with the independent Codex and Packy "
+                            "Claude Opus 5 panel. Do not edit it. If it fails, return exactly "
+                            "one structured text_revision or evidence_remediation action."
+                        ),
+                        "skill": "openlabs-paper-review",
+                        "routing_reason": "fresh_paper_review",
+                        "agent_role": "reviewer",
+                    }
+                elif current_role == "reviewer" and task_type == "paper_review":
+                    transition = None
+                else:
+                    report.errors.append(
+                        f"Task {task_id} cannot promote a paper candidate from "
+                        f"{current_role}/{task_type}"
+                    )
+
+                if transition is not None:
+                    if not has_room:
+                        report.errors.append(
+                            f"Campaign {campaign_id} reached its automatic-task safety limit"
+                        )
+                    elif transition["skill"]:
+                        successor_id = _derived_task_id(
+                            task_id,
+                            transition["suffix"],
+                            actual_sha,
+                        )
+                        _enqueue_paper_task(
+                            db,
+                            report,
+                            settings,
+                            task,
+                            task_id=successor_id,
+                            domain=domain,
+                            task_type=transition["task_type"],
+                            objective=transition["objective"],
+                            input_path=str(result_path),
+                            skill_path=transition["skill"],
+                            routing_reason=transition["routing_reason"],
+                            agent_role=transition["agent_role"],
+                        )
+
+            # Only a paper reviewer may send a manuscript back across the role
+            # boundary, and only to the writer session in its own ancestry.
+            if (
+                successful
+                and settings.auto_continue
+                and not successor_handled
+                and current_role == "reviewer"
+                and next_plan is not None
+            ):
+                successor_handled = True
+                target_role = next_plan.agent_role
+                if (
+                    task_type == "paper_review"
+                    and next_plan.handoff_kind == "text_revision"
+                    and target_role == "writer"
+                ):
+                    writer_source = db.nearest_session_source(
+                        task_id,
+                        agent_role="writer",
+                    )
+                    if writer_source is None:
+                        report.errors.append(
+                            f"Paper review {task_id} has no writer session in its lineage"
+                        )
+                    elif not has_room:
+                        report.errors.append(
+                            f"Campaign {campaign_id} reached its automatic-task safety limit"
+                        )
+                    else:
+                        successor_id = _derived_task_id(task_id, "paper-revision", actual_sha)
+                        source_task = db.task(str(writer_source["task_id"])) or {}
+                        _enqueue_paper_task(
+                            db,
+                            report,
+                            settings,
+                            task,
+                            task_id=successor_id,
+                            domain=domain,
+                            task_type="paper_revision",
+                            objective=next_plan.objective,
+                            input_path=str(result_path),
+                            skill_path=_paper_skill(domain),
+                            routing_reason="review_text_revision",
+                            agent_role="writer",
+                            session_mode="resume",
+                            session_source_task_id=str(writer_source["task_id"]),
+                            resources=(
+                                next_plan.resources
+                                or (task_resources(source_task) if source_task else None)
+                            ),
+                        )
+                elif (
+                    task_type in {"paper_readiness", "paper_review"}
+                    and next_plan.handoff_kind == "evidence_remediation"
+                    and target_role in {"researcher", "experimenter"}
+                ):
+                    if not has_room:
+                        report.errors.append(
+                            f"Campaign {campaign_id} reached its automatic-task safety limit"
+                        )
+                    else:
+                        successor_id = _derived_task_id(task_id, "evidence-remediation", actual_sha)
+                        _enqueue_paper_task(
+                            db,
+                            report,
+                            settings,
+                            task,
+                            task_id=successor_id,
+                            domain=domain,
+                            task_type="evidence_remediation",
+                            objective=next_plan.objective,
+                            input_path=str(result_path),
+                            skill_path=_research_skill(domain),
+                            routing_reason="review_evidence_remediation",
+                            agent_role=target_role,
+                            resources=next_plan.resources,
+                        )
+                else:
+                    report.errors.append(
+                        f"Reviewer task {task_id} requested an unsafe or ambiguous handoff"
+                    )
+
             can_follow = (
                 settings.auto_continue
                 and next_plan is not None
                 and str(task.get("task_type") or "") != "smoke"
                 and current_role != "reviewer"
+                and not successor_handled
                 and payload.get("paper_candidate") is not True
-                and db.task_count(str(payload["campaign_id"]))
-                < settings.max_auto_tasks_per_campaign
+                and has_room
             )
             is_continuation = final_status == "succeeded" and gate.passed
             is_replan = final_status == "needs_replan" and gate.validation.valid
             if can_follow and (is_continuation or is_replan):
-                objective, target_role, session_mode = next_plan
+                objective = next_plan.objective
+                target_role = next_plan.agent_role
+                session_mode = next_plan.session_mode
                 if is_replan:
                     target_role = "researcher"
                     session_mode = "fresh"
@@ -340,17 +660,11 @@ def ingest_results(
                         task_id=follow_task_id,
                         campaign_id=str(payload["campaign_id"]),
                         domain=domain,
-                        task_type=(
-                            "replan" if is_replan else _continuation_task_type(target_role)
-                        ),
+                        task_type=("replan" if is_replan else _continuation_task_type(target_role)),
                         objective=objective,
                         input_path=str(result_path),
-                        skill_path=(
-                            str(task["skill_path"]) if task.get("skill_path") else None
-                        ),
-                        runner="frontier" if is_replan else str(
-                            task.get("runner") or "balanced"
-                        ),
+                        skill_path=(str(task["skill_path"]) if task.get("skill_path") else None),
+                        runner="frontier" if is_replan else str(task.get("runner") or "balanced"),
                         routing_reason=(
                             "gate_replan"
                             if is_replan
@@ -366,6 +680,12 @@ def ingest_results(
                         priority=int(task.get("priority") or 0),
                         max_attempts=settings.max_attempts,
                         max_wall_seconds=settings.max_task_wall_seconds,
+                        **_successor_resources(
+                            task,
+                            settings,
+                            target_role=target_role,
+                            requested=next_plan.resources,
+                        ).to_dict(),
                     )
                     report.enqueued.append(follow_task_id)
             report.ingested.append({"task_id": task_id, "status": final_status})
@@ -428,9 +748,7 @@ def _write_task_spec(
     ).resolve()
     campaign_workspace.mkdir(parents=True, exist_ok=True)
     agent_workspace = (
-        output_path.parent
-        if task.get("agent_role") == "reviewer"
-        else campaign_workspace
+        output_path.parent if task.get("agent_role") == "reviewer" else campaign_workspace
     )
     agent_workspace.mkdir(parents=True, exist_ok=True)
     run_metadata_path = output_path.parent / "run-metadata.json"
@@ -458,11 +776,11 @@ def _write_task_spec(
             "session_mode": task.get("session_mode") or "resume",
             "session_id": (
                 None
-                if task.get("agent_role") == "reviewer"
-                or task.get("session_mode") == "fresh"
+                if task.get("agent_role") == "reviewer" or task.get("session_mode") == "fresh"
                 else task.get("agent_session_id")
             ),
         },
+        "resources": task_resources(task).to_dict(),
         "budget": {"wall_seconds": max(1, int(wall_seconds))},
     }
     validation = validate_task(payload)
@@ -519,6 +837,18 @@ def _launch_task(
     environment = dict(os.environ)
     environment["OPENLABS_WORKSPACE"] = str(paths.workspace)
     environment["OPENLABS_JOB_SPEC"] = str(job_path)
+    reserved = task_resources(task)
+    thread_count = str(reserved.cpu_threads)
+    for name in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        environment[name] = thread_count
+    environment["OPENLABS_MEMORY_MIB"] = str(reserved.memory_mib)
+    environment["OPENLABS_SCRATCH_MIB"] = str(reserved.scratch_mib)
     db.mark_running(
         str(task["task_id"]),
         attempt_id=str(task["current_attempt_id"]),
@@ -560,14 +890,19 @@ def tick(paths: WorkspacePaths, settings: FactorySettings) -> TickReport:
     report.quarantined.extend(recovery.quarantined)
     report.budget_stopped.extend(db.stop_budget_exhausted_tasks())
 
+    reserved = db.active_resource_totals()
+    resource_capacity = effective_capacity(paths.workspace, settings, reserved)
+    report.resource_capacity = resource_capacity.to_dict()
+
     if settings.launch_jobs:
-        capacity = max(0, settings.max_concurrent_jobs - db.active_count())
+        capacity = max(0, settings.max_worker_processes - db.active_count())
         owner = f"tick:{socket.gethostname()}:{os.getpid()}"
         for _ in range(capacity):
             task = db.claim_next_task(
                 owner=owner,
                 lease_seconds=settings.lease_seconds,
-                max_active=settings.max_concurrent_jobs,
+                max_active=settings.max_worker_processes,
+                resource_capacity=resource_capacity.to_dict(),
             )
             if task is None:
                 break
@@ -584,5 +919,6 @@ def tick(paths: WorkspacePaths, settings: FactorySettings) -> TickReport:
                 report.errors.append(f"Could not launch {task['task_id']}: {exc}")
                 break
 
+    report.resource_reserved = db.active_resource_totals()
     report.status_counts = db.status_counts()
     return report

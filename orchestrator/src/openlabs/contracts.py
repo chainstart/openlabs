@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-TASK_SCHEMA = "openlabs.task.v2"
+TASK_SCHEMA = "openlabs.task.v3"
 RESULT_SCHEMA = "openlabs.result_bundle.v1"
 RECEIPT_SCHEMA = "openlabs.result_receipt.v2"
 IDENTIFIER = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$")
@@ -27,6 +27,13 @@ RESULT_STATUSES = {
 }
 AGENT_ROLES = {"researcher", "experimenter", "writer", "reviewer"}
 SESSION_MODES = {"resume", "fresh"}
+HANDOFF_KINDS = {
+    "role_handoff",
+    "text_revision",
+    "evidence_remediation",
+    "independent_replication",
+}
+RESOURCE_KEYS = ("cpu_threads", "memory_mib", "scratch_mib")
 
 
 @dataclass(frozen=True)
@@ -131,12 +138,16 @@ def validate_task(payload: Any) -> ValidationResult:
         errors.append("budget must be an object")
     else:
         wall_seconds = budget.get("wall_seconds")
-        if (
-            not isinstance(wall_seconds, int)
-            or isinstance(wall_seconds, bool)
-            or wall_seconds < 1
-        ):
+        if not isinstance(wall_seconds, int) or isinstance(wall_seconds, bool) or wall_seconds < 1:
             errors.append("budget.wall_seconds must be a positive integer")
+    resources = payload.get("resources")
+    if not isinstance(resources, Mapping):
+        errors.append("resources must be an object")
+    else:
+        for key in RESOURCE_KEYS:
+            value = resources.get(key)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                errors.append(f"resources.{key} must be a positive integer")
     agent = payload.get("agent")
     if not isinstance(agent, Mapping):
         errors.append("agent must be an object")
@@ -253,6 +264,18 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
                 errors.append(f"{prefix}.session_mode must be one of {sorted(SESSION_MODES)}")
             if role == "reviewer" and mode != "fresh":
                 errors.append(f"{prefix}: reviewer handoffs must start fresh")
+            handoff_kind = action.get("handoff_kind")
+            if handoff_kind is not None and _text(handoff_kind) not in HANDOFF_KINDS:
+                errors.append(f"{prefix}.handoff_kind must be one of {sorted(HANDOFF_KINDS)}")
+            resources = action.get("resources")
+            if resources is not None:
+                if not isinstance(resources, Mapping):
+                    errors.append(f"{prefix}.resources must be an object")
+                else:
+                    for key in RESOURCE_KEYS:
+                        value = resources.get(key)
+                        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                            errors.append(f"{prefix}.resources.{key} must be a positive integer")
     return ValidationResult(not errors, tuple(errors), tuple(warnings))
 
 
@@ -279,11 +302,7 @@ def validate_receipt(payload: Any) -> ValidationResult:
         errors.append("runtime must be an object")
     else:
         duration = runtime.get("duration_seconds")
-        if (
-            not isinstance(duration, (int, float))
-            or isinstance(duration, bool)
-            or duration < 0
-        ):
+        if not isinstance(duration, (int, float)) or isinstance(duration, bool) or duration < 0:
             errors.append("runtime.duration_seconds must be a non-negative number")
         exit_code = runtime.get("exit_code")
         if not isinstance(exit_code, int) or isinstance(exit_code, bool):
