@@ -25,7 +25,8 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from .config import WorkspacePaths
-from .contracts import atomic_write_json, sha256_file
+from .contracts import atomic_write_json, executable_artifact, sha256_file
+from .reproduction import materialize_reproduction
 
 ATTEMPT_SCHEMA = "openlabs.attempt_workspace.v1"
 ARCHIVE_SCHEMA = "openlabs.immutable_result_archive.v1"
@@ -607,8 +608,9 @@ def freeze_result_bundle(
     attempt_id: str,
     source_result_path: Path,
     source_result_sha256: str,
+    source_workspace: Path | None = None,
 ) -> tuple[dict[str, Any], Path, str]:
-    """Copy every artifact and the rewritten bundle into an immutable archive."""
+    """Copy every artifact and replayable dependency closure into an immutable archive."""
 
     campaign_id = str(payload.get("campaign_id") or "")
     task_id = str(payload.get("task_id") or "")
@@ -622,6 +624,7 @@ def freeze_result_bundle(
     archive.mkdir(parents=True, exist_ok=True)
     frozen = copy.deepcopy(dict(payload))
     frozen_artifacts: list[dict[str, Any]] = []
+    reproduction_manifest: list[dict[str, Any]] = []
     for index, artifact in enumerate(payload.get("artifacts", [])):
         if not isinstance(artifact, Mapping):
             continue
@@ -641,6 +644,40 @@ def freeze_result_bundle(
             _copy_file(source, target)
             target.chmod(0o444)
         item["uri"] = target.as_uri()
+        if executable_artifact(artifact):
+            if source_workspace is None:
+                raise AttemptWorkspaceError(
+                    f"Executable artifact has no attempt workspace: {item.get('artifact_id')}"
+                )
+            closure_root = (
+                archive
+                / "reproductions"
+                / _token(item.get("artifact_id"), prefix=f"artifact-{index}")
+            )
+            try:
+                reproduction = materialize_reproduction(
+                    artifact,
+                    workspace_root=source_workspace,
+                    closure_root=closure_root,
+                )
+            except Exception as exc:
+                raise AttemptWorkspaceError(
+                    f"Could not materialize reproduction closure for "
+                    f"{item.get('artifact_id')}: {exc}"
+                ) from exc
+            for reproduced_path in sorted((closure_root / "workspace").rglob("*"), reverse=True):
+                reproduced_path.chmod(0o444 if reproduced_path.is_file() else 0o555)
+            (closure_root / "workspace").chmod(0o555)
+            item["reproduction"] = reproduction
+            reproduction_manifest.append(
+                {
+                    "artifact_id": item.get("artifact_id"),
+                    "workspace_uri": reproduction["workspace_uri"],
+                    "artifact_path": reproduction["artifact_path"],
+                    "replay": reproduction["replay"],
+                    "inputs": reproduction["inputs"],
+                }
+            )
         frozen_artifacts.append(item)
     frozen["artifacts"] = frozen_artifacts
     frozen["openlabs_archive"] = {
@@ -649,6 +686,17 @@ def freeze_result_bundle(
         "source_result_path": str(source_result_path),
         "source_result_sha256": source_result_sha256,
         "archived_at": _utc_now(),
+        "reproduction": {
+            "required": len(reproduction_manifest),
+            "passed": sum(
+                1
+                for item in reproduction_manifest
+                if item.get("replay", {}).get("status") == "passed"
+            ),
+            "reproducible": all(
+                item.get("replay", {}).get("status") == "passed" for item in reproduction_manifest
+            ),
+        },
     }
     result_path = atomic_write_json(archive / "result.json", frozen)
     result_sha256 = sha256_file(result_path)
@@ -672,6 +720,7 @@ def freeze_result_bundle(
                 }
                 for item in frozen_artifacts
             ],
+            "reproductions": reproduction_manifest,
         },
     )
     return frozen, result_path, result_sha256

@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlparse
 
 TASK_SCHEMA = "openlabs.task.v3"
 RESULT_SCHEMA = "openlabs.result_bundle.v1"
@@ -34,6 +35,9 @@ HANDOFF_KINDS = {
     "independent_replication",
 }
 RESOURCE_KEYS = ("cpu_threads", "memory_mib", "scratch_mib")
+EXECUTABLE_ARTIFACT_KINDS = frozenset(
+    {"verification_script", "reproduction_script", "validator_script"}
+)
 
 
 @dataclass(frozen=True)
@@ -105,6 +109,14 @@ def _identifier(value: Any, label: str, errors: list[str]) -> str:
 def safe_relative_path(value: str) -> bool:
     path = PurePosixPath(value)
     return bool(value.strip()) and not path.is_absolute() and ".." not in path.parts
+
+
+def executable_artifact(artifact: Mapping[str, Any]) -> bool:
+    """Return whether an artifact must carry a replayable dependency closure."""
+
+    kind = _text(artifact.get("kind")).lower()
+    suffix = PurePosixPath(urlparse(_text(artifact.get("uri"))).path).suffix.lower()
+    return kind in EXECUTABLE_ARTIFACT_KINDS or kind.endswith("_script") or suffix in {".py", ".sh"}
 
 
 def validate_task(payload: Any) -> ValidationResult:
@@ -206,6 +218,7 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
         errors.append("artifacts must be an array")
         artifacts = []
     artifact_ids: set[str] = set()
+    reproduction_timeout_total = 0
     for index, artifact in enumerate(artifacts):
         prefix = f"artifacts[{index}]"
         if not isinstance(artifact, Mapping):
@@ -223,6 +236,71 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
             errors.append(f"{prefix}.sha256 must be a lowercase SHA-256 digest")
         if status in {"completed", "succeeded"} and not digest:
             warnings.append(f"{prefix} has no sha256; it cannot support a promoted claim")
+        reproduction = artifact.get("reproduction")
+        if (
+            status in {"completed", "succeeded"}
+            and executable_artifact(artifact)
+            and not isinstance(reproduction, Mapping)
+        ):
+            errors.append(
+                f"{prefix}.reproduction must declare the replay command and input closure"
+            )
+            continue
+        if reproduction is not None:
+            if not isinstance(reproduction, Mapping):
+                errors.append(f"{prefix}.reproduction must be an object")
+                continue
+            command = reproduction.get("command")
+            if (
+                not isinstance(command, list)
+                or not command
+                or any(not _text(item) for item in command)
+            ):
+                errors.append(f"{prefix}.reproduction.command must be an argv string array")
+            elif executable_artifact(artifact) and not any(
+                "{artifact}" in str(item) for item in command
+            ):
+                errors.append(
+                    f"{prefix}.reproduction.command must reference the {{artifact}} placeholder"
+                )
+            inputs = reproduction.get("inputs")
+            if not isinstance(inputs, list):
+                errors.append(f"{prefix}.reproduction.inputs must be an array")
+                inputs = []
+            input_paths: set[str] = set()
+            for input_index, declared_input in enumerate(inputs):
+                input_prefix = f"{prefix}.reproduction.inputs[{input_index}]"
+                if not isinstance(declared_input, Mapping):
+                    errors.append(f"{input_prefix} must be an object")
+                    continue
+                relative = _text(declared_input.get("path"))
+                if not safe_relative_path(relative):
+                    errors.append(f"{input_prefix}.path must be a safe relative path")
+                elif relative in input_paths:
+                    errors.append(f"{input_prefix}.path is duplicated: {relative}")
+                input_paths.add(relative)
+                input_digest = _text(declared_input.get("sha256"))
+                if not SHA256.fullmatch(input_digest):
+                    errors.append(f"{input_prefix}.sha256 must be a lowercase SHA-256 digest")
+            timeout_seconds = reproduction.get("timeout_seconds", 120)
+            if (
+                not isinstance(timeout_seconds, int)
+                or isinstance(timeout_seconds, bool)
+                or not 1 <= timeout_seconds <= 300
+            ):
+                errors.append(
+                    f"{prefix}.reproduction.timeout_seconds must be an integer from 1 to 300"
+                )
+            else:
+                reproduction_timeout_total += timeout_seconds
+            if isinstance(payload.get("openlabs_archive"), Mapping):
+                replay = reproduction.get("replay")
+                if not isinstance(replay, Mapping) or replay.get("status") != "passed":
+                    errors.append(f"{prefix}.reproduction replay did not pass in the archive")
+                if not _text(reproduction.get("workspace_uri")):
+                    errors.append(f"{prefix}.reproduction.workspace_uri is required in the archive")
+    if reproduction_timeout_total > 300:
+        errors.append("artifacts reproduction timeout budget must not exceed 300 seconds")
 
     claims = payload.get("claims")
     if not isinstance(claims, list):
@@ -332,6 +410,18 @@ def validate_receipt(payload: Any) -> ValidationResult:
         session_id = runtime.get("session_id")
         if session_id is not None and not _text(session_id):
             errors.append("runtime.session_id must be null or a non-empty string")
+        hooks = runtime.get("hooks")
+        if hooks is not None:
+            if not isinstance(hooks, Mapping):
+                errors.append("runtime.hooks must be an object")
+            else:
+                if hooks.get("schema_version") != "openlabs.hook_runtime.v1":
+                    errors.append("runtime.hooks has an unsupported schema_version")
+                events = hooks.get("events")
+                if not isinstance(events, list) or any(
+                    not isinstance(event, Mapping) for event in events
+                ):
+                    errors.append("runtime.hooks.events must be an array of objects")
     return ValidationResult(not errors, tuple(errors))
 
 

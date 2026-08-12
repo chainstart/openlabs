@@ -104,3 +104,8 @@ End with:
 Do not bind a supported claim directly to a live mutable lane file. The control plane snapshots
 every referenced artifact into an immutable result archive before ingestion; if the bytes change
 between emission and snapshot, the node is rejected and its attempt workspace is quarantined.
+
+Executable verification artifacts must also declare the complete workspace-relative input closure
+and an argv replay command as specified by the result contract. The Stop hook preflights that
+closure, and the archive repeats it with the network unshared and only the immutable closure plus
+read-only system runtime mounted. A script file by itself is not reproducible evidence.

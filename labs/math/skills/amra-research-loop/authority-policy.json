@@ -1,0 +1,43 @@
+{
+  "schema_version": "openlabs.authority_policy.v1",
+  "policy_id": "amra-phase-authority",
+  "state_glob": "**/campaign_state.json",
+  "state_schema_version": "amra-research-loop.v1",
+  "phase_field": "phase",
+  "exclude_path_parts": ["evidence", "audit", "results"],
+  "phase_authority": {
+    "target_selection": {
+      "allowed_roles": ["researcher", "experimenter"],
+      "default_role": "researcher"
+    },
+    "obstruction_analysis": {
+      "allowed_roles": ["researcher", "experimenter"],
+      "default_role": "researcher"
+    },
+    "representation_search": {
+      "allowed_roles": ["researcher", "experimenter"],
+      "default_role": "researcher"
+    },
+    "mechanism_falsification": {
+      "allowed_roles": ["researcher", "experimenter"],
+      "default_role": "researcher"
+    },
+    "survivor_deepening": {
+      "allowed_roles": ["researcher", "experimenter"],
+      "default_role": "researcher"
+    },
+    "independent_audit": {
+      "allowed_roles": ["reviewer"],
+      "default_role": "reviewer",
+      "required_session_mode": "fresh",
+      "required_handoff_kind": "independent_replication",
+      "objective": "Independently reconstruct and audit the active AMRA decisive claim from only its frozen statement, declared dependencies, and hash-bound evidence. Do not read creator conversations, scratch notes, or sibling reviews. Check statement match, every dependency, adversarial failure modes, and live novelty; then either advance through the audited gate, freeze with an exact defect, or leave one bounded fresh-reviewer continuation."
+    },
+    "promotion": {
+      "terminal": true
+    },
+    "frozen": {
+      "terminal": true
+    }
+  }
+}

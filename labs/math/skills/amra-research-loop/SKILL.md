@@ -21,6 +21,10 @@ this Skill directory and never write directly to the factory SQLite database.
 6. Persist claims, mechanisms, kill tests, evidence, and decisions as structured JSON.
 7. Run `validate` before `advance`. Treat a failed gate as a research result, not as permission to weaken the contract.
 
+The adjacent `authority-policy.json` is the machine-readable role boundary consumed by both the
+Codex Stop hook and the scheduler. In particular, entering `independent_audit` transfers authority
+to a blank `reviewer`; never try to continue that phase in the creator session.
+
 Use:
 
 ```bash

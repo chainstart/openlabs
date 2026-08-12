@@ -22,8 +22,8 @@ local-case enumeration, or manuscript generation.
    task declares an isolated attempt workspace, the lane and plan paths are staged transaction
    paths. Never write the canonical campaign named in `transaction`; only the control plane may
    promote staged state after the result gate passes.
-5. Obey the task's role and session boundary. A fresh independent researcher performs AMRA audit;
-   the target's author does not audit their own proof.
+5. Obey the task's role and session boundary. A blank `reviewer` performs AMRA audit; the target's
+   author does not audit their own proof.
 6. Preserve every rejected target, failed mechanism, null result, and uncertainty.
 7. Read `selection_mode`. For `operator_locked_route`, accept the configured route and selected
    target as administrator-owned desired state. Do not run radar, generate target cards, or score
@@ -139,10 +139,11 @@ phase. The nested path is `selected_target.amra_campaign` in `production_lane.js
 - If work keeps splitting into restrictions, chambers, finite cases, or normal forms without a
   general interface, classify the node as `no_progress` even when it creates substantial files.
 
-At `independent_audit`, stop the author session and return a structured same-role action with
-`session_mode: fresh` and `handoff_kind: independent_replication`. The fresh researcher reads only
-the frozen claim and declared evidence, reconstructs it independently, and applies AMRA's statement,
-dependency, and novelty checks.
+At `independent_audit`, stop the author session and return a structured action for `agent_role:
+reviewer`, `session_mode: fresh`, and `handoff_kind: independent_replication`. The blank reviewer
+reads only the frozen claim and declared evidence, reconstructs it independently, and applies
+AMRA's statement, dependency, and novelty checks. The machine-readable AMRA authority policy and
+the generic Stop/scheduler gates enforce this transfer.
 
 ### Terminal outcomes
 

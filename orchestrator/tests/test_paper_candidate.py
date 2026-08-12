@@ -6,6 +6,103 @@ from openlabs.db import FactoryDB
 from openlabs.engine import TickReport, ingest_results
 
 
+def test_amra_reviewer_promotion_still_enters_fresh_paper_readiness(tmp_path) -> None:
+    paths = WorkspacePaths(
+        workspace=tmp_path,
+        code=tmp_path / "openlabs",
+        data=tmp_path / "data",
+        artifacts=tmp_path / "artifacts",
+        database=tmp_path / "database",
+        database_file=tmp_path / "database" / "live" / "factory.sqlite",
+    )
+    paths.ensure_runtime_directories()
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign("campaign-amra-audit", domain="math", title="AMRA audit")
+    db.enqueue_task(
+        task_id="amra-audit",
+        campaign_id="campaign-amra-audit",
+        domain="math",
+        task_type="independent_review",
+        objective="Independently reconstruct the decisive lemma.",
+        agent_role="reviewer",
+        session_mode="fresh",
+    )
+    root = paths.data / "workspaces" / "math" / "campaign-amra-audit"
+    evidence = atomic_write_json(root / "audit.json", {"reconstructed": True})
+    result = atomic_write_json(
+        root / "result.json",
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": "amra-audit",
+            "campaign_id": "campaign-amra-audit",
+            "lab_id": "math",
+            "domain": "math",
+            "status": "completed",
+            "summary": "The independent AMRA reconstruction passed.",
+            "artifacts": [
+                {
+                    "artifact_id": "audit",
+                    "uri": evidence.resolve().as_uri(),
+                    "sha256": sha256_file(evidence),
+                }
+            ],
+            "claims": [
+                {
+                    "claim_id": "reconstructed",
+                    "text": "The frozen lemma reconstructed under the declared assumptions.",
+                    "status": "verified",
+                    "evidence": ["audit"],
+                    "limitations": ["Paper readiness remains a separate shadow gate."],
+                }
+            ],
+            "next_actions": [],
+            "paper_candidate": True,
+        },
+    )
+    task = db.claim_next_task(owner="audit", lease_seconds=60)
+    assert task is not None
+    attempt_id = str(task["current_attempt_id"])
+    db.bind_attempt_spec(
+        "amra-audit",
+        attempt_id=attempt_id,
+        lab_id="math",
+        output_path=str(result),
+    )
+    db.mark_running(
+        "amra-audit",
+        attempt_id=attempt_id,
+        owner="audit",
+        pid=123,
+        lease_seconds=60,
+    )
+    atomic_write_json(
+        paths.result_inbox / "amra-audit.json",
+        {
+            "schema_version": RECEIPT_SCHEMA,
+            "task_id": "amra-audit",
+            "attempt_id": attempt_id,
+            "campaign_id": "campaign-amra-audit",
+            "lab_id": "math",
+            "domain": "math",
+            "agent_role": "reviewer",
+            "result_path": str(result),
+            "sha256": sha256_file(result),
+            "runtime": {"duration_seconds": 1.0, "exit_code": 0},
+        },
+    )
+
+    report = TickReport()
+    ingest_results(db, paths, FactorySettings(), report)
+
+    assert report.enqueued == ["amra-audit:paper-readiness"]
+    readiness = db.task(report.enqueued[0])
+    assert readiness is not None
+    assert readiness["task_type"] == "paper_readiness"
+    assert readiness["agent_role"] == "reviewer"
+    assert readiness["session_mode"] == "fresh"
+
+
 def test_valid_paper_candidate_enqueues_one_frontier_readiness_task(tmp_path) -> None:
     paths = WorkspacePaths(
         workspace=tmp_path,

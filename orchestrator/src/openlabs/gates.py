@@ -38,6 +38,8 @@ def evaluate_result_bundle(
     blockers = list(validation.errors)
     warnings = list(validation.warnings)
     failure_classes: set[str] = {"result_contract"} if validation.errors else set()
+    if any(".reproduction" in error for error in validation.errors):
+        failure_classes.add("reproducibility")
     if validation.valid and allowed_roots:
         roots = tuple(root.resolve() for root in allowed_roots)
         for artifact in payload.get("artifacts", []):
@@ -59,6 +61,43 @@ def evaluate_result_bundle(
             elif artifact.get("sha256") and sha256_file(path) != artifact.get("sha256"):
                 blockers.append(f"artifact {artifact_id} SHA-256 mismatch")
                 failure_classes.add("artifact_binding")
+            archive = payload.get("openlabs_archive")
+            reproduction = artifact.get("reproduction")
+            if isinstance(archive, Mapping) and isinstance(reproduction, Mapping):
+                workspace_uri = urlparse(str(reproduction.get("workspace_uri") or ""))
+                workspace_path = Path(unquote(workspace_uri.path)).resolve()
+                if (
+                    workspace_uri.scheme != "file"
+                    or workspace_uri.netloc not in {"", "localhost"}
+                    or not any(
+                        workspace_path == root or workspace_path.is_relative_to(root)
+                        for root in roots
+                    )
+                    or not workspace_path.is_dir()
+                ):
+                    blockers.append(
+                        f"artifact {artifact_id} reproduction workspace is not archived"
+                    )
+                    failure_classes.add("reproducibility")
+                for declared in reproduction.get("inputs", []):
+                    if not isinstance(declared, Mapping):
+                        continue
+                    input_uri = urlparse(str(declared.get("uri") or ""))
+                    input_path = Path(unquote(input_uri.path)).resolve()
+                    if (
+                        input_uri.scheme != "file"
+                        or input_uri.netloc not in {"", "localhost"}
+                        or not any(
+                            input_path == root or input_path.is_relative_to(root) for root in roots
+                        )
+                        or not input_path.is_file()
+                        or sha256_file(input_path) != declared.get("sha256")
+                    ):
+                        blockers.append(
+                            f"artifact {artifact_id} reproduction input "
+                            f"{declared.get('path')} is not hash-bound in the archive"
+                        )
+                        failure_classes.add("reproducibility")
     if validation.valid and payload.get("status") in {"completed", "succeeded"}:
         digests = artifact_digests(payload)
         for claim in payload.get("claims", []):

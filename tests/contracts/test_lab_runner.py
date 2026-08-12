@@ -318,6 +318,42 @@ def test_codex_uses_native_workspace_sandbox_and_generated_hooks(tmp_path) -> No
     assert sandbox == "codex-native-workspace-write"
 
 
+def test_runner_collects_structured_hook_receipts(tmp_path) -> None:
+    runner = _load_runner()
+    workspace = tmp_path / "attempt" / "campaign"
+    receipt_path = workspace / ".codex" / "hook-receipts.jsonl"
+    receipt_path.parent.mkdir(parents=True)
+    events = [
+        {
+            "schema_version": "openlabs.codex_hook_receipt.v1",
+            "hook_event_name": "SessionStart",
+            "outcome": "context_injected",
+        },
+        {
+            "schema_version": "openlabs.codex_hook_receipt.v1",
+            "hook_event_name": "Stop",
+            "outcome": "result_gate_blocked",
+        },
+        {
+            "schema_version": "openlabs.codex_hook_receipt.v1",
+            "hook_event_name": "Stop",
+            "outcome": "result_gate_passed",
+        },
+    ]
+    receipt_path.write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    runtime = runner._hook_runtime(receipt_path, agent_workspace=workspace)
+
+    assert runtime["schema_version"] == "openlabs.hook_runtime.v1"
+    assert runtime["session_start_count"] == 1
+    assert runtime["stop_count"] == 2
+    assert runtime["stop_passed"] is True
+    assert runtime["stop_blocked"] == 1
+
+
 def test_codex_adapter_rejects_sandbox_bypass(tmp_path) -> None:
     runner = _load_runner()
 

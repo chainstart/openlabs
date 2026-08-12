@@ -33,6 +33,38 @@ Write one JSON object with this minimum shape:
 }
 ```
 
+Every artifact whose `kind` is `verification_script`, `reproduction_script`,
+`validator_script`, or another value ending in `_script` must add a replay declaration:
+
+```json
+{
+  "artifact_id": "decisive-validator",
+  "uri": "file:///attempt/campaign/evidence/node-007/verify.py",
+  "sha256": "64-lowercase-hex-characters",
+  "kind": "verification_script",
+  "reproduction": {
+    "command": ["python3", "{artifact}"],
+    "inputs": [
+      {
+        "path": "evidence/node-007/frozen-input.json",
+        "sha256": "64-lowercase-hex-characters"
+      }
+    ],
+    "timeout_seconds": 120
+  }
+}
+```
+
+`inputs[].path` is relative to the staged campaign root, not to the script. List every non-system
+file the command reads, including source extracts, state snapshots, data, helper modules, and
+configuration. Use `{artifact}` for the archived workspace-relative script path and `{workspace}`
+when an absolute closure root argument is required. The command is an argv array, never a shell
+pipeline. The hook and immutable archiver each rebuild only this declared closure and replay it in
+a network-unshared sandbox. Missing inputs, hash drift, undeclared live-state reads, timeouts, and
+nonzero exits make the artifact non-reproducible and block promotion. All executable-artifact
+timeouts in one result must total at most 300 seconds; `.py` and `.sh` artifacts are treated as
+executable even when their `kind` was mislabeled.
+
 Allowed claim statuses are `hypothesis`, `unsupported`, `supported`, `verified`, and `refuted`.
 Use `verified` only for an applicable independent deterministic or formal check, not because an
 agent agreed. Every promoted or refuted claim requires at least one evidence artifact with a

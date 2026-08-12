@@ -13,9 +13,15 @@ from openlabs.attempts import (
     recover_attempt_promotion,
 )
 from openlabs.config import FactorySettings, WorkspacePaths
-from openlabs.contracts import RESULT_SCHEMA, atomic_write_json, sha256_file
+from openlabs.contracts import (
+    RESULT_SCHEMA,
+    atomic_write_json,
+    sha256_file,
+    validate_result_bundle,
+)
 from openlabs.db import FactoryDB
 from openlabs.engine import TickReport, _launch_task, ingest_results, tick
+from openlabs.reproduction import preflight_reproductions
 
 
 def _paths(tmp_path: Path, code_root: Path | None = None) -> WorkspacePaths:
@@ -264,6 +270,106 @@ def test_result_archive_survives_later_live_file_mutation(tmp_path) -> None:
     assert sha256_file(archived) == digest
     assert json.loads(archived.read_text(encoding="utf-8")) == {"nodes": ["node-1"]}
     assert json.loads(result_path.read_text(encoding="utf-8"))["artifacts"][0]["sha256"] == digest
+
+
+def test_result_archive_materializes_and_replays_declared_dependency_closure(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    workspace = paths.data / "workspaces" / "math" / "campaign"
+    input_path = atomic_write_json(workspace / "data" / "input.json", {"value": 7})
+    script = workspace / "evidence" / "verify.py"
+    script.parent.mkdir(parents=True)
+    script.write_text(
+        "from pathlib import Path\n"
+        "import json\n"
+        "root = Path(__file__).resolve().parents[1]\n"
+        "assert json.loads((root / 'data/input.json').read_text())['value'] == 7\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "schema_version": RESULT_SCHEMA,
+        "task_id": "replay-task",
+        "campaign_id": "campaign",
+        "lab_id": "math",
+        "domain": "math",
+        "status": "completed",
+        "summary": "The declared verification closure replays.",
+        "artifacts": [
+            {
+                "artifact_id": "validator",
+                "uri": script.resolve().as_uri(),
+                "sha256": sha256_file(script),
+                "kind": "verification_script",
+                "reproduction": {
+                    "command": ["python3", "{artifact}"],
+                    "inputs": [
+                        {
+                            "path": "data/input.json",
+                            "sha256": sha256_file(input_path),
+                        }
+                    ],
+                    "timeout_seconds": 10,
+                },
+            }
+        ],
+        "claims": [],
+        "next_actions": [],
+    }
+    assert validate_result_bundle(payload).valid
+    preflight_errors, preflight_receipts = preflight_reproductions(
+        payload,
+        workspace_root=workspace,
+    )
+    assert preflight_errors == []
+    assert preflight_receipts[0]["status"] == "passed"
+    source_result = atomic_write_json(workspace / "result.json", payload)
+
+    frozen, result_path, _result_sha = freeze_result_bundle(
+        paths,
+        payload,
+        attempt_id="attempt-replay",
+        source_result_path=source_result,
+        source_result_sha256=sha256_file(source_result),
+        source_workspace=workspace,
+    )
+
+    reproduction = frozen["artifacts"][0]["reproduction"]
+    assert reproduction["replay"]["status"] == "passed"
+    assert frozen["openlabs_archive"]["reproduction"]["reproducible"] is True
+    assert Path(reproduction["workspace_uri"].removeprefix("file://")).is_dir()
+    assert validate_result_bundle(json.loads(result_path.read_text(encoding="utf-8"))).valid
+
+
+def test_preflight_rejects_undeclared_live_dependency(tmp_path) -> None:
+    workspace = tmp_path / "campaign"
+    dependency = atomic_write_json(workspace / "data" / "hidden.json", {"value": 7})
+    script = workspace / "evidence" / "verify.py"
+    script.parent.mkdir(parents=True)
+    script.write_text(
+        "from pathlib import Path\n"
+        "root = Path(__file__).resolve().parents[1]\n"
+        "assert (root / 'data/hidden.json').is_file()\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "status": "completed",
+        "artifacts": [
+            {
+                "artifact_id": "validator",
+                "uri": script.resolve().as_uri(),
+                "sha256": sha256_file(script),
+                "kind": "verification_script",
+                "reproduction": {
+                    "command": ["python3", "{artifact}"],
+                    "inputs": [],
+                    "timeout_seconds": 10,
+                },
+            }
+        ],
+    }
+    assert dependency.is_file()
+    errors, receipts = preflight_reproductions(payload, workspace_root=workspace)
+    assert errors
+    assert receipts[0]["status"] == "failed"
 
 
 def test_launch_writes_job_against_private_campaign_copy(tmp_path) -> None:

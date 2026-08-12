@@ -6,7 +6,7 @@ from pathlib import Path
 from openlabs.config import FactorySettings, WorkspacePaths
 from openlabs.contracts import atomic_write_json
 from openlabs.db import FactoryDB
-from openlabs.engine import tick
+from openlabs.engine import _production_workspace_authority, tick
 
 
 def _paths(tmp_path) -> WorkspacePaths:
@@ -119,6 +119,99 @@ def test_active_plan_rolls_a_full_task_window_and_reseeds(tmp_path) -> None:
         }
     ]
     assert report.production_reseeded == [lane_id]
+
+
+def test_restart_reseed_recovers_reviewer_authority_from_durable_phase(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    lane_id = "authority-restart-lane"
+    plan_path, lane_path = _write_active_plan(paths, lane_id)
+    lab_root = paths.code / "labs" / "math"
+    skill_root = lab_root / "skills" / "phase-skill"
+    skill_root.mkdir(parents=True)
+    atomic_write_json(
+        lab_root / "lab.json",
+        {
+            "schema_version": "openlabs.lab.v1",
+            "lab_id": "math",
+            "domain": "math",
+            "runner": {"command": ["{python}", "runner.py"]},
+            "skills": [
+                {
+                    "skill_id": "phase-skill",
+                    "path": "skills/phase-skill/SKILL.md",
+                }
+            ],
+        },
+    )
+    (skill_root / "SKILL.md").write_text(
+        "---\nname: phase-skill\ndescription: Test phase authority.\n---\n",
+        encoding="utf-8",
+    )
+    atomic_write_json(
+        skill_root / "authority-policy.json",
+        {
+            "schema_version": "openlabs.authority_policy.v1",
+            "policy_id": "test-authority",
+            "state_glob": "**/campaign_state.json",
+            "state_schema_version": "test-state.v1",
+            "phase_field": "phase",
+            "exclude_path_parts": ["evidence"],
+            "phase_authority": {
+                "independent_audit": {
+                    "allowed_roles": ["reviewer"],
+                    "default_role": "reviewer",
+                    "required_session_mode": "fresh",
+                    "required_handoff_kind": "independent_replication",
+                }
+            },
+        },
+    )
+    atomic_write_json(
+        Path(lane_path).parent / "research" / "campaign_state.json",
+        {
+            "schema_version": "test-state.v1",
+            "phase": "independent_audit",
+            "updated_at": "2026-08-12T00:00:00Z",
+        },
+    )
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign(lane_id, domain="math", title="Authority restart")
+    db.configure_continuous_campaign(
+        lane_id,
+        production_plan_path=plan_path,
+        production_lane_path=lane_path,
+    )
+    campaign = db.campaign(lane_id)
+    assert campaign is not None
+
+    authority = _production_workspace_authority(paths, campaign)
+
+    assert authority is not None
+    assert authority.phase == "independent_audit"
+    assert authority.allowed_roles == ("reviewer",)
+    db.enqueue_task(
+        task_id="cancelled-author-task",
+        campaign_id=lane_id,
+        domain="math",
+        task_type="research_continue",
+        objective="An author task that was stopped at the timebox.",
+        skill_path="phase-skill",
+        agent_role="researcher",
+        session_mode="fresh",
+    )
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET status='cancelled' WHERE task_id='cancelled-author-task'"
+        )
+
+    report = tick(paths, FactorySettings(launch_jobs=False))
+
+    successor = db.task(report.enqueued[0])
+    assert successor is not None
+    assert successor["agent_role"] == "reviewer"
+    assert successor["session_mode"] == "fresh"
+    assert successor["task_type"] == "independent_review"
 
 
 def test_idle_binding_failure_is_repaired_without_repeating_science(tmp_path) -> None:

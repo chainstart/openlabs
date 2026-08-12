@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from openlabs.contracts import validate_result_bundle, validate_task
+from openlabs.contracts import sha256_file, validate_result_bundle, validate_task
 from openlabs.gates import evaluate_result_bundle
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
@@ -45,6 +45,35 @@ def test_gate_verifies_local_artifact_bytes(tmp_path) -> None:
     assert not gate.passed
     assert "artifact smoke-evidence SHA-256 mismatch" in gate.blockers
     assert gate.failure_classes == ("artifact_binding",)
+
+
+def test_gate_classifies_missing_executable_closure_as_reproducibility(tmp_path) -> None:
+    script = tmp_path / "verify.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+    payload = {
+        "schema_version": "openlabs.result_bundle.v1",
+        "task_id": "task-replay",
+        "campaign_id": "campaign",
+        "lab_id": "math",
+        "domain": "math",
+        "status": "completed",
+        "summary": "A script was emitted without its replay closure.",
+        "artifacts": [
+            {
+                "artifact_id": "validator",
+                "uri": script.resolve().as_uri(),
+                "sha256": sha256_file(script),
+                "kind": "verification_script",
+            }
+        ],
+        "claims": [],
+        "next_actions": [],
+    }
+
+    gate = evaluate_result_bundle(payload, allowed_roots=(tmp_path,))
+
+    assert not gate.passed
+    assert "reproducibility" in gate.failure_classes
 
 
 def test_result_contract_accepts_fresh_role_handoff_but_not_resumed_reviewer() -> None:

@@ -19,6 +19,8 @@ from typing import Any
 
 TASK_SCHEMA = "openlabs.task.v3"
 RESULT_SCHEMA = "openlabs.result_bundle.v1"
+HOOK_RECEIPT_SCHEMA = "openlabs.codex_hook_receipt.v1"
+HOOK_RUNTIME_SCHEMA = "openlabs.hook_runtime.v1"
 
 
 def sha256_file(path: Path) -> str:
@@ -243,6 +245,37 @@ def _jsonl_runtime(path: Path) -> dict[str, Any]:
                 if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                     runtime[key] = value
     return runtime
+
+
+def _hook_runtime(path: Path, *, agent_workspace: Path) -> dict[str, Any]:
+    """Collect generated lifecycle-hook receipts without interpreting research content."""
+
+    expected = (agent_workspace / ".codex" / "hook-receipts.jsonl").resolve()
+    if path.expanduser().resolve() != expected:
+        raise ValueError("Generated hook receipt path does not match the attempt runtime")
+    events: list[dict[str, Any]] = []
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, Mapping) or event.get("schema_version") != (
+                HOOK_RECEIPT_SCHEMA
+            ):
+                continue
+            events.append(dict(event))
+    starts = [item for item in events if item.get("hook_event_name") == "SessionStart"]
+    stops = [item for item in events if item.get("hook_event_name") == "Stop"]
+    return {
+        "schema_version": HOOK_RUNTIME_SCHEMA,
+        "receipt_path": str(path.resolve()),
+        "events": events,
+        "session_start_count": len(starts),
+        "stop_count": len(stops),
+        "stop_passed": any(item.get("outcome") == "result_gate_passed" for item in stops),
+        "stop_blocked": sum(item.get("outcome") == "result_gate_blocked" for item in stops),
+    }
 
 
 def _adapter_version(command: list[str]) -> str | None:
@@ -660,6 +693,12 @@ def _run_agent(
             for signum, previous in previous_handlers.items():
                 signal.signal(signum, previous)
     runtime = _jsonl_runtime(stdout_path)
+    raw_hook_receipts = str(runtime_policy.get("hook_receipts") or "").strip()
+    if raw_hook_receipts:
+        runtime["hooks"] = _hook_runtime(
+            Path(raw_hook_receipts),
+            agent_workspace=agent_workspace,
+        )
     runtime.update(
         {
             "adapter": Path(agent_command[0]).name,
