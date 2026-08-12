@@ -18,7 +18,7 @@ from .contracts import validate_result_bundle
 from .reproduction import preflight_reproductions
 
 HOOK_RECEIPT_SCHEMA = "openlabs.codex_hook_receipt.v1"
-HOOK_VERSION = "openlabs.codex_hook.v2"
+HOOK_VERSION = "openlabs.codex_hook.v3"
 
 
 def _read_event() -> dict[str, Any]:
@@ -48,9 +48,7 @@ def _session_context(context: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _stop_decision(event: Mapping[str, Any], context: Mapping[str, Any]) -> dict[str, Any]:
-    if event.get("stop_hook_active") is True:
-        return {}
+def _stop_gate_problems(context: Mapping[str, Any]) -> list[str]:
     result_path = Path(str(context.get("result_path") or "")).expanduser()
     problems: list[str] = []
     try:
@@ -98,10 +96,29 @@ def _stop_decision(event: Mapping[str, Any], context: Mapping[str, Any]) -> dict
             problems.extend(reproduction_errors)
     elif payload is not None:
         problems.append("result bundle must be a JSON object")
+    return problems
+
+
+def _stop_evaluation(
+    event: Mapping[str, Any], context: Mapping[str, Any]
+) -> tuple[dict[str, Any], str, str]:
+    """Evaluate the result gate once and distinguish continuation from final re-entry."""
+
+    problems = _stop_gate_problems(context)
     if not problems:
-        return {}
+        return {}, "result_gate_passed", "result_gate_passed"
     reason = "OpenLabs result gate is incomplete: " + "; ".join(problems[:8])
-    return {"decision": "block", "reason": reason}
+    if event.get("stop_hook_active") is True:
+        # Codex has already continued this turn once.  Revalidate the finished
+        # result, but do not request another continuation and risk a loop.  The
+        # terminal failure receipt keeps the outer orchestrator fail-closed.
+        return {}, "result_gate_failed_final", reason
+    return {"decision": "block", "reason": reason}, "result_gate_blocked", reason
+
+
+def _stop_decision(event: Mapping[str, Any], context: Mapping[str, Any]) -> dict[str, Any]:
+    output, _outcome, _summary = _stop_evaluation(event, context)
+    return output
 
 
 def _utc_now() -> str:
@@ -112,8 +129,6 @@ def _receipt_outcome(event_name: str, output: Mapping[str, Any]) -> str:
     if event_name == "session-start":
         return "context_injected"
     if output.get("decision") is None and output.get("reason") is None:
-        # Stop-hook re-entry is deliberately ignored to prevent an infinite
-        # continue loop, but it is not evidence that the result gate ran.
         return "result_gate_passed"
     if output.get("decision") == "block":
         return "result_gate_blocked"
@@ -128,6 +143,8 @@ def _append_hook_receipt(
     output: Mapping[str, Any],
     started_at: str,
     finished_at: str,
+    outcome: str | None = None,
+    output_summary: str | None = None,
 ) -> None:
     raw_path = str(context.get("hook_receipt_path") or "").strip()
     if not raw_path:
@@ -138,6 +155,8 @@ def _append_hook_receipt(
     if path != expected:
         raise ValueError("Hook receipt path is outside the generated runtime directory")
     reason = str(output.get("reason") or "")
+    resolved_outcome = outcome or _receipt_outcome(event_name, output)
+    resolved_summary = output_summary or reason or resolved_outcome
     receipt = {
         "schema_version": HOOK_RECEIPT_SCHEMA,
         "hook_version": HOOK_VERSION,
@@ -148,13 +167,9 @@ def _append_hook_receipt(
         "session_id": event.get("session_id"),
         "turn_id": event.get("turn_id"),
         "stop_hook_active": event.get("stop_hook_active") is True,
-        "outcome": (
-            "stop_reentry_ignored"
-            if event_name == "stop" and event.get("stop_hook_active") is True
-            else _receipt_outcome(event_name, output)
-        ),
+        "outcome": resolved_outcome,
         "decision": output.get("decision"),
-        "output_summary": reason[:512] if reason else _receipt_outcome(event_name, output),
+        "output_summary": resolved_summary[:512],
         "output_sha256": hashlib.sha256(
             json.dumps(output, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest(),
@@ -177,11 +192,12 @@ def main() -> int:
     context = runtime_context(args.context.resolve())
     event = _read_event()
     started_at = _utc_now()
-    output = (
-        _session_context(context)
-        if args.event == "session-start"
-        else _stop_decision(event, context)
-    )
+    if args.event == "session-start":
+        output = _session_context(context)
+        outcome = "context_injected"
+        output_summary = outcome
+    else:
+        output, outcome, output_summary = _stop_evaluation(event, context)
     _append_hook_receipt(
         context,
         event_name=args.event,
@@ -189,6 +205,8 @@ def main() -> int:
         output=output,
         started_at=started_at,
         finished_at=_utc_now(),
+        outcome=outcome,
+        output_summary=output_summary,
     )
     json.dump(output, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")

@@ -275,6 +275,9 @@ def _hook_runtime(path: Path, *, agent_workspace: Path) -> dict[str, Any]:
         "stop_count": len(stops),
         "stop_passed": any(item.get("outcome") == "result_gate_passed" for item in stops),
         "stop_blocked": sum(item.get("outcome") == "result_gate_blocked" for item in stops),
+        "stop_failed_final": sum(
+            item.get("outcome") == "result_gate_failed_final" for item in stops
+        ),
     }
 
 

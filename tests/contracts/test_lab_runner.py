@@ -339,6 +339,11 @@ def test_runner_collects_structured_hook_receipts(tmp_path) -> None:
             "hook_event_name": "Stop",
             "outcome": "result_gate_passed",
         },
+        {
+            "schema_version": "openlabs.codex_hook_receipt.v1",
+            "hook_event_name": "Stop",
+            "outcome": "result_gate_failed_final",
+        },
     ]
     receipt_path.write_text(
         "".join(json.dumps(event) + "\n" for event in events),
@@ -349,9 +354,10 @@ def test_runner_collects_structured_hook_receipts(tmp_path) -> None:
 
     assert runtime["schema_version"] == "openlabs.hook_runtime.v1"
     assert runtime["session_start_count"] == 1
-    assert runtime["stop_count"] == 2
+    assert runtime["stop_count"] == 3
     assert runtime["stop_passed"] is True
     assert runtime["stop_blocked"] == 1
+    assert runtime["stop_failed_final"] == 1
 
 
 def test_codex_adapter_rejects_sandbox_bypass(tmp_path) -> None:
