@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -39,6 +41,25 @@ def _failure_result(task: dict[str, object], message: str) -> dict[str, object]:
         "claims": [],
         "next_actions": ["Inspect worker.log and choose a bounded retry or replan."],
     }
+
+
+def _stop_lab_runner(process: subprocess.Popen[bytes], *, grace_seconds: int = 30) -> int:
+    """Stop a runner after lease loss without abandoning its descendants or receipt."""
+
+    if process.poll() is not None:
+        return int(process.returncode)
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return int(process.wait())
+    try:
+        return int(process.wait(timeout=max(1, grace_seconds)))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return int(process.wait())
 
 
 def run_worker(job_file: str) -> int:
@@ -81,7 +102,8 @@ def run_worker(job_file: str) -> int:
     command.extend(["--task", str(job_path), "--output", str(output)])
 
     started = time.monotonic()
-    process = subprocess.Popen(command, cwd=manifest.root)
+    process = subprocess.Popen(command, cwd=manifest.root, start_new_session=True)
+    heartbeat_lost = False
     while True:
         try:
             return_code = process.wait(timeout=settings.heartbeat_seconds)
@@ -93,8 +115,8 @@ def run_worker(job_file: str) -> int:
                 owner=owner,
                 lease_seconds=settings.lease_seconds,
             ):
-                process.terminate()
-                return_code = process.wait(timeout=30)
+                heartbeat_lost = True
+                return_code = _stop_lab_runner(process)
                 break
     duration_seconds = max(0.0, time.monotonic() - started)
 
@@ -121,6 +143,7 @@ def run_worker(job_file: str) -> int:
         {
             "duration_seconds": duration_seconds,
             "exit_code": int(return_code),
+            "heartbeat_lost": heartbeat_lost,
         }
     )
     receipt = {

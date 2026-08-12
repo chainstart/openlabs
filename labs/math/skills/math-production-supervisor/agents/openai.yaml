@@ -1,4 +1,4 @@
 interface:
   display_name: "Math Production Supervisor"
   short_description: "Run direct-route and evidence-gated mathematics production"
-  default_prompt: "Use $math-production-supervisor to advance one proof-level node in an operator-locked or bounded-radar mathematics production lane."
+  default_prompt: "Use $math-production-supervisor to autonomously advance an operator-locked or bounded-radar lane to its next proof-level checkpoint."

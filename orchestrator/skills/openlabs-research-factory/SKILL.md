@@ -1,12 +1,13 @@
 ---
 name: openlabs-research-factory
-description: Coordinate one bounded, recoverable step in an OpenLabs autonomous research campaign by reading persisted task and campaign state, obeying the assigned epistemic role and session boundary, selecting the matching domain Skill, and emitting a versioned evidence-bound result bundle. Use for scheduled research, experiment, writing, independent review, continuation, recovery, or replan tasks; never write the runtime database directly, cross role boundaries, or treat agent prose as validated evidence.
+description: Coordinate a bounded, recoverable OpenLabs research episode by reading durable task and campaign state, autonomously decomposing the objective with the matching domain Skill, obeying epistemic-role and transaction boundaries, and emitting a versioned evidence-bound checkpoint. Use for scheduled research, experiment, writing, independent review, continuation, recovery, or replan tasks; never write the runtime database directly, cross role boundaries, or treat agent prose as validated evidence.
 ---
 
 # OpenLabs Research Factory
 
-Advance exactly one useful, checkpointed research step. Let the domain Skill decide how to
-research; keep this Skill focused on boundaries, recovery, and handoff.
+Own one useful, checkpointed research episode. Autonomously analyze, choose tools, revise the route,
+and perform as many intermediate operations as are useful within the reservation. Let the domain
+Skill govern scientific method; keep this Skill focused on boundaries, recovery, and handoff.
 
 ## Establish the task
 
@@ -51,15 +52,22 @@ artifacts without inheriting the failed conversation's anchoring. The sole cross
 `text_revision` returned by a paper reviewer: the scheduler resumes the nearest writer session in
 that task's own ancestry, never the reviewer session.
 
-## Choose one bounded action
+## Own the bounded decision loop
 
-Select the smallest action that can materially reduce uncertainty or advance a declared gate. Good
-actions include a focused literature update, one falsifiable hypothesis, a kill test, a pilot,
-reproduction, proof subgoal, error analysis, or independent audit.
+Start from the durable objective and choose the highest-information admissible route. Decompose and
+iterate without waiting for the outer scheduler: inspect evidence, formulate or revise hypotheses,
+run tools, test failure modes, and consolidate the result. A checkpoint may contain several proof
+operations, computations, searches, or repairs when they form one coherent evidence advance.
+
+Stop the episode when it has produced a material evidence delta, decisively killed a route, reached
+a genuine blocker, encountered a role/authority boundary, or needs to reserve time to persist a
+recoverable checkpoint. Do not stop merely because one administrative substep or one file edit is
+complete.
 
 - Prefer a decisive test over producing more prose or files.
 - Reuse registered tools before creating a new implementation.
-- Keep independent branches in separate tasks with frozen, non-conflicting inputs and outputs.
+- Keep genuinely independent epistemic branches in separate tasks with frozen, non-conflicting
+  inputs and outputs; ordinary substeps remain inside the current episode.
 - Give every branch a budget, expected artifact, kill condition, and merge rule.
 - Preserve null, refuted, negative, and inconclusive outcomes.
 - Stop when the task crosses an unbounded-cost, irreversible, safety, authorship, publication, or

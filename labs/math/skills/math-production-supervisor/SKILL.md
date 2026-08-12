@@ -1,11 +1,13 @@
 ---
 name: math-production-supervisor
-description: Run an autonomous, evidence-adaptive mathematics production lane through operator-locked major-problem routes or bounded literature radar, AMRA mechanism-first research, independent reconstruction, post-result assessment, route branching, flagship reporting, result maturation, and paper handoff. Use when an OpenLabs math task points to production_plan.json or production_lane.json, especially for parallel Riemann-Hypothesis routes that must begin proof-level work without candidate scoring, or when a lane must deepen, falsify, audit, freeze, branch, or promote without a fixed calendar.
+description: Autonomously run an evidence-adaptive mathematics production episode inside an operator-locked major-problem route or bounded literature-radar lane, using AMRA mechanism-first research, independent reconstruction, post-result assessment, route branching, result maturation, and paper handoff. Use when an OpenLabs math task points to production_plan.json or production_lane.json, especially for parallel Riemann-Hypothesis routes that must perform proof-level work without prospective candidate scoring, or when a lane must deepen, falsify, audit, freeze, branch, or promote without a fixed calendar.
 ---
 
 # Mathematics production supervisor
 
-Advance exactly one bounded node in one production lane. Time is only a safety ceiling; evidence
+Own one bounded research episode in one production lane and finish with a coherent durable node.
+Within the reservation, autonomously choose and perform the derivations, searches, computations,
+falsification tests, and state updates needed for that node. Time is only a safety ceiling; evidence
 delta decides whether the lane continues. Never convert continuous execution into continuous prose,
 local-case enumeration, or manuscript generation.
 
@@ -32,8 +34,8 @@ local-case enumeration, or manuscript generation.
 An active `production_plan.json` is persistent desired state, not a one-shot brief. A factory task
 cap or Agent-time cap closes one auditable `production_epoch`; it does not close the lane. On a
 `production_rollover` or `production_idle_reseed` task, start from the durable lane, plan, nested
-AMRA state, and last validated result. Use a fresh researcher session after rollover and execute
-exactly one bounded node.
+AMRA state, and last validated result. Use a fresh researcher session after rollover and recover
+the highest-information admissible next episode from durable state.
 
 Every nonterminal node must emit one executable structured `next_actions` entry. For a
 score-selected lane, recycle a frozen target only with `scripts/production_lane.py recycle`. For an
@@ -124,7 +126,9 @@ control plane pauses it. Do not request another radar pass after that event.
 Read the complete sibling `amra-research-loop/SKILL.md` and the references required by its current
 phase. The nested path is `selected_target.amra_campaign` in `production_lane.json`.
 
-- Perform one useful AMRA transition or one decisive test per factory task.
+- Autonomously perform the useful proof operations and decisive tests that fit the current AMRA
+  phase. Cross at most one formal phase or epistemic-role boundary per checkpoint, but do not turn
+  ordinary intermediate operations into scheduler tasks.
 - Use AMRA's CLI for transitions and freezing; never edit phase history to bypass a gate.
 - Record the node with `scripts/production_lane.py record-node` and an exact `--delta-kind`.
 - Count progress only when an exact blocker shrinks, a mechanism is killed, a survivor is

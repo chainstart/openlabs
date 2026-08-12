@@ -53,7 +53,8 @@ python3 -m openlabs tick
 
 真实 Agent runner、systemd timer、跨设备 SQLite 交接和外部操作门禁见
 [个人运行手册](docs/operations.zh.md)。完整设计见
-[架构决策](docs/openlabs-monorepo-architecture.zh.md)，本次来源与过滤情况见
+[架构决策](docs/openlabs-monorepo-architecture.zh.md)，Codex、Skill、Hook 与确定性控制面的
+边界见 [自主科研运行时](docs/autonomous-runtime.zh.md)，本次来源与过滤情况见
 [迁移报告](docs/migration-report.zh.md)。仓库没有自动启用 timer，也没有启动昂贵研究任务。
 
 ## License

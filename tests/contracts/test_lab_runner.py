@@ -9,6 +9,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 CODE_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = CODE_ROOT / "packages" / "research-core" / "lab_runner.py"
 
@@ -271,3 +273,146 @@ def test_agent_resume_uses_only_the_declared_role_session(tmp_path, monkeypatch)
 
     assert json.loads(output.read_text(encoding="utf-8"))["session"] == "writer-session"
     assert runtime["resumed_from"] == "writer-session"
+
+
+def test_codex_uses_native_workspace_sandbox_and_generated_hooks(tmp_path) -> None:
+    runner = _load_runner()
+    workspace = tmp_path / "attempt" / "campaign"
+    hooks = workspace / ".codex" / "hooks.json"
+    hooks.parent.mkdir(parents=True)
+    hooks.write_text("{}\n", encoding="utf-8")
+    task = {
+        "runtime_policy": {
+            "schema_version": "openlabs.codex_runtime.v1",
+            "hooks": str(hooks),
+            "hook_trust": "orchestrator-generated",
+        }
+    }
+    command = runner._prepare_codex_command(
+        [
+            "codex",
+            "exec",
+            "--sandbox",
+            "workspace-write",
+            "--approve-for-me",
+            "resume",
+            "--json",
+            "session-1",
+            "-",
+        ],
+        agent_workspace=workspace,
+        trust_generated_hooks=True,
+    )
+
+    wrapped, sandbox = runner._transaction_sandbox(command, task, tmp_path)
+
+    assert wrapped == command
+    assert command[:2] == ["codex", "exec"]
+    assert "--approve-for-me" in command
+    assert "--sandbox" not in command
+    assert command[command.index("-C") + 1] == str(workspace)
+    assert command.count("--json") == 1
+    assert "--dangerously-bypass-hook-trust" in command
+    assert command[command.index("--enable") + 1] == "hooks"
+    assert command.index("--approve-for-me") < command.index("resume")
+    assert sandbox == "codex-native-workspace-write"
+
+
+def test_codex_adapter_rejects_sandbox_bypass(tmp_path) -> None:
+    runner = _load_runner()
+
+    with pytest.raises(ValueError, match="may not bypass"):
+        runner._prepare_codex_command(
+            ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "-"],
+            agent_workspace=tmp_path,
+            trust_generated_hooks=False,
+        )
+
+    with pytest.raises(ValueError, match="may not add writable"):
+        runner._prepare_codex_command(
+            ["codex", "exec", "--add-dir", "/canonical", "-"],
+            agent_workspace=tmp_path,
+            trust_generated_hooks=False,
+        )
+
+    with pytest.raises(ValueError, match="runtime policy"):
+        runner._prepare_codex_command(
+            ["codex", "exec", "-c", 'sandbox_mode="danger-full-access"', "-"],
+            agent_workspace=tmp_path,
+            trust_generated_hooks=False,
+        )
+
+
+def test_result_envelope_repairs_missing_transport_identity(tmp_path) -> None:
+    runner = _load_runner()
+    output = tmp_path / "result.json"
+    output.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "summary": "Scientific fields remain agent-owned.",
+                "artifacts": [],
+                "claims": [],
+                "next_actions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    task = {
+        "task_id": "task-1",
+        "campaign_id": "campaign",
+        "lab_id": "math",
+        "domain": "math",
+    }
+
+    repaired, error = runner._seal_result_envelope(task, {"lab_id": "math"}, output)
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert repaired is True
+    assert error is None
+    assert payload["schema_version"] == "openlabs.result_bundle.v1"
+    assert payload["task_id"] == "task-1"
+    assert payload["lab_id"] == "math"
+    assert payload["summary"] == "Scientific fields remain agent-owned."
+
+
+def test_codex_transaction_requires_production_layout_outside_temporary_roots() -> None:
+    runner = _load_runner()
+    workspace = Path("/home/research/openlabs")
+    attempt = workspace / "openlabs-artifacts" / "attempt-workspaces" / "one"
+    staged = attempt / "workspaces" / "math" / "campaign"
+    canonical = workspace / "openlabs-data" / "workspaces" / "math" / "campaign"
+    task = {
+        "transaction": {
+            "mode": "isolated_attempt_workspace",
+            "attempt_root": str(attempt),
+            "staged_campaign_workspace": str(staged),
+            "canonical_campaign_workspace": str(canonical),
+        }
+    }
+
+    runner._validate_codex_transaction(
+        task,
+        workspace=workspace,
+        agent_workspace=staged,
+    )
+
+    temporary_workspace = Path("/tmp/openlabs")
+    temporary_attempt = temporary_workspace / "openlabs-artifacts" / "attempt-workspaces" / "one"
+    temporary_staged = temporary_attempt / "workspaces" / "math" / "campaign"
+    temporary_task = {
+        "transaction": {
+            "mode": "isolated_attempt_workspace",
+            "attempt_root": str(temporary_attempt),
+            "staged_campaign_workspace": str(temporary_staged),
+            "canonical_campaign_workspace": str(
+                temporary_workspace / "openlabs-data" / "workspaces" / "math" / "campaign"
+            ),
+        }
+    }
+    with pytest.raises(ValueError, match="temporary root"):
+        runner._validate_codex_transaction(
+            temporary_task,
+            workspace=temporary_workspace,
+            agent_workspace=temporary_staged,
+        )

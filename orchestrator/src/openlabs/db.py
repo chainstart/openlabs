@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 ACTIVE_STATUSES = ("leased", "running")
 AGENT_ROLES = ("researcher", "experimenter", "writer", "reviewer")
 SESSION_MODES = ("resume", "fresh")
@@ -55,10 +55,20 @@ def bounded_elapsed(started_at: str | None, finished_at: str, limit: int) -> flo
 
 
 @dataclass(frozen=True)
+class AttemptDisposition:
+    task_id: str
+    campaign_id: str
+    attempt_id: str
+    status: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class RecoverySummary:
     requeued: tuple[str, ...]
     quarantined: tuple[str, ...]
     cancelled: tuple[str, ...]
+    attempts: tuple[AttemptDisposition, ...] = ()
 
 
 class FactoryDB:
@@ -90,6 +100,20 @@ class FactoryDB:
 
     def initialize(self) -> None:
         with self.connect() as connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            version_row = connection.execute(
+                "SELECT value FROM meta WHERE key='schema_version'"
+            ).fetchone()
+            try:
+                prior_version = int(version_row["value"]) if version_row is not None else 0
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Factory database has an invalid schema version") from exc
+            if prior_version > SCHEMA_VERSION:
+                raise ValueError(
+                    f"Factory database schema {prior_version} is newer than {SCHEMA_VERSION}"
+                )
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS meta (
@@ -222,6 +246,7 @@ class FactoryDB:
             self._migrate_v3(connection)
             self._migrate_v4(connection)
             self._migrate_v5(connection)
+            self._migrate_v6(connection, prior_version=prior_version)
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS task_attempts_task_idx
@@ -253,6 +278,10 @@ class FactoryDB:
     def _migrate_v3(cls, connection: sqlite3.Connection) -> None:
         """Apply the additive migration needed by existing local v2 databases."""
 
+        task_columns = {
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(tasks)").fetchall()
+        }
+        had_requested_output = "requested_output_path" in task_columns
         for definition in (
             "max_agent_seconds INTEGER NOT NULL DEFAULT 86400",
             "agent_seconds_used REAL NOT NULL DEFAULT 0",
@@ -275,12 +304,13 @@ class FactoryDB:
             "runtime_json TEXT NOT NULL DEFAULT '{}'",
         ):
             cls._add_column(connection, "result_bundles", definition)
-        connection.execute(
-            """
-            UPDATE tasks SET requested_output_path=output_path
-            WHERE requested_output_path IS NULL AND output_path IS NOT NULL
-            """
-        )
+        if not had_requested_output:
+            connection.execute(
+                """
+                UPDATE tasks SET requested_output_path=output_path
+                WHERE requested_output_path IS NULL AND output_path IS NOT NULL
+                """
+            )
 
     @classmethod
     def _migrate_v4(cls, connection: sqlite3.Connection) -> None:
@@ -337,6 +367,20 @@ class FactoryDB:
                 )
                 """
             )
+
+    @staticmethod
+    def _migrate_v6(connection: sqlite3.Connection, *, prior_version: int) -> None:
+        """Remove attempt-local output paths copied into immutable task intent by v5 ticks."""
+
+        if prior_version >= 6:
+            return
+        connection.execute(
+            """
+            UPDATE tasks SET requested_output_path=NULL
+            WHERE requested_output_path IS NOT NULL
+              AND instr(requested_output_path, '/attempt-workspaces/') > 0
+            """
+        )
 
     @staticmethod
     def _event(
@@ -1009,6 +1053,17 @@ class FactoryDB:
             ).fetchone()
         return dict(row) if row else None
 
+    def result_runtime(self, task_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT runtime_json FROM result_bundles WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return {}
+        payload = json.loads(str(row["runtime_json"]))
+        return payload if isinstance(payload, dict) else {}
+
     def continuous_campaigns(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
@@ -1315,6 +1370,7 @@ class FactoryDB:
         requeued: list[str] = []
         quarantined: list[str] = []
         cancelled: list[str] = []
+        attempts: list[AttemptDisposition] = []
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
@@ -1393,6 +1449,15 @@ class FactoryDB:
                         """,
                         (elapsed, elapsed, now, str(row["campaign_id"])),
                     )
+                    attempts.append(
+                        AttemptDisposition(
+                            task_id=task_id,
+                            campaign_id=str(row["campaign_id"]),
+                            attempt_id=attempt_id,
+                            status=status,
+                            reason=recovery_error,
+                        )
+                    )
                 self._event(
                     connection,
                     "task",
@@ -1410,19 +1475,24 @@ class FactoryDB:
                     quarantined.append(task_id)
                 else:
                     requeued.append(task_id)
-        return RecoverySummary(tuple(requeued), tuple(quarantined), tuple(cancelled))
+        return RecoverySummary(
+            tuple(requeued),
+            tuple(quarantined),
+            tuple(cancelled),
+            tuple(attempts),
+        )
 
     def fail_launch(
         self,
         task_id: str,
         error: str,
         retry_backoff_seconds: int = 0,
-    ) -> None:
+    ) -> AttemptDisposition:
         now = utc_now()
         with self.connect() as connection:
             row = connection.execute(
                 """
-                SELECT attempt, max_attempts, current_attempt_id
+                SELECT attempt, max_attempts, current_attempt_id, campaign_id
                 FROM tasks WHERE task_id=?
                 """,
                 (task_id,),
@@ -1459,6 +1529,109 @@ class FactoryDB:
                 "task_launch_failed",
                 {"error": error, "status": status, "attempt_id": attempt_id},
             )
+        return AttemptDisposition(
+            task_id=task_id,
+            campaign_id=str(row["campaign_id"]),
+            attempt_id=attempt_id,
+            status=status,
+            reason=error,
+        )
+
+    def reject_attempt(
+        self,
+        task_id: str,
+        *,
+        attempt_id: str,
+        reason: str,
+        result_path: str | None,
+        result_sha256: str | None,
+        run_seconds: float,
+        runtime: Mapping[str, Any],
+        retry_backoff_seconds: int = 0,
+    ) -> AttemptDisposition:
+        """Close a current attempt whose authenticated result transport is invalid."""
+
+        now = utc_now()
+        runtime_json = json.dumps(dict(runtime), ensure_ascii=False, sort_keys=True)
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT attempt, max_attempts, max_wall_seconds, campaign_id
+                FROM tasks
+                WHERE task_id=? AND status='running' AND current_attempt_id=?
+                """,
+                (task_id, attempt_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Task {task_id} is not running for current attempt {attempt_id}")
+            status = "quarantined" if int(row["attempt"]) >= int(row["max_attempts"]) else "queued"
+            not_before = (
+                None
+                if status == "quarantined"
+                else retry_not_before(int(row["attempt"]), retry_backoff_seconds)
+            )
+            bounded_seconds = min(
+                float(max(1, int(row["max_wall_seconds"]))),
+                max(0.0, float(run_seconds)),
+            )
+            connection.execute(
+                """
+                UPDATE tasks SET status=?, lease_owner=NULL, lease_expires_at=NULL,
+                    worker_pid=NULL, current_attempt_id=NULL, output_path=NULL,
+                    not_before=?, last_error=?, updated_at=?
+                WHERE task_id=?
+                """,
+                (status, not_before, reason, now, task_id),
+            )
+            updated = connection.execute(
+                """
+                UPDATE task_attempts
+                SET status='result_rejected', finished_at=?, result_path=?, result_sha256=?,
+                    run_seconds=?, runtime_json=?, error=?
+                WHERE attempt_id=? AND task_id=? AND status='running'
+                """,
+                (
+                    now,
+                    result_path,
+                    result_sha256,
+                    bounded_seconds,
+                    runtime_json,
+                    reason,
+                    attempt_id,
+                    task_id,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise ValueError(f"Attempt {attempt_id} is not rejectable")
+            connection.execute(
+                """
+                UPDATE campaigns
+                SET agent_seconds_used=agent_seconds_used+?,
+                    epoch_agent_seconds_used=epoch_agent_seconds_used+?, updated_at=?
+                WHERE campaign_id=?
+                """,
+                (bounded_seconds, bounded_seconds, now, str(row["campaign_id"])),
+            )
+            self._event(
+                connection,
+                "task",
+                task_id,
+                "task_result_rejected",
+                {
+                    "attempt_id": attempt_id,
+                    "reason": reason,
+                    "status": status,
+                    "run_seconds": bounded_seconds,
+                },
+            )
+        return AttemptDisposition(
+            task_id=task_id,
+            campaign_id=str(row["campaign_id"]),
+            attempt_id=attempt_id,
+            status=status,
+            reason=reason,
+        )
 
     def ingest_result(
         self,
@@ -1704,6 +1877,14 @@ class FactoryDB:
             item["resources"] = json.loads(str(item.pop("resources_json")))
             attempts.append(item)
         return attempts
+
+    def attempt_record(self, attempt_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM task_attempts WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def status_counts(self) -> dict[str, int]:
         with self.connect() as connection:

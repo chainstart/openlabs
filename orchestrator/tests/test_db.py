@@ -135,6 +135,64 @@ def test_expired_task_obeys_retry_backoff(tmp_path) -> None:
     assert db.claim_next_task(owner="too-early", lease_seconds=60) is None
 
 
+def test_initialize_never_copies_attempt_output_into_task_intent(tmp_path) -> None:
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    db.register_campaign("campaign", domain="math", title="Campaign")
+    db.enqueue_task(
+        task_id="task",
+        campaign_id="campaign",
+        domain="math",
+        task_type="research",
+        objective="Keep requested output immutable across ticks.",
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=60)
+    assert task is not None
+    attempt_output = tmp_path / "artifacts" / "attempt-workspaces" / "one" / "result.json"
+    db.bind_attempt_spec(
+        "task",
+        attempt_id=str(task["current_attempt_id"]),
+        lab_id="math",
+        output_path=str(attempt_output),
+    )
+
+    db.initialize()
+    row = db.task("task")
+
+    assert row["requested_output_path"] is None
+    assert row["output_path"] == str(attempt_output)
+
+
+def test_v6_migration_removes_only_attempt_local_requested_outputs(tmp_path) -> None:
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    db.register_campaign("campaign", domain="math", title="Campaign")
+    canonical = "/data/workspaces/math/campaign/result.json"
+    db.enqueue_task(
+        task_id="canonical",
+        campaign_id="campaign",
+        domain="math",
+        task_type="research",
+        objective="Preserve explicit task intent.",
+        output_path=canonical,
+    )
+    db.enqueue_task(
+        task_id="polluted",
+        campaign_id="campaign",
+        domain="math",
+        task_type="research",
+        objective="Clean an attempt-local migration artifact.",
+        output_path="/artifacts/attempt-workspaces/campaign/attempt/result.json",
+    )
+    with db.connect() as connection:
+        connection.execute("UPDATE meta SET value='5' WHERE key='schema_version'")
+
+    db.initialize()
+
+    assert db.task("canonical")["requested_output_path"] == canonical
+    assert db.task("polluted")["requested_output_path"] is None
+
+
 def test_expired_task_from_paused_production_is_cancelled_not_requeued(tmp_path) -> None:
     db = FactoryDB(tmp_path / "factory.sqlite")
     db.initialize()

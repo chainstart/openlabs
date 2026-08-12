@@ -68,10 +68,10 @@ ${EDITOR:-vi} "$HOME/.config/openlabs/env"
 文件内容示意：
 
 ```text
-OPENLABS_AGENT_COMMAND_CHEAP_JSON='["codex","exec","--profile","openlabs-cheap","--skip-git-repo-check","--json","--approve-for-me","--sandbox","workspace-write","-C","{agent_workspace}","-"]'
-OPENLABS_AGENT_COMMAND_BALANCED_JSON='["codex","exec","--profile","openlabs-balanced","--skip-git-repo-check","--json","--approve-for-me","--sandbox","workspace-write","-C","{agent_workspace}","-"]'
-OPENLABS_AGENT_COMMAND_FRONTIER_JSON='["codex","exec","--profile","openlabs-frontier","--skip-git-repo-check","--json","--approve-for-me","--sandbox","workspace-write","-C","{agent_workspace}","-"]'
-OPENLABS_AGENT_RESUME_COMMAND_JSON='["codex","exec","resume","--skip-git-repo-check","--json","{session_id}","-"]'
+OPENLABS_AGENT_COMMAND_CHEAP_JSON='["codex","exec","--profile","openlabs-cheap","-"]'
+OPENLABS_AGENT_COMMAND_BALANCED_JSON='["codex","exec","--profile","openlabs-balanced","-"]'
+OPENLABS_AGENT_COMMAND_FRONTIER_JSON='["codex","exec","--profile","openlabs-frontier","-"]'
+OPENLABS_AGENT_RESUME_COMMAND_JSON='["codex","exec","resume","{session_id}","-"]'
 OPENLABS_AGENT_TIMEOUT_SECONDS=14400
 OPENLABS_CLAUDE_COMMAND=claude
 # OPENLABS_CLAUDE_SETTINGS=/home/you/.claude/settings.json
@@ -83,6 +83,9 @@ OPENLABS_CLAUDE_COMMAND=claude
 `{prompt_file}`、`{output_file}`、`{output_dir}`、`{skill_path}` 和 `{task_file}`；恢复命令还
 必须包含独立的 `{session_id}` 参数。如果 runner 未配置，
 工厂会安全地产生 `needs_human`，不会假装完成研究。
+模板只描述 provider、model/profile 与会话参数。runner 会统一加入 JSONL、私有工作目录、
+自动审批、Codex 原生 `workspace-write` 和受信 project hook 参数；模板不得请求
+`danger-full-access` 或绕过 sandbox。
 研究者、实验执行者和作者的可写根是 campaign workspace，不是外层四仓库根；reviewer 的
 可写根进一步缩到本次 attempt 目录。先用 smoke task 验证文件协议，再接入真实 Agent。
 
@@ -141,8 +144,10 @@ python3 -m openlabs halt-production \
 target 的 persistent systemd timer 调用此命令；否则停机动作会随 factory 一起被停止。
 
 每个 Agent attempt 在 `openlabs-artifacts/attempt-workspaces/` 的私有 campaign 副本中写入。
-worker 使用 bubblewrap 将代码、正式数据、证据归档和数据库重新挂载为只读，仅将本 attempt
-目录重新挂载为可写；若本机缺少 bubblewrap，事务型任务拒绝启动而不会降级为共享写入。
+Codex adapter 强制使用其原生 `workspace-write` sandbox，因此 Codex 调起的 shell、Python、
+证明器等子进程继承同一写边界，也不会被第二层 namespace 阻断。非 Codex adapter 没有这项
+原生保证，仍由 worker 使用 bubblewrap 只开放本 attempt；本机缺少 bubblewrap 时拒绝启动，
+不会降级为共享写入。
 只有状态为完成、通过文件门禁且所有证据已复制到 `openlabs-artifacts/result-bundles/` 不可变
 归档的节点，才会以目录交换方式提升到正式 campaign；数据库确认入库前保留原目录作为回滚
 副本。取消、超时、失败和门禁拒绝的 attempt 只留下带原因的隔离 checkpoint。tick 与

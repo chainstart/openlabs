@@ -44,6 +44,7 @@ def test_gate_verifies_local_artifact_bytes(tmp_path) -> None:
 
     assert not gate.passed
     assert "artifact smoke-evidence SHA-256 mismatch" in gate.blockers
+    assert gate.failure_classes == ("artifact_binding",)
 
 
 def test_result_contract_accepts_fresh_role_handoff_but_not_resumed_reviewer() -> None:

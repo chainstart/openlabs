@@ -142,9 +142,24 @@ def test_idle_binding_failure_is_repaired_without_repeating_science(tmp_path) ->
             """
             UPDATE tasks
             SET status='needs_replan',
-                last_error='artifact 0 must use a verifiable local file URI'
+                last_error='opaque gate detail that policy must not parse'
             WHERE task_id='rejected-result'
             """
+        )
+        connection.execute(
+            """
+            INSERT INTO result_bundles(
+                task_id, attempt_id, path, sha256, valid, gate_passed,
+                blockers_json, runtime_json, ingested_at
+            ) VALUES(
+                'rejected-result', NULL, '/tmp/rejected.json', ?, 1, 0,
+                '[]', ?, '2026-08-12T00:00:00Z'
+            )
+            """,
+            (
+                "0" * 64,
+                json.dumps({"gate_failure_classes": ["artifact_binding"]}),
+            ),
         )
 
     report = tick(

@@ -12,10 +12,10 @@ from openlabs.attempts import (
     quarantine_attempt_workspace,
     recover_attempt_promotion,
 )
-from openlabs.config import WorkspacePaths
+from openlabs.config import FactorySettings, WorkspacePaths
 from openlabs.contracts import RESULT_SCHEMA, atomic_write_json, sha256_file
 from openlabs.db import FactoryDB
-from openlabs.engine import TickReport, _launch_task, ingest_results
+from openlabs.engine import TickReport, _launch_task, ingest_results, tick
 
 
 def _paths(tmp_path: Path, code_root: Path | None = None) -> WorkspacePaths:
@@ -87,6 +87,10 @@ def test_valid_attempt_is_promoted_as_one_campaign_transaction(tmp_path) -> None
     workspace = prepare_attempt_workspace(paths, task, {})
     atomic_write_json(workspace.campaign_root / "production_lane.json", {"nodes": ["node-1"]})
     (workspace.campaign_root / "evidence.txt").write_text("proof bytes\n", encoding="utf-8")
+    (workspace.campaign_root / ".codex").mkdir()
+    (workspace.campaign_root / ".codex" / "hooks.json").write_text("{}\n", encoding="utf-8")
+    (workspace.campaign_root / ".agents" / "skills").mkdir(parents=True)
+    (workspace.campaign_root / ".agents" / "skills" / "test").symlink_to(tmp_path)
 
     metadata = promote_attempt_workspace(workspace)
 
@@ -95,7 +99,103 @@ def test_valid_attempt_is_promoted_as_one_campaign_transaction(tmp_path) -> None
         "nodes": ["node-1"]
     }
     assert (canonical / "evidence.txt").read_text(encoding="utf-8") == "proof bytes\n"
+    assert not (canonical / ".codex").exists()
+    assert not (canonical / ".agents").exists()
     assert metadata["status"] == "committed"
+
+
+def test_lease_recovery_quarantines_the_private_attempt_checkpoint(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    db, task = _leased_task(paths)
+    workspace = prepare_attempt_workspace(paths, task, {})
+    attempt_id = str(task["current_attempt_id"])
+    db.mark_running(
+        "task",
+        attempt_id=attempt_id,
+        owner="test",
+        pid=123,
+        lease_seconds=60,
+    )
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET lease_expires_at='2000-01-01T00:00:00Z' WHERE task_id='task'"
+        )
+
+    report = tick(paths, FactorySettings(launch_jobs=False, retry_backoff_seconds=0))
+
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    assert report.recovered == ["task"]
+    assert metadata["status"] == "quarantined"
+    assert metadata["quarantine_reason"] == "lease_expired"
+
+
+def test_launch_failure_closes_and_quarantines_the_created_attempt(tmp_path, monkeypatch) -> None:
+    code_root = Path(__file__).resolve().parents[2]
+    paths = _paths(tmp_path, code_root)
+    campaign = paths.data / "workspaces" / "math" / "campaign"
+    campaign.mkdir(parents=True)
+    atomic_write_json(campaign / "production_lane.json", {"nodes": []})
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign("campaign", domain="math", title="Campaign", state_path=str(campaign))
+    db.enqueue_task(
+        task_id="task",
+        campaign_id="campaign",
+        domain="math",
+        task_type="research",
+        objective="Exercise launch failure cleanup.",
+    )
+
+    def fail_worker(**_kwargs):
+        raise RuntimeError("synthetic launch failure")
+
+    monkeypatch.setattr("openlabs.engine._launch_worker", fail_worker)
+    report = tick(
+        paths,
+        FactorySettings(
+            launch_jobs=True,
+            max_worker_processes=1,
+            retry_backoff_seconds=0,
+        ),
+    )
+
+    task = db.task("task")
+    attempt = db.task_attempts("task")[0]
+    workspace = find_attempt_workspace(
+        paths,
+        campaign_id="campaign",
+        attempt_id=str(attempt["attempt_id"]),
+    )
+    assert task["status"] == "queued"
+    assert attempt["status"] == "launch_failed"
+    assert workspace is not None
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["status"] == "quarantined"
+    assert "synthetic launch failure" in metadata["quarantine_reason"]
+    assert report.attempts_quarantined[0]["attempt_id"] == attempt["attempt_id"]
+
+
+def test_tick_reconciles_terminal_database_attempt_with_stale_active_metadata(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    db, task = _leased_task(paths)
+    workspace = prepare_attempt_workspace(paths, task, {})
+    attempt_id = str(task["current_attempt_id"])
+    db.fail_launch("task", "historical launch failure", retry_backoff_seconds=60)
+    assert json.loads(workspace.metadata_path.read_text(encoding="utf-8"))["status"] == "active"
+
+    report = tick(paths, FactorySettings(launch_jobs=False))
+
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["status"] == "quarantined"
+    assert metadata["quarantine_reason"] == "reconciled_terminal_attempt:launch_failed"
+    assert report.attempts_quarantined == [
+        {
+            "task_id": "task",
+            "attempt_id": attempt_id,
+            "campaign_id": "campaign",
+            "reason": "reconciled_terminal_attempt:launch_failed",
+        }
+    ]
 
 
 def test_crash_recovery_rolls_back_uncommitted_filesystem_promotion(tmp_path) -> None:
@@ -191,6 +291,11 @@ def test_launch_writes_job_against_private_campaign_copy(tmp_path) -> None:
     assert job["transaction"]["canonical_campaign_workspace"] == str(
         workspace.canonical_campaign_root
     )
+    assert job["runtime_policy"]["sandbox"] == "workspace-write"
+    assert "$openlabs-research-factory" in job["runtime_policy"]["skills"]
+    assert "$math-production-supervisor" in job["runtime_policy"]["skills"]
+    assert (workspace.campaign_root / ".codex" / "hooks.json").is_file()
+    assert (workspace.campaign_root / ".agents" / "skills" / "amra-research-loop").is_symlink()
     assert str(workspace.campaign_root) in job["objective"]
     assert Path(job["output_path"]).is_relative_to(workspace.campaign_root)
 

@@ -31,6 +31,7 @@ ATTEMPT_SCHEMA = "openlabs.attempt_workspace.v1"
 ARCHIVE_SCHEMA = "openlabs.immutable_result_archive.v1"
 _SAFE_NAME = re.compile(r"[^a-zA-Z0-9._-]+")
 _RENAME_EXCHANGE = 2
+_ATTEMPT_RUNTIME_DIRS = frozenset({".agents", ".codex"})
 
 
 class AttemptWorkspaceError(RuntimeError):
@@ -154,6 +155,8 @@ def _tree_manifest(root: Path, *, exclude_results: bool = True) -> dict[str, str
         relative = path.relative_to(root)
         if exclude_results and relative.parts[:1] == ("results",):
             continue
+        if relative.parts[:1] and relative.parts[0] in _ATTEMPT_RUNTIME_DIRS:
+            continue
         if path.is_symlink():
             raise AttemptWorkspaceError(f"Symlinks are not allowed in campaign state: {path}")
         if path.is_file():
@@ -220,7 +223,7 @@ def prepare_attempt_workspace(
         shutil.copytree(
             canonical_campaign,
             temporary_campaign,
-            ignore=shutil.ignore_patterns("results"),
+            ignore=shutil.ignore_patterns("results", *_ATTEMPT_RUNTIME_DIRS),
         )
         plan_value = str(campaign.get("production_plan_path") or "").strip()
         staged_plan: Path | None = None

@@ -80,7 +80,9 @@ def test_result_cannot_cross_campaign_or_domain_boundaries(tmp_path) -> None:
     assert report.ingested == []
     assert report.enqueued == []
     assert any("Result campaign_id mismatch" in error for error in report.errors)
-    assert db.task("task-a")["status"] == "running"
+    assert db.task("task-a")["status"] == "queued"
+    assert db.task("task-a")["current_attempt_id"] is None
+    assert db.task_attempts("task-a")[0]["status"] == "result_rejected"
     assert db.task_count("campaign-b") == 0
     assert not list(paths.result_inbox.glob("*.json"))
 

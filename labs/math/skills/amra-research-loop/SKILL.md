@@ -47,10 +47,12 @@ target_selection
 
 Freeze from any nonterminal phase when no surviving route justifies further allocation. Never skip a phase or edit `campaign_state.json` to bypass a failed gate.
 
-The OpenLabs task is one bounded turn, not permission to run the whole phase graph. At the end of
-the turn, atomically write the required `openlabs.result_bundle.v1` file. Refer to changed campaign
-files and computational evidence by URI and SHA-256; the orchestrator alone decides the factory
-task transition.
+The OpenLabs task is one bounded research episode, not permission to run the whole phase graph. You
+may autonomously perform multiple derivations, representation checks, and kill tests inside the
+current phase, but cross at most one formal phase boundary and never cross an epistemic-role
+boundary. At the end, atomically write the required `openlabs.result_bundle.v1` file. Refer to
+changed campaign files and computational evidence by URI and SHA-256; the orchestrator alone
+decides the factory task transition.
 
 ## Enforce the research contract
 

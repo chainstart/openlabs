@@ -142,10 +142,29 @@ The control plane promotes the staged tree only after a completed result passes 
 cancelled, interrupted, or invalid attempt is quarantined automatically. Never copy staged changes
 to the canonical campaign yourself.
 """
-    return f"""# OpenLabs bounded research task
+    runtime_policy = (
+        task.get("runtime_policy") if isinstance(task.get("runtime_policy"), Mapping) else {}
+    )
+    configured_skills = runtime_policy.get("skills")
+    skill_instruction = (
+        "Invoke and follow "
+        + ", ".join(str(item) for item in configured_skills)
+        + "; read their trusted project copies under `.agents/skills/`."
+        if isinstance(configured_skills, list) and configured_skills
+        else (
+            f"Read and follow the factory coordinator at `{factory_skill}` and the domain Skill "
+            f"at `{task.get('skill_path')}`."
+        )
+    )
+    return f"""# OpenLabs autonomous research task
 
-Read and follow the factory coordinator at `{factory_skill}` and the domain skill at
-`{task.get("skill_path")}`. Work only on this task and its declared inputs.
+{skill_instruction}
+
+Own the analysis, decomposition, tool use, and scientific decisions needed to reach one coherent
+checkpoint. You may perform as many safe intermediate research operations as are useful within the
+declared budget; do not stop at an administrative micro-step when a material evidence advance is
+still feasible. Durable evidence and the result contract, rather than conversational narration,
+define completion.
 
 - task file: `{task.get("_task_file")}`
 - task id: `{task["task_id"]}`
@@ -163,9 +182,9 @@ Read and follow the factory coordinator at `{factory_skill}` and the domain skil
 {independence}
 {transaction_notice}
 
-Write one `openlabs.result_bundle.v1` JSON object to the required result path. Do not write to
-SQLite. Preserve unsupported, negative, and inconclusive outcomes. Do not submit, publish, spend
-unbounded resources, or perform another irreversible external action.
+Before stopping, atomically write one `openlabs.result_bundle.v1` JSON object to the required
+result path. Do not write to SQLite. Preserve unsupported, negative, and inconclusive outcomes. Do
+not submit, publish, spend unbounded resources, or perform another irreversible external action.
 """
 
 
@@ -267,6 +286,215 @@ def _configuration_result(
     )
 
 
+def _remove_flags(command: list[str], names: set[str]) -> list[str]:
+    return [
+        token
+        for token in command
+        if token not in names and not any(token.startswith(f"{name}=") for name in names)
+    ]
+
+
+def _remove_value_options(command: list[str], names: set[str]) -> list[str]:
+    filtered: list[str] = []
+    skip_next = False
+    for token in command:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in names:
+            skip_next = True
+            continue
+        if any(token.startswith(f"{name}=") for name in names):
+            continue
+        filtered.append(token)
+    if skip_next:
+        raise ValueError("Codex command ends with an option that requires a value")
+    return filtered
+
+
+def _config_override_keys(command: list[str]) -> set[str]:
+    keys: set[str] = set()
+    for index, token in enumerate(command):
+        value: str | None = None
+        if token in {"-c", "--config"} and index + 1 < len(command):
+            value = command[index + 1]
+        elif token.startswith(("-c=", "--config=")):
+            value = token.split("=", 1)[1]
+        if value:
+            keys.add(value.split("=", 1)[0].strip())
+    return keys
+
+
+def _prepare_codex_command(
+    command: list[str],
+    *,
+    agent_workspace: Path,
+    trust_generated_hooks: bool,
+) -> list[str]:
+    """Apply the factory's invariant Codex policy without wrapping Codex itself."""
+
+    if Path(command[0]).name != "codex":
+        return command
+    if len(command) < 2 or command[1] != "exec":
+        raise ValueError("The Codex adapter must use `codex exec`")
+    forbidden = {
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--yolo",
+    }
+    if any(
+        token in forbidden or any(token.startswith(f"{name}=") for name in forbidden)
+        for token in command
+    ):
+        raise ValueError("The Codex adapter may not bypass its native sandbox")
+    if any(token == "--add-dir" or token.startswith("--add-dir=") for token in command):
+        raise ValueError("OpenLabs Codex tasks may not add writable directories")
+    if any(
+        (token == "--disable" and index + 1 < len(command) and command[index + 1] == "hooks")
+        or token == "--disable=hooks"
+        for index, token in enumerate(command)
+    ):
+        raise ValueError("OpenLabs Codex tasks require lifecycle hooks")
+    protected_config = {
+        "approval_policy",
+        "features.hooks",
+        "sandbox_mode",
+        "sandbox_permissions",
+        "sandbox_workspace_write.writable_roots",
+    }
+    if _config_override_keys(command) & protected_config:
+        raise ValueError("The Codex adapter may not override factory runtime policy")
+    configured_sandbox = _command_option(command, "--sandbox", "-s")
+    if configured_sandbox not in {None, "workspace-write"}:
+        raise ValueError("OpenLabs Codex tasks require the workspace-write sandbox")
+
+    tail = _remove_value_options(command[2:], {"--sandbox", "-s", "--cd", "-C"})
+    tail = _remove_flags(
+        tail,
+        {
+            "--approve-for-me",
+            "--full-auto",
+            "--json",
+            "--skip-git-repo-check",
+            "--dangerously-bypass-hook-trust",
+        },
+    )
+    policy = [
+        "--approve-for-me",
+        "--enable",
+        "hooks",
+        "--json",
+        "--skip-git-repo-check",
+        "-C",
+        str(agent_workspace),
+    ]
+    if trust_generated_hooks:
+        policy.append("--dangerously-bypass-hook-trust")
+    return [command[0], "exec", *policy, *tail]
+
+
+def _validate_codex_transaction(
+    task: Mapping[str, Any],
+    *,
+    workspace: Path,
+    agent_workspace: Path,
+) -> None:
+    """Prove that the native sandbox root cannot contain authoritative state."""
+
+    transaction = task.get("transaction")
+    if not isinstance(transaction, Mapping) or transaction.get("mode") != (
+        "isolated_attempt_workspace"
+    ):
+        raise ValueError("Codex research tasks require an isolated attempt transaction")
+    attempt_root = Path(str(transaction.get("attempt_root") or "")).expanduser().resolve()
+    staged = Path(str(transaction.get("staged_campaign_workspace") or "")).expanduser().resolve()
+    canonical = (
+        Path(str(transaction.get("canonical_campaign_workspace") or "")).expanduser().resolve()
+    )
+    expected_attempts = (workspace / "openlabs-artifacts" / "attempt-workspaces").resolve()
+    expected_data = (workspace / "openlabs-data").resolve()
+    if not attempt_root.is_relative_to(expected_attempts):
+        raise ValueError("Codex attempt root is outside the artifact transaction store")
+    if staged != agent_workspace or not staged.is_relative_to(attempt_root):
+        raise ValueError("Codex writable root is not the declared private campaign")
+    if not canonical.is_relative_to(expected_data):
+        raise ValueError("Canonical campaign is outside the authoritative data store")
+    if canonical == staged or canonical.is_relative_to(staged) or staged.is_relative_to(canonical):
+        raise ValueError("Canonical and private campaign roots overlap")
+    temporary_roots = {
+        Path(tempfile.gettempdir()).resolve(),
+        Path("/tmp").resolve(),
+        Path("/var/tmp").resolve(),
+        Path("/dev/shm").resolve(),
+    }
+    for root in temporary_roots:
+        if workspace == root or workspace.is_relative_to(root):
+            raise ValueError("Codex factory workspace may not live under a system temporary root")
+        if canonical == root or canonical.is_relative_to(root):
+            raise ValueError("Canonical campaign may not live under a system temporary root")
+
+
+def _seal_result_envelope(
+    task: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    output: Path,
+) -> tuple[bool, str | None]:
+    """Bind transport identity while leaving every scientific field agent-owned."""
+
+    try:
+        raw = json.loads(output.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"Agent result is not readable JSON: {exc}"
+    if not isinstance(raw, dict):
+        return False, "Agent result must be a JSON object"
+    expected = {
+        "schema_version": RESULT_SCHEMA,
+        "task_id": task.get("task_id"),
+        "campaign_id": task.get("campaign_id"),
+        "lab_id": task.get("lab_id") or manifest.get("lab_id"),
+        "domain": task.get("domain") or manifest.get("domain"),
+    }
+    repaired = False
+    for key, value in expected.items():
+        if value is None:
+            continue
+        current = raw.get(key)
+        if current is None or current == "":
+            raw[key] = value
+            repaired = True
+        elif current != value:
+            return False, f"Agent result {key} conflicts with the task identity"
+    if repaired:
+        write_json(output, raw)
+    return repaired, None
+
+
+def _replace_rejected_result(
+    task: dict[str, Any],
+    manifest: dict[str, Any],
+    output: Path,
+    reason: str,
+) -> None:
+    rejected = output.parent / "agent-result-rejected.json"
+    if output.exists():
+        os.replace(output, rejected)
+    write_json(
+        output,
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": task["task_id"],
+            "campaign_id": task["campaign_id"],
+            "lab_id": task.get("lab_id") or manifest["lab_id"],
+            "domain": task.get("domain") or manifest["domain"],
+            "status": "failed",
+            "summary": reason,
+            "artifacts": [],
+            "claims": [],
+            "next_actions": ["Retry from the quarantined checkpoint with a valid result bundle."],
+            "paper_candidate": False,
+        },
+    )
+
+
 def _transaction_sandbox(
     command: list[str],
     task: Mapping[str, Any],
@@ -274,6 +502,8 @@ def _transaction_sandbox(
 ) -> tuple[list[str], str | None]:
     """Make canonical factory state read-only for a transactional research agent."""
 
+    if Path(command[0]).name == "codex":
+        return command, "codex-native-workspace-write"
     transaction = task.get("transaction")
     if not isinstance(transaction, Mapping) or transaction.get("mode") != (
         "isolated_attempt_workspace"
@@ -364,6 +594,27 @@ def _run_agent(
         "{session_id}": session_id,
     }
     agent_command = [replacements.get(token, token) for token in template]
+    if Path(agent_command[0]).name == "codex":
+        _validate_codex_transaction(
+            task,
+            workspace=workspace,
+            agent_workspace=agent_workspace,
+        )
+    runtime_policy = (
+        task.get("runtime_policy") if isinstance(task.get("runtime_policy"), Mapping) else {}
+    )
+    hooks_path = Path(str(runtime_policy.get("hooks") or "")).expanduser()
+    trust_generated_hooks = (
+        runtime_policy.get("schema_version") == "openlabs.codex_runtime.v1"
+        and runtime_policy.get("hook_trust") == "orchestrator-generated"
+        and hooks_path.resolve() == (agent_workspace / ".codex" / "hooks.json").resolve()
+        and hooks_path.is_file()
+    )
+    agent_command = _prepare_codex_command(
+        agent_command,
+        agent_workspace=agent_workspace,
+        trust_generated_hooks=trust_generated_hooks,
+    )
     command, sandbox = _transaction_sandbox(agent_command, task, workspace)
     environment_timeout = max(
         1,
@@ -424,8 +675,21 @@ def _run_agent(
             "termination_signal": termination_signal,
         }
     )
+    if termination_signal is not None:
+        runtime["failure_class"] = "agent_interrupted"
+    elif timed_out:
+        runtime["failure_class"] = "agent_timeout"
+    elif process.returncode != 0:
+        runtime["failure_class"] = "agent_process"
     if output.is_file():
+        repaired, envelope_error = _seal_result_envelope(task, manifest, output)
+        runtime["result_envelope_repaired"] = repaired
+        runtime["result_envelope_error"] = envelope_error
+        if envelope_error:
+            runtime["failure_class"] = "result_contract"
+            _replace_rejected_result(task, manifest, output, envelope_error)
         return runtime
+    runtime["failure_class"] = "agent_transport"
     if termination_signal is not None:
         summary = (
             f"Agent was interrupted by signal {termination_signal} before writing a result bundle."

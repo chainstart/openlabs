@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .agent_runtime import configure_codex_runtime
 from .attempts import (
     AttemptWorkspace,
     attempt_output_path,
@@ -36,7 +37,7 @@ from .contracts import (
     validate_receipt,
     validate_task,
 )
-from .db import FactoryDB
+from .db import AttemptDisposition, FactoryDB
 from .gates import evaluate_result_bundle
 from .labs import discover_labs, lab_for_domain
 from .locking import factory_operation_lock
@@ -176,12 +177,15 @@ def _explicit_terminal_freeze(payload: Mapping[str, Any]) -> bool:
     )
 
 
-def _missing_agent_bundle(payload: Mapping[str, Any]) -> bool:
+def _missing_agent_bundle(
+    payload: Mapping[str, Any],
+    runtime: Mapping[str, Any],
+) -> bool:
     """Identify a runner-level miss before any scientific result was produced."""
 
     return (
         str(payload.get("status") or "") == "needs_replan"
-        and str(payload.get("summary") or "").startswith("Agent exited with code ")
+        and str(runtime.get("failure_class") or "") == "agent_transport"
         and not payload.get("artifacts")
         and not payload.get("claims")
     )
@@ -195,9 +199,7 @@ def _infrastructure_retry_objective(
 
     source: Mapping[str, Any] = task
     visited: set[str] = set()
-    while str(source.get("objective") or "").startswith(
-        "Inspect the bounded agent logs and repair"
-    ):
+    while str(source.get("routing_reason") or "") == "infrastructure_retry":
         parent_id = str(source.get("parent_task_id") or "")
         if not parent_id or parent_id in visited:
             break
@@ -352,21 +354,41 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _recover_interrupted_promotions(
+def _recover_attempt_workspaces(
     db: FactoryDB,
     paths: WorkspacePaths,
     report: TickReport,
 ) -> None:
+    """Reconcile every nonterminal attempt metadata state against the database."""
+
     root = paths.artifacts / "attempt-workspaces"
     for metadata_path in sorted(root.glob("*/*/attempt-workspace.json")):
         try:
             metadata = _read_json_object(metadata_path)
             status = str(metadata.get("status") or "")
-            if status not in {"promotion_pending", "promotion_pending_db"}:
-                continue
             campaign_id = str(metadata.get("campaign_id") or "")
             attempt_id = str(metadata.get("attempt_id") or "")
             task_id = str(metadata.get("task_id") or "")
+            if status == "active":
+                attempt = db.attempt_record(attempt_id)
+                if attempt is None or str(attempt.get("task_id") or "") != task_id:
+                    raise ValueError("active attempt has no matching database record")
+                database_status = str(attempt.get("status") or "")
+                if database_status in {"leased", "running"}:
+                    continue
+                if database_status == "succeeded":
+                    raise ValueError("active attempt conflicts with a succeeded database result")
+                _quarantine_attempt(
+                    paths,
+                    report,
+                    task_id=task_id,
+                    campaign_id=campaign_id,
+                    attempt_id=attempt_id,
+                    reason=f"reconciled_terminal_attempt:{database_status or 'unknown'}",
+                )
+                continue
+            if status not in {"promotion_pending", "promotion_pending_db"}:
+                continue
             workspace = find_attempt_workspace(
                 paths,
                 campaign_id=campaign_id,
@@ -393,7 +415,7 @@ def _recover_interrupted_promotions(
                 }
             )
         except Exception as exc:  # noqa: BLE001
-            report.errors.append(f"Could not recover attempt promotion {metadata_path}: {exc}")
+            report.errors.append(f"Could not recover attempt workspace {metadata_path}: {exc}")
 
 
 def _active_production_lanes(
@@ -514,23 +536,20 @@ def _fallback_production_action(campaign: Mapping[str, Any]) -> ActionPlan:
     lane = _read_json_object(lane_path)
     stage = str(lane.get("stage") or "radar")
     cycle = int(lane.get("cycle") or 1)
-    if stage == "radar":
-        objective = (
-            f"Recover active production lane {campaign['campaign_id']} at radar cycle {cycle}. "
-            f"Read {lane_path} and {plan_path}, then execute exactly one bounded live "
-            "primary-literature radar node under the unchanged selection and evidence gates."
-        )
-    elif stage == "research":
-        objective = (
-            f"Recover active production lane {campaign['campaign_id']} at research cycle {cycle}. "
-            f"Read {lane_path}, {plan_path}, and the selected nested AMRA state; execute exactly "
-            "one bounded next scientific node without weakening any gate."
-        )
-    else:
+    if stage not in {"radar", "research"}:
         objective = (
             f"Recover terminal production lane {campaign['campaign_id']} from {lane_path}. "
             "Preserve its terminal evidence and return no successor work. The control plane "
             "must pause this lane until administrator-owned desired state changes."
+        )
+    else:
+        objective = (
+            f"Resume active production lane {campaign['campaign_id']} at stage {stage}, cycle "
+            f"{cycle}. Read {lane_path}, {plan_path}, all durable lane checkpoints, and the "
+            "assigned Skills. Autonomously choose and execute the highest-information admissible "
+            "research episode that materially advances or falsifies the lane, then leave one "
+            "coherent evidence-bound checkpoint and an executable continuation. Preserve every "
+            "configured scientific and transaction gate."
         )
     return ActionPlan(
         objective=objective,
@@ -548,7 +567,8 @@ def _binding_repair_objective(task: Mapping[str, Any]) -> str:
         "present local files. Preserve the prior scientific status, claims, limitations, failed "
         "v1/v2 evidence, and executable next action unchanged. Do not repeat the literature "
         "audit, generate CNF, start a solver, or begin downstream science. Re-run all local "
-        f"artifact checks before returning. Gate error: {task.get('last_error')}"
+        "artifact checks before returning. The prior result gate classified this as an artifact "
+        f"binding defect. Gate detail: {task.get('last_error')}"
     )
 
 
@@ -695,10 +715,15 @@ def _replenish_continuous_campaign(
     )
     action = action or _fallback_production_action(campaign)
     status = str(latest.get("status") or "") if latest else ""
+    result_runtime = db.result_runtime(str(latest["task_id"])) if latest else {}
+    failure_classes = (
+        result_runtime.get("gate_failure_classes") if isinstance(result_runtime, Mapping) else None
+    )
     binding_failure = bool(
         latest
         and status == "needs_replan"
-        and "must use a verifiable local file URI" in str(latest.get("last_error") or "")
+        and isinstance(failure_classes, list)
+        and "artifact_binding" in failure_classes
     )
     if binding_failure:
         action = ActionPlan(
@@ -870,6 +895,50 @@ def _archive_receipt(receipt: Path, paths: WorkspacePaths, *, keep: bool) -> Non
     receipt.replace(target)
 
 
+def _quarantine_attempt(
+    paths: WorkspacePaths,
+    report: TickReport,
+    *,
+    task_id: str,
+    campaign_id: str,
+    attempt_id: str,
+    reason: str,
+) -> None:
+    if not attempt_id:
+        return
+    metadata = quarantine_attempt_workspace(
+        paths,
+        campaign_id=campaign_id,
+        attempt_id=attempt_id,
+        reason=reason,
+    )
+    if metadata is None:
+        return
+    report.attempts_quarantined.append(
+        {
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "campaign_id": campaign_id,
+            "reason": reason,
+        }
+    )
+
+
+def _apply_attempt_disposition(
+    paths: WorkspacePaths,
+    report: TickReport,
+    disposition: AttemptDisposition,
+) -> None:
+    _quarantine_attempt(
+        paths,
+        report,
+        task_id=disposition.task_id,
+        campaign_id=disposition.campaign_id,
+        attempt_id=disposition.attempt_id,
+        reason=disposition.reason,
+    )
+
+
 def ingest_results(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -907,34 +976,58 @@ def ingest_results(
                         f"Receipt {key} mismatch for {task_id}: "
                         f"{receipt.get(key)!r} != {expected_value!r}"
                     )
+            runtime = dict(receipt["runtime"])
             result_path = Path(str(receipt["result_path"])).expanduser().resolve()
-            if not _inside(result_path, roots):
-                raise ValueError(f"Result is outside data/artifact roots: {result_path}")
-            expected_result = Path(str(task.get("output_path") or "")).resolve()
-            if result_path != expected_result:
-                raise ValueError(f"Receipt points to the wrong output path for {task_id}")
-            actual_sha = sha256_file(result_path)
-            if actual_sha != receipt["sha256"]:
-                raise ValueError(f"Result hash mismatch for {task_id}")
-            payload = json.loads(result_path.read_text(encoding="utf-8"))
-            if not isinstance(payload, Mapping):
-                raise TypeError(f"Result bundle is not an object: {result_path}")
-            payload_identity = {
-                "task_id": task_id,
-                "campaign_id": task["campaign_id"],
-                "lab_id": task["lab_id"],
-                "domain": task["domain"],
-            }
-            for key, expected_value in payload_identity.items():
-                if payload.get(key) != expected_value:
-                    raise ValueError(f"Result {key} mismatch for {task_id}")
+            actual_sha: str | None = None
+            try:
+                if not _inside(result_path, roots):
+                    raise ValueError(f"Result is outside data/artifact roots: {result_path}")
+                configured_output = str(task.get("output_path") or "").strip()
+                if not configured_output:
+                    raise ValueError(f"Task {task_id} has no bound output path")
+                expected_result = Path(configured_output).resolve()
+                if result_path != expected_result:
+                    raise ValueError(f"Receipt points to the wrong output path for {task_id}")
+                actual_sha = sha256_file(result_path)
+                if actual_sha != receipt["sha256"]:
+                    raise ValueError(f"Result hash mismatch for {task_id}")
+                payload = json.loads(result_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, Mapping):
+                    raise TypeError(f"Result bundle is not an object: {result_path}")
+                payload_identity = {
+                    "task_id": task_id,
+                    "campaign_id": task["campaign_id"],
+                    "lab_id": task["lab_id"],
+                    "domain": task["domain"],
+                }
+                for key, expected_value in payload_identity.items():
+                    if payload.get(key) != expected_value:
+                        raise ValueError(f"Result {key} mismatch for {task_id}")
+            except Exception as exc:  # noqa: BLE001
+                reason = f"result_rejected:{exc}"
+                disposition = db.reject_attempt(
+                    task_id,
+                    attempt_id=attempt_id,
+                    reason=reason,
+                    result_path=str(result_path),
+                    result_sha256=actual_sha,
+                    run_seconds=float(runtime.get("duration_seconds") or 0.0),
+                    runtime=runtime,
+                    retry_backoff_seconds=settings.retry_backoff_seconds,
+                )
+                _apply_attempt_disposition(paths, report, disposition)
+                if disposition.status == "quarantined":
+                    report.quarantined.append(task_id)
+                report.errors.append(f"Rejected result for {task_id}: {exc}")
+                _archive_receipt(receipt_path, paths, keep=settings.archive_result_receipts)
+                continue
+            assert actual_sha is not None
             gate = evaluate_result_bundle(payload, allowed_roots=roots)
             attempt_workspace = find_attempt_workspace(
                 paths,
                 campaign_id=str(task["campaign_id"]),
                 attempt_id=attempt_id,
             )
-            runtime = dict(receipt["runtime"])
             result_status = str(payload.get("status") or "failed")
             runtime_error: str | None = None
             if bool(runtime.get("timed_out")):
@@ -1000,43 +1093,32 @@ def ingest_results(
                     result_status = "needs_replan"
                     runtime["transaction_error"] = transaction_error
                     if attempt_workspace is not None:
-                        quarantine_attempt_workspace(
+                        _quarantine_attempt(
                             paths,
+                            report,
+                            task_id=task_id,
                             campaign_id=str(task["campaign_id"]),
                             attempt_id=attempt_id,
                             reason=transaction_error,
-                        )
-                        report.attempts_quarantined.append(
-                            {
-                                "task_id": task_id,
-                                "attempt_id": attempt_id,
-                                "campaign_id": str(task["campaign_id"]),
-                                "reason": transaction_error,
-                            }
                         )
             elif attempt_workspace is not None:
                 reason = runtime_error or (
                     "; ".join(gate.blockers) if gate.blockers else f"result_status:{result_status}"
                 )
-                quarantine_attempt_workspace(
+                _quarantine_attempt(
                     paths,
+                    report,
+                    task_id=task_id,
                     campaign_id=str(task["campaign_id"]),
                     attempt_id=attempt_id,
                     reason=reason,
-                )
-                report.attempts_quarantined.append(
-                    {
-                        "task_id": task_id,
-                        "attempt_id": attempt_id,
-                        "campaign_id": str(task["campaign_id"]),
-                        "reason": reason,
-                    }
                 )
             errors = [*gate.blockers]
             if runtime_error:
                 errors.append(runtime_error)
             if transaction_error:
                 errors.append(transaction_error)
+            runtime["gate_failure_classes"] = list(gate.failure_classes)
             try:
                 final_status = db.ingest_result(
                     task_id,
@@ -1377,7 +1459,7 @@ def ingest_results(
                 objective = next_plan.objective
                 target_role = next_plan.agent_role
                 session_mode = next_plan.session_mode
-                infrastructure_retry = is_replan and _missing_agent_bundle(payload)
+                infrastructure_retry = is_replan and _missing_agent_bundle(payload, runtime)
                 if is_replan:
                     target_role = "researcher"
                     session_mode = "fresh"
@@ -1510,6 +1592,24 @@ def _write_task_spec(
         "resources": task_resources(task).to_dict(),
         "budget": {"wall_seconds": max(1, int(wall_seconds))},
     }
+    skill_dirs = [
+        paths.code / "orchestrator" / "skills" / "openlabs-research-factory",
+    ]
+    lab_skills = manifest_path.parent / "skills"
+    if lab_skills.is_dir():
+        skill_dirs.extend(
+            candidate
+            for candidate in sorted(lab_skills.iterdir())
+            if candidate.is_dir() and (candidate / "SKILL.md").is_file()
+        )
+    if skill_path is not None and skill_path.parent not in skill_dirs:
+        skill_dirs.append(skill_path.parent)
+    payload["runtime_policy"] = configure_codex_runtime(
+        agent_workspace,
+        task=payload,
+        output_path=output_path,
+        skill_dirs=skill_dirs,
+    )
     validation = validate_task(payload)
     if not validation.valid:
         raise ValueError("; ".join(validation.errors))
@@ -1616,7 +1716,7 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     db.initialize()
     report = TickReport()
 
-    _recover_interrupted_promotions(db, paths, report)
+    _recover_attempt_workspaces(db, paths, report)
 
     # An active production plan is desired state: bind its lanes before processing
     # completions so a safety-window boundary can roll over instead of going idle.
@@ -1628,6 +1728,8 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     report.recovered.extend(recovery.requeued)
     report.quarantined.extend(recovery.quarantined)
     report.cancelled.extend(recovery.cancelled)
+    for disposition in recovery.attempts:
+        _apply_attempt_disposition(paths, report, disposition)
     if settings.auto_continue:
         _replenish_continuous_campaigns(db, paths, settings, report)
     report.budget_stopped.extend(db.stop_budget_exhausted_tasks())
@@ -1653,11 +1755,14 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
                 report.launched.append(str(task["task_id"]))
             # A lab-specific launch failure must not crash the scheduler process.
             except Exception as exc:  # noqa: BLE001
-                db.fail_launch(
+                disposition = db.fail_launch(
                     str(task["task_id"]),
                     str(exc),
                     settings.retry_backoff_seconds,
                 )
+                _apply_attempt_disposition(paths, report, disposition)
+                if disposition.status == "quarantined":
+                    report.quarantined.append(str(task["task_id"]))
                 report.errors.append(f"Could not launch {task['task_id']}: {exc}")
                 break
 

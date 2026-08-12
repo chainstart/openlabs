@@ -26,7 +26,14 @@ def _start_task(db: FactoryDB, task_id: str, output: str, *, lab_id: str) -> dic
     return db.task(task_id) or {}
 
 
-def _receipt(task: dict, result: str, digest: str, *, session_id: str | None = None) -> dict:
+def _receipt(
+    task: dict,
+    result: str,
+    digest: str,
+    *,
+    session_id: str | None = None,
+    failure_class: str | None = None,
+) -> dict:
     return {
         "schema_version": RECEIPT_SCHEMA,
         "task_id": task["task_id"],
@@ -41,6 +48,7 @@ def _receipt(task: dict, result: str, digest: str, *, session_id: str | None = N
             "duration_seconds": 1.0,
             "exit_code": 0,
             "session_id": session_id,
+            "failure_class": failure_class,
         },
     }
 
@@ -268,7 +276,7 @@ def test_missing_agent_bundle_retries_the_original_objective(tmp_path) -> None:
             "lab_id": "math",
             "domain": "math",
             "status": "needs_replan",
-            "summary": "Agent exited with code 0 without a result bundle.",
+            "summary": "No scientific result bundle was emitted.",
             "artifacts": [],
             "claims": [],
             "next_actions": [
@@ -280,7 +288,12 @@ def test_missing_agent_bundle_retries_the_original_objective(tmp_path) -> None:
     task = _start_task(db, "research-infra", str(result), lab_id="math")
     atomic_write_json(
         paths.result_inbox / "research-infra.json",
-        _receipt(task, str(result), sha256_file(result)),
+        _receipt(
+            task,
+            str(result),
+            sha256_file(result),
+            failure_class="agent_transport",
+        ),
     )
 
     report = TickReport()

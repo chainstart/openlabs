@@ -1,4 +1,4 @@
 interface:
   display_name: "OpenLabs Research Factory"
-  short_description: "Coordinate one recoverable autonomous research step"
-  default_prompt: "Use $openlabs-research-factory to advance one validated step of the selected research campaign."
+  short_description: "Coordinate one autonomous, recoverable research episode"
+  default_prompt: "Use $openlabs-research-factory to autonomously advance the selected campaign to its next evidence-bound checkpoint."
