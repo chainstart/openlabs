@@ -52,6 +52,8 @@ class FactorySettings:
     max_attempts: int = 3
     retry_backoff_seconds: int = 120
     auto_continue: bool = True
+    # Lifetime limit for bounded campaigns; renewable per-epoch limit for
+    # campaigns bound to an active production plan.
     max_auto_tasks_per_campaign: int = 24
     max_task_wall_seconds: int = 14_400
     max_campaign_agent_seconds: int = 86_400
@@ -118,7 +120,13 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
         max_attempts=_positive_int(factory.get("max_attempts"), 3),
         retry_backoff_seconds=_positive_int(factory.get("retry_backoff_seconds"), 120),
         auto_continue=bool(factory.get("auto_continue", True)),
-        max_auto_tasks_per_campaign=_positive_int(factory.get("max_auto_tasks_per_campaign"), 24),
+        max_auto_tasks_per_campaign=_positive_int(
+            factory.get(
+                "max_auto_tasks_per_epoch",
+                factory.get("max_auto_tasks_per_campaign"),
+            ),
+            24,
+        ),
         max_task_wall_seconds=_positive_int(factory.get("max_task_wall_seconds"), 14_400),
         max_campaign_agent_seconds=_positive_int(factory.get("max_campaign_agent_seconds"), 86_400),
         launch_jobs=bool(factory.get("launch_jobs", True)),

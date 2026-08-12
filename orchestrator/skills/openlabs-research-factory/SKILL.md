@@ -21,6 +21,13 @@ Do not read SQLite directly and never update it. The deterministic tick owns lea
 transitions. Communicate only through the task file, campaign files, immutable artifacts, and the
 result bundle.
 
+When the task declares `transaction.mode: isolated_attempt_workspace`, every writable campaign
+path in the task already points to a private staged copy. Write only there and use only staged
+`file://` URIs in the result. Never edit or copy files into the declared canonical campaign path.
+The control plane is the sole committer: a validated completed node is promoted atomically; an
+interrupted, cancelled, failed, or rejected node remains a quarantined checkpoint and cannot alter
+the authoritative lane.
+
 ## Obey the Agent boundary
 
 Treat `agent.role` and `agent.session_mode` as authority, not suggestions. One OS process performs
@@ -85,3 +92,7 @@ End with:
 - limitations and remaining uncertainty;
 - bounded next actions;
 - one of `completed`, `failed`, `needs_replan`, `needs_human`, or `quarantined`.
+
+Do not bind a supported claim directly to a live mutable lane file. The control plane snapshots
+every referenced artifact into an immutable result archive before ingestion; if the bytes change
+between emission and snapshot, the node is rejected and its attempt workspace is quarantined.

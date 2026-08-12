@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -126,6 +127,21 @@ def _agent_request(task: dict[str, Any], manifest: dict[str, Any], output: Path)
         if agent["role"] == "reviewer"
         else "Keep conclusions inside this role; do not review or approve your own work."
     )
+    transaction = task.get("transaction") if isinstance(task.get("transaction"), Mapping) else {}
+    transaction_notice = ""
+    if transaction.get("mode") == "isolated_attempt_workspace":
+        transaction_notice = f"""
+This task runs in an isolated transaction workspace:
+
+- writable staged campaign: `{transaction.get("staged_campaign_workspace")}`
+- canonical campaign (do not write): `{transaction.get("canonical_campaign_workspace")}`
+- promotion rule: `{transaction.get("promotion_policy")}`
+
+Use only staged paths for every edit, generated proof object, state transition, and artifact URI.
+The control plane promotes the staged tree only after a completed result passes all gates. A failed,
+cancelled, interrupted, or invalid attempt is quarantined automatically. Never copy staged changes
+to the canonical campaign yourself.
+"""
     return f"""# OpenLabs bounded research task
 
 Read and follow the factory coordinator at `{factory_skill}` and the domain skill at
@@ -145,6 +161,7 @@ Read and follow the factory coordinator at `{factory_skill}` and the domain skil
 - required result path: `{output}`
 
 {independence}
+{transaction_notice}
 
 Write one `openlabs.result_bundle.v1` JSON object to the required result path. Do not write to
 SQLite. Preserve unsupported, negative, and inconclusive outcomes. Do not submit, publish, spend
@@ -250,6 +267,35 @@ def _configuration_result(
     )
 
 
+def _transaction_sandbox(
+    command: list[str],
+    task: Mapping[str, Any],
+    workspace: Path,
+) -> tuple[list[str], str | None]:
+    """Make canonical factory state read-only for a transactional research agent."""
+
+    transaction = task.get("transaction")
+    if not isinstance(transaction, Mapping) or transaction.get("mode") != (
+        "isolated_attempt_workspace"
+    ):
+        return command, None
+    bubblewrap = shutil.which("bwrap")
+    if bubblewrap is None:
+        raise RuntimeError("bubblewrap is required for isolated attempt workspaces")
+    attempt_root = Path(str(transaction["attempt_root"])).expanduser().resolve()
+    if not attempt_root.is_dir() or not attempt_root.is_relative_to(workspace):
+        raise ValueError("Transaction attempt_root is missing or outside OPENLABS_WORKSPACE")
+    sandbox = [bubblewrap, "--die-with-parent", "--bind", "/", "/"]
+    for relative in ("openlabs", "openlabs-data", "openlabs-artifacts", "openlabs-database"):
+        root = (workspace / relative).resolve()
+        if root.exists():
+            sandbox.extend(["--ro-bind", str(root), str(root)])
+    # A nested writable bind overrides the read-only artifact-store mount.
+    sandbox.extend(["--bind", str(attempt_root), str(attempt_root), "--"])
+    sandbox.extend(command)
+    return sandbox, "bubblewrap"
+
+
 def _run_agent(
     task: dict[str, Any],
     manifest: dict[str, Any],
@@ -317,7 +363,8 @@ def _run_agent(
         "{task_file}": str(task.get("_task_file") or ""),
         "{session_id}": session_id,
     }
-    command = [replacements.get(token, token) for token in template]
+    agent_command = [replacements.get(token, token) for token in template]
+    command, sandbox = _transaction_sandbox(agent_command, task, workspace)
     environment_timeout = max(
         1,
         int(os.environ.get("OPENLABS_AGENT_TIMEOUT_SECONDS", "14400")),
@@ -339,10 +386,15 @@ def _run_agent(
             start_new_session=True,
         )
         previous_handlers: dict[int, Any] = {}
+        termination_signal: int | None = None
 
         def forward_termination(signum: int, _frame: Any) -> None:
+            nonlocal termination_signal
+            if termination_signal is None:
+                termination_signal = signum
             _terminate_process_group(process)
-            raise SystemExit(128 + signum)
+            # Return to _run_agent so it can atomically persist a retryable bundle and
+            # runtime metadata; raising here recreates an opaque exit-143 attempt.
 
         for signum in (signal.SIGTERM, signal.SIGINT):
             previous_handlers[signum] = signal.getsignal(signum)
@@ -359,24 +411,35 @@ def _run_agent(
     runtime = _jsonl_runtime(stdout_path)
     runtime.update(
         {
-            "adapter": Path(command[0]).name,
-            "adapter_version": _adapter_version(command),
+            "adapter": Path(agent_command[0]).name,
+            "adapter_version": _adapter_version(agent_command),
             "runner": runner,
-            "profile": _command_option(command, "--profile", "-p"),
-            "configured_model": _command_option(command, "--model", "-m"),
+            "profile": _command_option(agent_command, "--profile", "-p"),
+            "configured_model": _command_option(agent_command, "--model", "-m"),
+            "filesystem_sandbox": sandbox,
             "resumed_from": session_id or None,
             "timed_out": timed_out,
             "agent_exit_code": process.returncode,
+            "interrupted": termination_signal is not None,
+            "termination_signal": termination_signal,
         }
     )
     if output.is_file():
         return runtime
-    if timed_out:
+    if termination_signal is not None:
+        summary = (
+            f"Agent was interrupted by signal {termination_signal} before writing a result bundle."
+        )
+        status = "failed"
+        next_action = "Resume this task from its persisted checkpoint and bounded agent session."
+    elif timed_out:
         summary = f"Agent exceeded its bounded {timeout} second timeout."
         status = "needs_replan"
+        next_action = "Inspect the bounded agent logs and replan the task within its budget."
     else:
         summary = f"Agent exited with code {process.returncode} without a result bundle."
         status = "needs_replan" if process.returncode == 0 else "failed"
+        next_action = "Inspect the bounded agent logs and repair the runner or task prompt."
     write_json(
         output,
         {
@@ -389,9 +452,7 @@ def _run_agent(
             "summary": summary,
             "artifacts": [],
             "claims": [],
-            "next_actions": [
-                "Inspect the bounded agent logs and repair the runner or task prompt."
-            ],
+            "next_actions": [next_action],
             "paper_candidate": False,
         },
     )

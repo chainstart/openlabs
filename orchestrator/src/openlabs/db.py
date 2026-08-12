@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 ACTIVE_STATUSES = ("leased", "running")
 AGENT_ROLES = ("researcher", "experimenter", "writer", "reviewer")
 SESSION_MODES = ("resume", "fresh")
@@ -58,6 +58,7 @@ def bounded_elapsed(started_at: str | None, finished_at: str, limit: int) -> flo
 class RecoverySummary:
     requeued: tuple[str, ...]
     quarantined: tuple[str, ...]
+    cancelled: tuple[str, ...]
 
 
 class FactoryDB:
@@ -106,6 +107,14 @@ class FactoryDB:
                     source TEXT,
                     max_agent_seconds INTEGER NOT NULL DEFAULT 86400,
                     agent_seconds_used REAL NOT NULL DEFAULT 0,
+                    continuous INTEGER NOT NULL DEFAULT 0,
+                    production_plan_path TEXT,
+                    production_lane_path TEXT,
+                    production_epoch INTEGER NOT NULL DEFAULT 1,
+                    epoch_agent_seconds_used REAL NOT NULL DEFAULT 0,
+                    rollover_count INTEGER NOT NULL DEFAULT 0,
+                    last_rollover_at TEXT,
+                    last_rollover_reason TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -128,6 +137,7 @@ class FactoryDB:
                     session_mode TEXT NOT NULL DEFAULT 'resume',
                     agent_session_id TEXT,
                     session_source_task_id TEXT,
+                    campaign_epoch INTEGER NOT NULL DEFAULT 1,
                     status TEXT NOT NULL DEFAULT 'queued',
                     priority INTEGER NOT NULL DEFAULT 0,
                     attempt INTEGER NOT NULL DEFAULT 0,
@@ -211,10 +221,13 @@ class FactoryDB:
             )
             self._migrate_v3(connection)
             self._migrate_v4(connection)
+            self._migrate_v5(connection)
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS task_attempts_task_idx
                     ON task_attempts(task_id, attempt_number);
+                CREATE INDEX IF NOT EXISTS tasks_campaign_epoch_idx
+                    ON tasks(campaign_id, campaign_epoch, status);
                 """
             )
             connection.execute(
@@ -285,6 +298,45 @@ class FactoryDB:
             "task_attempts",
             "resources_json TEXT NOT NULL DEFAULT '{}'",
         )
+
+    @classmethod
+    def _migrate_v5(cls, connection: sqlite3.Connection) -> None:
+        """Add renewable production epochs without erasing lifetime accounting."""
+
+        campaign_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(campaigns)").fetchall()
+        }
+        task_columns = {
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(tasks)").fetchall()
+        }
+        had_epoch_usage = "epoch_agent_seconds_used" in campaign_columns
+        had_task_epoch = "campaign_epoch" in task_columns
+        for definition in (
+            "continuous INTEGER NOT NULL DEFAULT 0",
+            "production_plan_path TEXT",
+            "production_lane_path TEXT",
+            "production_epoch INTEGER NOT NULL DEFAULT 1",
+            "epoch_agent_seconds_used REAL NOT NULL DEFAULT 0",
+            "rollover_count INTEGER NOT NULL DEFAULT 0",
+            "last_rollover_at TEXT",
+            "last_rollover_reason TEXT",
+        ):
+            cls._add_column(connection, "campaigns", definition)
+        cls._add_column(connection, "tasks", "campaign_epoch INTEGER NOT NULL DEFAULT 1")
+        if not had_epoch_usage:
+            connection.execute("UPDATE campaigns SET epoch_agent_seconds_used=agent_seconds_used")
+        if not had_task_epoch:
+            connection.execute(
+                """
+                UPDATE tasks
+                SET campaign_epoch=COALESCE(
+                    (SELECT production_epoch FROM campaigns
+                     WHERE campaigns.campaign_id=tasks.campaign_id),
+                    1
+                )
+                """
+            )
 
     @staticmethod
     def _event(
@@ -370,6 +422,274 @@ class FactoryDB:
             event = "campaign_registered" if existing is None else "campaign_updated"
             self._event(connection, "campaign", campaign_id, event)
 
+    def configure_continuous_campaign(
+        self,
+        campaign_id: str,
+        *,
+        production_plan_path: str,
+        production_lane_path: str,
+        priority: int | None = None,
+    ) -> bool:
+        """Bind an administrator-owned active production lane to a renewable epoch."""
+
+        now = utc_now()
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT status, continuous, production_plan_path,
+                       production_lane_path, priority
+                FROM campaigns WHERE campaign_id=?
+                """,
+                (campaign_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(campaign_id)
+            status = str(row["status"])
+            if status not in {"active", "production_paused"}:
+                raise ValueError(f"Campaign {campaign_id} cannot be activated from status {status}")
+            desired_priority = int(row["priority"]) if priority is None else int(priority)
+            desired = (
+                "active",
+                1,
+                production_plan_path,
+                production_lane_path,
+                desired_priority,
+            )
+            if tuple(row) == desired:
+                return False
+            connection.execute(
+                """
+                UPDATE campaigns
+                SET status='active', continuous=1, production_plan_path=?,
+                    production_lane_path=?, priority=?, updated_at=?
+                WHERE campaign_id=?
+                """,
+                (
+                    production_plan_path,
+                    production_lane_path,
+                    desired_priority,
+                    now,
+                    campaign_id,
+                ),
+            )
+            self._event(
+                connection,
+                "campaign",
+                campaign_id,
+                "continuous_production_configured",
+                {
+                    "production_plan_path": production_plan_path,
+                    "production_lane_path": production_lane_path,
+                    "priority": desired_priority,
+                },
+            )
+        return True
+
+    def production_campaigns(self) -> list[dict[str, Any]]:
+        """Return every campaign ever bound to administrator production state."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM campaigns
+                WHERE production_plan_path IS NOT NULL
+                   OR production_lane_path IS NOT NULL
+                   OR continuous=1
+                ORDER BY campaign_id
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def pause_production_campaign(self, campaign_id: str, *, reason: str) -> tuple[str, ...]:
+        """Stop renewal for a lane that disappeared from active desired state.
+
+        Queued work is cancelled immediately. A currently leased/running node may finish,
+        but its expired lease is cancelled rather than requeued and result ingestion cannot
+        create a successor while the campaign is paused.
+        """
+
+        now = utc_now()
+        cancelled: list[str] = []
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            campaign = connection.execute(
+                "SELECT status, continuous FROM campaigns WHERE campaign_id=?",
+                (campaign_id,),
+            ).fetchone()
+            if campaign is None:
+                raise KeyError(campaign_id)
+            prior_status = str(campaign["status"])
+            target_status = (
+                "production_paused"
+                if prior_status in {"active", "production_paused"}
+                else prior_status
+            )
+            rows = connection.execute(
+                """
+                SELECT task_id FROM tasks
+                WHERE campaign_id=? AND status='queued'
+                ORDER BY task_id
+                """,
+                (campaign_id,),
+            ).fetchall()
+            cancelled = [str(row["task_id"]) for row in rows]
+            connection.execute(
+                """
+                UPDATE tasks
+                SET status='cancelled', not_before=NULL,
+                    last_error=?, updated_at=?
+                WHERE campaign_id=? AND status='queued'
+                """,
+                (f"production_paused:{reason}", now, campaign_id),
+            )
+            connection.execute(
+                """
+                UPDATE campaigns
+                SET status=?, continuous=0, updated_at=?
+                WHERE campaign_id=?
+                """,
+                (target_status, now, campaign_id),
+            )
+            if prior_status != target_status or bool(campaign["continuous"]) or cancelled:
+                self._event(
+                    connection,
+                    "campaign",
+                    campaign_id,
+                    "continuous_production_paused",
+                    {
+                        "reason": reason,
+                        "prior_status": prior_status,
+                        "cancelled_tasks": cancelled,
+                    },
+                )
+        return tuple(cancelled)
+
+    def cancel_queued_tasks_for_inactive_campaigns(self) -> tuple[str, ...]:
+        """Remove stale queue entries that can never be admitted by the scheduler."""
+
+        now = utc_now()
+        cancelled: list[str] = []
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                SELECT tasks.task_id, campaigns.status AS campaign_status
+                FROM tasks
+                JOIN campaigns USING(campaign_id)
+                WHERE tasks.status='queued' AND campaigns.status!='active'
+                ORDER BY tasks.task_id
+                """
+            ).fetchall()
+            for row in rows:
+                task_id = str(row["task_id"])
+                error = f"campaign_not_active:{row['campaign_status']}"
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status='cancelled', not_before=NULL, last_error=?, updated_at=?
+                    WHERE task_id=? AND status='queued'
+                    """,
+                    (error, now, task_id),
+                )
+                self._event(
+                    connection,
+                    "task",
+                    task_id,
+                    "task_cancelled",
+                    {"reason": error},
+                )
+                cancelled.append(task_id)
+        return tuple(cancelled)
+
+    def cancel_active_tasks(
+        self,
+        campaign_ids: Iterable[str],
+        *,
+        reason: str,
+    ) -> tuple[dict[str, Any], ...]:
+        """Atomically cancel leased/running work and account its bounded elapsed time.
+
+        Process termination is deliberately left to the control plane.  Returning the
+        recorded worker PIDs lets a supervised shutdown stop both transient systemd
+        workers and pre-upgrade detached process groups without leaving authoritative
+        task state at ``running``.
+        """
+
+        selected = tuple(sorted({str(item).strip() for item in campaign_ids if str(item).strip()}))
+        if not selected:
+            return ()
+        now = utc_now()
+        placeholders = ",".join("?" for _ in selected)
+        cancelled: list[dict[str, Any]] = []
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                f"""
+                SELECT tasks.task_id, tasks.campaign_id, tasks.status,
+                       tasks.current_attempt_id, tasks.worker_pid,
+                       tasks.max_wall_seconds, task_attempts.started_at
+                FROM tasks
+                LEFT JOIN task_attempts
+                  ON task_attempts.attempt_id=tasks.current_attempt_id
+                WHERE tasks.campaign_id IN ({placeholders})
+                  AND tasks.status IN ('leased', 'running')
+                ORDER BY tasks.task_id
+                """,
+                selected,
+            ).fetchall()
+            for row in rows:
+                task_id = str(row["task_id"])
+                campaign_id = str(row["campaign_id"])
+                attempt_id = str(row["current_attempt_id"] or "")
+                elapsed = bounded_elapsed(
+                    str(row["started_at"]) if row["started_at"] else None,
+                    now,
+                    int(row["max_wall_seconds"]),
+                )
+                error = f"operator_cancelled:{reason}"
+                updated = connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status='cancelled', lease_owner=NULL, lease_expires_at=NULL,
+                        worker_pid=NULL, current_attempt_id=NULL, not_before=NULL,
+                        last_error=?, updated_at=?
+                    WHERE task_id=? AND status IN ('leased', 'running')
+                    """,
+                    (error, now, task_id),
+                ).rowcount
+                if updated != 1:
+                    continue
+                if attempt_id:
+                    connection.execute(
+                        """
+                        UPDATE task_attempts
+                        SET status='cancelled', finished_at=?, run_seconds=?, error=?
+                        WHERE attempt_id=? AND status IN ('leased', 'running')
+                        """,
+                        (now, elapsed, error, attempt_id),
+                    )
+                connection.execute(
+                    """
+                    UPDATE campaigns
+                    SET agent_seconds_used=agent_seconds_used+?,
+                        epoch_agent_seconds_used=epoch_agent_seconds_used+?,
+                        updated_at=?
+                    WHERE campaign_id=?
+                    """,
+                    (elapsed, elapsed, now, campaign_id),
+                )
+                item = {
+                    "task_id": task_id,
+                    "campaign_id": campaign_id,
+                    "attempt_id": attempt_id or None,
+                    "worker_pid": int(row["worker_pid"]) if row["worker_pid"] else None,
+                    "run_seconds": elapsed,
+                    "reason": reason,
+                }
+                self._event(connection, "task", task_id, "task_cancelled", item)
+                cancelled.append(item)
+        return tuple(cancelled)
+
     def enqueue_task(
         self,
         *,
@@ -418,7 +738,7 @@ class FactoryDB:
                 raise ValueError(f"{name} must be a positive integer")
         with self.connect() as connection:
             campaign = connection.execute(
-                "SELECT domain, status FROM campaigns WHERE campaign_id=?",
+                "SELECT domain, status, production_epoch FROM campaigns WHERE campaign_id=?",
                 (campaign_id,),
             ).fetchone()
             if campaign is None:
@@ -490,10 +810,11 @@ class FactoryDB:
                     task_id, campaign_id, domain, task_type, objective, input_path,
                     requested_output_path, skill_path, runner, routing_reason,
                     parent_task_id, agent_role, session_mode, agent_session_id,
-                    session_source_task_id, status, priority, max_attempts, not_before,
+                    session_source_task_id, campaign_epoch, status, priority,
+                    max_attempts, not_before,
                     max_wall_seconds, cpu_threads, memory_mib, scratch_mib,
                     created_at, updated_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                          'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -512,6 +833,7 @@ class FactoryDB:
                     mode,
                     agent_session_id,
                     session_source_task_id,
+                    int(campaign["production_epoch"]),
                     priority,
                     max(1, int(max_attempts)),
                     not_before,
@@ -640,6 +962,132 @@ class FactoryDB:
             ).fetchone()
         return int(row["n"])
 
+    def current_epoch_task_count(self, campaign_id: str) -> int:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS n
+                FROM tasks
+                JOIN campaigns USING(campaign_id)
+                WHERE tasks.campaign_id=?
+                  AND tasks.campaign_epoch=campaigns.production_epoch
+                """,
+                (campaign_id,),
+            ).fetchone()
+        return int(row["n"])
+
+    def has_active_tasks(self, campaign_id: str) -> bool:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM tasks
+                WHERE campaign_id=? AND status IN ('leased', 'running')
+                LIMIT 1
+                """,
+                (campaign_id,),
+            ).fetchone()
+        return row is not None
+
+    def has_queued_tasks(self, campaign_id: str) -> bool:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM tasks WHERE campaign_id=? AND status='queued' LIMIT 1",
+                (campaign_id,),
+            ).fetchone()
+        return row is not None
+
+    def latest_task(self, campaign_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM tasks
+                WHERE campaign_id=?
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (campaign_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def continuous_campaigns(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM campaigns
+                WHERE continuous=1 AND status='active'
+                ORDER BY priority DESC, campaign_id
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def rollover_campaign_epoch(
+        self,
+        campaign_id: str,
+        *,
+        reason: str,
+        source_task_id: str | None = None,
+    ) -> int:
+        """Renew a continuous lane while retaining all lifetime tasks and usage."""
+
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            campaign = connection.execute(
+                """
+                SELECT continuous, status, production_epoch, epoch_agent_seconds_used
+                FROM campaigns WHERE campaign_id=?
+                """,
+                (campaign_id,),
+            ).fetchone()
+            if campaign is None:
+                raise KeyError(campaign_id)
+            if not bool(campaign["continuous"]):
+                raise ValueError(f"Campaign {campaign_id} is not continuous")
+            if str(campaign["status"]) != "active":
+                raise ValueError(f"Campaign {campaign_id} is not active")
+            active = connection.execute(
+                """
+                SELECT COUNT(*) AS n FROM tasks
+                WHERE campaign_id=? AND status IN ('leased', 'running')
+                """,
+                (campaign_id,),
+            ).fetchone()
+            if int(active["n"]):
+                raise ValueError(f"Campaign {campaign_id} still has an active task")
+            old_epoch = int(campaign["production_epoch"])
+            new_epoch = old_epoch + 1
+            connection.execute(
+                """
+                UPDATE campaigns
+                SET production_epoch=?, epoch_agent_seconds_used=0,
+                    rollover_count=rollover_count+1, last_rollover_at=?,
+                    last_rollover_reason=?, updated_at=?
+                WHERE campaign_id=?
+                """,
+                (new_epoch, now, reason, now, campaign_id),
+            )
+            connection.execute(
+                """
+                UPDATE tasks SET campaign_epoch=?, updated_at=?
+                WHERE campaign_id=? AND status='queued'
+                """,
+                (new_epoch, now, campaign_id),
+            )
+            self._event(
+                connection,
+                "campaign",
+                campaign_id,
+                "production_epoch_rolled",
+                {
+                    "old_epoch": old_epoch,
+                    "new_epoch": new_epoch,
+                    "reason": reason,
+                    "source_task_id": source_task_id,
+                    "epoch_agent_seconds_used": float(campaign["epoch_agent_seconds_used"]),
+                },
+            )
+        return new_epoch
+
     def claim_next_task(
         self,
         *,
@@ -660,12 +1108,26 @@ class FactoryDB:
                     return None
             rows = connection.execute(
                 """
-                SELECT tasks.*, campaigns.max_agent_seconds, campaigns.agent_seconds_used
+                SELECT tasks.*, campaigns.max_agent_seconds, campaigns.agent_seconds_used,
+                       campaigns.continuous, campaigns.production_epoch,
+                       campaigns.epoch_agent_seconds_used
                 FROM tasks
                 JOIN campaigns USING(campaign_id)
                 WHERE tasks.status = 'queued'
                   AND campaigns.status = 'active'
-                  AND campaigns.agent_seconds_used + 1 <= campaigns.max_agent_seconds
+                  AND (
+                      (campaigns.continuous=1
+                       AND campaigns.epoch_agent_seconds_used + 1
+                           <= campaigns.max_agent_seconds)
+                      OR
+                      (campaigns.continuous=0
+                       AND campaigns.agent_seconds_used + 1
+                           <= campaigns.max_agent_seconds)
+                  )
+                  AND (
+                      campaigns.continuous=0
+                      OR tasks.campaign_epoch=campaigns.production_epoch
+                  )
                   AND (tasks.not_before IS NULL OR tasks.not_before <= ?)
                   AND NOT EXISTS (
                       SELECT 1 FROM tasks active
@@ -852,37 +1314,48 @@ class FactoryDB:
         now = utc_now()
         requeued: list[str] = []
         quarantined: list[str] = []
+        cancelled: list[str] = []
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
                 """
-                SELECT task_id, campaign_id, attempt, max_attempts, current_attempt_id,
-                       max_wall_seconds
+                SELECT tasks.task_id, tasks.campaign_id, tasks.attempt,
+                       tasks.max_attempts, tasks.current_attempt_id,
+                       tasks.max_wall_seconds, campaigns.status AS campaign_status
                 FROM tasks
-                WHERE status IN ('leased', 'running')
-                  AND lease_expires_at IS NOT NULL
-                  AND lease_expires_at < ?
-                ORDER BY task_id
+                JOIN campaigns USING(campaign_id)
+                WHERE tasks.status IN ('leased', 'running')
+                  AND tasks.lease_expires_at IS NOT NULL
+                  AND tasks.lease_expires_at < ?
+                ORDER BY tasks.task_id
                 """,
                 (now,),
             ).fetchall()
             for row in rows:
                 task_id = str(row["task_id"])
                 exhausted = int(row["attempt"]) >= int(row["max_attempts"])
-                status = "quarantined" if exhausted else "queued"
+                campaign_active = str(row["campaign_status"]) == "active"
+                status = (
+                    "cancelled" if not campaign_active else "quarantined" if exhausted else "queued"
+                )
                 not_before = (
                     None
-                    if exhausted
+                    if status != "queued"
                     else retry_not_before(int(row["attempt"]), retry_backoff_seconds)
+                )
+                recovery_error = (
+                    "lease_expired"
+                    if campaign_active
+                    else f"lease_expired_while_campaign_{row['campaign_status']}"
                 )
                 connection.execute(
                     """
                     UPDATE tasks SET status=?, lease_owner=NULL, lease_expires_at=NULL,
                         worker_pid=NULL, current_attempt_id=NULL, output_path=NULL,
-                        not_before=?, updated_at=?, last_error='lease_expired'
+                        not_before=?, updated_at=?, last_error=?
                     WHERE task_id=?
                     """,
-                    (status, not_before, now, task_id),
+                    (status, not_before, now, recovery_error, task_id),
                 )
                 attempt_id = str(row["current_attempt_id"] or "")
                 elapsed = 0.0
@@ -898,19 +1371,27 @@ class FactoryDB:
                     )
                     connection.execute(
                         """
-                        UPDATE task_attempts SET status='lease_expired', finished_at=?,
-                            run_seconds=?, error='lease_expired'
+                        UPDATE task_attempts SET status=?, finished_at=?,
+                            run_seconds=?, error=?
                         WHERE attempt_id=? AND status IN ('leased', 'running')
                         """,
-                        (now, elapsed, attempt_id),
+                        (
+                            status if status == "cancelled" else "lease_expired",
+                            now,
+                            elapsed,
+                            recovery_error,
+                            attempt_id,
+                        ),
                     )
                     connection.execute(
                         """
                         UPDATE campaigns
-                        SET agent_seconds_used=agent_seconds_used+?, updated_at=?
+                        SET agent_seconds_used=agent_seconds_used+?,
+                            epoch_agent_seconds_used=epoch_agent_seconds_used+?,
+                            updated_at=?
                         WHERE campaign_id=?
                         """,
-                        (elapsed, now, str(row["campaign_id"])),
+                        (elapsed, elapsed, now, str(row["campaign_id"])),
                     )
                 self._event(
                     connection,
@@ -923,8 +1404,13 @@ class FactoryDB:
                         "run_seconds": elapsed,
                     },
                 )
-                (quarantined if exhausted else requeued).append(task_id)
-        return RecoverySummary(tuple(requeued), tuple(quarantined))
+                if status == "cancelled":
+                    cancelled.append(task_id)
+                elif status == "quarantined":
+                    quarantined.append(task_id)
+                else:
+                    requeued.append(task_id)
+        return RecoverySummary(tuple(requeued), tuple(quarantined), tuple(cancelled))
 
     def fail_launch(
         self,
@@ -1090,10 +1576,13 @@ class FactoryDB:
             )
             connection.execute(
                 """
-                UPDATE campaigns SET agent_seconds_used=agent_seconds_used+?, updated_at=?
+                UPDATE campaigns
+                SET agent_seconds_used=agent_seconds_used+?,
+                    epoch_agent_seconds_used=epoch_agent_seconds_used+?,
+                    updated_at=?
                 WHERE campaign_id=?
                 """,
-                (bounded_seconds, now, str(row["campaign_id"])),
+                (bounded_seconds, bounded_seconds, now, str(row["campaign_id"])),
             )
             connection.execute(
                 """
@@ -1147,7 +1636,8 @@ class FactoryDB:
                 """
                 SELECT campaign_id, agent_seconds_used, max_agent_seconds
                 FROM campaigns
-                WHERE status='active' AND agent_seconds_used + 1 > max_agent_seconds
+                WHERE status='active' AND continuous=0
+                  AND agent_seconds_used + 1 > max_agent_seconds
                 ORDER BY campaign_id
                 """
             ).fetchall()

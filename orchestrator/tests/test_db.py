@@ -135,6 +135,101 @@ def test_expired_task_obeys_retry_backoff(tmp_path) -> None:
     assert db.claim_next_task(owner="too-early", lease_seconds=60) is None
 
 
+def test_expired_task_from_paused_production_is_cancelled_not_requeued(tmp_path) -> None:
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    db.register_campaign("route", domain="math", title="Route")
+    db.configure_continuous_campaign(
+        "route",
+        production_plan_path="/data/production_plan.json",
+        production_lane_path="/data/production_lane.json",
+    )
+    db.enqueue_task(
+        task_id="in-flight",
+        campaign_id="route",
+        domain="math",
+        task_type="research",
+        objective="Do not resurrect after route retirement.",
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=60)
+    assert task is not None
+    db.mark_running(
+        "in-flight",
+        attempt_id=str(task["current_attempt_id"]),
+        owner="test",
+        pid=123,
+        lease_seconds=60,
+    )
+    db.pause_production_campaign("route", reason="plan_retired")
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET lease_expires_at='2000-01-01T00:00:00Z' WHERE task_id='in-flight'"
+        )
+
+    recovery = db.recover_expired()
+
+    assert recovery.requeued == ()
+    assert recovery.quarantined == ()
+    assert recovery.cancelled == ("in-flight",)
+    assert db.task("in-flight")["status"] == "cancelled"
+
+
+def test_stale_queue_of_inactive_campaign_is_cancelled(tmp_path) -> None:
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    db.register_campaign("paused", domain="math", title="Paused")
+    db.enqueue_task(
+        task_id="stale",
+        campaign_id="paused",
+        domain="math",
+        task_type="research",
+        objective="Must not remain queued after campaign pause.",
+    )
+    db.register_campaign("paused", domain="math", title="Paused", status="paused")
+
+    assert db.cancel_queued_tasks_for_inactive_campaigns() == ("stale",)
+    assert db.task("stale")["status"] == "cancelled"
+
+
+def test_operator_cancellation_stops_active_attempt_and_accounts_time(tmp_path) -> None:
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    db.register_campaign("route", domain="math", title="Route")
+    db.enqueue_task(
+        task_id="in-flight",
+        campaign_id="route",
+        domain="math",
+        task_type="research",
+        objective="Stop cleanly at the run deadline.",
+        max_wall_seconds=3600,
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=60)
+    assert task is not None
+    attempt_id = str(task["current_attempt_id"])
+    db.mark_running(
+        "in-flight",
+        attempt_id=attempt_id,
+        owner="test",
+        pid=4321,
+        lease_seconds=60,
+    )
+
+    cancelled = db.cancel_active_tasks(("route",), reason="timebox_expired")
+
+    assert len(cancelled) == 1
+    assert cancelled[0]["task_id"] == "in-flight"
+    assert cancelled[0]["worker_pid"] == 4321
+    assert cancelled[0]["run_seconds"] >= 0
+    row = db.task("in-flight")
+    assert row["status"] == "cancelled"
+    assert row["worker_pid"] is None
+    assert row["current_attempt_id"] is None
+    attempt = db.task_attempts("in-flight")[0]
+    assert attempt["status"] == "cancelled"
+    assert attempt["error"] == "operator_cancelled:timebox_expired"
+    assert db.campaign("route")["agent_seconds_used"] == cancelled[0]["run_seconds"]
+
+
 def test_sessions_cannot_cross_roles_or_enter_reviewer_tasks(tmp_path) -> None:
     db = FactoryDB(tmp_path / "factory.sqlite")
     db.initialize()
@@ -252,6 +347,65 @@ def test_global_concurrency_and_campaign_time_budget_are_hard_limits(tmp_path) -
     assert db.task("campaign-1:next")["status"] == "needs_human"
     next_task = db.claim_next_task(owner="two", lease_seconds=60, max_active=1)
     assert next_task is not None and next_task["campaign_id"] == "campaign-2"
+
+
+def test_continuous_campaign_renews_budget_without_erasing_lifetime_usage(tmp_path) -> None:
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    db.register_campaign(
+        "continuous",
+        domain="math",
+        title="Continuous lane",
+        max_agent_seconds=10,
+    )
+    db.configure_continuous_campaign(
+        "continuous",
+        production_plan_path="/data/production_plan.json",
+        production_lane_path="/data/production_lane.json",
+    )
+    db.enqueue_task(
+        task_id="epoch-1",
+        campaign_id="continuous",
+        domain="math",
+        task_type="research",
+        objective="Use the first production window.",
+    )
+    with db.connect() as connection:
+        connection.execute("UPDATE tasks SET status='succeeded' WHERE task_id='epoch-1'")
+        connection.execute(
+            """
+            UPDATE campaigns
+            SET agent_seconds_used=12, epoch_agent_seconds_used=12
+            WHERE campaign_id='continuous'
+            """
+        )
+
+    assert db.stop_budget_exhausted_tasks() == []
+    assert db.campaign("continuous")["status"] == "active"
+    assert (
+        db.rollover_campaign_epoch(
+            "continuous",
+            reason="agent_time_window_exhausted",
+            source_task_id="epoch-1",
+        )
+        == 2
+    )
+    db.enqueue_task(
+        task_id="epoch-2",
+        campaign_id="continuous",
+        domain="math",
+        task_type="research",
+        objective="Use the renewed production window.",
+    )
+
+    campaign = db.campaign("continuous")
+    assert campaign["agent_seconds_used"] == 12
+    assert campaign["epoch_agent_seconds_used"] == 0
+    assert campaign["rollover_count"] == 1
+    assert db.task("epoch-1")["campaign_epoch"] == 1
+    assert db.task("epoch-2")["campaign_epoch"] == 2
+    claimed = db.claim_next_task(owner="test", lease_seconds=60)
+    assert claimed is not None and claimed["task_id"] == "epoch-2"
 
 
 def test_overlapping_claims_cannot_overbook_resources(tmp_path) -> None:

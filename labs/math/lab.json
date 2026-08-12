@@ -12,6 +12,10 @@
       "path": "skills/amra-research-loop/SKILL.md"
     },
     {
+      "skill_id": "math-production-supervisor",
+      "path": "skills/math-production-supervisor/SKILL.md"
+    },
+    {
       "skill_id": "openlabs-math-paper",
       "path": "../../workflows/paper/skills/openlabs-math-paper/SKILL.md"
     },

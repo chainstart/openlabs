@@ -1,0 +1,7 @@
+[Unit]
+Description=OpenLabs continuous research factory
+Wants=openlabs-workers.target openlabs-tick.timer
+After=openlabs-workers.target
+
+[Install]
+WantedBy=default.target

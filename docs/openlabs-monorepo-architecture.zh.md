@@ -367,13 +367,12 @@ python -m openlabs tick
     └── 保存状态并退出
 ~~~
 
-3 分钟只是调度和回收的检查周期，不是 worker 超时。有效租约上的 worker 脱离 tick 运行，
-可以跨越任意多个 tick，直到节点完成、硬超时或失去租约。
-
-第一版把长任务启动为脱离 tick 会话的 worker，并由 SQLite 心跳/租约监督；systemd unit 使用
-`KillMode=process`，因此 oneshot tick 结束不会清理 worker。同一 worker 在退出、超时或主机
-重启后由后续 tick 接收结果、重排或隔离。未来需要更强的资源/cgroup 控制时，再把 worker
-提升为 transient systemd user service，而不改变 task/result 文件协议。
+3 分钟只是调度和回收的检查周期，不是 worker 超时。有效租约上的 worker 由 tick 启动为
+`openlabs-worker-*.service` transient systemd user service，位于独立的
+`openlabs-workers.slice`，可以跨越任意多个 tick，直到节点完成、硬超时或失去租约。这样
+oneshot tick 自身保持无子进程，后续 tick 不会遇到遗留 cgroup；停止
+`openlabs-factory.target` 会同时停止 timer 与完整 worker 进程组。科学恢复仍由 SQLite
+心跳/租约负责，task/result 文件协议不依赖 systemd unit 生命周期。
 
 ### 6.2 故障和死循环处理
 
@@ -384,15 +383,18 @@ systemd 只能保证进程被启动，科学恢复必须由工厂 watchdog 实�
 | 进程退出/结果失败 | 有限重试、指数退避；达到次数上限后隔离 |
 | worker 失去租约 | 终止 lab/Agent 进程组，等待后续 tick 重排 |
 | Agent 无输出或命令死循环 | 达到任务硬超时后终止进程组并进入重新规划 |
+| Agent 在截止前只写了一半状态 | attempt 私有工作树被隔离；正式 campaign 保持逐字节不变 |
+| 结果引用随后会变化的 lane/state 文件 | 入库前复制为 attempt 专属不可变证据，后续节点只读取归档 |
+| 文件提升后、SQLite 入库前崩溃 | 下个加锁 tick 根据事务日志自动回滚；若数据库已成功则完成清理 |
 | 科学路线陷入僵局 | 合法 `NEEDS_REPLAN` 自动用 `frontier` runner 建立一个新任务 |
 | 可逆决策十字路口 | Agent 可在单个有界任务内启动互不写冲突的子 Agent 分支 |
 | 高成本或不可逆决策 | 进入 `NEEDS_HUMAN`，停止该链但继续其他 campaign |
-| 连续成功但无实质进展 | 由领域状态门、每 campaign 任务数上限和 24 小时累计 Agent 运行时上限停止 |
+| 连续成功但无实质进展 | 由领域状态门冻结当前路线；活动生产计划回收产线并从新 radar 周期继续 |
 
-工厂连续性的定义是：任何单个任务都可以暂停、隔离或等待管理员，但不能阻塞其他研究任务。
-个人最小版本不自动扫描 40 个 campaign 决定“全局最值得做什么”；管理员为一个 campaign
-播种首任务后，Agent 的受门禁 `next_actions` 驱动后继。待积累真实运行成本和质量数据后，
-再增加独立的组合级选题 Agent，避免一开始制造一个昂贵且不可审计的总管会话。
+工厂连续性的定义是：任何单个任务都可以暂停、隔离或等待管理员，但不能阻塞其他研究任务；
+活动 `production_plan.json` 中的产线还必须在安全窗口换轮后自动补种。控制面不凭空扫描全部
+历史 campaign，而是把管理员已批准的生产计划当作期望状态，读取各 lane 的证据门、冻结记录
+和受门禁 `next_actions`。每轮任务数和 Agent 时间仍是熔断窗口，但不再是连续产线的永久寿命。
 
 ### 6.3 Agent 进程、角色和会话
 

@@ -130,6 +130,21 @@ def validate_task(payload: Any) -> ValidationResult:
     for field_name in ("lab_manifest", "agent_workspace", "run_metadata_path"):
         if not _text(payload.get(field_name)):
             errors.append(f"{field_name} must be a non-empty string")
+    transaction = payload.get("transaction")
+    if transaction is not None:
+        if not isinstance(transaction, Mapping):
+            errors.append("transaction must be an object")
+        else:
+            if transaction.get("mode") != "isolated_attempt_workspace":
+                errors.append("transaction.mode must be isolated_attempt_workspace")
+            for field_name in (
+                "attempt_root",
+                "staged_campaign_workspace",
+                "canonical_campaign_workspace",
+                "promotion_policy",
+            ):
+                if not _text(transaction.get(field_name)):
+                    errors.append(f"transaction.{field_name} must be a non-empty string")
     attempt = payload.get("attempt")
     if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
         errors.append("attempt must be a positive integer")
@@ -267,6 +282,13 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
             handoff_kind = action.get("handoff_kind")
             if handoff_kind is not None and _text(handoff_kind) not in HANDOFF_KINDS:
                 errors.append(f"{prefix}.handoff_kind must be one of {sorted(HANDOFF_KINDS)}")
+            wall_seconds = action.get("wall_seconds")
+            if wall_seconds is not None and (
+                not isinstance(wall_seconds, int)
+                or isinstance(wall_seconds, bool)
+                or wall_seconds < 1
+            ):
+                errors.append(f"{prefix}.wall_seconds must be a positive integer")
             resources = action.get("resources")
             if resources is not None:
                 if not isinstance(resources, Mapping):

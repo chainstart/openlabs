@@ -13,7 +13,7 @@ python3 -m openlabs status
 python3 -m openlabs tick
 ```
 
-`init` 也会把现有本地 SQLite 以加列方式迁移到 v4；不会删除 campaign、task 或研究索引。
+`init` 也会把现有本地 SQLite 以加列方式迁移到 v5；不会删除 campaign、task 或研究索引。
 
 继续当前数学 campaign 的最小任务示例（先不要启用 timer）：
 
@@ -41,16 +41,20 @@ worker 的寿命：tick 先接收完成结果，再回收过期租约，最后�
 能放下的新任务；仍有心跳和有效租约的 worker 会跨越许多 tick 继续运行。队首任务暂时放不下
 时会保留排队并尝试其他 campaign。单个任务失败、等待人工或被隔离，不会阻塞其他 campaign。
 
-管理员只需播种第一个有界任务。默认情况下，通过门禁的结果若给出 `next_actions`，控制面
-只取第一项生成一个后继任务；合法的 `needs_replan` 自动升级到 `frontier`，而
-`needs_human`、隔离、无下一步或达到 `max_auto_tasks_per_campaign` 会停止该链。可在
-`config/openlabs.toml` 设置 `auto_continue = false`，将系统切回每步人工排队模式。
+普通有界 campaign 只需播种第一个任务。通过门禁的结果若给出 `next_actions`，控制面只取
+第一项生成后继；合法的 `needs_replan` 自动升级到 `frontier`，而 `needs_human`、隔离、
+无下一步或达到任务上限会停止该链。被活动 `production_plan.json` 声明的产线则是持久期望
+状态：控制面自动绑定、在空闲时从产线状态或最后结果补种任务，并在任务数或 Agent 时间窗口
+耗尽后换到新 `production_epoch`。历史任务和累计用量不删除，只重置本轮安全窗口。因此
+`max_auto_tasks_per_epoch` 是连续产线的单轮保险，而不是工厂寿命。可将 `auto_continue = false`
+切回每步人工排队模式；这不会关闭生产计划的状态同步。
 
 每个 campaign 同时只运行一个任务。默认单任务预留 2 个 CPU 线程、4 GiB 内存和 4 GiB
-临时盘，最多运行 4 小时；每个 campaign 累计 Agent 运行时间最多 24 小时。主机默认保留
+临时盘，最多运行 4 小时；普通 campaign 的 Agent 运行时间累计上限为 24 小时，连续产线则
+每个生产轮次拥有同样的 24 小时窗口并保留终身累计账本。主机默认保留
 2 个 CPU 线程、8 GiB 内存和 64 GiB 磁盘不给工厂使用。`max_worker_processes = 8` 只是
-异常保险，不是日常并发目标。预算耗尽后该 campaign 的排队任务转为 `NEEDS_HUMAN`，不会
-占用其他 campaign 的资源。
+异常保险，不是日常并发目标。普通 campaign 预算耗尽后排队任务转为 `NEEDS_HUMAN`；连续
+产线在没有运行中任务时换轮并继续。两者都不会占用其他 campaign 的资源。
 
 ## Agent runner
 
@@ -104,10 +108,11 @@ Packy key。第一位 Codex 审阅结果先冻结；适配器只计算其 SHA-25
 
 ```bash
 mkdir -p "$HOME/.config/systemd/user"
-cp deploy/systemd/openlabs-tick.service deploy/systemd/openlabs-tick.timer \
+cp deploy/systemd/openlabs-factory.target deploy/systemd/openlabs-workers.target \
+  deploy/systemd/openlabs-tick.service deploy/systemd/openlabs-tick.timer \
   "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
-systemctl --user enable --now openlabs-tick.timer
+systemctl --user enable --now openlabs-factory.target
 systemctl --user status openlabs-tick.timer
 journalctl --user -u openlabs-tick.service
 ```
@@ -115,8 +120,33 @@ journalctl --user -u openlabs-tick.service
 若 OpenLabs 不在默认 `$HOME/work/projects/openlabs`，先修改复制后的 unit。停机使用：
 
 ```bash
-systemctl --user disable --now openlabs-tick.timer
+systemctl --user disable --now openlabs-factory.target
 ```
+
+该命令同时停止调度 timer 和 `openlabs-worker-*.service` 的完整进程组；仅停止
+`openlabs-tick.timer` 不等于全厂停机。
+
+有绝对截止时间的试运行应通过控制面停机，以便计划、campaign、task 和 attempt 状态与
+进程同时收敛，而不是只杀进程：
+
+```bash
+python3 -m openlabs halt-production \
+  --plan "$OPENLABS_WORKSPACE/openlabs-data/workspaces/math/production/example/production_plan.json" \
+  --reason timebox_expired \
+  --report "$OPENLABS_WORKSPACE/openlabs-data/workspaces/math/production/example/timebox_stop_report.json"
+```
+
+该命令把计划置为 `paused_timebox_complete`，取消所属排队与运行任务、结算已用 Agent 时间、
+终止已登记 worker 进程组，并停用 `openlabs-factory.target`。如需准点运行，应由独立于 factory
+target 的 persistent systemd timer 调用此命令；否则停机动作会随 factory 一起被停止。
+
+每个 Agent attempt 在 `openlabs-artifacts/attempt-workspaces/` 的私有 campaign 副本中写入。
+worker 使用 bubblewrap 将代码、正式数据、证据归档和数据库重新挂载为只读，仅将本 attempt
+目录重新挂载为可写；若本机缺少 bubblewrap，事务型任务拒绝启动而不会降级为共享写入。
+只有状态为完成、通过文件门禁且所有证据已复制到 `openlabs-artifacts/result-bundles/` 不可变
+归档的节点，才会以目录交换方式提升到正式 campaign；数据库确认入库前保留原目录作为回滚
+副本。取消、超时、失败和门禁拒绝的 attempt 只留下带原因的隔离 checkpoint。tick 与
+`halt-production` 共用跨进程排他锁，因此截止停机不能与结果提升交错执行。
 
 systemd 只保证 tick 被再次调用；科学恢复由 SQLite 租约、心跳、超时、有限重试、结果
 门禁和 `quarantined`/`needs_replan` 状态负责。Agent 有界超时后会终止其进程组。复杂且

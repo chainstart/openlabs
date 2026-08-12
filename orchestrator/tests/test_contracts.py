@@ -79,6 +79,7 @@ def test_contract_accepts_typed_review_remediation_resources() -> None:
             "agent_role": "experimenter",
             "session_mode": "fresh",
             "handoff_kind": "evidence_remediation",
+            "wall_seconds": 2400,
             "resources": {
                 "cpu_threads": 4,
                 "memory_mib": 8192,
@@ -88,6 +89,12 @@ def test_contract_accepts_typed_review_remediation_resources() -> None:
     ]
 
     assert validate_result_bundle(result).valid
+
+    result["next_actions"][0]["wall_seconds"] = 0
+    validation = validate_result_bundle(result)
+    assert not validation.valid
+    assert any("wall_seconds" in error for error in validation.errors)
+    result["next_actions"][0]["wall_seconds"] = 2400
 
     result["next_actions"][0]["resources"]["memory_mib"] = 0
     validation = validate_result_bundle(result)

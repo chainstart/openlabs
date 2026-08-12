@@ -52,12 +52,14 @@ def test_independent_replication_forces_a_fresh_same_role_session() -> None:
             "agent_role": "experimenter",
             "session_mode": "resume",
             "handoff_kind": "independent_replication",
+            "wall_seconds": 2400,
         },
         current_role="experimenter",
     )
 
     assert plan is not None
     assert plan.session_mode == "fresh"
+    assert plan.wall_seconds == 2400
 
 
 def test_valid_next_action_enqueues_one_bounded_successor(tmp_path) -> None:
@@ -118,6 +120,58 @@ def test_valid_next_action_enqueues_one_bounded_successor(tmp_path) -> None:
     assert successor["agent_role"] == "researcher"
     assert successor["agent_session_id"] == "session-1"
     assert successor["parent_task_id"] == "research-1"
+
+
+def test_explicit_freeze_does_not_execute_prose_next_action(tmp_path) -> None:
+    paths = WorkspacePaths(
+        workspace=tmp_path,
+        code=tmp_path / "openlabs",
+        data=tmp_path / "data",
+        artifacts=tmp_path / "artifacts",
+        database=tmp_path / "database",
+        database_file=tmp_path / "database" / "live" / "factory.sqlite",
+    )
+    paths.ensure_runtime_directories()
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign("campaign-freeze", domain="math", title="Campaign")
+    db.enqueue_task(
+        task_id="audit-freeze",
+        campaign_id="campaign-freeze",
+        domain="math",
+        task_type="research",
+        objective="Independently audit the frozen result.",
+        skill_path="amra-research-loop",
+        runner="frontier",
+    )
+    result = atomic_write_json(
+        paths.data / "workspaces" / "math" / "campaign-freeze" / "result.json",
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": "audit-freeze",
+            "campaign_id": "campaign-freeze",
+            "lab_id": "math",
+            "domain": "math",
+            "status": "completed",
+            "summary": "The local theorem reconstructs, but promotion is frozen.",
+            "artifacts": [],
+            "claims": [],
+            "next_actions": ["Do not initiate paper writing or promotion."],
+            "paper_candidate": False,
+            "gate_result": {"promotion_decision": "freeze"},
+        },
+    )
+    task = _start_task(db, "audit-freeze", str(result), lab_id="math")
+    atomic_write_json(
+        paths.result_inbox / "audit-freeze.json",
+        _receipt(task, str(result), sha256_file(result), session_id="audit-session"),
+    )
+
+    report = TickReport()
+    ingest_results(db, paths, FactorySettings(max_auto_tasks_per_campaign=2), report)
+
+    assert report.enqueued == []
+    assert db.task("audit-freeze")["status"] == "succeeded"
 
 
 def test_needs_replan_escalates_but_needs_human_stops(tmp_path) -> None:
@@ -181,6 +235,66 @@ def test_needs_replan_escalates_but_needs_human_stops(tmp_path) -> None:
     assert successor["agent_session_id"] is None
 
 
+def test_missing_agent_bundle_retries_the_original_objective(tmp_path) -> None:
+    paths = WorkspacePaths(
+        workspace=tmp_path,
+        code=tmp_path / "openlabs",
+        data=tmp_path / "data",
+        artifacts=tmp_path / "artifacts",
+        database=tmp_path / "database",
+        database_file=tmp_path / "database" / "live" / "factory.sqlite",
+    )
+    paths.ensure_runtime_directories()
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign("campaign-infra", domain="math", title="Campaign")
+    original_objective = "Run the frozen first kill test without changing the target."
+    db.enqueue_task(
+        task_id="research-infra",
+        campaign_id="campaign-infra",
+        domain="math",
+        task_type="research_continue",
+        objective=original_objective,
+        skill_path="math-production-supervisor",
+        runner="frontier",
+        max_wall_seconds=3600,
+    )
+    result = atomic_write_json(
+        paths.data / "workspaces" / "math" / "campaign-infra" / "result.json",
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": "research-infra",
+            "campaign_id": "campaign-infra",
+            "lab_id": "math",
+            "domain": "math",
+            "status": "needs_replan",
+            "summary": "Agent exited with code 0 without a result bundle.",
+            "artifacts": [],
+            "claims": [],
+            "next_actions": [
+                "Inspect the bounded agent logs and repair the runner or task prompt."
+            ],
+            "paper_candidate": False,
+        },
+    )
+    task = _start_task(db, "research-infra", str(result), lab_id="math")
+    atomic_write_json(
+        paths.result_inbox / "research-infra.json",
+        _receipt(task, str(result), sha256_file(result)),
+    )
+
+    report = TickReport()
+    ingest_results(db, paths, FactorySettings(max_auto_tasks_per_campaign=3), report)
+
+    assert len(report.enqueued) == 1
+    successor = db.task(report.enqueued[0])
+    assert successor is not None
+    assert successor["routing_reason"] == "infrastructure_retry"
+    assert original_objective in successor["objective"]
+    assert successor["session_mode"] == "fresh"
+    assert successor["max_wall_seconds"] == 3600
+
+
 def test_structured_handoff_starts_an_independent_experimenter(tmp_path) -> None:
     paths = WorkspacePaths(
         workspace=tmp_path,
@@ -241,7 +355,8 @@ def test_structured_handoff_starts_an_independent_experimenter(tmp_path) -> None
     assert successor["agent_role"] == "experimenter"
     assert successor["session_mode"] == "fresh"
     assert successor["agent_session_id"] is None
-    assert successor["input_path"] == str(result)
+    assert successor["input_path"] == db.task("design-experiment")["result_path"]
+    assert "result-bundles" in successor["input_path"]
     assert successor["routing_reason"] == "role_handoff"
 
 

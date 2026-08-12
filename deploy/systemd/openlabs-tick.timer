@@ -1,5 +1,6 @@
 [Unit]
 Description=Run the OpenLabs research factory continuously
+PartOf=openlabs-factory.target
 
 [Timer]
 OnBootSec=2min
@@ -10,4 +11,4 @@ RandomizedDelaySec=15s
 Unit=openlabs-tick.service
 
 [Install]
-WantedBy=timers.target
+WantedBy=openlabs-factory.target

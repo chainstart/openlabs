@@ -1,17 +1,21 @@
 [Unit]
 Description=OpenLabs one-shot research factory tick
-After=default.target
+PartOf=openlabs-factory.target
+After=default.target openlabs-workers.target
 
 [Service]
 Type=oneshot
-# Detached workers outlive this one-shot tick; SQLite leases supervise them.
+# Each worker is launched as a transient service in openlabs-workers.slice.
+# Keep pre-upgrade detached workers alive until their current bounded node exits.
 KillMode=process
 WorkingDirectory=%h/work/projects/openlabs/openlabs
 Environment=OPENLABS_WORKSPACE=%h/work/projects/openlabs
 EnvironmentFile=-%h/.config/openlabs/env
+EnvironmentFile=-%h/.config/environment.d/90-openlabs-proxy.conf
+PassEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
 ExecStart=/usr/bin/env PYTHONPATH=%h/work/projects/openlabs/openlabs/orchestrator/src /usr/bin/python3 -m openlabs tick
 Nice=5
 TimeoutStartSec=5min
 
 [Install]
-WantedBy=default.target
+WantedBy=openlabs-factory.target
