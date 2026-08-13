@@ -354,7 +354,8 @@ def test_codex_uses_native_workspace_sandbox_and_generated_hooks(tmp_path) -> No
     assert wrapped == command
     assert command[:2] == ["codex", "exec"]
     assert "--approve-for-me" in command
-    assert "--sandbox" not in command
+    assert command[command.index("--sandbox") + 1] == "workspace-write"
+    assert "sandbox_workspace_write.network_access=true" in command
     assert command[command.index("-C") + 1] == str(workspace)
     assert command.count("--json") == 1
     assert "--dangerously-bypass-hook-trust" in command
@@ -425,6 +426,19 @@ def test_codex_adapter_rejects_sandbox_bypass(tmp_path) -> None:
     with pytest.raises(ValueError, match="runtime policy"):
         runner._prepare_codex_command(
             ["codex", "exec", "-c", 'sandbox_mode="danger-full-access"', "-"],
+            agent_workspace=tmp_path,
+            trust_generated_hooks=False,
+        )
+
+    with pytest.raises(ValueError, match="runtime policy"):
+        runner._prepare_codex_command(
+            [
+                "codex",
+                "exec",
+                "-c",
+                "sandbox_workspace_write.network_access=false",
+                "-",
+            ],
             agent_workspace=tmp_path,
             trust_generated_hooks=False,
         )

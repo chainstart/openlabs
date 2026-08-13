@@ -46,20 +46,23 @@ The operational lesson is not “launch many agents.” It is:
 
 ## OpenLabs transfer
 
-Use four bounded stages within the existing production/AMRA contracts:
+The productive ideas transfer as a Codex-owned research pattern, not as a deterministic scheduler
+or mandatory stage machine. A researcher may use, reorder, merge, repeat, or abandon these modes as
+the mathematics requires:
 
 | Stage | Required durable object | Gate |
 |---|---|---|
-| Discovery | research memo, false-world controls, isolated mechanism reports, survivor ledger | at most three survivors |
-| Synthesis | exact intermediate theorem, scope, comparator, dependency graph, consequence | theorem delta recorded |
-| Hostile validation | blind reproof, hypothesis audit, counterexample search, numerical adversarial tests | all scientific defects resolved |
-| Certification | live literature check, formalization where feasible, paper-shadow assessment | promotion or freeze |
+| Discovery | research memo, false-world controls, isolated mechanism reports, survivor ledger | Codex decides what remains worth pursuing |
+| Synthesis | exact intermediate theorem, scope, comparator, dependency graph, consequence | a theorem-shaped candidate exists |
+| Hostile validation | blind reproof, hypothesis audit, counterexample search, numerical adversarial tests | independent reviewers identify exact defects |
+| Certification | live literature check, formalization where feasible, paper-shadow assessment | Codex reviewer gives a supported verdict |
 
-The scheduler may execute discovery roles separately, but role count and token volume are not
-progress. A killed mechanism is search progress only. After the configured bounded search budget
-(eight nodes by default) without a theorem delta, the target freezes. A theorem delta blocks further
-author-side work until independent audit. A failed audit permits only an exact defect-addressing
-amendment, and the default route stops after two consecutive frozen targets without promotion.
+The scheduler may execute epistemically independent roles separately, but role count and token
+volume are not progress. Resource ceilings still prevent runaway jobs. It is the researcher or
+reviewer—not a node counter, score, or outer script—who decides whether a killed mechanism should be
+inverted, a target should freeze, an exact defect should be repaired, or a different route should
+open. A promising result should receive blank-session hostile review without stopping unrelated
+free exploration.
 
 This method is transferable to OpenLabs at the workflow level. The specific 67.25% mathematics is
 transferable only to lanes whose objects admit the same pair-correlation, indefinite-form, and

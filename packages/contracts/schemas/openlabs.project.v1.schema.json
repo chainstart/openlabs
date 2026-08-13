@@ -59,6 +59,40 @@
       "required": ["path"],
       "properties": {"path": {"type": "string", "minLength": 1}}
     },
+    "research_index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "source_campaign_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        }
+      }
+    },
+    "read_resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "path"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "portfolio": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "allow_dynamic_candidate_workstreams": {"type": "boolean"},
+        "candidate_maturation_instruction": {"type": "string"},
+        "candidate_state_template": {"type": "object"}
+      }
+    },
     "workstreams": {
       "type": "array",
       "minItems": 1,
@@ -71,7 +105,16 @@
           "title": {"type": "string"},
           "state_path": {"type": "string", "minLength": 1},
           "startup": {"enum": ["active", "paused"]},
-          "priority": {"type": "integer"}
+          "priority": {"type": "integer"},
+          "objective": {"type": "string"},
+          "agent_role": {
+            "enum": ["researcher", "experimenter", "writer", "reviewer"]
+          },
+          "session_mode": {"enum": ["resume", "fresh"]},
+          "continuation": {"enum": ["continuous", "review_on_new_results"]},
+          "review_every_results": {"type": "integer", "minimum": 1},
+          "review_batch_size": {"type": "integer", "minimum": 1},
+          "spawn_candidate_workstreams": {"type": "boolean"}
         }
       }
     }

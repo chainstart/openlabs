@@ -150,6 +150,7 @@ to the canonical campaign yourself.
         task.get("runtime_policy") if isinstance(task.get("runtime_policy"), Mapping) else {}
     )
     configured_skills = runtime_policy.get("skills")
+    optional_methods = runtime_policy.get("optional_methods")
     skill_instruction = (
         "Invoke and follow "
         + ", ".join(str(item) for item in configured_skills)
@@ -159,6 +160,14 @@ to the canonical campaign yourself.
             f"Read and follow the factory coordinator at `{factory_skill}` and the domain Skill "
             f"at `{task.get('skill_path')}`."
         )
+    )
+    optional_skill_instruction = (
+        " Other laboratory method guides are readable but not registered as active Skills: "
+        + json.dumps(optional_methods, ensure_ascii=False, sort_keys=True)
+        + ". They are optional references, not active constraints; inspect one only when you "
+        "decide it helps this research."
+        if isinstance(optional_methods, list) and optional_methods
+        else ""
     )
     execution = task.get("execution_policy")
     continuity_notice = ""
@@ -173,6 +182,14 @@ blocker, or when the remaining wall budget is needed to persist a safe result bu
 workers run independently; do not terminate this process merely to make room for them.
 """
     project = task.get("project") if isinstance(task.get("project"), Mapping) else {}
+    read_resources = project.get("read_resources", [])
+    read_resource_notice = ""
+    if isinstance(read_resources, list) and read_resources:
+        read_resource_notice = (
+            "\nCanonical read-only project resources (inspect freely; never write to them):\n\n"
+            + json.dumps(read_resources, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n"
+        )
     lab_runtime = task.get("lab_runtime")
     runtime_notice = ""
     if isinstance(lab_runtime, Mapping) and lab_runtime.get("setups"):
@@ -183,13 +200,18 @@ workers run independently; do not terminate this process merely to make room for
         )
     return f"""# OpenLabs autonomous research task
 
-{skill_instruction}
+{skill_instruction}{optional_skill_instruction}
 
 Own the analysis, decomposition, tool use, and scientific decisions needed to reach one coherent
 checkpoint. You may perform as many safe intermediate research operations as are useful within the
 declared budget; do not stop at an administrative micro-step when a material evidence advance is
 still feasible. Durable evidence and the result contract, rather than conversational narration,
 define completion.
+
+No outer script is authorized to choose your scientific route, rank prospective ideas, or turn a
+configured method into a mandatory sequence. Treat project routes, stages, and prior plans as
+recoverable context only unless the objective itself logically requires one. Freely create, combine,
+switch, pause, revive, or abandon approaches and use any installed laboratory capability that helps.
 
 - task file: `{task.get("_task_file")}`
 - task id: `{task["task_id"]}`
@@ -209,11 +231,14 @@ define completion.
 {independence}
 {continuity_notice}
 {runtime_notice}
+{read_resource_notice}
 {transaction_notice}
 
 Before stopping, atomically write one `openlabs.result_bundle.v1` JSON object to the required
 result path. Do not write to SQLite. Preserve unsupported, negative, and inconclusive outcomes. Do
 not submit, publish, spend unbounded resources, or perform another irreversible external action.
+For a portfolio-review task, include `candidate_branches` (possibly empty); the control plane will
+mechanically start each branch in a separate researcher campaign without altering your judgment.
 """
 
 
@@ -520,6 +545,7 @@ def _prepare_codex_command(
         "sandbox_mode",
         "sandbox_permissions",
         "sandbox_workspace_write.writable_roots",
+        "sandbox_workspace_write.network_access",
     }
     if _config_override_keys(command) & protected_config:
         raise ValueError("The Codex adapter may not override factory runtime policy")
@@ -542,6 +568,10 @@ def _prepare_codex_command(
         "--approve-for-me",
         "--enable",
         "hooks",
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        "sandbox_workspace_write.network_access=true",
         "--json",
         "--skip-git-repo-check",
         "-C",
@@ -778,7 +808,7 @@ def _run_agent(
     command, sandbox = _transaction_sandbox(agent_command, task, workspace)
     environment_timeout = max(
         1,
-        int(os.environ.get("OPENLABS_AGENT_TIMEOUT_SECONDS", "14400")),
+        int(os.environ.get("OPENLABS_AGENT_TIMEOUT_SECONDS", "43200")),
     )
     timeout = min(environment_timeout, int(task["budget"]["wall_seconds"]))
     stdout_path = output.parent / "agent-stdout.log"

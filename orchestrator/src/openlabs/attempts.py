@@ -176,6 +176,39 @@ def _copy_project_closure(
                     source,
                     staged_domain_root / source.relative_to(canonical_domain_root),
                 )
+    research_index = payload.get("research_index")
+    if isinstance(research_index, Mapping):
+        configured = str(research_index.get("path") or "").strip()
+        if configured:
+            source = (project_path.parent / configured).resolve()
+            if not source.is_file() or not _inside(source, canonical_domain_root):
+                raise AttemptWorkspaceError(f"Invalid project research index: {source}")
+            _copy_file(
+                source,
+                staged_domain_root / source.relative_to(canonical_domain_root),
+            )
+    # Large historical archives remain canonical read-only inputs. Validate
+    # their declared closure here, but do not duplicate them into every attempt.
+    read_resources = payload.get("read_resources", [])
+    if not isinstance(read_resources, list):
+        raise AttemptWorkspaceError("Project read_resources must be an array")
+    for index, item in enumerate(read_resources):
+        if not isinstance(item, Mapping):
+            raise AttemptWorkspaceError(f"Invalid project read resource {index}")
+        configured = str(item.get("path") or "").strip()
+        source = (project_path.parent / configured).resolve()
+        workspace_root = canonical_domain_root.parents[2]
+        code_root = (workspace_root / "openlabs").resolve()
+        if (
+            not configured
+            or not source.exists()
+            or not (source.is_file() or source.is_dir())
+            or not (
+                _inside(source, canonical_domain_root)
+                or _inside(source, code_root)
+            )
+        ):
+            raise AttemptWorkspaceError(f"Invalid project read resource: {source}")
     for item in payload.get("workstreams", []):
         if not isinstance(item, Mapping):
             continue

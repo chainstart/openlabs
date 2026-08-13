@@ -178,3 +178,27 @@ def test_contract_accepts_typed_review_remediation_resources() -> None:
     validation = validate_result_bundle(result)
     assert not validation.valid
     assert any("memory_mib" in error for error in validation.errors)
+
+
+def test_result_contract_accepts_reviewer_selected_candidate_branches() -> None:
+    result = json.loads(
+        (CODE_ROOT / "packages/contracts/examples/smoke-result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    result["candidate_branches"] = [
+        {
+            "candidate_id": "negative-theorem-sharp-boundary",
+            "title": "A sharp obstruction theorem",
+            "objective": "Determine the maximal natural scope and prove or refute it.",
+            "rationale": "The reviewed computation exposes a stable structural obstruction.",
+            "source_result_ids": ["research-task-7"],
+        }
+    ]
+
+    assert validate_result_bundle(result).valid
+
+    result["candidate_branches"][0]["source_result_ids"] = []
+    validation = validate_result_bundle(result)
+    assert not validation.valid
+    assert any("source_result_ids" in error for error in validation.errors)

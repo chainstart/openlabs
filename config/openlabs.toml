@@ -8,7 +8,9 @@ auto_continue = true
 # Active production-plan campaigns renew this safety window automatically.
 # Bounded campaigns still treat it as a lifetime ceiling.
 max_auto_tasks_per_epoch = 24
-max_task_wall_seconds = 14400
+# Long-lived same-role Codex sessions are preferred. This remains a crash guard,
+# not a scientific phase or checkpoint cadence.
+max_task_wall_seconds = 43200
 max_campaign_agent_seconds = 86400
 launch_jobs = true
 

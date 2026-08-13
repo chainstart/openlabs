@@ -18,6 +18,8 @@ from .contracts import HANDOFF_KINDS, IDENTIFIER
 PROJECT_SCHEMA = "openlabs.project.v1"
 PROJECT_STATUSES = frozenset({"active", "paused", "retired"})
 CHECKPOINT_POLICIES = frozenset({"role_boundary_or_budget", "explicit_checkpoint"})
+WORKSTREAM_CONTINUATIONS = frozenset({"continuous", "review_on_new_results"})
+AGENT_ROLES = frozenset({"researcher", "experimenter", "writer", "reviewer"})
 EPISTEMIC_FRESH_BOUNDARIES = frozenset(
     {
         "independent_replication",
@@ -56,6 +58,36 @@ class ProjectWorkstream:
     title: str
     startup: str
     priority: int
+    objective: str
+    agent_role: str
+    session_mode: str
+    continuation: str
+    review_every_results: int
+    review_batch_size: int
+    spawn_candidate_workstreams: bool
+
+    def policy(self) -> dict[str, Any]:
+        return {
+            "dynamic": False,
+            "objective": self.objective,
+            "default_agent_role": self.agent_role,
+            "default_session_mode": self.session_mode,
+            "continuation": self.continuation,
+            "review_every_results": self.review_every_results,
+            "review_batch_size": self.review_batch_size,
+            "spawn_candidate_workstreams": self.spawn_candidate_workstreams,
+        }
+
+
+@dataclass(frozen=True)
+class ProjectReadResource:
+    """A project-declared canonical input that agents may inspect but never mutate."""
+
+    label: str
+    path: Path
+
+    def to_dict(self) -> dict[str, str]:
+        return {"label": self.label, "path": str(self.path)}
 
 
 @dataclass(frozen=True)
@@ -70,6 +102,9 @@ class ProjectConfig:
     execution: ExecutionPolicy
     workstreams: tuple[ProjectWorkstream, ...]
     domain_config_path: Path | None
+    research_index_path: Path | None
+    research_index_source_campaign_ids: tuple[str, ...]
+    read_resources: tuple[ProjectReadResource, ...]
     raw: dict[str, Any]
 
 
@@ -90,6 +125,16 @@ def _relative_file(base: Path, value: object, field: str) -> Path:
         raise ValueError(f"project {field} is required")
     path = (base / configured).resolve()
     if not path.is_file():
+        raise ValueError(f"project {field} does not exist: {path}")
+    return path
+
+
+def _relative_resource(base: Path, value: object, field: str) -> Path:
+    configured = _text(value)
+    if not configured:
+        raise ValueError(f"project {field} is required")
+    path = (base / configured).resolve()
+    if not path.exists() or not (path.is_file() or path.is_dir()):
         raise ValueError(f"project {field} does not exist: {path}")
     return path
 
@@ -171,6 +216,56 @@ def load_project(path: str | Path) -> ProjectConfig:
             "domain_config.path",
         )
 
+    research_index_path: Path | None = None
+    research_index_source_campaign_ids: tuple[str, ...] = ()
+    research_index = payload.get("research_index")
+    if research_index is not None:
+        if not isinstance(research_index, Mapping):
+            raise ValueError("project research_index must be an object")
+        research_index_path = _relative_file(
+            project_path.parent,
+            research_index.get("path"),
+            "research_index.path",
+        )
+        sources_value = research_index.get("source_campaign_ids", [])
+        if (
+            not isinstance(sources_value, list)
+            or any(not IDENTIFIER.fullmatch(_text(item)) for item in sources_value)
+        ):
+            raise ValueError(
+                "project research_index.source_campaign_ids must be an identifier array"
+            )
+        research_index_source_campaign_ids = tuple(_text(item) for item in sources_value)
+        if len(research_index_source_campaign_ids) != len(
+            set(research_index_source_campaign_ids)
+        ):
+            raise ValueError("project research index source campaigns must be unique")
+
+    read_resources_value = payload.get("read_resources", [])
+    if not isinstance(read_resources_value, list):
+        raise ValueError("project read_resources must be an array")
+    read_resources: list[ProjectReadResource] = []
+    resource_labels: set[str] = set()
+    resource_paths: set[Path] = set()
+    for index, item in enumerate(read_resources_value):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"project read_resources[{index}] must be an object")
+        label = _text(item.get("label"))
+        if not label:
+            raise ValueError(f"project read_resources[{index}].label is required")
+        path_value = _relative_resource(
+            project_path.parent,
+            item.get("path"),
+            f"read_resources[{index}].path",
+        )
+        if label in resource_labels:
+            raise ValueError(f"duplicate project read resource label: {label}")
+        if path_value in resource_paths:
+            raise ValueError(f"duplicate project read resource path: {path_value}")
+        resource_labels.add(label)
+        resource_paths.add(path_value)
+        read_resources.append(ProjectReadResource(label=label, path=path_value))
+
     raw_workstreams = payload.get("workstreams")
     if not isinstance(raw_workstreams, list) or not raw_workstreams:
         raise ValueError("project workstreams must be a nonempty array")
@@ -189,6 +284,54 @@ def load_project(path: str | Path) -> ProjectConfig:
         raw_priority = item.get("priority", 0)
         if not isinstance(raw_priority, int) or isinstance(raw_priority, bool):
             raise ValueError(f"workstream {workstream_id} priority must be an integer")
+        role = _text(item.get("agent_role") or "researcher")
+        if role not in AGENT_ROLES:
+            raise ValueError(f"workstream {workstream_id} has invalid agent_role: {role}")
+        session_mode = _text(
+            item.get("session_mode") or ("fresh" if role == "reviewer" else "resume")
+        )
+        if session_mode not in {"resume", "fresh"}:
+            raise ValueError(
+                f"workstream {workstream_id} session_mode must be resume or fresh"
+            )
+        if role == "reviewer" and session_mode != "fresh":
+            raise ValueError(f"workstream {workstream_id} reviewers must start fresh")
+        continuation = _text(item.get("continuation") or "continuous")
+        if continuation not in WORKSTREAM_CONTINUATIONS:
+            raise ValueError(
+                f"workstream {workstream_id} has invalid continuation: {continuation}"
+            )
+        if continuation == "review_on_new_results" and role != "reviewer":
+            raise ValueError(
+                f"workstream {workstream_id} review_on_new_results requires reviewer role"
+            )
+        review_every_results = item.get("review_every_results", 1)
+        if (
+            not isinstance(review_every_results, int)
+            or isinstance(review_every_results, bool)
+            or review_every_results < 1
+        ):
+            raise ValueError(
+                f"workstream {workstream_id} review_every_results must be positive"
+            )
+        review_batch_size = item.get("review_batch_size", 32)
+        if (
+            not isinstance(review_batch_size, int)
+            or isinstance(review_batch_size, bool)
+            or review_batch_size < 1
+        ):
+            raise ValueError(
+                f"workstream {workstream_id} review_batch_size must be positive"
+            )
+        spawn_candidates = item.get("spawn_candidate_workstreams", False)
+        if not isinstance(spawn_candidates, bool):
+            raise ValueError(
+                f"workstream {workstream_id} spawn_candidate_workstreams must be boolean"
+            )
+        if spawn_candidates and role != "reviewer":
+            raise ValueError(
+                f"workstream {workstream_id} candidate spawning requires reviewer role"
+            )
         workstreams.append(
             ProjectWorkstream(
                 workstream_id=workstream_id,
@@ -200,6 +343,13 @@ def load_project(path: str | Path) -> ProjectConfig:
                 title=_text(item.get("title")) or workstream_id,
                 startup=startup,
                 priority=int(raw_priority),
+                objective=_text(item.get("objective")),
+                agent_role=role,
+                session_mode=session_mode,
+                continuation=continuation,
+                review_every_results=int(review_every_results),
+                review_batch_size=int(review_batch_size),
+                spawn_candidate_workstreams=spawn_candidates,
             )
         )
     return ProjectConfig(
@@ -213,6 +363,9 @@ def load_project(path: str | Path) -> ProjectConfig:
         execution=execution,
         workstreams=tuple(workstreams),
         domain_config_path=domain_config_path,
+        research_index_path=research_index_path,
+        research_index_source_campaign_ids=research_index_source_campaign_ids,
+        read_resources=tuple(read_resources),
         raw=dict(payload),
     )
 
@@ -224,3 +377,16 @@ def discover_projects(data_root: str | Path) -> tuple[ProjectConfig, ...]:
         *root.glob("*/production/*/project.json"),
     }
     return tuple(load_project(path) for path in sorted(paths))
+
+
+def workstream_policy(campaign: Mapping[str, Any]) -> dict[str, Any]:
+    """Decode the thin scheduling envelope stored with a campaign binding."""
+
+    raw = campaign.get("workstream_policy_json")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return dict(value) if isinstance(value, Mapping) else {}
+    return dict(raw) if isinstance(raw, Mapping) else {}

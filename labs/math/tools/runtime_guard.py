@@ -209,27 +209,46 @@ def run_guarded(
     if not command or any(not isinstance(item, str) or not item for item in command):
         raise ValueError("guarded command must be a non-empty argv sequence")
     systemd_run = shutil.which("systemd-run")
-    if systemd_run is None:
-        raise RuntimeError("systemd-run is required for a hard memory cgroup")
-    guarded_command = [
-        systemd_run,
-        "--user",
-        "--scope",
-        "--slice=openlabs-workers.slice",
-        "--quiet",
-        "-p",
-        "PartOf=openlabs-workers.target",
-        "-p",
-        f"MemoryMax={limits.memory_mib}M",
-        "-p",
-        "MemorySwapMax=0",
-        "-p",
-        f"TasksMax={limits.processes}",
-        "-p",
-        "OOMPolicy=stop",
-        "--",
-        *command,
-    ]
+    scope_available = False
+    if systemd_run is not None:
+        try:
+            probe = subprocess.run(
+                [systemd_run, "--user", "--scope", "--quiet", "--", "true"],
+                cwd=cwd,
+                env=guarded_environment(limits, environment),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+            scope_available = probe.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            scope_available = False
+    # Native Codex workspace isolation may intentionally hide the user D-Bus.
+    # In that case execute directly with RLIMIT_AS/CPU/FSIZE/NOFILE. Factory
+    # runs additionally inherit the aggregate openlabs-workers.slice MemoryMax.
+    guarded_command = list(command)
+    if scope_available and systemd_run is not None:
+        guarded_command = [
+            systemd_run,
+            "--user",
+            "--scope",
+            "--slice=openlabs-workers.slice",
+            "--quiet",
+            "-p",
+            "PartOf=openlabs-workers.target",
+            "-p",
+            f"MemoryMax={limits.memory_mib}M",
+            "-p",
+            "MemorySwapMax=0",
+            "-p",
+            f"TasksMax={limits.processes}",
+            "-p",
+            "OOMPolicy=stop",
+            "--",
+            *command,
+        ]
     output_limit = limits.output_mib * MIB
     with tempfile.TemporaryFile() as stdout_handle, tempfile.TemporaryFile() as stderr_handle:
         process = subprocess.Popen(

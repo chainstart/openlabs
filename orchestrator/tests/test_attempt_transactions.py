@@ -399,7 +399,7 @@ def test_launch_writes_job_against_private_campaign_copy(tmp_path) -> None:
     )
     assert job["runtime_policy"]["sandbox"] == "workspace-write"
     assert "$openlabs-research-factory" in job["runtime_policy"]["skills"]
-    assert "$math-production-supervisor" in job["runtime_policy"]["skills"]
+    assert "$math-production-supervisor" not in job["runtime_policy"]["skills"]
     assert (workspace.campaign_root / ".codex" / "hooks.json").is_file()
     assert (workspace.campaign_root / ".agents" / "skills" / "amra-research-loop").is_symlink()
     assert str(workspace.campaign_root) in job["objective"]

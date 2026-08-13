@@ -19,13 +19,50 @@
       "route_reselection"
     ]
   },
+  "research_index": {
+    "path": "research_index.json",
+    "source_campaign_ids": []
+  },
+  "read_resources": [
+    {
+      "label": "historical project archive",
+      "path": "../../historical-workstream"
+    }
+  ],
+  "portfolio": {
+    "allow_dynamic_candidate_workstreams": true,
+    "candidate_maturation_instruction": "Apply this project's publication and evidence goals without inflating claims.",
+    "candidate_state_template": {
+      "schema_version": "replace-with-protocol-state-schema",
+      "mode": "candidate_maturation",
+      "status": "active"
+    }
+  },
   "workstreams": [
     {
       "workstream_id": "example-workstream",
       "title": "Replace with a workstream title",
       "state_path": "../../example-workstream/state.json",
       "startup": "active",
-      "priority": 100
+      "priority": 100,
+      "objective": "Freely pursue the project objective and choose all scientific routes.",
+      "agent_role": "researcher",
+      "session_mode": "resume",
+      "continuation": "continuous"
+    },
+    {
+      "workstream_id": "example-review",
+      "title": "Independent portfolio review",
+      "state_path": "../../example-review/state.json",
+      "startup": "active",
+      "priority": 110,
+      "objective": "Review new results and select any worthwhile maturation branches.",
+      "agent_role": "reviewer",
+      "session_mode": "fresh",
+      "continuation": "review_on_new_results",
+      "review_every_results": 1,
+      "review_batch_size": 32,
+      "spawn_candidate_workstreams": true
     }
   ]
 }

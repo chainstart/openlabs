@@ -6,7 +6,10 @@ from openlabs.config import WorkspacePaths
 from openlabs.engine import _launch_worker, _worker_unit_name
 
 
-def test_systemd_tick_launches_worker_in_transient_service(tmp_path, monkeypatch) -> None:
+def test_systemd_tick_launches_burst_capable_worker_in_transient_service(
+    tmp_path,
+    monkeypatch,
+) -> None:
     paths = WorkspacePaths(
         workspace=tmp_path,
         code=tmp_path / "openlabs",
@@ -45,6 +48,7 @@ def test_systemd_tick_launches_worker_in_transient_service(tmp_path, monkeypatch
             "OPENLABS_SECRET": "must-not-appear-in-argv",
             "INVOCATION_ID": "old-invocation",
         },
+        cpu_ceiling_threads=15,
     )
 
     unit = _worker_unit_name(task)
@@ -55,8 +59,8 @@ def test_systemd_tick_launches_worker_in_transient_service(tmp_path, monkeypatch
     assert "--property=PartOf=openlabs-workers.target" in calls[0]
     assert "--property=MemoryHigh=4096M" in calls[0]
     assert not any(item.startswith("--property=MemoryMax=") for item in calls[0])
-    assert "--property=CPUQuota=200%" in calls[0]
-    assert "--property=TasksMax=64" in calls[0]
+    assert "--property=CPUQuota=1500%" in calls[0]
+    assert "--property=TasksMax=512" in calls[0]
     assert "--property=OOMPolicy=stop" in calls[0]
     assert "--setenv=OPENLABS_SECRET" in calls[0]
     assert "--setenv=INVOCATION_ID" not in calls[0]

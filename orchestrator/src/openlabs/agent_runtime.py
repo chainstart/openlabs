@@ -59,8 +59,9 @@ def configure_codex_runtime(
     task: Mapping[str, Any],
     output_path: Path,
     skill_dirs: Iterable[Path],
+    available_skill_dirs: Iterable[Path] = (),
 ) -> dict[str, Any]:
-    """Install attempt-local Skill links, concise context, and trusted hooks."""
+    """Install available Skills while activating only the protocol-selected subset."""
 
     workspace = campaign_workspace.resolve()
     result = output_path.resolve()
@@ -72,24 +73,52 @@ def configure_codex_runtime(
     _replace_runtime_directory(agents_root)
     _replace_runtime_directory(codex_root)
     skills_root = agents_root / "skills"
+    optional_root = agents_root / "optional-methods"
     skills_root.mkdir(parents=True)
+    optional_root.mkdir(parents=True)
     codex_root.mkdir(parents=True)
 
+    active_sources = tuple(raw_path.expanduser().resolve() for raw_path in skill_dirs)
+    active_source_set = set(active_sources)
     installed: dict[str, str] = {}
-    installed_sources: list[Path] = []
-    for raw_path in skill_dirs:
+    active_names: list[str] = []
+    active_policy_sources: list[Path] = []
+    optional_methods: list[dict[str, str]] = []
+    optional_sources: dict[str, str] = {}
+    for raw_path in active_sources:
         skill_dir = raw_path.expanduser().resolve()
         name = _skill_name(skill_dir)
         prior = installed.get(name)
         if prior is not None and prior != str(skill_dir):
             raise ValueError(f"Conflicting Skill name {name!r}: {prior} and {skill_dir}")
+        if prior is None:
+            (skills_root / name).symlink_to(skill_dir, target_is_directory=True)
+            installed[name] = str(skill_dir)
+        if name not in active_names:
+            active_names.append(name)
+            active_policy_sources.append(skill_dir)
+    for raw_path in available_skill_dirs:
+        skill_dir = raw_path.expanduser().resolve()
+        name = _skill_name(skill_dir)
+        prior = installed.get(name)
+        if prior is not None and prior != str(skill_dir):
+            raise ValueError(f"Conflicting Skill name {name!r}: {prior} and {skill_dir}")
+        if skill_dir in active_source_set:
+            continue
+        prior = optional_sources.get(name)
+        if prior is not None and prior != str(skill_dir):
+            raise ValueError(f"Conflicting optional method {name!r}: {prior} and {skill_dir}")
         if prior is not None:
             continue
-        (skills_root / name).symlink_to(skill_dir, target_is_directory=True)
-        installed[name] = str(skill_dir)
-        installed_sources.append(skill_dir)
+        target = optional_root / name
+        if not target.exists() and not target.is_symlink():
+            target.symlink_to(skill_dir, target_is_directory=True)
+        optional_methods.append(
+            {"name": name, "path": str(target / "SKILL.md")}
+        )
+        optional_sources[name] = str(skill_dir)
 
-    policy_paths = authority_policy_paths(installed_sources)
+    policy_paths = authority_policy_paths(active_policy_sources)
     authority = resolve_workspace_authority(workspace, policy_paths)
     agent = task.get("agent") if isinstance(task.get("agent"), Mapping) else {}
     authority_errors = task_authority_errors(
@@ -107,7 +136,7 @@ def configure_codex_runtime(
         "lab_id": task["lab_id"],
         "domain": task["domain"],
     }
-    skill_invocations = [f"${name}" for name in installed]
+    skill_invocations = [f"${name}" for name in active_names]
     hook_receipt_path = codex_root / "hook-receipts.jsonl"
     context = {
         "schema_version": RUNTIME_POLICY_SCHEMA,
@@ -123,6 +152,7 @@ def configure_codex_runtime(
         "project": task.get("project"),
         "execution_policy": task.get("execution_policy"),
         "skills": skill_invocations,
+        "optional_methods": optional_methods,
         "skill_source_root": str(skills_root),
         "authority_policy_paths": [str(path) for path in policy_paths],
         "initial_authority": authority.to_dict() if authority else None,
@@ -176,6 +206,7 @@ def configure_codex_runtime(
         "hook_trust": "orchestrator-generated",
         "hook_receipts": str(hook_receipt_path),
         "skills": skill_invocations,
+        "optional_methods": optional_methods,
         "authority": authority.to_dict() if authority else None,
     }
 

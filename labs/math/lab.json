@@ -6,6 +6,9 @@
   "runner": {
     "command": ["{python}", "../../packages/research-core/lab_runner.py"]
   },
+  "worker_resources": {
+    "cpu_burst_fraction_of_host": 0.75
+  },
   "skills": [
     {
       "skill_id": "amra-research-loop",
@@ -14,6 +17,10 @@
     {
       "skill_id": "math-production-supervisor",
       "path": "skills/math-production-supervisor/SKILL.md"
+    },
+    {
+      "skill_id": "math-autonomous-research",
+      "path": "skills/math-autonomous-research/SKILL.md"
     },
     {
       "skill_id": "openlabs-math-paper",
@@ -28,10 +35,33 @@
     {
       "protocol_id": "amra-math",
       "primary_skill": "math-production-supervisor",
+      "runtime_skills": [
+        "math-production-supervisor",
+        "amra-research-loop"
+      ],
       "validator": {
         "command": [
           "{python}",
           "protocols/amra_math_protocol.py",
+          "--project",
+          "{project_config}",
+          "--workstream",
+          "{workstream_state}",
+          "--mode",
+          "{validation_mode}"
+        ]
+      }
+    },
+    {
+      "protocol_id": "autonomous-math",
+      "primary_skill": "math-autonomous-research",
+      "runtime_skills": [
+        "math-autonomous-research"
+      ],
+      "validator": {
+        "command": [
+          "{python}",
+          "protocols/autonomous_math_protocol.py",
           "--project",
           "{project_config}",
           "--workstream",

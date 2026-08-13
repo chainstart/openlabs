@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from openlabs.attempts import prepare_attempt_workspace
+import pytest
+
+from openlabs.attempts import attempt_output_path, prepare_attempt_workspace
 from openlabs.config import FactorySettings, WorkspacePaths
 from openlabs.contracts import atomic_write_json
 from openlabs.db import FactoryDB
-from openlabs.engine import _validate_bound_protocol, tick
+from openlabs.engine import _validate_bound_protocol, _write_task_spec, tick
 from openlabs.projects import load_project
 
 
@@ -27,12 +29,36 @@ def _paths(tmp_path: Path) -> WorkspacePaths:
 def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tuple[Path, Path]:
     lab = paths.code / "labs" / "test"
     skill = lab / "skills" / "test-protocol"
+    unrelated_skill = lab / "skills" / "unrelated-method"
     protocol_script = lab / "protocols" / "validate.py"
     skill.mkdir(parents=True)
+    unrelated_skill.mkdir(parents=True)
     protocol_script.parent.mkdir(parents=True)
     (skill / "SKILL.md").write_text(
         "---\nname: test-protocol\ndescription: Test protocol.\n---\n",
         encoding="utf-8",
+    )
+    (unrelated_skill / "SKILL.md").write_text(
+        "---\nname: unrelated-method\ndescription: Must remain optional.\n---\n",
+        encoding="utf-8",
+    )
+    atomic_write_json(
+        unrelated_skill / "authority-policy.json",
+        {
+            "schema_version": "openlabs.authority_policy.v1",
+            "policy_id": "unrelated-authority",
+            "state_glob": "**/state.json",
+            "state_schema_version": "test-state.v1",
+            "phase_field": "phase",
+            "phase_authority": {
+                "audit": {
+                    "allowed_roles": ["reviewer"],
+                    "default_role": "reviewer",
+                    "required_session_mode": "fresh",
+                    "required_handoff_kind": "independent_replication",
+                }
+            },
+        },
     )
     protocol_script.write_text(
         "import argparse,json\n"
@@ -56,12 +82,17 @@ def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tupl
                 {
                     "skill_id": "test-protocol",
                     "path": "skills/test-protocol/SKILL.md",
-                }
+                },
+                {
+                    "skill_id": "unrelated-method",
+                    "path": "skills/unrelated-method/SKILL.md",
+                },
             ],
             "protocols": [
                 {
                     "protocol_id": "test-protocol",
                     "primary_skill": "test-protocol",
+                    "runtime_skills": ["test-protocol"],
                     "validator": {
                         "command": [
                             "{python}",
@@ -79,7 +110,14 @@ def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tupl
         },
     )
     state = paths.data / "workspaces" / "test-domain" / "stream-one" / "state.json"
-    atomic_write_json(state, {"valid": valid_state})
+    atomic_write_json(
+        state,
+        {
+            "schema_version": "test-state.v1",
+            "phase": "audit",
+            "valid": valid_state,
+        },
+    )
     project = (
         paths.data
         / "workspaces"
@@ -183,7 +221,111 @@ def test_protocol_commit_gate_validates_the_private_attempt_state(tmp_path) -> N
     assert errors == ("state rejected by test protocol",)
 
 
-def test_database_v7_migrates_generic_project_bindings(tmp_path) -> None:
+def test_project_protocol_activates_only_its_declared_runtime_skills(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _generic_project(paths)
+    factory_skill = paths.code / "orchestrator" / "skills" / "openlabs-research-factory"
+    factory_skill.mkdir(parents=True)
+    (factory_skill / "SKILL.md").write_text(
+        "---\nname: openlabs-research-factory\ndescription: Test factory.\n---\n",
+        encoding="utf-8",
+    )
+    tick(paths, FactorySettings(auto_continue=False, launch_jobs=False))
+    db = FactoryDB(paths.database_file)
+    db.enqueue_task(
+        task_id="runtime-skill-selection",
+        campaign_id="stream-one",
+        domain="test-domain",
+        task_type="research_continue",
+        objective="Use only the protocol-selected research Skill.",
+        skill_path="test-protocol",
+        session_mode="fresh",
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=60)
+    assert task is not None
+    campaign = db.campaign("stream-one")
+    assert campaign is not None
+    attempt = prepare_attempt_workspace(paths, task, campaign)
+    output = attempt_output_path(attempt, task)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    job_path = _write_task_spec(
+        paths,
+        task,
+        attempt_workspace=attempt,
+        lab_id="test",
+        manifest_path=paths.code / "labs" / "test" / "lab.json",
+        skill_path=paths.code / "labs" / "test" / "skills" / "test-protocol" / "SKILL.md",
+        output_path=output,
+        wall_seconds=60,
+        campaign=campaign,
+    )
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+
+    assert job["runtime_policy"]["skills"] == [
+        "$openlabs-research-factory",
+        "$test-protocol",
+    ]
+    assert "$unrelated-method" not in job["runtime_policy"]["skills"]
+    assert job["runtime_policy"]["optional_methods"][0]["name"] == "unrelated-method"
+    assert not (
+        attempt.campaign_root / ".agents" / "skills" / "unrelated-method"
+    ).exists()
+    assert (
+        attempt.campaign_root / ".agents" / "optional-methods" / "unrelated-method"
+    ).is_symlink()
+
+
+def test_project_task_cannot_activate_a_skill_outside_its_protocol(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _generic_project(paths)
+    factory_skill = paths.code / "orchestrator" / "skills" / "openlabs-research-factory"
+    factory_skill.mkdir(parents=True)
+    (factory_skill / "SKILL.md").write_text(
+        "---\nname: openlabs-research-factory\ndescription: Test factory.\n---\n",
+        encoding="utf-8",
+    )
+    tick(paths, FactorySettings(auto_continue=False, launch_jobs=False))
+    db = FactoryDB(paths.database_file)
+    db.enqueue_task(
+        task_id="stale-skill-route",
+        campaign_id="stream-one",
+        domain="test-domain",
+        task_type="research_continue",
+        objective="A stale route must not reactivate an unrelated method.",
+        skill_path="unrelated-method",
+        session_mode="fresh",
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=60)
+    assert task is not None
+    campaign = db.campaign("stream-one")
+    assert campaign is not None
+    attempt = prepare_attempt_workspace(paths, task, campaign)
+    output = attempt_output_path(attempt, task)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(ValueError, match="not activated by protocol"):
+        _write_task_spec(
+            paths,
+            task,
+            attempt_workspace=attempt,
+            lab_id="test",
+            manifest_path=paths.code / "labs" / "test" / "lab.json",
+            skill_path=(
+                paths.code
+                / "labs"
+                / "test"
+                / "skills"
+                / "unrelated-method"
+                / "SKILL.md"
+            ),
+            output_path=output,
+            wall_seconds=60,
+            campaign=campaign,
+        )
+
+
+def test_database_v8_migrates_generic_project_bindings(tmp_path) -> None:
     db = FactoryDB(tmp_path / "factory.sqlite")
     db.initialize()
     db.register_campaign("stream", domain="test-domain", title="Stream")
@@ -205,7 +347,7 @@ def test_database_v7_migrates_generic_project_bindings(tmp_path) -> None:
         version = connection.execute(
             "SELECT value FROM meta WHERE key='schema_version'"
         ).fetchone()[0]
-    assert version == "7"
+    assert version == "8"
 
 
 def test_legacy_and_generic_bindings_replace_each_other_cleanly(tmp_path) -> None:

@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 ACTIVE_STATUSES = ("leased", "running")
 AGENT_ROLES = ("researcher", "experimenter", "writer", "reviewer")
 SESSION_MODES = ("resume", "fresh")
@@ -139,6 +139,8 @@ class FactoryDB:
                     protocol_id TEXT,
                     primary_skill TEXT,
                     execution_policy_json TEXT NOT NULL DEFAULT '{}',
+                    project_id TEXT,
+                    workstream_policy_json TEXT NOT NULL DEFAULT '{}',
                     production_epoch INTEGER NOT NULL DEFAULT 1,
                     epoch_agent_seconds_used REAL NOT NULL DEFAULT 0,
                     rollover_count INTEGER NOT NULL DEFAULT 0,
@@ -176,7 +178,7 @@ class FactoryDB:
                     lease_expires_at TEXT,
                     worker_pid INTEGER,
                     current_attempt_id TEXT,
-                    max_wall_seconds INTEGER NOT NULL DEFAULT 14400,
+                    max_wall_seconds INTEGER NOT NULL DEFAULT 43200,
                     cpu_threads INTEGER NOT NULL DEFAULT 2,
                     memory_mib INTEGER NOT NULL DEFAULT 4096,
                     scratch_mib INTEGER NOT NULL DEFAULT 4096,
@@ -253,6 +255,7 @@ class FactoryDB:
             self._migrate_v5(connection)
             self._migrate_v6(connection, prior_version=prior_version)
             self._migrate_v7(connection)
+            self._migrate_v8(connection)
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS task_attempts_task_idx
@@ -302,7 +305,7 @@ class FactoryDB:
             "session_mode TEXT NOT NULL DEFAULT 'resume'",
             "agent_session_id TEXT",
             "current_attempt_id TEXT",
-            "max_wall_seconds INTEGER NOT NULL DEFAULT 14400",
+            "max_wall_seconds INTEGER NOT NULL DEFAULT 43200",
         ):
             cls._add_column(connection, "tasks", definition)
         for definition in (
@@ -398,6 +401,16 @@ class FactoryDB:
             "protocol_id TEXT",
             "primary_skill TEXT",
             "execution_policy_json TEXT NOT NULL DEFAULT '{}'",
+        ):
+            cls._add_column(connection, "campaigns", definition)
+
+    @classmethod
+    def _migrate_v8(cls, connection: sqlite3.Connection) -> None:
+        """Store thin scheduling policy separately from domain research state."""
+
+        for definition in (
+            "project_id TEXT",
+            "workstream_policy_json TEXT NOT NULL DEFAULT '{}'",
         ):
             cls._add_column(connection, "campaigns", definition)
 
@@ -502,7 +515,8 @@ class FactoryDB:
                 SELECT status, continuous, production_plan_path,
                        production_lane_path, project_config_path,
                        workstream_state_path, protocol_id, primary_skill,
-                       execution_policy_json, priority
+                       execution_policy_json, project_id,
+                       workstream_policy_json, priority
                 FROM campaigns WHERE campaign_id=?
                 """,
                 (campaign_id,),
@@ -523,6 +537,8 @@ class FactoryDB:
                 None,
                 None,
                 "{}",
+                None,
+                "{}",
                 desired_priority,
             )
             if tuple(row) == desired:
@@ -534,6 +550,7 @@ class FactoryDB:
                     production_lane_path=?, project_config_path=NULL,
                     workstream_state_path=NULL, protocol_id=NULL,
                     primary_skill=NULL, execution_policy_json='{}',
+                    project_id=NULL, workstream_policy_json='{}',
                     priority=?, updated_at=?
                 WHERE campaign_id=?
                 """,
@@ -567,19 +584,25 @@ class FactoryDB:
         protocol_id: str,
         primary_skill: str,
         execution_policy: Mapping[str, Any],
+        project_id: str | None = None,
+        workstream_policy: Mapping[str, Any] | None = None,
         priority: int | None = None,
     ) -> bool:
         """Bind a generic project workstream without teaching the DB its science."""
 
         now = utc_now()
         policy_json = json.dumps(dict(execution_policy), ensure_ascii=False, sort_keys=True)
+        stream_policy_json = json.dumps(
+            dict(workstream_policy or {}), ensure_ascii=False, sort_keys=True
+        )
         with self.connect() as connection:
             row = connection.execute(
                 """
                 SELECT status, continuous, production_plan_path,
                        production_lane_path, project_config_path,
                        workstream_state_path, protocol_id, primary_skill,
-                       execution_policy_json, priority
+                       execution_policy_json, project_id,
+                       workstream_policy_json, priority
                 FROM campaigns WHERE campaign_id=?
                 """,
                 (campaign_id,),
@@ -600,6 +623,8 @@ class FactoryDB:
                 protocol_id,
                 primary_skill,
                 policy_json,
+                project_id,
+                stream_policy_json,
                 desired_priority,
             )
             if tuple(row) == desired:
@@ -611,7 +636,8 @@ class FactoryDB:
                     production_plan_path=NULL, production_lane_path=NULL,
                     project_config_path=?,
                     workstream_state_path=?, protocol_id=?, primary_skill=?,
-                    execution_policy_json=?, priority=?, updated_at=?
+                    execution_policy_json=?, project_id=?, workstream_policy_json=?,
+                    priority=?, updated_at=?
                 WHERE campaign_id=?
                 """,
                 (
@@ -620,6 +646,8 @@ class FactoryDB:
                     protocol_id,
                     primary_skill,
                     policy_json,
+                    project_id,
+                    stream_policy_json,
                     desired_priority,
                     now,
                     campaign_id,
@@ -636,6 +664,8 @@ class FactoryDB:
                     "protocol_id": protocol_id,
                     "primary_skill": primary_skill,
                     "execution_policy": dict(execution_policy),
+                    "project_id": project_id,
+                    "workstream_policy": dict(workstream_policy or {}),
                     "priority": desired_priority,
                 },
             )
@@ -874,7 +904,7 @@ class FactoryDB:
         session_mode: str | None = None,
         agent_session_id: str | None = None,
         session_source_task_id: str | None = None,
-        max_wall_seconds: int = 14_400,
+        max_wall_seconds: int = 43_200,
         cpu_threads: int = 2,
         memory_mib: int = 4_096,
         scratch_mib: int = 4_096,

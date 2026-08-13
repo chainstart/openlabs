@@ -29,6 +29,7 @@ Write one JSON object with this minimum shape:
     }
   ],
   "next_actions": ["One bounded next action."],
+  "candidate_branches": [],
   "paper_candidate": false
 }
 ```
@@ -103,3 +104,20 @@ This resumes only the closest writer session in the current task ancestry. If ne
 evidence is required, return `evidence_remediation` to a fresh `researcher` or `experimenter`.
 After that bounded evidence task completes, the scheduler returns to the ancestral writer; if no
 writer exists yet, it repeats the independent paper-readiness audit.
+
+An independent project portfolio reviewer may select ideas for separate maturation without making
+them paper-ready. It returns `paper_candidate: false` and one or more `candidate_branches`:
+
+```json
+{
+  "candidate_id": "stable-project-unique-id",
+  "title": "Exact descriptive title",
+  "objective": "The mathematical uncertainty and result the branch should resolve.",
+  "rationale": "Why the reviewed evidence warrants an independent research process.",
+  "source_result_ids": ["reviewed-result-task-id"]
+}
+```
+
+The control plane checks only structure and source existence, then mechanically creates a new
+continuous researcher campaign. It does not score, rank, rewrite, approve, or reject the reviewer's
+scientific judgment. The original free-research campaign continues independently.

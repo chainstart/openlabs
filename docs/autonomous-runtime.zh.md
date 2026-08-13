@@ -4,14 +4,15 @@ OpenLabs 的自动化边界按“科研判断归 Codex、状态确定性归控�
 数学路线、不枚举科研微步骤，也不根据启发式分数替 Codex 决定下一项证明操作。
 
 ```text
-管理员期望状态（plan / lane / budget）
+管理员期望状态（project objective / resources / services）
                  │
                  ▼
-短生命周期 tick：租约、资源准入、attempt 事务、自动续接
+短生命周期 tick：租约、资源准入、attempt 事务、机械续接/审查触发
                  │
                  ▼
 私有 campaign 副本
-  ├─ .agents/skills  ──► 工厂 Skill + 当前实验室 Skills
+  ├─ .agents/skills  ──► 仅协议激活的 Skill
+  ├─ .agents/optional-methods ─► 可读但未注册生效的方法指南
   ├─ .codex/hooks.json ─► 简短 SessionStart 上下文 + Stop 结果自检
   └─ Codex 原生 workspace-write sandbox
                  │
@@ -46,14 +47,16 @@ Hook 只负责：
 - 租约、心跳、资源与时间上限；
 - 创建私有 attempt、Codex 原生沙箱策略和受信 Hook；
 - 绑定任务身份、验证本地证据、不可变存储和事务晋升；
-- 对每一种终止路径关闭 attempt，并从持久状态自动续接；
+- 对每一种终止路径关闭 attempt，并执行 Codex 给出的 typed handoff；缺少 handoff 时只用
+  项目原始目标重新交还科学决策权，不在脚本里选择路线；
 - 阻止提交、发布、越权写入和其他不可逆外部动作。
 
 ## 运行时不变量
 
 1. Codex 不再套入会破坏其子进程工具调用的第二层 bubblewrap；非 Codex adapter 仍使用
    外层隔离。Codex 命令由 runner 强制归一为 `workspace-write`，拒绝 sandbox bypass、额外
-   可写目录和受保护的配置覆盖。聚合工作区与 canonical 不得位于系统临时根。
+   可写目录和受保护的配置覆盖，并显式开放该沙箱的网络访问。聚合工作区与 canonical 不得
+   位于系统临时根。
 2. `.agents` 与 `.codex` 是 attempt 临时运行时，不属于科研状态，不复制自 canonical，
    也不晋升回 canonical。
 3. `requested_output_path` 永远是用户任务意图；`output_path` 永远是当前 attempt 的绑定，
@@ -61,12 +64,16 @@ Hook 只负责：
 4. 通过身份校验的当前回执一旦发现结果损坏，立即终结并隔离 attempt；不等待租约过期。
 5. 启动失败、结果拒绝、租约过期、取消和预算停止都必须给 attempt 写入终态。
 6. 只有通过结果契约、证据门禁和不可变快照的 `completed` 结果可以原子晋升 campaign。
+7. 协议只激活 `runtime_skills` 声明的 Skill/authority；同实验室其他 Skill 可发现但不构成
+   当前任务的强制规则。
+8. project index、review packet/cursor 属可重建或哈希绑定的控制面元数据；它们不放在
+   reviewer 可写并可晋升的 campaign 树中，物化失败必须幂等重试。
 
 ## 项目与协议插件
 
 控制面只发现 `openlabs.project.v1`，不解释项目的科学配置。项目通过 `protocol.id` 选择
 实验室在 `lab.json` 注册的领域协议，协议 validator 在项目发现和 attempt 提交前分别验证
-正式状态与私有修改状态。项目目标、workstream、Skill、优先级和连续会话策略都由
+正式状态与私有修改状态。项目目标、workstream、Skill、优先级、周期审查和连续会话策略都由
 `project.json` 替换，无需修改调度器。详见
 [project-protocol-architecture.zh.md](project-protocol-architecture.zh.md)。
 

@@ -17,6 +17,7 @@ LAB_SCHEMA = "openlabs.lab.v1"
 class ProtocolManifest:
     protocol_id: str
     primary_skill: str
+    runtime_skills: tuple[str, ...]
     validator_command: tuple[str, ...]
 
 
@@ -37,6 +38,7 @@ class LabManifest:
     protocols: tuple[ProtocolManifest, ...]
     runtime_setups: tuple[RuntimeSetupManifest, ...]
     capabilities: tuple[str, ...]
+    worker_cpu_burst_fraction: float | None
     raw: dict[str, Any]
 
     def skill_path(self, requested: str | None = None) -> Path | None:
@@ -96,22 +98,32 @@ def load_lab(path: str | Path) -> LabManifest:
             raise TypeError(f"protocol entries must be objects: {manifest_path}")
         protocol_id = _text(item.get("protocol_id"))
         primary_skill = _text(item.get("primary_skill"))
+        runtime_skills_value = item.get("runtime_skills", [primary_skill])
         validator = item.get("validator")
         validator_command = validator.get("command") if isinstance(validator, Mapping) else None
         if (
             not IDENTIFIER.fullmatch(protocol_id)
             or primary_skill not in skill_ids
+            or not isinstance(runtime_skills_value, list)
+            or not runtime_skills_value
+            or any(_text(skill) not in skill_ids for skill in runtime_skills_value)
             or not isinstance(validator_command, list)
             or not validator_command
             or any(not isinstance(token, str) or not token for token in validator_command)
         ):
             raise ValueError(f"invalid protocol registration in {manifest_path}: {item}")
+        runtime_skills = tuple(_text(skill) for skill in runtime_skills_value)
+        if len(runtime_skills) != len(set(runtime_skills)) or primary_skill not in runtime_skills:
+            raise ValueError(
+                f"protocol runtime_skills must be unique and include primary_skill: {item}"
+            )
         if any(existing.protocol_id == protocol_id for existing in protocols):
             raise ValueError(f"duplicate protocol_id {protocol_id!r} in {manifest_path}")
         protocols.append(
             ProtocolManifest(
                 protocol_id=protocol_id,
                 primary_skill=primary_skill,
+                runtime_skills=runtime_skills,
                 validator_command=tuple(validator_command),
             )
         )
@@ -142,6 +154,18 @@ def load_lab(path: str | Path) -> LabManifest:
             )
         )
     capabilities = tuple(_text(item) for item in payload.get("capabilities", []) if _text(item))
+    worker_resources = payload.get("worker_resources", {})
+    if not isinstance(worker_resources, Mapping):
+        raise ValueError(f"worker_resources must be an object: {manifest_path}")
+    burst_value = worker_resources.get("cpu_burst_fraction_of_host")
+    if burst_value is not None and (
+        not isinstance(burst_value, (int, float))
+        or isinstance(burst_value, bool)
+        or not 0 < float(burst_value) <= 1
+    ):
+        raise ValueError(
+            f"worker_resources.cpu_burst_fraction_of_host must be in (0, 1]: {manifest_path}"
+        )
     return LabManifest(
         lab_id=lab_id,
         domain=domain,
@@ -151,6 +175,9 @@ def load_lab(path: str | Path) -> LabManifest:
         protocols=tuple(protocols),
         runtime_setups=tuple(runtime_setups),
         capabilities=capabilities,
+        worker_cpu_burst_fraction=(
+            float(burst_value) if burst_value is not None else None
+        ),
         raw=dict(payload),
     )
 

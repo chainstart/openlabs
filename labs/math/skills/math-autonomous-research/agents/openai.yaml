@@ -1,0 +1,4 @@
+interface:
+  display_name: "Autonomous Mathematics Research"
+  short_description: "Free mathematical exploration, review, and candidate maturation"
+  default_prompt: "Own the scientific decisions and use OpenLabs only for durable evidence, indexing, resources, and handoffs."

@@ -55,7 +55,7 @@ class FactorySettings:
     # Lifetime limit for bounded campaigns; renewable per-epoch limit for
     # campaigns bound to an active production plan.
     max_auto_tasks_per_campaign: int = 24
-    max_task_wall_seconds: int = 14_400
+    max_task_wall_seconds: int = 43_200
     max_campaign_agent_seconds: int = 86_400
     launch_jobs: bool = True
     archive_result_receipts: bool = True
@@ -127,7 +127,7 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
             ),
             24,
         ),
-        max_task_wall_seconds=_positive_int(factory.get("max_task_wall_seconds"), 14_400),
+        max_task_wall_seconds=_positive_int(factory.get("max_task_wall_seconds"), 43_200),
         max_campaign_agent_seconds=_positive_int(factory.get("max_campaign_agent_seconds"), 86_400),
         launch_jobs=bool(factory.get("launch_jobs", True)),
         archive_result_receipts=bool(retention.get("archive_result_receipts", True)),

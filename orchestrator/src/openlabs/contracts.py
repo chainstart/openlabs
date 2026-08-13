@@ -171,6 +171,32 @@ def validate_task(payload: Any) -> ValidationResult:
                     errors.append(f"project.{field_name} must be a non-empty string")
             if not _text(project.get("protocol_id")):
                 errors.append("project.protocol_id must be a non-empty string")
+            read_resources = project.get("read_resources", [])
+            if not isinstance(read_resources, list):
+                errors.append("project.read_resources must be an array")
+            else:
+                labels: list[str] = []
+                paths: list[str] = []
+                for index, item in enumerate(read_resources):
+                    if not isinstance(item, Mapping):
+                        errors.append(f"project.read_resources[{index}] must be an object")
+                        continue
+                    label = _text(item.get("label"))
+                    path = _text(item.get("path"))
+                    if not label:
+                        errors.append(
+                            f"project.read_resources[{index}].label must be non-empty"
+                        )
+                    if not path or not Path(path).is_absolute():
+                        errors.append(
+                            f"project.read_resources[{index}].path must be absolute"
+                        )
+                    labels.append(label)
+                    paths.append(path)
+                if len(labels) != len(set(labels)):
+                    errors.append("project.read_resources labels must be unique")
+                if len(paths) != len(set(paths)):
+                    errors.append("project.read_resources paths must be unique")
     execution_policy = payload.get("execution_policy")
     if execution_policy is not None:
         if not isinstance(execution_policy, Mapping):
@@ -433,6 +459,44 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
                         value = resources.get(key)
                         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
                             errors.append(f"{prefix}.resources.{key} must be a positive integer")
+    candidate_branches = payload.get("candidate_branches", [])
+    if not isinstance(candidate_branches, list):
+        errors.append("candidate_branches must be an array")
+    else:
+        candidate_ids: set[str] = set()
+        for index, branch in enumerate(candidate_branches):
+            prefix = f"candidate_branches[{index}]"
+            if not isinstance(branch, Mapping):
+                errors.append(f"{prefix} must be an object")
+                continue
+            candidate_id = _identifier(branch.get("candidate_id"), f"{prefix}.candidate_id", errors)
+            if candidate_id in candidate_ids:
+                errors.append(f"{prefix}.candidate_id is duplicated")
+            candidate_ids.add(candidate_id)
+            for field_name in ("title", "objective", "rationale"):
+                if not _text(branch.get(field_name)):
+                    errors.append(f"{prefix}.{field_name} must be a non-empty string")
+            source_ids = branch.get("source_result_ids")
+            if not isinstance(source_ids, list) or not source_ids:
+                errors.append(f"{prefix}.source_result_ids must be a nonempty array")
+            elif any(not _text(item) for item in source_ids):
+                errors.append(f"{prefix}.source_result_ids must contain non-empty strings")
+            resources = branch.get("resources")
+            if resources is not None:
+                if not isinstance(resources, Mapping):
+                    errors.append(f"{prefix}.resources must be an object")
+                else:
+                    for key in RESOURCE_KEYS:
+                        value = resources.get(key)
+                        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                            errors.append(f"{prefix}.resources.{key} must be a positive integer")
+            wall_seconds = branch.get("wall_seconds")
+            if wall_seconds is not None and (
+                not isinstance(wall_seconds, int)
+                or isinstance(wall_seconds, bool)
+                or wall_seconds < 1
+            ):
+                errors.append(f"{prefix}.wall_seconds must be a positive integer")
     return ValidationResult(not errors, tuple(errors), tuple(warnings))
 
 

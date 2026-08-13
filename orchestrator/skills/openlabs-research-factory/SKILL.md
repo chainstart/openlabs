@@ -9,6 +9,13 @@ Own one useful, checkpointed research episode. Autonomously analyze, choose tool
 and perform as many intermediate operations as are useful within the reservation. Let the domain
 Skill govern scientific method; keep this Skill focused on boundaries, recovery, and handoff.
 
+The control plane never chooses a scientific route, scores a prospective idea, interprets a result,
+or manufactures continuation. Project configuration may provide objectives, history, and available
+services, but these are context rather than an exhaustive action menu. Scientific researchers and
+independent reviewers own those judgments. Deterministic code is limited to resource admission,
+transactions, validation of declared evidence, storage, indexing, scheduling, and mechanically
+executing typed agent handoffs.
+
 ## Establish the task
 
 1. Read the complete `openlabs.task.v3` file supplied by the runner, including its CPU-thread,
@@ -82,6 +89,11 @@ independent processes; their existence does not require this process to terminat
   submission boundary.
 - Stay inside the task's declared resource reservation. Request a larger successor explicitly only
   when the next bounded action cannot fit the current reservation.
+
+In a project portfolio review, the blank reviewer may return `candidate_branches` as defined by the
+result contract. The factory creates those independent maturation workstreams verbatim while the
+original researcher continues; it does not impose a candidate quota, route list, score, or venue
+decision.
 
 ## Validate before promotion
 

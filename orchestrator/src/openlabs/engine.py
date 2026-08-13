@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -45,9 +46,21 @@ from .contracts import (
 )
 from .db import AttemptDisposition, FactoryDB
 from .gates import evaluate_result_bundle
-from .labs import discover_labs, lab_for_domain
+from .labs import LabManifest, discover_labs, lab_for_domain
 from .locking import factory_operation_lock
-from .projects import EPISTEMIC_FRESH_BOUNDARIES, ExecutionPolicy, load_project
+from .portfolio import (
+    advance_review_cursor,
+    index_project_result,
+    reconcile_pending_portfolio_review,
+    schedule_portfolio_review,
+    spawn_candidate_workstreams,
+)
+from .projects import (
+    EPISTEMIC_FRESH_BOUNDARIES,
+    ExecutionPolicy,
+    load_project,
+    workstream_policy,
+)
 from .protocols import validate_protocol_state
 from .resources import (
     ResourceVector,
@@ -90,6 +103,7 @@ class ProjectWorkstreamBinding:
     protocol_id: str
     primary_skill: str
     execution_policy: ExecutionPolicy
+    workstream_policy: dict[str, Any] = field(default_factory=dict)
     legacy_plan_path: Path | None = None
 
 
@@ -541,6 +555,11 @@ def _active_project_workstreams(
                 (domain_root,),
             ):
                 raise ValueError("project domain config escapes its domain workspace")
+            for resource in project.read_resources:
+                if not _inside(resource.path, (domain_root, paths.code)):
+                    raise ValueError(
+                        f"project read resource {resource.label!r} escapes its domain workspace"
+                    )
             protocol = lab.protocol(project.protocol_id)
             if protocol is None:
                 raise ValueError(
@@ -590,6 +609,10 @@ def _active_project_workstreams(
                         protocol_id=project.protocol_id,
                         primary_skill=project.primary_skill,
                         execution_policy=project.execution,
+                        workstream_policy={
+                            **workstream.policy(),
+                            "objective": workstream.objective or project.objective,
+                        },
                     )
                 )
         except (
@@ -653,6 +676,12 @@ def _active_project_workstreams(
                         protocol_id="legacy-production-plan",
                         primary_skill="math-production-supervisor",
                         execution_policy=ExecutionPolicy(),
+                        workstream_policy={
+                            "runtime_skills": [
+                                "math-production-supervisor",
+                                "amra-research-loop",
+                            ]
+                        },
                         legacy_plan_path=plan_path.resolve(),
                     )
                 )
@@ -669,9 +698,64 @@ def _sync_active_projects(
 ) -> None:
     bindings = _active_project_workstreams(paths, report)
     desired = {binding.workstream_id for binding in bindings}
+    active_project_paths = {
+        str(binding.project_path) for binding in bindings if binding.legacy_plan_path is None
+    }
     for campaign in db.project_campaigns():
         campaign_id = str(campaign["campaign_id"])
         if campaign_id in desired:
+            continue
+        policy = workstream_policy(campaign)
+        if (
+            policy.get("dynamic") is True
+            and str(campaign.get("project_config_path") or "") in active_project_paths
+        ):
+            try:
+                state_status = _workstream_state_status(campaign)
+                if state_status in {"paused", "completed"}:
+                    if not db.has_active_tasks(campaign_id) and not db.has_queued_tasks(
+                        campaign_id
+                    ):
+                        db.pause_production_campaign(
+                            campaign_id,
+                            reason=f"agent_workstream_{state_status}",
+                        )
+                        report.production_paused.append(campaign_id)
+                    continue
+                project = load_project(str(campaign["project_config_path"]))
+                domain_root = (paths.data / "workspaces" / project.domain).resolve()
+                for resource in project.read_resources:
+                    if not _inside(resource.path, (domain_root, paths.code)):
+                        raise ValueError(
+                            f"project read resource {resource.label!r} escapes its domain workspace"
+                        )
+                protocol_errors = _validate_bound_protocol(
+                    paths,
+                    campaign,
+                    mode="discovery",
+                )
+                if protocol_errors:
+                    raise ValueError("; ".join(protocol_errors))
+                db.configure_project_campaign(
+                    campaign_id,
+                    project_config_path=str(project.path),
+                    workstream_state_path=str(campaign["workstream_state_path"]),
+                    protocol_id=project.protocol_id,
+                    primary_skill=project.primary_skill,
+                    execution_policy=project.execution.to_dict(),
+                    project_id=project.project_id,
+                    workstream_policy=policy,
+                    priority=int(campaign.get("priority") or 0),
+                )
+                report.production_synced.append(campaign_id)
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                db.pause_production_campaign(
+                    campaign_id,
+                    reason=f"dynamic_binding_invalid:{exc}",
+                )
+                report.production_blocked.append(
+                    {"campaign_id": campaign_id, "reason": f"dynamic_binding_invalid:{exc}"}
+                )
             continue
         if not bool(campaign.get("continuous")) and str(campaign.get("status")) != "active":
             continue
@@ -722,6 +806,8 @@ def _sync_active_projects(
                 protocol_id=binding.protocol_id,
                 primary_skill=binding.primary_skill,
                 execution_policy=binding.execution_policy.to_dict(),
+                project_id=binding.project_id,
+                workstream_policy=binding.workstream_policy,
                 priority=binding.priority,
             )
         report.production_synced.append(binding.workstream_id)
@@ -736,14 +822,27 @@ def _fallback_project_action(
     lane_path = Path(str(lane_value))
     plan_path = Path(str(project_value))
     if campaign.get("project_config_path"):
+        stream_policy = workstream_policy(campaign)
+        role = str(stream_policy.get("default_agent_role") or "researcher")
+        session_mode = str(
+            stream_policy.get("default_session_mode")
+            or ("fresh" if role == "reviewer" else execution_policy.default_session_mode)
+        )
+        configured_objective = str(stream_policy.get("objective") or "").strip()
         objective = (
-            f"Continue project workstream {campaign['campaign_id']} under protocol "
+            f"Own project workstream {campaign['campaign_id']} under protocol "
             f"{campaign.get('protocol_id')} and Skill {campaign.get('primary_skill')}. Read the "
-            f"project config {plan_path}, workstream state {lane_path}, and all durable protocol "
-            "checkpoints. Autonomously execute the highest-information admissible research work "
-            "and persist one evidence-bound checkpoint plus any executable continuation."
+            f"project config {plan_path}, workstream state {lane_path}, durable checkpoints, and "
+            "available research index. "
+            + (configured_objective + " " if configured_objective else "")
+            + "You own every scientific choice: freely create, combine, switch, pause, revive, "
+            "or abandon routes and choose any useful installed tool. Treat configured themes and "
+            "prior routes as context, never as an exhaustive menu or mandatory sequence. Persist "
+            "a truthful evidence-bound checkpoint and an executable continuation when useful."
         )
     else:
+        role = "researcher"
+        session_mode = execution_policy.default_session_mode
         lane = _read_json_object(lane_path)
         stage = str(lane.get("stage") or "radar")
         cycle = int(lane.get("cycle") or 1)
@@ -764,10 +863,43 @@ def _fallback_project_action(
             )
     return ActionPlan(
         objective=objective,
-        agent_role="researcher",
-        session_mode=execution_policy.default_session_mode,
+        agent_role=role,
+        session_mode=session_mode,
         handoff_kind="role_handoff",
     )
+
+
+def _workstream_state_status(campaign: Mapping[str, Any]) -> str | None:
+    value = str(campaign.get("workstream_state_path") or "").strip()
+    if not value:
+        return None
+    state_path = Path(value).expanduser().resolve()
+    if not state_path.is_file():
+        return None
+    status = str(_read_json_object(state_path).get("status") or "").strip()
+    return status or None
+
+
+def _campaign_runtime_skill_ids(
+    lab: LabManifest,
+    campaign: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    if campaign is None:
+        return ()
+    stream_policy = workstream_policy(campaign)
+    configured = stream_policy.get("runtime_skills")
+    if isinstance(configured, list):
+        return tuple(str(item) for item in configured)
+    protocol_id = str(campaign.get("protocol_id") or "").strip()
+    protocol = lab.protocol(protocol_id) if protocol_id else None
+    if protocol is not None:
+        return protocol.runtime_skills
+    primary = str(campaign.get("primary_skill") or "").strip()
+    if primary:
+        return (primary,)
+    if campaign.get("production_plan_path") or campaign.get("production_lane_path"):
+        return tuple(str(item["skill_id"]) for item in lab.skills)
+    return ()
 
 
 def _production_workspace_authority(
@@ -793,10 +925,11 @@ def _production_workspace_authority(
     if not labs:
         return None
     lab = lab_for_domain(labs, str(campaign.get("domain") or ""))
+    selected_skill_ids = _campaign_runtime_skill_ids(lab, campaign)
     skill_dirs = {
-        (lab.root / str(item["path"])).resolve().parent
-        for item in lab.skills
-        if str(item.get("path") or "").strip()
+        path.parent
+        for skill_id in selected_skill_ids
+        if skill_id and (path := lab.skill_path(skill_id)) is not None
     }
     policies = authority_policy_paths(sorted(skill_dirs))
     return resolve_workspace_authority(lane_path.parent, policies)
@@ -832,6 +965,7 @@ def _validate_bound_protocol(
     campaign: Mapping[str, Any],
     *,
     attempt_workspace: AttemptWorkspace | None = None,
+    mode: str = "commit",
 ) -> tuple[str, ...]:
     project_value = str(campaign.get("project_config_path") or "").strip()
     state_value = str(campaign.get("workstream_state_path") or "").strip()
@@ -855,7 +989,7 @@ def _validate_bound_protocol(
         protocol,
         project_path=project_path,
         workstream_path=state_path,
-        mode="commit",
+        mode=mode,
     )
     return validation.errors if not validation.valid else ()
 
@@ -891,6 +1025,7 @@ def _launch_worker(
     job_path: Path,
     log_path: Path,
     environment: Mapping[str, str],
+    cpu_ceiling_threads: int | None = None,
 ) -> int | None:
     """Launch a worker outside the short-lived tick service cgroup when supervised."""
 
@@ -901,7 +1036,10 @@ def _launch_worker(
             raise RuntimeError("systemd tick requires systemd-run for detached workers")
         unit = _worker_unit_name(task)
         reserved = task_resources(task)
-        tasks_max = max(64, reserved.cpu_threads * 32)
+        cpu_quota_threads = max(reserved.cpu_threads, int(cpu_ceiling_threads or 0))
+        # Codex, Lean, Mathlib and language servers may create many short-lived
+        # helper threads.  This is a crash guard, not a research-parallelism knob.
+        tasks_max = max(512, reserved.cpu_threads * 128)
         launch = [
             systemd_run,
             "--user",
@@ -918,7 +1056,7 @@ def _launch_worker(
             # openlabs-workers.slice owns the aggregate hard ceiling.
             f"--property=MemoryHigh={reserved.memory_mib}M",
             f"--property=TasksMax={tasks_max}",
-            f"--property=CPUQuota={reserved.cpu_threads * 100}%",
+            f"--property=CPUQuota={cpu_quota_threads * 100}%",
             "--property=Nice=5",
             f"--property=StandardOutput=append:{log_path}",
             f"--property=StandardError=append:{log_path}",
@@ -1000,6 +1138,16 @@ def _replenish_continuous_campaign(
             {"campaign_id": campaign_id, "reason": str(latest.get("status"))}
         )
         return
+    campaign = db.campaign(campaign_id) or dict(campaign)
+    stream_policy = workstream_policy(campaign)
+    state_status = _workstream_state_status(campaign)
+    if stream_policy.get("dynamic") is True and state_status in {"paused", "completed"}:
+        db.pause_production_campaign(
+            campaign_id,
+            reason=f"agent_workstream_{state_status}",
+        )
+        report.production_paused.append(campaign_id)
+        return
     room = _prepare_auto_task_room(
         db,
         campaign_id,
@@ -1014,9 +1162,45 @@ def _replenish_continuous_campaign(
         return
     if db.has_queued_tasks(campaign_id):
         return
-    campaign = db.campaign(campaign_id) or dict(campaign)
+    if stream_policy.get("continuation") == "review_on_new_results":
+        reconciled = reconcile_pending_portfolio_review(
+            db,
+            paths,
+            settings,
+            campaign,
+        )
+        if reconciled.reconciled:
+            report.enqueued.extend(reconciled.spawned.task_ids)
+            report.production_synced.extend(reconciled.spawned.campaign_ids)
+            return
+        scheduled = schedule_portfolio_review(
+            db,
+            paths,
+            settings,
+            campaign,
+            epoch=room.epoch,
+        )
+        if scheduled.task_id is not None:
+            report.enqueued.append(scheduled.task_id)
+            report.production_reseeded.append(campaign_id)
+        elif scheduled.reason is not None:
+            report.production_blocked.append(
+                {"campaign_id": campaign_id, "reason": scheduled.reason}
+            )
+        return
     execution_policy = _campaign_execution_policy(campaign)
     payload = _verified_result_payload(latest, paths) if latest else None
+    if (
+        stream_policy.get("dynamic") is True
+        and latest
+        and str(latest.get("task_type") or "") == "paper_review"
+        and payload
+        and payload.get("paper_candidate") is True
+    ):
+        report.production_blocked.append(
+            {"campaign_id": campaign_id, "reason": "candidate_paper_pipeline_complete"}
+        )
+        return
     current_role = str(latest.get("agent_role") or "researcher") if latest else "researcher"
     actions = payload.get("next_actions") if payload else None
     action = (
@@ -1085,8 +1269,10 @@ def _replenish_continuous_campaign(
     if (
         latest
         and action.session_mode == "resume"
-        and action.agent_role == current_role
-        and not latest.get("agent_session_id")
+        and (
+            action.agent_role != current_role
+            or not latest.get("agent_session_id")
+        )
     ):
         action = ActionPlan(
             objective=action.objective,
@@ -1620,7 +1806,70 @@ def ingest_results(
             campaign_id = str(payload["campaign_id"])
             task_type = str(task.get("task_type") or "")
             successful = final_status == "succeeded" and gate.passed
-            successor_handled = False
+            if task_type == "portfolio_review" and payload.get("paper_candidate") is True:
+                report.errors.append(
+                    f"Portfolio reviewer {task_id} set paper_candidate=true; ignored for "
+                    "scheduling because candidate_branches is the only portfolio handoff"
+                )
+            if campaign_binding is not None and campaign_binding.get("project_config_path"):
+                try:
+                    index_project_result(
+                        campaign_binding,
+                        task,
+                        payload,
+                        result_path=result_path,
+                        result_sha256=actual_sha,
+                        final_status=final_status,
+                    )
+                except Exception as exc:  # noqa: BLE001 - derived index is rebuildable.
+                    report.errors.append(f"Could not index project result {task_id}: {exc}")
+            candidate_materialization_ok = True
+            if (
+                successful
+                and settings.auto_continue
+                and campaign_binding is not None
+                and campaign_binding.get("project_config_path")
+            ):
+                try:
+                    spawned = spawn_candidate_workstreams(
+                        db,
+                        paths,
+                        settings,
+                        campaign_binding,
+                        task,
+                        payload,
+                        result_path=result_path,
+                    )
+                    report.enqueued.extend(spawned.task_ids)
+                    report.production_synced.extend(spawned.campaign_ids)
+                except Exception as exc:  # noqa: BLE001 - result remains authoritative.
+                    candidate_materialization_ok = False
+                    report.errors.append(
+                        f"Could not materialize candidate branches from {task_id}: {exc}"
+                    )
+            if (
+                successful
+                and task_type == "portfolio_review"
+                and candidate_materialization_ok
+            ):
+                try:
+                    advance_review_cursor(task)
+                except Exception as exc:  # noqa: BLE001 - retry review rather than lose result.
+                    report.errors.append(f"Could not advance review cursor {task_id}: {exc}")
+            agent_closed_dynamic = bool(
+                campaign_binding is not None
+                and workstream_policy(campaign_binding).get("dynamic") is True
+                and _workstream_state_status(campaign_binding) in {"paused", "completed"}
+                and payload.get("paper_candidate") is not True
+            )
+            successor_handled = agent_closed_dynamic
+            if agent_closed_dynamic:
+                state_status = _workstream_state_status(campaign_binding or {})
+                db.pause_production_campaign(
+                    campaign_id,
+                    reason=f"agent_workstream_{state_status}",
+                )
+                report.production_paused.append(campaign_id)
             room = _prepare_auto_task_room(
                 db,
                 campaign_id,
@@ -1703,6 +1952,7 @@ def ingest_results(
                 successful
                 and settings.auto_continue
                 and not successor_handled
+                and task_type != "portfolio_review"
                 and payload.get("paper_candidate") is True
             ):
                 successor_handled = True
@@ -1858,7 +2108,12 @@ def ingest_results(
                             task_type="evidence_remediation",
                             objective=next_plan.objective,
                             input_path=str(result_path),
-                            skill_path=_research_skill(domain),
+                            skill_path=(
+                                str(campaign_binding.get("primary_skill") or "")
+                                if campaign_binding is not None
+                                and campaign_binding.get("project_config_path")
+                                else _research_skill(domain)
+                            ),
                             routing_reason="review_evidence_remediation",
                             agent_role=target_role,
                             resources=next_plan.resources,
@@ -1903,7 +2158,9 @@ def ingest_results(
                         keep=settings.archive_result_receipts,
                     )
                     continue
-                if session_mode == "resume" and not task.get("agent_session_id"):
+                if session_mode == "resume" and (
+                    target_role != current_role or not task.get("agent_session_id")
+                ):
                     session_mode = "fresh"
                 prefix = "replan" if is_replan else "continue"
                 follow_task_id = f"{prefix}:{actual_sha[:32]}"
@@ -2034,29 +2291,60 @@ def _write_task_spec(
     if project_path and workstream_path:
         assert campaign is not None
         execution_policy = _campaign_execution_policy(campaign)
+        project_config = (
+            load_project(project_path) if campaign.get("project_config_path") else None
+        )
         payload["project"] = {
             "config_path": attempt_workspace.map_path(project_path),
             "workstream_state_path": attempt_workspace.map_path(workstream_path),
             "protocol_id": campaign.get("protocol_id") or "legacy-production-plan",
+            "read_resources": (
+                [item.to_dict() for item in project_config.read_resources]
+                if project_config is not None
+                else []
+            ),
         }
         payload["execution_policy"] = execution_policy.to_dict()
     skill_dirs = [
         paths.code / "orchestrator" / "skills" / "openlabs-research-factory",
     ]
-    lab_skills = manifest_path.parent / "skills"
-    if lab_skills.is_dir():
-        skill_dirs.extend(
-            candidate
-            for candidate in sorted(lab_skills.iterdir())
-            if candidate.is_dir() and (candidate / "SKILL.md").is_file()
-        )
+    runtime_lab = lab_for_domain(discover_labs(paths.code), str(task["domain"]))
+    runtime_skill_ids = _campaign_runtime_skill_ids(runtime_lab, campaign)
+    skill_dirs.extend(
+        candidate.parent
+        for skill_id in runtime_skill_ids
+        if skill_id
+        and (candidate := runtime_lab.skill_path(skill_id)) is not None
+        and candidate.parent not in skill_dirs
+    )
+    available_skill_dirs = [
+        candidate.parent
+        for item in runtime_lab.skills
+        if (candidate := runtime_lab.skill_path(str(item["skill_id"]))) is not None
+    ]
     if skill_path is not None and skill_path.parent not in skill_dirs:
+        requested_skill_id = str(task.get("skill_path") or "").strip()
+        project_bound = bool(campaign and campaign.get("project_config_path"))
+        task_type = str(task.get("task_type") or "")
+        paper_skill_ids: set[str] = set()
+        if task_type == "paper_review":
+            paper_skill_ids.add("openlabs-paper-review")
+        elif task_type in {"paper_readiness", "paper_write", "paper_revision"}:
+            configured_paper_skill = _paper_skill(str(task.get("domain") or ""))
+            if configured_paper_skill:
+                paper_skill_ids.add(configured_paper_skill)
+        if project_bound and requested_skill_id not in paper_skill_ids:
+            raise ValueError(
+                f"Project task Skill {requested_skill_id!r} is not activated by protocol "
+                f"{campaign.get('protocol_id')!r}"
+            )
         skill_dirs.append(skill_path.parent)
     payload["runtime_policy"] = configure_codex_runtime(
         agent_workspace,
         task=payload,
         output_path=output_path,
         skill_dirs=skill_dirs,
+        available_skill_dirs=available_skill_dirs,
     )
     validation = validate_task(payload)
     if not validation.valid:
@@ -2065,6 +2353,12 @@ def _write_task_spec(
         paths.job_inbox / f"{task['task_id']}-{task['current_attempt_id']}.json",
         payload,
     )
+
+
+def _worker_cpu_ceiling_threads(fraction: float | None) -> int | None:
+    if fraction is None:
+        return None
+    return max(1, math.ceil((os.cpu_count() or 1) * fraction))
 
 
 def _launch_task(
@@ -2143,6 +2437,9 @@ def _launch_task(
         job_path=job_path,
         log_path=log_path,
         environment=environment,
+        cpu_ceiling_threads=_worker_cpu_ceiling_threads(
+            lab.worker_cpu_burst_fraction
+        ),
     )
     try:
         if worker_pid is not None:
