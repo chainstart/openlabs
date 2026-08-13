@@ -320,7 +320,7 @@ def test_agent_resume_uses_only_the_declared_role_session(tmp_path, monkeypatch)
     assert runtime["resumed_from"] == "writer-session"
 
 
-def test_codex_uses_native_workspace_sandbox_and_generated_hooks(tmp_path) -> None:
+def test_codex_uses_full_access_and_generated_hooks(tmp_path) -> None:
     runner = _load_runner()
     workspace = tmp_path / "attempt" / "campaign"
     hooks = workspace / ".codex" / "hooks.json"
@@ -338,7 +338,7 @@ def test_codex_uses_native_workspace_sandbox_and_generated_hooks(tmp_path) -> No
             "codex",
             "exec",
             "--sandbox",
-            "workspace-write",
+            "danger-full-access",
             "--approve-for-me",
             "resume",
             "--json",
@@ -353,15 +353,15 @@ def test_codex_uses_native_workspace_sandbox_and_generated_hooks(tmp_path) -> No
 
     assert wrapped == command
     assert command[:2] == ["codex", "exec"]
-    assert "--approve-for-me" in command
-    assert command[command.index("--sandbox") + 1] == "workspace-write"
-    assert "sandbox_workspace_write.network_access=true" in command
+    assert 'approval_policy="never"' in command
+    assert command[command.index("--sandbox") + 1] == "danger-full-access"
+    assert "sandbox_workspace_write.network_access=true" not in command
     assert command[command.index("-C") + 1] == str(workspace)
     assert command.count("--json") == 1
     assert "--dangerously-bypass-hook-trust" in command
     assert command[command.index("--enable") + 1] == "hooks"
-    assert command.index("--approve-for-me") < command.index("resume")
-    assert sandbox == "codex-native-workspace-write"
+    assert command.index('approval_policy="never"') < command.index("resume")
+    assert sandbox == "codex-native-danger-full-access"
 
 
 def test_runner_collects_structured_hook_receipts(tmp_path) -> None:
@@ -406,17 +406,17 @@ def test_runner_collects_structured_hook_receipts(tmp_path) -> None:
     assert runtime["stop_failed_final"] == 1
 
 
-def test_codex_adapter_rejects_sandbox_bypass(tmp_path) -> None:
+def test_codex_adapter_enforces_factory_full_access_policy(tmp_path) -> None:
     runner = _load_runner()
 
-    with pytest.raises(ValueError, match="may not bypass"):
+    with pytest.raises(ValueError, match="full-access policy"):
         runner._prepare_codex_command(
             ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "-"],
             agent_workspace=tmp_path,
             trust_generated_hooks=False,
         )
 
-    with pytest.raises(ValueError, match="may not add writable"):
+    with pytest.raises(ValueError, match="do not need extra writable"):
         runner._prepare_codex_command(
             ["codex", "exec", "--add-dir", "/canonical", "-"],
             agent_workspace=tmp_path,
@@ -425,7 +425,7 @@ def test_codex_adapter_rejects_sandbox_bypass(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="runtime policy"):
         runner._prepare_codex_command(
-            ["codex", "exec", "-c", 'sandbox_mode="danger-full-access"', "-"],
+            ["codex", "exec", "-c", 'sandbox_mode="workspace-write"', "-"],
             agent_workspace=tmp_path,
             trust_generated_hooks=False,
         )

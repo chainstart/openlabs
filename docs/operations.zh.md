@@ -84,10 +84,11 @@ OPENLABS_CLAUDE_COMMAND=claude
 必须包含独立的 `{session_id}` 参数。如果 runner 未配置，
 工厂会安全地产生 `needs_human`，不会假装完成研究。
 模板只描述 provider、model/profile 与会话参数。runner 会统一加入 JSONL、私有工作目录、
-自动审批、Codex 原生 `workspace-write` 和受信 project hook 参数；模板不得请求
-`danger-full-access` 或绕过 sandbox。
-研究者、实验执行者和作者的可写根是 campaign workspace，不是外层四仓库根；reviewer 的
-可写根进一步缩到本次 attempt 目录。先用 smoke task 验证文件协议，再接入真实 Agent。
+`approval_policy=never`、Codex 原生 `danger-full-access` 和受信 project hook 参数。外层模板
+不得覆盖这些工厂运行参数。Codex 以 worker 的普通 Linux 用户权限运行，可以自由调用已安装
+工具、网络、缓存、编译器和跨目录材料；它仍受 systemd/cgroup 的 CPU、内存、进程和时间
+护栏约束。attempt workspace 仍是约定的研究与成果写入位置，正式成果只由控制面在协议验证
+后晋升。先用 smoke task 验证文件协议，再接入真实 Agent。
 
 研究者、同一实验执行链和同一稿件修订链可按 session ID 恢复，但每个节点仍启动一个有界
 进程并在完成后退出。节点内部可以跨越多个不应持久化为边界的微步骤；等待外部实验、形成
@@ -143,11 +144,22 @@ python3 -m openlabs halt-production \
 该命令把计划置为 `paused_timebox_complete`，取消所属排队与运行任务、结算已用 Agent 时间、
 终止已登记 worker 进程组，并停用 `openlabs-factory.target`。如需准点运行，应由独立于 factory
 target 的 persistent systemd timer 调用此命令；否则停机动作会随 factory 一起被停止。
+新的通用 `project.json` 项目使用对应的项目级命令，不要求其领域配置恰好是旧 production plan：
 
-每个 Agent attempt 在 `openlabs-artifacts/attempt-workspaces/` 的私有 campaign 副本中写入。
-Codex adapter 强制使用其原生 `workspace-write` sandbox，因此 Codex 调起的 shell、Python、
-证明器等子进程继承同一写边界，也不会被第二层 namespace 阻断。非 Codex adapter 没有这项
-原生保证，仍由 worker 使用 bubblewrap 只开放本 attempt；本机缺少 bubblewrap 时拒绝启动，
+```bash
+python3 -m openlabs halt-project \
+  --project "$OPENLABS_WORKSPACE/openlabs-data/workspaces/math/production/example/project.json" \
+  --reason timebox_expired \
+  --report "$OPENLABS_WORKSPACE/openlabs-data/workspaces/math/production/example/project_stop.json"
+```
+
+它会在同一控制面锁下暂停项目，并取消所有静态或动态生成的绑定 campaign。
+
+每个 Agent attempt 都在 `openlabs-artifacts/attempt-workspaces/` 的私有 campaign 副本中开始。
+Codex adapter 使用原生 `danger-full-access`，因此它调起的 shell、Python、证明器、编译器和
+包管理器不会再被文件系统沙盒阻断。隔离目录此时是事务约定和默认 cwd，而不是内核强制的
+写边界；正式成果仍必须通过结果合同、协议验证、不可变归档和目录交换才能晋升。非 Codex
+adapter 仍由 worker 使用 bubblewrap 只开放本 attempt；本机缺少 bubblewrap 时拒绝启动，
 不会降级为共享写入。
 只有状态为完成、通过文件门禁且所有证据已复制到 `openlabs-artifacts/result-bundles/` 不可变
 归档的节点，才会以目录交换方式提升到正式 campaign；数据库确认入库前保留原目录作为回滚

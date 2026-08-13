@@ -201,7 +201,7 @@ def configure_codex_runtime(
     hooks_path = atomic_write_json(codex_root / "hooks.json", hooks)
     return {
         "schema_version": RUNTIME_POLICY_SCHEMA,
-        "sandbox": "workspace-write",
+        "sandbox": "danger-full-access",
         "hooks": str(hooks_path),
         "hook_trust": "orchestrator-generated",
         "hook_receipts": str(hook_receipt_path),

@@ -46,7 +46,7 @@ def test_attempt_runtime_exposes_skills_and_checks_result_before_stop(tmp_path) 
         skill_dirs=(factory_skill, domain_skill),
     )
 
-    assert policy["sandbox"] == "workspace-write"
+    assert policy["sandbox"] == "danger-full-access"
     assert policy["skills"] == ["$factory-skill", "$domain-skill"]
     assert (workspace / ".agents" / "skills" / "factory-skill").resolve() == factory_skill
     hooks = json.loads((workspace / ".codex" / "hooks.json").read_text(encoding="utf-8"))

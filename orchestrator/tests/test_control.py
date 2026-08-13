@@ -5,7 +5,7 @@ import json
 from openlabs.attempts import prepare_attempt_workspace
 from openlabs.config import workspace_paths
 from openlabs.contracts import atomic_write_json
-from openlabs.control import halt_production
+from openlabs.control import halt_production, halt_project
 from openlabs.db import FactoryDB
 
 
@@ -157,3 +157,62 @@ def test_halt_production_pauses_generic_project_campaigns(tmp_path) -> None:
     assert report["campaigns"] == ["generic-route"]
     assert db.campaign("generic-route")["status"] == "production_paused"
     assert db.task("generic-queued")["status"] == "cancelled"
+
+
+def test_halt_project_pauses_all_bound_campaigns_without_domain_config_coupling(tmp_path) -> None:
+    paths = workspace_paths(tmp_path)
+    paths.ensure_runtime_directories()
+    project_root = paths.data / "workspaces/math/production/run"
+    project_root.mkdir(parents=True)
+    domain_context = atomic_write_json(project_root / "context.json", {"topic": "RH"})
+    project_path = atomic_write_json(
+        project_root / "project.json",
+        {
+            "schema_version": "openlabs.project.v1",
+            "project_id": "generic-project",
+            "domain": "math",
+            "status": "active",
+            "domain_config": {"path": domain_context.name},
+        },
+    )
+    state_path = atomic_write_json(
+        paths.data / "workspaces/math/free-research/research_state.json",
+        {"status": "active"},
+    )
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    for campaign_id in ("free-research", "dynamic-candidate"):
+        db.register_campaign(campaign_id, domain="math", title=campaign_id)
+        db.configure_project_campaign(
+            campaign_id,
+            project_config_path=str(project_path.resolve()),
+            workstream_state_path=str(state_path.resolve()),
+            protocol_id="autonomous-math",
+            primary_skill="math-autonomous-research",
+            execution_policy={},
+        )
+        db.enqueue_task(
+            task_id=f"{campaign_id}-queued",
+            campaign_id=campaign_id,
+            domain="math",
+            task_type="research",
+            objective="Must stop at the project deadline.",
+        )
+
+    report = halt_project(
+        paths,
+        project_path=project_path,
+        reason="project_timebox_expired",
+        stop_systemd=False,
+    )
+
+    assert json.loads(project_path.read_text(encoding="utf-8"))["status"] == "paused"
+    assert report["schema_version"] == "openlabs.project_halt.v1"
+    assert report["campaigns"] == ["dynamic-candidate", "free-research"]
+    assert sorted(report["queued_cancelled"]) == [
+        "dynamic-candidate-queued",
+        "free-research-queued",
+    ]
+    for campaign_id in report["campaigns"]:
+        assert db.campaign(campaign_id)["status"] == "production_paused"
+        assert db.campaign(campaign_id)["continuous"] == 0

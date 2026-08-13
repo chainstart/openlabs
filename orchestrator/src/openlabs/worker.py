@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -62,6 +63,47 @@ def _stop_lab_runner(process: subprocess.Popen[bytes], *, grace_seconds: int = 3
         return int(process.wait())
 
 
+def _heartbeat_with_contention_tolerance(
+    db: FactoryDB,
+    task_id: str,
+    *,
+    attempt_id: str,
+    owner: str,
+    lease_seconds: int,
+) -> bool | None:
+    """Keep research alive across a transient SQLite writer collision.
+
+    The authoritative lease is deliberately much longer than one heartbeat.  A
+    single busy/locked write must therefore be retried on the next heartbeat,
+    rather than terminating a healthy agent and losing its in-memory context.
+    ``None`` means no state transition was observed and the retry is safe.
+    """
+
+    try:
+        return db.heartbeat(
+            task_id,
+            attempt_id=attempt_id,
+            owner=owner,
+            lease_seconds=lease_seconds,
+        )
+    except sqlite3.OperationalError as exc:
+        code = getattr(exc, "sqlite_errorcode", None)
+        detail = str(exc).lower()
+        retryable = code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED} or any(
+            marker in detail
+            for marker in ("database is locked", "database table is locked", "locking protocol")
+        )
+        if not retryable:
+            raise
+        print(
+            f"Transient SQLite contention during heartbeat for {task_id}; "
+            "the live agent will retry within its lease.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+
+
 def run_worker(job_file: str) -> int:
     paths = workspace_paths()
     settings = load_settings(paths)
@@ -109,12 +151,14 @@ def run_worker(job_file: str) -> int:
             return_code = process.wait(timeout=settings.heartbeat_seconds)
             break
         except subprocess.TimeoutExpired:
-            if not db.heartbeat(
+            heartbeat = _heartbeat_with_contention_tolerance(
+                db,
                 task_id,
                 attempt_id=attempt_id,
                 owner=owner,
                 lease_seconds=settings.lease_seconds,
-            ):
+            )
+            if heartbeat is False:
                 heartbeat_lost = True
                 return_code = _stop_lab_runner(process)
                 break

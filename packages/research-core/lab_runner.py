@@ -249,7 +249,7 @@ def _lab_runtime_setup(
     workspace: Path,
     agent_workspace: Path,
 ) -> dict[str, Any]:
-    """Run trusted lab-declared setup commands before the sandboxed Agent starts."""
+    """Run trusted lab-declared setup commands before the Agent starts."""
 
     configured = manifest.get("runtime_setup", [])
     if not isinstance(configured, list):
@@ -530,9 +530,9 @@ def _prepare_codex_command(
         token in forbidden or any(token.startswith(f"{name}=") for name in forbidden)
         for token in command
     ):
-        raise ValueError("The Codex adapter may not bypass its native sandbox")
+        raise ValueError("The Codex adapter may not override the factory's full-access policy")
     if any(token == "--add-dir" or token.startswith("--add-dir=") for token in command):
-        raise ValueError("OpenLabs Codex tasks may not add writable directories")
+        raise ValueError("OpenLabs Codex tasks do not need extra writable roots in full-access mode")
     if any(
         (token == "--disable" and index + 1 < len(command) and command[index + 1] == "hooks")
         or token == "--disable=hooks"
@@ -550,8 +550,8 @@ def _prepare_codex_command(
     if _config_override_keys(command) & protected_config:
         raise ValueError("The Codex adapter may not override factory runtime policy")
     configured_sandbox = _command_option(command, "--sandbox", "-s")
-    if configured_sandbox not in {None, "workspace-write"}:
-        raise ValueError("OpenLabs Codex tasks require the workspace-write sandbox")
+    if configured_sandbox not in {None, "danger-full-access"}:
+        raise ValueError("OpenLabs Codex tasks require the danger-full-access runtime")
 
     tail = _remove_value_options(command[2:], {"--sandbox", "-s", "--cd", "-C"})
     tail = _remove_flags(
@@ -565,13 +565,12 @@ def _prepare_codex_command(
         },
     )
     policy = [
-        "--approve-for-me",
+        "-c",
+        'approval_policy="never"',
         "--enable",
         "hooks",
         "--sandbox",
-        "workspace-write",
-        "-c",
-        "sandbox_workspace_write.network_access=true",
+        "danger-full-access",
         "--json",
         "--skip-git-repo-check",
         "-C",
@@ -588,7 +587,7 @@ def _validate_codex_transaction(
     workspace: Path,
     agent_workspace: Path,
 ) -> None:
-    """Prove that the native sandbox root cannot contain authoritative state."""
+    """Validate the staged transaction layout before an unrestricted Codex run."""
 
     transaction = task.get("transaction")
     if not isinstance(transaction, Mapping) or transaction.get("mode") != (
@@ -690,10 +689,10 @@ def _transaction_sandbox(
     task: Mapping[str, Any],
     workspace: Path,
 ) -> tuple[list[str], str | None]:
-    """Make canonical factory state read-only for a transactional research agent."""
+    """Apply the configured filesystem policy for a transactional research agent."""
 
     if Path(command[0]).name == "codex":
-        return command, "codex-native-workspace-write"
+        return command, "codex-native-danger-full-access"
     transaction = task.get("transaction")
     if not isinstance(transaction, Mapping) or transaction.get("mode") != (
         "isolated_attempt_workspace"

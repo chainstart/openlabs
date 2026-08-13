@@ -88,7 +88,6 @@ class FactoryDB:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA journal_mode = WAL")
         try:
             yield connection
             connection.commit()
@@ -99,6 +98,25 @@ class FactoryDB:
             connection.close()
 
     def initialize(self) -> None:
+        # Journal mode is persistent database state.  Reasserting WAL on every
+        # short-lived worker connection turns simultaneous heartbeats into a
+        # schema-level lock race, despite each UPDATE being tiny.  Negotiate it
+        # only while bootstrapping (or repairing) the database.
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        bootstrap = sqlite3.connect(self.path, timeout=30)
+        try:
+            bootstrap.execute("PRAGMA busy_timeout = 30000")
+            current_mode = str(bootstrap.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+            if current_mode != "wal":
+                selected_mode = str(
+                    bootstrap.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+                ).lower()
+                if selected_mode != "wal":
+                    raise RuntimeError(
+                        f"Factory database refused WAL journal mode: {selected_mode}"
+                    )
+        finally:
+            bootstrap.close()
         with self.connect() as connection:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"

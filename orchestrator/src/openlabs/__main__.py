@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .config import load_settings, workspace_paths
-from .control import halt_production
+from .control import halt_production, halt_project
 from .db import FactoryDB
 from .engine import tick
 from .resources import effective_capacity
@@ -42,6 +42,14 @@ def _parser() -> argparse.ArgumentParser:
     halt.add_argument("--plan", type=Path, required=True)
     halt.add_argument("--reason", required=True)
     halt.add_argument("--report", type=Path)
+
+    halt_generic = commands.add_parser(
+        "halt-project",
+        help="Pause a generic project, cancel its work, and stop the local factory",
+    )
+    halt_generic.add_argument("--project", type=Path, required=True)
+    halt_generic.add_argument("--reason", required=True)
+    halt_generic.add_argument("--report", type=Path)
 
     enqueue = commands.add_parser("enqueue", help="Add one bounded task")
     enqueue.add_argument("--campaign-id", required=True)
@@ -163,6 +171,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         payload = halt_production(
             paths,
             plan_path=args.plan,
+            reason=args.reason,
+            report_path=args.report,
+        )
+    elif args.command == "halt-project":
+        payload = halt_project(
+            paths,
+            project_path=args.project,
             reason=args.reason,
             report_path=args.report,
         )

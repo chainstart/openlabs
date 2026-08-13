@@ -220,3 +220,113 @@ def halt_production(
             report_path=report_path,
             stop_systemd=stop_systemd,
         )
+
+
+def _halt_project_locked(
+    paths: WorkspacePaths,
+    *,
+    project_path: Path,
+    reason: str,
+    report_path: Path | None = None,
+    stop_systemd: bool = True,
+) -> dict[str, Any]:
+    """Pause one generic project and atomically cancel its materialized work."""
+
+    project_path = project_path.expanduser().resolve()
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project_id = str(project.get("project_id") or "").strip() if isinstance(project, dict) else ""
+    if not project_id:
+        raise ValueError(f"Invalid project config: {project_path}")
+    reason = reason.strip()
+    if not reason:
+        raise ValueError("A halt reason is required")
+
+    stopped_at = _utc_now()
+    prior_status = str(project.get("status") or "")
+    project["status"] = "paused"
+    atomic_write_json(project_path, project)
+
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    campaigns = sorted(
+        str(campaign["campaign_id"])
+        for campaign in db.project_campaigns()
+        if str(campaign.get("project_config_path") or "")
+        and Path(str(campaign["project_config_path"])).expanduser().resolve() == project_path
+    )
+    queued_cancelled: list[str] = []
+    for campaign_id in campaigns:
+        queued_cancelled.extend(db.pause_production_campaign(campaign_id, reason=reason))
+    active_cancelled = list(db.cancel_active_tasks(campaigns, reason=reason))
+    attempt_checkpoints: list[dict[str, Any]] = []
+    for item in active_cancelled:
+        attempt_id = str(item.get("attempt_id") or "").strip()
+        if not attempt_id:
+            continue
+        checkpoint = quarantine_attempt_workspace(
+            paths,
+            campaign_id=str(item["campaign_id"]),
+            attempt_id=attempt_id,
+            reason=f"operator_cancelled:{reason}",
+        )
+        if checkpoint is not None:
+            attempt_checkpoints.append(
+                {
+                    "task_id": item["task_id"],
+                    "campaign_id": item["campaign_id"],
+                    "attempt_id": attempt_id,
+                    "status": checkpoint.get("status"),
+                    "workspace": str(
+                        Path(str(checkpoint["staged_campaign_root"])).resolve().parents[2]
+                    ),
+                }
+            )
+    worker_pids = [
+        int(item["worker_pid"])
+        for item in active_cancelled
+        if item.get("worker_pid") is not None
+    ]
+    signalled = _terminate_recorded_workers(worker_pids) if stop_systemd else []
+    systemd: list[dict[str, Any]] = []
+    if stop_systemd:
+        systemd.append(_systemctl("stop", "openlabs-workers.target"))
+        systemd.append(_systemctl("disable", "--now", "openlabs-factory.target"))
+
+    report = {
+        "schema_version": "openlabs.project_halt.v1",
+        "project_id": project_id,
+        "project_path": str(project_path),
+        "prior_status": prior_status,
+        "final_status": "paused",
+        "reason": reason,
+        "stopped_at": stopped_at,
+        "campaigns": campaigns,
+        "queued_cancelled": sorted(queued_cancelled),
+        "active_cancelled": active_cancelled,
+        "attempt_checkpoints": attempt_checkpoints,
+        "worker_pids_signalled": signalled,
+        "systemd": systemd,
+    }
+    if report_path is not None:
+        atomic_write_json(report_path.expanduser().resolve(), report)
+    return report
+
+
+def halt_project(
+    paths: WorkspacePaths,
+    *,
+    project_path: Path,
+    reason: str,
+    report_path: Path | None = None,
+    stop_systemd: bool = True,
+) -> dict[str, Any]:
+    """Serialize generic-project cancellation against result ingestion and promotion."""
+
+    with factory_operation_lock(paths):
+        return _halt_project_locked(
+            paths,
+            project_path=project_path,
+            reason=reason,
+            report_path=report_path,
+            stop_systemd=stop_systemd,
+        )
