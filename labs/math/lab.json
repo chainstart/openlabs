@@ -24,11 +24,86 @@
       "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"
     }
   ],
+  "protocols": [
+    {
+      "protocol_id": "amra-math",
+      "primary_skill": "math-production-supervisor",
+      "validator": {
+        "command": [
+          "{python}",
+          "protocols/amra_math_protocol.py",
+          "--project",
+          "{project_config}",
+          "--workstream",
+          "{workstream_state}",
+          "--mode",
+          "{validation_mode}"
+        ]
+      }
+    }
+  ],
+  "runtime_setup": [
+    {
+      "setup_id": "lean4-mathlib-v4.26.0",
+      "command": [
+        "{python}",
+        "tools/formal/lean_runtime.py",
+        "prepare",
+        "--agent-workspace",
+        "{agent_workspace}",
+        "--artifacts-root",
+        "{artifacts_root}"
+      ],
+      "timeout_seconds": 1800
+    },
+    {
+      "setup_id": "sage-exact-v10.8",
+      "command": [
+        "{python}",
+        "tools/computation/math_runtime.py",
+        "prepare",
+        "--profile",
+        "sage-exact-v10.8",
+        "--agent-workspace",
+        "{agent_workspace}"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "setup_id": "arb-certified-v10.8",
+      "command": [
+        "{python}",
+        "tools/computation/math_runtime.py",
+        "prepare",
+        "--profile",
+        "arb-certified-v10.8",
+        "--agent-workspace",
+        "{agent_workspace}"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "setup_id": "smt-consensus-z3-cvc5-v1",
+      "command": [
+        "{python}",
+        "tools/computation/math_runtime.py",
+        "prepare",
+        "--profile",
+        "smt-consensus-z3-cvc5-v1",
+        "--agent-workspace",
+        "{agent_workspace}"
+      ],
+      "timeout_seconds": 120
+    }
+  ],
   "capabilities": [
     "open-problem-selection",
     "mechanism-falsification",
     "counterexample-search",
     "symbolic-computation",
+    "sage-exact-computation",
+    "arb-certified-numerics",
+    "smt-solver-consensus",
     "lean-verification"
   ]
 }

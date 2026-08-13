@@ -1,6 +1,9 @@
 {
   "statement": "",
   "status": "unset",
+  "exact_scope": "",
+  "unconditional_inputs": [],
+  "non_cosmetic_consequence": "",
   "closes": [],
   "evidence": [],
   "dependency_gaps": []

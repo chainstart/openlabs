@@ -33,8 +33,12 @@ HANDOFF_KINDS = {
     "text_revision",
     "evidence_remediation",
     "independent_replication",
+    "adversarial_review",
+    "portfolio_review",
+    "route_reselection",
 }
 RESOURCE_KEYS = ("cpu_threads", "memory_mib", "scratch_mib")
+CHECKPOINT_POLICIES = {"role_boundary_or_budget", "explicit_checkpoint"}
 EXECUTABLE_ARTIFACT_KINDS = frozenset(
     {"verification_script", "reproduction_script", "validator_script"}
 )
@@ -157,6 +161,59 @@ def validate_task(payload: Any) -> ValidationResult:
             ):
                 if not _text(transaction.get(field_name)):
                     errors.append(f"transaction.{field_name} must be a non-empty string")
+    project = payload.get("project")
+    if project is not None:
+        if not isinstance(project, Mapping):
+            errors.append("project must be an object")
+        else:
+            for field_name in ("config_path", "workstream_state_path"):
+                if not _text(project.get(field_name)):
+                    errors.append(f"project.{field_name} must be a non-empty string")
+            if not _text(project.get("protocol_id")):
+                errors.append("project.protocol_id must be a non-empty string")
+    execution_policy = payload.get("execution_policy")
+    if execution_policy is not None:
+        if not isinstance(execution_policy, Mapping):
+            errors.append("execution_policy must be an object")
+        else:
+            checkpoint_policy = _text(execution_policy.get("checkpoint_policy"))
+            if checkpoint_policy not in CHECKPOINT_POLICIES:
+                errors.append(
+                    "execution_policy.checkpoint_policy must be one of "
+                    f"{sorted(CHECKPOINT_POLICIES)}"
+                )
+            continuation = execution_policy.get("continue_across_protocol_phases")
+            if not isinstance(continuation, bool):
+                errors.append(
+                    "execution_policy.continue_across_protocol_phases must be a boolean"
+                )
+            default_mode = _text(execution_policy.get("default_session_mode"))
+            if default_mode not in SESSION_MODES:
+                errors.append(
+                    "execution_policy.default_session_mode must be one of "
+                    f"{sorted(SESSION_MODES)}"
+                )
+            boundaries = execution_policy.get("fresh_session_boundaries")
+            if not isinstance(boundaries, list):
+                errors.append("execution_policy.fresh_session_boundaries must be an array")
+            else:
+                normalized_boundaries = [_text(item) for item in boundaries]
+                if any(not item for item in normalized_boundaries):
+                    errors.append(
+                        "execution_policy.fresh_session_boundaries must contain strings"
+                    )
+                unknown = set(normalized_boundaries) - HANDOFF_KINDS
+                if unknown:
+                    errors.append(
+                        "execution_policy.fresh_session_boundaries contain unknown kinds: "
+                        + ", ".join(sorted(unknown))
+                    )
+                if len(normalized_boundaries) != len(set(normalized_boundaries)):
+                    errors.append(
+                        "execution_policy.fresh_session_boundaries cannot contain duplicates"
+                    )
+    if (project is None) != (execution_policy is None):
+        errors.append("project and execution_policy must be supplied together")
     attempt = payload.get("attempt")
     if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
         errors.append("attempt must be a positive integer")

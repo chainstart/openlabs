@@ -1,0 +1,31 @@
+{
+  "schema_version": "openlabs.project.v1",
+  "project_id": "example-project",
+  "domain": "replace-with-lab-domain",
+  "status": "paused",
+  "objective": "Replace with the project-level scientific objective.",
+  "protocol": {
+    "id": "replace-with-lab-registered-protocol",
+    "primary_skill": "replace-with-lab-skill"
+  },
+  "execution": {
+    "checkpoint_policy": "role_boundary_or_budget",
+    "continue_across_protocol_phases": true,
+    "default_session_mode": "resume",
+    "fresh_session_boundaries": [
+      "independent_replication",
+      "adversarial_review",
+      "portfolio_review",
+      "route_reselection"
+    ]
+  },
+  "workstreams": [
+    {
+      "workstream_id": "example-workstream",
+      "title": "Replace with a workstream title",
+      "state_path": "../../example-workstream/state.json",
+      "startup": "active",
+      "priority": 100
+    }
+  ]
+}

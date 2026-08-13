@@ -18,11 +18,25 @@ LANE_SCHEMA = "openlabs.math_production_lane.v1"
 STAGES = {"radar", "research", "terminal"}
 NODE_OUTCOMES = {"progress", "no_progress", "promotion", "freeze"}
 SELECTION_MODES = {"radar_scored", "operator_locked_route"}
-EPISTEMIC_DELTAS = {
+SEARCH_DELTAS = {
     "blocker_reduced",
     "mechanism_killed",
     "survivor_strengthened",
     "promotion_gate_advanced",
+}
+THEOREM_DELTAS = {
+    "theorem_statement_strengthened",
+    "hypothesis_removed",
+    "public_frontier_improved",
+    "standalone_no_go_closed",
+}
+EPISTEMIC_DELTAS = SEARCH_DELTAS | THEOREM_DELTAS
+DEFAULT_NODE_POLICY = {
+    "consecutive_no_progress_limit": 3,
+    "max_radar_nodes_per_cycle": 3,
+    "max_nodes_without_theorem_delta": 8,
+    "max_research_nodes_per_target": 12,
+    "max_frozen_branches_without_promotion": 2,
 }
 SCORE_MAXIMA = {
     "novelty": 25,
@@ -80,6 +94,71 @@ def _positive_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
+def _effective_node_policy(lane_path: Path, lane: dict[str, Any]) -> dict[str, Any]:
+    """Merge safe defaults, plan-level theorem policy, and lane overrides."""
+
+    policy: dict[str, Any] = dict(DEFAULT_NODE_POLICY)
+    plan_path = lane.get("plan_path")
+    if _text(plan_path):
+        plan = read_json((lane_path.parent / str(plan_path)).resolve())
+        program = plan.get("program")
+        if isinstance(program, dict):
+            theorem_policy = program.get("theorem_target_policy")
+            if isinstance(theorem_policy, dict):
+                policy.update(theorem_policy)
+    lane_policy = lane.get("node_policy")
+    if isinstance(lane_policy, dict):
+        policy.update(lane_policy)
+    return policy
+
+
+def _selected_amra_phase(lane_path: Path, lane: dict[str, Any]) -> str:
+    selected = lane.get("selected_target")
+    if not isinstance(selected, dict) or not _text(selected.get("amra_campaign")):
+        raise StateError("research outcome requires a selected AMRA campaign")
+    campaign_path = (lane_path.parent / str(selected["amra_campaign"])).resolve()
+    return str(read_json(campaign_path / "campaign_state.json").get("phase"))
+
+
+def _research_budget_metrics(
+    lane: dict[str, Any], policy: dict[str, Any]
+) -> dict[str, Any]:
+    cycle = lane.get("cycle")
+    cycle_nodes = [
+        node
+        for node in lane.get("nodes", [])
+        if node.get("cycle") == cycle
+        and node.get("outcome") in {"progress", "no_progress"}
+    ]
+    consecutive_no_progress = 0
+    for node in reversed(cycle_nodes):
+        if node.get("outcome") != "no_progress":
+            break
+        consecutive_no_progress += 1
+    without_theorem = 0
+    for node in reversed(cycle_nodes):
+        progress_class = node.get("progress_class")
+        if progress_class == "theorem" or node.get("delta_kind") in THEOREM_DELTAS:
+            break
+        without_theorem += 1
+    reasons: list[str] = []
+    if consecutive_no_progress >= int(policy["consecutive_no_progress_limit"]):
+        reasons.append("consecutive_no_progress_limit")
+    if without_theorem >= int(policy["max_nodes_without_theorem_delta"]):
+        reasons.append("max_nodes_without_theorem_delta")
+    if (
+        len(cycle_nodes) >= int(policy["max_research_nodes_per_target"])
+        and without_theorem > 0
+    ):
+        reasons.append("max_research_nodes_per_target")
+    return {
+        "research_nodes": len(cycle_nodes),
+        "consecutive_no_progress": consecutive_no_progress,
+        "consecutive_without_theorem_delta": without_theorem,
+        "freeze_reasons": reasons,
+    }
+
+
 def validate_plan(path: Path) -> list[str]:
     plan = read_json(path)
     errors: list[str] = []
@@ -120,6 +199,20 @@ def validate_plan(path: Path) -> list[str]:
                 expected = list if field in {"research_fronts", "invalid_progress"} else dict
                 if not isinstance(program.get(field), expected):
                     errors.append(f"program {field} must be a {expected.__name__}")
+            theorem_policy = program.get("theorem_target_policy")
+            if theorem_policy is not None:
+                if not isinstance(theorem_policy, dict):
+                    errors.append("program theorem_target_policy must be an object")
+                else:
+                    for field in (
+                        "max_nodes_without_theorem_delta",
+                        "max_research_nodes_per_target",
+                        "max_frozen_branches_without_promotion",
+                    ):
+                        if not _positive_int(theorem_policy.get(field)):
+                            errors.append(
+                                f"program theorem_target_policy {field} must be a positive integer"
+                            )
     lanes = plan.get("lanes")
     if not isinstance(lanes, list) or not lanes:
         errors.append("plan lanes must be a nonempty list")
@@ -189,6 +282,12 @@ def validate_lane(path: Path, *, expected_plan_id: str | None = None) -> list[st
     for field in ("selection_gate", "node_policy"):
         if not isinstance(lane.get(field), dict):
             errors.append(f"lane {field} must be an object")
+    node_policy = lane.get("node_policy")
+    if isinstance(node_policy, dict):
+        for field in DEFAULT_NODE_POLICY:
+            value = node_policy.get(field)
+            if value is not None and not _positive_int(value):
+                errors.append(f"lane node_policy {field} must be a positive integer")
     for field in ("archived_targets", "nodes", "history"):
         if not isinstance(lane.get(field), list):
             errors.append(f"lane {field} must be a list")
@@ -280,6 +379,7 @@ def select_target(args: argparse.Namespace) -> dict[str, Any]:
     now = utc_now()
     lane["stage"] = "research"
     lane["selected_target"] = {
+        "cycle": lane["cycle"],
         "target_id": args.target_id,
         "problem_id": args.problem_id,
         "title": args.title,
@@ -330,6 +430,7 @@ def lock_route(args: argparse.Namespace) -> dict[str, Any]:
     now = utc_now()
     lane["stage"] = "research"
     lane["selected_target"] = {
+        "cycle": lane["cycle"],
         "target_id": args.target_id,
         "problem_id": args.problem_id,
         "title": args.title,
@@ -362,9 +463,45 @@ def record_node(args: argparse.Namespace) -> dict[str, Any]:
         raise StateError("; ".join(errors))
     if lane["stage"] == "terminal":
         raise StateError("cannot record work on a terminal lane")
+    node_policy = _effective_node_policy(lane_path, lane)
+    continuation_gate = lane.get("continuation_gate")
+    if isinstance(continuation_gate, dict):
+        gate_status = continuation_gate.get("status")
+        if (
+            gate_status == "freeze_required"
+            and args.outcome not in {"promotion", "freeze"}
+            and args.delta_kind not in THEOREM_DELTAS
+        ):
+            raise StateError("the lane requires AMRA freeze before any further research node")
+        if gate_status == "independent_audit_required" and args.outcome not in {
+            "promotion",
+            "freeze",
+        }:
+            raise StateError(
+                "the theorem delta requires an independent audit before further research"
+            )
+    if (
+        lane["stage"] == "research"
+        and args.outcome not in {"promotion", "freeze"}
+        and args.delta_kind not in THEOREM_DELTAS
+    ):
+        existing_budget = _research_budget_metrics(lane, node_policy)
+        if existing_budget["freeze_reasons"]:
+            raise StateError(
+                "the existing lane history requires AMRA freeze before further research: "
+                + ", ".join(existing_budget["freeze_reasons"])
+            )
     if lane["stage"] == "radar" and lane.get("selected_target") is None:
         if args.outcome != "no_progress":
             raise StateError("an unselected radar pass can only be recorded as no_progress")
+    if lane["stage"] == "research" and args.outcome in {"promotion", "freeze"}:
+        expected_phase = "promotion" if args.outcome == "promotion" else "frozen"
+        actual_phase = _selected_amra_phase(lane_path, lane)
+        if actual_phase != expected_phase:
+            raise StateError(
+                f"cannot record {args.outcome}: selected AMRA campaign is {actual_phase}, "
+                f"not {expected_phase}"
+            )
     if args.outcome == "progress":
         if args.delta_kind not in EPISTEMIC_DELTAS:
             raise StateError(
@@ -373,28 +510,63 @@ def record_node(args: argparse.Namespace) -> dict[str, Any]:
             )
         if not args.evidence:
             raise StateError("progress requires at least one evidence path")
+    theorem_fields = {
+        "statement": getattr(args, "theorem_statement", None),
+        "scope": getattr(args, "theorem_scope", None),
+        "consequence": getattr(args, "theorem_consequence", None),
+    }
+    if args.delta_kind in THEOREM_DELTAS:
+        missing = [name for name, value in theorem_fields.items() if not _text(value)]
+        if missing:
+            raise StateError(
+                "theorem delta requires --theorem-statement, --theorem-scope, and "
+                "--theorem-consequence"
+            )
+    elif any(_text(value) for value in theorem_fields.values()):
+        raise StateError("theorem metadata is only valid for a theorem delta-kind")
+    if args.outcome == "promotion":
+        progress_class = "promotion"
+    elif args.outcome == "progress" and args.delta_kind in THEOREM_DELTAS:
+        progress_class = "theorem"
+    elif args.outcome == "progress":
+        progress_class = "search"
+    else:
+        progress_class = "none"
     now = utc_now()
     entry = {
         "at": now,
         "cycle": lane["cycle"],
         "outcome": args.outcome,
         "delta_kind": args.delta_kind,
+        "progress_class": progress_class,
         "summary": args.summary,
         "evidence": list(args.evidence or []),
     }
+    if progress_class == "theorem":
+        entry["theorem"] = theorem_fields
     lane.setdefault("nodes", []).append(entry)
     consecutive = 0
     for node in reversed(lane["nodes"]):
         if node.get("cycle") != lane["cycle"] or node.get("outcome") != "no_progress":
             break
         consecutive += 1
-    limit = int(lane.get("node_policy", {}).get("consecutive_no_progress_limit", 3))
+    limit = int(
+        node_policy.get(
+            "consecutive_no_progress_limit",
+            DEFAULT_NODE_POLICY["consecutive_no_progress_limit"],
+        )
+    )
     radar_nodes = sum(
         1
         for node in lane["nodes"]
         if node.get("cycle") == lane["cycle"] and node.get("stage", "radar") == "radar"
     ) if lane["stage"] == "radar" else 0
-    radar_limit = int(lane.get("node_policy", {}).get("max_radar_nodes_per_cycle", 3))
+    radar_limit = int(
+        node_policy.get(
+            "max_radar_nodes_per_cycle",
+            DEFAULT_NODE_POLICY["max_radar_nodes_per_cycle"],
+        )
+    )
     radar_exhausted = lane["stage"] == "radar" and radar_nodes >= radar_limit
     if radar_exhausted:
         lane["stage"] = "terminal"
@@ -406,14 +578,83 @@ def record_node(args: argparse.Namespace) -> dict[str, Any]:
                 "radar_nodes": radar_nodes,
             }
         )
+    research_nodes = 0
+    consecutive_without_theorem_delta = 0
+    if lane["stage"] == "research":
+        budget_metrics = _research_budget_metrics(lane, node_policy)
+        research_nodes = int(budget_metrics["research_nodes"])
+        consecutive_without_theorem_delta = int(
+            budget_metrics["consecutive_without_theorem_delta"]
+        )
+    theorem_limit = int(
+        node_policy.get(
+            "max_nodes_without_theorem_delta",
+            DEFAULT_NODE_POLICY["max_nodes_without_theorem_delta"],
+        )
+    )
+    research_limit = int(
+        node_policy.get(
+            "max_research_nodes_per_target",
+            DEFAULT_NODE_POLICY["max_research_nodes_per_target"],
+        )
+    )
+    theorem_stalled = (
+        lane["stage"] == "research"
+        and consecutive_without_theorem_delta >= theorem_limit
+    )
+    target_budget_exhausted = (
+        lane["stage"] == "research"
+        and research_nodes >= research_limit
+        and progress_class != "theorem"
+    )
+    no_progress_freeze = lane["stage"] == "research" and consecutive >= limit
+    audit_required = lane["stage"] == "research" and progress_class == "theorem"
+    freeze_reasons: list[str] = []
+    if no_progress_freeze:
+        freeze_reasons.append("consecutive_no_progress_limit")
+    if theorem_stalled:
+        freeze_reasons.append("max_nodes_without_theorem_delta")
+    if target_budget_exhausted:
+        freeze_reasons.append("max_research_nodes_per_target")
+    if args.outcome == "freeze":
+        lane["continuation_gate"] = {
+            "status": "branch_or_terminal_required",
+            "set_at": now,
+            "cycle": lane["cycle"],
+        }
+    elif freeze_reasons:
+        lane["continuation_gate"] = {
+            "status": "freeze_required",
+            "set_at": now,
+            "cycle": lane["cycle"],
+            "reasons": freeze_reasons,
+        }
+    elif audit_required:
+        lane["continuation_gate"] = {
+            "status": "independent_audit_required",
+            "set_at": now,
+            "cycle": lane["cycle"],
+            "theorem_delta": args.delta_kind,
+        }
+    elif args.outcome == "promotion":
+        lane.pop("continuation_gate", None)
     lane["consecutive_no_progress"] = consecutive
+    lane["consecutive_without_theorem_delta"] = consecutive_without_theorem_delta
     lane["updated_at"] = now
     atomic_write_json(lane_path, lane)
     return {
         "node": entry,
         "consecutive_no_progress": consecutive,
         "limit": limit,
-        "freeze_required": consecutive >= limit,
+        "freeze_required": bool(freeze_reasons),
+        "freeze_reasons": freeze_reasons,
+        "progress_class": progress_class,
+        "audit_required": audit_required,
+        "consecutive_without_theorem_delta": consecutive_without_theorem_delta,
+        "theorem_delta_limit": theorem_limit,
+        "research_nodes": research_nodes,
+        "research_node_limit": research_limit,
+        "target_budget_exhausted": target_budget_exhausted,
         "radar_nodes": radar_nodes,
         "radar_limit": radar_limit,
         "radar_exhausted": radar_exhausted,
@@ -438,6 +679,30 @@ def branch_route(args: argparse.Namespace) -> dict[str, Any]:
     state = read_json(amra_path / "campaign_state.json")
     if state.get("phase") not in {"frozen", "promotion"}:
         raise StateError("finish, freeze, or promote the current AMRA target before branching")
+    if args.statement.strip() == str(selected.get("exact_statement", "")).strip():
+        raise StateError("a route branch must change the exact target statement")
+    if state.get("phase") == "frozen":
+        if not _text(args.amendment) or not _text(args.defect_addressed):
+            raise StateError(
+                "branching after freeze requires --amendment and --defect-addressed"
+            )
+        consecutive_frozen = 1
+        for prior in reversed(lane.get("archived_targets", [])):
+            if prior.get("terminal_phase") == "promotion":
+                break
+            if prior.get("terminal_phase") != "frozen":
+                break
+            consecutive_frozen += 1
+        branch_limit = int(
+            _effective_node_policy(lane_path, lane)[
+                "max_frozen_branches_without_promotion"
+            ]
+        )
+        if consecutive_frozen >= branch_limit:
+            raise StateError(
+                "route branch limit reached after consecutive frozen targets; "
+                "close the lane or obtain an independently audited promotion"
+            )
 
     amra_scripts = Path(__file__).resolve().parents[1].parent / "amra-research-loop" / "scripts"
     sys.path.insert(0, str(amra_scripts))
@@ -468,7 +733,10 @@ def branch_route(args: argparse.Namespace) -> dict[str, Any]:
         raise StateError(str(exc)) from exc
     lane["stage"] = "research"
     lane["consecutive_no_progress"] = 0
+    lane["consecutive_without_theorem_delta"] = 0
+    lane.pop("continuation_gate", None)
     lane["selected_target"] = {
+        "cycle": lane["cycle"],
         "target_id": args.target_id,
         "problem_id": args.problem_id,
         "title": args.title,
@@ -477,6 +745,9 @@ def branch_route(args: argparse.Namespace) -> dict[str, Any]:
         "route_frontier": lane.get("route", {}).get("frontier", ""),
         "first_kill_test": args.first_kill_test,
         "selection_basis": "post_result_route_branch",
+        "predecessor_target_id": selected.get("target_id"),
+        "branch_amendment": args.amendment,
+        "defect_addressed": args.defect_addressed,
         "selected_at": now,
         "amra_campaign": campaign.relative_to(lane_path.parent).as_posix(),
     }
@@ -487,6 +758,8 @@ def branch_route(args: argparse.Namespace) -> dict[str, Any]:
             "event": "post_result_route_branch_started",
             "target_id": args.target_id,
             "reason": args.reason,
+            "amendment": args.amendment,
+            "defect_addressed": args.defect_addressed,
             "candidate_scoring": "not_performed",
         }
     )
@@ -520,6 +793,8 @@ def recycle_lane(args: argparse.Namespace) -> dict[str, Any]:
     lane["stage"] = "radar"
     lane["cycle"] = int(lane["cycle"]) + 1
     lane["consecutive_no_progress"] = 0
+    lane["consecutive_without_theorem_delta"] = 0
+    lane.pop("continuation_gate", None)
     lane["updated_at"] = now
     lane.setdefault("history", []).append(
         {"at": now, "event": "lane_recycled", "reason": args.reason, "next_cycle": lane["cycle"]}
@@ -570,6 +845,8 @@ def parser() -> argparse.ArgumentParser:
     branch.add_argument("--source", required=True)
     branch.add_argument("--first-kill-test", required=True)
     branch.add_argument("--reason", required=True)
+    branch.add_argument("--amendment")
+    branch.add_argument("--defect-addressed")
 
     record = commands.add_parser("record-node")
     record.add_argument("--lane", type=Path, required=True)
@@ -577,6 +854,9 @@ def parser() -> argparse.ArgumentParser:
     record.add_argument("--delta-kind", default="none")
     record.add_argument("--summary", required=True)
     record.add_argument("--evidence", action="append", default=[])
+    record.add_argument("--theorem-statement")
+    record.add_argument("--theorem-scope")
+    record.add_argument("--theorem-consequence")
 
     recycle = commands.add_parser("recycle")
     recycle.add_argument("--lane", type=Path, required=True)
@@ -597,7 +877,22 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "status":
             lane = read_json(args.lane.resolve())
             errors = validate_lane(args.lane.resolve())
-            print(json.dumps({"valid": not errors, "errors": errors, "lane": lane}, ensure_ascii=False, indent=2))
+            budget = None
+            if not errors and lane.get("stage") == "research":
+                policy = _effective_node_policy(args.lane.resolve(), lane)
+                budget = _research_budget_metrics(lane, policy)
+            print(
+                json.dumps(
+                    {
+                        "valid": not errors,
+                        "errors": errors,
+                        "research_budget": budget,
+                        "lane": lane,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return 1 if errors else 0
         if args.command == "select":
             payload = select_target(args)

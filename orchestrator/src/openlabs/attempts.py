@@ -32,7 +32,7 @@ ATTEMPT_SCHEMA = "openlabs.attempt_workspace.v1"
 ARCHIVE_SCHEMA = "openlabs.immutable_result_archive.v1"
 _SAFE_NAME = re.compile(r"[^a-zA-Z0-9._-]+")
 _RENAME_EXCHANGE = 2
-_ATTEMPT_RUNTIME_DIRS = frozenset({".agents", ".codex"})
+_ATTEMPT_RUNTIME_DIRS = frozenset({".agents", ".codex", ".openlabs"})
 
 
 class AttemptWorkspaceError(RuntimeError):
@@ -148,6 +148,49 @@ def _copy_plan_closure(
     return staged_plan
 
 
+def _copy_project_closure(
+    canonical_domain_root: Path,
+    staged_domain_root: Path,
+    project_path: Path,
+) -> Path:
+    """Copy a generic project envelope and its declared read-only config closure."""
+
+    if not _inside(project_path, canonical_domain_root):
+        raise AttemptWorkspaceError(f"Project config is outside its domain: {project_path}")
+    staged_project = staged_domain_root / project_path.relative_to(canonical_domain_root)
+    _copy_file(project_path, staged_project)
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise AttemptWorkspaceError(f"Project config is not an object: {project_path}")
+    domain_config = payload.get("domain_config")
+    if isinstance(domain_config, Mapping):
+        configured = str(domain_config.get("path") or "").strip()
+        if configured:
+            source = (project_path.parent / configured).resolve()
+            if not source.is_file() or not _inside(source, canonical_domain_root):
+                raise AttemptWorkspaceError(f"Invalid project domain config: {source}")
+            if source.name == "production_plan.json":
+                _copy_plan_closure(canonical_domain_root, staged_domain_root, source)
+            else:
+                _copy_file(
+                    source,
+                    staged_domain_root / source.relative_to(canonical_domain_root),
+                )
+    for item in payload.get("workstreams", []):
+        if not isinstance(item, Mapping):
+            continue
+        configured = str(item.get("state_path") or "").strip()
+        if not configured:
+            continue
+        source = (project_path.parent / configured).resolve()
+        if not source.is_file() or not _inside(source, canonical_domain_root):
+            raise AttemptWorkspaceError(f"Invalid project workstream state: {source}")
+        target = staged_domain_root / source.relative_to(canonical_domain_root)
+        if not target.is_file():
+            _copy_file(source, target)
+    return staged_project
+
+
 def _tree_manifest(root: Path, *, exclude_results: bool = True) -> dict[str, str]:
     manifest: dict[str, str] = {}
     if not root.is_dir():
@@ -178,7 +221,12 @@ def prepare_attempt_workspace(
     if not attempt_id or not campaign_id or not domain:
         raise AttemptWorkspaceError("Attempt workspace requires task, campaign, and attempt IDs")
     canonical_domain = (paths.data / "workspaces" / domain).resolve()
-    canonical_campaign = (canonical_domain / campaign_id).resolve()
+    configured_state_root = str(campaign.get("state_path") or "").strip()
+    canonical_campaign = (
+        Path(configured_state_root).expanduser().resolve()
+        if configured_state_root
+        else (canonical_domain / campaign_id).resolve()
+    )
     if not _inside(canonical_campaign, canonical_domain):
         raise AttemptWorkspaceError("Campaign path escapes its domain workspace")
     canonical_campaign.mkdir(parents=True, exist_ok=True)
@@ -190,7 +238,7 @@ def prepare_attempt_workspace(
         / _token(attempt_id, prefix="attempt")
     ).resolve()
     staged_domain = root / "workspaces" / domain
-    staged_campaign = staged_domain / campaign_id
+    staged_campaign = staged_domain / canonical_campaign.relative_to(canonical_domain)
     metadata_path = root / "attempt-workspace.json"
     workspace = AttemptWorkspace(
         root=root,
@@ -218,7 +266,7 @@ def prepare_attempt_workspace(
     temporary = Path(tempfile.mkdtemp(prefix=f".{root.name}.", dir=root.parent))
     try:
         temporary_domain = temporary / "workspaces" / domain
-        temporary_campaign = temporary_domain / campaign_id
+        temporary_campaign = temporary_domain / canonical_campaign.relative_to(canonical_domain)
         # Prior result bundles are immutable inputs referenced explicitly by the
         # task and must not be recursively recopied into every new attempt.
         shutil.copytree(
@@ -227,7 +275,15 @@ def prepare_attempt_workspace(
             ignore=shutil.ignore_patterns("results", *_ATTEMPT_RUNTIME_DIRS),
         )
         plan_value = str(campaign.get("production_plan_path") or "").strip()
+        project_value = str(campaign.get("project_config_path") or "").strip()
         staged_plan: Path | None = None
+        staged_project: Path | None = None
+        if project_value:
+            staged_project = _copy_project_closure(
+                canonical_domain,
+                temporary_domain,
+                Path(project_value).expanduser().resolve(),
+            )
         if plan_value:
             staged_plan = _copy_plan_closure(
                 canonical_domain,
@@ -248,6 +304,7 @@ def prepare_attempt_workspace(
                 "canonical_campaign_root": str(canonical_campaign),
                 "staged_campaign_root": str(temporary_campaign),
                 "staged_plan_path": str(staged_plan) if staged_plan else None,
+                "staged_project_path": str(staged_project) if staged_project else None,
                 "baseline": baseline,
             },
         )
@@ -263,6 +320,10 @@ def prepare_attempt_workspace(
     if isinstance(staged_plan, str) and staged_plan:
         relative = Path(staged_plan).relative_to(temporary)
         metadata["staged_plan_path"] = str(root / relative)
+    staged_project = metadata.get("staged_project_path")
+    if isinstance(staged_project, str) and staged_project:
+        relative = Path(staged_project).relative_to(temporary)
+        metadata["staged_project_path"] = str(root / relative)
     atomic_write_json(metadata_path, metadata)
     return workspace
 

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.project.v1.schema.json",
+  "title": "OpenLabs pluggable research project v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "project_id",
+    "domain",
+    "status",
+    "objective",
+    "protocol",
+    "workstreams"
+  ],
+  "properties": {
+    "schema_version": {"const": "openlabs.project.v1"},
+    "project_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "domain": {"type": "string", "minLength": 1},
+    "status": {"enum": ["active", "paused", "retired"]},
+    "objective": {"type": "string", "minLength": 1},
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "primary_skill"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "primary_skill": {"type": "string", "minLength": 1}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint_policy": {
+          "enum": ["role_boundary_or_budget", "explicit_checkpoint"]
+        },
+        "continue_across_protocol_phases": {"type": "boolean"},
+        "default_session_mode": {"enum": ["resume", "fresh"]},
+        "fresh_session_boundaries": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "role_handoff",
+              "text_revision",
+              "evidence_remediation",
+              "independent_replication",
+              "adversarial_review",
+              "portfolio_review",
+              "route_reselection"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "domain_config": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {"path": {"type": "string", "minLength": 1}}
+    },
+    "workstreams": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["workstream_id", "state_path"],
+        "properties": {
+          "workstream_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "title": {"type": "string"},
+          "state_path": {"type": "string", "minLength": 1},
+          "startup": {"enum": ["active", "paused"]},
+          "priority": {"type": "integer"}
+        }
+      }
+    }
+  }
+}

@@ -17,6 +17,7 @@ from loop_core import (
     load_campaign,
     set_mechanism_status,
     validate_campaign,
+    validate_campaign_integrity,
 )
 
 
@@ -32,7 +33,7 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--statement", required=True)
     init.add_argument("--source", required=True)
 
-    for name in ("status", "validate"):
+    for name in ("status", "validate", "validate-integrity"):
         command = commands.add_parser(name)
         command.add_argument("--campaign", type=Path, required=True)
 
@@ -80,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(state, indent=2, ensure_ascii=False))
         elif args.command == "validate":
             errors = validate_campaign(args.campaign)
+            print(json.dumps({"valid": not errors, "errors": errors}, indent=2, ensure_ascii=False))
+            return 1 if errors else 0
+        elif args.command == "validate-integrity":
+            errors = validate_campaign_integrity(args.campaign)
             print(json.dumps({"valid": not errors, "errors": errors}, indent=2, ensure_ascii=False))
             return 1 if errors else 0
         elif args.command == "advance":

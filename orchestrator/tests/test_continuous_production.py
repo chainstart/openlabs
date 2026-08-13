@@ -121,6 +121,42 @@ def test_active_plan_rolls_a_full_task_window_and_reseeds(tmp_path) -> None:
     assert report.production_reseeded == [lane_id]
 
 
+def test_rollover_resumes_an_available_research_session(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    lane_id = "continuous-session-lane"
+    _write_active_plan(paths, lane_id)
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign(lane_id, domain="math", title="Continuous session")
+    for index in (1, 2):
+        db.enqueue_task(
+            task_id=f"old-{index}",
+            campaign_id=lane_id,
+            domain="math",
+            task_type="research_continue",
+            objective="Continue the same research lineage.",
+            skill_path="math-production-supervisor",
+        )
+    with db.connect() as connection:
+        connection.execute(
+            """
+            UPDATE tasks SET status='succeeded', agent_session_id='research-session'
+            WHERE campaign_id=?
+            """,
+            (lane_id,),
+        )
+
+    report = tick(
+        paths,
+        FactorySettings(launch_jobs=False, max_auto_tasks_per_campaign=2),
+    )
+
+    successor = db.task(report.enqueued[0])
+    assert successor["routing_reason"] == "production_rollover"
+    assert successor["session_mode"] == "resume"
+    assert successor["agent_session_id"] == "research-session"
+
+
 def test_restart_reseed_recovers_reviewer_authority_from_durable_phase(tmp_path) -> None:
     paths = _paths(tmp_path)
     lane_id = "authority-restart-lane"
@@ -233,9 +269,10 @@ def test_idle_binding_failure_is_repaired_without_repeating_science(tmp_path) ->
     with db.connect() as connection:
         connection.execute(
             """
-            UPDATE tasks
-            SET status='needs_replan',
-                last_error='opaque gate detail that policy must not parse'
+                UPDATE tasks
+                SET status='needs_replan',
+                    last_error='opaque gate detail that policy must not parse',
+                    agent_session_id='repair-session'
             WHERE task_id='rejected-result'
             """
         )
@@ -270,7 +307,8 @@ def test_idle_binding_failure_is_repaired_without_repeating_science(tmp_path) ->
     assert successor["task_type"] == "replan"
     assert successor["runner"] == "frontier"
     assert successor["routing_reason"] == "production_gate_repair"
-    assert successor["session_mode"] == "fresh"
+    assert successor["session_mode"] == "resume"
+    assert successor["session_source_task_id"] == "rejected-result"
     assert "materialize the exact referenced bytes" in successor["objective"]
     assert "Do not repeat the literature audit" in successor["objective"]
 

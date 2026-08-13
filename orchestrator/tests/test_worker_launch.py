@@ -16,7 +16,13 @@ def test_systemd_tick_launches_worker_in_transient_service(tmp_path, monkeypatch
         database_file=tmp_path / "openlabs-database" / "live" / "factory.sqlite",
     )
     paths.code.mkdir()
-    task = {"task_id": "route:node", "current_attempt_id": "attempt-1"}
+    task = {
+        "task_id": "route:node",
+        "current_attempt_id": "attempt-1",
+        "cpu_threads": 2,
+        "memory_mib": 4096,
+        "scratch_mib": 4096,
+    }
     calls: list[list[str]] = []
 
     monkeypatch.setenv("INVOCATION_ID", "tick-invocation")
@@ -47,6 +53,11 @@ def test_systemd_tick_launches_worker_in_transient_service(tmp_path, monkeypatch
     assert f"--unit={unit}" in calls[0]
     assert "--slice=openlabs-workers.slice" in calls[0]
     assert "--property=PartOf=openlabs-workers.target" in calls[0]
+    assert "--property=MemoryHigh=4096M" in calls[0]
+    assert not any(item.startswith("--property=MemoryMax=") for item in calls[0])
+    assert "--property=CPUQuota=200%" in calls[0]
+    assert "--property=TasksMax=64" in calls[0]
+    assert "--property=OOMPolicy=stop" in calls[0]
     assert "--setenv=OPENLABS_SECRET" in calls[0]
     assert "--setenv=INVOCATION_ID" not in calls[0]
     assert all("must-not-appear-in-argv" not in token for token in calls[0])

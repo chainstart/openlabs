@@ -7,6 +7,21 @@
   "properties": {
     "exact_statement": {"type": "string", "minLength": 1},
     "source": {"type": "string", "minLength": 1},
+    "published_comparator": {"type": "string"},
+    "admissible_inputs": {"type": "array", "items": {"type": "string"}},
+    "false_world_controls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["model", "expected_failure"],
+        "properties": {
+          "model": {"type": "string", "minLength": 1},
+          "expected_failure": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "non_cosmetic_consequence": {"type": "string"},
     "success_conditions": {
       "type": "array",
       "items": {

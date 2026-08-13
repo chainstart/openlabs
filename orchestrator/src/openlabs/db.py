@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 ACTIVE_STATUSES = ("leased", "running")
 AGENT_ROLES = ("researcher", "experimenter", "writer", "reviewer")
 SESSION_MODES = ("resume", "fresh")
@@ -134,6 +134,11 @@ class FactoryDB:
                     continuous INTEGER NOT NULL DEFAULT 0,
                     production_plan_path TEXT,
                     production_lane_path TEXT,
+                    project_config_path TEXT,
+                    workstream_state_path TEXT,
+                    protocol_id TEXT,
+                    primary_skill TEXT,
+                    execution_policy_json TEXT NOT NULL DEFAULT '{}',
                     production_epoch INTEGER NOT NULL DEFAULT 1,
                     epoch_agent_seconds_used REAL NOT NULL DEFAULT 0,
                     rollover_count INTEGER NOT NULL DEFAULT 0,
@@ -247,6 +252,7 @@ class FactoryDB:
             self._migrate_v4(connection)
             self._migrate_v5(connection)
             self._migrate_v6(connection, prior_version=prior_version)
+            self._migrate_v7(connection)
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS task_attempts_task_idx
@@ -382,6 +388,19 @@ class FactoryDB:
             """
         )
 
+    @classmethod
+    def _migrate_v7(cls, connection: sqlite3.Connection) -> None:
+        """Add generic project/protocol bindings alongside the legacy plan adapter."""
+
+        for definition in (
+            "project_config_path TEXT",
+            "workstream_state_path TEXT",
+            "protocol_id TEXT",
+            "primary_skill TEXT",
+            "execution_policy_json TEXT NOT NULL DEFAULT '{}'",
+        ):
+            cls._add_column(connection, "campaigns", definition)
+
     @staticmethod
     def _event(
         connection: sqlite3.Connection,
@@ -481,7 +500,9 @@ class FactoryDB:
             row = connection.execute(
                 """
                 SELECT status, continuous, production_plan_path,
-                       production_lane_path, priority
+                       production_lane_path, project_config_path,
+                       workstream_state_path, protocol_id, primary_skill,
+                       execution_policy_json, priority
                 FROM campaigns WHERE campaign_id=?
                 """,
                 (campaign_id,),
@@ -497,6 +518,11 @@ class FactoryDB:
                 1,
                 production_plan_path,
                 production_lane_path,
+                None,
+                None,
+                None,
+                None,
+                "{}",
                 desired_priority,
             )
             if tuple(row) == desired:
@@ -505,7 +531,10 @@ class FactoryDB:
                 """
                 UPDATE campaigns
                 SET status='active', continuous=1, production_plan_path=?,
-                    production_lane_path=?, priority=?, updated_at=?
+                    production_lane_path=?, project_config_path=NULL,
+                    workstream_state_path=NULL, protocol_id=NULL,
+                    primary_skill=NULL, execution_policy_json='{}',
+                    priority=?, updated_at=?
                 WHERE campaign_id=?
                 """,
                 (
@@ -529,8 +558,91 @@ class FactoryDB:
             )
         return True
 
-    def production_campaigns(self) -> list[dict[str, Any]]:
-        """Return every campaign ever bound to administrator production state."""
+    def configure_project_campaign(
+        self,
+        campaign_id: str,
+        *,
+        project_config_path: str,
+        workstream_state_path: str,
+        protocol_id: str,
+        primary_skill: str,
+        execution_policy: Mapping[str, Any],
+        priority: int | None = None,
+    ) -> bool:
+        """Bind a generic project workstream without teaching the DB its science."""
+
+        now = utc_now()
+        policy_json = json.dumps(dict(execution_policy), ensure_ascii=False, sort_keys=True)
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT status, continuous, production_plan_path,
+                       production_lane_path, project_config_path,
+                       workstream_state_path, protocol_id, primary_skill,
+                       execution_policy_json, priority
+                FROM campaigns WHERE campaign_id=?
+                """,
+                (campaign_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(campaign_id)
+            status = str(row["status"])
+            if status not in {"active", "production_paused"}:
+                raise ValueError(f"Campaign {campaign_id} cannot be activated from status {status}")
+            desired_priority = int(row["priority"]) if priority is None else int(priority)
+            desired = (
+                "active",
+                1,
+                None,
+                None,
+                project_config_path,
+                workstream_state_path,
+                protocol_id,
+                primary_skill,
+                policy_json,
+                desired_priority,
+            )
+            if tuple(row) == desired:
+                return False
+            connection.execute(
+                """
+                UPDATE campaigns
+                SET status='active', continuous=1,
+                    production_plan_path=NULL, production_lane_path=NULL,
+                    project_config_path=?,
+                    workstream_state_path=?, protocol_id=?, primary_skill=?,
+                    execution_policy_json=?, priority=?, updated_at=?
+                WHERE campaign_id=?
+                """,
+                (
+                    project_config_path,
+                    workstream_state_path,
+                    protocol_id,
+                    primary_skill,
+                    policy_json,
+                    desired_priority,
+                    now,
+                    campaign_id,
+                ),
+            )
+            self._event(
+                connection,
+                "campaign",
+                campaign_id,
+                "project_workstream_configured",
+                {
+                    "project_config_path": project_config_path,
+                    "workstream_state_path": workstream_state_path,
+                    "protocol_id": protocol_id,
+                    "primary_skill": primary_skill,
+                    "execution_policy": dict(execution_policy),
+                    "priority": desired_priority,
+                },
+            )
+        return True
+
+    def project_campaigns(self) -> list[dict[str, Any]]:
+        """Return every campaign bound to project/workstream desired state."""
 
         with self.connect() as connection:
             rows = connection.execute(
@@ -538,11 +650,18 @@ class FactoryDB:
                 SELECT * FROM campaigns
                 WHERE production_plan_path IS NOT NULL
                    OR production_lane_path IS NOT NULL
+                   OR project_config_path IS NOT NULL
+                   OR workstream_state_path IS NOT NULL
                    OR continuous=1
                 ORDER BY campaign_id
                 """
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def production_campaigns(self) -> list[dict[str, Any]]:
+        """Compatibility alias for legacy production-plan lifecycle commands."""
+
+        return self.project_campaigns()
 
     def pause_production_campaign(self, campaign_id: str, *, reason: str) -> tuple[str, ...]:
         """Stop renewal for a lane that disappeared from active desired state.

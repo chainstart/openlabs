@@ -18,7 +18,15 @@ AUTHORITY_POLICY_SCHEMA = "openlabs.authority_policy.v1"
 AGENT_ROLES = frozenset({"researcher", "experimenter", "writer", "reviewer"})
 SESSION_MODES = frozenset({"resume", "fresh"})
 HANDOFF_KINDS = frozenset(
-    {"role_handoff", "text_revision", "evidence_remediation", "independent_replication"}
+    {
+        "role_handoff",
+        "text_revision",
+        "evidence_remediation",
+        "independent_replication",
+        "adversarial_review",
+        "portfolio_review",
+        "route_reselection",
+    }
 )
 
 

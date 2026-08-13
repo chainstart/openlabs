@@ -1,0 +1,226 @@
+"""Generic project configuration and workstream discovery.
+
+The control plane understands only this small project envelope.  Scientific
+state and validation belong to a protocol registered by the selected lab.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from .contracts import HANDOFF_KINDS, IDENTIFIER
+
+
+PROJECT_SCHEMA = "openlabs.project.v1"
+PROJECT_STATUSES = frozenset({"active", "paused", "retired"})
+CHECKPOINT_POLICIES = frozenset({"role_boundary_or_budget", "explicit_checkpoint"})
+EPISTEMIC_FRESH_BOUNDARIES = frozenset(
+    {
+        "independent_replication",
+        "adversarial_review",
+        "portfolio_review",
+        "route_reselection",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ExecutionPolicy:
+    checkpoint_policy: str = "role_boundary_or_budget"
+    continue_across_protocol_phases: bool = True
+    default_session_mode: str = "resume"
+    fresh_session_boundaries: tuple[str, ...] = (
+        "independent_replication",
+        "adversarial_review",
+        "portfolio_review",
+        "route_reselection",
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "checkpoint_policy": self.checkpoint_policy,
+            "continue_across_protocol_phases": self.continue_across_protocol_phases,
+            "default_session_mode": self.default_session_mode,
+            "fresh_session_boundaries": list(self.fresh_session_boundaries),
+        }
+
+
+@dataclass(frozen=True)
+class ProjectWorkstream:
+    workstream_id: str
+    state_path: Path
+    title: str
+    startup: str
+    priority: int
+
+
+@dataclass(frozen=True)
+class ProjectConfig:
+    project_id: str
+    domain: str
+    status: str
+    objective: str
+    protocol_id: str
+    primary_skill: str
+    path: Path
+    execution: ExecutionPolicy
+    workstreams: tuple[ProjectWorkstream, ...]
+    domain_config_path: Path | None
+    raw: dict[str, Any]
+
+
+def _text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _identifier(value: object, field: str) -> str:
+    normalized = _text(value)
+    if not IDENTIFIER.fullmatch(normalized):
+        raise ValueError(f"project {field} is invalid: {normalized!r}")
+    return normalized
+
+
+def _relative_file(base: Path, value: object, field: str) -> Path:
+    configured = _text(value)
+    if not configured:
+        raise ValueError(f"project {field} is required")
+    path = (base / configured).resolve()
+    if not path.is_file():
+        raise ValueError(f"project {field} does not exist: {path}")
+    return path
+
+
+def load_project(path: str | Path) -> ProjectConfig:
+    project_path = Path(path).expanduser().resolve()
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise TypeError(f"Project config must be an object: {project_path}")
+    if payload.get("schema_version") != PROJECT_SCHEMA:
+        raise ValueError(f"Unsupported project schema in {project_path}")
+    project_id = _identifier(payload.get("project_id"), "project_id")
+    domain = _text(payload.get("domain"))
+    if not domain:
+        raise ValueError("project domain is required")
+    status = _text(payload.get("status"))
+    if status not in PROJECT_STATUSES:
+        raise ValueError(f"unknown project status: {status!r}")
+    objective = _text(payload.get("objective"))
+    if not objective:
+        raise ValueError("project objective is required")
+    protocol = payload.get("protocol")
+    if not isinstance(protocol, Mapping):
+        raise ValueError("project protocol must be an object")
+    protocol_id = _identifier(protocol.get("id"), "protocol.id")
+    primary_skill = _identifier(protocol.get("primary_skill"), "protocol.primary_skill")
+
+    execution_value = payload.get("execution", {})
+    if not isinstance(execution_value, Mapping):
+        raise ValueError("project execution must be an object")
+    checkpoint_policy = _text(
+        execution_value.get("checkpoint_policy") or "role_boundary_or_budget"
+    )
+    if checkpoint_policy not in CHECKPOINT_POLICIES:
+        raise ValueError(f"unknown checkpoint policy: {checkpoint_policy!r}")
+    default_session_mode = _text(
+        execution_value.get("default_session_mode") or "resume"
+    )
+    if default_session_mode not in {"resume", "fresh"}:
+        raise ValueError("project default_session_mode must be resume or fresh")
+    boundaries_value = execution_value.get(
+        "fresh_session_boundaries",
+        list(ExecutionPolicy().fresh_session_boundaries),
+    )
+    if (
+        not isinstance(boundaries_value, list)
+        or any(not _text(item) for item in boundaries_value)
+    ):
+        raise ValueError("project fresh_session_boundaries must be a string array")
+    unknown_boundaries = {
+        str(item).strip() for item in boundaries_value
+    } - HANDOFF_KINDS
+    if unknown_boundaries:
+        raise ValueError(
+            "project fresh_session_boundaries contain unknown handoff kinds: "
+            + ", ".join(sorted(unknown_boundaries))
+        )
+    continuation_value = execution_value.get("continue_across_protocol_phases", True)
+    if not isinstance(continuation_value, bool):
+        raise ValueError("project continue_across_protocol_phases must be a boolean")
+    normalized_boundaries = tuple(str(item).strip() for item in boundaries_value)
+    if len(normalized_boundaries) != len(set(normalized_boundaries)):
+        raise ValueError("project fresh_session_boundaries cannot contain duplicates")
+    execution = ExecutionPolicy(
+        checkpoint_policy=checkpoint_policy,
+        continue_across_protocol_phases=continuation_value,
+        default_session_mode=default_session_mode,
+        fresh_session_boundaries=normalized_boundaries,
+    )
+
+    domain_config_path: Path | None = None
+    domain_config = payload.get("domain_config")
+    if domain_config is not None:
+        if not isinstance(domain_config, Mapping):
+            raise ValueError("project domain_config must be an object")
+        domain_config_path = _relative_file(
+            project_path.parent,
+            domain_config.get("path"),
+            "domain_config.path",
+        )
+
+    raw_workstreams = payload.get("workstreams")
+    if not isinstance(raw_workstreams, list) or not raw_workstreams:
+        raise ValueError("project workstreams must be a nonempty array")
+    workstreams: list[ProjectWorkstream] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw_workstreams):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"project workstream {index} must be an object")
+        workstream_id = _identifier(item.get("workstream_id"), "workstream_id")
+        if workstream_id in seen:
+            raise ValueError(f"duplicate workstream_id: {workstream_id}")
+        seen.add(workstream_id)
+        startup = _text(item.get("startup") or "active")
+        if startup not in {"active", "paused"}:
+            raise ValueError(f"workstream {workstream_id} has invalid startup: {startup}")
+        raw_priority = item.get("priority", 0)
+        if not isinstance(raw_priority, int) or isinstance(raw_priority, bool):
+            raise ValueError(f"workstream {workstream_id} priority must be an integer")
+        workstreams.append(
+            ProjectWorkstream(
+                workstream_id=workstream_id,
+                state_path=_relative_file(
+                    project_path.parent,
+                    item.get("state_path"),
+                    f"workstream {workstream_id} state_path",
+                ),
+                title=_text(item.get("title")) or workstream_id,
+                startup=startup,
+                priority=int(raw_priority),
+            )
+        )
+    return ProjectConfig(
+        project_id=project_id,
+        domain=domain,
+        status=status,
+        objective=objective,
+        protocol_id=protocol_id,
+        primary_skill=primary_skill,
+        path=project_path,
+        execution=execution,
+        workstreams=tuple(workstreams),
+        domain_config_path=domain_config_path,
+        raw=dict(payload),
+    )
+
+
+def discover_projects(data_root: str | Path) -> tuple[ProjectConfig, ...]:
+    root = Path(data_root).expanduser().resolve() / "workspaces"
+    paths = {
+        *root.glob("*/projects/*/project.json"),
+        *root.glob("*/production/*/project.json"),
+    }
+    return tuple(load_project(path) for path in sorted(paths))

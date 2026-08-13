@@ -33,6 +33,17 @@ class ResearchLoopTests(unittest.TestCase):
             exact_statement="For every n, prove P(n).",
             source="https://example.test/problem",
         )
+        contract = read_json(self.campaign / "closure_contract.json")
+        contract.update({
+            "published_comparator": "The best published result proves P(n) for n up to N.",
+            "admissible_inputs": ["The declared unconditional base theorem"],
+            "false_world_controls": [{
+                "model": "A planted countermodel where global compatibility fails",
+                "expected_failure": "The proposed interface certificate must reject the model",
+            }],
+            "non_cosmetic_consequence": "The theorem closes the global compatibility interface.",
+        })
+        write_json(self.campaign / "closure_contract.json", contract)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -99,6 +110,15 @@ class ResearchLoopTests(unittest.TestCase):
         with self.assertRaises(CampaignError):
             advance_campaign(self.campaign, "representation_search")
 
+    def test_new_campaign_requires_false_world_control(self) -> None:
+        contract = read_json(self.campaign / "closure_contract.json")
+        contract["false_world_controls"] = []
+        self.write("closure_contract.json", contract)
+        errors = validate_campaign(self.campaign)
+        self.assertTrue(any("false-world control" in error for error in errors))
+        with self.assertRaises(CampaignError):
+            advance_campaign(self.campaign, "obstruction_analysis")
+
     def test_full_promotion_path(self) -> None:
         advance_campaign(self.campaign, "obstruction_analysis")
         self.populate_obstruction()
@@ -110,6 +130,9 @@ class ResearchLoopTests(unittest.TestCase):
         self.write("decisive_lemma.json", {
             "statement": "The global compatibility interface always holds.",
             "status": "proved",
+            "exact_scope": "Every object satisfying the frozen unconditional inputs.",
+            "unconditional_inputs": ["The declared unconditional base theorem"],
+            "non_cosmetic_consequence": "The original global interface is closed.",
             "closes": ["global interface"],
             "evidence": ["evidence/lemma-proof.md"],
             "dependency_gaps": [],
@@ -124,6 +147,14 @@ class ResearchLoopTests(unittest.TestCase):
             "statement_match": "passed",
             "dependency_check": "passed",
             "novelty_check": "priority_uncertain",
+            "hypothesis_check": "passed",
+            "counterexample_check": "passed",
+            "literature_check": "passed",
+            "formalization_check": {
+                "status": "not_feasible",
+                "reason": "The imported analytic library is not available in the prover.",
+                "evidence": [],
+            },
         })
         self.write("decision.json", {
             "outcome": "promote",

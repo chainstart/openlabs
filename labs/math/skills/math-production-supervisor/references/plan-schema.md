@@ -30,6 +30,8 @@ A long-horizon plan may include a `program` object with:
 - `seed_maturation`: the trigger, expansion requirements, and promotion contract for a standalone
   intermediate result;
 - `north_star_claim_gate`: additional reconstruction and dependency checks for a claimed solution.
+- `theorem_target_policy`: hard budgets for nodes without theorem progress, total research nodes per
+  target, and consecutive frozen branches without promotion.
 
 In a score-selected plan, the north star directs radar but is not automatically the AMRA target.
 Every intermediate target must name a verifiable bridge to it. The configured `program_summary` and
@@ -60,7 +62,10 @@ after a mathematical result has survived reconstruction.
   "selection_gate": {},
   "node_policy": {
     "consecutive_no_progress_limit": 3,
-    "max_radar_nodes_per_cycle": 3
+    "max_radar_nodes_per_cycle": 3,
+    "max_nodes_without_theorem_delta": 8,
+    "max_research_nodes_per_target": 12,
+    "max_frozen_branches_without_promotion": 2
   },
   "selected_target": null,
   "archived_targets": [],
@@ -75,7 +80,10 @@ statement, source, score vector, first kill test, and relative nested AMRA campa
 An operator-locked lane also contains a durable `route` object and uses
 `selection_basis: operator_locked_route` instead of a score vector. After a target freezes or
 promotes, `branch-route` may initialize the next evidence-driven subproblem in that same route with
-`selection_basis: post_result_route_branch`; it never returns to candidate radar.
+`selection_basis: post_result_route_branch`; it never returns to candidate radar. A frozen target's
+successor must change the exact statement and record both `branch_amendment` and
+`defect_addressed`. The default permits one such repair: after two consecutive frozen targets
+without promotion, the route cannot branch again.
 
 ## Score contract
 
@@ -103,14 +111,26 @@ The plan may name a hash-bound `current_calibration` record. Use its stage-speci
 calibrated ceiling is capped by the factory hard ceiling. Stages without three comparable samples
 remain explicitly uncalibrated and retain their prior ceiling.
 
-Classify a node as:
+Classify a node at two levels:
 
 - `progress`: one named epistemic blocker became strictly smaller;
 - `no_progress`: activity occurred but no promotion-relevant uncertainty decreased;
 - `promotion`: the frozen AMRA success condition passed independent audit;
 - `freeze`: the target was terminated with its negative evidence preserved.
 
-Three consecutive `no_progress` nodes normally force AMRA freeze and lane recycling.
+Then classify progress as:
+
+- `search`: a blocker shrank, mechanism died, survivor strengthened, or a promotion gate moved;
+- `theorem`: an exact standalone theorem/no-go statement was obtained, a hypothesis was removed, or
+  a published frontier was strictly improved;
+- `promotion`: a theorem delta survived fresh independent reconstruction.
+
+Search progress preserves valuable negative information but does not reset the theorem-stall
+counter. Eight research nodes without theorem progress, three consecutive `no_progress` nodes, or
+twelve research nodes on one target normally force AMRA freeze. A theorem delta must include its
+exact statement, scope, and non-cosmetic consequence, and immediately requires fresh independent
+audit. An already obtained theorem may still be recorded at the budget boundary; it opens audit,
+not further author-side search.
 Direct refutation of a named public statement is also a freeze of that positive target, but its
 counterexample may enter a fresh, separately audited negative-result track. It is not promoted from
 the authoring session and does not inherit novelty approval from the original question.
@@ -119,9 +139,11 @@ An unselected radar pass is always `no_progress`. A source-family change, biblio
 or provenance improvement cannot reset this count. Reaching `max_radar_nodes_per_cycle` without a
 selection makes the lane terminal; the control plane then pauses it instead of reseeding it.
 
-For a `progress` node, `record-node` requires a semantic delta kind: `blocker_reduced`,
-`mechanism_killed`, `survivor_strengthened`, or `promotion_gate_advanced`. Literature-only and
-artifact-only activity do not satisfy this contract.
+For a `progress` node, `record-node` requires a semantic delta kind. Search kinds are
+`blocker_reduced`, `mechanism_killed`, `survivor_strengthened`, and
+`promotion_gate_advanced`. Theorem kinds are `theorem_statement_strengthened`,
+`hypothesis_removed`, `public_frontier_improved`, and `standalone_no_go_closed`.
+Literature-only and artifact-only activity do not satisfy this contract.
 
 ## Result and continuation contract
 

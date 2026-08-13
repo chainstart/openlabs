@@ -1,6 +1,10 @@
 {
   "exact_statement": "",
   "source": "",
+  "published_comparator": "",
+  "admissible_inputs": [],
+  "false_world_controls": [],
+  "non_cosmetic_consequence": "",
   "success_conditions": ["original_problem_closed"],
   "non_success_conditions": [
     "additional_local_branch",

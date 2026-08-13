@@ -11,6 +11,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Mapping
@@ -21,6 +22,7 @@ TASK_SCHEMA = "openlabs.task.v3"
 RESULT_SCHEMA = "openlabs.result_bundle.v1"
 HOOK_RECEIPT_SCHEMA = "openlabs.codex_hook_receipt.v1"
 HOOK_RUNTIME_SCHEMA = "openlabs.hook_runtime.v1"
+LAB_RUNTIME_SCHEMA = "openlabs.lab_runtime_setup.v1"
 
 
 def sha256_file(path: Path) -> str:
@@ -158,6 +160,27 @@ to the canonical campaign yourself.
             f"at `{task.get('skill_path')}`."
         )
     )
+    execution = task.get("execution_policy")
+    continuity_notice = ""
+    if isinstance(execution, Mapping):
+        if execution.get("continue_across_protocol_phases") is True:
+            continuity_notice = """
+Continue inside this Codex process across as many same-role protocol phases and ordinary
+checkpoints as the scientific work and wall budget allow. Protocol phases are durable state
+records, not process boundaries. Do not stop merely because a phase advanced. Stop only at an
+epistemic-role boundary, an explicitly fresh boundary, a terminal scientific result, a genuine
+blocker, or when the remaining wall budget is needed to persist a safe result bundle. Other
+workers run independently; do not terminate this process merely to make room for them.
+"""
+    project = task.get("project") if isinstance(task.get("project"), Mapping) else {}
+    lab_runtime = task.get("lab_runtime")
+    runtime_notice = ""
+    if isinstance(lab_runtime, Mapping) and lab_runtime.get("setups"):
+        runtime_notice = (
+            "\nTrusted laboratory runtimes prepared for this attempt:\n\n"
+            + json.dumps(lab_runtime, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n"
+        )
     return f"""# OpenLabs autonomous research task
 
 {skill_instruction}
@@ -180,14 +203,94 @@ define completion.
 - objective: {task["objective"]}
 - input state: `{task.get("input_path")}`
 - required result path: `{output}`
+- project config: `{project.get("config_path")}`
+- workstream state: `{project.get("workstream_state_path")}`
 
 {independence}
+{continuity_notice}
+{runtime_notice}
 {transaction_notice}
 
 Before stopping, atomically write one `openlabs.result_bundle.v1` JSON object to the required
 result path. Do not write to SQLite. Preserve unsupported, negative, and inconclusive outcomes. Do
 not submit, publish, spend unbounded resources, or perform another irreversible external action.
 """
+
+
+def _lab_runtime_setup(
+    task: dict[str, Any],
+    manifest: Mapping[str, Any],
+    *,
+    workspace: Path,
+    agent_workspace: Path,
+) -> dict[str, Any]:
+    """Run trusted lab-declared setup commands before the sandboxed Agent starts."""
+
+    configured = manifest.get("runtime_setup", [])
+    if not isinstance(configured, list):
+        raise TypeError("lab runtime_setup must be an array")
+    manifest_path = Path(str(task["lab_manifest"])).expanduser().resolve()
+    lab_root = manifest_path.parent
+    attempt_root = str(
+        (task.get("transaction") or {}).get("attempt_root") or agent_workspace
+    )
+    replacements = {
+        "{python}": sys.executable,
+        "{workspace}": str(workspace),
+        "{artifacts_root}": str((workspace / "openlabs-artifacts").resolve()),
+        "{lab_root}": str(lab_root),
+        "{agent_workspace}": str(agent_workspace),
+        "{attempt_root}": attempt_root,
+        "{task_file}": str(task.get("_task_file") or ""),
+    }
+    results: list[dict[str, Any]] = []
+    for index, item in enumerate(configured):
+        if not isinstance(item, Mapping):
+            raise TypeError(f"lab runtime_setup[{index}] must be an object")
+        setup_id = str(item.get("setup_id") or "").strip()
+        raw_command = item.get("command")
+        if (
+            not setup_id
+            or not isinstance(raw_command, list)
+            or not raw_command
+            or any(not isinstance(token, str) or not token for token in raw_command)
+        ):
+            raise ValueError(f"invalid lab runtime setup entry {index}")
+        command: list[str] = []
+        for command_index, raw in enumerate(raw_command):
+            token = replacements.get(raw, raw)
+            if command_index > 0 and token.endswith(".py") and not Path(token).is_absolute():
+                token = str((lab_root / token).resolve())
+            command.append(token)
+        timeout = item.get("timeout_seconds", 1800)
+        if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 1:
+            raise ValueError(f"runtime setup {setup_id} timeout must be positive")
+        completed = subprocess.run(
+            command,
+            cwd=lab_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise RuntimeError(
+                f"runtime setup {setup_id} emitted invalid JSON: {detail[:1000]}"
+            ) from exc
+        if (
+            completed.returncode != 0
+            or not isinstance(payload, Mapping)
+            or payload.get("valid") is not True
+        ):
+            detail = (
+                payload.get("errors") if isinstance(payload, Mapping) else completed.stderr.strip()
+            )
+            raise RuntimeError(f"runtime setup {setup_id} failed: {detail}")
+        results.append({"setup_id": setup_id, **dict(payload)})
+    return {"schema_version": LAB_RUNTIME_SCHEMA, "setups": results}
 
 
 def _command_template(raw_command: str) -> list[str]:
@@ -202,6 +305,27 @@ def _command_template(raw_command: str) -> list[str]:
     ):
         raise ValueError("Agent command must be a JSON array of argv strings")
     return template
+
+
+def _configured_agent_adapter(task: Mapping[str, Any]) -> str | None:
+    """Return the configured executable name without starting or preparing the agent."""
+
+    runner = str(task.get("runner") or "balanced")
+    runner_key = "".join(
+        character if character.isalnum() else "_" for character in runner
+    ).upper()
+    agent = task.get("agent") if isinstance(task.get("agent"), Mapping) else {}
+    session_id = (
+        str(agent.get("session_id") or "").strip()
+        if agent.get("role") != "reviewer" and agent.get("session_mode") == "resume"
+        else ""
+    )
+    command_kind = "RESUME_COMMAND" if session_id else "COMMAND"
+    raw_command = os.environ.get(f"OPENLABS_AGENT_{command_kind}_{runner_key}_JSON", "").strip()
+    raw_command = raw_command or os.environ.get(f"OPENLABS_AGENT_{command_kind}_JSON", "").strip()
+    if not raw_command:
+        return None
+    return Path(_command_template(raw_command)[0]).name
 
 
 def _command_option(command: list[str], *names: str) -> str | None:
@@ -783,11 +907,57 @@ def main() -> int:
         raise ValueError("Task and manifest domain differ")
     output = Path(args.output).resolve()
     started = time.monotonic()
-    if task.get("task_type") == "smoke":
-        _smoke(task, manifest, output)
-        runtime: dict[str, Any] = {"adapter": "deterministic", "runner": "none"}
-    else:
-        runtime = _run_agent(task, manifest, output)
+    configured_workspace = os.environ.get("OPENLABS_WORKSPACE", "").strip()
+    workspace = (
+        Path(configured_workspace).expanduser().resolve()
+        if configured_workspace
+        else manifest_path.parents[3]
+    )
+    agent_workspace = Path(str(task["agent_workspace"])).expanduser().resolve()
+    try:
+        task_type = task.get("task_type")
+        adapter = _configured_agent_adapter(task)
+        if task_type == "smoke":
+            lab_runtime = {
+                "schema_version": LAB_RUNTIME_SCHEMA,
+                "setups": [],
+                "skipped": "deterministic smoke task",
+            }
+            _smoke(task, manifest, output)
+            runtime: dict[str, Any] = {"adapter": "deterministic", "runner": "none"}
+        elif adapter != "codex":
+            # Non-Codex commands are retained solely for deterministic transport tests. Production
+            # research uses the native Codex adapter and receives every trusted lab runtime.
+            lab_runtime = {
+                "schema_version": LAB_RUNTIME_SCHEMA,
+                "setups": [],
+                "skipped": "non-Codex adapter",
+            }
+            task["lab_runtime"] = lab_runtime
+            runtime = _run_agent(task, manifest, output)
+        else:
+            lab_runtime = _lab_runtime_setup(
+                task,
+                manifest,
+                workspace=workspace,
+                agent_workspace=agent_workspace,
+            )
+            task["lab_runtime"] = lab_runtime
+            runtime = _run_agent(task, manifest, output)
+        runtime["lab_runtime"] = lab_runtime
+    except (OSError, RuntimeError, subprocess.TimeoutExpired, TypeError, ValueError) as exc:
+        _configuration_result(
+            task,
+            manifest,
+            output,
+            f"Laboratory runtime setup failed closed: {exc}",
+        )
+        runtime = {
+            "adapter": "runtime_setup_failed",
+            "runner": "none",
+            "failure_class": "lab_runtime_setup",
+            "error": str(exc),
+        }
     runtime["lab_runner_seconds"] = max(0.0, time.monotonic() - started)
     metadata_path = Path(str(task["run_metadata_path"])).resolve()
     if metadata_path.parent != output.parent:

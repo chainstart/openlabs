@@ -4,12 +4,12 @@
 
 | Current phase | Required output before advancing |
 |---|---|
-| `target_selection` | Exact statement, primary source, frozen success and non-success conditions |
+| `target_selection` | Exact paper-scale statement, primary source and published comparator, frozen success and non-success conditions, and an explicit false-world control |
 | `obstruction_analysis` | At least one inherited method with exact loss step, lost information, and consequence |
 | `representation_search` | Configured minimum of valid representations and mechanisms across distinct families |
 | `mechanism_falsification` | Evidenced kill tests, configured kill ratio, and one to three survivors |
-| `survivor_deepening` | A decisive lemma with audited status, closure effect, evidence, and explicit gaps |
-| `independent_audit` | Blind reconstruction plus statement, dependency, novelty, and promotion-decision checks |
+| `survivor_deepening` | A decisive theorem/lemma with exact scope, closure effect, unconditional inputs, non-cosmetic consequence, evidence, and explicit gaps |
+| `independent_audit` | Blind reconstruction plus hostile statement, dependency, counterexample, novelty, and promotion-decision checks |
 
 The defaults are eight representations across four families, ten mechanisms across four families, an 80% kill ratio among non-survivors, and at most three survivors. A campaign may change these numbers in `campaign_state.json`, but must record a mathematical reason in history before doing so.
 

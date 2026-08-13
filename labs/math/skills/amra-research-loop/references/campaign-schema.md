@@ -3,14 +3,20 @@
 ## Canonical files
 
 - `campaign_state.json`: Identity, current phase, gate thresholds, artifact map, and append-only transition history.
-- `closure_contract.json`: Exact statement, source, success conditions, and outcomes that do not count.
+- `closure_contract.json`: Exact statement, source, published comparator, admissible inputs,
+  false-world controls, non-cosmetic consequence, success conditions, and outcomes that do not
+  count.
 - `information_loss_map.json`: Inherited methods and their precise information losses.
 - `representations.json`: Candidate representations with new information and first test.
 - `mechanisms.json`: Decisive candidate claims and their status.
 - `kill_tests.json`: Evidenced falsification records keyed by mechanism id.
 - `survivors.json`: One to three selected mechanisms and rationale.
-- `decisive_lemma.json`: Strongest deepened claim, status, closure effect, evidence, and gaps.
-- `audit.json`: Independent reconstruction and statement, dependency, and novelty checks.
+- `decisive_lemma.json`: Strongest deepened claim, exact scope, unconditional inputs,
+  non-cosmetic consequence, status, closure effect, evidence, and gaps.
+- `audit.json`: Independent reconstruction plus statement, hypothesis, dependency, counterexample,
+  literature, novelty, formalization, and typed computation checks. Formalization may be marked
+  infeasible only with a concrete reason. A computation marked `passed` must cite a replayable
+  `openlabs.math_computation.v1` receipt.
 - `decision.json`: Promotion or freeze decision tied to the closure contract.
 
 ## Core commands

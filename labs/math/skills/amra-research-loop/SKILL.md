@@ -51,12 +51,15 @@ target_selection
 
 Freeze from any nonterminal phase when no surviving route justifies further allocation. Never skip a phase or edit `campaign_state.json` to bypass a failed gate.
 
-The OpenLabs task is one bounded research episode, not permission to run the whole phase graph. You
-may autonomously perform multiple derivations, representation checks, and kill tests inside the
-current phase, but cross at most one formal phase boundary and never cross an epistemic-role
-boundary. At the end, atomically write the required `openlabs.result_bundle.v1` file. Refer to
-changed campaign files and computational evidence by URI and SHA-256; the orchestrator alone
-decides the factory task transition.
+The OpenLabs task is one bounded research episode. Protocol phases are durable recovery and audit
+records, not process boundaries. Within one researcher or experimenter authority, autonomously
+perform multiple derivations, representation checks, kill tests, and validated phase transitions
+for as long as useful work and the task wall budget remain. Do not stop merely because a phase
+advanced. Stop at an epistemic-role boundary, a terminal outcome, a genuine blocker, or when the
+remaining wall budget is needed to persist a recoverable checkpoint. Never cross into independent
+audit in the creator session. At the end, atomically write the required
+`openlabs.result_bundle.v1` file. Refer to changed campaign files and computational evidence by URI
+and SHA-256; the orchestrator alone decides the factory task transition.
 
 ## Enforce the research contract
 
@@ -68,6 +71,29 @@ decides the factory task transition.
 - Promote only an original-problem closure, main-term or main-exponent improvement, global-interface closure, or standalone decisive lemma.
 - Require independent reconstruction and statement, dependency, and novelty checks before promotion.
 - Apply [evidence-policy.md](references/evidence-policy.md) whenever classifying a result.
+
+For a major open problem, make a paper-scale intermediate theorem the default research target.
+Before representation search, write a research memo containing the frozen theorem statement,
+published comparator, admissible analytic inputs, expected closure effect, and at least one explicit
+false-world control where the proposed mechanism must fail. Explore genuinely different mechanisms
+in isolation and preserve a survivor ledger, but allow a failed mechanism to be inverted when the
+failure exposes a new provable quantity. Once a theorem candidate appears, stop broad ideation and
+run disjoint hostile checks: blind re-derivation, hypothesis/prime-side audit, linear-algebra or
+counting audit, counterexample search, and live literature comparison. Formalization is an
+additional validation layer after the mathematical statement stabilizes; it never replaces
+novelty or analytic-input checks.
+
+For Lean-capable statements, follow [lean-verification.md](references/lean-verification.md). Keep
+project `.lean` sources and receipts in the active AMRA campaign's `formal/lean/` directory. A
+formalization may be marked `passed` only from an `openlabs.lean_verification.v1` receipt produced by
+the trusted verifier; the domain protocol will replay it before promotion. Never treat an imported
+Lean theorem, a source-code search, or an LLM assertion as a kernel check.
+
+For exact algebra, certified numerics, and finite constraint solving, follow
+[computation-verification.md](references/computation-verification.md). Use the prepared Sage, Arb,
+or dual-SMT profile and preserve its v1 receipt. Never call a floating-point run exact, treat a ball
+enclosure as coverage of an unproved analytic tail, or promote an SMT answer beyond the proved
+encoding scope.
 
 Do not count file volume, test count, agent-hours, finite examples, another local branch, a conditional bridge, or another normal form as mathematical promotion.
 

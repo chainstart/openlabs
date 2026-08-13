@@ -112,6 +112,7 @@ Packy key。第一位 Codex 审阅结果先冻结；适配器只计算其 SHA-25
 ```bash
 mkdir -p "$HOME/.config/systemd/user"
 cp deploy/systemd/openlabs-factory.target deploy/systemd/openlabs-workers.target \
+  deploy/systemd/openlabs-workers.slice \
   deploy/systemd/openlabs-tick.service deploy/systemd/openlabs-tick.timer \
   "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload

@@ -31,8 +31,10 @@ the authoritative lane.
 
 ## Obey the Agent boundary
 
-Treat `agent.role` and `agent.session_mode` as authority, not suggestions. One OS process performs
-one bounded task and exits; continuity comes from a resumable logical session plus durable files.
+Treat `agent.role` and `agent.session_mode` as authority, not suggestions. One OS process owns one
+bounded task, but it should stay alive across ordinary same-role protocol phases and checkpoints
+until a real stop condition occurs. Continuity across an unavoidable process boundary comes from a
+resumable logical session plus durable files.
 
 - A `researcher` may resume only the same campaign's research lineage. It proposes and interprets,
   but cannot independently approve its own claims.
@@ -47,8 +49,9 @@ one bounded task and exits; continuity comes from a resumable logical session pl
 Do not simulate a second epistemic role inside the current session. A plain-string next action keeps
 the current role and resumes its session. When another role or an independent same-role run is
 needed, return the structured handoff defined in the result contract; the scheduler normally starts
-it from a blank session. A replan also starts a blank researcher session, using the frozen failure
-artifacts without inheriting the failed conversation's anchoring. The sole cross-role resume is a
+it from a blank session. A replan normally resumes its research lineage; use an explicit
+`route_reselection` or `portfolio_review` boundary when a blank researcher is scientifically
+necessary to escape anchoring. The sole cross-role resume is a
 `text_revision` returned by a paper reviewer: the scheduler resumes the nearest writer session in
 that task's own ancestry, never the reviewer session.
 
@@ -63,6 +66,11 @@ Stop the episode when it has produced a material evidence delta, decisively kill
 a genuine blocker, encountered a role/authority boundary, or needs to reserve time to persist a
 recoverable checkpoint. Do not stop merely because one administrative substep or one file edit is
 complete.
+
+When the task execution policy allows phase continuity, a material intermediate delta is a reason
+to persist state, not automatically a reason to exit. Continue the same process if the role,
+authority, scientific objective, and resource reservation remain valid. Other admitted workers are
+independent processes; their existence does not require this process to terminate.
 
 - Prefer a decisive test over producing more prose or files.
 - Reuse registered tools before creating a new implementation.

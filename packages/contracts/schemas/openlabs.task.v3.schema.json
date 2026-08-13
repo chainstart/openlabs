@@ -37,6 +37,48 @@
     "agent_workspace": {"type": "string", "minLength": 1},
     "run_metadata_path": {"type": "string", "minLength": 1},
     "skill_path": {"type": ["string", "null"]},
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["config_path", "workstream_state_path", "protocol_id"],
+      "properties": {
+        "config_path": {"type": "string", "minLength": 1},
+        "workstream_state_path": {"type": "string", "minLength": 1},
+        "protocol_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "execution_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checkpoint_policy",
+        "continue_across_protocol_phases",
+        "default_session_mode",
+        "fresh_session_boundaries"
+      ],
+      "properties": {
+        "checkpoint_policy": {
+          "enum": ["role_boundary_or_budget", "explicit_checkpoint"]
+        },
+        "continue_across_protocol_phases": {"type": "boolean"},
+        "default_session_mode": {"enum": ["resume", "fresh"]},
+        "fresh_session_boundaries": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "role_handoff",
+              "text_revision",
+              "evidence_remediation",
+              "independent_replication",
+              "adversarial_review",
+              "portfolio_review",
+              "route_reselection"
+            ]
+          }
+        }
+      }
+    },
     "attempt": {"type": "integer", "minimum": 1},
     "agent": {
       "type": "object",

@@ -120,6 +120,8 @@ def configure_codex_runtime(
         "role": task.get("agent", {}).get("role"),
         "session_mode": task.get("agent", {}).get("session_mode"),
         "objective": task.get("objective"),
+        "project": task.get("project"),
+        "execution_policy": task.get("execution_policy"),
         "skills": skill_invocations,
         "skill_source_root": str(skills_root),
         "authority_policy_paths": [str(path) for path in policy_paths],

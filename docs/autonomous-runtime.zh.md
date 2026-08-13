@@ -16,12 +16,12 @@ OpenLabs 的自动化边界按“科研判断归 Codex、状态确定性归控�
   └─ Codex 原生 workspace-write sandbox
                  │
                  ▼
-Codex 自主分析、分解、调用工具、修正路线并形成证据 checkpoint
+Codex 自主分析、分解、调用工具并连续跨越同角色协议阶段
                  │
                  ▼
 结果身份封装 → 契约/证据门禁 → 不可变归档 → campaign 原子晋升
                  │                         └─ 失败：attempt 隔离并按策略续接
-                 └─ next_actions：下一次自主 episode 的目标
+                 └─ 仅在角色边界、终态、阻塞或预算边界产生 next_actions
 ```
 
 ## 职责边界
@@ -32,6 +32,7 @@ Codex 与领域 Skill 负责：
 - 在一次有界 episode 中自主完成必要的搜索、推导、计算、反例与修正；
 - 区分猜想、证据、证明、反证和未知，保存负结果；
 - 形成可恢复 checkpoint，并提出可执行的后继目标。
+- 将协议阶段作为可恢复状态记录；同一权限和预算内不因阶段变化退出当前进程。
 
 Hook 只负责：
 
@@ -60,6 +61,14 @@ Hook 只负责：
 4. 通过身份校验的当前回执一旦发现结果损坏，立即终结并隔离 attempt；不等待租约过期。
 5. 启动失败、结果拒绝、租约过期、取消和预算停止都必须给 attempt 写入终态。
 6. 只有通过结果契约、证据门禁和不可变快照的 `completed` 结果可以原子晋升 campaign。
+
+## 项目与协议插件
+
+控制面只发现 `openlabs.project.v1`，不解释项目的科学配置。项目通过 `protocol.id` 选择
+实验室在 `lab.json` 注册的领域协议，协议 validator 在项目发现和 attempt 提交前分别验证
+正式状态与私有修改状态。项目目标、workstream、Skill、优先级和连续会话策略都由
+`project.json` 替换，无需修改调度器。详见
+[project-protocol-architecture.zh.md](project-protocol-architecture.zh.md)。
 
 新增故障应先判断它违反了哪一条不变量，再修改所属职责层；禁止在科研调度路径上继续堆叠
 针对单个课题、单个错误字符串或单次运行的特殊分支。

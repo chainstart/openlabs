@@ -36,6 +36,51 @@ def test_agent_process_group_is_terminated_and_reaped() -> None:
     assert process.poll() is not None
 
 
+def test_lab_runtime_setup_runs_before_the_agent_and_returns_typed_context(tmp_path) -> None:
+    runner = _load_runner()
+    lab_root = tmp_path / "openlabs" / "labs" / "math"
+    lab_root.mkdir(parents=True)
+    manifest_path = lab_root / "lab.json"
+    manifest_path.write_text("{}\n", encoding="utf-8")
+    setup = lab_root / "prepare.py"
+    setup.write_text(
+        "import json,pathlib,sys\n"
+        "target=pathlib.Path(sys.argv[1])/'.openlabs/tools/prepared.json'\n"
+        "target.parent.mkdir(parents=True,exist_ok=True)\n"
+        "target.write_text('{}\\n')\n"
+        "print(json.dumps({'valid':True,'receipt_path':str(target)}))\n",
+        encoding="utf-8",
+    )
+    workspace = tmp_path
+    agent_workspace = tmp_path / "openlabs-artifacts" / "attempt-workspaces" / "campaign"
+    agent_workspace.mkdir(parents=True)
+    task = {
+        "lab_manifest": str(manifest_path),
+        "agent_workspace": str(agent_workspace),
+        "transaction": {"attempt_root": str(agent_workspace.parent)},
+    }
+    manifest = {
+        "runtime_setup": [
+            {
+                "setup_id": "test-runtime",
+                "command": ["{python}", "prepare.py", "{agent_workspace}"],
+                "timeout_seconds": 10,
+            }
+        ]
+    }
+
+    result = runner._lab_runtime_setup(
+        task,
+        manifest,
+        workspace=workspace,
+        agent_workspace=agent_workspace,
+    )
+
+    assert result["schema_version"] == "openlabs.lab_runtime_setup.v1"
+    assert result["setups"][0]["setup_id"] == "test-runtime"
+    assert Path(result["setups"][0]["receipt_path"]).is_file()
+
+
 def test_sigterm_persists_recoverable_result_and_runtime(tmp_path) -> None:
     manifest_path = tmp_path / "openlabs" / "labs" / "math" / "lab.json"
     manifest_path.parent.mkdir(parents=True)

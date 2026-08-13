@@ -21,6 +21,54 @@ def test_contract_examples_are_valid() -> None:
     assert evaluate_result_bundle(result).passed
 
 
+def test_task_contract_accepts_complete_project_execution_envelope() -> None:
+    task = json.loads(
+        (CODE_ROOT / "packages/contracts/examples/smoke-task.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    task["project"] = {
+        "config_path": "/attempt/workspaces/math/project.json",
+        "workstream_state_path": "/attempt/workspaces/math/state.json",
+        "protocol_id": "amra-math",
+    }
+    task["execution_policy"] = {
+        "checkpoint_policy": "role_boundary_or_budget",
+        "continue_across_protocol_phases": True,
+        "default_session_mode": "resume",
+        "fresh_session_boundaries": ["adversarial_review", "route_reselection"],
+    }
+
+    assert validate_task(task).valid
+
+
+def test_task_contract_rejects_partial_or_ill_typed_execution_policy() -> None:
+    task = json.loads(
+        (CODE_ROOT / "packages/contracts/examples/smoke-task.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    task["project"] = {
+        "config_path": "/attempt/project.json",
+        "workstream_state_path": "/attempt/state.json",
+        "protocol_id": "amra-math",
+    }
+    validation = validate_task(task)
+    assert not validation.valid
+    assert "project and execution_policy must be supplied together" in validation.errors
+
+    task["execution_policy"] = {
+        "checkpoint_policy": "role_boundary_or_budget",
+        "continue_across_protocol_phases": "yes",
+        "default_session_mode": "resume",
+        "fresh_session_boundaries": ["unknown_boundary"],
+    }
+    validation = validate_task(task)
+    assert not validation.valid
+    assert any("must be a boolean" in error for error in validation.errors)
+    assert any("unknown kinds" in error for error in validation.errors)
+
+
 def test_supported_claim_requires_hash_bound_evidence() -> None:
     result = json.loads(
         (CODE_ROOT / "packages/contracts/examples/smoke-result.json").read_text(encoding="utf-8")

@@ -1,0 +1,65 @@
+{
+  "schema_version": "openlabs.math_computation_profiles.v1",
+  "profiles": {
+    "sage-exact-v10.8": {
+      "mode": "sage-json",
+      "evidence_class": "exact_symbolic_computation",
+      "executable": "sage",
+      "expected_version": "10.8",
+      "source_root": "experiments/sage",
+      "source_suffix": ".py",
+      "output_schema": "openlabs.sage_exact_output.v1",
+      "resource_limits": {
+        "memory_mib": 3072,
+        "cpu_seconds": 300,
+        "wall_seconds": 600,
+        "file_mib": 512,
+        "threads": 2,
+        "output_mib": 4
+      }
+    },
+    "arb-certified-v10.8": {
+      "mode": "arb-json",
+      "evidence_class": "certified_ball_arithmetic",
+      "executable": "sage",
+      "expected_version": "10.8",
+      "source_root": "experiments/arb",
+      "source_suffix": ".py",
+      "output_schema": "openlabs.arb_certificate_output.v1",
+      "resource_limits": {
+        "memory_mib": 3072,
+        "cpu_seconds": 600,
+        "wall_seconds": 900,
+        "file_mib": 512,
+        "threads": 2,
+        "output_mib": 4
+      }
+    },
+    "smt-consensus-z3-cvc5-v1": {
+      "mode": "smt-consensus",
+      "evidence_class": "finite_constraint_solver_consensus",
+      "executables": [
+        {
+          "id": "z3",
+          "command": "z3",
+          "expected_version": "4.12.6"
+        },
+        {
+          "id": "cvc5",
+          "command": "cvc5",
+          "expected_version": "1.1.2"
+        }
+      ],
+      "source_root": "experiments/smt",
+      "source_suffix": ".smt2",
+      "resource_limits": {
+        "memory_mib": 2048,
+        "cpu_seconds": 300,
+        "wall_seconds": 600,
+        "file_mib": 256,
+        "threads": 2,
+        "output_mib": 4
+      }
+    }
+  }
+}

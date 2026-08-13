@@ -1,0 +1,10 @@
+[Unit]
+Description=OpenLabs aggregate research worker resource guard
+Before=openlabs-workers.target
+
+[Slice]
+# The WSL VM keeps at least 20% of physical RAM for the kernel, desktop and
+# interactive work. Individual heavy tools apply a lower per-process ceiling.
+MemoryAccounting=yes
+MemoryMax=80%
+MemorySwapMax=0

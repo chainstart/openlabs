@@ -1,0 +1,30 @@
+{
+  "schema_version": "openlabs.lean_profile.v1",
+  "profile_id": "lean4-mathlib-v4.26.0",
+  "toolchain": "leanprover/lean4:v4.26.0",
+  "mathlib_revision": "v4.26.0",
+  "template": "amra-library",
+  "resource_limits": {
+    "verification": {
+      "memory_fraction_of_host": 0.75,
+      "cpu_seconds": 4500,
+      "wall_seconds": 300,
+      "file_mib": 512,
+      "threads_fraction_of_host": 0.75,
+      "output_mib": 4
+    },
+    "provisioning": {
+      "memory_fraction_of_host": 0.75,
+      "cpu_seconds": 27000,
+      "wall_seconds": 1800,
+      "file_mib": 2048,
+      "threads_fraction_of_host": 0.75,
+      "output_mib": 4
+    }
+  },
+  "allowed_axioms": [
+    "propext",
+    "Quot.sound",
+    "Classical.choice"
+  ]
+}

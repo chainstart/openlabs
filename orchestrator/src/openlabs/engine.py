@@ -47,6 +47,8 @@ from .db import AttemptDisposition, FactoryDB
 from .gates import evaluate_result_bundle
 from .labs import discover_labs, lab_for_domain
 from .locking import factory_operation_lock
+from .projects import EPISTEMIC_FRESH_BOUNDARIES, ExecutionPolicy, load_project
+from .protocols import validate_protocol_state
 from .resources import (
     ResourceVector,
     default_task_resources,
@@ -77,13 +79,18 @@ class ActionPlan:
 
 
 @dataclass(frozen=True)
-class ProductionLaneBinding:
-    plan_id: str
-    plan_path: Path
-    lane_id: str
-    lane_path: Path
+class ProjectWorkstreamBinding:
+    project_id: str
+    project_path: Path
+    workstream_id: str
+    title: str
+    workstream_path: Path
     domain: str
     priority: int
+    protocol_id: str
+    primary_skill: str
+    execution_policy: ExecutionPolicy
+    legacy_plan_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -97,21 +104,25 @@ def _next_action_plan(
     action: object,
     *,
     current_role: str,
+    execution_policy: ExecutionPolicy | None = None,
 ) -> ActionPlan | None:
     """Normalize one bounded successor without weakening role boundaries."""
 
+    policy = execution_policy or ExecutionPolicy()
     if isinstance(action, str) and action.strip():
         return ActionPlan(
             objective=action.strip(),
             agent_role=current_role,
-            session_mode="resume",
+            session_mode=policy.default_session_mode,
             handoff_kind="role_handoff",
         )
     if not isinstance(action, Mapping):
         return None
     objective = str(action.get("objective") or "").strip()
     target_role = str(action.get("agent_role") or "").strip()
-    requested_mode = str(action.get("session_mode") or "").strip()
+    requested_mode = str(
+        action.get("session_mode") or policy.default_session_mode
+    ).strip()
     handoff_kind = str(action.get("handoff_kind") or "role_handoff").strip()
     if not objective or target_role not in {
         "researcher",
@@ -126,7 +137,8 @@ def _next_action_plan(
         "fresh"
         if target_role != current_role
         or target_role == "reviewer"
-        or handoff_kind == "independent_replication"
+        or handoff_kind
+        in EPISTEMIC_FRESH_BOUNDARIES.union(policy.fresh_session_boundaries)
         else requested_mode
     )
     if effective_mode not in {"resume", "fresh"}:
@@ -501,15 +513,98 @@ def _recover_attempt_workspaces(
             report.errors.append(f"Could not recover attempt workspace {metadata_path}: {exc}")
 
 
-def _active_production_lanes(
+def _active_project_workstreams(
     paths: WorkspacePaths,
     report: TickReport,
-) -> list[ProductionLaneBinding]:
-    bindings: list[ProductionLaneBinding] = []
+) -> list[ProjectWorkstreamBinding]:
+    """Discover generic projects, with old math plans retained as an adapter."""
+
+    bindings: list[ProjectWorkstreamBinding] = []
     seen: set[str] = set()
     root = paths.data / "workspaces"
+    labs = discover_labs(paths.code)
+    project_paths = {
+        *root.glob("*/projects/*/project.json"),
+        *root.glob("*/production/*/project.json"),
+    }
+    for project_path in sorted(project_paths):
+        try:
+            project = load_project(project_path)
+            if project.status != "active":
+                continue
+            lab = lab_for_domain(labs, project.domain)
+            domain_root = (root / project.domain).resolve()
+            if not _inside(project.path, (domain_root,)):
+                raise ValueError("project config is outside its declared domain workspace")
+            if project.domain_config_path is not None and not _inside(
+                project.domain_config_path,
+                (domain_root,),
+            ):
+                raise ValueError("project domain config escapes its domain workspace")
+            protocol = lab.protocol(project.protocol_id)
+            if protocol is None:
+                raise ValueError(
+                    f"lab {lab.lab_id} does not register protocol {project.protocol_id!r}"
+                )
+            if protocol.primary_skill != project.primary_skill:
+                raise ValueError(
+                    f"project primary skill {project.primary_skill!r} differs from protocol "
+                    f"registration {protocol.primary_skill!r}"
+                )
+            selected_skill = lab.skill_path(project.primary_skill)
+            if selected_skill is None or not selected_skill.is_file():
+                raise ValueError(f"unknown project primary skill: {project.primary_skill}")
+            for workstream in project.workstreams:
+                if workstream.startup != "active":
+                    continue
+                if not _inside(workstream.state_path, (domain_root,)):
+                    raise ValueError(
+                        f"workstream {workstream.workstream_id} escapes its domain workspace"
+                    )
+                validation = validate_protocol_state(
+                    lab,
+                    protocol,
+                    project_path=project.path,
+                    workstream_path=workstream.state_path,
+                    mode="discovery",
+                )
+                if not validation.valid:
+                    raise ValueError(
+                        f"protocol rejected {workstream.workstream_id}: "
+                        + "; ".join(validation.errors)
+                    )
+                if workstream.workstream_id in seen:
+                    raise ValueError(
+                        f"workstream {workstream.workstream_id} appears in more than one project"
+                    )
+                seen.add(workstream.workstream_id)
+                bindings.append(
+                    ProjectWorkstreamBinding(
+                        project_id=project.project_id,
+                        project_path=project.path,
+                        workstream_id=workstream.workstream_id,
+                        title=workstream.title,
+                        workstream_path=workstream.state_path,
+                        domain=project.domain,
+                        priority=workstream.priority,
+                        protocol_id=project.protocol_id,
+                        primary_skill=project.primary_skill,
+                        execution_policy=project.execution,
+                    )
+                )
+        except (
+            OSError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+            subprocess.TimeoutExpired,
+        ) as exc:
+            report.errors.append(f"Invalid project config {project_path}: {exc}")
+
     for plan_path in sorted(root.glob("*/production/*/production_plan.json")):
         try:
+            if (plan_path.parent / "project.json").is_file():
+                continue
             plan = _read_json_object(plan_path)
             if str(plan.get("status") or "") != "active":
                 continue
@@ -542,13 +637,23 @@ def _active_production_lanes(
                     raise ValueError(f"lane {lane_id} appears in more than one active plan")
                 seen.add(lane_id)
                 bindings.append(
-                    ProductionLaneBinding(
-                        plan_id=plan_id,
-                        plan_path=plan_path.resolve(),
-                        lane_id=lane_id,
-                        lane_path=lane_path,
+                    ProjectWorkstreamBinding(
+                        project_id=plan_id,
+                        project_path=plan_path.resolve(),
+                        workstream_id=lane_id,
+                        title=str(
+                            (lane.get("theme") or {}).get("name")
+                            if isinstance(lane.get("theme"), Mapping)
+                            else lane_id
+                        )
+                        or lane_id,
+                        workstream_path=lane_path,
                         domain=domain,
                         priority=int(item.get("priority") or 0),
+                        protocol_id="legacy-production-plan",
+                        primary_skill="math-production-supervisor",
+                        execution_policy=ExecutionPolicy(),
+                        legacy_plan_path=plan_path.resolve(),
                     )
                 )
         except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -556,15 +661,15 @@ def _active_production_lanes(
     return bindings
 
 
-def _sync_active_production_plans(
+def _sync_active_projects(
     db: FactoryDB,
     paths: WorkspacePaths,
     settings: FactorySettings,
     report: TickReport,
 ) -> None:
-    bindings = _active_production_lanes(paths, report)
-    desired = {binding.lane_id for binding in bindings}
-    for campaign in db.production_campaigns():
+    bindings = _active_project_workstreams(paths, report)
+    desired = {binding.workstream_id for binding in bindings}
+    for campaign in db.project_campaigns():
         campaign_id = str(campaign["campaign_id"])
         if campaign_id in desired:
             continue
@@ -577,67 +682,90 @@ def _sync_active_production_plans(
         report.production_paused.append(campaign_id)
 
     for binding in bindings:
-        campaign = db.campaign(binding.lane_id)
+        campaign = db.campaign(binding.workstream_id)
         if campaign is None:
-            lane = _read_json_object(binding.lane_path)
-            theme = lane.get("theme") if isinstance(lane.get("theme"), Mapping) else {}
             db.register_campaign(
-                binding.lane_id,
+                binding.workstream_id,
                 domain=binding.domain,
-                title=str(theme.get("name") or binding.lane_id),
+                title=binding.title,
                 priority=binding.priority,
-                state_path=str(binding.lane_path.parent),
-                source=str(binding.plan_path),
+                state_path=str(binding.workstream_path.parent),
+                source=str(binding.project_path),
                 max_agent_seconds=settings.max_campaign_agent_seconds,
             )
-            campaign = db.campaign(binding.lane_id)
+            campaign = db.campaign(binding.workstream_id)
         if campaign is None or str(campaign.get("domain")) != binding.domain:
             report.production_blocked.append(
-                {"campaign_id": binding.lane_id, "reason": "campaign_domain_mismatch"}
+                {"campaign_id": binding.workstream_id, "reason": "campaign_domain_mismatch"}
             )
             continue
         if str(campaign.get("status")) not in {"active", "production_paused"}:
             report.production_blocked.append(
                 {
-                    "campaign_id": binding.lane_id,
+                    "campaign_id": binding.workstream_id,
                     "reason": f"campaign_status_{campaign.get('status')}",
                 }
             )
             continue
-        db.configure_continuous_campaign(
-            binding.lane_id,
-            production_plan_path=str(binding.plan_path),
-            production_lane_path=str(binding.lane_path),
-            priority=binding.priority,
-        )
-        report.production_synced.append(binding.lane_id)
+        if binding.legacy_plan_path is not None:
+            db.configure_continuous_campaign(
+                binding.workstream_id,
+                production_plan_path=str(binding.legacy_plan_path),
+                production_lane_path=str(binding.workstream_path),
+                priority=binding.priority,
+            )
+        else:
+            db.configure_project_campaign(
+                binding.workstream_id,
+                project_config_path=str(binding.project_path),
+                workstream_state_path=str(binding.workstream_path),
+                protocol_id=binding.protocol_id,
+                primary_skill=binding.primary_skill,
+                execution_policy=binding.execution_policy.to_dict(),
+                priority=binding.priority,
+            )
+        report.production_synced.append(binding.workstream_id)
 
 
-def _fallback_production_action(campaign: Mapping[str, Any]) -> ActionPlan:
-    lane_path = Path(str(campaign["production_lane_path"]))
-    plan_path = Path(str(campaign["production_plan_path"]))
-    lane = _read_json_object(lane_path)
-    stage = str(lane.get("stage") or "radar")
-    cycle = int(lane.get("cycle") or 1)
-    if stage not in {"radar", "research"}:
+def _fallback_project_action(
+    campaign: Mapping[str, Any],
+    execution_policy: ExecutionPolicy,
+) -> ActionPlan:
+    lane_value = campaign.get("workstream_state_path") or campaign.get("production_lane_path")
+    project_value = campaign.get("project_config_path") or campaign.get("production_plan_path")
+    lane_path = Path(str(lane_value))
+    plan_path = Path(str(project_value))
+    if campaign.get("project_config_path"):
         objective = (
-            f"Recover terminal production lane {campaign['campaign_id']} from {lane_path}. "
-            "Preserve its terminal evidence and return no successor work. The control plane "
-            "must pause this lane until administrator-owned desired state changes."
+            f"Continue project workstream {campaign['campaign_id']} under protocol "
+            f"{campaign.get('protocol_id')} and Skill {campaign.get('primary_skill')}. Read the "
+            f"project config {plan_path}, workstream state {lane_path}, and all durable protocol "
+            "checkpoints. Autonomously execute the highest-information admissible research work "
+            "and persist one evidence-bound checkpoint plus any executable continuation."
         )
     else:
-        objective = (
-            f"Resume active production lane {campaign['campaign_id']} at stage {stage}, cycle "
-            f"{cycle}. Read {lane_path}, {plan_path}, all durable lane checkpoints, and the "
-            "assigned Skills. Autonomously choose and execute the highest-information admissible "
-            "research episode that materially advances or falsifies the lane, then leave one "
-            "coherent evidence-bound checkpoint and an executable continuation. Preserve every "
-            "configured scientific and transaction gate."
-        )
+        lane = _read_json_object(lane_path)
+        stage = str(lane.get("stage") or "radar")
+        cycle = int(lane.get("cycle") or 1)
+        if stage not in {"radar", "research"}:
+            objective = (
+                f"Recover terminal production lane {campaign['campaign_id']} from {lane_path}. "
+                "Preserve its terminal evidence and return no successor work. The control plane "
+                "must pause this lane until administrator-owned desired state changes."
+            )
+        else:
+            objective = (
+                f"Resume active production lane {campaign['campaign_id']} at stage {stage}, cycle "
+                f"{cycle}. Read {lane_path}, {plan_path}, all durable lane checkpoints, and the "
+                "assigned Skills. Autonomously choose and execute the highest-information "
+                "admissible research episode that materially advances or falsifies the lane, "
+                "then leave one coherent evidence-bound checkpoint and an executable "
+                "continuation. Preserve every configured scientific and transaction gate."
+            )
     return ActionPlan(
         objective=objective,
         agent_role="researcher",
-        session_mode="fresh",
+        session_mode=execution_policy.default_session_mode,
         handoff_kind="role_handoff",
     )
 
@@ -653,7 +781,11 @@ def _production_workspace_authority(
     conversational handoff to recover the correct epistemic role.
     """
 
-    lane_value = str(campaign.get("production_lane_path") or "").strip()
+    lane_value = str(
+        campaign.get("workstream_state_path")
+        or campaign.get("production_lane_path")
+        or ""
+    ).strip()
     if not lane_value:
         return None
     lane_path = Path(lane_value).expanduser().resolve()
@@ -668,6 +800,64 @@ def _production_workspace_authority(
     }
     policies = authority_policy_paths(sorted(skill_dirs))
     return resolve_workspace_authority(lane_path.parent, policies)
+
+
+def _campaign_execution_policy(campaign: Mapping[str, Any]) -> ExecutionPolicy:
+    raw = campaign.get("execution_policy_json")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            value = None
+        if isinstance(value, Mapping):
+            boundaries = value.get("fresh_session_boundaries")
+            if isinstance(boundaries, list) and all(
+                isinstance(item, str) and item.strip() for item in boundaries
+            ):
+                return ExecutionPolicy(
+                    checkpoint_policy=str(
+                        value.get("checkpoint_policy") or "role_boundary_or_budget"
+                    ),
+                    continue_across_protocol_phases=(
+                        value.get("continue_across_protocol_phases", True) is True
+                    ),
+                    default_session_mode=str(value.get("default_session_mode") or "resume"),
+                    fresh_session_boundaries=tuple(item.strip() for item in boundaries),
+                )
+    return ExecutionPolicy()
+
+
+def _validate_bound_protocol(
+    paths: WorkspacePaths,
+    campaign: Mapping[str, Any],
+    *,
+    attempt_workspace: AttemptWorkspace | None = None,
+) -> tuple[str, ...]:
+    project_value = str(campaign.get("project_config_path") or "").strip()
+    state_value = str(campaign.get("workstream_state_path") or "").strip()
+    protocol_id = str(campaign.get("protocol_id") or "").strip()
+    if not project_value and not state_value and not protocol_id:
+        return ()
+    if not project_value or not state_value or not protocol_id:
+        return ("generic project binding is incomplete",)
+    labs = discover_labs(paths.code)
+    lab = lab_for_domain(labs, str(campaign.get("domain") or ""))
+    protocol = lab.protocol(protocol_id)
+    if protocol is None:
+        return (f"lab {lab.lab_id} does not register protocol {protocol_id!r}",)
+    project_path = Path(project_value).expanduser().resolve()
+    state_path = Path(state_value).expanduser().resolve()
+    if attempt_workspace is not None:
+        project_path = Path(str(attempt_workspace.map_path(project_path))).resolve()
+        state_path = Path(str(attempt_workspace.map_path(state_path))).resolve()
+    validation = validate_protocol_state(
+        lab,
+        protocol,
+        project_path=project_path,
+        workstream_path=state_path,
+        mode="commit",
+    )
+    return validation.errors if not validation.valid else ()
 
 
 def _binding_repair_objective(task: Mapping[str, Any]) -> str:
@@ -710,6 +900,8 @@ def _launch_worker(
         if systemd_run is None:
             raise RuntimeError("systemd tick requires systemd-run for detached workers")
         unit = _worker_unit_name(task)
+        reserved = task_resources(task)
+        tasks_max = max(64, reserved.cpu_threads * 32)
         launch = [
             systemd_run,
             "--user",
@@ -720,6 +912,13 @@ def _launch_worker(
             "--slice=openlabs-workers.slice",
             "--property=PartOf=openlabs-workers.target",
             "--property=KillMode=control-group",
+            "--property=OOMPolicy=stop",
+            # This is a scheduling estimate and reclaim hint, not a hard wall.
+            # Tool adapters (Lean, Sage, SMT) own their phase-specific ceilings;
+            # openlabs-workers.slice owns the aggregate hard ceiling.
+            f"--property=MemoryHigh={reserved.memory_mib}M",
+            f"--property=TasksMax={tasks_max}",
+            f"--property=CPUQuota={reserved.cpu_threads * 100}%",
             "--property=Nice=5",
             f"--property=StandardOutput=append:{log_path}",
             f"--property=StandardError=append:{log_path}",
@@ -816,15 +1015,20 @@ def _replenish_continuous_campaign(
     if db.has_queued_tasks(campaign_id):
         return
     campaign = db.campaign(campaign_id) or dict(campaign)
+    execution_policy = _campaign_execution_policy(campaign)
     payload = _verified_result_payload(latest, paths) if latest else None
     current_role = str(latest.get("agent_role") or "researcher") if latest else "researcher"
     actions = payload.get("next_actions") if payload else None
     action = (
-        _next_action_plan(actions[0], current_role=current_role)
+        _next_action_plan(
+            actions[0],
+            current_role=current_role,
+            execution_policy=execution_policy,
+        )
         if isinstance(actions, list) and actions
         else None
     )
-    action = action or _fallback_production_action(campaign)
+    action = action or _fallback_project_action(campaign, execution_policy)
     status = str(latest.get("status") or "") if latest else ""
     result_runtime = db.result_runtime(str(latest["task_id"])) if latest else {}
     failure_classes = (
@@ -840,14 +1044,14 @@ def _replenish_continuous_campaign(
         action = ActionPlan(
             objective=_binding_repair_objective(latest),
             agent_role="researcher",
-            session_mode="fresh",
+            session_mode="resume",
             handoff_kind="evidence_remediation",
         )
-    elif status == "needs_replan":
+    elif status == "needs_replan" and action.agent_role != "researcher":
         action = ActionPlan(
             objective=action.objective,
             agent_role="researcher",
-            session_mode="fresh",
+            session_mode="resume",
             handoff_kind=action.handoff_kind,
             resources=action.resources,
             wall_seconds=action.wall_seconds,
@@ -878,7 +1082,12 @@ def _replenish_continuous_campaign(
             {"campaign_id": campaign_id, "reason": "unsafe_direct_writer_handoff"}
         )
         return
-    if room.rolled_over and action.agent_role in {"researcher", "experimenter"}:
+    if (
+        latest
+        and action.session_mode == "resume"
+        and action.agent_role == current_role
+        and not latest.get("agent_session_id")
+    ):
         action = ActionPlan(
             objective=action.objective,
             agent_role=action.agent_role,
@@ -922,12 +1131,19 @@ def _replenish_continuous_campaign(
         input_path=(
             str(latest.get("result_path"))
             if latest and latest.get("result_path")
-            else str(Path(str(campaign["production_lane_path"])).parent)
+            else str(
+                Path(
+                    str(
+                        campaign.get("workstream_state_path")
+                        or campaign.get("production_lane_path")
+                    )
+                ).parent
+            )
         ),
         skill_path=(
             str(latest.get("skill_path"))
             if latest and latest.get("skill_path")
-            else "math-production-supervisor"
+            else str(campaign.get("primary_skill") or "math-production-supervisor")
         ),
         runner=runner,
         routing_reason=(
@@ -1093,6 +1309,8 @@ def ingest_results(
             task = db.task(task_id)
             if task is None:
                 raise ValueError(f"Unknown task: {task_id}")
+            campaign_binding = db.campaign(str(task["campaign_id"]))
+            execution_policy = _campaign_execution_policy(campaign_binding or {})
             expected = {
                 "attempt_id": task.get("current_attempt_id"),
                 "campaign_id": task.get("campaign_id"),
@@ -1171,7 +1389,11 @@ def ingest_results(
             next_actions = payload.get("next_actions", [])
             current_role = str(task.get("agent_role") or "researcher")
             next_plan = (
-                _next_action_plan(next_actions[0], current_role=current_role)
+                _next_action_plan(
+                    next_actions[0],
+                    current_role=current_role,
+                    execution_policy=execution_policy,
+                )
                 if isinstance(next_actions, list) and next_actions
                 else None
             )
@@ -1248,6 +1470,22 @@ def ingest_results(
             )
             if promotable:
                 try:
+                    if campaign_binding is None:
+                        raise ValueError("campaign disappeared before protocol validation")
+                    protocol_errors = _validate_bound_protocol(
+                        paths,
+                        campaign_binding,
+                        attempt_workspace=attempt_workspace,
+                    )
+                    if protocol_errors:
+                        runtime["protocol_gate"] = {
+                            "passed": False,
+                            "errors": list(protocol_errors),
+                        }
+                        raise ValueError(
+                            "protocol_gate_failed:" + "; ".join(protocol_errors)
+                        )
+                    runtime["protocol_gate"] = {"passed": True, "errors": []}
                     payload, result_path, actual_sha = freeze_result_bundle(
                         paths,
                         payload,
@@ -1298,7 +1536,10 @@ def ingest_results(
                 errors.append(runtime_error)
             if transaction_error:
                 errors.append(transaction_error)
-            runtime["gate_failure_classes"] = list(gate.failure_classes)
+            failure_classes = set(gate.failure_classes)
+            if transaction_error and "protocol_gate_failed:" in transaction_error:
+                failure_classes.add("protocol_state")
+            runtime["gate_failure_classes"] = sorted(failure_classes)
             try:
                 final_status = db.ingest_result(
                     task_id,
@@ -1646,7 +1887,8 @@ def ingest_results(
                 infrastructure_retry = is_replan and _missing_agent_bundle(payload, runtime)
                 if is_replan:
                     target_role = "researcher"
-                    session_mode = "fresh"
+                    if target_role != current_role:
+                        session_mode = "fresh"
                     if infrastructure_retry:
                         objective = _infrastructure_retry_objective(db, task)
                 elif target_role == "writer" and current_role != "writer":
@@ -1661,7 +1903,7 @@ def ingest_results(
                         keep=settings.archive_result_receipts,
                     )
                     continue
-                if room.rolled_over and target_role in {"researcher", "experimenter"}:
+                if session_mode == "resume" and not task.get("agent_session_id"):
                     session_mode = "fresh"
                 prefix = "replan" if is_replan else "continue"
                 follow_task_id = f"{prefix}:{actual_sha[:32]}"
@@ -1733,6 +1975,7 @@ def _write_task_spec(
     skill_path: Path | None,
     output_path: Path,
     wall_seconds: int,
+    campaign: Mapping[str, Any] | None = None,
 ) -> Path:
     agent_workspace = attempt_workspace.campaign_root
     agent_workspace.mkdir(parents=True, exist_ok=True)
@@ -1776,6 +2019,27 @@ def _write_task_spec(
         "resources": task_resources(task).to_dict(),
         "budget": {"wall_seconds": max(1, int(wall_seconds))},
     }
+    project_path = (
+        campaign.get("project_config_path") or campaign.get("production_plan_path")
+        if campaign is not None
+        else None
+    )
+    workstream_path = (
+        campaign.get("workstream_state_path") or campaign.get("production_lane_path")
+        if campaign is not None
+        else None
+    )
+    if bool(project_path) != bool(workstream_path):
+        raise ValueError("campaign project/workstream binding is incomplete")
+    if project_path and workstream_path:
+        assert campaign is not None
+        execution_policy = _campaign_execution_policy(campaign)
+        payload["project"] = {
+            "config_path": attempt_workspace.map_path(project_path),
+            "workstream_state_path": attempt_workspace.map_path(workstream_path),
+            "protocol_id": campaign.get("protocol_id") or "legacy-production-plan",
+        }
+        payload["execution_policy"] = execution_policy.to_dict()
     skill_dirs = [
         paths.code / "orchestrator" / "skills" / "openlabs-research-factory",
     ]
@@ -1846,6 +2110,7 @@ def _launch_task(
         skill_path=skill_path,
         output_path=output_path,
         wall_seconds=wall_seconds,
+        campaign=campaign,
     )
     log_path = output_path.parent / "worker.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1864,6 +2129,7 @@ def _launch_task(
         environment[name] = thread_count
     environment["OPENLABS_MEMORY_MIB"] = str(reserved.memory_mib)
     environment["OPENLABS_SCRATCH_MIB"] = str(reserved.scratch_mib)
+    environment["OPENLABS_CPU_THREADS"] = thread_count
     db.mark_running(
         str(task["task_id"]),
         attempt_id=str(task["current_attempt_id"]),
@@ -1902,9 +2168,9 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
 
     _recover_attempt_workspaces(db, paths, report)
 
-    # An active production plan is desired state: bind its lanes before processing
-    # completions so a safety-window boundary can roll over instead of going idle.
-    _sync_active_production_plans(db, paths, settings, report)
+    # Active project configs are desired state: bind their workstreams before
+    # processing completions so a safety-window boundary can roll over instead of idle.
+    _sync_active_projects(db, paths, settings, report)
     report.cancelled.extend(db.cancel_queued_tasks_for_inactive_campaigns())
     # Ingest first so a completed worker is not requeued just because its lease expired.
     ingest_results(db, paths, settings, report)

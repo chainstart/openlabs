@@ -19,6 +19,11 @@
 
 该结构优先满足当前个人使用的轻量要求，同时保留未来迁移到服务器、多用户和远程 artifact store 的边界。
 
+项目、领域协议和 Codex 连续执行的可插拔接口见
+[project-protocol-architecture.zh.md](project-protocol-architecture.zh.md)。控制面只理解通用
+`openlabs.project.v1` 外壳；领域状态由实验室注册的 protocol validator 在发现和事务提交
+两个时点验证。
+
 ## 2. 四层物理存储结构
 
 ~~~text
@@ -470,8 +475,13 @@ session ID，以及 runner 能提供的模型、token、缓存和成本字段。
 主机总量减管理员保留量，并结合当前可用内存/磁盘压力计算本轮容量。活动任务预留加候选任务
 预留不超过容量时才可启动。放不下的队首任务保持排队，调度器继续查看其他 campaign；资源
 释放后的下一轮 tick 再尝试。`max_worker_processes` 只是不可信资源申报之外的进程数保险，
-同一 campaign 串行规则继续独立生效。第一版不增加 GPU 分配器或 cgroup 服务；当前任务协议
-只声明系统实际执行并测试的三种资源。
+同一 campaign 串行规则继续独立生效。任务内存预留落实为 worker 的 `MemoryHigh` 回收提示，
+不再误作工具硬上限；worker 仍由 `TasksMax`、`CPUQuota` 和完整进程组生命周期监督。所有
+worker 与数学工具共同位于 `openlabs-workers.slice`，该 slice 以主机物理内存的 80% 为聚合
+`MemoryMax` 且禁用 swap。数学工具另施加 profile 级物理内存 cgroup、地址空间、CPU/墙钟、
+线程/进程数、文件和输出限制；Lean 单次上限动态取 WSL 内核可见物理内存和 CPU 的 75%，
+且多个 Lean 校验串行。当前任务协议仍只声明 CPU 线程、内存和临时盘三种可调度资源，不增加
+GPU 分配器。
 
 ### 6.5 只保留最小程序入口
 

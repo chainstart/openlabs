@@ -48,6 +48,8 @@ never rely on conversational memory as the only continuation record.
 uncertainty, a killed mechanism, an empty radar pass, and a repairable evidence-package defect are
 `needs_replan` and must carry an autonomous recovery action. External submission, spending,
 authorship decisions, and public release remain blocked even though internal production continues.
+The exception is an exhausted theorem-progress or frozen-branch budget: that lane is scientifically
+terminal and must not manufacture another successor merely to keep the scheduler busy.
 
 ## Run a flagship program
 
@@ -57,6 +59,13 @@ route and its public frontier as fixed research scope, not as a candidate awaiti
 on a precise frontier theorem, bridge lemma, obstruction, or direct closure inside that route.
 Reject numerology, finite verification presented as proof, equivalent reformulations with no new
 leverage, and mechanisms whose analytic domains or dependencies are not fully specified.
+
+Make a paper-scale intermediate theorem, rather than direct north-star closure, the normal unit of
+allocation. Freeze its exact statement, scope, unconditional inputs, published comparator, and one
+non-cosmetic consequence before a proof episode expands. A local lemma counts only when it closes a
+named global interface or supports a standalone no-go theorem. Use
+[claude-rh-transfer.md](references/claude-rh-transfer.md) for the role portfolio, hostile controls,
+and validation sequence adapted from Anthropic's 2026 zeta-function result.
 
 After every node, atomically update the lane's configured `program_summary` and
 `paper_seed_registry`. Separate verified theorems, supported reductions, computational evidence,
@@ -126,16 +135,36 @@ control plane pauses it. Do not request another radar pass after that event.
 Read the complete sibling `amra-research-loop/SKILL.md` and the references required by its current
 phase. The nested path is `selected_target.amra_campaign` in `production_lane.json`.
 
+The math lab prepares its pinned Lean/Mathlib profile before every task. When the theorem surface is
+formalizable or a formal probe is decisive, use the AMRA
+`references/lean-verification.md` procedure. Work only in the target's attempt-local
+`formal/lean/`; never modify the shared Lean runtime or claim formal verification without the v1
+receipt. Python computation and Lean verification are different evidence classes and must remain
+separately identified.
+
+The lab also prepares the `sage-exact-v10.8`, `arb-certified-v10.8`, and
+`smt-consensus-z3-cvc5-v1` profiles. Follow the AMRA
+`references/computation-verification.md` procedure whenever their output supports a claim. Prefer
+Arb to ordinary floating point for RH special functions, zero enclosures, integrals, and explicit
+error bounds. Treat exact Sage and SMT results as universal evidence only when a natural proof
+establishes that the finite computation or encoding is complete.
+
 - Autonomously perform the useful proof operations and decisive tests that fit the current AMRA
-  phase. Cross at most one formal phase or epistemic-role boundary per checkpoint, but do not turn
-  ordinary intermediate operations into scheduler tasks.
+  authority. Continue through as many validated researcher-owned AMRA phases as the wall budget
+  permits; phases are state records, not scheduler tasks. Stop before an epistemic-role boundary.
 - Use AMRA's CLI for transitions and freezing; never edit phase history to bypass a gate.
 - Record the node with `scripts/production_lane.py record-node` and an exact `--delta-kind`.
-- Count progress only when an exact blocker shrinks, a mechanism is killed, a survivor is
-  strengthened, or a promotion condition moves.
-- If the configured consecutive-no-progress limit is reached, freeze the nested AMRA campaign. A
-  score-selected lane may recycle; an operator-locked route must open a post-result route branch
-  without radar or prospective scoring.
+- Distinguish search progress from theorem progress. `blocker_reduced`, `mechanism_killed`,
+  `survivor_strengthened`, and `promotion_gate_advanced` preserve useful search evidence but do not
+  reset the theorem-stall counter. Only an exact standalone theorem/no-go statement, hypothesis
+  removal, or strict public-frontier improvement is theorem progress.
+- Record theorem progress with its exact statement, scope, and non-cosmetic consequence. The script
+  then blocks author-side continuation until a fresh independent audit records promotion or freeze.
+- If the consecutive-no-progress, no-theorem-delta, or per-target research-node limit is reached,
+  freeze the nested AMRA campaign. A score-selected lane may recycle. An operator-locked route may
+  open only a defect-addressing amended branch and remains subject to its frozen-branch cap. Before
+  freezing, one existing result may still be recorded as a theorem delta if it already has the
+  required exact statement, scope, consequence, and evidence; this triggers audit, not more search.
 - If work keeps splitting into restrictions, chambers, finite cases, or normal forms without a
   general interface, classify the node as `no_progress` even when it creates substantial files.
 
@@ -157,8 +186,10 @@ the generic Stop/scheduler gates enforce this transfer.
   standalone contribution that passes the same novelty and paper-shadow gates; one small witness
   without that audit remains archived evidence, not a paper candidate.
 - On freeze or failed audit, record `freeze`. Recycle only a `radar_scored` lane. For an
-  `operator_locked_route`, preserve the negative result and return one executable action that
-  assesses it and starts the next in-route branch.
+  `operator_locked_route`, preserve the negative result. A route branch must state how its exact
+  theorem is amended and which audited defect it avoids; repeating the same theorem is forbidden.
+  Two consecutive frozen targets without a promotion terminate the default route budget. Do not
+  emit another research action after that cap.
 - For a terminal adopted-campaign freeze, return `completed` with `paper_candidate: false` and an
   empty `next_actions` array. Never place prohibitions such as "do not promote" in
   `next_actions`; that field contains executable successor work only.
@@ -197,6 +228,7 @@ until a fresh bounded task explicitly adopts and validates it.
 
 Write the required `openlabs.result_bundle.v1` and report the lane cycle, production stage, AMRA
 phase when applicable, exact evidence delta, node classification, consecutive-no-progress count,
-and next bounded action. Bind every supported or refuted claim to present local artifacts and
+consecutive-without-theorem-delta count, and next bounded action. Bind every supported or refuted
+claim to present local artifacts and
 SHA-256. Except for the terminal adopted-campaign case above, do not leave an active lane with an
 empty `next_actions` array.
