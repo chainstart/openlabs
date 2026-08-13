@@ -96,3 +96,64 @@ def test_halt_production_pauses_plan_and_cancels_all_work(tmp_path) -> None:
     assert json.loads(report_path.read_text(encoding="utf-8"))["final_status"] == (
         "paused_timebox_complete"
     )
+
+
+def test_halt_production_pauses_generic_project_campaigns(tmp_path) -> None:
+    paths = workspace_paths(tmp_path)
+    paths.ensure_runtime_directories()
+    project_root = paths.data / "workspaces/math/production/run"
+    project_root.mkdir(parents=True)
+    plan_path = atomic_write_json(
+        project_root / "production_plan.json",
+        {
+            "schema_version": "openlabs.math_production_plan.v1",
+            "plan_id": "generic-timebox",
+            "status": "active",
+        },
+    )
+    project_path = atomic_write_json(
+        project_root / "project.json",
+        {
+            "schema_version": "openlabs.project.v1",
+            "project_id": "generic-project",
+            "domain": "math",
+            "status": "active",
+            "domain_config": {"path": "production_plan.json"},
+        },
+    )
+    lane_path = atomic_write_json(
+        paths.data / "workspaces/math/generic-route/production_lane.json",
+        {"nodes": []},
+    )
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign("generic-route", domain="math", title="Generic route")
+    db.configure_project_campaign(
+        "generic-route",
+        project_config_path=str(project_path.resolve()),
+        workstream_state_path=str(lane_path.resolve()),
+        protocol_id="amra-math",
+        primary_skill="math-production-supervisor",
+        execution_policy={},
+    )
+    db.enqueue_task(
+        task_id="generic-queued",
+        campaign_id="generic-route",
+        domain="math",
+        task_type="research",
+        objective="Must be cancelled with the project.",
+    )
+
+    report = halt_production(
+        paths,
+        plan_path=plan_path,
+        reason="generic_timebox_expired",
+        stop_systemd=False,
+    )
+
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    assert project["status"] == "paused"
+    assert report["projects"][0]["project_id"] == "generic-project"
+    assert report["campaigns"] == ["generic-route"]
+    assert db.campaign("generic-route")["status"] == "production_paused"
+    assert db.task("generic-queued")["status"] == "cancelled"

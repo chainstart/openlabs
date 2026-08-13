@@ -56,6 +56,42 @@ def _systemctl(*arguments: str) -> dict[str, Any]:
     }
 
 
+def _pause_projects_for_plan(
+    paths: WorkspacePaths,
+    plan_path: Path,
+) -> list[dict[str, str]]:
+    """Pause generic desired-state projects whose domain config is this plan."""
+
+    roots = paths.data / "workspaces"
+    candidates = {
+        *roots.glob("*/projects/*/project.json"),
+        *roots.glob("*/production/*/project.json"),
+    }
+    paused: list[dict[str, str]] = []
+    for project_path in sorted(candidates):
+        payload = json.loads(project_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise TypeError(f"Invalid project config: {project_path}")
+        domain_config = payload.get("domain_config")
+        if not isinstance(domain_config, dict):
+            continue
+        configured = str(domain_config.get("path") or "").strip()
+        if not configured or (project_path.parent / configured).resolve() != plan_path:
+            continue
+        prior_status = str(payload.get("status") or "")
+        payload["status"] = "paused"
+        atomic_write_json(project_path, payload)
+        paused.append(
+            {
+                "project_id": str(payload.get("project_id") or ""),
+                "project_path": str(project_path.resolve()),
+                "prior_status": prior_status,
+                "final_status": "paused",
+            }
+        )
+    return paused
+
+
 def _halt_production_locked(
     paths: WorkspacePaths,
     *,
@@ -88,15 +124,25 @@ def _halt_production_locked(
         }
     )
     atomic_write_json(plan_path, plan)
+    paused_projects = _pause_projects_for_plan(paths, plan_path)
+    paused_project_paths = {
+        str(Path(item["project_path"]).resolve()) for item in paused_projects
+    }
 
     db = FactoryDB(paths.database_file)
     db.initialize()
     campaigns = []
     for campaign in db.production_campaigns():
         configured = campaign.get("production_plan_path")
-        if not configured:
-            continue
-        if Path(str(configured)).expanduser().resolve() == plan_path:
+        project_configured = campaign.get("project_config_path")
+        legacy_match = bool(configured) and (
+            Path(str(configured)).expanduser().resolve() == plan_path
+        )
+        project_match = bool(project_configured) and (
+            str(Path(str(project_configured)).expanduser().resolve())
+            in paused_project_paths
+        )
+        if legacy_match or project_match:
             campaigns.append(str(campaign["campaign_id"]))
 
     queued_cancelled: list[str] = []
@@ -143,6 +189,7 @@ def _halt_production_locked(
         "final_status": plan["status"],
         "reason": reason,
         "stopped_at": stopped_at,
+        "projects": paused_projects,
         "campaigns": campaigns,
         "queued_cancelled": sorted(queued_cancelled),
         "active_cancelled": active_cancelled,
