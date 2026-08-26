@@ -1,0 +1,12 @@
+[Unit]
+Description=Ingest OpenLabs result receipts as soon as workers finish
+After=default.target
+
+[Path]
+# Workers publish receipts with an atomic rename, so this glob never exposes a
+# partially written JSON file to the control plane.
+PathExistsGlob=%h/work/projects/openlabs/openlabs-data/inbox/results/*.json
+Unit=openlabs-tick.service
+
+[Install]
+WantedBy=default.target

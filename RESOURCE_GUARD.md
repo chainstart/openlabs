@@ -28,6 +28,19 @@ systemctl --user show openlabs-workers.slice \
 The installer recalculates 75% from the CPU count visible on the current host.
 It installs only the slice; it does not enable the factory timer.
 
+Result ingestion is a separate, lightweight event service. Install it once so
+an atomically published worker receipt immediately runs an idempotent tick and
+updates SQLite, even when the periodic factory timer is disabled:
+
+```bash
+bin/install-completion-watcher
+systemctl --user status openlabs-results.path
+journalctl --user -u openlabs-tick.service
+```
+
+This watcher performs control-plane ingestion and the already-declared
+continuation actions. It does not inject messages into an active Codex TUI.
+
 ## Run work inside the guard
 
 ```bash

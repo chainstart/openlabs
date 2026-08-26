@@ -7,9 +7,16 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
+
+LAB_ROOT = Path(__file__).resolve().parents[1]
+if str(LAB_ROOT) not in sys.path:
+    sys.path.insert(0, str(LAB_ROOT))
+
+from tools.problem_verdict import validate_resolution  # noqa: E402
 
 STATE_SCHEMA = "openlabs.physics_research_workspace.v1"
 DATA_SCHEMA = "openlabs.physics_dataset.v1"
@@ -59,6 +66,20 @@ def _configured_states(project_path: Path, project: dict[str, Any]) -> set[Path]
         for item in project.get("workstreams", [])
         if isinstance(item, dict) and _text(item.get("state_path"))
     }
+
+
+def _configured_workstream(
+    project_path: Path,
+    project: dict[str, Any],
+    workstream_path: Path,
+) -> dict[str, Any] | None:
+    resolved = workstream_path.resolve()
+    for item in project.get("workstreams", []):
+        if not isinstance(item, dict) or not _text(item.get("state_path")):
+            continue
+        if (project_path.parent / str(item["state_path"])).resolve() == resolved:
+            return item
+    return None
 
 
 def _relative_file(root: Path, raw: Any, field: str, errors: list[str]) -> Path | None:
@@ -332,6 +353,36 @@ def validate(project_path: Path, workstream_path: Path, *, mode: str) -> list[st
                 errors.append(f"{field}[{index}] is invalid: {exc}")
                 continue
             errors.extend(validator(payload, label=f"{field}[{index}]", root=root, replay=replay))
+    resolution_policy = project.get("resolution_policy")
+    configured_workstream = _configured_workstream(project_path, project, workstream_path)
+    resolution_required = (
+        isinstance(resolution_policy, dict)
+        and resolution_policy.get("required") is True
+        and not (
+            isinstance(configured_workstream, dict)
+            and configured_workstream.get("resolution_required") is False
+        )
+    )
+    resolution_path_raw = state.get("resolution_decision")
+    if resolution_required and not _text(resolution_path_raw):
+        errors.append("resolution_decision is required by project.resolution_policy")
+    if _text(resolution_path_raw):
+        resolution_path = _relative_file(
+            root,
+            resolution_path_raw,
+            "resolution_decision",
+            errors,
+        )
+        if resolution_path is not None:
+            try:
+                resolution = read_object(resolution_path)
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                errors.append(f"resolution_decision is invalid: {exc}")
+            else:
+                errors.extend(
+                    f"resolution_decision: {error}"
+                    for error in validate_resolution(resolution, evidence_root=root)
+                )
     errors.extend(_validate_claims(state))
     return errors
 

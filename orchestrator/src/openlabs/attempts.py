@@ -475,6 +475,47 @@ def quarantine_attempt_workspace(
     return metadata
 
 
+def reactivate_protocol_failed_attempt_workspace(
+    paths: WorkspacePaths,
+    *,
+    campaign_id: str,
+    attempt_id: str,
+    expected_error_fragment: str,
+) -> dict[str, Any]:
+    """Reactivate only an attempt quarantined by the named protocol infrastructure error."""
+
+    workspace = find_attempt_workspace(
+        paths,
+        campaign_id=campaign_id,
+        attempt_id=attempt_id,
+    )
+    if workspace is None:
+        raise AttemptWorkspaceError(f"Attempt workspace is missing: {campaign_id}/{attempt_id}")
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    if metadata.get("status") != "quarantined":
+        raise AttemptWorkspaceError(
+            f"Attempt is not quarantined: {metadata.get('status')!r}"
+        )
+    reason = str(metadata.get("quarantine_reason") or "")
+    if not expected_error_fragment or expected_error_fragment not in reason:
+        raise AttemptWorkspaceError("Attempt quarantine reason does not match protocol failure")
+    history = metadata.get("replay_history")
+    replay_history = list(history) if isinstance(history, list) else []
+    replay_history.append(
+        {
+            "reactivated_at": _utc_now(),
+            "prior_quarantine_reason": reason,
+        }
+    )
+    return _update_metadata(
+        workspace,
+        status="active",
+        quarantine_reason=None,
+        quarantined_at=None,
+        replay_history=replay_history,
+    )
+
+
 def _rename_exchange(left: Path, right: Path) -> None:
     """Atomically exchange two same-filesystem directories on Linux."""
 

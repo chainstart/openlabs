@@ -19,6 +19,10 @@
       "route_reselection"
     ]
   },
+  "resolution_policy": {
+    "required": true,
+    "schema_version": "openlabs.physics_problem_resolution.v1"
+  },
   "workstreams": [
     {
       "workstream_id": "fixture-check",

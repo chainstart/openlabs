@@ -1,0 +1,43 @@
+{
+  "schema_version": "openlabs.physics_problem_resolution.v1",
+  "decision_id": "physics-example-resolution-1",
+  "problem_id": "PHYSICS-FIXTURE",
+  "as_of_utc": "2026-08-26T00:00:00Z",
+  "scope": {
+    "question_version": "fixture-v1",
+    "current_question": "Do the fixture files satisfy their declared deterministic protocol?",
+    "historical_prompt_status": "not_an_open_research_problem"
+  },
+  "problem_verdict": "open",
+  "rationale": "The protocol replay task completed; the fixture does not assert that an open scientific problem was solved.",
+  "resolution_routes": [
+    {
+      "route_id": "scientific-resolution",
+      "verdict_if_complete": "solved_positive",
+      "criteria": [
+        {
+          "criterion_id": "scientific-claim",
+          "statement": "A scoped scientific claim is independently resolved.",
+          "status": "not_met",
+          "evidence": []
+        }
+      ]
+    }
+  ],
+  "latest_round": {
+    "round_id": "fixture-check",
+    "task_id": "fixture-check",
+    "task_status": "succeeded",
+    "round_status": "completed",
+    "completion_rule": "all",
+    "summary": "The deterministic fixture replay completed without promoting a physics claim.",
+    "criteria": [
+      {
+        "criterion_id": "fixture-replay",
+        "statement": "Replay the deterministic fixture and verify its hashes.",
+        "status": "met",
+        "evidence": ["computation_receipt.json"]
+      }
+    ]
+  }
+}

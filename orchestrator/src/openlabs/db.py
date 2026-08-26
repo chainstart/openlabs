@@ -1965,6 +1965,104 @@ class FactoryDB:
             )
         return final_status
 
+    def reopen_protocol_failed_attempt(
+        self,
+        task_id: str,
+        *,
+        attempt_id: str,
+        expected_error_fragment: str,
+        lease_seconds: int = 600,
+    ) -> dict[str, Any]:
+        """Reopen one hash-bound result rejected only by validator infrastructure.
+
+        This is deliberately narrower than a general status override. The result
+        envelope must already have passed its ordinary gate, and both the task and
+        attempt must identify the same terminal protocol failure. The prior runtime
+        charge is removed before replay so successful re-ingestion accounts it once.
+        """
+
+        if not expected_error_fragment.strip():
+            raise ValueError("expected_error_fragment must be non-empty")
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT tasks.campaign_id, tasks.status AS task_status,
+                       tasks.current_attempt_id, tasks.last_error,
+                       task_attempts.status AS attempt_status,
+                       task_attempts.run_seconds,
+                       result_bundles.valid, result_bundles.gate_passed,
+                       result_bundles.runtime_json
+                FROM tasks
+                JOIN task_attempts
+                  ON task_attempts.attempt_id=tasks.current_attempt_id
+                 AND task_attempts.task_id=tasks.task_id
+                JOIN result_bundles ON result_bundles.task_id=tasks.task_id
+                WHERE tasks.task_id=? AND tasks.current_attempt_id=?
+                """,
+                (task_id, attempt_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"No current result exists for {task_id}/{attempt_id}")
+            if str(row["task_status"]) != "needs_replan":
+                raise ValueError(f"Task {task_id} is not a protocol needs_replan result")
+            if str(row["attempt_status"]) != "needs_replan":
+                raise ValueError(f"Attempt {attempt_id} is not in needs_replan")
+            if not bool(row["valid"]) or not bool(row["gate_passed"]):
+                raise ValueError("The result did not pass its ordinary evidence gate")
+            runtime = json.loads(str(row["runtime_json"]))
+            transaction_error = str(runtime.get("transaction_error") or "")
+            last_error = str(row["last_error"] or "")
+            if expected_error_fragment not in transaction_error or expected_error_fragment not in last_error:
+                raise ValueError("The recorded failure does not match the expected protocol error")
+            charged_seconds = max(0.0, float(row["run_seconds"] or 0.0))
+            connection.execute(
+                """
+                UPDATE tasks
+                SET status='running', lease_owner='protocol-replay',
+                    lease_expires_at=?, worker_pid=NULL, not_before=NULL,
+                    last_error=NULL, updated_at=?
+                WHERE task_id=? AND current_attempt_id=?
+                """,
+                (utc_after(lease_seconds), now, task_id, attempt_id),
+            )
+            connection.execute(
+                """
+                UPDATE task_attempts
+                SET status='running', finished_at=NULL, run_seconds=0, error=NULL
+                WHERE task_id=? AND attempt_id=?
+                """,
+                (task_id, attempt_id),
+            )
+            connection.execute(
+                """
+                UPDATE campaigns
+                SET agent_seconds_used=MAX(0, agent_seconds_used-?),
+                    epoch_agent_seconds_used=MAX(0, epoch_agent_seconds_used-?),
+                    updated_at=?
+                WHERE campaign_id=?
+                """,
+                (charged_seconds, charged_seconds, now, str(row["campaign_id"])),
+            )
+            self._event(
+                connection,
+                "task",
+                task_id,
+                "protocol_ingest_reopened",
+                {
+                    "attempt_id": attempt_id,
+                    "expected_error_fragment": expected_error_fragment,
+                    "prior_run_seconds": charged_seconds,
+                },
+            )
+        return {
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "campaign_id": str(row["campaign_id"]),
+            "prior_run_seconds": charged_seconds,
+        }
+
     def stop_budget_exhausted_tasks(self) -> list[str]:
         """Stop queued work once a campaign has consumed its hard Agent-time budget."""
 

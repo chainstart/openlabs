@@ -11,11 +11,12 @@
 - [`problems/CATALOG.md`](problems/CATALOG.md)：50 个候选课题及首个可闭环目标。
 - [`problems/SHORTLIST.md`](problems/SHORTLIST.md)：优先级、选择理由和建议启动顺序。
 - [`problems/SOURCES.md`](problems/SOURCES.md)：主要原始文献与证据索引。
-- `problems/shortlist/TP-*/PROBLEM.md`：首批 6 个课题的可执行研究档案。
+- `problems/shortlist/TP-*/PROBLEM.md`：首批 6 个课题的可执行研究档案；已启动的三题另有
+  “本轮完成”与“问题解决”两层判据。
 - [`skills/physics-research-loop`](skills/physics-research-loop/SKILL.md)：物理研究主循环与证据门。
 - `skills/vendor/{astropy,qutip}`：固定版本、许可清晰的上游领域 Skill。
 - [`protocols/physics_research_protocol.py`](protocols/physics_research_protocol.py)：提交前的数据、计算和结论证据验证。
-- [`tools`](tools)：隔离环境检查、公开数据摄取和计算回执工具。
+- [`tools`](tools)：隔离环境检查、公开数据摄取、计算回执和客观问题判决工具。
 - [`registries`](registries)：经审计的工具与公开数据源清单。
 
 ## 课题准入原则
@@ -40,5 +41,10 @@
 - 大型数据、模型和数值输出：`$OPENLABS_WORKSPACE/openlabs-artifacts/experiments/<campaign-id>/`
 - 通过门禁的不可变结果：`$OPENLABS_WORKSPACE/openlabs-artifacts/result-bundles/`
 - 活任务、租约和 attempt 索引：`$OPENLABS_WORKSPACE/openlabs-database/live/factory.sqlite`
+
+`factory.sqlite` 的 `tasks.status=succeeded` 只表示一个有界任务通过门禁，不表示开放问题已经
+解决。三题的科学判决保存在对应 workstream 的 `resolution_decision.json`；
+`tools/problem_verdict.py` 只在某条预先声明路线的全部原子条件均为 `met` 且证据文件存在时，
+才允许把 `problem_verdict: open` 改为解决态。项目协议在后续晋升时强制执行这条门禁。
 
 先用 `uv sync --all-groups` 安装锁定环境；该命令及其他重计算必须通过仓库根目录的 `bin/openlabs-resource-guard` 运行。`tools/dataset_intake.py` 只接受 HTTP(S) 公共来源，并要求记录许可/条款、引用和 SHA-256；凭据和受限数据不得进入仓库。

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+TICK_UNIT="$ROOT/deploy/systemd/openlabs-tick.service"
+PATH_UNIT="$ROOT/deploy/systemd/openlabs-results.path"
+RESULT_INBOX="$ROOT/../openlabs-data/inbox/results"
+
+for unit in "$TICK_UNIT" "$PATH_UNIT"; do
+  if [[ ! -f "$unit" ]]; then
+    printf 'OpenLabs completion unit not found: %s\n' "$unit" >&2
+    exit 66
+  fi
+done
+
+if ! command -v systemctl >/dev/null 2>&1; then
+  printf 'systemctl is required for the OpenLabs completion watcher.\n' >&2
+  exit 69
+fi
+
+mkdir -p "$UNIT_DIR" "$RESULT_INBOX"
+install -m 0644 "$TICK_UNIT" "$UNIT_DIR/openlabs-tick.service"
+install -m 0644 "$PATH_UNIT" "$UNIT_DIR/openlabs-results.path"
+systemctl --user daemon-reload
+systemctl --user enable --now openlabs-results.path
+systemctl --user show openlabs-results.path \
+  -p LoadState \
+  -p ActiveState \
+  -p Unit \
+  -p Triggers

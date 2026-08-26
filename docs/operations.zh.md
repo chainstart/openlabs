@@ -112,25 +112,35 @@ Packy key。第一位 Codex 审阅结果先冻结；适配器只计算其 SHA-25
 
 ## 聚合资源护栏与 systemd user timer
 
-先安装资源 slice；该命令不会启用 factory timer：
+先安装资源 slice；该命令不会启用 factory timer。另行安装结果监听器后，worker 以原子
+rename 发布完整收据时会立即触发一次幂等 tick，完成门禁、成果晋升、后继动作和 SQLite
+更新；它不依赖三分钟 timer，也不会向正在运行的 Codex TUI 注入文字：
 
 ```bash
 bin/install-resource-guard
+bin/install-completion-watcher
 bin/openlabs-resource-guard -- python path/to/heavy_search.py
 # 新的交互式 Codex 会话：
 bin/openlabs-codex
 ```
 
+```bash
+systemctl --user status openlabs-results.path
+journalctl --user -u openlabs-tick.service
+```
+
 护栏内存、swap 和 tasks 参数与 OpenMath 对齐；OpenMath 当前没有 CPUQuota，因此 OpenLabs
 的 CPU 上限来自本仓库原有 75% CPU 策略。详见 [RESOURCE_GUARD.md](../RESOURCE_GUARD.md)。
 
-仓库只提供 unit，不自动启用：
+结果监听器只负责“已有 worker 完成后的立即入库”。若还需要定时同步项目期望状态、恢复
+过期租约和启动尚未运行的排队任务，再启用完整 factory target：
 
 ```bash
 mkdir -p "$HOME/.config/systemd/user"
 cp deploy/systemd/openlabs-factory.target deploy/systemd/openlabs-workers.target \
   deploy/systemd/openlabs-workers.slice \
   deploy/systemd/openlabs-tick.service deploy/systemd/openlabs-tick.timer \
+  deploy/systemd/openlabs-results.path \
   "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable --now openlabs-factory.target

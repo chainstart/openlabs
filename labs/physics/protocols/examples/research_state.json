@@ -12,6 +12,7 @@
   },
   "assumptions": ["The input uses SI metres and seconds."],
   "conventions": {"units": "SI", "metric_signature": "not_applicable"},
+  "resolution_decision": "resolution_decision.json",
   "data_manifests": ["data_manifest.json"],
   "computation_receipts": ["computation_receipt.json"],
   "claims": [
