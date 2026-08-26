@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+UNIT="$ROOT/deploy/systemd/openlabs-workers.slice"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+SLICE=openlabs-workers.slice
+CPU_PERCENT=75
+
+if [[ ! -f "$UNIT" ]]; then
+  printf 'OpenLabs slice unit not found: %s\n' "$UNIT" >&2
+  exit 66
+fi
+
+if ! command -v systemctl >/dev/null 2>&1; then
+  printf 'systemctl is required for the OpenLabs resource guard.\n' >&2
+  exit 69
+fi
+
+host_threads=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)
+cpu_threads=$((host_threads * CPU_PERCENT / 100))
+if (( cpu_threads < 1 )); then
+  cpu_threads=1
+fi
+cpu_quota="$((cpu_threads * 100))%"
+
+mkdir -p "$UNIT_DIR"
+install -m 0644 "$UNIT" "$UNIT_DIR/$SLICE"
+systemctl --user daemon-reload
+systemctl --user start "$SLICE"
+systemctl --user set-property --runtime "$SLICE" CPUAccounting=yes CPUQuota="$cpu_quota"
+
+systemctl --user show "$SLICE" \
+  -p LoadState \
+  -p ActiveState \
+  -p ControlGroup \
+  -p CPUQuotaPerSecUSec \
+  -p MemoryHigh \
+  -p MemoryMax \
+  -p MemorySwapMax \
+  -p TasksMax

@@ -1,0 +1,24 @@
+{
+  "source_repository": "K-Dense-AI/scientific-agent-skills",
+  "source_url": "https://github.com/K-Dense-AI/scientific-agent-skills",
+  "source_ref": "v2.52.0",
+  "source_commit": "9c12fcc25efb2042ec41d5d9c331a76f8e2020b5",
+  "downloaded_on": "2026-08-26",
+  "selection_policy": "Physics-relevant documentation-only skills with explicit permissive metadata; no scripts, network clients or executables vendored.",
+  "review": "Manual content and path review; selected trees contain Markdown only.",
+  "skills": [
+    {
+      "name": "astropy",
+      "source_path": "skills/astropy",
+      "metadata_license": "BSD-3-Clause license",
+      "status": "vendored_with_codex_frontmatter_patch",
+      "patch": "Moved the unsupported compatibility frontmatter field into the Markdown body."
+    },
+    {
+      "name": "qutip",
+      "source_path": "skills/qutip",
+      "metadata_license": "BSD-3-Clause license",
+      "status": "vendored_exact"
+    }
+  ]
+}

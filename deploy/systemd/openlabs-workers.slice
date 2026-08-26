@@ -3,8 +3,14 @@ Description=OpenLabs aggregate research worker resource guard
 Before=openlabs-workers.target
 
 [Slice]
-# The WSL VM keeps at least 20% of physical RAM for the kernel, desktop and
-# interactive work. Individual heavy tools apply a lower per-process ceiling.
+CPUAccounting=yes
+# This workstation exposes 20 logical CPUs. Keep 25% for the desktop and
+# interactive work. bin/install-resource-guard recalculates this value when
+# the slice is installed on a host with a different CPU count.
+CPUQuota=1500%
 MemoryAccounting=yes
-MemoryMax=80%
-MemorySwapMax=0
+MemoryHigh=30G
+MemoryMax=34G
+MemorySwapMax=4G
+TasksAccounting=yes
+TasksMax=512

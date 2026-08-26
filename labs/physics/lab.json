@@ -1,0 +1,74 @@
+{
+  "schema_version": "openlabs.lab.v1",
+  "lab_id": "physics",
+  "domain": "physics",
+  "name": "OpenLabs Physics Lab",
+  "runner": {
+    "command": ["{python}", "../../packages/research-core/lab_runner.py"]
+  },
+  "skills": [
+    {
+      "skill_id": "physics-research-loop",
+      "path": "skills/physics-research-loop/SKILL.md"
+    },
+    {
+      "skill_id": "astropy",
+      "path": "skills/vendor/astropy/SKILL.md"
+    },
+    {
+      "skill_id": "qutip",
+      "path": "skills/vendor/qutip/SKILL.md"
+    }
+  ],
+  "protocols": [
+    {
+      "protocol_id": "autonomous-physics",
+      "primary_skill": "physics-research-loop",
+      "runtime_skills": ["physics-research-loop", "astropy", "qutip"],
+      "validator": {
+        "command": [
+          "{python}",
+          "protocols/physics_research_protocol.py",
+          "--project",
+          "{project_config}",
+          "--workstream",
+          "{workstream_state}",
+          "--mode",
+          "{validation_mode}"
+        ]
+      }
+    }
+  ],
+  "runtime_setup": [
+    {
+      "setup_id": "physics-environment",
+      "command": [
+        "{python}",
+        "tools/physics_runtime.py",
+        "prepare",
+        "--lab-root",
+        "{lab_root}",
+        "--agent-workspace",
+        "{agent_workspace}",
+        "--artifacts-root",
+        "{artifacts_root}"
+      ],
+      "timeout_seconds": 180
+    }
+  ],
+  "capabilities": [
+    "open-problem-selection",
+    "literature-and-prior-art-audit",
+    "analytical-derivation",
+    "symbolic-and-arbitrary-precision-computation",
+    "convex-and-semidefinite-optimization",
+    "quantum-dynamics-simulation",
+    "high-energy-physics-open-data-analysis",
+    "astronomy-and-gravitational-wave-open-data-analysis",
+    "uncertainty-and-convergence-audit",
+    "independent-replication"
+  ],
+  "worker_resources": {
+    "cpu_burst_fraction_of_host": 0.75
+  }
+}

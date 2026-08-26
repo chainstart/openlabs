@@ -50,9 +50,13 @@ worker 的寿命：tick 先接收完成结果，再回收过期租约，最后�
 切回每步人工排队模式；这不会关闭生产计划的状态同步。
 
 每个 campaign 同时只运行一个任务。默认单任务预留 2 个 CPU 线程、4 GiB 内存和 4 GiB
-临时盘，最多运行 4 小时；普通 campaign 的 Agent 运行时间累计上限为 24 小时，连续产线则
+临时盘，调度任务墙钟上限为 12 小时；示例 env 中的 Agent provider 超时为 4 小时，所以可能
+更早退出。普通 campaign 的 Agent 运行时间累计上限为 24 小时，连续产线则
 每个生产轮次拥有同样的 24 小时窗口并保留终身累计账本。主机默认保留
-2 个 CPU 线程、8 GiB 内存和 64 GiB 磁盘不给工厂使用。`max_worker_processes = 8` 只是
+2 个 CPU 线程、8 GiB 内存和 64 GiB 磁盘不给工厂使用，且调度准入最多使用宿主机逻辑 CPU
+的 75%。共享 `openlabs-workers.slice` 对所有 worker、交互式 Codex 和重计算合计施加
+15 CPU（本机 20 线程）、30 GiB soft/34 GiB hard 内存、4 GiB swap 和 512 tasks 上限。
+`max_worker_processes = 8` 只是
 异常保险，不是日常并发目标。普通 campaign 预算耗尽后排队任务转为 `NEEDS_HUMAN`；连续
 产线在没有运行中任务时换轮并继续。两者都不会占用其他 campaign 的资源。
 
@@ -106,7 +110,19 @@ reviewer session。`evidence_remediation` 永远先启动空白 researcher/exper
 Claude settings 读取 Packy endpoint 和凭据。仓库、env 示例、prompt 和审阅产物都不得保存
 Packy key。第一位 Codex 审阅结果先冻结；适配器只计算其 SHA-256 绑定，不把内容发给 Claude。
 
-## systemd user timer
+## 聚合资源护栏与 systemd user timer
+
+先安装资源 slice；该命令不会启用 factory timer：
+
+```bash
+bin/install-resource-guard
+bin/openlabs-resource-guard -- python path/to/heavy_search.py
+# 新的交互式 Codex 会话：
+bin/openlabs-codex
+```
+
+护栏内存、swap 和 tasks 参数与 OpenMath 对齐；OpenMath 当前没有 CPUQuota，因此 OpenLabs
+的 CPU 上限来自本仓库原有 75% CPU 策略。详见 [RESOURCE_GUARD.md](../RESOURCE_GUARD.md)。
 
 仓库只提供 unit，不自动启用：
 

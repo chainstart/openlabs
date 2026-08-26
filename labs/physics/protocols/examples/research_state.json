@@ -1,0 +1,41 @@
+{
+  "schema_version": "openlabs.physics_research_workspace.v1",
+  "project_id": "physics-example",
+  "workstream_id": "fixture-check",
+  "mode": "hypothesis_discovery",
+  "status": "paused",
+  "research_question": "Does the deterministic fixture preserve its declared units and hashes?",
+  "prior_art": {
+    "checked_at_utc": "2026-08-26T00:00:00Z",
+    "closest_work": "Protocol fixture only; it is not a scientific novelty claim.",
+    "open_status": "uncertain"
+  },
+  "assumptions": ["The input uses SI metres and seconds."],
+  "conventions": {"units": "SI", "metric_signature": "not_applicable"},
+  "data_manifests": ["data_manifest.json"],
+  "computation_receipts": ["computation_receipt.json"],
+  "claims": [
+    {
+      "claim_id": "PCL-001",
+      "statement": "The files form a deterministic protocol fixture, not a physics result.",
+      "status": "provisional",
+      "evidence_ids": ["EV-001"]
+    }
+  ],
+  "evidence_routes": [
+    {
+      "evidence_id": "EV-001",
+      "kind": "numerical_computation",
+      "independence_group": "fixture-replay",
+      "artifact": "computation_receipt.json"
+    }
+  ],
+  "failed_routes": [],
+  "paper_candidates": [],
+  "research_log": [
+    {
+      "at_utc": "2026-08-26T00:00:00Z",
+      "event": "Fixture created; no scientific result is claimed."
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": "openlabs.physics_computation.v1",
+  "receipt_id": "fixture-speed-v1",
+  "recorded_at_utc": "2026-08-26T00:00:00Z",
+  "code": {"path": "fixture.py", "sha256": "1ff21c30a18fee0cce6640d4fe58b56a146553e3e21eb283b42bbfaaccedcbe3", "bytes": 314},
+  "environment_lock": {"path": "environment-lock.txt", "sha256": "1dc3b3479a694a0dab30edbeab932bf697ead3f3d3fdfbf7cdbb8d29a6106543", "bytes": 37},
+  "inputs": [{"path": "input.json", "sha256": "f94777c195c5435b2df97eae3fbc23bc32477591b307e5d173788f4ac4ef5ba9", "bytes": 35}],
+  "outputs": [{"path": "output.json", "sha256": "c278b9ddb827ebc4e1511beaa2fd5872e1d3541206e55eabdfcc2efd6b698db2", "bytes": 23}],
+  "command": ["python", "fixture.py"],
+  "precision": "IEEE-754 binary64; exact for these fixture values",
+  "random_seed": null,
+  "numerical_controls": {
+    "dimensional_analysis": true,
+    "convergence": "No iterative method or truncation is used.",
+    "uncertainty_budget": "Zero by fixture construction."
+  },
+  "status": "PASS"
+}

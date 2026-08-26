@@ -1,0 +1,50 @@
+{
+  "schema_version": "openlabs.physics_data_source_registry.v1",
+  "reviewed_at": "2026-08-26",
+  "sources": [
+    {
+      "source_id": "cern-open-data",
+      "name": "CERN Open Data Portal",
+      "url": "https://opendata.cern.ch/",
+      "terms": "https://opendata.cern.ch/docs/terms-of-use",
+      "access": "public_with_record_specific_licenses",
+      "research_use": "LHC and other CERN experimental datasets, metadata and analysis examples"
+    },
+    {
+      "source_id": "hepdata",
+      "name": "HEPData",
+      "url": "https://www.hepdata.net/",
+      "access": "public_with_record_metadata",
+      "research_use": "publication-level high-energy-physics numerical tables and covariance information"
+    },
+    {
+      "source_id": "gwosc",
+      "name": "Gravitational Wave Open Science Center",
+      "url": "https://gwosc.org/",
+      "api": "https://gwosc.org/api/",
+      "access": "public_read_only_no_authentication",
+      "research_use": "event catalogs, data-quality segments, strain data and parameter-estimation products"
+    },
+    {
+      "source_id": "nasa-mast",
+      "name": "Mikulski Archive for Space Telescopes",
+      "url": "https://archive.stsci.edu/",
+      "access": "public_with_mission_specific_policies",
+      "research_use": "space-telescope images, spectra, light curves and catalogs"
+    },
+    {
+      "source_id": "nasa-heasarc",
+      "name": "NASA HEASARC",
+      "url": "https://heasarc.gsfc.nasa.gov/",
+      "access": "public_with_mission_specific_policies",
+      "research_use": "high-energy astrophysics archives, catalogs and calibration products"
+    },
+    {
+      "source_id": "zenodo-physics-records",
+      "name": "Zenodo record-specific physics datasets",
+      "url": "https://zenodo.org/",
+      "access": "record_specific",
+      "research_use": "author-deposited data and code only after per-record license and version audit"
+    }
+  ]
+}

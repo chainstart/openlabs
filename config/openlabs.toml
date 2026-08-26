@@ -15,6 +15,9 @@ max_campaign_agent_seconds = 86400
 launch_jobs = true
 
 [resources]
+# The shared systemd slice and scheduler both cap aggregate CPU at 75% of the
+# logical CPUs visible to OpenLabs.
+max_cpu_fraction_of_host = 0.75
 reserve_cpu_threads = 2
 reserve_memory_mib = 8192
 reserve_scratch_mib = 65536

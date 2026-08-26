@@ -1,0 +1,66 @@
+{
+  "schema_version": "openlabs.physics_tooling_registry.v1",
+  "reviewed_at": "2026-08-26",
+  "controller_policy": "Codex and OpenLabs remain the research controller; packages provide bounded computation.",
+  "tools": [
+    {
+      "name": "SymPy, mpmath and python-flint",
+      "upstreams": [
+        "https://github.com/sympy/sympy",
+        "https://github.com/mpmath/mpmath",
+        "https://github.com/flintlib/python-flint"
+      ],
+      "role": "symbolic algebra, exact arithmetic and arbitrary-precision cross-checks",
+      "status": "adopted_core"
+    },
+    {
+      "name": "CVXPY, Clarabel and SCS",
+      "upstreams": [
+        "https://github.com/cvxpy/cvxpy",
+        "https://github.com/oxfordcontrol/Clarabel.rs",
+        "https://github.com/cvxgrp/scs"
+      ],
+      "role": "convex and semidefinite prototype bounds with primal/dual diagnostics",
+      "status": "adopted_optional"
+    },
+    {
+      "name": "QuTiP",
+      "upstream": "https://github.com/qutip/qutip",
+      "role": "closed and open quantum-system dynamics",
+      "status": "adopted_optional",
+      "skill": "skills/vendor/qutip/SKILL.md"
+    },
+    {
+      "name": "Astropy",
+      "upstream": "https://github.com/astropy/astropy",
+      "role": "astronomical units, coordinates, time, FITS, WCS and cosmology",
+      "status": "adopted_optional",
+      "skill": "skills/vendor/astropy/SKILL.md"
+    },
+    {
+      "name": "Scikit-HEP analysis stack",
+      "upstreams": [
+        "https://github.com/scikit-hep/uproot5",
+        "https://github.com/scikit-hep/awkward",
+        "https://github.com/scikit-hep/vector",
+        "https://github.com/scikit-hep/pyhf"
+      ],
+      "role": "ROOT I/O, jagged arrays, Lorentz vectors and HistFactory inference",
+      "status": "adopted_optional"
+    },
+    {
+      "name": "PhysicsIntern",
+      "upstream": "https://github.com/huggingface/physics-intern-skills",
+      "role": "methodology reference for durable file state and independent fresh-context review",
+      "status": "concepts_only_not_vendored",
+      "note": "No repository license file was present at the reviewed commit; its orchestrator also overlaps the OpenLabs control plane."
+    },
+    {
+      "name": "ColliderAgent",
+      "upstream": "https://github.com/HET-AGI/ColliderAgent",
+      "role": "possible future collider phenomenology integration",
+      "status": "deferred",
+      "note": "Cloud/container execution, external generators and optional licensed Wolfram tooling require a separate side-effect and license review."
+    }
+  ]
+}

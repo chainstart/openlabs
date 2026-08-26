@@ -14,7 +14,7 @@ OpenLabs 的自动化边界按“科研判断归 Codex、状态确定性归控�
   ├─ .agents/skills  ──► 仅协议激活的 Skill
   ├─ .agents/optional-methods ─► 可读但未注册生效的方法指南
   ├─ .codex/hooks.json ─► 简短 SessionStart 上下文 + Stop 结果自检
-  └─ Codex 原生 workspace-write sandbox
+  └─ Codex 原生 danger-full-access runtime（本机可信账号）
                  │
                  ▼
 Codex 自主分析、分解、调用工具并连续跨越同角色协议阶段
@@ -54,9 +54,10 @@ Hook 只负责：
 ## 运行时不变量
 
 1. Codex 不再套入会破坏其子进程工具调用的第二层 bubblewrap；非 Codex adapter 仍使用
-   外层隔离。Codex 命令由 runner 强制归一为 `workspace-write`，拒绝 sandbox bypass、额外
-   可写目录和受保护的配置覆盖，并显式开放该沙箱的网络访问。聚合工作区与 canonical 不得
-   位于系统临时根。
+   外层隔离。Codex 命令由 runner 强制归一为 `danger-full-access` 与
+   `approval_policy=never`，允许本机账号访问文件、网络和已安装工具；attempt 目录是事务约定
+   和默认 cwd，不是内核写边界。聚合 systemd slice 仍强制 CPU、内存、swap 和 tasks 上限，
+   聚合工作区与 canonical 不得位于系统临时根。
 2. `.agents` 与 `.codex` 是 attempt 临时运行时，不属于科研状态，不复制自 canonical，
    也不晋升回 canonical。
 3. `requested_output_path` 永远是用户任务意图；`output_path` 永远是当前 attempt 的绑定，

@@ -1,0 +1,35 @@
+{
+  "schema_version": "openlabs.project.v1",
+  "project_id": "physics-example",
+  "domain": "physics",
+  "status": "paused",
+  "objective": "Demonstrate a hash-bound physics research workstream without making a scientific claim.",
+  "protocol": {
+    "id": "autonomous-physics",
+    "primary_skill": "physics-research-loop"
+  },
+  "execution": {
+    "checkpoint_policy": "role_boundary_or_budget",
+    "continue_across_protocol_phases": true,
+    "default_session_mode": "resume",
+    "fresh_session_boundaries": [
+      "independent_replication",
+      "adversarial_review",
+      "portfolio_review",
+      "route_reselection"
+    ]
+  },
+  "workstreams": [
+    {
+      "workstream_id": "fixture-check",
+      "title": "Protocol fixture check",
+      "state_path": "research_state.json",
+      "startup": "paused",
+      "priority": 100,
+      "objective": "Replay one deterministic dimensional-analysis fixture.",
+      "agent_role": "researcher",
+      "session_mode": "resume",
+      "continuation": "continuous"
+    }
+  ]
+}

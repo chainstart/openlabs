@@ -1,0 +1,14 @@
+{
+  "schema_version": "openlabs.physics_dataset.v1",
+  "dataset_id": "synthetic-kinematics-fixture-v1",
+  "provider": "OpenLabs deterministic fixture",
+  "source_url": "https://example.invalid/openlabs/synthetic-kinematics-fixture-v1",
+  "acquired_at_utc": "2026-08-26T00:00:00Z",
+  "license_or_terms": "Apache-2.0 fixture generated in this repository",
+  "citation": "OpenLabs Physics Lab protocol fixture v1",
+  "access_scope": "public",
+  "artifact_path": "input.json",
+  "sha256": "f94777c195c5435b2df97eae3fbc23bc32477591b307e5d173788f4ac4ef5ba9",
+  "bytes": 35,
+  "raw_immutable": true
+}

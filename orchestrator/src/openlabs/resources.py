@@ -6,6 +6,7 @@ import os
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
+from math import floor
 from pathlib import Path
 from typing import Any
 
@@ -104,7 +105,11 @@ def effective_capacity(
     total_scratch = int(disk.total // MIB)
     available_scratch = int(disk.free // MIB)
 
-    static_cpu = max(0, host_cpu - settings.reserve_cpu_threads)
+    fraction_cpu = max(1, floor(host_cpu * settings.max_cpu_fraction_of_host))
+    static_cpu = min(
+        max(0, host_cpu - settings.reserve_cpu_threads),
+        fraction_cpu,
+    )
     static_memory = max(0, total_memory - settings.reserve_memory_mib)
     static_scratch = max(0, total_scratch - settings.reserve_scratch_mib)
     pressure_memory = used.memory_mib + max(0, available_memory - settings.reserve_memory_mib)

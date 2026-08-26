@@ -8,7 +8,7 @@
   "properties": {
     "schema_version": {"const": "openlabs.lab.v1"},
     "lab_id": {"type": "string", "minLength": 1, "maxLength": 128},
-    "domain": {"enum": ["math", "ai", "materials"]},
+    "domain": {"enum": ["math", "ai", "materials", "physics"]},
     "runner": {
       "type": "object",
       "required": ["command"],

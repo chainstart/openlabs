@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+GUARD="$ROOT/bin/openlabs-resource-guard"
+
+if ! command -v codex >/dev/null 2>&1; then
+  printf 'codex is not available on PATH.\n' >&2
+  exit 69
+fi
+
+exec "$GUARD" -- codex -C "$ROOT" -a never -s danger-full-access "$@"

@@ -30,3 +30,14 @@ def test_epoch_task_window_accepts_new_and_legacy_config_keys(tmp_path) -> None:
         encoding="utf-8",
     )
     assert load_settings(paths).max_auto_tasks_per_campaign == 11
+
+
+def test_cpu_fraction_is_loaded_and_invalid_values_fail_to_default(tmp_path) -> None:
+    paths = workspace_paths(tmp_path)
+    config = paths.code / "config" / "openlabs.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text("[resources]\nmax_cpu_fraction_of_host = 0.5\n", encoding="utf-8")
+    assert load_settings(paths).max_cpu_fraction_of_host == 0.5
+
+    config.write_text("[resources]\nmax_cpu_fraction_of_host = 1.5\n", encoding="utf-8")
+    assert load_settings(paths).max_cpu_fraction_of_host == 0.75

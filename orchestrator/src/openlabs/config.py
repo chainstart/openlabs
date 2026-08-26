@@ -59,6 +59,7 @@ class FactorySettings:
     max_campaign_agent_seconds: int = 86_400
     launch_jobs: bool = True
     archive_result_receipts: bool = True
+    max_cpu_fraction_of_host: float = 0.75
     reserve_cpu_threads: int = 2
     reserve_memory_mib: int = 8_192
     reserve_scratch_mib: int = 65_536
@@ -102,6 +103,14 @@ def _nonnegative_int(value: Any, default: int) -> int:
     return parsed if parsed >= 0 else default
 
 
+def _fraction(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if 0 < parsed <= 1 else default
+
+
 def load_settings(paths: WorkspacePaths) -> FactorySettings:
     path = paths.code / "config" / "openlabs.toml"
     payload: dict[str, Any] = {}
@@ -131,6 +140,7 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
         max_campaign_agent_seconds=_positive_int(factory.get("max_campaign_agent_seconds"), 86_400),
         launch_jobs=bool(factory.get("launch_jobs", True)),
         archive_result_receipts=bool(retention.get("archive_result_receipts", True)),
+        max_cpu_fraction_of_host=_fraction(resources.get("max_cpu_fraction_of_host"), 0.75),
         reserve_cpu_threads=_nonnegative_int(resources.get("reserve_cpu_threads"), 2),
         reserve_memory_mib=_nonnegative_int(resources.get("reserve_memory_mib"), 8_192),
         reserve_scratch_mib=_nonnegative_int(resources.get("reserve_scratch_mib"), 65_536),

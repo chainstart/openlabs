@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MEMORY_HIGH=30G
+MEMORY_MAX=34G
+MEMORY_SWAP_MAX=4G
+TASKS_MAX=512
+CPU_PERCENT=75
+SLICE=openlabs-workers.slice
+
+if [[ ${1-} == -- ]]; then
+  shift
+fi
+
+if (( $# == 0 )); then
+  printf 'Usage: %s -- <command> [args...]\n' "${0##*/}" >&2
+  exit 64
+fi
+
+# A guarded Codex session passes this cgroup to all tools it starts. Reuse the
+# shared guard instead of nesting another transient scope.
+if rg -q '(^|/)openlabs-workers\.slice(/|$)' /proc/self/cgroup 2>/dev/null; then
+  exec "$@"
+fi
+
+if ! command -v systemd-run >/dev/null 2>&1 || ! command -v systemctl >/dev/null 2>&1; then
+  printf 'OpenLabs guard requires systemd-run and systemctl; refusing an unbounded run.\n' >&2
+  exit 69
+fi
+
+if [[ ! -r /sys/fs/cgroup/cgroup.controllers ]] || \
+   ! rg -qw memory /sys/fs/cgroup/cgroup.controllers || \
+   ! rg -qw cpu /sys/fs/cgroup/cgroup.controllers || \
+   ! rg -qw pids /sys/fs/cgroup/cgroup.controllers; then
+  printf 'OpenLabs guard requires cgroup v2 cpu, memory and pids controllers.\n' >&2
+  exit 69
+fi
+
+if ! systemctl --user cat "$SLICE" >/dev/null 2>&1; then
+  printf 'OpenLabs slice is not installed. Run bin/install-resource-guard first.\n' >&2
+  exit 78
+fi
+
+host_threads=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)
+cpu_threads=$((host_threads * CPU_PERCENT / 100))
+if (( cpu_threads < 1 )); then
+  cpu_threads=1
+fi
+cpu_quota="$((cpu_threads * 100))%"
+
+systemctl --user start "$SLICE"
+# Keep the checked-in workstation default portable when the repository moves.
+systemctl --user set-property --runtime "$SLICE" CPUAccounting=yes CPUQuota="$cpu_quota"
+
+stamp=$(date +%Y%m%d-%H%M%S)
+unit="openlabs-task-${stamp}-$$"
+
+printf 'OpenLabs guard: unit=%s.scope cpu=%s high=%s max=%s swap=%s tasks=%s\n' \
+  "$unit" "$cpu_quota" "$MEMORY_HIGH" "$MEMORY_MAX" "$MEMORY_SWAP_MAX" "$TASKS_MAX" >&2
+
+exec systemd-run --user --scope --quiet \
+  --unit="$unit" \
+  --slice="$SLICE" \
+  --property=CPUAccounting=yes \
+  --property=CPUQuota="$cpu_quota" \
+  --property=MemoryAccounting=yes \
+  --property=MemoryHigh="$MEMORY_HIGH" \
+  --property=MemoryMax="$MEMORY_MAX" \
+  --property=MemorySwapMax="$MEMORY_SWAP_MAX" \
+  --property=TasksAccounting=yes \
+  --property=TasksMax="$TASKS_MAX" \
+  --property=OOMPolicy=kill \
+  "$@"
