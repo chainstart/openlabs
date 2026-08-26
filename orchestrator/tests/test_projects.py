@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from openlabs.attempts import attempt_output_path, prepare_attempt_workspace
 from openlabs.config import FactorySettings, WorkspacePaths
 from openlabs.contracts import atomic_write_json
@@ -181,6 +180,81 @@ def test_generic_project_config_selects_protocol_without_core_changes(tmp_path) 
         "continue_across_protocol_phases"
     ] is True
     assert _validate_bound_protocol(paths, campaign) == ()
+
+
+def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    project_path, _ = _generic_project(paths)
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload["workstreams"][0].update(
+        {
+            "continuation": "one_shot",
+            "wall_seconds": 14_400,
+            "resources": {
+                "cpu_threads": 5,
+                "memory_mib": 8_192,
+                "scratch_mib": 8_192,
+            },
+        }
+    )
+    atomic_write_json(project_path, payload)
+
+    project = load_project(project_path)
+    policy = project.workstreams[0].policy()
+    report = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    task = FactoryDB(paths.database_file).latest_task("stream-one")
+
+    assert policy["wall_seconds"] == 14_400
+    assert policy["continuation"] == "one_shot"
+    assert policy["resources"] == {
+        "cpu_threads": 5,
+        "memory_mib": 8_192,
+        "scratch_mib": 8_192,
+    }
+    assert report.production_reseeded == ["stream-one"]
+    assert task is not None
+    assert task["max_wall_seconds"] == 14_400
+    assert task["cpu_threads"] == 5
+    assert task["memory_mib"] == 8_192
+    assert task["scratch_mib"] == 8_192
+
+    with FactoryDB(paths.database_file).connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET status='succeeded' WHERE task_id=?",
+            (task["task_id"],),
+        )
+    second_report = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    campaign = FactoryDB(paths.database_file).campaign("stream-one")
+
+    assert second_report.production_paused == ["stream-one"]
+    assert campaign is not None
+    assert campaign["status"] == "production_paused"
+    assert campaign["continuous"] == 0
+    assert FactoryDB(paths.database_file).task_count("stream-one") == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("wall_seconds", 0, "wall_seconds must be a positive integer"),
+        (
+            "resources",
+            {"cpu_threads": 5, "memory_mib": 0, "scratch_mib": 8_192},
+            "resources.memory_mib must be a positive integer",
+        ),
+    ],
+)
+def test_project_workstream_limits_fail_closed(
+    tmp_path, field: str, value: object, message: str
+) -> None:
+    paths = _paths(tmp_path)
+    project_path, _ = _generic_project(paths)
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload["workstreams"][0][field] = value
+    atomic_write_json(project_path, payload)
+
+    with pytest.raises(ValueError, match=message):
+        load_project(project_path)
 
 
 def test_protocol_rejection_isolated_before_campaign_sync(tmp_path) -> None:

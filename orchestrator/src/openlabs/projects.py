@@ -13,12 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import HANDOFF_KINDS, IDENTIFIER
-
+from .resources import ResourceVector
 
 PROJECT_SCHEMA = "openlabs.project.v1"
 PROJECT_STATUSES = frozenset({"active", "paused", "retired"})
 CHECKPOINT_POLICIES = frozenset({"role_boundary_or_budget", "explicit_checkpoint"})
-WORKSTREAM_CONTINUATIONS = frozenset({"continuous", "review_on_new_results"})
+WORKSTREAM_CONTINUATIONS = frozenset({"continuous", "one_shot", "review_on_new_results"})
 AGENT_ROLES = frozenset({"researcher", "experimenter", "writer", "reviewer"})
 EPISTEMIC_FRESH_BOUNDARIES = frozenset(
     {
@@ -65,9 +65,11 @@ class ProjectWorkstream:
     review_every_results: int
     review_batch_size: int
     spawn_candidate_workstreams: bool
+    resources: ResourceVector | None
+    wall_seconds: int | None
 
     def policy(self) -> dict[str, Any]:
-        return {
+        policy: dict[str, Any] = {
             "dynamic": False,
             "objective": self.objective,
             "default_agent_role": self.agent_role,
@@ -77,6 +79,11 @@ class ProjectWorkstream:
             "review_batch_size": self.review_batch_size,
             "spawn_candidate_workstreams": self.spawn_candidate_workstreams,
         }
+        if self.resources is not None:
+            policy["resources"] = self.resources.to_dict()
+        if self.wall_seconds is not None:
+            policy["wall_seconds"] = self.wall_seconds
+        return policy
 
 
 @dataclass(frozen=True)
@@ -332,6 +339,27 @@ def load_project(path: str | Path) -> ProjectConfig:
             raise ValueError(
                 f"workstream {workstream_id} candidate spawning requires reviewer role"
             )
+        resources_value = item.get("resources")
+        resources: ResourceVector | None = None
+        if resources_value is not None:
+            if not isinstance(resources_value, Mapping):
+                raise ValueError(f"workstream {workstream_id} resources must be an object")
+            try:
+                resources = ResourceVector.from_mapping(resources_value)
+            except ValueError as exc:
+                raise ValueError(f"workstream {workstream_id} {exc}") from exc
+        wall_seconds_value = item.get("wall_seconds")
+        wall_seconds: int | None = None
+        if wall_seconds_value is not None:
+            if (
+                not isinstance(wall_seconds_value, int)
+                or isinstance(wall_seconds_value, bool)
+                or wall_seconds_value < 1
+            ):
+                raise ValueError(
+                    f"workstream {workstream_id} wall_seconds must be a positive integer"
+                )
+            wall_seconds = int(wall_seconds_value)
         workstreams.append(
             ProjectWorkstream(
                 workstream_id=workstream_id,
@@ -350,6 +378,8 @@ def load_project(path: str | Path) -> ProjectConfig:
                 review_every_results=int(review_every_results),
                 review_batch_size=int(review_batch_size),
                 spawn_candidate_workstreams=spawn_candidates,
+                resources=resources,
+                wall_seconds=wall_seconds,
             )
         )
     return ProjectConfig(

@@ -840,7 +840,23 @@ def _fallback_project_action(
             "prior routes as context, never as an exhaustive menu or mandatory sequence. Persist "
             "a truthful evidence-bound checkpoint and an executable continuation when useful."
         )
+        resources_value = stream_policy.get("resources")
+        resources = (
+            ResourceVector.from_mapping(resources_value)
+            if isinstance(resources_value, Mapping)
+            else None
+        )
+        wall_seconds_value = stream_policy.get("wall_seconds")
+        wall_seconds = (
+            int(wall_seconds_value)
+            if isinstance(wall_seconds_value, int)
+            and not isinstance(wall_seconds_value, bool)
+            and wall_seconds_value > 0
+            else None
+        )
     else:
+        resources = None
+        wall_seconds = None
         role = "researcher"
         session_mode = execution_policy.default_session_mode
         lane = _read_json_object(lane_path)
@@ -866,6 +882,8 @@ def _fallback_project_action(
         agent_role=role,
         session_mode=session_mode,
         handoff_kind="role_handoff",
+        resources=resources,
+        wall_seconds=wall_seconds,
     )
 
 
@@ -1138,8 +1156,15 @@ def _replenish_continuous_campaign(
             {"campaign_id": campaign_id, "reason": str(latest.get("status"))}
         )
         return
-    campaign = db.campaign(campaign_id) or dict(campaign)
     stream_policy = workstream_policy(campaign)
+    if latest and stream_policy.get("continuation") == "one_shot":
+        db.pause_production_campaign(
+            campaign_id,
+            reason="one_shot_round_complete",
+        )
+        report.production_paused.append(campaign_id)
+        return
+    campaign = db.campaign(campaign_id) or dict(campaign)
     state_status = _workstream_state_status(campaign)
     if stream_policy.get("dynamic") is True and state_status in {"paused", "completed"}:
         db.pause_production_campaign(
