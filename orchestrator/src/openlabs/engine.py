@@ -1157,7 +1157,16 @@ def _replenish_continuous_campaign(
         )
         return
     stream_policy = workstream_policy(campaign)
-    if latest and stream_policy.get("continuation") == "one_shot":
+    latest_status = str(latest.get("status") or "") if latest else ""
+    cancelled_before_attempt = bool(
+        latest and latest_status == "cancelled" and int(latest.get("attempt") or 0) == 0
+    )
+    if (
+        latest
+        and stream_policy.get("continuation") == "one_shot"
+        and latest_status != "queued"
+        and not cancelled_before_attempt
+    ):
         db.pause_production_campaign(
             campaign_id,
             reason="one_shot_round_complete",
@@ -1238,7 +1247,7 @@ def _replenish_continuous_campaign(
         else None
     )
     action = action or _fallback_project_action(campaign, execution_policy)
-    status = str(latest.get("status") or "") if latest else ""
+    status = latest_status
     result_runtime = db.result_runtime(str(latest["task_id"])) if latest else {}
     failure_classes = (
         result_runtime.get("gate_failure_classes") if isinstance(result_runtime, Mapping) else None

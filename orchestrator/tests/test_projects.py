@@ -218,6 +218,15 @@ def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
     assert task["memory_mib"] == 8_192
     assert task["scratch_mib"] == 8_192
 
+    queued_report = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    queued_campaign = FactoryDB(paths.database_file).campaign("stream-one")
+
+    assert queued_report.production_paused == []
+    assert queued_campaign is not None
+    assert queued_campaign["status"] == "active"
+    assert queued_campaign["continuous"] == 1
+    assert FactoryDB(paths.database_file).task_count("stream-one") == 1
+
     with FactoryDB(paths.database_file).connect() as connection:
         connection.execute(
             "UPDATE tasks SET status='succeeded' WHERE task_id=?",
@@ -231,6 +240,35 @@ def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
     assert campaign["status"] == "production_paused"
     assert campaign["continuous"] == 0
     assert FactoryDB(paths.database_file).task_count("stream-one") == 1
+
+
+def test_one_shot_reseeds_a_task_cancelled_before_its_first_attempt(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    project_path, _ = _generic_project(paths)
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload["workstreams"][0]["continuation"] = "one_shot"
+    atomic_write_json(project_path, payload)
+    settings = FactorySettings(auto_continue=True, launch_jobs=False)
+
+    tick(paths, settings)
+    db = FactoryDB(paths.database_file)
+    first = db.latest_task("stream-one")
+    assert first is not None
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET status='cancelled' WHERE task_id=?",
+            (first["task_id"],),
+        )
+
+    report = tick(paths, settings)
+    replacement = db.latest_task("stream-one")
+
+    assert report.production_paused == []
+    assert report.production_reseeded == ["stream-one"]
+    assert replacement is not None
+    assert replacement["task_id"] != first["task_id"]
+    assert replacement["status"] == "queued"
+    assert db.task_count("stream-one") == 2
 
 
 @pytest.mark.parametrize(
