@@ -483,8 +483,9 @@ session ID，以及 runner 能提供的模型、token、缓存和成本字段。
 释放后的下一轮 tick 再尝试。`max_worker_processes` 只是不可信资源申报之外的进程数保险，
 同一 campaign 串行规则继续独立生效。任务内存预留落实为 worker 的 `MemoryHigh` 回收提示，
 不再误作工具硬上限；worker 仍由 `TasksMax`、`CPUQuota` 和完整进程组生命周期监督。所有
-worker 与数学工具共同位于 `openlabs-workers.slice`，该 slice 以主机物理内存的 80% 为聚合
-`MemoryMax` 且禁用 swap。数学工具另施加 profile 级物理内存 cgroup、地址空间、CPU/墙钟、
+worker 与数学工具共同位于 `openlabs-workers.slice`；当前安装值为 30 GiB `MemoryHigh`、
+34 GiB `MemoryMax`、4 GiB `MemorySwapMax` 和 512 `TasksMax`。数学工具另施加禁用 swap 的
+profile 级物理内存 cgroup、地址空间、CPU/墙钟、
 线程/进程数、文件和输出限制；Lean 单次上限动态取 WSL 内核可见物理内存和 CPU 的 75%，
 且多个 Lean 校验串行。当前任务协议仍只声明 CPU 线程、内存和临时盘三种可调度资源，不增加
 GPU 分配器。

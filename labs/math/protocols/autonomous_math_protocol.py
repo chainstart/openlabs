@@ -83,7 +83,13 @@ def _validate_receipts(workstream_path: Path, state: dict, *, replay: bool) -> l
     return errors
 
 
-def validate(project_path: Path, workstream_path: Path, *, mode: str) -> list[str]:
+def validate(
+    project_path: Path,
+    workstream_path: Path,
+    *,
+    mode: str,
+    expected_protocol_id: str = "autonomous-math",
+) -> list[str]:
     errors: list[str] = []
     project = _read(project_path)
     state = _read(workstream_path)
@@ -92,8 +98,8 @@ def validate(project_path: Path, workstream_path: Path, *, mode: str) -> list[st
     if project.get("domain") != "math":
         errors.append("autonomous mathematics requires project domain math")
     protocol = project.get("protocol")
-    if not isinstance(protocol, dict) or protocol.get("id") != "autonomous-math":
-        errors.append("project does not select autonomous-math")
+    if not isinstance(protocol, dict) or protocol.get("id") != expected_protocol_id:
+        errors.append(f"project does not select {expected_protocol_id}")
     if state.get("schema_version") not in {STATE_SCHEMA, DYNAMIC_STATE_SCHEMA}:
         errors.append(
             f"workstream schema must be {STATE_SCHEMA} or {DYNAMIC_STATE_SCHEMA}"
@@ -145,12 +151,14 @@ def main() -> int:
     parser.add_argument("--project", type=Path, required=True)
     parser.add_argument("--workstream", type=Path, required=True)
     parser.add_argument("--mode", choices=("discovery", "commit"), required=True)
+    parser.add_argument("--protocol-id", default="autonomous-math")
     args = parser.parse_args()
     try:
         errors = validate(
             args.project.resolve(),
             args.workstream.resolve(),
             mode=args.mode,
+            expected_protocol_id=args.protocol_id,
         )
     except Exception as exc:  # noqa: BLE001 - protocol errors must fail closed with detail.
         errors = [f"protocol validation failed: {exc}"]

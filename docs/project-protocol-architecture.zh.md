@@ -116,6 +116,10 @@ review packet、cursor 位于 `openlabs-artifacts/portfolio-control/`，不在 r
 AMRA 的七个 phase 因而只写入 `campaign_state.json` 和 history；它们不再对应七个 Codex
 进程。同一权限可以连续跨过多个已通过 gate 的 phase，`independent_audit` 才切给空白 reviewer。
 `autonomous-math` 更薄：AMRA 只是 Codex 可自由选用的方法之一，完全不要求经过这七个 phase。
+`open-math-research` 则是显式选择的独立长时证明协议：它加载 OpenMath 的原始 CDC 多 Agent
+提示词，不与 AMRA 默认门禁混用，但仍继承 OpenLabs 的 attempt、证据归档和资源护栏。正式
+运行必须同时为 Agent 和 provider 配置至少 8 小时 wall budget；到达基础设施硬截止时只写
+可恢复 checkpoint，不把该边界解释为数学路线已经失败。
 
 ## 数学研究工作区
 
@@ -163,8 +167,9 @@ CPU 时间、墙钟、线程/进程数、单文件、打开文件数和捕获输
 验证动态取 WSL 内核可见物理内存与 CPU 线程的 75%，当前 44 GiB/20 核配置对应
 33105 MiB 与 15 线程，墙钟仍为 300 秒；任务的 4 GiB/2 线程申报只是调度估算，不会再压低
 Lean profile。多个 Lean 校验串行。worker 的任务级内存值改为 `MemoryHigh` 软提示，所有
-worker 与数学工具则共同继承 `openlabs-workers.slice` 的约 80% 聚合 `MemoryMax`、零 swap
-护栏，因此并发工具也不能把 WSL 整体内存耗尽。worker 的 `TasksMax` 下限为 512，不再用
+worker 与数学工具则共同继承 `openlabs-workers.slice` 当前 30 GiB soft、34 GiB hard、
+4 GiB aggregate swap 的护栏；数学工具的嵌套 scope 另行禁用 swap，因此并发工具也不能把
+WSL 整体内存耗尽。worker 的 `TasksMax` 下限为 512，不再用
 64 个 task/thread 阻断 Codex code host 或 Lean。数学实验室 worker 的 CPU cgroup 允许按
 lab 配置突发到主机线程的 75%（当前为 `CPUQuota=1500%`），所以 D-Bus 不可用、Lean 继承
 父 cgroup 时也不会被旧的 2 核调度估算压回 200%。

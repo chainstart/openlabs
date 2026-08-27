@@ -23,6 +23,10 @@
       "path": "skills/math-autonomous-research/SKILL.md"
     },
     {
+      "skill_id": "open-math-research",
+      "path": "skills/open-math-research/SKILL.md"
+    },
+    {
       "skill_id": "openlabs-math-paper",
       "path": "../../workflows/paper/skills/openlabs-math-paper/SKILL.md"
     },
@@ -68,6 +72,27 @@
           "{workstream_state}",
           "--mode",
           "{validation_mode}"
+        ]
+      }
+    },
+    {
+      "protocol_id": "open-math-research",
+      "primary_skill": "open-math-research",
+      "runtime_skills": [
+        "open-math-research"
+      ],
+      "validator": {
+        "command": [
+          "{python}",
+          "protocols/autonomous_math_protocol.py",
+          "--project",
+          "{project_config}",
+          "--workstream",
+          "{workstream_state}",
+          "--mode",
+          "{validation_mode}",
+          "--protocol-id",
+          "open-math-research"
         ]
       }
     }
@@ -128,6 +153,7 @@
   ],
   "capabilities": [
     "open-problem-selection",
+    "persistent-multi-agent-proof-search",
     "mechanism-falsification",
     "counterexample-search",
     "symbolic-computation",
