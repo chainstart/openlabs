@@ -102,6 +102,15 @@ context. Preserve the existing resource ceilings: at most four threads, 24 GiB a
 8 GiB or one quarter of host memory. If a central claim needs the audit and no valid PASS receipt
 exists, retain an evidence blocker.
 
+Select validation from the Lean-input delta. If Lean sources, `lean-toolchain`, Lake configuration,
+and dependency-lock hashes are unchanged, use `--reuse-pass-receipt` (or
+`--reuse-build-report` for a verified legacy full-build report) to create a zero-execution receipt
+bound to the current manuscript/support snapshot. A support-package or manuscript-only change does
+not invalidate Lean evidence. For a local source change with stable toolchain, dependency lock,
+configuration, and foundational interfaces, use `--build-mode incremental`; reserve
+`--build-mode full` for toolchain, dependency, configuration, or broad interface changes. State in
+the review packet whether Lean validation was reused, incremental, or full.
+
 ## Select the rubric
 
 Read `references/rubrics.md` completely and route from the registry's literal domain:

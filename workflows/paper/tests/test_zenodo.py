@@ -15,6 +15,7 @@ from paper_writing.registry import load_paper_metadata
 from paper_writing.support import (
     SupportPackageError,
     build_support_archive,
+    default_support_archive_path,
     md5_file,
     resolve_support_sources,
     verify_support_archive,
@@ -234,6 +235,23 @@ def test_current_paper_version_overrides_stale_zenodo_draft_state() -> None:
     assert metadata["version"] == "0.1.3"
 
 
+def test_zenodo_metadata_preserves_publication_type() -> None:
+    record = {
+        "id": "20260802mathgraph0001",
+        "title": "Versioned manuscript",
+        "version": "0.1.3",
+        "authors": {"names": ["Ada Lovelace"]},
+        "support": {
+            "publication": {
+                "mode": "zenodo_only",
+                "zenodo": {"publication_type": "article"},
+            }
+        },
+    }
+
+    assert zenodo.build_zenodo_metadata(record)["publication_type"] == "article"
+
+
 def test_prepare_identity_moves_old_public_record_out_of_active_fields() -> None:
     publication = {
         "status": "published",
@@ -300,7 +318,8 @@ def test_draft_identity_rejects_creator_mismatch() -> None:
 
 
 def test_support_archive_is_deterministic_and_self_verifying(tmp_path: Path) -> None:
-    paper_id = "20260802-math-graph-opg1757-active-newton"
+    paper_id = "20260802mathgraph0001"
+    display_id = "20260802-math-graph-opg1757-active-newton"
     evidence = tmp_path / "papers" / paper_id / "evidence"
     evidence.mkdir(parents=True)
     readme = evidence / "REPLAY.md"
@@ -309,6 +328,7 @@ def test_support_archive_is_deterministic_and_self_verifying(tmp_path: Path) -> 
     result.write_text('{"verified": true}\n', encoding="utf-8")
     record = {
         "paper_id": paper_id,
+        "display_id": display_id,
         "title": "A deterministic support archive",
         "version": "0.1.2",
         "support": {"publication": {"license": "cc-by-4.0"}},
@@ -336,6 +356,7 @@ def test_support_archive_is_deterministic_and_self_verifying(tmp_path: Path) -> 
     assert first["archive"].read_bytes() == second["archive"].read_bytes()
     verified = verify_support_archive(first["archive"])
     assert verified["paper_id"] == paper_id
+    assert verified["display_id"] == display_id
     assert verified["paper_version"] == "0.1.2"
     assert verified["reserved_version_doi"] == "10.5281/zenodo.123"
     with zipfile.ZipFile(first["archive"]) as archive:
@@ -347,10 +368,18 @@ def test_support_archive_is_deterministic_and_self_verifying(tmp_path: Path) -> 
         assert manifest["files"]
         assert all("repository_path" not in item for item in manifest["files"])
         assert all(
-            item["archive_path"].startswith(f"{paper_id}-support-v0.1.2/")
+            item["archive_path"].startswith(f"{display_id}-support-v0.1.2/")
             for item in manifest["files"]
         )
         assert any(name.endswith("/SHA256SUMS") for name in archive.namelist())
+        release_readme_name = next(
+            name for name in archive.namelist() if name.endswith("/ARA_SUPPORT_README.md")
+        )
+        release_readme = archive.read(release_readme_name).decode("utf-8")
+        assert display_id in release_readme
+        assert "10.5281/zenodo.123" in release_readme
+        assert paper_id not in release_readme
+        assert "a" * 40 not in release_readme
         assert all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist())
 
 
@@ -381,6 +410,20 @@ def test_support_archive_verifier_ignores_nested_control_files(tmp_path: Path) -
 
     assert verified["paper_id"] == paper_id
     assert verified["paper_version"] == "1.0.0"
+
+
+def test_default_support_archive_uses_display_id_for_legacy_paper_id(tmp_path: Path) -> None:
+    record = {
+        "paper_id": "20260802mathgraph0001",
+        "display_id": "20260802-math-graph-opg1757-deficit-windows",
+        "version": "0.1.17",
+    }
+
+    path = default_support_archive_path(record, repo_root=tmp_path)
+
+    assert path.name == (
+        "20260802-math-graph-opg1757-deficit-windows-support-v0.1.17.zip"
+    )
 
 
 def test_support_sources_reject_credential_files(tmp_path: Path) -> None:
@@ -495,7 +538,6 @@ def test_production_release_needs_no_interactive_confirmation(
     paper_id = "20260802mathgraph0001"
     settings = _gate_only_release_repo(tmp_path, paper_id)
     monkeypatch.setenv("ZENODO_ACCESS_TOKEN", "test-token")
-    monkeypatch.setenv("OPENLABS_ENABLE_EXTERNAL_WRITES", "1")
 
     class NetworkMustNotRun:
         def __init__(self, *_: Any, **__: Any) -> None:
@@ -532,7 +574,6 @@ def test_release_still_rejects_mismatched_optional_paper_id_confirmation(
     paper_id = "20260802mathgraph0001"
     settings = _gate_only_release_repo(tmp_path, paper_id)
     monkeypatch.setenv("ZENODO_ACCESS_TOKEN", "test-token")
-    monkeypatch.setenv("OPENLABS_ENABLE_EXTERNAL_WRITES", "1")
 
     exit_code = main(
         [
@@ -663,6 +704,10 @@ defaults: {}
     )
     (registry / f"{paper_id}.yaml").write_text(
         f"""paper_id: {paper_id}
+display_id: 20260802-math-graph-test-gated-release
+created_at: '2026-08-02'
+domain: math
+subdomain: graph
 title: Test gated Zenodo release
 version: 0.1.2
 manuscript_dir: papers/{paper_id}/manuscript

@@ -27,8 +27,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO, Sequence
 
+import yaml
+
 
 SCHEMA_VERSION = "ara.paper_writing.lean_objective_audit.v1"
+REUSED_SCHEMA_VERSION = "ara.paper_writing.lean_objective_audit.v2"
+REUSE_REASON = "lean_sources_and_configuration_unchanged"
+LEGACY_REUSE_REASON = "manuscript_text_or_metadata_only_support_and_lean_sources_unchanged"
 DEFAULT_THREADS = 2
 MAX_THREADS = 4
 DEFAULT_AGGREGATE_RSS_MIB = 16384
@@ -114,8 +119,54 @@ def _source_hashes(project: Path) -> dict[str, str]:
     }
 
 
+def _build_report_input_manifest_sha256(project: Path) -> tuple[int, str]:
+    """Recompute the input digest used by legacy successful build reports."""
+
+    selected = {
+        path
+        for path in project.rglob("*.lean")
+        if ".lake" not in path.relative_to(project).parts
+    }
+    for name in ("lean-toolchain", "lake-manifest.json"):
+        path = project / name
+        if path.is_file():
+            selected.add(path)
+    records = "".join(
+        f"{_sha256_file(path)}  {path.relative_to(project).as_posix()}\n"
+        for path in sorted(selected, key=lambda item: item.relative_to(project).as_posix())
+    )
+    return len(selected), hashlib.sha256(records.encode("utf-8")).hexdigest()
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _registered_support_sha256(root: Path, paper_id: str) -> str | None:
+    """Read the current support hash when a paper registry is available."""
+
+    registry_path = root / "registry" / "papers" / f"{paper_id}.yaml"
+    if not registry_path.is_file():
+        return None
+    try:
+        metadata = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise AuditError(
+            "invalid_registry", f"cannot read the paper registry: {exc}"
+        ) from exc
+    if not isinstance(metadata, dict):
+        raise AuditError("invalid_registry", "paper registry must be a YAML mapping")
+    support = metadata.get("support")
+    support = support if isinstance(support, dict) else {}
+    publication = support.get("publication")
+    publication = publication if isinstance(publication, dict) else {}
+    value = publication.get("package_sha256")
+    if not isinstance(value, str) or not re_full_sha256(value):
+        raise AuditError(
+            "invalid_registry",
+            "paper registry has no current lowercase support-package SHA-256",
+        )
+    return value
 
 
 def _memory_mib() -> tuple[int, int]:
@@ -331,11 +382,26 @@ def _run_command(
     return result
 
 
-def _commands(audit_file: Path) -> list[list[str]]:
-    return [
-        ["lake", "build", "--quiet"],
-        ["lake", "env", "lean", audit_file.as_posix()],
-    ]
+def _commands(
+    audit_file: Path,
+    *,
+    hydrate_mathlib_cache: bool = False,
+    build_mode: str = "incremental",
+) -> list[list[str]]:
+    commands: list[list[str]] = []
+    if build_mode == "full":
+        commands.append(["lake", "clean"])
+    elif build_mode != "incremental":
+        raise AuditError("invalid_build_mode", f"unknown Lean build mode: {build_mode}")
+    if hydrate_mathlib_cache:
+        commands.append(["lake", "exe", "cache", "get"])
+    commands.extend(
+        [
+            ["lake", "build", "--quiet"],
+            ["lake", "env", "lean", audit_file.as_posix()],
+        ]
+    )
+    return commands
 
 
 def _atomic_json(path: Path, payload: dict[str, object]) -> None:
@@ -375,6 +441,191 @@ def _matching_pass_receipt(
         and payload.get("support_package_sha256") == support_sha256
         and payload.get("source_sha256") == source_hashes
         and payload.get("formal_validation_execution_count") == 1
+        and payload.get("cumulative_formal_validation_execution_count") == 1
+    )
+
+
+def _executing_pass_receipt(
+    path: Path,
+    *,
+    root: Path,
+    paper_id: str,
+    project: Path,
+    audit_file: Path,
+    source_hashes: dict[str, str],
+) -> dict[str, str | int]:
+    """Validate an executing PASS receipt before reusing its objective evidence."""
+
+    resolved = path.resolve()
+    try:
+        source = resolved.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise AuditError(
+            "outside_repository", "reused PASS receipt must stay inside the repository"
+        ) from exc
+    try:
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AuditError(
+            "invalid_reuse_receipt", f"cannot read reused PASS receipt: {exc}"
+        ) from exc
+
+    expected = {
+        "schema_version": SCHEMA_VERSION,
+        "status": "PASS",
+        "paper_id": paper_id,
+        "audit_file": audit_file.as_posix(),
+        "source_sha256": source_hashes,
+        "objective_only": True,
+        "score_bearing": False,
+        "execution_count": 1,
+        "formal_validation_execution_count": 1,
+        "cumulative_formal_validation_execution_count": 1,
+    }
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            raise AuditError(
+                "invalid_reuse_receipt",
+                f"reused PASS receipt {key} does not match the unchanged audit input",
+            )
+    prior_snapshot = payload.get("manuscript_snapshot_sha256")
+    if not isinstance(prior_snapshot, str) or not re_full_sha256(prior_snapshot):
+        raise AuditError(
+            "invalid_reuse_receipt",
+            "reused PASS receipt has no valid manuscript snapshot binding",
+        )
+
+    hydrate = payload.get("mathlib_cache_hydration", False)
+    if not isinstance(hydrate, bool):
+        raise AuditError(
+            "invalid_reuse_receipt",
+            "reused PASS receipt has an invalid cache-hydration marker",
+        )
+    prior_build_mode = str(payload.get("build_mode") or "incremental")
+    expected_commands = _commands(
+        audit_file,
+        hydrate_mathlib_cache=hydrate,
+        build_mode=prior_build_mode,
+    )
+    commands = payload.get("commands")
+    if not isinstance(commands, list) or len(commands) != len(expected_commands):
+        raise AuditError(
+            "invalid_reuse_receipt",
+            "reused PASS receipt has an invalid command inventory",
+        )
+    for result, expected_command in zip(commands, expected_commands, strict=True):
+        if (
+            not isinstance(result, dict)
+            or result.get("command") != expected_command
+            or result.get("return_code") != 0
+            or "resource_violation" in result
+        ):
+            raise AuditError(
+                "invalid_reuse_receipt",
+                "reused PASS receipt does not contain a successful bounded command chain",
+            )
+    prior_support_sha256 = payload.get("support_package_sha256")
+    if not isinstance(prior_support_sha256, str) or not re_full_sha256(
+        prior_support_sha256
+    ):
+        raise AuditError(
+            "invalid_reuse_receipt",
+            "reused PASS receipt has no valid support-package binding",
+        )
+    return {
+        "kind": "objective_receipt",
+        "source": source,
+        "sha256": _sha256_file(resolved),
+        "manuscript_snapshot_sha256": prior_snapshot,
+        "support_package_sha256": prior_support_sha256,
+        "formal_validation_execution_count": 1,
+    }
+
+
+def _verified_build_report(
+    path: Path,
+    *,
+    root: Path,
+    project: Path,
+    audit_file: Path,
+) -> dict[str, str | int]:
+    """Validate a prior successful Lean build report against current inputs."""
+
+    resolved = path.resolve()
+    try:
+        source = resolved.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise AuditError(
+            "outside_repository", "reused build report must stay inside the repository"
+        ) from exc
+    try:
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AuditError(
+            "invalid_reuse_report", f"cannot read reused build report: {exc}"
+        ) from exc
+    if payload.get("status") != "passed":
+        raise AuditError("invalid_reuse_report", "reused build report did not pass")
+    commands = payload.get("commands")
+    if not isinstance(commands, list):
+        raise AuditError("invalid_reuse_report", "reused build report has no commands")
+    command_statuses = {
+        str(item.get("command")): item.get("exit_status")
+        for item in commands
+        if isinstance(item, dict)
+    }
+    if command_statuses.get("lake build") != 0:
+        raise AuditError("invalid_reuse_report", "reused build report lacks a passing build")
+    audit_command = f"lake env lean {audit_file.as_posix()}"
+    if command_statuses.get(audit_command) != 0:
+        raise AuditError(
+            "invalid_reuse_report", "reused build report lacks the required axiom audit"
+        )
+    input_count, input_digest = _build_report_input_manifest_sha256(project)
+    if (
+        payload.get("input_file_count") != input_count
+        or payload.get("input_manifest_sha256") != input_digest
+    ):
+        raise AuditError(
+            "invalid_reuse_report",
+            "reused build report input manifest does not match current Lean inputs",
+        )
+    return {
+        "kind": "verified_build_report",
+        "source": source,
+        "sha256": _sha256_file(resolved),
+        "input_file_count": input_count,
+        "input_manifest_sha256": input_digest,
+        "formal_validation_execution_count": 1,
+    }
+
+
+def _matching_reuse_receipt(
+    path: Path,
+    *,
+    paper_id: str,
+    snapshot: str,
+    support_sha256: str,
+    source_hashes: dict[str, str],
+    reused_pass_receipt: dict[str, str | int],
+) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        payload.get("schema_version") == REUSED_SCHEMA_VERSION
+        and payload.get("status") == "PASS"
+        and payload.get("paper_id") == paper_id
+        and payload.get("manuscript_snapshot_sha256") == snapshot
+        and payload.get("support_package_sha256") == support_sha256
+        and payload.get("source_sha256") == source_hashes
+        and payload.get("reuse_reason") in {REUSE_REASON, LEGACY_REUSE_REASON}
+        and payload.get("reused_pass_receipt") == reused_pass_receipt
+        and payload.get("execution_count") == 0
+        and payload.get("formal_validation_execution_count") == 0
         and payload.get("cumulative_formal_validation_execution_count") == 1
     )
 
@@ -477,6 +728,102 @@ def run(args: argparse.Namespace) -> int:
     )
     limits.validate()
     source_hashes = _source_hashes(project)
+    if args.reuse_pass_receipt and args.reuse_build_report:
+        raise AuditError(
+            "invalid_reuse_request",
+            "choose exactly one prior PASS receipt or prior successful build report",
+        )
+    if args.reuse_pass_receipt or args.reuse_build_report:
+        if args.prior_failed_receipt or args.hydrate_mathlib_cache:
+            raise AuditError(
+                "invalid_reuse_request",
+                "PASS-receipt reuse cannot continue a failed audit or hydrate a cache",
+            )
+        registered_support_sha256 = _registered_support_sha256(root, args.paper_id)
+        if (
+            registered_support_sha256 is not None
+            and registered_support_sha256 != args.support_sha256
+        ):
+            raise AuditError(
+                "support_binding_changed",
+                "PASS-receipt reuse requires the current registered support-package SHA-256",
+            )
+        prior_value = args.reuse_pass_receipt or args.reuse_build_report
+        prior_path = Path(prior_value)
+        if not prior_path.is_absolute():
+            prior_path = root / prior_path
+        if args.reuse_pass_receipt:
+            reused_pass_receipt = _executing_pass_receipt(
+                prior_path,
+                root=root,
+                paper_id=args.paper_id,
+                project=project,
+                audit_file=audit_file,
+                source_hashes=source_hashes,
+            )
+        else:
+            reused_pass_receipt = _verified_build_report(
+                prior_path,
+                root=root,
+                project=project,
+                audit_file=audit_file,
+            )
+        if _matching_reuse_receipt(
+            output,
+            paper_id=args.paper_id,
+            snapshot=args.manuscript_snapshot,
+            support_sha256=args.support_sha256,
+            source_hashes=source_hashes,
+            reused_pass_receipt=reused_pass_receipt,
+        ):
+            print(
+                json.dumps(
+                    {
+                        "status": "PASS",
+                        "receipt": output.as_posix(),
+                        "reused": True,
+                        "formal_execution_reused": True,
+                    }
+                )
+            )
+            return 0
+        if output.exists():
+            raise AuditError(
+                "receipt_conflict",
+                "an existing receipt does not match this reuse binding; use a new snapshot-bound path",
+            )
+        receipt: dict[str, object] = {
+            "schema_version": REUSED_SCHEMA_VERSION,
+            "status": "PASS",
+            "paper_id": args.paper_id,
+            "manuscript_snapshot_sha256": args.manuscript_snapshot,
+            "support_package_sha256": args.support_sha256,
+            "project": project.relative_to(root).as_posix(),
+            "audit_file": audit_file.as_posix(),
+            "source_sha256": source_hashes,
+            "commands": [],
+            "created_at": _utc_now(),
+            "objective_only": True,
+            "score_bearing": False,
+            "execution_count": 0,
+            "formal_validation_execution_count": 0,
+            "cumulative_formal_validation_execution_count": 1,
+            "reuse_reason": REUSE_REASON,
+            "reused_pass_receipt": reused_pass_receipt,
+        }
+        _atomic_json(output, receipt)
+        print(
+            json.dumps(
+                {
+                    "status": "PASS",
+                    "receipt": output.as_posix(),
+                    "reused": True,
+                    "formal_execution_reused": True,
+                }
+            )
+        )
+        return 0
+
     prior_failed_attempt = None
     if args.prior_failed_receipt:
         prior_path = Path(args.prior_failed_receipt)
@@ -536,7 +883,11 @@ def run(args: argparse.Namespace) -> int:
         status = "PASS"
         failure: dict[str, str] | None = None
         try:
-            for command in _commands(audit_file):
+            for command in _commands(
+                audit_file,
+                hydrate_mathlib_cache=args.hydrate_mathlib_cache,
+                build_mode=args.build_mode,
+            ):
                 command_results.append(
                     _run_command(
                         command,
@@ -570,6 +921,8 @@ def run(args: argparse.Namespace) -> int:
             "objective_only": True,
             "score_bearing": False,
             "execution_count": 1,
+            "mathlib_cache_hydration": args.hydrate_mathlib_cache,
+            "build_mode": args.build_mode,
             "formal_validation_execution_count": sum(
                 1 for result in command_results if _is_formal_validation_result(result)
             ),
@@ -610,6 +963,37 @@ def parser() -> argparse.ArgumentParser:
         help=(
             "same-snapshot FAIL receipt when continuing an interrupted incremental build; "
             "the failed receipt is retained and hash-linked"
+        ),
+    )
+    result.add_argument(
+        "--reuse-pass-receipt",
+        help=(
+            "executing PASS receipt to reuse when every Lean source/configuration hash "
+            "is unchanged; the current support hash may differ"
+        ),
+    )
+    result.add_argument(
+        "--reuse-build-report",
+        help=(
+            "prior successful build report to reuse when its complete Lean-input manifest "
+            "matches the current project"
+        ),
+    )
+    result.add_argument(
+        "--build-mode",
+        choices=("incremental", "full"),
+        default="incremental",
+        help=(
+            "incremental reuses existing Lake artifacts for local Lean changes; full runs "
+            "lake clean first and is reserved for large Lean/toolchain/dependency changes"
+        ),
+    )
+    result.add_argument(
+        "--hydrate-mathlib-cache",
+        action="store_true",
+        help=(
+            "download the pinned mathlib binary cache before building; this does not update "
+            "the manifest or count as formal validation"
         ),
     )
     result.add_argument("--threads", type=int, default=DEFAULT_THREADS)

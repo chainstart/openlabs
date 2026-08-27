@@ -220,9 +220,9 @@ workflows/paper 是所有领域共用、按需调用的下游工作流，不是�
 - 不直接读取实验室私有运行目录；
 - 使用 Skill 生成提纲、草稿、图表说明、期刊改写和审稿任务；
 - 使用确定性代码完成 registry、结果包、构建、引用、质量门和不可变版本校验；
-- 初期默认在投稿、公开发布和产生外部副作用之前等待管理员批准。
+- 投稿、期刊事件和一般外部副作用等待管理员批准；通过门禁只授权精确绑定的 Zenodo 支撑材料发布。
 
-现有 paper workflow 以 AI/ML、数学、材料和量化金融四个薄协调 Skill 覆盖领域证据边界；审稿由空白 Codex 与经 Packy 调用的空白 Claude Code Opus 5 组成双供应商面板。它们依赖 vendored 写作/统计/审稿 Skill、仓库 registry、claim-evidence map，以及 paper_writing 确定性 Python。纯复制 Skill 只能获得写作方法，不能获得可审计论文流水线。
+现有 paper workflow 以 AI/ML、数学、材料、物理和量化金融薄协调 Skill 覆盖领域证据边界；审稿由空白 Codex 与经 Packy 调用的空白 Claude Code Opus 5 组成双供应商面板。它们依赖 vendored 写作/统计/审稿 Skill、仓库 registry、claim-evidence map，以及 paper_writing 确定性 Python。纯复制 Skill 只能获得写作方法，不能获得可审计论文流水线。
 
 迁入 OpenLabs 时保留“Skill 决策层 + 薄确定性 workflow”：
 
@@ -231,7 +231,8 @@ workflows/paper 是所有领域共用、按需调用的下游工作流，不是�
 - templates：论文、期刊 overlay、cover letter 和 response 模板；
 - tests：协议、构建、引用和门禁测试。
 
-Zenodo、远程 handoff 和真实投稿属于可选外部适配器，不进入第一版最小闭环。
+Zenodo、远程 handoff 和真实投稿属于外部适配器。Zenodo 支撑材料采用 prepare/verify/release
+两阶段闭环；只有 `ready` 门禁授权 release。远程 handoff 与真实投稿保持独立授权。
 
 ### 3.4 共享包
 
@@ -629,7 +630,8 @@ Agent 负责：
 - 迁入 AIRA 的 AI/ML 实验室骨架；
 - 建立 Codex 主控、全试验登记和 point-in-time 数据门禁的量化金融领域包；
 - 将 ara-paper-writing 的协调 Skill、必要 vendored Skill、registry/bundle/build/review 门禁代码迁入轻量 paper workflow；
-- 暂不迁入 Zenodo 自动发布、远程 Manage handoff 等非 MVP 外部副作用。
+- 迁入受质量门、Git 状态和包哈希约束的 Zenodo 支撑材料发布；远程 handoff 与投稿继续保持
+  独立授权。
 
 旧 ARA 的固定串行 orchestrator、巨型 revision loop、重复写作流程和写死模型配置不迁入新核心。
 

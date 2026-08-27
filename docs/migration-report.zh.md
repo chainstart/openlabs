@@ -12,7 +12,7 @@
 | `amra` | `labs/math/skills/amra-research-loop`、`labs/math/tools/formal/` | 保留机制优先数学循环、阶段门、Schema、测试和 Lean 源码；排除 campaign、scratch、`.lake` 和构建缓存 |
 | `aira` | `labs/ai/aira` | 保留 bundle、registry、基准、执行、深化、评估和实验记忆工具；全局调度交给 OpenLabs |
 | `goai/matfactory` | `labs/materials/src/matfactory` | 保留材料协议、仿真/分析、数值门、队列、watchdog、审计和小型冻结科研输入；不迁入旧 `runs` 大型运行树 |
-| `ara-paper-writing` | `workflows/paper` | 保留 registry/bundle/build/review/support 的确定性代码、三套协调 Skill 和已审计 vendored Skills；默认关闭 Zenodo 与远程 handoff 写操作 |
+| `ara-paper-writing` | `workflows/paper` | 保留 registry/bundle/build/review/support 的确定性代码、领域协调 Skill 和已审计 vendored Skills；默认关闭预门禁 Zenodo 与远程 handoff 写操作，`ready` 仅授权哈希绑定的支撑材料 release |
 | `ara` | 新 `orchestrator` 与 `orchestrator/skills/vendor` | 复用经审计的 paper/database lookup Skill；manifest、dispatcher、bundle ingest、阶段限制和事件思路被精简重写，没有复制旧巨型固定流水线、dashboard、历史 projects 或重复论文逻辑 |
 
 旧包名 `aira`、`matfactory` 和若干 `ara.*` Schema 暂时作为兼容标识保留。首次迁入时的任务

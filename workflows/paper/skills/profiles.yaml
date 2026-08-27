@@ -45,6 +45,31 @@ profiles:
       domain: statistical-analysis
       review_or_citation: peer-review
 quality_gate:
+  require_target_journal_after_basic_draft: true
+  target_journal_classification_system:
+    math:
+      - 2026 XinRui Mathematics
+    ai:
+      - 2026 XinRui Mathematics
+      - 2026 XinRui Medicine
+      - 2026 XinRui Computer Science
+    cs:
+      - 2026 XinRui Computer Science
+      - 2026 XinRui Medicine
+    se:
+      - 2026 XinRui Computer Science
+      - 2026 XinRui Medicine
+  allowed_target_journal_tiers: [1, 2]
+  require_no_mandatory_author_fee: true
+  require_canonical_target_journal_format: true
+  zenodo_public_identifier: display_id
+  manuscript_style_check: required
+  manuscript_style_command: python -m paper_writing style-check --paper-id <paper_id>
+  require_ai_use_declaration: true
+  ai_workflow_disclosure_location: final_ai_use_declaration_only
+  require_code_and_formalization_purpose_disclosure: true
+  forbid_internal_audit_terms_and_paths: true
+  scan_bibliography_workflow_notes: true
   review_mode: independent_dual_provider_panel
   review_panel_size: 2
   parallel_execution: false

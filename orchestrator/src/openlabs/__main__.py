@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -12,6 +13,7 @@ from .config import load_local_environment, load_settings, workspace_paths
 from .control import halt_production, halt_project
 from .db import FactoryDB
 from .engine import tick
+from .proxy import ProxyPreflightError, ensure_proxy_ready
 from .resources import effective_capacity
 from .worker import run_worker
 
@@ -34,6 +36,17 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("init", help="Initialize the local SQLite schema")
     commands.add_parser("tick", help="Run one idempotent scheduling tick")
     commands.add_parser("status", help="Print task counts")
+    network = commands.add_parser(
+        "network-preflight",
+        help="Probe Agent connectivity and synchronize a reachable proxy",
+    )
+    network.add_argument(
+        "--exec",
+        action="store_true",
+        dest="execute",
+        help="Execute a command with the selected proxy environment",
+    )
+    network.add_argument("exec_command", nargs=argparse.REMAINDER)
 
     halt = commands.add_parser(
         "halt-production",
@@ -100,6 +113,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     # Keep manual CLI invocations, transient workers, and the systemd timer on
     # one local Agent/proxy configuration path. Explicit inherited values win.
+    inherited_environment = dict(os.environ)
     load_local_environment()
     arguments = list(argv) if argv is not None else sys.argv[1:]
     if arguments is not None and arguments[:1] == ["_worker"]:
@@ -107,6 +121,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit("usage: python -m openlabs _worker JOB_FILE")
         return run_worker(arguments[1])
     args = _parser().parse_args(arguments)
+    if args.command in {"network-preflight", "tick"}:
+        try:
+            network_report = ensure_proxy_ready(
+                environment=os.environ,
+                inherited_environment=inherited_environment,
+            )
+        except ProxyPreflightError as exc:
+            print(
+                json.dumps(
+                    {
+                        "schema_version": "openlabs.proxy_preflight.v1",
+                        "status": "failed",
+                        "error": str(exc),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 69
+        if args.command == "network-preflight":
+            exec_command = list(args.exec_command or ())
+            if exec_command[:1] == ["--"]:
+                exec_command = exec_command[1:]
+            if args.execute and exec_command:
+                os.execvpe(exec_command[0], exec_command, os.environ)
+            if args.execute:
+                print("network-preflight --exec requires a command", file=sys.stderr)
+                return 64
+            print(json.dumps(network_report, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
     paths = workspace_paths(args.workspace)
     paths.ensure_runtime_directories()
     db = FactoryDB(paths.database_file)

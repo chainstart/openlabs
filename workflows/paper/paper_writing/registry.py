@@ -152,6 +152,11 @@ def load_registry(
             if len(target_journal.strip()) > 500:
                 raise ValueError(f"target_journal is too long for {paper_id}")
             paper["target_journal"] = target_journal.strip()
+            _validate_journal_target_policy(
+                paper,
+                paper_id=paper_id,
+                policy=global_settings.get("journal_target_policy"),
+            )
         _validate_research_outcomes(paper, paper_id=paper_id)
         workspace = str(paper.pop("workspace", f"papers/{paper_id}")).strip("/")
         paper.setdefault("manuscript_dir", f"{workspace}/manuscript")
@@ -225,6 +230,119 @@ def _validate_research_outcomes(paper: Mapping[str, Any], *, paper_id: str) -> N
         blocker = scientific_validation.get("promotion_blocker")
         if not isinstance(blocker, str) or not blocker.strip():
             raise ValueError(f"scientific_validation needs a promotion_blocker for {paper_id}")
+
+
+def _validate_journal_target_policy(
+    paper: Mapping[str, Any],
+    *,
+    paper_id: str,
+    policy: Any,
+) -> None:
+    """Validate the evidence-backed target required after a journal basic draft."""
+
+    if not isinstance(policy, Mapping) or not policy.get("required_after_basic_draft"):
+        return
+    if str(paper.get("venue_type") or "journal") != "journal":
+        return
+    effective_from = str(policy.get("effective_from") or "").strip()
+    checked_at = str(paper.get("target_journal_checked_at") or "").strip()
+    if _iso_date(effective_from) and _iso_date(checked_at) and checked_at < effective_from:
+        # Existing records keep their historically truthful target metadata. The next
+        # target verification on or after the policy date must satisfy the new evidence fields.
+        return
+    systems = _coerce_allowed_classification_systems(
+        policy=policy,
+        domain=str(paper.get("domain") or "").strip(),
+    )
+    if not systems:
+        return
+    allowed = policy.get("allowed_tiers")
+    allowed_tiers = {
+        value
+        for value in (allowed if isinstance(allowed, list) else [1, 2])
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
+    tier = paper.get("target_journal_tier")
+    if tier not in allowed_tiers:
+        raise ValueError(
+            f"target_journal_tier must be one of {sorted(allowed_tiers)} for {paper_id}"
+        )
+    if str(paper.get("target_journal_ranking_system") or "").strip() not in systems:
+        raise ValueError(
+            f"target_journal_ranking_system must be one of {sorted(systems)!r} for {paper_id}"
+        )
+    _require_http_source(paper, "target_journal_ranking_source", paper_id)
+    if policy.get("require_no_mandatory_author_fee"):
+        if paper.get("target_journal_fee_policy") != "no_mandatory_author_fee":
+            raise ValueError(
+                f"target_journal_fee_policy must be no_mandatory_author_fee for {paper_id}"
+            )
+        _require_http_source(paper, "target_journal_fee_source", paper_id)
+    checked_at = str(paper.get("target_journal_checked_at") or "")
+    if not _iso_date(checked_at):
+        raise ValueError(f"target_journal_checked_at must be YYYY-MM-DD for {paper_id}")
+    if policy.get("require_canonical_venue_format"):
+        target_format = paper.get("target_journal_format")
+        if not isinstance(target_format, Mapping) or target_format.get("canonical") is not True:
+            raise ValueError(
+                f"target_journal_format.canonical must be true for {paper_id}"
+            )
+        _require_http_source(
+            target_format,
+            "source",
+            paper_id,
+            prefix="target_journal_format",
+        )
+        if not _iso_date(str(target_format.get("checked_at") or "")):
+            raise ValueError(
+                f"target_journal_format.checked_at must be YYYY-MM-DD for {paper_id}"
+            )
+
+
+def _coerce_allowed_classification_systems(
+    *,
+    policy: Mapping[str, Any],
+    domain: str,
+) -> list[str]:
+    raw = policy.get("classification_system")
+    if isinstance(raw, str):
+        systems = [raw.strip()]
+    elif isinstance(raw, Mapping):
+        mapped = raw.get(domain) or raw.get(domain.lower()) or raw.get("*") or []
+        if isinstance(mapped, list):
+            systems = [str(item).strip() for item in mapped]
+        elif isinstance(mapped, str):
+            systems = [mapped.strip()]
+        else:
+            systems = []
+    elif isinstance(raw, list):
+        systems = [str(item).strip() for item in raw]
+    else:
+        systems = []
+    return [system for system in systems if system]
+
+
+def _require_http_source(
+    value: Mapping[str, Any],
+    field: str,
+    paper_id: str,
+    *,
+    prefix: str = "",
+) -> None:
+    source = str(value.get(field) or "").strip()
+    label = f"{prefix}.{field}" if prefix else field
+    if not source.startswith(("https://", "http://")):
+        raise ValueError(f"{label} must be an HTTP(S) source for {paper_id}")
+
+
+def _iso_date(value: str) -> bool:
+    if len(value) != 10 or value[4:5] != "-" or value[7:8] != "-":
+        return False
+    try:
+        year, month, day = (int(part) for part in value.split("-"))
+    except ValueError:
+        return False
+    return year >= 2000 and 1 <= month <= 12 and 1 <= day <= 31
 
 
 def load_paper_metadata(paper_id: str, root: str | Path | None = None) -> dict[str, Any]:

@@ -1,4 +1,4 @@
-# ARA local LLM quality gate
+# OpenLabs local LLM quality gate
 
 This overlay is mandatory for every paper profile. `registry/settings.yaml#quality_gate` is the
 single source of thresholds. The current minimum LLM self-review score is **5.0/10**. Never round
@@ -6,9 +6,32 @@ up, average around, or bypass it inside a profile. Change the threshold policy o
 human authorization and synchronized repository policy, settings, runtime, skill, documentation,
 and test updates.
 
+For a journal manuscript beyond its basic draft in a domain configured by
+`journal_target_policy`, the registry must identify a verified
+2026 XinRui target system (Math Tier 1/2, Medicine Tier 1/2, or Computer Science
+Tier 1/2 per domain policy), an official no-mandatory-author-fee publication route, and the
+official formatting source. The canonical `manuscript/` must be marked and checked as the
+venue-specific edition. A side candidate alone is a blocker. Public Zenodo ZIP names and enclosing
+roots must use the registered `display_id`.
+
 ## Produce a review record
 
-After drafting and deterministic checks, run
+After drafting, first run
+`python -m paper_writing style-check --paper-id <paper_id>`. It scans the compiled TeX tree and its
+referenced bibliography metadata and must reject AI/tool narration outside the final AI-use
+declaration, agent/reviewer orchestration, private repository and claim-routing terminology,
+internal source/audit narration (including `audit`, `auditable`, and `auditability`), internal
+audit/campaign filenames or paths, bibliography workflow notes, and preparation chronology that
+does not belong in scientific prose. A registered institutional name is allowed.
+Exactly one final AI-use declaration is required. It must identify the tool and textual purposes;
+manuscripts with computational code must also disclose source-code-development/verification
+assistance and human checking, and manuscripts reporting Codex-assisted Lean work must disclose
+Lean-code preparation/checking while attributing formal verification to the pinned Lean toolchain
+rather than to AI output. The check is non-scoring, but every failure is projected into
+`unresolved_review_blockers`; neither score nor decision can override it. It does not authorize
+concealing truthful AI use or deleting a disclosure required by the target venue.
+
+Then run
 `python -m paper_writing support-check --paper-id <paper_id>`. It must scan both formal TeX and any
 standalone reader-facing reproducibility, support, or availability statement and confirm that the
 manuscript cites the current Zenodo Version DOI and metadata, that the support-record title
@@ -63,6 +86,17 @@ than duplicated across reviewer contexts. A diagnosed interruption may continue 
 incremental build with a hash-linked receipt; the formal validation command may execute at most
 once over the complete receipt chain.
 
+Choose Lean validation from the Lean-input delta. When every Lean source, toolchain, Lake
+configuration, and dependency-lock hash is unchanged, bind the new manuscript snapshot and current
+support-package hash to the earlier PASS receipt with `--reuse-pass-receipt`, or to an exact-input
+successful full-build report with `--reuse-build-report`; do not execute Lean. A support archive,
+DOI, filename, author-metadata, or manuscript change alone does not invalidate Lean evidence. For a
+local Lean-source change with unchanged toolchain, lock file, configuration, and foundational
+interfaces, use `--build-mode incremental` so Lake reuses valid earlier build products, then run the
+axiom audit. Use `--build-mode full` only for a large Lean change such as a toolchain, dependency,
+configuration, or broad foundational/interface change. Supply the resulting receipt to both
+reviewers and disclose whether validation was reused, incremental, or full.
+
 Route the registry domain exactly as follows:
 
 - `ai`, `cs`, and `se`: ARA `cs_top_tier`, judged numerically as a top-tier computer-science
@@ -74,6 +108,9 @@ Route the registry domain exactly as follows:
   `four_top_math_journals` plus `cas_zone_1_journal` opinions, with no conference opinion.
 - `materials`: a leading selective materials-journal benchmark using rubric ID
   `openlabs.paper-writing.materials-leading-journals.v1`, with `leading_materials_journals` plus
+  `cas_zone_1_journal` opinions;
+- `physics`: a leading selective physics-journal benchmark using rubric ID
+  `openlabs.paper-writing.physics-leading-journals.v1`, with `leading_physics_journals` plus
   `cas_zone_1_journal` opinions;
 - `quant`: a leading quantitative-finance/financial-econometrics journal benchmark using rubric ID
   `openlabs.paper-writing.quant-finance-leading-journals.v1`, with

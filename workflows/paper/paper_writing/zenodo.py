@@ -54,6 +54,7 @@ ZENODO_IDENTITY_FIELDS = (
     "title",
     "version",
     "upload_type",
+    "publication_type",
     "publication_date",
     "access_right",
     "license",
@@ -148,7 +149,7 @@ def build_zenodo_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
         "access_right": zenodo.get("access_right") or "open",
         "prereserve_doi": True,
     }
-    optional_scalar_fields = ("notes", "language")
+    optional_scalar_fields = ("publication_type", "notes", "language")
     for field in optional_scalar_fields:
         value = zenodo.get(field)
         if isinstance(value, str) and value.strip():
@@ -260,7 +261,7 @@ class ZenodoClient:
         token: str,
         *,
         client: httpx.Client | None = None,
-        timeout: float = 120.0,
+        timeout: float = 300.0,
     ) -> None:
         self.environment = environment
         self.api_url = _api_url(environment)
@@ -1196,10 +1197,11 @@ def _verify_archive_sources(
     if not isinstance(entries, list):
         raise ZenodoError("Support archive manifest is missing its source file list")
     paper_id = str(archive_result.get("paper_id") or "").strip()
+    display_id = str(archive_result.get("display_id") or "").strip()
     paper_version = str(archive_result.get("paper_version") or "").strip()
-    if not paper_id or not paper_version:
+    if not paper_id or not display_id or not paper_version:
         raise ZenodoError("Support archive manifest is missing paper identity fields")
-    archive_root = f"{paper_id}-support-v{_safe_archive_component(paper_version)}"
+    archive_root = f"{display_id}-support-v{_safe_archive_component(paper_version)}"
     manifest_files: dict[str, Mapping[str, Any]] = {}
     for item in entries:
         if not isinstance(item, Mapping):

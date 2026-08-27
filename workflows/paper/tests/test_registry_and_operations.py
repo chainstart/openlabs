@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 
 from paper_writing.operations import create_paper, record_quality_gate, start_revision
-from paper_writing.registry import load_paper_metadata, load_registry, repository_root
+from paper_writing.registry import (
+    load_paper_metadata,
+    load_registry,
+    repository_root,
+    write_paper_metadata,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +51,137 @@ def test_real_registry_contains_migrated_papers() -> None:
         "20260724mathgraph0007",
     ):
         assert f"papers/{paper_id}" in registry["papers"]
+
+
+def test_journal_target_policy_requires_tier_fee_and_canonical_format(tmp_path: Path) -> None:
+    _settings(tmp_path)
+    settings = tmp_path / "registry" / "settings.yaml"
+    settings.write_text(
+        settings.read_text(encoding="utf-8")
+        + """journal_target_policy:
+  required_after_basic_draft: true
+  classification_system: 2026 XinRui Mathematics
+  allowed_tiers: [1, 2]
+  require_no_mandatory_author_fee: true
+  require_canonical_venue_format: true
+""",
+        encoding="utf-8",
+    )
+    paper_id = "20260813-math-graph-target-policy"
+    create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="A policy test",
+        created_at="2026-08-13",
+        domain="math",
+        subdomain="graph",
+        venue_type="journal",
+        target_journal="A Journal",
+    )
+
+    with pytest.raises(ValueError, match="target_journal_tier"):
+        load_registry(tmp_path, include_local_repositories=False)
+
+    metadata = load_paper_metadata(paper_id, tmp_path)
+    metadata.update(
+        {
+            "target_journal_tier": 2,
+            "target_journal_ranking_system": "2026 XinRui Mathematics",
+            "target_journal_ranking_source": "https://example.test/ranking",
+            "target_journal_fee_policy": "no_mandatory_author_fee",
+            "target_journal_fee_source": "https://example.test/fees",
+            "target_journal_checked_at": "2026-08-13",
+            "target_journal_format": {
+                "canonical": True,
+                "source": "https://example.test/format",
+                "checked_at": "2026-08-13",
+            },
+        }
+    )
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    assert load_registry(tmp_path, include_local_repositories=False)["papers"]
+
+
+def test_journal_target_policy_supports_domain_specific_systems(tmp_path: Path) -> None:
+    _settings(tmp_path)
+    settings = tmp_path / "registry" / "settings.yaml"
+    settings.write_text(
+        settings.read_text(encoding="utf-8")
+        + """journal_target_policy:
+  required_after_basic_draft: true
+  classification_system:
+    ai: [2026 XinRui Computer Science, 2026 XinRui Medicine]
+  allowed_tiers: [1, 2]
+  require_no_mandatory_author_fee: true
+  require_canonical_venue_format: true
+""",
+        encoding="utf-8",
+    )
+    paper_id = "20260814-ai-health-target-system"
+    create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="A cross-domain policy test",
+        created_at="2026-08-14",
+        domain="ai",
+        subdomain="health",
+        venue_type="journal",
+        target_journal="Health AI Journal",
+    )
+    metadata = load_paper_metadata(paper_id, tmp_path)
+    metadata.update(
+        {
+            "target_journal_tier": 2,
+            "target_journal_ranking_system": "2026 XinRui Medicine",
+            "target_journal_ranking_source": "https://example.test/ranking",
+            "target_journal_fee_policy": "no_mandatory_author_fee",
+            "target_journal_fee_source": "https://example.test/fees",
+            "target_journal_checked_at": "2026-08-24",
+            "target_journal_format": {
+                "canonical": True,
+                "source": "https://example.test/format",
+                "checked_at": "2026-08-24",
+            },
+        }
+    )
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    assert load_registry(tmp_path, include_local_repositories=False)["papers"]
+
+
+def test_journal_target_policy_grandfathers_truthful_pre_policy_metadata(
+    tmp_path: Path,
+) -> None:
+    _settings(tmp_path)
+    settings = tmp_path / "registry" / "settings.yaml"
+    settings.write_text(
+        settings.read_text(encoding="utf-8")
+        + """journal_target_policy:
+  required_after_basic_draft: true
+  effective_from: '2026-08-27'
+  classification_system:
+    math: [2026 XinRui Mathematics]
+  allowed_tiers: [1, 2]
+  require_no_mandatory_author_fee: true
+  require_canonical_venue_format: true
+""",
+        encoding="utf-8",
+    )
+    paper_id = "20260801-math-graph-legacy-target"
+    create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="A pre-policy target",
+        created_at="2026-08-01",
+        domain="math",
+        subdomain="graph",
+        venue_type="journal",
+        target_journal="A historical target",
+    )
+    metadata = load_paper_metadata(paper_id, tmp_path)
+    metadata["target_journal_checked_at"] = "2026-08-07"
+    write_paper_metadata(paper_id, metadata, tmp_path)
+
+    assert load_registry(tmp_path, include_local_repositories=False)["papers"]
 
 
 def test_create_revision_and_quality_gate(tmp_path: Path) -> None:

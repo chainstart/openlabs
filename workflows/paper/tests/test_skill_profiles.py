@@ -50,6 +50,32 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     review_skill = ROOT / profiles["quality_gate"]["review_skill_path"]
 
     assert profiles["quality_gate"]["review_mode"] == "independent_dual_provider_panel"
+    assert profiles["quality_gate"]["require_target_journal_after_basic_draft"] is True
+    assert profiles["quality_gate"]["target_journal_classification_system"] == {
+        "math": ["2026 XinRui Mathematics"],
+        "ai": [
+            "2026 XinRui Mathematics",
+            "2026 XinRui Medicine",
+            "2026 XinRui Computer Science",
+        ],
+        "cs": ["2026 XinRui Computer Science", "2026 XinRui Medicine"],
+        "se": ["2026 XinRui Computer Science", "2026 XinRui Medicine"],
+    }
+    assert profiles["quality_gate"]["allowed_target_journal_tiers"] == [1, 2]
+    assert profiles["quality_gate"]["require_no_mandatory_author_fee"] is True
+    assert profiles["quality_gate"]["require_canonical_target_journal_format"] is True
+    assert profiles["quality_gate"]["zenodo_public_identifier"] == "display_id"
+    assert profiles["quality_gate"]["manuscript_style_check"] == "required"
+    assert profiles["quality_gate"]["manuscript_style_command"] == (
+        "python -m paper_writing style-check --paper-id <paper_id>"
+    )
+    assert profiles["quality_gate"]["require_ai_use_declaration"] is True
+    assert profiles["quality_gate"]["ai_workflow_disclosure_location"] == (
+        "final_ai_use_declaration_only"
+    )
+    assert profiles["quality_gate"]["require_code_and_formalization_purpose_disclosure"] is True
+    assert profiles["quality_gate"]["forbid_internal_audit_terms_and_paths"] is True
+    assert profiles["quality_gate"]["scan_bibliography_workflow_notes"] is True
     assert profiles["quality_gate"]["review_panel_size"] == 2
     assert profiles["quality_gate"]["parallel_execution"] is False
     assert profiles["quality_gate"]["independent_contexts"] == "required"
@@ -134,3 +160,25 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert gate["decision_standard"] == "cas_zone_1_journal"
     assert gate["cas_zone_1_scope"] == "major_category"
     assert gate["cas_zone_1_minimum_decision"] == "minor_revision"
+    assert gate["require_manuscript_style_check"] is True
+    assert gate["require_ai_use_declaration"] is True
+    target_policy = settings["journal_target_policy"]
+    assert target_policy["required_after_basic_draft"] is True
+    assert target_policy["effective_from"] == "2026-08-27"
+    assert target_policy["allowed_tiers"] == [1, 2]
+    assert target_policy["require_no_mandatory_author_fee"] is True
+    assert target_policy["require_canonical_venue_format"] is True
+    assert settings["support_publication"]["public_archive_identifier"] == "display_id"
+    assert settings["support_publication"]["public_archive_root_identifier"] == "display_id"
+    assert settings["lean_audit_policy"] == {
+        "unchanged_inputs": "reuse_verified_pass_without_lean_execution",
+        "support_hash_change_alone_invalidates_lean": False,
+        "local_source_change": "incremental_build_then_axiom_audit",
+        "large_change": "full_clean_build_then_axiom_audit",
+        "full_build_triggers": [
+            "toolchain",
+            "dependency_lock",
+            "lake_configuration",
+            "foundational_interface",
+        ],
+    }

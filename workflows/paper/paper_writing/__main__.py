@@ -421,7 +421,7 @@ def _run_zenodo(args: argparse.Namespace) -> int:
     from paper_writing.support import SupportPackageError
 
     try:
-        if args.zenodo_command in {"create-draft", "new-version", "prepare", "release", "publish"}:
+        if args.zenodo_command in {"create-draft", "new-version", "prepare", "publish"}:
             if os.environ.get("OPENLABS_ENABLE_EXTERNAL_WRITES") != "1":
                 raise ZenodoError(
                     "External writes are disabled. An administrator must explicitly set "

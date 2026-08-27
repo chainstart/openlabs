@@ -140,6 +140,216 @@ def test_matching_pass_receipt_is_reused_only_for_exact_binding(tmp_path: Path) 
     )
 
 
+def test_text_only_revision_reuses_verified_pass_without_running_lean(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "lean"
+    project.mkdir()
+    audit_file = project / "GuardAxiomAudit.lean"
+    audit_file.write_text("#print axioms guard\n", encoding="utf-8")
+    (project / "lean-toolchain").write_text(
+        "leanprover/lean4:v4.26.0\n", encoding="utf-8"
+    )
+    source_hashes = lean_audit._source_hashes(project)
+    prior = tmp_path / "reviews" / "old" / "lean.json"
+    prior.parent.mkdir(parents=True)
+    prior.write_text(
+        json.dumps(
+            {
+                "schema_version": lean_audit.SCHEMA_VERSION,
+                "status": "PASS",
+                "paper_id": "paper-1",
+                "manuscript_snapshot_sha256": "b" * 64,
+                "support_package_sha256": "c" * 64,
+                "project": "lean",
+                "audit_file": "GuardAxiomAudit.lean",
+                "source_sha256": source_hashes,
+                "commands": [
+                    {"command": ["lake", "build", "--quiet"], "return_code": 0},
+                    {
+                        "command": ["lake", "env", "lean", "GuardAxiomAudit.lean"],
+                        "return_code": 0,
+                    },
+                ],
+                "objective_only": True,
+                "score_bearing": False,
+                "execution_count": 1,
+                "mathlib_cache_hydration": False,
+                "formal_validation_execution_count": 1,
+                "cumulative_formal_validation_execution_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    registry = tmp_path / "registry" / "papers"
+    registry.mkdir(parents=True)
+    (registry / "paper-1.yaml").write_text(
+        f"support:\n  publication:\n    package_sha256: {'d' * 64}\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "reviews" / "new" / "lean.json"
+    args = lean_audit.parser().parse_args(
+        [
+            "--root",
+            str(tmp_path),
+            "--paper-id",
+            "paper-1",
+            "--project",
+            "lean",
+            "--audit-file",
+            "GuardAxiomAudit.lean",
+            "--manuscript-snapshot",
+            "d" * 64,
+            "--support-sha256",
+            "d" * 64,
+            "--reuse-pass-receipt",
+            str(prior.relative_to(tmp_path)),
+            "--output",
+            str(output.relative_to(tmp_path)),
+        ]
+    )
+
+    assert lean_audit.run(args) == 0
+    receipt = json.loads(output.read_text(encoding="utf-8"))
+    assert receipt["schema_version"] == lean_audit.REUSED_SCHEMA_VERSION
+    assert receipt["manuscript_snapshot_sha256"] == "d" * 64
+    assert receipt["support_package_sha256"] == "d" * 64
+    assert receipt["reused_pass_receipt"]["support_package_sha256"] == "c" * 64
+    assert receipt["execution_count"] == 0
+    assert receipt["formal_validation_execution_count"] == 0
+    assert receipt["cumulative_formal_validation_execution_count"] == 1
+    assert receipt["commands"] == []
+    assert receipt["reused_pass_receipt"]["sha256"] == lean_audit._sha256_file(prior)
+
+
+def test_pass_reuse_allows_new_support_binding_but_forbids_lean_source_change(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "lean"
+    project.mkdir()
+    audit_file = project / "GuardAxiomAudit.lean"
+    audit_file.write_text("#print axioms guard\n", encoding="utf-8")
+    source_hashes = lean_audit._source_hashes(project)
+    prior = tmp_path / "lean-pass.json"
+    prior.write_text(
+        json.dumps(
+            {
+                "schema_version": lean_audit.SCHEMA_VERSION,
+                "status": "PASS",
+                "paper_id": "paper-1",
+                "manuscript_snapshot_sha256": "b" * 64,
+                "support_package_sha256": "c" * 64,
+                "project": "lean",
+                "audit_file": "GuardAxiomAudit.lean",
+                "source_sha256": source_hashes,
+                "commands": [
+                    {"command": ["lake", "build", "--quiet"], "return_code": 0},
+                    {
+                        "command": ["lake", "env", "lean", "GuardAxiomAudit.lean"],
+                        "return_code": 0,
+                    },
+                ],
+                "objective_only": True,
+                "score_bearing": False,
+                "execution_count": 1,
+                "mathlib_cache_hydration": False,
+                "formal_validation_execution_count": 1,
+                "cumulative_formal_validation_execution_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    reused = lean_audit._executing_pass_receipt(
+        prior,
+        root=tmp_path,
+        paper_id="paper-1",
+        project=project,
+        audit_file=Path("GuardAxiomAudit.lean"),
+        source_hashes=source_hashes,
+    )
+    assert reused["support_package_sha256"] == "c" * 64
+
+    audit_file.write_text("#print axioms changed_guard\n", encoding="utf-8")
+    with pytest.raises(lean_audit.AuditError) as source_error:
+        lean_audit._executing_pass_receipt(
+            prior,
+            root=tmp_path,
+            paper_id="paper-1",
+            project=project,
+            audit_file=Path("GuardAxiomAudit.lean"),
+            source_hashes=lean_audit._source_hashes(project),
+        )
+    assert source_error.value.reason == "invalid_reuse_receipt"
+
+
+def test_pass_reuse_checks_the_current_registered_support_hash(tmp_path: Path) -> None:
+    project = tmp_path / "lean"
+    project.mkdir()
+    audit_file = project / "GuardAxiomAudit.lean"
+    audit_file.write_text("#print axioms guard\n", encoding="utf-8")
+    source_hashes = lean_audit._source_hashes(project)
+    prior = tmp_path / "lean-pass.json"
+    prior.write_text(
+        json.dumps(
+            {
+                "schema_version": lean_audit.SCHEMA_VERSION,
+                "status": "PASS",
+                "paper_id": "paper-1",
+                "manuscript_snapshot_sha256": "b" * 64,
+                "support_package_sha256": "c" * 64,
+                "project": "lean",
+                "audit_file": "GuardAxiomAudit.lean",
+                "source_sha256": source_hashes,
+                "commands": [
+                    {"command": ["lake", "build", "--quiet"], "return_code": 0},
+                    {
+                        "command": ["lake", "env", "lean", "GuardAxiomAudit.lean"],
+                        "return_code": 0,
+                    },
+                ],
+                "objective_only": True,
+                "score_bearing": False,
+                "execution_count": 1,
+                "mathlib_cache_hydration": False,
+                "formal_validation_execution_count": 1,
+                "cumulative_formal_validation_execution_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    registry = tmp_path / "registry" / "papers"
+    registry.mkdir(parents=True)
+    (registry / "paper-1.yaml").write_text(
+        f"support:\n  publication:\n    package_sha256: {'d' * 64}\n",
+        encoding="utf-8",
+    )
+    args = lean_audit.parser().parse_args(
+        [
+            "--root",
+            str(tmp_path),
+            "--paper-id",
+            "paper-1",
+            "--project",
+            "lean",
+            "--audit-file",
+            "GuardAxiomAudit.lean",
+            "--manuscript-snapshot",
+            "e" * 64,
+            "--support-sha256",
+            "c" * 64,
+            "--reuse-pass-receipt",
+            str(prior),
+            "--output",
+            "new.json",
+        ]
+    )
+
+    with pytest.raises(lean_audit.AuditError) as captured:
+        lean_audit.run(args)
+    assert captured.value.reason == "support_binding_changed"
+
+
 def test_prior_failed_attempt_must_match_and_is_hash_linked(tmp_path: Path) -> None:
     source_hashes = {"Guard.lean": "a" * 64}
     receipt = tmp_path / "failed.json"
@@ -210,6 +420,26 @@ def test_prior_failed_attempt_cannot_repeat_formal_validation(tmp_path: Path) ->
 
 def test_lean_audit_runs_build_and_axiom_audit_sequentially() -> None:
     assert lean_audit._commands(Path("GuardAxiomAudit.lean")) == [
+        ["lake", "build", "--quiet"],
+        ["lake", "env", "lean", "GuardAxiomAudit.lean"],
+    ]
+
+
+def test_full_lean_audit_cleans_before_build() -> None:
+    assert lean_audit._commands(
+        Path("GuardAxiomAudit.lean"), build_mode="full"
+    ) == [
+        ["lake", "clean"],
+        ["lake", "build", "--quiet"],
+        ["lake", "env", "lean", "GuardAxiomAudit.lean"],
+    ]
+
+
+def test_lean_audit_can_hydrate_pinned_mathlib_cache_before_build() -> None:
+    assert lean_audit._commands(
+        Path("GuardAxiomAudit.lean"), hydrate_mathlib_cache=True
+    ) == [
+        ["lake", "exe", "cache", "get"],
         ["lake", "build", "--quiet"],
         ["lake", "env", "lean", "GuardAxiomAudit.lean"],
     ]

@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from paper_writing.identifiers import PAPER_ID_PATTERN
+from paper_writing.identifiers import PAPER_ID_PATTERN, domain_scoped_parts
 
 
 SUPPORT_ARCHIVE_SCHEMA_VERSION = "ara.paper_writing.support_archive.v1"
@@ -180,6 +180,7 @@ def default_support_archive_path(
     repo_root: str | Path,
 ) -> Path:
     paper_id = _paper_id(record)
+    public_id = _public_id(record)
     version = _safe_component(_record_version(record))
     return (
         Path(repo_root).resolve()
@@ -188,7 +189,7 @@ def default_support_archive_path(
         / "support-materials"
         / "zenodo"
         / f"v{version}"
-        / f"{paper_id}-support-v{version}.zip"
+        / f"{public_id}-support-v{version}.zip"
     )
 
 
@@ -208,6 +209,7 @@ def build_support_archive(
     if not re.fullmatch(r"[0-9a-f]{40}", origin_commit):
         raise SupportPackageError("origin_commit must be a full 40-character Git commit")
     paper_id = _paper_id(record)
+    public_id = _public_id(record)
     version = _record_version(record)
     publication = _publication(record)
     zenodo = publication.get("zenodo")
@@ -234,7 +236,7 @@ def build_support_archive(
     if archive.suffix.casefold() != ".zip":
         raise SupportPackageError("Support archive output must end in .zip")
     archive.parent.mkdir(parents=True, exist_ok=True)
-    archive_root = f"{paper_id}-support-v{_safe_component(version)}"
+    archive_root = f"{public_id}-support-v{_safe_component(version)}"
 
     entries: list[dict[str, Any]] = []
     used_names: set[str] = set()
@@ -278,9 +280,10 @@ def build_support_archive(
     manifest = {
         "schema_version": SUPPORT_ARCHIVE_SCHEMA_VERSION,
         "paper_id": paper_id,
+        "display_id": public_id,
         "paper_title": str(record.get("title") or paper_id),
         "paper_version": version,
-        "origin_repository": "chainstart/ara-paper-writing",
+        "origin_repository": "chainstart/openlabs-data",
         "origin_commit": origin_commit,
         "reserved_version_doi": reserved_doi,
         "license": declared_license,
@@ -330,6 +333,7 @@ def build_support_archive(
     return {
         "schema_version": SUPPORT_ARCHIVE_SCHEMA_VERSION,
         "paper_id": paper_id,
+        "display_id": public_id,
         "version": version,
         "origin_commit": origin_commit,
         "reserved_version_doi": reserved_doi,
@@ -415,6 +419,7 @@ def _verify_support_archive_file(archive: Path) -> dict[str, Any]:
     return {
         "schema_version": manifest["schema_version"],
         "paper_id": manifest.get("paper_id"),
+        "display_id": manifest.get("display_id"),
         "paper_version": manifest.get("paper_version"),
         "origin_commit": manifest.get("origin_commit"),
         "reserved_version_doi": manifest.get("reserved_version_doi"),
@@ -429,6 +434,24 @@ def _paper_id(record: Mapping[str, Any]) -> str:
     value = str(record.get("id") or record.get("paper_id") or "").strip()
     if not PAPER_ID_PATTERN.fullmatch(value):
         raise SupportPackageError(f"Invalid paper_id for support release: {value!r}")
+    return value
+
+
+def _public_id(record: Mapping[str, Any]) -> str:
+    """Return the descriptive identifier required for public support names."""
+
+    paper_id = _paper_id(record)
+    value = str(record.get("display_id") or "").strip()
+    if not value:
+        metadata = record.get("metadata")
+        if isinstance(metadata, Mapping):
+            value = str(metadata.get("display_id") or "").strip()
+    if not value and domain_scoped_parts(paper_id):
+        value = paper_id
+    if not domain_scoped_parts(value):
+        raise SupportPackageError(
+            "A domain-scoped display_id is required for public support archive names"
+        )
     return value
 
 
@@ -508,11 +531,10 @@ def _support_readme(
 ) -> str:
     doi_line = reserved_doi or "not reserved when this archive was built"
     return (
-        "# ARA supporting-material release\n\n"
-        f"- Paper ID: `{_paper_id(record)}`\n"
-        f"- Paper title: {record.get('title') or _paper_id(record)}\n"
+        "# Supporting materials\n\n"
+        f"- Public paper ID: `{_public_id(record)}`\n"
+        f"- Paper title: {record.get('title') or _public_id(record)}\n"
         f"- Paper version: `{version}`\n"
-        f"- Writing source commit: `{origin_commit}`\n"
         f"- Zenodo Version DOI: `{doi_line}`\n"
         f"- Declared license: `{license_id}`\n\n"
         "`ZENODO_MANIFEST.json` records the archive-relative path, byte size and SHA-256 "
@@ -523,9 +545,8 @@ def _support_readme(
 def _license_declaration(license_id: str) -> str:
     return (
         f"Declared license identifier: {license_id}\n\n"
-        "This identifier is supplied by the paper registry. Review the selected license and "
-        "all third-party file rights before publication. Component files with their own "
-        "license notices retain those notices.\n"
+        "Component files with their own license notices retain those notices. Source datasets "
+        "not included in the archive remain subject to their providers' terms.\n"
     )
 
 

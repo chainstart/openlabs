@@ -94,6 +94,16 @@ OPENLABS_CLAUDE_COMMAND=claude
 所有 `python -m openlabs` 入口都会以“当前进程环境优先”的规则读取
 `~/.config/openlabs/env` 和 `~/.config/environment.d/90-openlabs-proxy.conf`，因此手工
 `tick`、timer 和 worker 使用同一份 Agent/proxy 配置；这些文件按数据解析，不经过 shell。
+`tick` 和 `bin/openlabs-codex` 在启动研究前还会执行严格网络门禁：依次探测当前进程继承的
+代理和持久代理文件。若当前进程携带一个新的可用代理，它会原子更新
+`90-openlabs-proxy.conf`，并通过 `systemctl --user import-environment` 同步大小写代理变量；
+随后启动的 transient worker 会继承同一组值。如果所有候选都不可达，则在领取或启动科研
+任务前以退出码 69 拒绝运行，不会消耗任务墙钟预算。可独立执行
+`PYTHONPATH=orchestrator/src python3 -m openlabs network-preflight` 查看不含凭据的报告。
+这个机制不扫描随机端口：它只信任调用环境或用户配置中明确提供的候选，因此无法发现候选时
+会安全失败。`OPENLABS_PROXY_AUTO_SYNC=false` 可禁止写回文件，
+`OPENLABS_PROXY_SYNC_SYSTEMD=false` 可禁止同步 systemd，代理文件位置可用
+`OPENLABS_PROXY_ENV_FILE` 覆盖。
 Codex 启动前会对命令中声明的 provider `base_url` 做有界 HEAD 预检。由于 urllib 与 Codex
 可能使用不同的认证或代理传输栈，网络失败默认只作提示，URL 语法错误仍会拒绝启动；只有在
 确认两者传输路径一致时才设置 `OPENLABS_AGENT_PREFLIGHT_STRICT=true`。真实 Codex 启动后若
@@ -249,9 +259,11 @@ systemd 只保证 tick 被再次调用；科学恢复由 SQLite 租约、心跳�
 
 ## 外部副作用
 
-第一版不自动投稿、公开发布或远程 handoff。论文适配器默认拒绝外部写操作；只有管理员
-针对一次明确操作设置 `OPENLABS_ENABLE_EXTERNAL_WRITES=1` 才会解除代码门禁。论文
-`ready` 状态本身不是这类授权。
+OpenLabs 不自动投稿或创建期刊事件。论文适配器默认拒绝外部写操作；只有管理员针对一次明确
+操作设置 `OPENLABS_ENABLE_EXTERNAL_WRITES=1` 才会解除代码门禁。唯一例外是已经准备、远端
+回读且哈希绑定的 Zenodo 支撑材料：论文 `ready` 门禁授权 `zenodo release`，该命令再次核验
+门禁、Git 状态和本地/远端材料后才发布。此授权不延伸到投稿、远程 handoff、付费或论文发表
+事实。
 
 ## 24 小时部署验收
 

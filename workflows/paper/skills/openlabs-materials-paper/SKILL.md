@@ -1,6 +1,6 @@
 ---
 name: openlabs-materials-paper
-description: Run OpenLabs' evidence-bound computational materials manuscript workflow from validated structures, simulations, convergence studies, reference calculations, and experimental context through claim mapping, drafting, skeptical review, and the internal quality gate. Use for materials-science paper readiness audits, manuscript creation or revision, and journal adaptation; never promote unconverged or model-only evidence into a physical claim, and never publish or submit implicitly.
+description: Run OpenLabs' evidence-bound computational materials manuscript workflow from validated structures, simulations, convergence studies, reference calculations, and experimental context through claim mapping, drafting, skeptical review, the internal quality gate, and controlled supporting-material release. Use for materials-science paper readiness audits, manuscript creation or revision, and journal adaptation; never promote unconverged or model-only evidence into a physical claim or create parallel release state.
 ---
 
 # OpenLabs materials paper
@@ -8,6 +8,8 @@ description: Run OpenLabs' evidence-bound computational materials manuscript wor
 Use this as a thin coordinator over the private paper registry and the migrated matfactory evidence.
 Resolve `paper_root` from `OPENLABS_DATA` or `$OPENLABS_WORKSPACE/openlabs-data`, and read the selected paper
 record, its claim–evidence map, the materials result bundles, and the current target-journal policy.
+Read `workflows/paper/skills/overlays/quality-gate.md`; when support publication is required, also
+read `docs/ZENODO_GUIDE.md`.
 
 ## Load the bounded components
 
@@ -39,7 +41,8 @@ Do not activate additional writing systems or create a second registry.
 
 Revise the canonical LaTeX only after updating the claim–evidence map. Verify each citation against
 the actual proposition used, compile the frozen manuscript, and run deterministic repository and
-support checks. In a factory `writer` task, stop at the frozen `paper_candidate`; do not run or
+support and style checks, including the single final truthful AI-use declaration required by the
+shared overlay. In a factory `writer` task, stop at the frozen `paper_candidate`; do not run or
 impersonate either reviewer. The scheduler gives it to a fresh `$openlabs-paper-review` task, whose
 independent Codex and blind Packy Claude Opus 5 reviewers use the `materials` rubric and the
 `leading_materials_journals` plus `cas_zone_1_journal` simulated views. A `paper_revision` applies
@@ -47,6 +50,7 @@ only the declared request; requests for new physical evidence go through a fresh
 `evidence_remediation` task before returning to the same writer. Every revised candidate receives a
 new panel because any score-bearing edit makes the old panel stale.
 
-A passing gate changes only internal state to `ready`. It never authorizes Zenodo, remote handoff,
-submission, journal communication, or public release. Report remaining physical-model,
+After a passing gate, run `paper-writing zenodo release` for an exact prepared support draft without
+asking again; the gate authorizes only that hash-bound release. It never authorizes remote handoff,
+submission, journal communication, spending, or a publication fact. Report remaining physical-model,
 convergence, sampling, literature, and reproducibility risks even when the manuscript passes.
