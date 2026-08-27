@@ -14,6 +14,7 @@ from paper_writing.review import (
     FOUR_TOP_MATH_JOURNALS_VIEW,
     INDIVIDUAL_REVIEW_SCHEMA_VERSION,
     LEADING_MATERIALS_JOURNALS_VIEW,
+    LEADING_PHYSICS_JOURNALS_VIEW,
     LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     LEAN_OBJECTIVE_AUDIT_KIND,
     LEAN_OBJECTIVE_AUDIT_SCHEMA_VERSION,
@@ -22,6 +23,8 @@ from paper_writing.review import (
     MATERIALS_REVIEWER_ROLE,
     MATH_FOUR_JOURNALS_RUBRIC_ID,
     MATHEMATICS_REVIEWER_ROLE,
+    PHYSICS_LEADING_JOURNALS_RUBRIC_ID,
+    PHYSICS_REVIEWER_ROLE,
     QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID,
     QUANT_FINANCE_REVIEWER_ROLE,
     RECOMMENDATION_SCHEMA_VERSION,
@@ -91,6 +94,19 @@ def _review(*, paper_id: str = "20260804-ai-llm-review-test", role: str = "cs_to
                 "decision": "major_revision",
                 "confidence": "high",
                 "rationale": "The study is promising but not yet ready.",
+            },
+        }
+    elif role == PHYSICS_REVIEWER_ROLE:
+        recommendations = {
+            LEADING_PHYSICS_JOURNALS_VIEW: {
+                "decision": "major_revision",
+                "confidence": "high",
+                "rationale": "The physics evidence package needs stronger validation.",
+            },
+            CAS_ZONE_1_JOURNAL_VIEW: {
+                "decision": "major_revision",
+                "confidence": "high",
+                "rationale": "The result is promising but not yet ready.",
             },
         }
     elif role == QUANT_FINANCE_REVIEWER_ROLE:
@@ -275,11 +291,14 @@ def test_domain_routing_matches_openlabs_roles() -> None:
         assert reviewer_role_for_domain(domain) == MATHEMATICS_REVIEWER_ROLE
     for domain in ("materials", "materials-science"):
         assert reviewer_role_for_domain(domain) == MATERIALS_REVIEWER_ROLE
+    for domain in ("physics", "theoretical-physics", "high-energy-physics", "cosmology"):
+        assert reviewer_role_for_domain(domain) == PHYSICS_REVIEWER_ROLE
     for domain in ("quant", "finance", "quantitative-finance"):
         assert reviewer_role_for_domain(domain) == QUANT_FINANCE_REVIEWER_ROLE
     assert rubric_id_for_role(CS_TOP_TIER_REVIEWER_ROLE) == CS_TOP_TIER_RUBRIC_ID
     assert rubric_id_for_role(MATHEMATICS_REVIEWER_ROLE) == MATH_FOUR_JOURNALS_RUBRIC_ID
     assert rubric_id_for_role(MATERIALS_REVIEWER_ROLE) == MATERIALS_LEADING_JOURNALS_RUBRIC_ID
+    assert rubric_id_for_role(PHYSICS_REVIEWER_ROLE) == PHYSICS_LEADING_JOURNALS_RUBRIC_ID
     assert (
         rubric_id_for_role(QUANT_FINANCE_REVIEWER_ROLE) == QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID
     )
@@ -376,6 +395,19 @@ def test_quant_finance_review_requires_its_domain_view() -> None:
     errors = validate_review_record(review, expected_role=QUANT_FINANCE_REVIEWER_ROLE)
     assert any(
         error.startswith(f"recommendations.{LEADING_QUANT_FINANCE_JOURNALS_VIEW}.decision")
+        for error in errors
+    )
+
+
+def test_physics_review_requires_its_domain_view() -> None:
+    review = _review(role=PHYSICS_REVIEWER_ROLE)
+
+    assert validate_review_record(review, expected_role=PHYSICS_REVIEWER_ROLE) == []
+
+    del review["recommendations"][LEADING_PHYSICS_JOURNALS_VIEW]
+    errors = validate_review_record(review, expected_role=PHYSICS_REVIEWER_ROLE)
+    assert any(
+        error.startswith(f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW}.decision")
         for error in errors
     )
 

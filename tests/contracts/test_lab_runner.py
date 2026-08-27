@@ -262,7 +262,7 @@ def test_transaction_sandbox_blocks_canonical_state_writes(tmp_path, monkeypatch
             "attempt_root": str(attempt_root),
             "staged_campaign_workspace": str(staged),
             "canonical_campaign_workspace": str(canonical),
-            "promotion_policy": "validated_completed_results_only",
+            "promotion_policy": "validated_results_and_checkpoints",
         },
     }
 

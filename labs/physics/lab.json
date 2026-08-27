@@ -18,13 +18,21 @@
     {
       "skill_id": "qutip",
       "path": "skills/vendor/qutip/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-physics-paper",
+      "path": "../../workflows/paper/skills/openlabs-physics-paper/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-paper-review",
+      "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"
     }
   ],
   "protocols": [
     {
       "protocol_id": "autonomous-physics",
       "primary_skill": "physics-research-loop",
-      "runtime_skills": ["physics-research-loop", "astropy", "qutip"],
+      "runtime_skills": ["physics-research-loop"],
       "validator": {
         "command": [
           "{python}",

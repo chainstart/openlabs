@@ -629,7 +629,13 @@ def test_launch_writes_job_against_private_campaign_copy(tmp_path) -> None:
     assert Path(job["output_path"]).is_relative_to(workspace.campaign_root)
 
 
-def test_ingestion_commits_staged_state_and_indexes_immutable_result(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("result_status", "stored_status"),
+    (("completed", "succeeded"), ("needs_replan", "needs_replan")),
+)
+def test_ingestion_commits_staged_state_and_indexes_immutable_result(
+    tmp_path, result_status: str, stored_status: str
+) -> None:
     paths = _paths(tmp_path)
     db, task = _leased_task(paths)
     workspace = prepare_attempt_workspace(paths, task, {})
@@ -649,7 +655,7 @@ def test_ingestion_commits_staged_state_and_indexes_immutable_result(tmp_path) -
             "campaign_id": "campaign",
             "lab_id": "math",
             "domain": "math",
-            "status": "completed",
+            "status": result_status,
             "summary": "Transactional node completed.",
             "artifacts": [
                 {
@@ -674,7 +680,11 @@ def test_ingestion_commits_staged_state_and_indexes_immutable_result(tmp_path) -
                     "limitations": [],
                 }
             ],
-            "next_actions": [],
+            "next_actions": (
+                []
+                if result_status == "completed"
+                else ["Continue from the promoted exact checkpoint."]
+            ),
             "paper_candidate": False,
         },
     )
@@ -701,7 +711,7 @@ def test_ingestion_commits_staged_state_and_indexes_immutable_result(tmp_path) -
     ingest_results(db, paths, FactorySettings(), report)
 
     stored = db.task("task")
-    assert stored is not None and stored["status"] == "succeeded"
+    assert stored is not None and stored["status"] == stored_status
     assert str(paths.artifacts / "result-bundles") in str(stored["result_path"])
     assert json.loads(
         (workspace.canonical_campaign_root / "production_lane.json").read_text(encoding="utf-8")

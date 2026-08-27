@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .agent_runtime import configure_codex_runtime, runtime_context
+from .agent_runtime import configure_codex_runtime
 from .attempts import (
     AttemptWorkspace,
     attempt_artifact_policy,
@@ -32,12 +32,6 @@ from .attempts import (
     quarantine_attempt_workspace,
     recover_attempt_promotion,
     rollback_attempt_promotion,
-)
-from .authority import (
-    AuthorityRequirement,
-    authority_policy_paths,
-    enforce_action_authority,
-    resolve_workspace_authority,
 )
 from .config import FactorySettings, WorkspacePaths
 from .contracts import (
@@ -187,83 +181,6 @@ def _next_action_plan(
     )
 
 
-def _attempt_authority(workspace: AttemptWorkspace | None) -> AuthorityRequirement | None:
-    if workspace is None:
-        return None
-    context_path = workspace.campaign_root / ".codex" / "openlabs-context.json"
-    if not context_path.is_file():
-        return None
-    context = runtime_context(context_path)
-    policy_paths = [
-        Path(str(item)).expanduser().resolve()
-        for item in context.get("authority_policy_paths", [])
-        if str(item).strip()
-    ]
-    return resolve_workspace_authority(workspace.campaign_root, policy_paths)
-
-
-def _authorized_action_plan(
-    action: ActionPlan | None,
-    *,
-    authority: AuthorityRequirement | None,
-) -> tuple[ActionPlan | None, list[str]]:
-    if authority is None:
-        return action, []
-    if action is None:
-        return (
-            ActionPlan(
-                objective=(
-                    authority.objective
-                    or (
-                        f"Continue the active {authority.policy_id} phase {authority.phase} from "
-                        "durable state under its declared epistemic authority."
-                    )
-                ),
-                agent_role=authority.default_role,
-                session_mode=authority.required_session_mode or "fresh",
-                handoff_kind=authority.required_handoff_kind or "role_handoff",
-            ),
-            ["missing_next_action:generated_from_authority"],
-        )
-    role, mode, kind, changes = enforce_action_authority(
-        agent_role=action.agent_role,
-        session_mode=action.session_mode,
-        handoff_kind=action.handoff_kind,
-        authority=authority,
-    )
-    objective = (
-        authority.objective
-        if authority.objective is not None
-        and any(change.startswith("agent_role:") for change in changes)
-        else action.objective
-    )
-    return (
-        ActionPlan(
-            objective=objective,
-            agent_role=role,
-            session_mode=mode,
-            handoff_kind=kind,
-            resources=action.resources,
-            wall_seconds=action.wall_seconds,
-        ),
-        changes,
-    )
-
-
-def _action_payload(action: ActionPlan) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "objective": action.objective,
-        "agent_role": action.agent_role,
-        "session_mode": action.session_mode,
-        "handoff_kind": action.handoff_kind,
-    }
-    if action.resources is not None:
-        payload["resources"] = action.resources.to_dict()
-    if action.wall_seconds is not None:
-        payload["wall_seconds"] = action.wall_seconds
-    return payload
-
-
 def _continuation_task_type(role: str) -> str:
     return {
         "researcher": "research_continue",
@@ -352,6 +269,8 @@ def _paper_skill(domain: str) -> str | None:
         "math": "openlabs-math-paper",
         "ai": "openlabs-ai-paper",
         "materials": "openlabs-materials-paper",
+        "physics": "openlabs-physics-paper",
+        "quant": "openlabs-quant-paper",
     }.get(domain)
 
 
@@ -360,6 +279,8 @@ def _research_skill(domain: str) -> str | None:
         "math": "amra-research-loop",
         "ai": "ai-research-loop",
         "materials": "materials-research-loop",
+        "physics": "physics-research-loop",
+        "quant": "quant-backtest-audit",
     }.get(domain)
 
 
@@ -939,39 +860,6 @@ def _campaign_runtime_skill_ids(
     return ()
 
 
-def _production_workspace_authority(
-    paths: WorkspacePaths,
-    campaign: Mapping[str, Any],
-) -> AuthorityRequirement | None:
-    """Resolve current authority directly from durable production state.
-
-    This is the restart path: the newest task may be an operator-cancelled attempt
-    with no result bundle, so a continuous factory cannot rely on its predecessor's
-    conversational handoff to recover the correct epistemic role.
-    """
-
-    lane_value = str(
-        campaign.get("workstream_state_path")
-        or campaign.get("production_lane_path")
-        or ""
-    ).strip()
-    if not lane_value:
-        return None
-    lane_path = Path(lane_value).expanduser().resolve()
-    labs = discover_labs(paths.code)
-    if not labs:
-        return None
-    lab = lab_for_domain(labs, str(campaign.get("domain") or ""))
-    selected_skill_ids = _campaign_runtime_skill_ids(lab, campaign)
-    skill_dirs = {
-        path.parent
-        for skill_id in selected_skill_ids
-        if skill_id and (path := lab.skill_path(skill_id)) is not None
-    }
-    policies = authority_policy_paths(sorted(skill_dirs))
-    return resolve_workspace_authority(lane_path.parent, policies)
-
-
 def _campaign_execution_policy(campaign: Mapping[str, Any]) -> ExecutionPolicy:
     raw = campaign.get("execution_policy_json")
     if isinstance(raw, str) and raw.strip():
@@ -985,12 +873,6 @@ def _campaign_execution_policy(campaign: Mapping[str, Any]) -> ExecutionPolicy:
                 isinstance(item, str) and item.strip() for item in boundaries
             ):
                 return ExecutionPolicy(
-                    checkpoint_policy=str(
-                        value.get("checkpoint_policy") or "role_boundary_or_budget"
-                    ),
-                    continue_across_protocol_phases=(
-                        value.get("continue_across_protocol_phases", True) is True
-                    ),
                     default_session_mode=str(value.get("default_session_mode") or "resume"),
                     fresh_session_boundaries=tuple(item.strip() for item in boundaries),
                 )
@@ -1177,21 +1059,6 @@ def _replenish_continuous_campaign(
         return
     stream_policy = workstream_policy(campaign)
     latest_status = str(latest.get("status") or "") if latest else ""
-    cancelled_before_attempt = bool(
-        latest and latest_status == "cancelled" and int(latest.get("attempt") or 0) == 0
-    )
-    if (
-        latest
-        and stream_policy.get("continuation") == "one_shot"
-        and latest_status != "queued"
-        and not cancelled_before_attempt
-    ):
-        db.pause_production_campaign(
-            campaign_id,
-            reason="one_shot_round_complete",
-        )
-        report.production_paused.append(campaign_id)
-        return
     campaign = db.campaign(campaign_id) or dict(campaign)
     state_status = _workstream_state_status(campaign)
     if stream_policy.get("dynamic") is True and state_status in {"paused", "completed"}:
@@ -1293,27 +1160,8 @@ def _replenish_continuous_campaign(
             resources=action.resources,
             wall_seconds=action.wall_seconds,
         )
-    try:
-        live_authority = _production_workspace_authority(paths, campaign)
-    except Exception as exc:  # noqa: BLE001 - bad trusted policy pauses only this lane.
-        report.production_blocked.append(
-            {"campaign_id": campaign_id, "reason": f"authority_resolution_failed:{exc}"}
-        )
-        return
-    archived_authority = AuthorityRequirement.from_mapping(
-        payload.get("openlabs_authority") if payload else None
-    )
-    action, authority_adjustments = _authorized_action_plan(
-        action,
-        authority=live_authority or archived_authority,
-    )
     if action is None:  # pragma: no cover - fallback always returns an action.
         return
-    if authority_adjustments:
-        report.errors.append(
-            f"Campaign {campaign_id} successor normalized by Skill authority: "
-            + ", ".join(authority_adjustments)
-        )
     if action.agent_role == "writer" and current_role != "writer":
         report.production_blocked.append(
             {"campaign_id": campaign_id, "reason": "unsafe_direct_writer_handoff"}
@@ -1531,7 +1379,7 @@ def _codex_hook_receipt_status(
 ) -> tuple[str | None, str | None]:
     """Return a fatal hook error and an optional compatibility warning.
 
-    The generated agent request already carries the task, authority, Skill,
+    The generated agent request already carries the task, Skill,
     transaction and result-path context. SessionStart remains useful as an
     additional Codex context channel, but some non-interactive CLI versions do
     not fire project-local SessionStart while still firing the trusted Stop
@@ -1666,37 +1514,8 @@ def ingest_results(
                 if isinstance(next_actions, list) and next_actions
                 else None
             )
-            authority: AuthorityRequirement | None = None
-            if result_status in {"completed", "succeeded"}:
-                try:
-                    authority = _attempt_authority(attempt_workspace)
-                except Exception as exc:  # noqa: BLE001 - trusted policy must fail closed.
-                    result_status = "needs_replan"
-                    runtime_error = f"Skill authority resolution failed: {exc}"
-                    runtime["authority_error"] = runtime_error
-            if authority is not None and result_status in {"completed", "succeeded"}:
-                next_plan, authority_adjustments = _authorized_action_plan(
-                    next_plan,
-                    authority=authority,
-                )
-                payload = dict(payload)
-                payload["openlabs_authority"] = authority.to_dict()
-                if next_plan is not None:
-                    remaining_actions = (
-                        list(next_actions[1:]) if isinstance(next_actions, list) else []
-                    )
-                    payload["next_actions"] = [
-                        _action_payload(next_plan),
-                        *remaining_actions,
-                    ]
-                runtime["authority_gate"] = {
-                    "policy_id": authority.policy_id,
-                    "phase": authority.phase,
-                    "state_path": authority.state_path,
-                    "adjustments": authority_adjustments,
-                }
             if (
-                result_status in {"completed", "succeeded"}
+                result_status in {"completed", "succeeded", "needs_replan"}
                 and str(runtime.get("adapter") or "") == "codex"
             ):
                 hook_error, hook_warning = _codex_hook_receipt_status(runtime)
@@ -1725,12 +1544,13 @@ def ingest_results(
                 runtime_error = str(runtime["continuity_error"])
 
             # The receipt authenticates the agent's private result.  Before a
-            # successful node becomes authoritative, bind every artifact to an
-            # immutable archive and atomically promote the staged campaign tree.
+            # valid completed node or replan checkpoint becomes authoritative,
+            # bind every artifact to an immutable archive and atomically promote
+            # the staged campaign tree.
             transaction_error: str | None = None
             promotion_pending = False
             promotable = (
-                result_status in {"completed", "succeeded"}
+                result_status in {"completed", "succeeded", "needs_replan"}
                 and gate.passed
                 and runtime_error is None
             )
@@ -1848,7 +1668,7 @@ def ingest_results(
                     )
                 raise
             if promotion_pending and attempt_workspace is not None:
-                if final_status != "succeeded":
+                if final_status not in {"succeeded", "needs_replan"}:
                     rollback_attempt_promotion(
                         attempt_workspace,
                         reason=f"database_rejected_promotion:{final_status}",
@@ -1905,10 +1725,7 @@ def ingest_results(
             campaign_id = str(payload["campaign_id"])
             task_type = str(task.get("task_type") or "")
             successful = final_status == "succeeded" and gate.passed
-            automatic_successors_allowed = not (
-                campaign_binding is not None
-                and workstream_policy(campaign_binding).get("continuation") == "one_shot"
-            )
+            automatic_successors_allowed = True
             if task_type == "portfolio_review" and payload.get("paper_candidate") is True:
                 report.errors.append(
                     f"Portfolio reviewer {task_id} set paper_candidate=true; ignored for "
@@ -1966,10 +1783,7 @@ def ingest_results(
                 and _workstream_state_status(campaign_binding) in {"paused", "completed"}
                 and payload.get("paper_candidate") is not True
             )
-            # one_shot is a scheduling invariant, not merely an idle-reseed hint:
-            # result ingestion, replans, paper handoffs, and candidate spawning
-            # must all stop after the first attempted task.
-            successor_handled = agent_closed_dynamic or not automatic_successors_allowed
+            successor_handled = agent_closed_dynamic
             if agent_closed_dynamic:
                 state_status = _workstream_state_status(campaign_binding or {})
                 db.pause_production_campaign(
@@ -2239,7 +2053,7 @@ def ingest_results(
                 settings.auto_continue
                 and next_plan is not None
                 and str(task.get("task_type") or "") != "smoke"
-                and (current_role != "reviewer" or authority is not None)
+                and current_role != "reviewer"
                 and not successor_handled
                 and not _explicit_terminal_freeze(payload)
                 and payload.get("paper_candidate") is not True
@@ -2354,7 +2168,7 @@ def _write_task_spec(
         "attempt_root": str(attempt_workspace.root),
         "staged_campaign_workspace": str(attempt_workspace.campaign_root),
         "canonical_campaign_workspace": str(attempt_workspace.canonical_campaign_root),
-        "promotion_policy": "validated_completed_results_only",
+        "promotion_policy": "validated_results_and_checkpoints",
     }
     policy = attempt_artifact_policy(attempt_workspace)
     if policy is not None:

@@ -1,0 +1,6 @@
+interface:
+  display_name: OpenLabs Physics Paper
+  short_description: Evidence-bound theoretical and data-driven physics writing
+  default_prompt: Use $openlabs-physics-paper to write or revise the frozen physics result without exceeding its evidence.
+policy:
+  allow_implicit_invocation: false

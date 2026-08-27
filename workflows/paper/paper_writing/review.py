@@ -18,6 +18,7 @@ from typing import Any
 CS_TOP_TIER_REVIEWER_ROLE = "cs_top_tier"
 MATHEMATICS_REVIEWER_ROLE = "math"
 MATERIALS_REVIEWER_ROLE = "materials"
+PHYSICS_REVIEWER_ROLE = "physics"
 QUANT_FINANCE_REVIEWER_ROLE = "quant_finance"
 
 INDIVIDUAL_REVIEW_SCHEMA_VERSION = "ara.paper_writing.review.v2"
@@ -38,6 +39,7 @@ LEAN_OBJECTIVE_AUDIT_KIND = "lean_mathlib"
 CS_TOP_TIER_RUBRIC_ID = "ara.revision-agent.cs-top-tier.v1"
 MATH_FOUR_JOURNALS_RUBRIC_ID = "ara.paper-writing.math-four-journals.v1"
 MATERIALS_LEADING_JOURNALS_RUBRIC_ID = "openlabs.paper-writing.materials-leading-journals.v1"
+PHYSICS_LEADING_JOURNALS_RUBRIC_ID = "openlabs.paper-writing.physics-leading-journals.v1"
 QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID = (
     "openlabs.paper-writing.quant-finance-leading-journals.v1"
 )
@@ -46,6 +48,7 @@ RECOMMENDATION_SCHEMA_VERSION = "ara.review_recommendations.v2"
 TOP_CONFERENCE_VIEW = "top_conference"
 FOUR_TOP_MATH_JOURNALS_VIEW = "four_top_math_journals"
 LEADING_MATERIALS_JOURNALS_VIEW = "leading_materials_journals"
+LEADING_PHYSICS_JOURNALS_VIEW = "leading_physics_journals"
 LEADING_QUANT_FINANCE_JOURNALS_VIEW = "leading_quant_finance_journals"
 CAS_ZONE_1_JOURNAL_VIEW = "cas_zone_1_journal"
 CAS_ZONE_1_SCOPE = "major_category"
@@ -55,6 +58,7 @@ RUBRIC_IDS_BY_ROLE = {
     CS_TOP_TIER_REVIEWER_ROLE: CS_TOP_TIER_RUBRIC_ID,
     MATHEMATICS_REVIEWER_ROLE: MATH_FOUR_JOURNALS_RUBRIC_ID,
     MATERIALS_REVIEWER_ROLE: MATERIALS_LEADING_JOURNALS_RUBRIC_ID,
+    PHYSICS_REVIEWER_ROLE: PHYSICS_LEADING_JOURNALS_RUBRIC_ID,
     QUANT_FINANCE_REVIEWER_ROLE: QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID,
 }
 
@@ -91,6 +95,12 @@ _CS_DOMAINS = {
 }
 _MATH_DOMAINS = {"math", "mathematics"}
 _MATERIALS_DOMAINS = {"material", "materials", "materials_science"}
+_PHYSICS_DOMAINS = {
+    "physics",
+    "theoretical_physics",
+    "high_energy_physics",
+    "cosmology",
+}
 _QUANT_FINANCE_DOMAINS = {"finance", "quant", "quant_finance", "quantitative_finance"}
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -127,6 +137,8 @@ def reviewer_role_for_domain(domain: Any) -> str:
         return MATHEMATICS_REVIEWER_ROLE
     if token in _MATERIALS_DOMAINS:
         return MATERIALS_REVIEWER_ROLE
+    if token in _PHYSICS_DOMAINS:
+        return PHYSICS_REVIEWER_ROLE
     if token in _QUANT_FINANCE_DOMAINS:
         return QUANT_FINANCE_REVIEWER_ROLE
     raise ValueError(f"No paper-review rubric is configured for domain: {domain!r}")
@@ -461,6 +473,10 @@ def validate_review_record(
             errors.append(
                 f"recommendations.{LEADING_QUANT_FINANCE_JOURNALS_VIEW} is only valid for quant-finance reviews"
             )
+        if LEADING_PHYSICS_JOURNALS_VIEW in recommendations:
+            errors.append(
+                f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW} is only valid for physics reviews"
+            )
     elif recommendation_role == MATHEMATICS_REVIEWER_ROLE:
         four_journals = _mapping(recommendations.get(FOUR_TOP_MATH_JOURNALS_VIEW))
         _validate_recommendation_entry(
@@ -483,6 +499,10 @@ def validate_review_record(
             errors.append(
                 f"recommendations.{LEADING_QUANT_FINANCE_JOURNALS_VIEW} is forbidden for math reviews"
             )
+        if LEADING_PHYSICS_JOURNALS_VIEW in recommendations:
+            errors.append(
+                f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW} is forbidden for math reviews"
+            )
     elif recommendation_role == MATERIALS_REVIEWER_ROLE:
         leading_materials = _mapping(recommendations.get(LEADING_MATERIALS_JOURNALS_VIEW))
         _validate_recommendation_entry(
@@ -495,12 +515,33 @@ def validate_review_record(
             TOP_CONFERENCE_VIEW,
             FOUR_TOP_MATH_JOURNALS_VIEW,
             LEADING_QUANT_FINANCE_JOURNALS_VIEW,
+            LEADING_PHYSICS_JOURNALS_VIEW,
             "conference",
         ):
             if forbidden in recommendations:
                 errors.append(
                     f"recommendations.{forbidden} is forbidden for materials reviews; "
                     "use leading_materials_journals"
+                )
+    elif recommendation_role == PHYSICS_REVIEWER_ROLE:
+        leading_physics = _mapping(recommendations.get(LEADING_PHYSICS_JOURNALS_VIEW))
+        _validate_recommendation_entry(
+            leading_physics,
+            path=f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW}",
+            decisions=JOURNAL_DECISIONS,
+            errors=errors,
+        )
+        for forbidden in (
+            TOP_CONFERENCE_VIEW,
+            FOUR_TOP_MATH_JOURNALS_VIEW,
+            LEADING_MATERIALS_JOURNALS_VIEW,
+            LEADING_QUANT_FINANCE_JOURNALS_VIEW,
+            "conference",
+        ):
+            if forbidden in recommendations:
+                errors.append(
+                    f"recommendations.{forbidden} is forbidden for physics reviews; "
+                    "use leading_physics_journals"
                 )
     elif recommendation_role == QUANT_FINANCE_REVIEWER_ROLE:
         leading_quant = _mapping(recommendations.get(LEADING_QUANT_FINANCE_JOURNALS_VIEW))
@@ -514,6 +555,7 @@ def validate_review_record(
             TOP_CONFERENCE_VIEW,
             FOUR_TOP_MATH_JOURNALS_VIEW,
             LEADING_MATERIALS_JOURNALS_VIEW,
+            LEADING_PHYSICS_JOURNALS_VIEW,
             "conference",
         ):
             if forbidden in recommendations:
@@ -1025,6 +1067,23 @@ def validate_review_panel_files(
                     f"recommendations.{LEADING_MATERIALS_JOURNALS_VIEW}.decision must equal "
                     f"{decision_aggregation} {expected}"
                 )
+    elif role == PHYSICS_REVIEWER_ROLE:
+        values = [
+            _mapping(
+                _mapping(review.get("recommendations")).get(LEADING_PHYSICS_JOURNALS_VIEW)
+            ).get("decision")
+            for review in reviewer_payloads
+        ]
+        if all(value in JOURNAL_DECISIONS for value in values):
+            expected = _aggregate_decision(values, JOURNAL_DECISIONS, decision_aggregation)
+            actual = _mapping(final_recommendations.get(LEADING_PHYSICS_JOURNALS_VIEW)).get(
+                "decision"
+            )
+            if actual != expected:
+                errors.append(
+                    f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW}.decision must equal "
+                    f"{decision_aggregation} {expected}"
+                )
     elif role == QUANT_FINANCE_REVIEWER_ROLE:
         values = [
             _mapping(
@@ -1074,6 +1133,9 @@ def review_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
     elif reviewer_role == MATERIALS_REVIEWER_ROLE:
         high_standard_view = LEADING_MATERIALS_JOURNALS_VIEW
         high_standard = _mapping(recommendations.get(LEADING_MATERIALS_JOURNALS_VIEW))
+    elif reviewer_role == PHYSICS_REVIEWER_ROLE:
+        high_standard_view = LEADING_PHYSICS_JOURNALS_VIEW
+        high_standard = _mapping(recommendations.get(LEADING_PHYSICS_JOURNALS_VIEW))
     elif reviewer_role == QUANT_FINANCE_REVIEWER_ROLE:
         high_standard_view = LEADING_QUANT_FINANCE_JOURNALS_VIEW
         high_standard = _mapping(recommendations.get(LEADING_QUANT_FINANCE_JOURNALS_VIEW))

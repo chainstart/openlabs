@@ -13,8 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .agent_runtime import runtime_context
-from .authority import action_authority_errors, resolve_workspace_authority
-from .contracts import validate_result_bundle
+from .contracts import PROMOTABLE_RESULT_STATUSES, validate_result_bundle
 from .reproduction import preflight_reproductions
 
 HOOK_RECEIPT_SCHEMA = "openlabs.codex_hook_receipt.v1"
@@ -67,26 +66,10 @@ def _stop_gate_problems(context: Mapping[str, Any]) -> list[str]:
             for key, value in expected.items():
                 if payload.get(key) != value:
                     problems.append(f"{key} must be {value!r}")
-        policy_paths = [
-            Path(str(item)).expanduser().resolve()
-            for item in context.get("authority_policy_paths", [])
-            if str(item).strip()
-        ]
-        authority = resolve_workspace_authority(
-            Path(str(context.get("agent_workspace") or "")).expanduser().resolve(),
-            policy_paths,
-        )
-        problems.extend(
-            action_authority_errors(
-                payload,
-                current_role=str(context.get("role") or "researcher"),
-                authority=authority,
-            )
-        )
-        if not validation.errors and str(payload.get("status") or "") in {
-            "completed",
-            "succeeded",
-        }:
+        if (
+            not validation.errors
+            and str(payload.get("status") or "") in PROMOTABLE_RESULT_STATUSES
+        ):
             reproduction_errors, _receipts = preflight_reproductions(
                 payload,
                 workspace_root=Path(str(context.get("agent_workspace") or ""))

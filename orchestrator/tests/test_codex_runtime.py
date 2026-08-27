@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 from openlabs.agent_runtime import configure_codex_runtime, runtime_context
 from openlabs.codex_hook import (
     _append_hook_receipt,
@@ -136,116 +135,6 @@ def test_stop_hook_reentry_revalidates_completed_result(tmp_path) -> None:
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert receipt["stop_hook_active"] is True
     assert receipt["outcome"] == "result_gate_passed"
-
-
-def _authority_policy(path) -> None:
-    (path / "authority-policy.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "openlabs.authority_policy.v1",
-                "policy_id": "test-phase-authority",
-                "state_glob": "**/campaign_state.json",
-                "state_schema_version": "test-state.v1",
-                "phase_field": "phase",
-                "exclude_path_parts": ["evidence", "audit", "results"],
-                "phase_authority": {
-                    "research": {
-                        "allowed_roles": ["researcher"],
-                        "default_role": "researcher",
-                    },
-                    "independent_audit": {
-                        "allowed_roles": ["reviewer"],
-                        "default_role": "reviewer",
-                        "required_session_mode": "fresh",
-                        "required_handoff_kind": "independent_replication",
-                    },
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-
-def test_skill_authority_rejects_creator_at_audit_and_gates_successor(tmp_path) -> None:
-    workspace = tmp_path / "attempt" / "campaign"
-    workspace.mkdir(parents=True)
-    domain_skill = tmp_path / "domain-skill"
-    _skill(domain_skill, "domain-skill")
-    _authority_policy(domain_skill)
-    atomic_write_json(
-        workspace / "nested" / "campaign_state.json",
-        {
-            "schema_version": "test-state.v1",
-            "phase": "independent_audit",
-            "updated_at": "2026-08-12T00:00:00Z",
-        },
-    )
-    atomic_write_json(
-        workspace / "nested" / "evidence" / "snapshot" / "campaign_state.json",
-        {
-            "schema_version": "test-state.v1",
-            "phase": "research",
-            "updated_at": "2026-08-12T01:00:00Z",
-        },
-    )
-    base_task = {
-        "task_id": "task-audit",
-        "campaign_id": "campaign",
-        "lab_id": "math",
-        "domain": "math",
-        "objective": "Independently reconstruct the claim.",
-        "transaction": {"canonical_campaign_workspace": "/canonical/campaign"},
-    }
-    with pytest.raises(ValueError, match="allows roles"):
-        configure_codex_runtime(
-            workspace,
-            task={
-                **base_task,
-                "agent": {"role": "researcher", "session_mode": "fresh"},
-            },
-            output_path=workspace / "result.json",
-            skill_dirs=(domain_skill,),
-        )
-
-    result_path = workspace / "result.json"
-    policy = configure_codex_runtime(
-        workspace,
-        task={
-            **base_task,
-            "agent": {"role": "reviewer", "session_mode": "fresh"},
-        },
-        output_path=result_path,
-        skill_dirs=(domain_skill,),
-    )
-    assert policy["authority"]["phase"] == "independent_audit"
-    context = runtime_context(workspace / ".codex" / "openlabs-context.json")
-    payload = {
-        "schema_version": RESULT_SCHEMA,
-        "task_id": "task-audit",
-        "campaign_id": "campaign",
-        "lab_id": "math",
-        "domain": "math",
-        "status": "completed",
-        "summary": "One reconstruction checkpoint completed.",
-        "artifacts": [],
-        "claims": [],
-        "next_actions": ["Repeat the audit."],
-    }
-    atomic_write_json(result_path, payload)
-    blocked = _stop_decision({}, context)
-    assert blocked["decision"] == "block"
-    assert "requires session_mode 'fresh'" in blocked["reason"]
-
-    payload["next_actions"] = [
-        {
-            "objective": "Repeat the reconstruction from frozen evidence.",
-            "agent_role": "reviewer",
-            "session_mode": "fresh",
-            "handoff_kind": "independent_replication",
-        }
-    ]
-    atomic_write_json(result_path, payload)
-    assert _stop_decision({}, context) == {}
 
 
 def test_hook_persists_structured_receipt(tmp_path) -> None:

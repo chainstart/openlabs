@@ -4,14 +4,11 @@ import json
 
 import pytest
 
-from openlabs.authority import AuthorityRequirement
 from openlabs.config import FactorySettings, WorkspacePaths
 from openlabs.contracts import RECEIPT_SCHEMA, RESULT_SCHEMA, atomic_write_json, sha256_file
 from openlabs.db import FactoryDB
 from openlabs.engine import (
-    ActionPlan,
     TickReport,
-    _authorized_action_plan,
     _next_action_plan,
     _replenish_continuous_campaign,
     ingest_results,
@@ -80,38 +77,6 @@ def test_independent_replication_forces_a_fresh_same_role_session() -> None:
     assert plan is not None
     assert plan.session_mode == "fresh"
     assert plan.wall_seconds == 2400
-
-
-def test_skill_authority_normalizes_audit_handoff_to_fresh_reviewer() -> None:
-    authority = AuthorityRequirement(
-        policy_id="amra-phase-authority",
-        policy_path="/trusted/authority-policy.json",
-        state_path="research/cycle/campaign_state.json",
-        phase="independent_audit",
-        allowed_roles=("reviewer",),
-        default_role="reviewer",
-        required_session_mode="fresh",
-        required_handoff_kind="independent_replication",
-        objective="Independently audit only the frozen lemma and declared evidence.",
-    )
-    plan, changes = _authorized_action_plan(
-        ActionPlan(
-            objective="Audit the frozen lemma.",
-            agent_role="researcher",
-            session_mode="resume",
-            handoff_kind="role_handoff",
-        ),
-        authority=authority,
-    )
-
-    assert plan is not None
-    assert (plan.agent_role, plan.session_mode, plan.handoff_kind) == (
-        "reviewer",
-        "fresh",
-        "independent_replication",
-    )
-    assert plan.objective == "Independently audit only the frozen lemma and declared evidence."
-    assert len(changes) == 3
 
 
 def test_valid_next_action_enqueues_one_bounded_successor(tmp_path) -> None:
@@ -288,7 +253,7 @@ def test_needs_replan_escalates_but_needs_human_stops(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("result_status", ["completed", "needs_replan"])
-def test_one_shot_blocks_every_automatic_successor_during_ingest(
+def test_legacy_one_shot_metadata_no_longer_stops_research(
     tmp_path, result_status: str
 ) -> None:
     paths = WorkspacePaths(
@@ -345,9 +310,9 @@ def test_one_shot_blocks_every_automatic_successor_during_ingest(
 
     ingest_results(db, paths, FactorySettings(max_auto_tasks_per_campaign=4), report)
 
-    assert report.enqueued == []
+    assert len(report.enqueued) == 1
     assert report.rollovers == []
-    assert db.task_count("one-shot") == 1
+    assert db.task_count("one-shot") == 2
     pause_report = TickReport()
     campaign = db.campaign("one-shot")
     assert campaign is not None
@@ -358,8 +323,8 @@ def test_one_shot_blocks_every_automatic_successor_during_ingest(
         pause_report,
         campaign,
     )
-    assert pause_report.production_paused == ["one-shot"]
-    assert db.campaign("one-shot")["status"] == "production_paused"
+    assert pause_report.production_paused == []
+    assert db.campaign("one-shot")["status"] == "active"
 
 
 def test_missing_agent_bundle_retries_the_original_objective(tmp_path) -> None:

@@ -18,6 +18,20 @@ from paper_writing.identifiers import (
 
 
 REGISTRY_SCHEMA_VERSION = "ara.paper_writing.registry.v1"
+RESEARCH_TRACKS = {
+    "open_problem_closure",
+    "bound_paper",
+    "scoped_theorem",
+    "classification",
+    "not_applicable",
+}
+DISCOVERY_SCHEDULING = {"active", "candidate", "frozen", "writing_only", "not_applicable"}
+SCIENTIFIC_VALIDATION_STATUSES = {
+    "internal_evidence_only",
+    "domain_expert_pending",
+    "independently_reconstructed",
+    "externally_reviewed",
+}
 
 
 def repository_root() -> Path:
@@ -30,7 +44,8 @@ def repository_root() -> Path:
     source = Path(__file__).resolve()
     for parent in source.parents:
         if (parent / "openlabs" / "config" / "openlabs.toml").is_file():
-            return (parent / "data").resolve()
+            data_root = parent / "openlabs-data"
+            return (data_root if data_root.is_dir() else parent / "data").resolve()
     # Compatibility fallback for an independently installed legacy workspace.
     return source.parents[1]
 
@@ -137,6 +152,7 @@ def load_registry(
             if len(target_journal.strip()) > 500:
                 raise ValueError(f"target_journal is too long for {paper_id}")
             paper["target_journal"] = target_journal.strip()
+        _validate_research_outcomes(paper, paper_id=paper_id)
         workspace = str(paper.pop("workspace", f"papers/{paper_id}")).strip("/")
         paper.setdefault("manuscript_dir", f"{workspace}/manuscript")
         source = repo_root / paper["manuscript_dir"] / "main.tex"
@@ -162,6 +178,53 @@ def load_registry(
     else:
         config["evidence_repositories"] = {}
     return config
+
+
+def _validate_research_outcomes(paper: Mapping[str, Any], *, paper_id: str) -> None:
+    """Validate scientific status without coupling it to manuscript readiness."""
+
+    track = paper.get("research_track")
+    scheduling = paper.get("discovery_scheduling")
+    outcomes = paper.get("research_outcomes")
+    scientific_validation = paper.get("scientific_validation")
+    if track is None and scheduling is None and outcomes is None and scientific_validation is None:
+        return
+    if track not in RESEARCH_TRACKS:
+        raise ValueError(f"invalid research_track for {paper_id}: {track!r}")
+    if scheduling not in DISCOVERY_SCHEDULING:
+        raise ValueError(f"invalid discovery_scheduling for {paper_id}: {scheduling!r}")
+    if not isinstance(outcomes, Mapping):
+        raise ValueError(f"research_outcomes must be an object for {paper_id}")
+    if "writing_package_ready" in outcomes:
+        raise ValueError(
+            f"writing_package_ready is derived from writing_release and must not be declared for {paper_id}"
+        )
+    evidence = outcomes.get("evidence")
+    if not isinstance(evidence, Mapping):
+        raise ValueError(f"research_outcomes.evidence must be an object for {paper_id}")
+    for field in ("original_problem_closed", "new_bound_or_scoped_theorem"):
+        value = outcomes.get(field)
+        if value not in {True, False, None}:
+            raise ValueError(
+                f"research_outcomes.{field} must be true, false, or null for {paper_id}"
+            )
+        support = evidence.get(field)
+        if value is not None and (not isinstance(support, str) or not support.strip()):
+            raise ValueError(f"research_outcomes.{field} needs evidence for {paper_id}")
+    if (
+        track in {"bound_paper", "scoped_theorem", "classification", "not_applicable"}
+        and scheduling == "active"
+    ):
+        raise ValueError(f"research_track {track} cannot be active discovery for {paper_id}")
+    if not isinstance(scientific_validation, Mapping):
+        raise ValueError(f"scientific_validation must be an object for {paper_id}")
+    validation_status = scientific_validation.get("status")
+    if validation_status not in SCIENTIFIC_VALIDATION_STATUSES:
+        raise ValueError(f"invalid scientific_validation.status for {paper_id}")
+    if validation_status in {"internal_evidence_only", "domain_expert_pending"}:
+        blocker = scientific_validation.get("promotion_blocker")
+        if not isinstance(blocker, str) or not blocker.strip():
+            raise ValueError(f"scientific_validation needs a promotion_blocker for {paper_id}")
 
 
 def load_paper_metadata(paper_id: str, root: str | Path | None = None) -> dict[str, Any]:

@@ -41,24 +41,6 @@ def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tupl
         "---\nname: unrelated-method\ndescription: Must remain optional.\n---\n",
         encoding="utf-8",
     )
-    atomic_write_json(
-        unrelated_skill / "authority-policy.json",
-        {
-            "schema_version": "openlabs.authority_policy.v1",
-            "policy_id": "unrelated-authority",
-            "state_glob": "**/state.json",
-            "state_schema_version": "test-state.v1",
-            "phase_field": "phase",
-            "phase_authority": {
-                "audit": {
-                    "allowed_roles": ["reviewer"],
-                    "default_role": "reviewer",
-                    "required_session_mode": "fresh",
-                    "required_handoff_kind": "independent_replication",
-                }
-            },
-        },
-    )
     protocol_script.write_text(
         "import argparse,json\n"
         "from pathlib import Path\n"
@@ -138,8 +120,6 @@ def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tupl
                 "primary_skill": "test-protocol",
             },
             "execution": {
-                "checkpoint_policy": "role_boundary_or_budget",
-                "continue_across_protocol_phases": True,
                 "default_session_mode": "resume",
                 "fresh_session_boundaries": [
                     "independent_replication",
@@ -169,16 +149,13 @@ def test_generic_project_config_selects_protocol_without_core_changes(tmp_path) 
     campaign = db.campaign("stream-one")
 
     assert project.protocol_id == "test-protocol"
-    assert project.execution.continue_across_protocol_phases is True
     assert report.production_synced == ["stream-one"]
     assert campaign is not None
     assert campaign["project_config_path"] == str(project_path)
     assert campaign["workstream_state_path"] == str(state_path)
     assert campaign["protocol_id"] == "test-protocol"
     assert campaign["primary_skill"] == "test-protocol"
-    assert json.loads(campaign["execution_policy_json"])[
-        "continue_across_protocol_phases"
-    ] is True
+    assert json.loads(campaign["execution_policy_json"])["default_session_mode"] == "resume"
     assert _validate_bound_protocol(paths, campaign) == ()
 
 
@@ -188,7 +165,7 @@ def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
     payload = json.loads(project_path.read_text(encoding="utf-8"))
     payload["workstreams"][0].update(
         {
-            "continuation": "one_shot",
+            "continuation": "continuous",
             "wall_seconds": 14_400,
             "max_agent_seconds": 14_400,
             "resources": {
@@ -207,7 +184,7 @@ def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
 
     assert policy["wall_seconds"] == 14_400
     assert policy["max_agent_seconds"] == 14_400
-    assert policy["continuation"] == "one_shot"
+    assert policy["continuation"] == "continuous"
     assert policy["resources"] == {
         "cpu_threads": 5,
         "memory_mib": 8_192,
@@ -238,40 +215,11 @@ def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
     second_report = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
     campaign = FactoryDB(paths.database_file).campaign("stream-one")
 
-    assert second_report.production_paused == ["stream-one"]
+    assert second_report.production_paused == []
     assert campaign is not None
-    assert campaign["status"] == "production_paused"
-    assert campaign["continuous"] == 0
-    assert FactoryDB(paths.database_file).task_count("stream-one") == 1
-
-
-def test_one_shot_reseeds_a_task_cancelled_before_its_first_attempt(tmp_path) -> None:
-    paths = _paths(tmp_path)
-    project_path, _ = _generic_project(paths)
-    payload = json.loads(project_path.read_text(encoding="utf-8"))
-    payload["workstreams"][0]["continuation"] = "one_shot"
-    atomic_write_json(project_path, payload)
-    settings = FactorySettings(auto_continue=True, launch_jobs=False)
-
-    tick(paths, settings)
-    db = FactoryDB(paths.database_file)
-    first = db.latest_task("stream-one")
-    assert first is not None
-    with db.connect() as connection:
-        connection.execute(
-            "UPDATE tasks SET status='cancelled' WHERE task_id=?",
-            (first["task_id"],),
-        )
-
-    report = tick(paths, settings)
-    replacement = db.latest_task("stream-one")
-
-    assert report.production_paused == []
-    assert report.production_reseeded == ["stream-one"]
-    assert replacement is not None
-    assert replacement["task_id"] != first["task_id"]
-    assert replacement["status"] == "queued"
-    assert db.task_count("stream-one") == 2
+    assert campaign["status"] == "active"
+    assert campaign["continuous"] == 1
+    assert FactoryDB(paths.database_file).task_count("stream-one") == 2
 
 
 @pytest.mark.parametrize(

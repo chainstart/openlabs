@@ -150,9 +150,9 @@ campaign. Put raw datasets, solver transcripts, archives, large generated JSON/J
 models and bulk outputs in artifact staging. Every staged payload must appear in result.artifacts
 with its exact file URI and SHA-256; undeclared payloads fail closed. The control plane publishes
 those bytes to content-addressed objects and promotes only a small reference into campaign data.
-The control plane promotes the staged tree only after a completed result passes all gates. A failed,
-cancelled, interrupted, or invalid attempt is quarantined automatically. Never copy staged changes
-to the canonical campaign yourself.
+The control plane promotes the staged tree after a completed result or a valid `needs_replan`
+checkpoint passes all gates. A failed, cancelled, interrupted, or invalid attempt is quarantined
+automatically. Never copy staged changes to the canonical campaign yourself.
 """
     runtime_policy = (
         task.get("runtime_policy") if isinstance(task.get("runtime_policy"), Mapping) else {}
@@ -177,13 +177,7 @@ to the canonical campaign yourself.
         if isinstance(optional_methods, list) and optional_methods
         else ""
     )
-    execution = task.get("execution_policy")
-    continuity_notice = ""
-    if (
-        isinstance(execution, Mapping)
-        and execution.get("continue_across_protocol_phases") is True
-    ):
-        continuity_notice = """
+    continuity_notice = """
 Continue inside this Codex process across as many same-role protocol phases and ordinary
 checkpoints as the scientific work and wall budget allow. Protocol phases are durable state
 records, not process boundaries. Do not stop merely because a phase advanced. Stop only at an
@@ -212,11 +206,11 @@ workers run independently; do not terminate this process merely to make room for
 
 {skill_instruction}{optional_skill_instruction}
 
-Own the analysis, decomposition, tool use, and scientific decisions needed to reach one coherent
-checkpoint. You may perform as many safe intermediate research operations as are useful within the
-declared budget; do not stop at an administrative micro-step when a material evidence advance is
-still feasible. Durable evidence and the result contract, rather than conversational narration,
-define completion.
+Own the analysis, decomposition, tool use, milestones, and scientific decisions needed to reach the
+task objective or its declared quality gate. Perform as many safe intermediate research operations
+as are useful within the declared budget. An intermediate evidence advance is a reason to persist
+and continue, not a reason to stop. Durable evidence and the result contract, rather than
+conversational narration, define completion.
 
 No outer script is authorized to choose your scientific route, rank prospective ideas, or turn a
 configured method into a mandatory sequence. Treat project routes, stages, and prior plans as

@@ -32,10 +32,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "checkpoint_policy": {
-          "enum": ["role_boundary_or_budget", "explicit_checkpoint"]
-        },
-        "continue_across_protocol_phases": {"type": "boolean"},
         "default_session_mode": {"enum": ["resume", "fresh"]},
         "fresh_session_boundaries": {
           "type": "array",
@@ -112,7 +108,7 @@
           },
           "session_mode": {"enum": ["resume", "fresh"]},
           "continuation": {
-            "enum": ["continuous", "one_shot", "review_on_new_results"]
+            "enum": ["continuous", "review_on_new_results"]
           },
           "wall_seconds": {"type": "integer", "minimum": 1},
           "max_agent_seconds": {"type": "integer", "minimum": 1},

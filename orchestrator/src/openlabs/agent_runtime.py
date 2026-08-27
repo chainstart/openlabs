@@ -16,11 +16,6 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .authority import (
-    authority_policy_paths,
-    resolve_workspace_authority,
-    task_authority_errors,
-)
 from .contracts import RESULT_SCHEMA, atomic_write_json
 
 RUNTIME_POLICY_SCHEMA = "openlabs.codex_runtime.v1"
@@ -82,7 +77,6 @@ def configure_codex_runtime(
     active_source_set = set(active_sources)
     installed: dict[str, str] = {}
     active_names: list[str] = []
-    active_policy_sources: list[Path] = []
     optional_methods: list[dict[str, str]] = []
     optional_sources: dict[str, str] = {}
     for raw_path in active_sources:
@@ -96,7 +90,6 @@ def configure_codex_runtime(
             installed[name] = str(skill_dir)
         if name not in active_names:
             active_names.append(name)
-            active_policy_sources.append(skill_dir)
     for raw_path in available_skill_dirs:
         skill_dir = raw_path.expanduser().resolve()
         name = _skill_name(skill_dir)
@@ -117,17 +110,6 @@ def configure_codex_runtime(
             {"name": name, "path": str(target / "SKILL.md")}
         )
         optional_sources[name] = str(skill_dir)
-
-    policy_paths = authority_policy_paths(active_policy_sources)
-    authority = resolve_workspace_authority(workspace, policy_paths)
-    agent = task.get("agent") if isinstance(task.get("agent"), Mapping) else {}
-    authority_errors = task_authority_errors(
-        role=agent.get("role"),
-        session_mode=agent.get("session_mode"),
-        authority=authority,
-    )
-    if authority_errors:
-        raise ValueError("Task violates the active Skill authority: " + "; ".join(authority_errors))
 
     expected = {
         "schema_version": RESULT_SCHEMA,
@@ -154,8 +136,6 @@ def configure_codex_runtime(
         "skills": skill_invocations,
         "optional_methods": optional_methods,
         "skill_source_root": str(skills_root),
-        "authority_policy_paths": [str(path) for path in policy_paths],
-        "initial_authority": authority.to_dict() if authority else None,
         "hook_receipt_path": str(hook_receipt_path),
     }
     context_path = atomic_write_json(codex_root / "openlabs-context.json", context)
@@ -207,7 +187,6 @@ def configure_codex_runtime(
         "hook_receipts": str(hook_receipt_path),
         "skills": skill_invocations,
         "optional_methods": optional_methods,
-        "authority": authority.to_dict() if authority else None,
     }
 
 

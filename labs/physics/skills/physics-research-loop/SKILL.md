@@ -5,30 +5,31 @@ description: Run auditable analytical, computational, or public-data physics res
 
 # Physics Research Loop
 
-Advance one precise claim or obstruction, not a broad field slogan.
+Own the configured physics objective and freely choose its decomposition, hypotheses, analytical
+route, computation, public data, tools, milestones, and route changes. The items below are
+claim-quality requirements, not a prescribed research process.
 
-1. Freeze the question, physical regime, observable, assumptions, units, sign/gauge/frame conventions,
-   comparator and a result that would falsify or stop the route. Load the workstream's
-   `resolution_decision.json` before research and do not silently broaden or narrow its current
-   question.
-2. Establish a dated closest-work boundary. Separate published facts, standard assumptions, numerical
-   evidence, conjectures and the exact unresolved increment. Recheck before claim promotion.
-3. Select the smallest adequate tool route. Prefer analytic or exact checks before expensive numerics;
-   reduce symmetry, dimensionality or truncation before increasing resources.
-4. Register public data before analysis and preserve raw bytes immutably. Record source, terms,
-   citation, acquisition time and SHA-256; never copy credentials or restricted data into OpenLabs.
-5. Record each consequential computation with code/input/environment/output hashes, command, precision,
-   randomness and numerical controls. Preserve null results, failed routes and counterexamples.
-6. Check dimensions, limiting cases, symmetries, conservation laws and known benchmarks. A fit or a
-   visually convincing plot is not a mechanism or proof.
-7. Promote a claim to `verified` only after at least two genuinely independent evidence routes agree
-   (for example analytic plus numeric, two formulations, or an isolated replication context).
-8. Update the durable workstream and write the bounded OpenLabs result bundle. Report the bounded
-   `task_status` separately from the machine-derived `problem_verdict`: a successful audit, baseline,
-   blocker, null result or literature update can complete a round while the open problem remains
-   `open`. Never declare a problem solved unless every criterion in one declared resolution route is
-   `met` with evidence. Use a fresh context for independent replication, adversarial review or route
-   reselection.
+- State the exact question, regime, observable, assumptions, units, sign/gauge/frame conventions,
+  comparator, and falsifier for every promoted claim. Load `resolution_decision.json` so changes in
+  scope are explicit rather than silent.
+- Maintain a dated closest-work boundary. Separate published facts, assumptions, numerical
+  evidence, conjectures, and the unresolved increment; recheck novelty before promotion.
+- Register public data and preserve raw bytes immutably. Record source, terms, citation,
+  acquisition time, and SHA-256; never place credentials or restricted data in OpenLabs.
+- Bind consequential computations to code/input/environment/output hashes, exact commands,
+  precision, randomness, convergence controls, and applicable dimensional, limiting-case,
+  symmetry, conservation-law, and benchmark checks.
+- Preserve null results, failed routes, and counterexamples. A fit or visually convincing plot is
+  not by itself a mechanism or proof.
+- Mark a claim `verified` only when independent evidence appropriate to that claim agrees. Use a
+  fresh context for an independent replication or adversarial review.
+
+An intermediate audit, baseline, null result, obstruction, lemma, or literature update is a durable
+advance but does not complete an active problem-solving task. Persist it and continue while the
+task budget and role permit. Stop only on the task's scientific/quality target, a genuine
+all-routes external blocker, an independent-review boundary, or a safe end-of-budget checkpoint.
+Never declare the problem solved unless every criterion in a declared resolution route is `met`
+with evidence. A `needs_replan` checkpoint must name an executable next attack.
 
 Read [evidence-gates.md](references/evidence-gates.md) before supporting a claim,
 [problem-resolution.md](references/problem-resolution.md) before closing a round or changing an

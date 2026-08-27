@@ -22,6 +22,7 @@ def test_profiles_are_explicit_bounded_and_pinned() -> None:
         "ai_ml",
         "mathematics",
         "materials",
+        "physics",
         "quantitative_finance",
     }
 
@@ -84,6 +85,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "se": "top_conference",
         "math": "four_top_math_journals",
         "materials": "leading_materials_journals",
+        "physics": "leading_physics_journals",
         "quant": "leading_quant_finance_journals",
     }
     assert profiles["quality_gate"]["recommendation_views"] == {
@@ -92,6 +94,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "se": ["top_conference", "cas_zone_1_journal"],
         "math": ["four_top_math_journals", "cas_zone_1_journal"],
         "materials": ["leading_materials_journals", "cas_zone_1_journal"],
+        "physics": ["leading_physics_journals", "cas_zone_1_journal"],
         "quant": ["leading_quant_finance_journals", "cas_zone_1_journal"],
     }
     assert profiles["quality_gate"]["gate_decision_standard"] == "cas_zone_1_journal"
@@ -102,6 +105,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "se": "cs_top_tier",
         "math": "math",
         "materials": "materials",
+        "physics": "physics",
         "quant": "quant_finance",
     }
     assert profiles["quality_gate"]["reviewer_rubric_ids"] == {
@@ -110,6 +114,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "se": "ara.revision-agent.cs-top-tier.v1",
         "math": "ara.paper-writing.math-four-journals.v1",
         "materials": "openlabs.paper-writing.materials-leading-journals.v1",
+        "physics": "openlabs.paper-writing.physics-leading-journals.v1",
         "quant": "openlabs.paper-writing.quant-finance-leading-journals.v1",
     }
     rubric_text = (review_skill / "references" / "rubrics.md").read_text(encoding="utf-8")

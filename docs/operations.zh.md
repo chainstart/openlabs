@@ -118,7 +118,8 @@ provider 可用 `OPENLABS_AGENT_PREFLIGHT_URL` 明确指定预检地址。
 进程并在完成后退出。节点内部可以跨越多个不应持久化为边界的微步骤；等待外部实验、形成
 原子 checkpoint、改变角色或进入独立审阅时才结束节点。让同一 Codex OS 进程空转两天不会
 免除模型处理活动上下文的 token 成本，还会扩大恢复和资源泄漏面，因此不作为连续性机制。
-独立复现实验、`needs_replan`、从研究切换到首次写作，以及所有 reviewer 都启动空白会话；
+独立复现实验、从研究切换到首次写作，以及所有 reviewer 都启动空白会话；普通
+`needs_replan` 在同一研究角色与有效 session 存在时可恢复，否则启动空白会话；
 reviewer 不接收作者或其他 reviewer 的 session。
 结果中的普通字符串 `next_action` 续接当前角色；跨角色或独立同角色运行必须使用结果合同中的
 结构化 action。角色切换默认强制为 `fresh`；唯一例外是 `paper_review` 返回
@@ -127,9 +128,10 @@ reviewer session。`evidence_remediation` 永远先启动空白 researcher/exper
 
 项目 workstream 可同时声明单任务 `wall_seconds` 与该生产 epoch 的
 `max_agent_seconds`；后者会同步到 campaign 账本并在实际启动时再次收紧任务墙钟。
-`continuation: one_shot` 是全局调度不变量：首次已尝试任务结束后，普通 continuation、
-`needs_replan`、论文角色交接和候选分支都不得隐式补种，workstream 会转为
-`production_paused`。只有 attempt 计数仍为 0 的管理员取消任务允许重新补种。
+研究 workstream 只使用 `continuation: continuous`。中间证据增量不能终止活动课题；有效
+`needs_replan` 会连同私有状态原子晋级，并按其可执行动作继续。只有达到目标/质量门禁、总
+Agent-time 耗尽、真实外部阻塞、明确的独立角色边界，或协议状态被 Codex 标为终态时才停链。
+`review_on_new_results` 仅用于按新结果机械触发独立组合审查。
 
 论文门禁的第二位审阅人不复用上述 Codex session。它由
 `run_claude_reviewer.py` 启动一次全新的 Claude Code `claude-opus-5` 进程，并从用户自己的

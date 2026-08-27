@@ -15,6 +15,10 @@ from paper_writing.identifiers import (
     work_id_from_paper_id,
 )
 from paper_writing.inventory import build_inventory
+from paper_writing.manuscript_style import (
+    audit_manuscript_style,
+    manuscript_style_blockers,
+)
 from paper_writing.registry import (
     load_paper_metadata,
     load_registry,
@@ -26,8 +30,10 @@ from paper_writing.review import (
     CS_TOP_TIER_REVIEWER_ROLE,
     FOUR_TOP_MATH_JOURNALS_VIEW,
     LEADING_MATERIALS_JOURNALS_VIEW,
+    LEADING_PHYSICS_JOURNALS_VIEW,
     LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     MATERIALS_REVIEWER_ROLE,
+    PHYSICS_REVIEWER_ROLE,
     QUANT_FINANCE_REVIEWER_ROLE,
     TOP_CONFERENCE_VIEW,
     decision_meets_standard_threshold,
@@ -83,7 +89,14 @@ def create_paper(
         (workspace / folder).mkdir(parents=True, exist_ok=True)
     (workspace / "manuscript" / "main.tex").write_text(
         "\\documentclass{article}\n\\title{" + title + "}\n\\author{}\n"
-        "\\begin{document}\n\\maketitle\n\\begin{abstract}\n\\end{abstract}\n\\end{document}\n",
+        "\\begin{document}\n\\maketitle\n\\begin{abstract}\n\\end{abstract}\n"
+        "\\section*{Generative AI declaration}\n"
+        "During the preparation of this work, the authors used OpenAI GPT-5.6 "
+        "through Codex to assist with manuscript drafting, editing, and technical "
+        "preparation. The authors reviewed and edited all AI-assisted text and take "
+        "full responsibility for the article. AI-generated output was not treated as "
+        "evidence, mathematical proof, formal verification, or external peer review.\n"
+        "\\end{document}\n",
         encoding="utf-8",
     )
     (workspace / "manuscript" / "references.bib").write_text("", encoding="utf-8")
@@ -189,6 +202,18 @@ def record_quality_gate(
 
     settings = load_registry(repo_root)
     gate = settings.get("quality_gate", {})
+    style_audit: dict[str, Any] | None = None
+    if bool(gate.get("require_manuscript_style_check", False)):
+        style_audit = audit_manuscript_style(
+            paper_id,
+            root=repo_root,
+            require_ai_declaration=bool(gate.get("require_ai_use_declaration", True)),
+        )
+        blockers.extend(
+            blocker
+            for blocker in manuscript_style_blockers(style_audit)
+            if blocker not in blockers
+        )
     minimum_score = float(gate.get("minimum_score", 5.0))
     maximum_rounds = int(gate.get("maximum_revision_rounds", 3))
     if revision_rounds > maximum_rounds:
@@ -291,6 +316,7 @@ def record_quality_gate(
         "manuscript_snapshot_sha256": snapshot_sha256,
         "support_package_sha256": release_record.get("support_package_sha256"),
         "support_materials_audit": support_audit,
+        "manuscript_style_audit": style_audit,
     }
 
 
@@ -369,6 +395,9 @@ def apply_review_record(
     elif expected_role == MATERIALS_REVIEWER_ROLE:
         high_standard_view = LEADING_MATERIALS_JOURNALS_VIEW
         high_standard = recommendations[LEADING_MATERIALS_JOURNALS_VIEW]
+    elif expected_role == PHYSICS_REVIEWER_ROLE:
+        high_standard_view = LEADING_PHYSICS_JOURNALS_VIEW
+        high_standard = recommendations[LEADING_PHYSICS_JOURNALS_VIEW]
     elif expected_role == QUANT_FINANCE_REVIEWER_ROLE:
         high_standard_view = LEADING_QUANT_FINANCE_JOURNALS_VIEW
         high_standard = recommendations[LEADING_QUANT_FINANCE_JOURNALS_VIEW]

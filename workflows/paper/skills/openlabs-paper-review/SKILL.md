@@ -1,6 +1,6 @@
 ---
 name: openlabs-paper-review
-description: Run OpenLabs' independent dual-provider paper gate for AI, computer-science, software-engineering, mathematics, materials-science, or quantitative-finance manuscripts. Use when one fresh Codex reviewer and one blind Packy Claude Code Opus 5 reviewer must score the same frozen manuscript, or when validating their conservative panel result.
+description: Run OpenLabs' independent dual-provider paper gate for AI, computer-science, software-engineering, mathematics, materials-science, physics, or quantitative-finance manuscripts. Use when one fresh Codex reviewer and one blind Packy Claude Code Opus 5 reviewer must score the same frozen manuscript, or when validating their conservative panel result.
 ---
 
 # OpenLabs paper review
@@ -112,6 +112,8 @@ Read `references/rubrics.md` completely and route from the registry's literal do
   the American Mathematical Society*, and *Acta Mathematica*, with `four_top_math_journals` and
   `cas_zone_1_journal` recommendations and no conference view;
 - `materials`: `materials`, with `leading_materials_journals` and
+  `cas_zone_1_journal` recommendations;
+- `physics`: `physics`, with `leading_physics_journals` and
   `cas_zone_1_journal` recommendations;
 - `quant`: `quant_finance`, with `leading_quant_finance_journals` and
   `cas_zone_1_journal` recommendations;

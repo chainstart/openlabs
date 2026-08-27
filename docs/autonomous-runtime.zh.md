@@ -65,8 +65,9 @@ Hook 只负责：
    初始化数据库不得把后者回写到前者。
 4. 通过身份校验的当前回执一旦发现结果损坏，立即终结并隔离 attempt；不等待租约过期。
 5. 启动失败、结果拒绝、租约过期、取消和预算停止都必须给 attempt 写入终态。
-6. 只有通过结果契约、证据门禁和不可变快照的 `completed` 结果可以原子晋升 campaign。
-7. 协议只激活 `runtime_skills` 声明的 Skill/authority；同实验室其他 Skill 可发现但不构成
+6. 只有通过结果契约、证据门禁、协议状态验证和不可变快照的 `completed` 结果或
+   `needs_replan` 检查点可以原子晋升 campaign；后者不等于成功，且必须携带可执行后继动作。
+7. 协议只激活 `runtime_skills` 声明的 Skill；同实验室其他 Skill 可发现但不构成
    当前任务的强制规则。
 8. project index、review packet/cursor 属可重建或哈希绑定的控制面元数据；它们不放在
    reviewer 可写并可晋升的 campaign 树中，物化失败必须幂等重试。

@@ -1,13 +1,14 @@
 ---
 name: openlabs-research-factory
-description: Coordinate a bounded, recoverable OpenLabs research episode by reading durable task and campaign state, autonomously decomposing the objective with the matching domain Skill, obeying epistemic-role and transaction boundaries, and emitting a versioned evidence-bound checkpoint. Use for scheduled research, experiment, writing, independent review, continuation, recovery, or replan tasks; never write the runtime database directly, cross role boundaries, or treat agent prose as validated evidence.
+description: Pursue an OpenLabs research objective autonomously inside resource, transaction, evidence, and epistemic-independence boundaries, while preserving recoverable versioned results. Use for scheduled research, experiment, writing, independent review, continuation, recovery, or replan tasks; never write the runtime database directly, cross independent-review boundaries, or treat agent prose as validated evidence.
 ---
 
 # OpenLabs Research Factory
 
-Own one useful, checkpointed research episode. Autonomously analyze, choose tools, revise the route,
-and perform as many intermediate operations as are useful within the reservation. Let the domain
-Skill govern scientific method; keep this Skill focused on boundaries, recovery, and handoff.
+Own the scientific objective for the full reservation. Autonomously analyze, choose tools, revise
+the route, set or replace intermediate milestones, and perform any safe in-scope operation that is
+useful. Domain Skills define evidence semantics, not a mandatory research sequence; this Skill is
+limited to resource, transaction, recovery, evidence, and independent-review boundaries.
 
 The control plane never chooses a scientific route, scores a prospective idea, interprets a result,
 or manufactures continuation. Project configuration may provide objectives, history, and available
@@ -23,7 +24,8 @@ executing typed agent handoffs.
 2. Read the referenced campaign state, latest checkpoint, prior failed routes, and declared inputs.
 3. Read the selected lab manifest and its domain `SKILL.md` completely.
 4. Confirm that the task output is inside the declared campaign workspace or artifact store.
-5. Treat missing state, evidence, credentials, software, or authority as a visible blocker.
+5. Treat missing state, evidence, credentials, or software as a visible blocker only after safe
+   in-scope alternatives have been exhausted.
 
 Do not read SQLite directly and never update it. The deterministic tick owns leases and state
 transitions. Communicate only through the task file, campaign files, immutable artifacts, and the
@@ -32,9 +34,9 @@ result bundle.
 When the task declares `transaction.mode: isolated_attempt_workspace`, every writable campaign
 path in the task already points to a private staged copy. Write only there and use only staged
 `file://` URIs in the result. Never edit or copy files into the declared canonical campaign path.
-The control plane is the sole committer: a validated completed node is promoted atomically; an
-interrupted, cancelled, failed, or rejected node remains a quarantined checkpoint and cannot alter
-the authoritative lane.
+The control plane is the sole committer: a validated completed result or `needs_replan` checkpoint
+is promoted atomically; an interrupted, cancelled, failed, or rejected node remains quarantined
+and cannot alter the authoritative lane.
 
 The same transaction declares `artifact_staging_root`. Keep evolving, human-readable research
 state, proof/source text, small verification receipts, summaries, and manifests in the staged
@@ -48,8 +50,8 @@ promotes only a small reference manifest into campaign state.
 
 ## Obey the Agent boundary
 
-Treat `agent.role` and `agent.session_mode` as authority, not suggestions. One OS process owns one
-bounded task, but it should stay alive across ordinary same-role protocol phases and checkpoints
+Treat `agent.role` and `agent.session_mode` as independence boundaries. One OS process owns one
+bounded task and stays alive across ordinary same-role protocol states and intermediate milestones
 until a real stop condition occurs. Continuity across an unavoidable process boundary comes from a
 resumable logical session plus durable files.
 
@@ -76,18 +78,18 @@ that task's own ancestry, never the reviewer session.
 
 Start from the durable objective and choose the highest-information admissible route. Decompose and
 iterate without waiting for the outer scheduler: inspect evidence, formulate or revise hypotheses,
-run tools, test failure modes, and consolidate the result. A checkpoint may contain several proof
-operations, computations, searches, or repairs when they form one coherent evidence advance.
+run tools, test failure modes, and consolidate the result. A durable checkpoint may contain several
+proof operations, computations, searches, or repairs. It is a recovery mechanism, not a completion
+criterion. A material intermediate result—including a killed route, useful lemma, new dataset,
+baseline, null result, or partial reconstruction—should be persisted and followed by the next best
+research action while budget remains.
 
-Stop the episode when it has produced a material evidence delta, decisively killed a route, reached
-a genuine blocker, encountered a role/authority boundary, or needs to reserve time to persist a
-recoverable checkpoint. Do not stop merely because one administrative substep or one file edit is
-complete.
-
-When the task execution policy allows phase continuity, a material intermediate delta is a reason
-to persist state, not automatically a reason to exit. Continue the same process if the role,
-authority, scientific objective, and resource reservation remain valid. Other admitted workers are
-independent processes; their existence does not require this process to terminate.
+Stop only when the requested scientific objective or declared quality gate is reached, all safe
+in-scope routes are genuinely blocked by missing external state or authority, an independent
+epistemic role must take over, or the remaining wall budget is needed to persist a safe
+`needs_replan` checkpoint. Every `needs_replan` checkpoint must include an executable autonomous
+next action. Other admitted workers are independent processes; their existence is not a reason to
+terminate.
 
 - Prefer a decisive test over producing more prose or files.
 - Reuse registered tools before creating a new implementation.
@@ -112,9 +114,10 @@ only when its evidence artifacts are named, present, and hash-bound. Apply domai
 tests, statistical checks, exact computation, simulation convergence checks, or formal proof tools.
 An LLM review is not a substitute for any applicable oracle.
 
-Use `needs_replan` when a route failed but an autonomous alternative is available. Use
-`needs_human` only when new authority or a genuinely consequential choice is required. A blocked
-campaign must not block unrelated campaigns.
+Use `needs_replan` only as a durable, evidence-valid checkpoint when the current process cannot
+safely continue before its budget ends; include the next executable route. Use `needs_human` only
+when new authority or a genuinely consequential external choice is required. A blocked campaign
+must not block unrelated campaigns.
 
 ## Emit the result
 

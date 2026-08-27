@@ -30,9 +30,11 @@ from paper_writing.review import (
     INDIVIDUAL_REVIEW_SCHEMA_VERSION,
     JOURNAL_DECISIONS,
     LEADING_MATERIALS_JOURNALS_VIEW,
+    LEADING_PHYSICS_JOURNALS_VIEW,
     LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     MATERIALS_REVIEWER_ROLE,
     MATHEMATICS_REVIEWER_ROLE,
+    PHYSICS_REVIEWER_ROLE,
     QUANT_FINANCE_REVIEWER_ROLE,
     REVIEW_DECISION_AGGREGATION,
     REVIEW_PANEL_SIZE,
@@ -272,6 +274,13 @@ def main(argv: list[str] | None = None) -> int:
         high_entries = [entry[LEADING_MATERIALS_JOURNALS_VIEW] for entry in recommendations]
         final_recommendations = {
             LEADING_MATERIALS_JOURNALS_VIEW: _aggregate_recommendation(
+                high_entries, order=JOURNAL_DECISIONS
+            )
+        }
+    elif expected_role == PHYSICS_REVIEWER_ROLE:
+        high_entries = [entry[LEADING_PHYSICS_JOURNALS_VIEW] for entry in recommendations]
+        final_recommendations = {
+            LEADING_PHYSICS_JOURNALS_VIEW: _aggregate_recommendation(
                 high_entries, order=JOURNAL_DECISIONS
             )
         }

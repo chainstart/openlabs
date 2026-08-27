@@ -17,8 +17,7 @@ from .resources import ResourceVector
 
 PROJECT_SCHEMA = "openlabs.project.v1"
 PROJECT_STATUSES = frozenset({"active", "paused", "retired"})
-CHECKPOINT_POLICIES = frozenset({"role_boundary_or_budget", "explicit_checkpoint"})
-WORKSTREAM_CONTINUATIONS = frozenset({"continuous", "one_shot", "review_on_new_results"})
+WORKSTREAM_CONTINUATIONS = frozenset({"continuous", "review_on_new_results"})
 AGENT_ROLES = frozenset({"researcher", "experimenter", "writer", "reviewer"})
 EPISTEMIC_FRESH_BOUNDARIES = frozenset(
     {
@@ -32,8 +31,6 @@ EPISTEMIC_FRESH_BOUNDARIES = frozenset(
 
 @dataclass(frozen=True)
 class ExecutionPolicy:
-    checkpoint_policy: str = "role_boundary_or_budget"
-    continue_across_protocol_phases: bool = True
     default_session_mode: str = "resume"
     fresh_session_boundaries: tuple[str, ...] = (
         "independent_replication",
@@ -44,8 +41,6 @@ class ExecutionPolicy:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "checkpoint_policy": self.checkpoint_policy,
-            "continue_across_protocol_phases": self.continue_across_protocol_phases,
             "default_session_mode": self.default_session_mode,
             "fresh_session_boundaries": list(self.fresh_session_boundaries),
         }
@@ -175,11 +170,6 @@ def load_project(path: str | Path) -> ProjectConfig:
     execution_value = payload.get("execution", {})
     if not isinstance(execution_value, Mapping):
         raise ValueError("project execution must be an object")
-    checkpoint_policy = _text(
-        execution_value.get("checkpoint_policy") or "role_boundary_or_budget"
-    )
-    if checkpoint_policy not in CHECKPOINT_POLICIES:
-        raise ValueError(f"unknown checkpoint policy: {checkpoint_policy!r}")
     default_session_mode = _text(
         execution_value.get("default_session_mode") or "resume"
     )
@@ -202,15 +192,10 @@ def load_project(path: str | Path) -> ProjectConfig:
             "project fresh_session_boundaries contain unknown handoff kinds: "
             + ", ".join(sorted(unknown_boundaries))
         )
-    continuation_value = execution_value.get("continue_across_protocol_phases", True)
-    if not isinstance(continuation_value, bool):
-        raise ValueError("project continue_across_protocol_phases must be a boolean")
     normalized_boundaries = tuple(str(item).strip() for item in boundaries_value)
     if len(normalized_boundaries) != len(set(normalized_boundaries)):
         raise ValueError("project fresh_session_boundaries cannot contain duplicates")
     execution = ExecutionPolicy(
-        checkpoint_policy=checkpoint_policy,
-        continue_across_protocol_phases=continuation_value,
         default_session_mode=default_session_mode,
         fresh_session_boundaries=normalized_boundaries,
     )

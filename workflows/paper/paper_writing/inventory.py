@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 import yaml
 
+from paper_writing.funding import eligible_funding
 from paper_writing.identifiers import PAPER_ID_PATTERN
 from paper_writing.registry import load_registry, repository_root
 
@@ -67,11 +68,14 @@ def _authors(metadata: Mapping[str, Any], settings: Mapping[str, Any]) -> dict[s
         for item in defaults.get("affiliations", [])
         if isinstance(item, Mapping)
     ]
-    funding = [
-        dict(item)
-        for item in defaults.get("funding", [])
-        if isinstance(item, Mapping)
+    funding_policies = [
+        dict(item) for item in defaults.get("funding", []) if isinstance(item, Mapping)
     ]
+    declared_funding = metadata.get("funding")
+    funding_source = (
+        declared_funding if isinstance(declared_funding, list) else funding_policies
+    )
+    funding = eligible_funding(funding_source, people, policies=funding_policies)
     return {
         "names": [str(item.get("name")) for item in people if item.get("name")],
         "people": people,
@@ -90,6 +94,29 @@ def _release(metadata: Mapping[str, Any]) -> dict[str, Any]:
         "score": None,
         "decision": None,
         "reviewed_at": None,
+    }
+
+
+def _research_outcomes(
+    metadata: Mapping[str, Any], release: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Keep scientific outcomes separate from the internal writing gate."""
+
+    declared = _mapping(metadata.get("research_outcomes"))
+    return {
+        "original_problem_closed": declared.get("original_problem_closed"),
+        "new_bound_or_scoped_theorem": declared.get("new_bound_or_scoped_theorem"),
+        "writing_package_ready": release.get("status") == "ready",
+        "evidence": _mapping(declared.get("evidence")),
+        "scientific_validation": _mapping(metadata.get("scientific_validation")),
+    }
+
+
+def _tri_state_counts(values: list[Any]) -> dict[str, int]:
+    return {
+        "true": sum(value is True for value in values),
+        "false": sum(value is False for value in values),
+        "unknown": sum(value is not True and value is not False for value in values),
     }
 
 
@@ -122,6 +149,7 @@ def build_inventory(
         support = _mapping(metadata.get("support"))
         publication = _mapping(support.get("publication"))
         support["publication"] = publication
+        release = _release(metadata)
         papers.append(
             {
                 "id": paper_id,
@@ -135,12 +163,20 @@ def build_inventory(
                     "version": {"label": str(metadata.get("version") or "0.1.0")},
                 },
                 "authors": _authors(metadata, settings),
-                "writing_release": _release(metadata),
+                "writing_release": release,
+                "research_outcomes": _research_outcomes(metadata, release),
                 "support": support,
                 "warnings": paper_warnings,
             }
         )
     releases = Counter(item["writing_release"]["status"] for item in papers)
+    original_closure = [
+        item["research_outcomes"]["original_problem_closed"] for item in papers
+    ]
+    scoped_contribution = [
+        item["research_outcomes"]["new_bound_or_scoped_theorem"] for item in papers
+    ]
+    writing_ready = [item["research_outcomes"]["writing_package_ready"] for item in papers]
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -148,6 +184,11 @@ def build_inventory(
         "summary": {
             "total": len(papers),
             "release_statuses": dict(sorted(releases.items())),
+            "research_outcomes": {
+                "original_problem_closed": _tri_state_counts(original_closure),
+                "new_bound_or_scoped_theorem": _tri_state_counts(scoped_contribution),
+                "writing_package_ready": _tri_state_counts(writing_ready),
+            },
             "needs_attention": sum(bool(item["warnings"]) for item in papers),
         },
         "papers": papers,

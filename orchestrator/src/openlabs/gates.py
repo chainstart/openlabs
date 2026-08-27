@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from .contracts import ValidationResult, artifact_digests, sha256_file, validate_result_bundle
+from .contracts import (
+    PROMOTABLE_RESULT_STATUSES,
+    ValidationResult,
+    artifact_digests,
+    sha256_file,
+    validate_result_bundle,
+)
 
 
 @dataclass(frozen=True)
@@ -98,7 +104,7 @@ def evaluate_result_bundle(
                             f"{declared.get('path')} is not hash-bound in the archive"
                         )
                         failure_classes.add("reproducibility")
-    if validation.valid and payload.get("status") in {"completed", "succeeded"}:
+    if validation.valid and payload.get("status") in PROMOTABLE_RESULT_STATUSES:
         digests = artifact_digests(payload)
         for claim in payload.get("claims", []):
             if not isinstance(claim, Mapping):

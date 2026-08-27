@@ -33,8 +33,6 @@ def test_task_contract_accepts_complete_project_execution_envelope() -> None:
         "protocol_id": "amra-math",
     }
     task["execution_policy"] = {
-        "checkpoint_policy": "role_boundary_or_budget",
-        "continue_across_protocol_phases": True,
         "default_session_mode": "resume",
         "fresh_session_boundaries": ["adversarial_review", "route_reselection"],
     }
@@ -60,7 +58,7 @@ def test_task_contract_accepts_artifact_boundary_and_rejects_partial_policy() ->
             "artifact_only_suffixes": [".jsonl", ".parquet"],
             "undeclared_staging_policy": "reject",
         },
-        "promotion_policy": "validated_completed_results_only",
+        "promotion_policy": "validated_results_and_checkpoints",
     }
 
     assert validate_task(task).valid
@@ -89,14 +87,11 @@ def test_task_contract_rejects_partial_or_ill_typed_execution_policy() -> None:
     assert "project and execution_policy must be supplied together" in validation.errors
 
     task["execution_policy"] = {
-        "checkpoint_policy": "role_boundary_or_budget",
-        "continue_across_protocol_phases": "yes",
         "default_session_mode": "resume",
         "fresh_session_boundaries": ["unknown_boundary"],
     }
     validation = validate_task(task)
     assert not validation.valid
-    assert any("must be a boolean" in error for error in validation.errors)
     assert any("unknown kinds" in error for error in validation.errors)
 
 

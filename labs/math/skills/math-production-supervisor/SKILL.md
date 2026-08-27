@@ -150,7 +150,7 @@ error bounds. Treat exact Sage and SMT results as universal evidence only when a
 establishes that the finite computation or encoding is complete.
 
 - Autonomously perform the useful proof operations and decisive tests that fit the current AMRA
-  authority. Continue through as many validated researcher-owned AMRA phases as the wall budget
+  role. Continue through as many validated researcher-owned AMRA phases as the wall budget
   permits; phases are state records, not scheduler tasks. Stop before an epistemic-role boundary.
 - Use AMRA's CLI for transitions and freezing; never edit phase history to bypass a gate.
 - Record the node with `scripts/production_lane.py record-node` and an exact `--delta-kind`.
@@ -171,8 +171,8 @@ establishes that the finite computation or encoding is complete.
 At `independent_audit`, stop the author session and return a structured action for `agent_role:
 reviewer`, `session_mode: fresh`, and `handoff_kind: independent_replication`. The blank reviewer
 reads only the frozen claim and declared evidence, reconstructs it independently, and applies
-AMRA's statement, dependency, and novelty checks. The machine-readable AMRA authority policy and
-the generic Stop/scheduler gates enforce this transfer.
+AMRA's statement, dependency, and novelty checks. The generic role and fresh-session gates enforce
+this transfer.
 
 ### Terminal outcomes
 

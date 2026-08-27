@@ -215,6 +215,24 @@ For `quant`, set `reviewer_role` to `quant_finance`, set `rubric_id` to
 }
 ```
 
+For `physics`, set `reviewer_role` to `physics`, set `rubric_id` to
+`openlabs.paper-writing.physics-leading-journals.v1`, and use:
+
+```json
+{
+  "leading_physics_journals": {
+    "decision": "major_revision",
+    "confidence": "medium",
+    "rationale": "physics-correctness, evidence, novelty, and significance explanation"
+  },
+  "cas_zone_1_journal": {
+    "decision": "minor_revision",
+    "confidence": "medium",
+    "rationale": "independent CAS Zone 1 explanation"
+  }
+}
+```
+
 Use `cas_zone_1_basis.mode: generic_standard` when no particular journal's current classification
 has been verified. Use `verified_target` only with non-empty `target_journal`,
 `classification_source`, and `classification_checked_at`. A formatting target is not classification

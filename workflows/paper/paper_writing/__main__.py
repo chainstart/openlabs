@@ -23,6 +23,7 @@ from paper_writing.operations import (
     start_revision,
     validate_repository,
 )
+from paper_writing.manuscript_style import audit_manuscript_style
 from paper_writing.support_citations import audit_manuscript_support
 
 
@@ -49,6 +50,14 @@ def build_parser() -> argparse.ArgumentParser:
     support_check.add_argument("--paper-id", required=True)
     support_check.add_argument("--root", default=str(default_repo_root()))
     support_check.add_argument("--json", action="store_true")
+
+    style_check = subparsers.add_parser(
+        "style-check",
+        help="Audit manuscript voice, workflow residue, funding eligibility, and AI disclosure.",
+    )
+    style_check.add_argument("--paper-id", required=True)
+    style_check.add_argument("--root", default=str(default_repo_root()))
+    style_check.add_argument("--json", action="store_true")
 
     bundle = subparsers.add_parser("bundle", help="Validate one result bundle.")
     bundle.add_argument("path")
@@ -320,6 +329,21 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"Support citations: {'valid' if result['valid'] else 'invalid'}; "
                 f"paper={result['paper_id']}; DOI={result['current_version_doi']}"
+            )
+            for issue in result["errors"]:
+                location = issue.get("path", "")
+                if issue.get("line") is not None:
+                    location = f"{location}:{issue['line']}"
+                print(f"ERROR {issue['code']}: {location}: {issue['message']}")
+        return 0 if result["valid"] else 1
+    if args.command == "style-check":
+        result = audit_manuscript_style(args.paper_id, root=args.root)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"Manuscript style: {'valid' if result['valid'] else 'invalid'}; "
+                f"paper={result['paper_id']}; files={len(result['checked_files'])}"
             )
             for issue in result["errors"]:
                 location = issue.get("path", "")

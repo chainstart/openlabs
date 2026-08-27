@@ -17,13 +17,14 @@ this Skill directory and never write directly to the factory SQLite database.
    explicitly an initialization task, create that directory with `scripts/research_loop.py init`.
 3. Read `campaign_state.json` and every artifact required by the current phase.
 4. Read [phase-gates.md](references/phase-gates.md) before changing phase.
-5. Execute only work allowed in the current phase.
+5. Use the phase as a durable evidence label, not as a restriction on which safe research method
+   may be attempted.
 6. Persist claims, mechanisms, kill tests, evidence, and decisions as structured JSON.
 7. Run `validate` before `advance`. Treat a failed gate as a research result, not as permission to weaken the contract.
 
-The adjacent `authority-policy.json` is the machine-readable role boundary consumed by both the
-Codex Stop hook and the scheduler. In particular, entering `independent_audit` transfers authority
-to a blank `reviewer`; never try to continue that phase in the creator session.
+Independent audit remains a blank-reviewer quality gate. Return a structured fresh-reviewer
+handoff when creator-side work is ready for that check; do not simulate the audit in the creator
+session.
 
 Use:
 
@@ -37,7 +38,8 @@ python3 "$OPENLABS_WORKSPACE/openlabs/labs/math/skills/amra-research-loop/script
 
 ## Follow the state machine
 
-Work through exactly one transition at a time:
+The following labels organize recovery and audit records; they do not prescribe the order of
+mathematical thought or tool use:
 
 ```text
 target_selection
@@ -49,10 +51,11 @@ target_selection
   -> promotion
 ```
 
-Freeze from any nonterminal phase when no surviving route justifies further allocation. Never skip a phase or edit `campaign_state.json` to bypass a failed gate.
+Freeze from any nonterminal phase when no surviving route justifies further allocation. Never edit
+`campaign_state.json` to fabricate a passed evidence gate.
 
 The OpenLabs task is one bounded research episode. Protocol phases are durable recovery and audit
-records, not process boundaries. Within one researcher or experimenter authority, autonomously
+records, not process boundaries. Within one researcher or experimenter role, autonomously
 perform multiple derivations, representation checks, kill tests, and validated phase transitions
 for as long as useful work and the task wall budget remain. Do not stop merely because a phase
 advanced. Stop at an epistemic-role boundary, a terminal outcome, a genuine blocker, or when the

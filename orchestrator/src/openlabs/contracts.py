@@ -26,6 +26,7 @@ RESULT_STATUSES = {
     "needs_human",
     "quarantined",
 }
+PROMOTABLE_RESULT_STATUSES = frozenset({"completed", "succeeded", "needs_replan"})
 AGENT_ROLES = {"researcher", "experimenter", "writer", "reviewer"}
 SESSION_MODES = {"resume", "fresh"}
 HANDOFF_KINDS = {
@@ -38,7 +39,6 @@ HANDOFF_KINDS = {
     "route_reselection",
 }
 RESOURCE_KEYS = ("cpu_threads", "memory_mib", "scratch_mib")
-CHECKPOINT_POLICIES = {"role_boundary_or_budget", "explicit_checkpoint"}
 EXECUTABLE_ARTIFACT_KINDS = frozenset(
     {"verification_script", "reproduction_script", "validator_script"}
 )
@@ -239,17 +239,6 @@ def validate_task(payload: Any) -> ValidationResult:
         if not isinstance(execution_policy, Mapping):
             errors.append("execution_policy must be an object")
         else:
-            checkpoint_policy = _text(execution_policy.get("checkpoint_policy"))
-            if checkpoint_policy not in CHECKPOINT_POLICIES:
-                errors.append(
-                    "execution_policy.checkpoint_policy must be one of "
-                    f"{sorted(CHECKPOINT_POLICIES)}"
-                )
-            continuation = execution_policy.get("continue_across_protocol_phases")
-            if not isinstance(continuation, bool):
-                errors.append(
-                    "execution_policy.continue_across_protocol_phases must be a boolean"
-                )
             default_mode = _text(execution_policy.get("default_session_mode"))
             if default_mode not in SESSION_MODES:
                 errors.append(
@@ -354,11 +343,11 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
         digest = _text(artifact.get("sha256"))
         if digest and not SHA256.fullmatch(digest):
             errors.append(f"{prefix}.sha256 must be a lowercase SHA-256 digest")
-        if status in {"completed", "succeeded"} and not digest:
+        if status in PROMOTABLE_RESULT_STATUSES and not digest:
             warnings.append(f"{prefix} has no sha256; it cannot support a promoted claim")
         reproduction = artifact.get("reproduction")
         if (
-            status in {"completed", "succeeded"}
+            status in PROMOTABLE_RESULT_STATUSES
             and executable_artifact(artifact)
             and not isinstance(reproduction, Mapping)
         ):
@@ -458,6 +447,8 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
     if not isinstance(next_actions, list):
         errors.append("next_actions must be an array")
     else:
+        if status == "needs_replan" and not next_actions:
+            errors.append("needs_replan requires at least one executable next action")
         for index, action in enumerate(next_actions):
             prefix = f"next_actions[{index}]"
             if isinstance(action, str):
@@ -496,6 +487,8 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
                         value = resources.get(key)
                         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
                             errors.append(f"{prefix}.resources.{key} must be a positive integer")
+    if status == "needs_replan" and payload.get("paper_candidate") is True:
+        errors.append("needs_replan cannot declare paper_candidate=true")
     candidate_branches = payload.get("candidate_branches", [])
     if not isinstance(candidate_branches, list):
         errors.append("candidate_branches must be an array")

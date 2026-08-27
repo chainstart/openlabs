@@ -63,7 +63,7 @@ workstream 可选 `continuous` 或 `review_on_new_results`。后者只按“出�
 验证；外层不设置候选分数、数量、期刊目标或固定路线。candidate Codex 将状态写为
 `paused`/`completed` 后，控制面机械停止续种，不用 fallback 推翻其证伪或放弃判断。
 
-`runtime_skills` 只决定本协议实际生效的 Skill 和 authority policy。实验室的其他 Skill 只以
+`runtime_skills` 只决定本协议实际生效的 Skill。实验室的其他 Skill 只以
 `.agents/optional-methods/` 下可读的方法指南暴露，不注册成当前 Codex 的 active Skill，也不会
 把自己的状态机暗中施加到当前
 项目。工具 `runtime_setup` 与 Skill 激活相互独立，因此自主 RH 仍可使用 Lean、Sage、Arb、
@@ -87,8 +87,6 @@ review packet、cursor 位于 `openlabs-artifacts/portfolio-control/`，不在 r
 
 ```json
 {
-  "checkpoint_policy": "role_boundary_or_budget",
-  "continue_across_protocol_phases": true,
   "default_session_mode": "resume",
   "fresh_session_boundaries": [
     "independent_replication",
@@ -114,7 +112,7 @@ review packet、cursor 位于 `openlabs-artifacts/portfolio-control/`，不在 r
 如果进程确实需要退出，同一角色优先恢复原 Codex session。rollover 和普通 replan 不再
 自动清空会话；只有没有可恢复 session，或显式 fresh boundary，才启动空白会话。
 AMRA 的七个 phase 因而只写入 `campaign_state.json` 和 history；它们不再对应七个 Codex
-进程。同一权限可以连续跨过多个已通过 gate 的 phase，`independent_audit` 才切给空白 reviewer。
+进程或限制研究者采用什么数学方法。独立审查由结果中的 typed handoff 切给空白 reviewer。
 `autonomous-math` 更薄：AMRA 只是 Codex 可自由选用的方法之一，完全不要求经过这七个 phase。
 `open-math-research` 则是显式选择的独立长时证明协议：它加载 OpenMath 的原始 CDC 多 Agent
 提示词，不与 AMRA 默认门禁混用，但仍继承 OpenLabs 的 attempt、证据归档和资源护栏。正式

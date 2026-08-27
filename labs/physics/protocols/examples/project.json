@@ -9,8 +9,6 @@
     "primary_skill": "physics-research-loop"
   },
   "execution": {
-    "checkpoint_policy": "role_boundary_or_budget",
-    "continue_across_protocol_phases": true,
     "default_session_mode": "resume",
     "fresh_session_boundaries": [
       "independent_replication",

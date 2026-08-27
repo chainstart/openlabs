@@ -73,9 +73,13 @@
                   "role_handoff",
                   "text_revision",
                   "evidence_remediation",
-                  "independent_replication"
+                  "independent_replication",
+                  "adversarial_review",
+                  "portfolio_review",
+                  "route_reselection"
                 ]
               },
+              "wall_seconds": {"type": "integer", "minimum": 1},
               "resources": {
                 "type": "object",
                 "additionalProperties": false,
@@ -101,5 +105,19 @@
       }
     },
     "paper_candidate": {"type": "boolean"}
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "needs_replan"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "next_actions": {"minItems": 1},
+          "paper_candidate": {"const": false}
+        }
+      }
+    }
+  ]
 }

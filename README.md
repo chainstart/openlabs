@@ -22,7 +22,7 @@ OpenLabs 是一个面向个人使用、可恢复、可连续运行的轻量科�
 - matfactory 的材料协议、仿真、分析、队列、审计、隐藏有序/软模发现代码及小型冻结输入；
 - 两个材料接续状态：暂停的 LLZTO 长周期 campaign，以及 CPU 校准完成、仍受模型/新颖性
   门约束的隐藏有序/软模试点；旧 23 GiB 运行证据没有混入代码或 openlabs-data Git；
-- ara-paper-writing 当前工作树中的 45 篇论文、registry、reviews、确定性工作流和四套
+- ara-paper-writing 当前工作树中的 45 篇论文、registry、reviews、确定性工作流和五套
   OpenLabs 领域写作 Skill；
 - 旧 ARA 中经审计的文献/数据库查询 Skill，以及其 manifest、租约、bundle、阶段限制等
   思路的精简重写。旧 ARA 巨型固定流水线没有整体复制。
@@ -38,7 +38,8 @@ OpenLabs 是一个面向个人使用、可恢复、可连续运行的轻量科�
 暂存，失败则完整隔离。具体阈值和恢复流程见架构决策与个人运行手册。
 
 管理员为一个 campaign 播种首个有界任务后，通过门禁的 `next_actions` 可自动续接下一步；
-`needs_replan` 升级到高级 runner，`needs_human`、隔离、无下一步或 campaign 任务上限会停链。
+有效 `needs_replan` 会先晋升可恢复状态，再升级到高级 runner。`needs_human`、隔离、缺失可
+执行后继动作或 campaign 的总 Agent-time 用尽会停链。
 第一版没有让一个永久“大 Agent”自行扫描全部课题并无限消费预算。
 同 campaign、同角色的研究/实验/写作后继任务可恢复逻辑 session，但每个 OS 进程仍在一个
 有界节点后退出；3 分钟 tick 只检查和调度，不会结束仍有租约与心跳的 worker。普通字符串
@@ -66,7 +67,8 @@ OpenLabs 研究负载的聚合 CPU、内存、swap 和任务数。
 真实 Agent runner、systemd timer、跨设备 SQLite 交接和外部操作门禁见
 [个人运行手册](docs/operations.zh.md)。完整设计见
 [架构决策](docs/openlabs-monorepo-architecture.zh.md)，Codex、Skill、Hook 与确定性控制面的
-边界见 [自主科研运行时](docs/autonomous-runtime.zh.md)，本次来源与过滤情况见
+边界见 [自主科研运行时](docs/autonomous-runtime.zh.md)，最小硬门禁见
+[最小约束架构](docs/minimal-constraints.zh.md)，本次来源与过滤情况见
 [迁移报告](docs/migration-report.zh.md)，量化工具与 Skill 的选型见
 [量化实验室复用审计](docs/quant-lab-reuse-audit.zh.md)，物理工具与 Skill 的选型见
 [物理实验室开源复用审计](docs/physics-lab-open-source-audit.zh.md)。仓库没有自动启用 timer，也没有启动昂贵研究任务。

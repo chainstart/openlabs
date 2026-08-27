@@ -34,9 +34,11 @@ from paper_writing.review import (
     INDIVIDUAL_REVIEW_SCHEMA_VERSION,
     JOURNAL_DECISIONS,
     LEADING_MATERIALS_JOURNALS_VIEW,
+    LEADING_PHYSICS_JOURNALS_VIEW,
     LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     MATERIALS_REVIEWER_ROLE,
     MATHEMATICS_REVIEWER_ROLE,
+    PHYSICS_REVIEWER_ROLE,
     QUANT_FINANCE_REVIEWER_ROLE,
     RECOMMENDATION_SCHEMA_VERSION,
     REVIEWER_PROVIDER_CONTRACTS,
@@ -92,6 +94,11 @@ def _judgment_schema(role: str) -> dict[str, Any]:
     elif role == MATERIALS_REVIEWER_ROLE:
         recommendation_properties = {
             LEADING_MATERIALS_JOURNALS_VIEW: recommendation,
+            CAS_ZONE_1_JOURNAL_VIEW: recommendation,
+        }
+    elif role == PHYSICS_REVIEWER_ROLE:
+        recommendation_properties = {
+            LEADING_PHYSICS_JOURNALS_VIEW: recommendation,
             CAS_ZONE_1_JOURNAL_VIEW: recommendation,
         }
     elif role == QUANT_FINANCE_REVIEWER_ROLE:
