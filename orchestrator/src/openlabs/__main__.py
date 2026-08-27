@@ -8,7 +8,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .config import load_settings, workspace_paths
+from .config import load_local_environment, load_settings, workspace_paths
 from .control import halt_production, halt_project
 from .db import FactoryDB
 from .engine import tick
@@ -86,6 +86,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Keep manual CLI invocations, transient workers, and the systemd timer on
+    # one local Agent/proxy configuration path. Explicit inherited values win.
+    load_local_environment()
     arguments = list(argv) if argv is not None else sys.argv[1:]
     if arguments is not None and arguments[:1] == ["_worker"]:
         if len(arguments) != 2:

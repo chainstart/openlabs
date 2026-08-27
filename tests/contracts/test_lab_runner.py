@@ -364,6 +364,161 @@ def test_codex_uses_full_access_and_generated_hooks(tmp_path) -> None:
     assert sandbox == "codex-native-danger-full-access"
 
 
+def test_codex_connectivity_preflight_uses_configured_provider_and_accepts_http_error(
+    monkeypatch,
+) -> None:
+    runner = _load_runner()
+    seen: dict[str, object] = {}
+
+    def reachable(request, *, timeout):
+        seen["url"] = request.full_url
+        seen["timeout"] = timeout
+        raise runner.urllib.error.HTTPError(
+            request.full_url,
+            401,
+            "authentication required",
+            {},
+            None,
+        )
+
+    monkeypatch.setattr(runner.urllib.request, "urlopen", reachable)
+    monkeypatch.setenv("OPENLABS_AGENT_PREFLIGHT_TIMEOUT_SECONDS", "2.5")
+    command = [
+        "codex",
+        "exec",
+        "-c",
+        'model_providers.local.base_url="https://provider.example/api/codex"',
+        "-",
+    ]
+
+    assert runner._agent_connectivity_preflight(command) is None
+    assert seen == {"url": "https://provider.example/api/codex", "timeout": 2.5}
+
+
+def test_codex_connectivity_preflight_fails_closed_and_redacts_credentials(
+    monkeypatch,
+) -> None:
+    runner = _load_runner()
+
+    def unreachable(_request, *, timeout):
+        assert timeout == 10.0
+        raise runner.urllib.error.URLError("proxy refused connection")
+
+    monkeypatch.setattr(runner.urllib.request, "urlopen", unreachable)
+    command = [
+        "codex",
+        "exec",
+        "-c",
+        'model_providers.local.base_url="https://secret@example.test/backend"',
+        "-",
+    ]
+
+    error = runner._agent_connectivity_preflight(command)
+
+    assert error is not None
+    assert "https://example.test" in error
+    assert "secret" not in error
+
+
+def test_codex_startup_health_distinguishes_transport_loop_from_progress(tmp_path) -> None:
+    runner = _load_runner()
+    log = tmp_path / "agent-stdout.log"
+    log.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": "session"}),
+                json.dumps({"type": "turn.started"}),
+                json.dumps({"type": "error", "message": "Connection failed"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "error", "message": "error sending request"},
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    failures, progressed = runner._jsonl_startup_health(log)
+
+    assert failures == 2
+    assert progressed is False
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "\n"
+            + json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "command_execution", "status": "completed"},
+                }
+            )
+        )
+    assert runner._jsonl_startup_health(log) == (2, True)
+
+
+def test_codex_transport_loop_is_stopped_as_needs_human(tmp_path, monkeypatch) -> None:
+    runner = _load_runner()
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json,sys,time\n"
+        "sys.stdin.read()\n"
+        "print(json.dumps({'type':'error','message':'Connection failed'}), flush=True)\n"
+        "print(json.dumps({'type':'item.completed','item':"
+        "{'type':'error','message':'error sending request'}}), flush=True)\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    workspace = tmp_path / "workspace"
+    agent_workspace = workspace / "attempt"
+    agent_workspace.mkdir(parents=True)
+    manifest_path = workspace / "openlabs" / "labs" / "math" / "lab.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text("{}\n", encoding="utf-8")
+    output = agent_workspace / "result.json"
+    monkeypatch.setenv("OPENLABS_WORKSPACE", str(workspace))
+    monkeypatch.setenv("OPENLABS_AGENT_COMMAND_JSON", json.dumps([str(fake_codex)]))
+    monkeypatch.setenv("OPENLABS_AGENT_TRANSPORT_FAILURE_THRESHOLD", "2")
+    monkeypatch.setattr(runner, "_validate_codex_transaction", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "_prepare_codex_command", lambda command, **kwargs: command)
+    monkeypatch.setattr(runner, "_agent_connectivity_preflight", lambda _command: None)
+    monkeypatch.setattr(runner, "_adapter_version", lambda _command: None)
+    task = {
+        "task_id": "network-loop",
+        "attempt_id": "attempt-1",
+        "campaign_id": "campaign",
+        "lab_id": "math",
+        "domain": "math",
+        "objective": "Fail fast when the Agent transport is unavailable.",
+        "lab_manifest": str(manifest_path),
+        "runner": "balanced",
+        "agent_workspace": str(agent_workspace),
+        "resources": {"cpu_threads": 1, "memory_mib": 512, "scratch_mib": 512},
+        "budget": {"wall_seconds": 30},
+        "agent": {
+            "role": "researcher",
+            "session_mode": "fresh",
+            "session_id": None,
+        },
+    }
+
+    started = time.monotonic()
+    runtime = runner._run_agent(
+        task,
+        {"lab_id": "math", "domain": "math"},
+        output,
+    )
+
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert time.monotonic() - started < 5
+    assert result["status"] == "needs_human"
+    assert runtime["failure_class"] == "agent_transport"
+    assert runtime["transport_watchdog_triggered"] is True
+    assert runtime["startup_transport_failure_count"] == 2
+
+
 def test_runner_collects_structured_hook_receipts(tmp_path) -> None:
     runner = _load_runner()
     workspace = tmp_path / "attempt" / "campaign"

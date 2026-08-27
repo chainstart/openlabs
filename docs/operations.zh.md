@@ -77,6 +77,9 @@ OPENLABS_AGENT_COMMAND_BALANCED_JSON='["codex","exec","--profile","openlabs-bala
 OPENLABS_AGENT_COMMAND_FRONTIER_JSON='["codex","exec","--profile","openlabs-frontier","-"]'
 OPENLABS_AGENT_RESUME_COMMAND_JSON='["codex","exec","resume","{session_id}","-"]'
 OPENLABS_AGENT_TIMEOUT_SECONDS=14400
+OPENLABS_AGENT_PREFLIGHT_TIMEOUT_SECONDS=10
+OPENLABS_AGENT_STARTUP_GRACE_SECONDS=120
+OPENLABS_AGENT_TRANSPORT_FAILURE_THRESHOLD=3
 OPENLABS_CLAUDE_COMMAND=claude
 # OPENLABS_CLAUDE_SETTINGS=/home/you/.claude/settings.json
 ```
@@ -87,6 +90,13 @@ OPENLABS_CLAUDE_COMMAND=claude
 `{prompt_file}`、`{output_file}`、`{output_dir}`、`{skill_path}` 和 `{task_file}`；恢复命令还
 必须包含独立的 `{session_id}` 参数。如果 runner 未配置，
 工厂会安全地产生 `needs_human`，不会假装完成研究。
+所有 `python -m openlabs` 入口都会以“当前进程环境优先”的规则读取
+`~/.config/openlabs/env` 和 `~/.config/environment.d/90-openlabs-proxy.conf`，因此手工
+`tick`、timer 和 worker 使用同一份 Agent/proxy 配置；这些文件按数据解析，不经过 shell。
+Codex 启动前会对命令中声明的 provider `base_url` 做有界连通性预检；启动后若只反复出现
+transport 错误、没有任何有效 item/turn 进展，startup watchdog 会提前停止并写入
+`needs_human`，不会把网络故障耗满整段科研预算。未在命令里声明 base URL 的自定义 provider
+可用 `OPENLABS_AGENT_PREFLIGHT_URL` 明确指定预检地址。
 模板只描述 provider、model/profile 与会话参数。runner 会统一加入 JSONL、私有工作目录、
 `approval_policy=never`、Codex 原生 `danger-full-access` 和受信 project hook 参数。外层模板
 不得覆盖这些工厂运行参数。Codex 以 worker 的普通 Linux 用户权限运行，可以自由调用已安装
@@ -104,6 +114,12 @@ reviewer 不接收作者或其他 reviewer 的 session。
 结构化 action。角色切换默认强制为 `fresh`；唯一例外是 `paper_review` 返回
 `handoff_kind: text_revision` 时，控制面从任务祖先链恢复原 writer 的 session，而不是恢复
 reviewer session。`evidence_remediation` 永远先启动空白 researcher/experimenter。
+
+项目 workstream 可同时声明单任务 `wall_seconds` 与该生产 epoch 的
+`max_agent_seconds`；后者会同步到 campaign 账本并在实际启动时再次收紧任务墙钟。
+`continuation: one_shot` 是全局调度不变量：首次已尝试任务结束后，普通 continuation、
+`needs_replan`、论文角色交接和候选分支都不得隐式补种，workstream 会转为
+`production_paused`。只有 attempt 计数仍为 0 的管理员取消任务允许重新补种。
 
 论文门禁的第二位审阅人不复用上述 Codex session。它由
 `run_claude_reviewer.py` 启动一次全新的 Claude Code `claude-opus-5` 进程，并从用户自己的

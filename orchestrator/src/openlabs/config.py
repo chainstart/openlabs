@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import os
+import re
+import shlex
 import tomllib
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+
+_ENVIRONMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,72 @@ class FactorySettings:
 def _default_workspace() -> Path:
     # .../openlabs/openlabs/orchestrator/src/openlabs/config.py -> outer workspace
     return Path(__file__).resolve().parents[4]
+
+
+def _environment_file_value(raw: str) -> str:
+    """Decode one systemd-style EnvironmentFile value without executing a shell."""
+
+    value = raw.strip()
+    if not value or value[:1] not in {"'", '"'}:
+        return value
+    try:
+        parsed = shlex.split(value, comments=False, posix=True)
+    except ValueError as exc:
+        raise ValueError(f"invalid quoted environment value: {exc}") from exc
+    if len(parsed) != 1:
+        raise ValueError("quoted environment value must decode to one string")
+    return parsed[0]
+
+
+def load_local_environment(
+    environment: MutableMapping[str, str] | None = None,
+    *,
+    config_home: str | Path | None = None,
+) -> tuple[Path, ...]:
+    """Load the same local Agent/proxy files for every OpenLabs CLI entrypoint.
+
+    Existing process values always win. Files are parsed as data and are never
+    sourced, so a local configuration line cannot execute shell code.
+    """
+
+    target = environment if environment is not None else os.environ
+    configured_home = config_home or target.get("XDG_CONFIG_HOME")
+    root = (
+        Path(configured_home).expanduser()
+        if configured_home
+        else Path(target.get("HOME") or Path.home()).expanduser() / ".config"
+    )
+    explicit = str(target.get("OPENLABS_ENV_FILES") or "").strip()
+    paths = (
+        tuple(Path(item).expanduser() for item in explicit.split(os.pathsep) if item.strip())
+        if explicit
+        else (
+            root / "openlabs" / "env",
+            root / "environment.d" / "90-openlabs-proxy.conf",
+        )
+    )
+    loaded: list[Path] = []
+    for path in paths:
+        if not path.is_file():
+            continue
+        for line_number, raw_line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            if "=" not in line:
+                raise ValueError(f"{path}:{line_number}: expected NAME=VALUE")
+            name, raw_value = line.split("=", 1)
+            name = name.strip()
+            if not _ENVIRONMENT_NAME.fullmatch(name):
+                raise ValueError(f"{path}:{line_number}: invalid environment name {name!r}")
+            target.setdefault(name, _environment_file_value(raw_value))
+        loaded.append(path.resolve())
+    return tuple(loaded)
 
 
 def workspace_paths(explicit: str | Path | None = None) -> WorkspacePaths:

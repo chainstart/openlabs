@@ -605,6 +605,7 @@ class FactoryDB:
         project_id: str | None = None,
         workstream_policy: Mapping[str, Any] | None = None,
         priority: int | None = None,
+        max_agent_seconds: int | None = None,
     ) -> bool:
         """Bind a generic project workstream without teaching the DB its science."""
 
@@ -620,7 +621,7 @@ class FactoryDB:
                        production_lane_path, project_config_path,
                        workstream_state_path, protocol_id, primary_skill,
                        execution_policy_json, project_id,
-                       workstream_policy_json, priority
+                       workstream_policy_json, priority, max_agent_seconds
                 FROM campaigns WHERE campaign_id=?
                 """,
                 (campaign_id,),
@@ -631,6 +632,11 @@ class FactoryDB:
             if status not in {"active", "production_paused"}:
                 raise ValueError(f"Campaign {campaign_id} cannot be activated from status {status}")
             desired_priority = int(row["priority"]) if priority is None else int(priority)
+            desired_budget = (
+                int(row["max_agent_seconds"])
+                if max_agent_seconds is None
+                else max(1, int(max_agent_seconds))
+            )
             desired = (
                 "active",
                 1,
@@ -644,6 +650,7 @@ class FactoryDB:
                 project_id,
                 stream_policy_json,
                 desired_priority,
+                desired_budget,
             )
             if tuple(row) == desired:
                 return False
@@ -655,7 +662,7 @@ class FactoryDB:
                     project_config_path=?,
                     workstream_state_path=?, protocol_id=?, primary_skill=?,
                     execution_policy_json=?, project_id=?, workstream_policy_json=?,
-                    priority=?, updated_at=?
+                    priority=?, max_agent_seconds=?, updated_at=?
                 WHERE campaign_id=?
                 """,
                 (
@@ -667,6 +674,7 @@ class FactoryDB:
                     project_id,
                     stream_policy_json,
                     desired_priority,
+                    desired_budget,
                     now,
                     campaign_id,
                 ),
@@ -685,6 +693,7 @@ class FactoryDB:
                     "project_id": project_id,
                     "workstream_policy": dict(workstream_policy or {}),
                     "priority": desired_priority,
+                    "max_agent_seconds": desired_budget,
                 },
             )
         return True

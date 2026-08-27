@@ -14,6 +14,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -362,6 +365,105 @@ def _command_option(command: list[str], *names: str) -> str | None:
             if token.startswith(prefix):
                 return token[len(prefix) :]
     return None
+
+
+def _positive_environment_number(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _codex_base_url(command: list[str]) -> str | None:
+    override = os.environ.get("OPENLABS_AGENT_PREFLIGHT_URL", "").strip()
+    if override:
+        return override
+    assignments: list[str] = []
+    for index, token in enumerate(command):
+        if token == "-c" and index + 1 < len(command):
+            assignments.append(command[index + 1])
+        elif token.startswith("-c="):
+            assignments.append(token[3:])
+    for assignment in assignments:
+        key, separator, raw_value = assignment.partition("=")
+        if not separator or not key.strip().endswith(".base_url"):
+            continue
+        value = raw_value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        return value or None
+    return None
+
+
+def _agent_connectivity_preflight(command: list[str]) -> str | None:
+    """Return a redacted connectivity error, or None when reachable/not applicable."""
+
+    if Path(command[0]).name != "codex":
+        return None
+    target = _codex_base_url(command)
+    if target is None:
+        return None
+    parsed = urllib.parse.urlsplit(target)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return "configured Agent provider URL is not a valid HTTP(S) endpoint"
+    endpoint = f"{parsed.scheme}://{parsed.hostname}"
+    if parsed.port is not None:
+        endpoint += f":{parsed.port}"
+    request = urllib.request.Request(
+        target,
+        method="HEAD",
+        headers={"User-Agent": "openlabs-agent-preflight/1"},
+    )
+    timeout = _positive_environment_number(
+        "OPENLABS_AGENT_PREFLIGHT_TIMEOUT_SECONDS",
+        10.0,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout):  # noqa: S310 - configured endpoint
+            return None
+    except urllib.error.HTTPError:
+        # Authentication and method errors still prove DNS, proxy, TLS, and the
+        # configured provider endpoint are reachable. Codex owns auth details.
+        return None
+    except (OSError, TimeoutError, urllib.error.URLError) as exc:
+        return f"Agent provider {endpoint} is unreachable: {type(exc).__name__}: {exc}"
+
+
+def _jsonl_startup_health(path: Path) -> tuple[int, bool]:
+    """Count transport failures and detect any meaningful Codex progress."""
+
+    failures = 0
+    meaningful_progress = False
+    if not path.is_file():
+        return failures, meaningful_progress
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, Mapping):
+            continue
+        serialized = json.dumps(event, ensure_ascii=False).lower()
+        if any(
+            marker in serialized
+            for marker in (
+                "connection failed",
+                "error sending request",
+                "waiting for network",
+                "connection reset",
+                "connection refused",
+            )
+        ):
+            failures += 1
+        event_type = str(event.get("type") or "")
+        item = event.get("item") if isinstance(event.get("item"), Mapping) else {}
+        item_type = str(item.get("type") or "")
+        if event_type == "turn.completed" or (
+            event_type == "item.completed" and item_type not in {"", "error"}
+        ):
+            meaningful_progress = True
+    return failures, meaningful_progress
 
 
 def _jsonl_runtime(path: Path) -> dict[str, Any]:
@@ -804,6 +906,20 @@ def _run_agent(
         agent_workspace=agent_workspace,
         trust_generated_hooks=trust_generated_hooks,
     )
+    preflight_error = _agent_connectivity_preflight(agent_command)
+    if preflight_error is not None:
+        _configuration_result(
+            task,
+            manifest,
+            output,
+            "Agent connectivity preflight failed closed: " + preflight_error,
+        )
+        return {
+            "adapter": Path(agent_command[0]).name,
+            "runner": runner,
+            "failure_class": "agent_connectivity_preflight",
+            "connectivity_preflight": {"passed": False, "error": preflight_error},
+        }
     command, sandbox = _transaction_sandbox(agent_command, task, workspace)
     environment_timeout = max(
         1,
@@ -840,11 +956,63 @@ def _run_agent(
             previous_handlers[signum] = signal.getsignal(signum)
             signal.signal(signum, forward_termination)
         timed_out = False
+        transport_failed = False
+        transport_failure_count = 0
         try:
-            process.communicate(input=request, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            _terminate_process_group(process, grace_seconds=1)
+            try:
+                assert process.stdin is not None
+                process.stdin.write(request)
+                process.stdin.close()
+                process.stdin = None
+            except BrokenPipeError:
+                process.stdin = None
+            deadline = time.monotonic() + timeout
+            startup_grace = min(
+                float(timeout),
+                _positive_environment_number(
+                    "OPENLABS_AGENT_STARTUP_GRACE_SECONDS",
+                    120.0,
+                ),
+            )
+            failure_threshold = max(
+                1,
+                int(
+                    _positive_environment_number(
+                        "OPENLABS_AGENT_TRANSPORT_FAILURE_THRESHOLD",
+                        3.0,
+                    )
+                ),
+            )
+            process_started = time.monotonic()
+            startup_monitoring = Path(agent_command[0]).name == "codex"
+            while process.poll() is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    _terminate_process_group(process, grace_seconds=1)
+                    break
+                try:
+                    process.wait(timeout=min(0.5, remaining))
+                except subprocess.TimeoutExpired:
+                    pass
+                if startup_monitoring:
+                    stdout_handle.flush()
+                    transport_failure_count, meaningful_progress = _jsonl_startup_health(
+                        stdout_path
+                    )
+                    startup_elapsed = time.monotonic() - process_started
+                    if output.is_file() or meaningful_progress:
+                        startup_monitoring = False
+                    elif transport_failure_count >= failure_threshold or (
+                        transport_failure_count > 0 and startup_elapsed >= startup_grace
+                    ):
+                        transport_failed = True
+                        _terminate_process_group(process, grace_seconds=1)
+                        break
+                    elif startup_elapsed >= startup_grace:
+                        # Bound the startup scan itself. A later generic hang is
+                        # still covered by the task wall timeout.
+                        startup_monitoring = False
         finally:
             for signum, previous in previous_handlers.items():
                 signal.signal(signum, previous)
@@ -865,6 +1033,8 @@ def _run_agent(
             "filesystem_sandbox": sandbox,
             "resumed_from": session_id or None,
             "timed_out": timed_out,
+            "transport_watchdog_triggered": transport_failed,
+            "startup_transport_failure_count": transport_failure_count,
             "agent_exit_code": process.returncode,
             "interrupted": termination_signal is not None,
             "termination_signal": termination_signal,
@@ -872,6 +1042,8 @@ def _run_agent(
     )
     if termination_signal is not None:
         runtime["failure_class"] = "agent_interrupted"
+    elif transport_failed:
+        runtime["failure_class"] = "agent_transport"
     elif timed_out:
         runtime["failure_class"] = "agent_timeout"
     elif process.returncode != 0:
@@ -891,6 +1063,13 @@ def _run_agent(
         )
         status = "failed"
         next_action = "Resume this task from its persisted checkpoint and bounded agent session."
+    elif transport_failed:
+        summary = (
+            "Agent transport remained unavailable without meaningful progress; "
+            "the bounded startup watchdog stopped the process."
+        )
+        status = "needs_human"
+        next_action = "Repair Agent network/proxy connectivity, then explicitly retry the task."
     elif timed_out:
         summary = f"Agent exceeded its bounded {timeout} second timeout."
         status = "needs_replan"

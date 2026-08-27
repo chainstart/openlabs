@@ -115,6 +115,7 @@
             "enum": ["continuous", "one_shot", "review_on_new_results"]
           },
           "wall_seconds": {"type": "integer", "minimum": 1},
+          "max_agent_seconds": {"type": "integer", "minimum": 1},
           "resources": {
             "type": "object",
             "additionalProperties": false,

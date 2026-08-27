@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from openlabs.authority import AuthorityRequirement
 from openlabs.config import FactorySettings, WorkspacePaths
 from openlabs.contracts import RECEIPT_SCHEMA, RESULT_SCHEMA, atomic_write_json, sha256_file
@@ -9,6 +13,7 @@ from openlabs.engine import (
     TickReport,
     _authorized_action_plan,
     _next_action_plan,
+    _replenish_continuous_campaign,
     ingest_results,
 )
 
@@ -280,6 +285,81 @@ def test_needs_replan_escalates_but_needs_human_stops(tmp_path) -> None:
     assert successor["agent_role"] == "researcher"
     assert successor["session_mode"] == "fresh"
     assert successor["agent_session_id"] is None
+
+
+@pytest.mark.parametrize("result_status", ["completed", "needs_replan"])
+def test_one_shot_blocks_every_automatic_successor_during_ingest(
+    tmp_path, result_status: str
+) -> None:
+    paths = WorkspacePaths(
+        workspace=tmp_path,
+        code=tmp_path / "openlabs",
+        data=tmp_path / "data",
+        artifacts=tmp_path / "artifacts",
+        database=tmp_path / "database",
+        database_file=tmp_path / "database" / "live" / "factory.sqlite",
+    )
+    paths.ensure_runtime_directories()
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign("one-shot", domain="math", title="One bounded round")
+    with db.connect() as connection:
+        connection.execute(
+            """
+            UPDATE campaigns
+            SET continuous=1, workstream_policy_json=?
+            WHERE campaign_id='one-shot'
+            """,
+            (json.dumps({"continuation": "one_shot"}),),
+        )
+    db.enqueue_task(
+        task_id="one-shot-task",
+        campaign_id="one-shot",
+        domain="math",
+        task_type="research",
+        objective="Run exactly one bounded research round.",
+        skill_path="amra-research-loop",
+    )
+    result = atomic_write_json(
+        paths.data / "workspaces" / "math" / "one-shot" / "result.json",
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": "one-shot-task",
+            "campaign_id": "one-shot",
+            "lab_id": "math",
+            "domain": "math",
+            "status": result_status,
+            "summary": "The bounded round ended with an explicit next action.",
+            "artifacts": [],
+            "claims": [],
+            "next_actions": ["Continue with another bounded route."],
+            "paper_candidate": False,
+        },
+    )
+    task = _start_task(db, "one-shot-task", str(result), lab_id="math")
+    atomic_write_json(
+        paths.result_inbox / "one-shot-task.json",
+        _receipt(task, str(result), sha256_file(result), session_id="bounded-session"),
+    )
+    report = TickReport()
+
+    ingest_results(db, paths, FactorySettings(max_auto_tasks_per_campaign=4), report)
+
+    assert report.enqueued == []
+    assert report.rollovers == []
+    assert db.task_count("one-shot") == 1
+    pause_report = TickReport()
+    campaign = db.campaign("one-shot")
+    assert campaign is not None
+    _replenish_continuous_campaign(
+        db,
+        paths,
+        FactorySettings(max_auto_tasks_per_campaign=4),
+        pause_report,
+        campaign,
+    )
+    assert pause_report.production_paused == ["one-shot"]
+    assert db.campaign("one-shot")["status"] == "production_paused"
 
 
 def test_missing_agent_bundle_retries_the_original_objective(tmp_path) -> None:

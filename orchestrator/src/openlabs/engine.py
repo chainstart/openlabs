@@ -746,6 +746,13 @@ def _sync_active_projects(
                     project_id=project.project_id,
                     workstream_policy=policy,
                     priority=int(campaign.get("priority") or 0),
+                    max_agent_seconds=(
+                        int(policy["max_agent_seconds"])
+                        if isinstance(policy.get("max_agent_seconds"), int)
+                        and not isinstance(policy.get("max_agent_seconds"), bool)
+                        and int(policy["max_agent_seconds"]) > 0
+                        else settings.max_campaign_agent_seconds
+                    ),
                 )
                 report.production_synced.append(campaign_id)
             except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -766,6 +773,14 @@ def _sync_active_projects(
         report.production_paused.append(campaign_id)
 
     for binding in bindings:
+        configured_budget = binding.workstream_policy.get("max_agent_seconds")
+        max_agent_seconds = (
+            int(configured_budget)
+            if isinstance(configured_budget, int)
+            and not isinstance(configured_budget, bool)
+            and configured_budget > 0
+            else settings.max_campaign_agent_seconds
+        )
         campaign = db.campaign(binding.workstream_id)
         if campaign is None:
             db.register_campaign(
@@ -775,7 +790,7 @@ def _sync_active_projects(
                 priority=binding.priority,
                 state_path=str(binding.workstream_path.parent),
                 source=str(binding.project_path),
-                max_agent_seconds=settings.max_campaign_agent_seconds,
+                max_agent_seconds=max_agent_seconds,
             )
             campaign = db.campaign(binding.workstream_id)
         if campaign is None or str(campaign.get("domain")) != binding.domain:
@@ -809,6 +824,7 @@ def _sync_active_projects(
                 project_id=binding.project_id,
                 workstream_policy=binding.workstream_policy,
                 priority=binding.priority,
+                max_agent_seconds=max_agent_seconds,
             )
         report.production_synced.append(binding.workstream_id)
 
@@ -1840,6 +1856,10 @@ def ingest_results(
             campaign_id = str(payload["campaign_id"])
             task_type = str(task.get("task_type") or "")
             successful = final_status == "succeeded" and gate.passed
+            automatic_successors_allowed = not (
+                campaign_binding is not None
+                and workstream_policy(campaign_binding).get("continuation") == "one_shot"
+            )
             if task_type == "portfolio_review" and payload.get("paper_candidate") is True:
                 report.errors.append(
                     f"Portfolio reviewer {task_id} set paper_candidate=true; ignored for "
@@ -1861,6 +1881,7 @@ def ingest_results(
             if (
                 successful
                 and settings.auto_continue
+                and automatic_successors_allowed
                 and campaign_binding is not None
                 and campaign_binding.get("project_config_path")
             ):
@@ -1896,7 +1917,10 @@ def ingest_results(
                 and _workstream_state_status(campaign_binding) in {"paused", "completed"}
                 and payload.get("paper_candidate") is not True
             )
-            successor_handled = agent_closed_dynamic
+            # one_shot is a scheduling invariant, not merely an idle-reseed hint:
+            # result ingestion, replans, paper handoffs, and candidate spawning
+            # must all stop after the first attempted task.
+            successor_handled = agent_closed_dynamic or not automatic_successors_allowed
             if agent_closed_dynamic:
                 state_status = _workstream_state_status(campaign_binding or {})
                 db.pause_production_campaign(
@@ -1904,12 +1928,16 @@ def ingest_results(
                     reason=f"agent_workstream_{state_status}",
                 )
                 report.production_paused.append(campaign_id)
-            room = _prepare_auto_task_room(
-                db,
-                campaign_id,
-                settings,
-                report,
-                source_task_id=task_id,
+            room = (
+                _prepare_auto_task_room(
+                    db,
+                    campaign_id,
+                    settings,
+                    report,
+                    source_task_id=task_id,
+                )
+                if automatic_successors_allowed
+                else AutoTaskRoom(False, epoch=int(task.get("campaign_epoch") or 1))
             )
             has_room = room.allowed
 
@@ -1918,6 +1946,7 @@ def ingest_results(
             # again before a writer is ever created.
             if (
                 settings.auto_continue
+                and automatic_successors_allowed
                 and successful
                 and task_type == "evidence_remediation"
                 and task.get("routing_reason") == "review_evidence_remediation"

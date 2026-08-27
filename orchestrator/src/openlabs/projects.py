@@ -67,6 +67,7 @@ class ProjectWorkstream:
     spawn_candidate_workstreams: bool
     resources: ResourceVector | None
     wall_seconds: int | None
+    max_agent_seconds: int | None
 
     def policy(self) -> dict[str, Any]:
         policy: dict[str, Any] = {
@@ -83,6 +84,8 @@ class ProjectWorkstream:
             policy["resources"] = self.resources.to_dict()
         if self.wall_seconds is not None:
             policy["wall_seconds"] = self.wall_seconds
+        if self.max_agent_seconds is not None:
+            policy["max_agent_seconds"] = self.max_agent_seconds
         return policy
 
 
@@ -360,6 +363,18 @@ def load_project(path: str | Path) -> ProjectConfig:
                     f"workstream {workstream_id} wall_seconds must be a positive integer"
                 )
             wall_seconds = int(wall_seconds_value)
+        max_agent_seconds_value = item.get("max_agent_seconds")
+        max_agent_seconds: int | None = None
+        if max_agent_seconds_value is not None:
+            if (
+                not isinstance(max_agent_seconds_value, int)
+                or isinstance(max_agent_seconds_value, bool)
+                or max_agent_seconds_value < 1
+            ):
+                raise ValueError(
+                    f"workstream {workstream_id} max_agent_seconds must be a positive integer"
+                )
+            max_agent_seconds = int(max_agent_seconds_value)
         workstreams.append(
             ProjectWorkstream(
                 workstream_id=workstream_id,
@@ -380,6 +395,7 @@ def load_project(path: str | Path) -> ProjectConfig:
                 spawn_candidate_workstreams=spawn_candidates,
                 resources=resources,
                 wall_seconds=wall_seconds,
+                max_agent_seconds=max_agent_seconds,
             )
         )
     return ProjectConfig(

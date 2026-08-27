@@ -190,6 +190,7 @@ def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
         {
             "continuation": "one_shot",
             "wall_seconds": 14_400,
+            "max_agent_seconds": 14_400,
             "resources": {
                 "cpu_threads": 5,
                 "memory_mib": 8_192,
@@ -205,6 +206,7 @@ def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
     task = FactoryDB(paths.database_file).latest_task("stream-one")
 
     assert policy["wall_seconds"] == 14_400
+    assert policy["max_agent_seconds"] == 14_400
     assert policy["continuation"] == "one_shot"
     assert policy["resources"] == {
         "cpu_threads": 5,
@@ -217,6 +219,7 @@ def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
     assert task["cpu_threads"] == 5
     assert task["memory_mib"] == 8_192
     assert task["scratch_mib"] == 8_192
+    assert FactoryDB(paths.database_file).campaign("stream-one")["max_agent_seconds"] == 14_400
 
     queued_report = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
     queued_campaign = FactoryDB(paths.database_file).campaign("stream-one")
@@ -275,6 +278,7 @@ def test_one_shot_reseeds_a_task_cancelled_before_its_first_attempt(tmp_path) ->
     ("field", "value", "message"),
     [
         ("wall_seconds", 0, "wall_seconds must be a positive integer"),
+        ("max_agent_seconds", 0, "max_agent_seconds must be a positive integer"),
         (
             "resources",
             {"cpu_threads": 5, "memory_mib": 0, "scratch_mib": 8_192},
