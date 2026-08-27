@@ -13,7 +13,7 @@ CODE_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = CODE_ROOT / "orchestrator" / "src"
 
 
-@pytest.mark.parametrize("domain", ["math", "ai", "materials", "physics"])
+@pytest.mark.parametrize("domain", ["math", "ai", "materials", "quant", "physics"])
 def test_tick_launches_and_ingests_smoke_task(tmp_path, monkeypatch, domain: str) -> None:
     paths = WorkspacePaths(
         workspace=tmp_path,

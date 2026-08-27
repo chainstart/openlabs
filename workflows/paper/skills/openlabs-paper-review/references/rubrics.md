@@ -1,10 +1,10 @@
 # OpenLabs reviewer rubrics
 
 The computer-science high standard preserves the validated ARA `RevisionAgent` semantics. The
-mathematics standard uses the repository's four-leading-journal benchmark, and materials science
-uses a selective leading-journal benchmark. Every role also receives the separate CAS Zone 1
-journal view defined below. Apply only the high-standard section selected from the paper registry
-domain.
+mathematics standard uses the repository's four-leading-journal benchmark, materials science uses a
+selective leading-journal benchmark, and quantitative finance uses a leading finance/econometrics
+journal benchmark. Every role also receives the separate CAS Zone 1 journal view defined below.
+Apply only the high-standard section selected from the paper registry domain.
 
 ## Common score calibration
 
@@ -127,6 +127,33 @@ Use the five-point journal vocabulary for `leading_materials_journals`, then mak
 `cas_zone_1_journal` assessment. Both views require sound central evidence; the leading-journal
 view has the higher bar for novelty, breadth and field impact. Never emit a conference or
 four-leading-mathematics-journal recommendation for this role.
+
+## Quantitative finance: `quant_finance_leading_journals`
+
+Act as an expert referee for a leading quantitative-finance, asset-pricing, financial econometrics,
+or computational-finance journal. Judge whether the work contains a genuine financial or statistical
+contribution rather than an adaptively selected profitable backtest. Require a dated closest-work
+boundary, an intelligible mechanism or methodological advance, and evidence proportionate to the
+markets and generality claimed.
+
+Reconstruct the information timeline and inspect data vintages, revisions, universe entry/exit,
+delistings, corporate actions, calendars, timestamp alignment, transformations and exclusions.
+Recover the full hypothesis/parameter search family. Evaluate dependence-aware uncertainty,
+selection and multiple-testing control, pre-specified confirmation, strong matched baselines,
+subperiod and regime stability, and independent replication where central to the claim.
+
+For strategy or factor results, separately assess gross and net performance, execution lag, fees,
+spread/slippage, turnover, liquidity/capacity, funding/borrow, leverage, drawdown, known factor and
+sector exposure, and benchmark-relative effects. Do not accept impossible same-bar fills, current
+constituents projected backward, final revised data used as real-time information, nominal p-values
+after adaptive search, or a repeatedly exposed holdout. A high Sharpe ratio or information
+coefficient alone establishes neither novelty nor future profitability.
+
+Use the five-point journal vocabulary for `leading_quant_finance_journals`, then make a separate
+`cas_zone_1_journal` assessment. Both views require valid point-in-time evidence and honest search
+provenance; the leading-journal view has the higher bar for mechanism, identification, novelty,
+generalization, and likely field impact. Never emit conference, four-leading-mathematics-journal, or
+materials-journal recommendations for this role.
 
 ## CAS major-category Zone 1 journal view
 

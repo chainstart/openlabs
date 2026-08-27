@@ -1,0 +1,44 @@
+{
+  "schema_version": "openlabs.project.v1",
+  "project_id": "quant-example",
+  "domain": "quant",
+  "status": "paused",
+  "objective": "Demonstrate an evidence-bound quantitative-finance workstream.",
+  "protocol": {
+    "id": "autonomous-quant",
+    "primary_skill": "quant-research-loop"
+  },
+  "execution": {
+    "checkpoint_policy": "role_boundary_or_budget",
+    "continue_across_protocol_phases": true,
+    "default_session_mode": "resume",
+    "fresh_session_boundaries": [
+      "independent_replication",
+      "adversarial_review",
+      "portfolio_review",
+      "route_reselection"
+    ]
+  },
+  "portfolio": {
+    "allow_dynamic_candidate_workstreams": true,
+    "candidate_maturation_instruction": "Mature only pre-registered results that survive independent audit.",
+    "candidate_state_template": {
+      "schema_version": "openlabs.project_workstream.v1",
+      "mode": "candidate_maturation",
+      "status": "active"
+    }
+  },
+  "workstreams": [
+    {
+      "workstream_id": "example-factor",
+      "title": "Example factor falsification",
+      "state_path": "research_state.json",
+      "startup": "paused",
+      "priority": 100,
+      "objective": "Test one mechanism with point-in-time data and explicit costs.",
+      "agent_role": "researcher",
+      "session_mode": "resume",
+      "continuation": "continuous"
+    }
+  ]
+}

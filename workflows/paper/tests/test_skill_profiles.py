@@ -2,9 +2,7 @@ import re
 from pathlib import Path
 
 import yaml
-
 from paper_writing.registry import repository_root
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,7 +18,12 @@ def test_profiles_are_explicit_bounded_and_pinned() -> None:
 
     assert policy["invocation"] == "explicit"
     assert policy["maximum_active_components"] == 3
-    assert set(profiles["profiles"]) == {"ai_ml", "mathematics", "materials"}
+    assert set(profiles["profiles"]) == {
+        "ai_ml",
+        "mathematics",
+        "materials",
+        "quantitative_finance",
+    }
 
     for profile in profiles["profiles"].values():
         components = profile["components"]
@@ -81,6 +84,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "se": "top_conference",
         "math": "four_top_math_journals",
         "materials": "leading_materials_journals",
+        "quant": "leading_quant_finance_journals",
     }
     assert profiles["quality_gate"]["recommendation_views"] == {
         "ai": ["top_conference", "cas_zone_1_journal"],
@@ -88,6 +92,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "se": ["top_conference", "cas_zone_1_journal"],
         "math": ["four_top_math_journals", "cas_zone_1_journal"],
         "materials": ["leading_materials_journals", "cas_zone_1_journal"],
+        "quant": ["leading_quant_finance_journals", "cas_zone_1_journal"],
     }
     assert profiles["quality_gate"]["gate_decision_standard"] == "cas_zone_1_journal"
     assert profiles["quality_gate"]["cas_zone_1_scope"] == "major_category"
@@ -97,6 +102,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "se": "cs_top_tier",
         "math": "math",
         "materials": "materials",
+        "quant": "quant_finance",
     }
     assert profiles["quality_gate"]["reviewer_rubric_ids"] == {
         "ai": "ara.revision-agent.cs-top-tier.v1",
@@ -104,6 +110,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "se": "ara.revision-agent.cs-top-tier.v1",
         "math": "ara.paper-writing.math-four-journals.v1",
         "materials": "openlabs.paper-writing.materials-leading-journals.v1",
+        "quant": "openlabs.paper-writing.quant-finance-leading-journals.v1",
     }
     rubric_text = (review_skill / "references" / "rubrics.md").read_text(encoding="utf-8")
     for journal in (

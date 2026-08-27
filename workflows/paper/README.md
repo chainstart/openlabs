@@ -1,8 +1,8 @@
 # OpenLabs paper workflow
 
 This is the deterministic half of paper production: registry validation, evidence bundles,
-manuscript inventory, review-record validation, exact median aggregation, quality gates, support
-checks, and immutable package construction. Writing and scientific judgment stay in the three
+manuscript inventory, review-record validation, conservative minimum aggregation, quality gates,
+support checks, and immutable package construction. Writing and scientific judgment stay in the four
 OpenLabs paper Skills and their pinned vendored components.
 
 By default, the workflow reads private state from `$OPENLABS_DATA`, or from

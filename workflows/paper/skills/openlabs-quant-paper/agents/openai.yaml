@@ -1,0 +1,6 @@
+interface:
+  display_name: "OpenLabs Quant Paper"
+  short_description: "Evidence-bound quantitative-finance manuscript workflow"
+  default_prompt: "Use $openlabs-quant-paper to audit and revise the selected quantitative-finance manuscript from registered evidence."
+policy:
+  allow_implicit_invocation: false

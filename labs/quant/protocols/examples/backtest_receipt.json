@@ -1,0 +1,31 @@
+{
+  "schema_version": "openlabs.quant_backtest_receipt.v1",
+  "trial_id": "pilot-001",
+  "stage": "pilot",
+  "status": "INCONCLUSIVE",
+  "created_at_utc": "2026-08-21T00:00:00Z",
+  "inputs": [
+    {
+      "path": "frozen_input.json",
+      "sha256": "fc7cf7ce19466fc90bb589724280ba0d7074a24139b43f771437dc6a9aa2c2c5"
+    }
+  ],
+  "execution": {
+    "costs_included": true,
+    "execution_lag_bars": 1,
+    "slippage_model": "Zero-value deterministic protocol fixture; no market interpretation."
+  },
+  "leakage_checks": {
+    "lookahead_detected": false,
+    "point_in_time_verified": true,
+    "survivorship_controlled": true
+  },
+  "metrics": {
+    "gross_return": null,
+    "net_return": null,
+    "sharpe": null,
+    "max_drawdown": null,
+    "turnover": null
+  },
+  "limitations": ["This fixture only exercises the evidence contract."]
+}

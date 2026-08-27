@@ -1,0 +1,75 @@
+{
+  "schema_version": "openlabs.lab.v1",
+  "lab_id": "quant",
+  "domain": "quant",
+  "name": "OpenLabs Quantitative Finance Lab",
+  "runner": {
+    "command": ["{python}", "../../packages/research-core/lab_runner.py"]
+  },
+  "skills": [
+    {
+      "skill_id": "quant-research-loop",
+      "path": "skills/quant-research-loop/SKILL.md"
+    },
+    {
+      "skill_id": "quant-backtest-audit",
+      "path": "skills/quant-backtest-audit/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-quant-paper",
+      "path": "../../workflows/paper/skills/openlabs-quant-paper/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-paper-review",
+      "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"
+    }
+  ],
+  "protocols": [
+    {
+      "protocol_id": "autonomous-quant",
+      "primary_skill": "quant-research-loop",
+      "runtime_skills": ["quant-research-loop"],
+      "validator": {
+        "command": [
+          "{python}",
+          "protocols/quant_research_protocol.py",
+          "--project",
+          "{project_config}",
+          "--workstream",
+          "{workstream_state}",
+          "--mode",
+          "{validation_mode}"
+        ]
+      }
+    }
+  ],
+  "runtime_setup": [
+    {
+      "setup_id": "quant-environment",
+      "command": [
+        "{python}",
+        "tools/quant_runtime.py",
+        "prepare",
+        "--lab-root",
+        "{lab_root}",
+        "--agent-workspace",
+        "{agent_workspace}",
+        "--artifacts-root",
+        "{artifacts_root}"
+      ],
+      "timeout_seconds": 120
+    }
+  ],
+  "capabilities": [
+    "literature-grounded-financial-hypotheses",
+    "point-in-time-data-governance",
+    "factor-and-strategy-research",
+    "cost-aware-backtesting",
+    "multiple-testing-control",
+    "portfolio-and-risk-analysis",
+    "independent-replication"
+  ],
+  "worker_resources": {
+    "cpu_burst_fraction_of_host": 0.75
+  }
+}

@@ -2,7 +2,7 @@
 
 OpenLabs 是一个面向个人使用、可恢复、可连续运行的轻量科研工厂。它以短生命周期 tick
 维护全局任务、租约和质量门，以 Agent + Skill 完成文献理解、Idea、证明/实验、解释和
-写作；数学、AI/ML、材料和物理实验室彼此不 import，只交换版本化任务文件和结果包。
+写作；数学、AI/ML、材料、量化金融和物理实验室彼此不 import，只交换版本化任务文件和结果包。
 
 ```text
 /home/biostar/work/projects/openlabs/   # 聚合目录，不是 Git 仓库
@@ -16,13 +16,14 @@ OpenLabs 是一个面向个人使用、可恢复、可连续运行的轻量科�
 
 - AMRA 数学研究循环、38 个 campaign 及当前 OPG-1757 探索脚本；
 - AIRA 的 bundle、基准、实验执行/评估和实验记忆工具；
+- Quant Lab 的时点数据契约、全试验账本、回测证据门和独立研究环境；
 - Physics Lab 的 50 个开放问题、物理证据协议、公开实验/观测数据摄取、Astropy/QuTiP
   领域 Skill 和分组锁定环境；
 - matfactory 的材料协议、仿真、分析、队列、审计、隐藏有序/软模发现代码及小型冻结输入；
 - 两个材料接续状态：暂停的 LLZTO 长周期 campaign，以及 CPU 校准完成、仍受模型/新颖性
   门约束的隐藏有序/软模试点；旧 23 GiB 运行证据没有混入代码或 openlabs-data Git；
-- ara-paper-writing 当前工作树中的 45 篇论文、registry、reviews、确定性工作流和三套
-  OpenLabs 写作/审稿 Skill；
+- ara-paper-writing 当前工作树中的 45 篇论文、registry、reviews、确定性工作流和四套
+  OpenLabs 领域写作 Skill；
 - 旧 ARA 中经审计的文献/数据库查询 Skill，以及其 manifest、租约、bundle、阶段限制等
   思路的精简重写。旧 ARA 巨型固定流水线没有整体复制。
 
@@ -61,7 +62,8 @@ OpenLabs 研究负载的聚合 CPU、内存、swap 和任务数。
 [个人运行手册](docs/operations.zh.md)。完整设计见
 [架构决策](docs/openlabs-monorepo-architecture.zh.md)，Codex、Skill、Hook 与确定性控制面的
 边界见 [自主科研运行时](docs/autonomous-runtime.zh.md)，本次来源与过滤情况见
-[迁移报告](docs/migration-report.zh.md)，物理工具与 Skill 的选型见
+[迁移报告](docs/migration-report.zh.md)，量化工具与 Skill 的选型见
+[量化实验室复用审计](docs/quant-lab-reuse-audit.zh.md)，物理工具与 Skill 的选型见
 [物理实验室开源复用审计](docs/physics-lab-open-source-audit.zh.md)。仓库没有自动启用 timer，也没有启动昂贵研究任务。
 
 ## License

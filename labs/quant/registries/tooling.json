@@ -1,0 +1,80 @@
+{
+  "schema_version": "openlabs.quant_tooling_registry.v1",
+  "reviewed_at": "2026-08-21",
+  "controller_policy": "Codex and OpenLabs remain the research controller; packages provide bounded computation.",
+  "tools": [
+    {
+      "name": "Microsoft Qlib",
+      "upstream": "https://github.com/microsoft/qlib",
+      "role": "factor, model, dataset and portfolio research",
+      "status": "adopted"
+    },
+    {
+      "name": "VectorBT",
+      "upstream": "https://github.com/polakowo/vectorbt",
+      "role": "fast vectorized pilot screening",
+      "status": "adopted_with_confirmation_boundary"
+    },
+    {
+      "name": "NautilusTrader",
+      "upstream": "https://github.com/nautechsystems/nautilus_trader",
+      "role": "optional event-driven execution-sensitive confirmation",
+      "status": "optional"
+    },
+    {
+      "name": "MLflow",
+      "upstream": "https://github.com/mlflow/mlflow",
+      "role": "experiment lineage",
+      "status": "adopted"
+    },
+    {
+      "name": "Optuna",
+      "upstream": "https://github.com/optuna/optuna",
+      "role": "registered numerical search",
+      "status": "adopted"
+    },
+    {
+      "name": "Polars, DuckDB and PyArrow",
+      "upstream": "https://github.com/pola-rs/polars",
+      "additional_upstreams": [
+        "https://github.com/duckdb/duckdb",
+        "https://arrow.apache.org/"
+      ],
+      "role": "columnar point-in-time data processing and storage",
+      "status": "adopted"
+    },
+    {
+      "name": "statsmodels and arch",
+      "upstream": "https://github.com/statsmodels/statsmodels",
+      "additional_upstreams": ["https://github.com/bashtage/arch"],
+      "role": "time-series, HAC, volatility and diagnostic statistics",
+      "status": "adopted"
+    },
+    {
+      "name": "CVXPY",
+      "upstream": "https://github.com/cvxpy/cvxpy",
+      "role": "constrained portfolio and risk-model research",
+      "status": "adopted"
+    },
+    {
+      "name": "skfolio",
+      "upstream": "https://github.com/skfolio/skfolio",
+      "role": "portfolio model selection reference",
+      "status": "not_coinstalled",
+      "note": "The current release depends on cvxpy-base, which overlaps the cvxpy package required by Qlib; keep it in a separate future environment until the namespace conflict is resolved."
+    },
+    {
+      "name": "exchange-calendars",
+      "upstream": "https://github.com/gerrymanoim/exchange_calendars",
+      "role": "market-session calendars",
+      "status": "adopted"
+    },
+    {
+      "name": "RD-Agent(Q)",
+      "upstream": "https://github.com/microsoft/RD-Agent",
+      "reference_snapshot": "/home/biostar/work/projects/lab/mle-lab/rd-agent",
+      "role": "Qlib integration reference only",
+      "status": "not_a_controller"
+    }
+  ]
+}

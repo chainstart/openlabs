@@ -12,7 +12,6 @@ import zipfile
 from pathlib import Path
 from typing import BinaryIO
 
-
 MAX_MEMBER_BYTES = 256 * 1024 * 1024
 MAX_TOTAL_BYTES = 1024 * 1024 * 1024
 TEXT_SUFFIXES = {
@@ -34,7 +33,7 @@ PATTERNS = (
     ("publishability", re.compile(r"\bpublishability\b|\bpotentially\s+publishable\b", re.IGNORECASE)),
     ("publication_assessment", re.compile(r"\bpublication\s+assessment\b", re.IGNORECASE)),
     ("publication_suitability", re.compile(r"\bsuitable\s+for\s+(?:publication|conversion\s+into\s+(?:a\s+)?(?:focused\s+)?(?:paper|preprint))", re.IGNORECASE)),
-    ("venue_tier_readiness", re.compile(r"\bCAS\s*1\s*区\b|\bfour[_ -]top[_ -]math[_ -]journals\b|\btop[_ -]conference\b", re.IGNORECASE)),
+    ("venue_tier_readiness", re.compile(r"\bCAS\s*1\s*区\b|\bfour[_ -]top[_ -]math[_ -]journals\b|\bleading[_ -](?:materials|quant[_ -]finance)[_ -]journals\b|\btop[_ -]conference\b", re.IGNORECASE)),
     ("quality_gate", re.compile(r"\bquality[_ -]?gate\b|\bwriting_release\b|\bara_llm_self_review\b", re.IGNORECASE)),
     ("audit_verdict", re.compile(r"\b(?:core|theorem|proof|manuscript|paper)(?:\s+\w+){0,3}\s+passed\s+(?:the\s+)?audit\b", re.IGNORECASE)),
     ("review_decision", re.compile(r"[\"']?(?:decision|recommendation)[\"']?\s*[:=]\s*[\"']?(?:accept|reject|minor_revision|major_revision|weak_accept|weak_reject)\b", re.IGNORECASE)),

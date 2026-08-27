@@ -3,7 +3,7 @@
 - 状态：初始架构基线
 - 日期：2026-08-07
 - 适用范围：个人使用、可持续 24 小时运行的跨领域科研工厂
-- 初始领域：数学、材料科学、AI/ML
+- 初始领域：数学、材料科学、AI/ML；2026-08-21 增加量化金融
 
 ## 1. 总体决策
 
@@ -12,7 +12,7 @@
 1. 所有稳定源代码进入一个干净的 OpenLabs monorepo。
 2. 研究数据、大型产物和数据库与代码在物理目录上分离。
 3. OpenLabs orchestrator 是薄控制面，不拥有任何领域的科研真相。
-4. 数学、材料、AI/ML 实验室和论文写作系统是独立子项目。
+4. 数学、材料、AI/ML、量化金融实验室和论文写作系统是独立子项目。
 5. 子项目之间不直接调用彼此的内部 Python API，只通过版本化文件协议、最小程序入口和 artifact URI 交换任务、状态和成果。
 6. 工厂以短生命周期 tick、独立长任务和持久状态实现连续运行，不依赖一个永不退出的大 Agent 会话。
 7. Agent 主导研究选择和执行；确定性代码掌握状态迁移、证据验证、资源限制和不可逆操作。
@@ -66,7 +66,8 @@ openlabs-data/
 ├── workspaces/
 │   ├── math/
 │   ├── materials/
-│   └── ai/
+│   ├── ai/
+│   └── quant/
 ├── papers/                 # 论文源文件和期刊版本，统一由 openlabs-data 仓库追踪
 ├── literature/             # 文献清单、结构化笔记和索引清单
 └── inbox/                  # 外部导入或待人工确认的材料
@@ -83,6 +84,7 @@ openlabs-artifacts 保存大型、不可变、可通过哈希寻址的产物，�
 
 - 材料模拟轨迹和波函数输出；
 - AI/ML 数据集、模型权重和训练检查点；
+- 量化金融原始时序/面板、特征矩阵、模型和大规模回测输出；
 - 大规模枚举结果；
 - 压缩结果包；
 - 本地编译 PDF、提交包、模型权重、轨迹和其他大型附件；
@@ -144,7 +146,11 @@ openlabs/
 │   ├── materials/
 │   │   ├── skills/
 │   │   └── tools/
-│   └── ai/
+│   ├── ai/
+│   │   ├── skills/
+│   │   └── tools/
+│   └── quant/
+│       ├── protocols/
 │       ├── skills/
 │       └── tools/
 ├── workflows/
@@ -201,7 +207,7 @@ workflows/paper 是所有领域共用、按需调用的下游工作流，不是�
 - 使用确定性代码完成 registry、结果包、构建、引用、质量门和不可变版本校验；
 - 初期默认在投稿、公开发布和产生外部副作用之前等待管理员批准。
 
-对现有 ara-paper-writing 的检查表明，ara-ai-paper 和 ara-math-paper 已能作为 AI/ML 与数学论文的薄协调 Skill；审稿现由空白 Codex 与经 Packy 调用的空白 Claude Code Opus 5 组成双供应商面板。它们依赖 vendored 写作/统计/审稿 Skill、仓库 registry、claim-evidence map，以及约 7,400 行 paper_writing 确定性 Python。纯复制 Skill 只能获得写作方法，不能获得可审计论文流水线。
+现有 paper workflow 以 AI/ML、数学、材料和量化金融四个薄协调 Skill 覆盖领域证据边界；审稿由空白 Codex 与经 Packy 调用的空白 Claude Code Opus 5 组成双供应商面板。它们依赖 vendored 写作/统计/审稿 Skill、仓库 registry、claim-evidence map，以及 paper_writing 确定性 Python。纯复制 Skill 只能获得写作方法，不能获得可审计论文流水线。
 
 迁入 OpenLabs 时保留“Skill 决策层 + 薄确定性 workflow”：
 
@@ -219,7 +225,7 @@ Zenodo、远程 handoff 和真实投稿属于可选外部适配器，不进入�
 - contracts：Schema、状态枚举和协议示例；
 - research-core：规范化 JSON、哈希、原子写入、事件日志和 artifact URI 等真正通用的机械能力；
 
-数学、材料和 AI/ML 的工具直接归各自 labs/<domain>/tools。不得因为代码相似就把领域知识放入 research-core；只有至少两个领域以相同语义使用的能力才考虑进入工厂级公共包。
+数学、材料、AI/ML 和量化金融的工具直接归各自 labs/<domain>/tools。不得因为代码相似就把领域知识放入 research-core；只有至少两个领域以相同语义使用的能力才考虑进入工厂级公共包。
 
 ### 3.5 Workflow、package 和 Skill 的区别
 
@@ -605,6 +611,7 @@ Agent 负责：
 - 迁入 AMRA 的数学研究循环和审计门；
 - 迁入 matfactory 的材料协议、campaign、watchdog 和结果验证；
 - 迁入 AIRA 的 AI/ML 实验室骨架；
+- 建立 Codex 主控、全试验登记和 point-in-time 数据门禁的量化金融领域包；
 - 将 ara-paper-writing 的协调 Skill、必要 vendored Skill、registry/bundle/build/review 门禁代码迁入轻量 paper workflow；
 - 暂不迁入 Zenodo 自动发布、远程 Manage handoff 等非 MVP 外部副作用。
 

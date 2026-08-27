@@ -1,0 +1,17 @@
+{
+  "schema_version": "openlabs.quant_trial_ledger.v1",
+  "project_id": "quant-example",
+  "workstream_id": "example-factor",
+  "created_at_utc": "2026-08-21T00:00:00Z",
+  "trials": [
+    {
+      "trial_id": "pilot-001",
+      "hypothesis_id": "hypothesis-001",
+      "stage": "pilot",
+      "status": "inconclusive",
+      "registered_at_utc": "2026-08-21T00:00:00Z",
+      "config_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "data_snapshot_ids": ["synthetic-fixture-v1"]
+    }
+  ]
+}

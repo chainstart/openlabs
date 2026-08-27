@@ -7,9 +7,9 @@ from openlabs.labs import discover_labs
 CODE_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_four_labs_are_discoverable() -> None:
+def test_five_labs_are_discoverable() -> None:
     labs = discover_labs(CODE_ROOT)
-    assert set(labs) == {"ai", "materials", "math", "physics"}
+    assert set(labs) == {"ai", "materials", "math", "physics", "quant"}
     for lab in labs.values():
         assert lab.command
         assert lab.skill_path() is not None

@@ -1,6 +1,6 @@
 # ARA local LLM quality gate
 
-This overlay is mandatory for both paper profiles. `registry/settings.yaml#quality_gate` is the
+This overlay is mandatory for every paper profile. `registry/settings.yaml#quality_gate` is the
 single source of thresholds. The current minimum LLM self-review score is **5.0/10**. Never round
 up, average around, or bypass it inside a profile. Change the threshold policy only with explicit
 human authorization and synchronized repository policy, settings, runtime, skill, documentation,
@@ -72,6 +72,12 @@ Route the registry domain exactly as follows:
   *Inventiones Mathematicae*, *Journal of the American Mathematical Society*, and
   *Acta Mathematica*; use rubric ID `ara.paper-writing.math-four-journals.v1` and record
   `four_top_math_journals` plus `cas_zone_1_journal` opinions, with no conference opinion.
+- `materials`: a leading selective materials-journal benchmark using rubric ID
+  `openlabs.paper-writing.materials-leading-journals.v1`, with `leading_materials_journals` plus
+  `cas_zone_1_journal` opinions;
+- `quant`: a leading quantitative-finance/financial-econometrics journal benchmark using rubric ID
+  `openlabs.paper-writing.quant-finance-leading-journals.v1`, with
+  `leading_quant_finance_journals` plus `cas_zone_1_journal` opinions.
 
 The CAS Zone 1 view uses the configured major-category scope and a lower selectivity bar than the
 domain's high-standard view, while preserving correctness and evidence requirements. Unless a

@@ -1,0 +1,21 @@
+{
+  "schema_version": "openlabs.quant_data_snapshot.v1",
+  "dataset_id": "synthetic-fixture-v1",
+  "provider": "OpenLabs deterministic test fixture",
+  "source_url": "https://openlabs.local/fixtures/quant",
+  "acquired_at_utc": "2026-08-21T00:00:00Z",
+  "license_or_terms": "Repository test fixture only; not financial data.",
+  "artifact_uri": "file:///immutable/openlabs/fixtures/quant/frozen_input.json",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "time_range": {
+    "start": "2020-01-01T00:00:00Z",
+    "end": "2020-01-03T00:00:00Z"
+  },
+  "frequency": "1d",
+  "universe_policy": "One synthetic identifier fixed before the pilot.",
+  "point_in_time": {
+    "available_at_field": "available_at_utc",
+    "revisions_policy": "Immutable synthetic fixture.",
+    "survivor_policy": "No membership changes in the synthetic fixture."
+  }
+}

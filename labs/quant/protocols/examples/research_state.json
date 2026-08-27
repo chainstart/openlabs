@@ -1,0 +1,18 @@
+{
+  "schema_version": "openlabs.quant_research_workspace.v1",
+  "project_id": "quant-example",
+  "workstream_id": "example-factor",
+  "mode": "hypothesis_discovery",
+  "status": "paused",
+  "research_question": "Does the registered signal retain a net effect after realistic timing and costs?",
+  "trial_ledger": "trial_ledger.json",
+  "data_manifests": ["data_manifest.json"],
+  "backtest_receipts": ["backtest_receipt.json"],
+  "paper_candidates": [],
+  "research_log": [
+    {
+      "at_utc": "2026-08-21T00:00:00Z",
+      "event": "Example protocol fixture created; no scientific result is claimed."
+    }
+  ]
+}

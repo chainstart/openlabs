@@ -15,10 +15,10 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-
 CS_TOP_TIER_REVIEWER_ROLE = "cs_top_tier"
 MATHEMATICS_REVIEWER_ROLE = "math"
 MATERIALS_REVIEWER_ROLE = "materials"
+QUANT_FINANCE_REVIEWER_ROLE = "quant_finance"
 
 INDIVIDUAL_REVIEW_SCHEMA_VERSION = "ara.paper_writing.review.v2"
 LEGACY_REVIEW_SCHEMA_VERSION = "ara.paper_writing.review.v3"
@@ -38,11 +38,15 @@ LEAN_OBJECTIVE_AUDIT_KIND = "lean_mathlib"
 CS_TOP_TIER_RUBRIC_ID = "ara.revision-agent.cs-top-tier.v1"
 MATH_FOUR_JOURNALS_RUBRIC_ID = "ara.paper-writing.math-four-journals.v1"
 MATERIALS_LEADING_JOURNALS_RUBRIC_ID = "openlabs.paper-writing.materials-leading-journals.v1"
+QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID = (
+    "openlabs.paper-writing.quant-finance-leading-journals.v1"
+)
 RECOMMENDATION_SCHEMA_VERSION = "ara.review_recommendations.v2"
 
 TOP_CONFERENCE_VIEW = "top_conference"
 FOUR_TOP_MATH_JOURNALS_VIEW = "four_top_math_journals"
 LEADING_MATERIALS_JOURNALS_VIEW = "leading_materials_journals"
+LEADING_QUANT_FINANCE_JOURNALS_VIEW = "leading_quant_finance_journals"
 CAS_ZONE_1_JOURNAL_VIEW = "cas_zone_1_journal"
 CAS_ZONE_1_SCOPE = "major_category"
 CAS_ZONE_1_BASIS_MODES = ("generic_standard", "verified_target")
@@ -51,6 +55,7 @@ RUBRIC_IDS_BY_ROLE = {
     CS_TOP_TIER_REVIEWER_ROLE: CS_TOP_TIER_RUBRIC_ID,
     MATHEMATICS_REVIEWER_ROLE: MATH_FOUR_JOURNALS_RUBRIC_ID,
     MATERIALS_REVIEWER_ROLE: MATERIALS_LEADING_JOURNALS_RUBRIC_ID,
+    QUANT_FINANCE_REVIEWER_ROLE: QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID,
 }
 
 # Match ARA RevisionAgent ordering: most favorable to least favorable.
@@ -86,6 +91,7 @@ _CS_DOMAINS = {
 }
 _MATH_DOMAINS = {"math", "mathematics"}
 _MATERIALS_DOMAINS = {"material", "materials", "materials_science"}
+_QUANT_FINANCE_DOMAINS = {"finance", "quant", "quant_finance", "quantitative_finance"}
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -121,6 +127,8 @@ def reviewer_role_for_domain(domain: Any) -> str:
         return MATHEMATICS_REVIEWER_ROLE
     if token in _MATERIALS_DOMAINS:
         return MATERIALS_REVIEWER_ROLE
+    if token in _QUANT_FINANCE_DOMAINS:
+        return QUANT_FINANCE_REVIEWER_ROLE
     raise ValueError(f"No paper-review rubric is configured for domain: {domain!r}")
 
 
@@ -235,9 +243,7 @@ def _aggregate_score(values: list[int], aggregation: str) -> int:
     raise ValueError(f"Unknown review score aggregation: {aggregation!r}")
 
 
-def _aggregate_decision(
-    values: list[str], ordering: tuple[str, ...], aggregation: str
-) -> str:
+def _aggregate_decision(values: list[str], ordering: tuple[str, ...], aggregation: str) -> str:
     if aggregation == REVIEW_DECISION_AGGREGATION:
         return max(values, key=ordering.index)
     if aggregation == LEGACY_REVIEW_DECISION_AGGREGATION:
@@ -274,8 +280,7 @@ def _validate_recommendation_entry(
         errors.append(f"{path}.decision must be one of: {', '.join(decisions)}")
     if entry.get("confidence") not in RECOMMENDATION_CONFIDENCE_LEVELS:
         errors.append(
-            f"{path}.confidence must be one of: "
-            f"{', '.join(RECOMMENDATION_CONFIDENCE_LEVELS)}"
+            f"{path}.confidence must be one of: {', '.join(RECOMMENDATION_CONFIDENCE_LEVELS)}"
         )
     rationale = entry.get("rationale")
     if not isinstance(rationale, str) or not rationale.strip():
@@ -347,9 +352,7 @@ def validate_review_record(
                 if not isinstance(item.get(key), str) or not str(item.get(key)).strip():
                     errors.append(f"{path}.{key} must be a non-empty string")
             if item.get("priority") not in CHANGE_PRIORITIES:
-                errors.append(
-                    f"{path}.priority must be one of: {', '.join(CHANGE_PRIORITIES)}"
-                )
+                errors.append(f"{path}.priority must be one of: {', '.join(CHANGE_PRIORITIES)}")
             targets = item.get("targets")
             if not isinstance(targets, list) or any(
                 not isinstance(target, str) or not target.strip() for target in targets
@@ -364,9 +367,10 @@ def validate_review_record(
             errors.append(f"publishability_summary.{key} must be boolean")
     if not isinstance(publishability.get("blocking_reason"), str):
         errors.append("publishability_summary.blocking_reason must be a string")
-    elif publishability.get("scientific_ready") is False and not publishability.get(
-        "blocking_reason", ""
-    ).strip():
+    elif (
+        publishability.get("scientific_ready") is False
+        and not publishability.get("blocking_reason", "").strip()
+    ):
         errors.append(
             "publishability_summary.blocking_reason must explain why scientific_ready is false"
         )
@@ -376,8 +380,7 @@ def validate_review_record(
         errors.append("review_metadata.score_kind must be ara_llm_self_review")
     if metadata.get("recommendation_schema_version") != RECOMMENDATION_SCHEMA_VERSION:
         errors.append(
-            "review_metadata.recommendation_schema_version must be "
-            f"{RECOMMENDATION_SCHEMA_VERSION}"
+            f"review_metadata.recommendation_schema_version must be {RECOMMENDATION_SCHEMA_VERSION}"
         )
     if metadata.get("not_external_peer_review") is not True:
         errors.append("review_metadata.not_external_peer_review must be true")
@@ -393,8 +396,7 @@ def validate_review_record(
     reviewer_role = metadata.get("reviewer_role")
     if reviewer_role not in RUBRIC_IDS_BY_ROLE:
         errors.append(
-            "review_metadata.reviewer_role must be one of: "
-            f"{', '.join(RUBRIC_IDS_BY_ROLE)}"
+            f"review_metadata.reviewer_role must be one of: {', '.join(RUBRIC_IDS_BY_ROLE)}"
         )
     rubric_role = expected_role if expected_role in RUBRIC_IDS_BY_ROLE else reviewer_role
     expected_rubric_id = RUBRIC_IDS_BY_ROLE.get(rubric_role)
@@ -413,9 +415,7 @@ def validate_review_record(
 
     cas_basis = _mapping(metadata.get("cas_zone_1_basis"))
     if cas_basis.get("scope") != CAS_ZONE_1_SCOPE:
-        errors.append(
-            f"review_metadata.cas_zone_1_basis.scope must be {CAS_ZONE_1_SCOPE}"
-        )
+        errors.append(f"review_metadata.cas_zone_1_basis.scope must be {CAS_ZONE_1_SCOPE}")
     cas_basis_mode = cas_basis.get("mode")
     if cas_basis_mode not in CAS_ZONE_1_BASIS_MODES:
         errors.append(
@@ -431,9 +431,7 @@ def validate_review_record(
                     "for verified_target"
                 )
 
-    recommendation_role = (
-        expected_role if expected_role in RUBRIC_IDS_BY_ROLE else reviewer_role
-    )
+    recommendation_role = expected_role if expected_role in RUBRIC_IDS_BY_ROLE else reviewer_role
     recommendations = _mapping(review.get("recommendations"))
     cas_zone_1 = _mapping(recommendations.get(CAS_ZONE_1_JOURNAL_VIEW))
     _validate_recommendation_entry(
@@ -459,6 +457,10 @@ def validate_review_record(
             errors.append(
                 f"recommendations.{LEADING_MATERIALS_JOURNALS_VIEW} is only valid for materials reviews"
             )
+        if LEADING_QUANT_FINANCE_JOURNALS_VIEW in recommendations:
+            errors.append(
+                f"recommendations.{LEADING_QUANT_FINANCE_JOURNALS_VIEW} is only valid for quant-finance reviews"
+            )
     elif recommendation_role == MATHEMATICS_REVIEWER_ROLE:
         four_journals = _mapping(recommendations.get(FOUR_TOP_MATH_JOURNALS_VIEW))
         _validate_recommendation_entry(
@@ -477,6 +479,10 @@ def validate_review_record(
             errors.append(
                 f"recommendations.{LEADING_MATERIALS_JOURNALS_VIEW} is forbidden for math reviews"
             )
+        if LEADING_QUANT_FINANCE_JOURNALS_VIEW in recommendations:
+            errors.append(
+                f"recommendations.{LEADING_QUANT_FINANCE_JOURNALS_VIEW} is forbidden for math reviews"
+            )
     elif recommendation_role == MATERIALS_REVIEWER_ROLE:
         leading_materials = _mapping(recommendations.get(LEADING_MATERIALS_JOURNALS_VIEW))
         _validate_recommendation_entry(
@@ -485,11 +491,35 @@ def validate_review_record(
             decisions=JOURNAL_DECISIONS,
             errors=errors,
         )
-        for forbidden in (TOP_CONFERENCE_VIEW, FOUR_TOP_MATH_JOURNALS_VIEW, "conference"):
+        for forbidden in (
+            TOP_CONFERENCE_VIEW,
+            FOUR_TOP_MATH_JOURNALS_VIEW,
+            LEADING_QUANT_FINANCE_JOURNALS_VIEW,
+            "conference",
+        ):
             if forbidden in recommendations:
                 errors.append(
                     f"recommendations.{forbidden} is forbidden for materials reviews; "
                     "use leading_materials_journals"
+                )
+    elif recommendation_role == QUANT_FINANCE_REVIEWER_ROLE:
+        leading_quant = _mapping(recommendations.get(LEADING_QUANT_FINANCE_JOURNALS_VIEW))
+        _validate_recommendation_entry(
+            leading_quant,
+            path=f"recommendations.{LEADING_QUANT_FINANCE_JOURNALS_VIEW}",
+            decisions=JOURNAL_DECISIONS,
+            errors=errors,
+        )
+        for forbidden in (
+            TOP_CONFERENCE_VIEW,
+            FOUR_TOP_MATH_JOURNALS_VIEW,
+            LEADING_MATERIALS_JOURNALS_VIEW,
+            "conference",
+        ):
+            if forbidden in recommendations:
+                errors.append(
+                    f"recommendations.{forbidden} is forbidden for quant-finance reviews; "
+                    "use leading_quant_finance_journals"
                 )
     for key in ("model", "reasoning_effort", "reviewed_at_utc"):
         if not isinstance(metadata.get(key), str) or not str(metadata.get(key)).strip():
@@ -541,10 +571,7 @@ def validate_review_record(
         if panel.get("prior_reviews_hidden") is not True:
             errors.append("review_metadata.review_panel.prior_reviews_hidden must be true")
         reviewer_records = panel.get("reviewer_records")
-        if (
-            not isinstance(reviewer_records, list)
-            or len(reviewer_records) != expected_panel_size
-        ):
+        if not isinstance(reviewer_records, list) or len(reviewer_records) != expected_panel_size:
             errors.append(
                 "review_metadata.review_panel.reviewer_records must contain exactly "
                 f"{expected_panel_size} entries"
@@ -571,17 +598,13 @@ def validate_review_record(
                 if schema_version == REVIEW_SCHEMA_VERSION:
                     expected_reviewer_id = f"reviewer-{index + 1}"
                     if reviewer_id != expected_reviewer_id:
-                        errors.append(
-                            f"{path}.reviewer_id must be {expected_reviewer_id}"
-                        )
+                        errors.append(f"{path}.reviewer_id must be {expected_reviewer_id}")
                     contract = REVIEWER_PROVIDER_CONTRACTS.get(str(reviewer_id))
                     if contract is None:
                         errors.append(f"{path}.reviewer_id is not in the current provider contract")
                     else:
                         if item.get("provider") != contract["provider"]:
-                            errors.append(
-                                f"{path}.provider must be {contract['provider']}"
-                            )
+                            errors.append(f"{path}.provider must be {contract['provider']}")
                         expected_model = contract["model"]
                         if expected_model is not None and item.get("model") != expected_model:
                             errors.append(f"{path}.model must be {expected_model}")
@@ -597,9 +620,7 @@ def validate_review_record(
 
         shared_audits = panel.get("shared_objective_audits", [])
         if not isinstance(shared_audits, list):
-            errors.append(
-                "review_metadata.review_panel.shared_objective_audits must be an array"
-            )
+            errors.append("review_metadata.review_panel.shared_objective_audits must be an array")
         else:
             audit_kinds: list[str] = []
             audit_sources: list[str] = []
@@ -702,9 +723,7 @@ def validate_review_panel_files(
             errors.append(f"reviewer record {index + 1} cannot reference the panel result")
             continue
         if source_path.parent != aggregate_path.parent:
-            errors.append(
-                f"reviewer record {index + 1} must be stored beside the panel result"
-            )
+            errors.append(f"reviewer record {index + 1} must be stored beside the panel result")
             continue
         if not source_path.is_file():
             errors.append(f"reviewer record {index + 1} does not exist: {source}")
@@ -723,8 +742,7 @@ def validate_review_panel_files(
             continue
         if reviewer.get("schema_version") != INDIVIDUAL_REVIEW_SCHEMA_VERSION:
             errors.append(
-                f"reviewer record {index + 1} must use schema "
-                f"{INDIVIDUAL_REVIEW_SCHEMA_VERSION}"
+                f"reviewer record {index + 1} must use schema {INDIVIDUAL_REVIEW_SCHEMA_VERSION}"
             )
         errors.extend(
             f"reviewer record {index + 1}: {error}"
@@ -736,9 +754,7 @@ def validate_review_panel_files(
         )
         reviewer_metadata = _mapping(reviewer.get("review_metadata"))
         if reviewer_metadata.get("panel_reviewer_id") != item.get("reviewer_id"):
-            errors.append(
-                f"reviewer record {index + 1} panel_reviewer_id does not match the panel"
-            )
+            errors.append(f"reviewer record {index + 1} panel_reviewer_id does not match the panel")
         if reviewer_metadata.get("independent_context") is not True:
             errors.append(f"reviewer record {index + 1} independent_context must be true")
         if reviewer_metadata.get("prior_reviews_hidden") is not True:
@@ -754,26 +770,18 @@ def validate_review_panel_files(
                     )
                 expected_model = provider_contract["model"]
                 if expected_model is not None and reviewer_metadata.get("model") != expected_model:
-                    errors.append(
-                        f"reviewer record {index + 1} model must be {expected_model}"
-                    )
+                    errors.append(f"reviewer record {index + 1} model must be {expected_model}")
                 if item.get("provider") != reviewer_metadata.get("provider"):
-                    errors.append(
-                        f"reviewer record {index + 1} provider does not match the panel"
-                    )
+                    errors.append(f"reviewer record {index + 1} provider does not match the panel")
                 if item.get("model") != reviewer_metadata.get("model"):
-                    errors.append(
-                        f"reviewer record {index + 1} model does not match the panel"
-                    )
+                    errors.append(f"reviewer record {index + 1} model does not match the panel")
         for key in (
             "main_tex_sha256",
             "manuscript_snapshot_sha256_before",
             "manuscript_snapshot_sha256_after",
         ):
             if reviewer_metadata.get(key) != metadata.get(key):
-                errors.append(
-                    f"reviewer record {index + 1} {key} does not match the panel result"
-                )
+                errors.append(f"reviewer record {index + 1} {key} does not match the panel result")
         reviewer_payloads.append(reviewer)
 
     if len(reviewer_payloads) != expected_panel_size:
@@ -784,8 +792,7 @@ def validate_review_panel_files(
         reviewer_two_metadata = _mapping(reviewer_payloads[1].get("review_metadata"))
         if reviewer_two_metadata.get("hidden_peer_review_sha256") != reviewer_one_hash:
             errors.append(
-                "reviewer record 2 hidden_peer_review_sha256 must bind the frozen "
-                "reviewer-1 record"
+                "reviewer record 2 hidden_peer_review_sha256 must bind the frozen reviewer-1 record"
             )
 
     shared_audits = panel.get("shared_objective_audits", [])
@@ -859,8 +866,7 @@ def validate_review_panel_files(
                     or not minimum <= value <= maximum
                 ):
                     errors.append(
-                        f"{prefix} resource_limits.{key} must be between "
-                        f"{minimum} and {maximum}"
+                        f"{prefix} resource_limits.{key} must be between {minimum} and {maximum}"
                     )
             preflight = _mapping(receipt.get("preflight"))
             total_memory = preflight.get("total_memory_mib")
@@ -883,19 +889,14 @@ def validate_review_panel_files(
             else:
                 expected_reserve = max(8192, total_memory // 4)
                 if reserved_headroom != expected_reserve:
-                    errors.append(
-                        f"{prefix} reserved_headroom_mib must equal {expected_reserve}"
-                    )
+                    errors.append(f"{prefix} reserved_headroom_mib must equal {expected_reserve}")
                 expected_required = aggregate_limit + reserved_headroom
                 if required_available != expected_required:
                     errors.append(
-                        f"{prefix} required_available_memory_mib must equal "
-                        f"{expected_required}"
+                        f"{prefix} required_available_memory_mib must equal {expected_required}"
                     )
                 if available_memory < required_available:
-                    errors.append(
-                        f"{prefix} available memory did not preserve the host headroom"
-                    )
+                    errors.append(f"{prefix} available memory did not preserve the host headroom")
             audit_file = receipt.get("audit_file")
             commands = receipt.get("commands")
             expected_commands = (
@@ -934,10 +935,7 @@ def validate_review_panel_files(
                         errors.append(f"{prefix} project does not exist: {project}")
                     elif isinstance(audit_file, str):
                         audit_path = (project_path / audit_file).resolve()
-                        if (
-                            not audit_path.is_relative_to(project_path)
-                            or not audit_path.is_file()
-                        ):
+                        if not audit_path.is_relative_to(project_path) or not audit_path.is_file():
                             errors.append(f"{prefix} audit_file is missing or escapes its project")
 
             source_hashes = receipt.get("source_sha256")
@@ -954,11 +952,10 @@ def validate_review_panel_files(
                         errors.append(f"{prefix} contains an invalid source hash entry")
                         continue
                     source_path = (project_path / relative).resolve()
-                    if (
-                        not source_path.is_relative_to(project_path)
-                        or not source_path.is_file()
-                    ):
-                        errors.append(f"{prefix} source is missing or escapes its project: {relative}")
+                    if not source_path.is_relative_to(project_path) or not source_path.is_file():
+                        errors.append(
+                            f"{prefix} source is missing or escapes its project: {relative}"
+                        )
                     elif hashlib.sha256(source_path.read_bytes()).hexdigest() != expected_hash:
                         errors.append(f"{prefix} source SHA-256 mismatch: {relative}")
 
@@ -985,9 +982,7 @@ def validate_review_panel_files(
             for review in reviewer_payloads
         ]
         if all(value in CONFERENCE_DECISIONS for value in values):
-            expected = _aggregate_decision(
-                values, CONFERENCE_DECISIONS, decision_aggregation
-            )
+            expected = _aggregate_decision(values, CONFERENCE_DECISIONS, decision_aggregation)
             actual = _mapping(
                 _mapping(final_recommendations.get(TOP_CONFERENCE_VIEW)).get("seven_point")
             ).get("decision")
@@ -998,16 +993,16 @@ def validate_review_panel_files(
                 )
     elif role == MATHEMATICS_REVIEWER_ROLE:
         values = [
-            _mapping(
-                _mapping(review.get("recommendations")).get(FOUR_TOP_MATH_JOURNALS_VIEW)
-            ).get("decision")
+            _mapping(_mapping(review.get("recommendations")).get(FOUR_TOP_MATH_JOURNALS_VIEW)).get(
+                "decision"
+            )
             for review in reviewer_payloads
         ]
         if all(value in JOURNAL_DECISIONS for value in values):
             expected = _aggregate_decision(values, JOURNAL_DECISIONS, decision_aggregation)
-            actual = _mapping(
-                final_recommendations.get(FOUR_TOP_MATH_JOURNALS_VIEW)
-            ).get("decision")
+            actual = _mapping(final_recommendations.get(FOUR_TOP_MATH_JOURNALS_VIEW)).get(
+                "decision"
+            )
             if actual != expected:
                 errors.append(
                     f"recommendations.{FOUR_TOP_MATH_JOURNALS_VIEW}.decision must equal "
@@ -1022,28 +1017,41 @@ def validate_review_panel_files(
         ]
         if all(value in JOURNAL_DECISIONS for value in values):
             expected = _aggregate_decision(values, JOURNAL_DECISIONS, decision_aggregation)
-            actual = _mapping(
-                final_recommendations.get(LEADING_MATERIALS_JOURNALS_VIEW)
-            ).get("decision")
+            actual = _mapping(final_recommendations.get(LEADING_MATERIALS_JOURNALS_VIEW)).get(
+                "decision"
+            )
             if actual != expected:
                 errors.append(
                     f"recommendations.{LEADING_MATERIALS_JOURNALS_VIEW}.decision must equal "
                     f"{decision_aggregation} {expected}"
                 )
+    elif role == QUANT_FINANCE_REVIEWER_ROLE:
+        values = [
+            _mapping(
+                _mapping(review.get("recommendations")).get(LEADING_QUANT_FINANCE_JOURNALS_VIEW)
+            ).get("decision")
+            for review in reviewer_payloads
+        ]
+        if all(value in JOURNAL_DECISIONS for value in values):
+            expected = _aggregate_decision(values, JOURNAL_DECISIONS, decision_aggregation)
+            actual = _mapping(final_recommendations.get(LEADING_QUANT_FINANCE_JOURNALS_VIEW)).get(
+                "decision"
+            )
+            if actual != expected:
+                errors.append(
+                    f"recommendations.{LEADING_QUANT_FINANCE_JOURNALS_VIEW}.decision must equal "
+                    f"{decision_aggregation} {expected}"
+                )
 
     cas_values = [
-        _mapping(
-            _mapping(review.get("recommendations")).get(CAS_ZONE_1_JOURNAL_VIEW)
-        ).get("decision")
+        _mapping(_mapping(review.get("recommendations")).get(CAS_ZONE_1_JOURNAL_VIEW)).get(
+            "decision"
+        )
         for review in reviewer_payloads
     ]
     if all(value in JOURNAL_DECISIONS for value in cas_values):
-        expected = _aggregate_decision(
-            cas_values, JOURNAL_DECISIONS, decision_aggregation
-        )
-        actual = _mapping(final_recommendations.get(CAS_ZONE_1_JOURNAL_VIEW)).get(
-            "decision"
-        )
+        expected = _aggregate_decision(cas_values, JOURNAL_DECISIONS, decision_aggregation)
+        actual = _mapping(final_recommendations.get(CAS_ZONE_1_JOURNAL_VIEW)).get("decision")
         if actual != expected:
             errors.append(
                 f"recommendations.{CAS_ZONE_1_JOURNAL_VIEW}.decision must equal "
@@ -1066,6 +1074,9 @@ def review_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
     elif reviewer_role == MATERIALS_REVIEWER_ROLE:
         high_standard_view = LEADING_MATERIALS_JOURNALS_VIEW
         high_standard = _mapping(recommendations.get(LEADING_MATERIALS_JOURNALS_VIEW))
+    elif reviewer_role == QUANT_FINANCE_REVIEWER_ROLE:
+        high_standard_view = LEADING_QUANT_FINANCE_JOURNALS_VIEW
+        high_standard = _mapping(recommendations.get(LEADING_QUANT_FINANCE_JOURNALS_VIEW))
     else:
         high_standard_view = TOP_CONFERENCE_VIEW
         high_standard = _mapping(
@@ -1081,7 +1092,5 @@ def review_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
         "high_standard_decision": high_standard.get("decision"),
         "cas_zone_1_decision": cas_zone_1.get("decision"),
         "panel_size": _mapping(metadata.get("review_panel")).get("panel_size"),
-        "score_aggregation": _mapping(metadata.get("review_panel")).get(
-            "score_aggregation"
-        ),
+        "score_aggregation": _mapping(metadata.get("review_panel")).get("score_aggregation"),
     }

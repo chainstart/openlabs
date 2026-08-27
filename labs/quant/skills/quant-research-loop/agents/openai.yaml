@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Research Loop"
+  short_description: "Run evidence-bound quantitative-finance research"
+  default_prompt: "Use $quant-research-loop to advance one falsifiable quantitative-finance research step."

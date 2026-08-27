@@ -197,6 +197,24 @@ For `materials`, set `reviewer_role` to `materials`, set `rubric_id` to
 }
 ```
 
+For `quant`, set `reviewer_role` to `quant_finance`, set `rubric_id` to
+`openlabs.paper-writing.quant-finance-leading-journals.v1`, and use:
+
+```json
+{
+  "leading_quant_finance_journals": {
+    "decision": "major_revision",
+    "confidence": "medium",
+    "rationale": "point-in-time, search, execution, and finance-contribution explanation"
+  },
+  "cas_zone_1_journal": {
+    "decision": "minor_revision",
+    "confidence": "medium",
+    "rationale": "independent CAS Zone 1 explanation"
+  }
+}
+```
+
 Use `cas_zone_1_basis.mode: generic_standard` when no particular journal's current classification
 has been verified. Use `verified_target` only with non-empty `target_journal`,
 `classification_source`, and `classification_checked_at`. A formatting target is not classification
@@ -208,4 +226,6 @@ formalization artifact is required. AI/computing request categories may include 
 `title_abstract_scope`, `related_work`, `method_clarification`, `new_experiment`, `new_analysis`,
 `new_figure`, `new_data_or_model`, and `missing_baseline`. Mathematics may additionally use
 `proof_exposition`, `proof_gap`, `theorem_scope`, `formalization_artifact`, and
-`submission_compliance`.
+`submission_compliance`. Quantitative-finance requests may additionally use `data_vintage`,
+`search_multiplicity`, `execution_assumptions`, `capacity`, `factor_exposure`, and
+`independent_replication`.

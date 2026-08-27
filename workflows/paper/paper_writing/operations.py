@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from paper_writing.identifiers import (
     DOMAIN_SCOPED_PAPER_ID_PATTERN,
@@ -14,24 +15,31 @@ from paper_writing.identifiers import (
     work_id_from_paper_id,
 )
 from paper_writing.inventory import build_inventory
+from paper_writing.registry import (
+    load_paper_metadata,
+    load_registry,
+    paper_metadata_path,
+    write_paper_metadata,
+)
 from paper_writing.review import (
     CAS_ZONE_1_JOURNAL_VIEW,
     CS_TOP_TIER_REVIEWER_ROLE,
     FOUR_TOP_MATH_JOURNALS_VIEW,
     LEADING_MATERIALS_JOURNALS_VIEW,
+    LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     MATERIALS_REVIEWER_ROLE,
+    QUANT_FINANCE_REVIEWER_ROLE,
     TOP_CONFERENCE_VIEW,
     decision_meets_standard_threshold,
     decisions_for_standard,
     reviewer_role_for_domain,
     validate_review_panel_files,
 )
-from paper_writing.registry import load_paper_metadata, load_registry, paper_metadata_path, write_paper_metadata
 from paper_writing.support_citations import audit_manuscript_support, support_audit_blockers
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def create_paper(
@@ -361,6 +369,9 @@ def apply_review_record(
     elif expected_role == MATERIALS_REVIEWER_ROLE:
         high_standard_view = LEADING_MATERIALS_JOURNALS_VIEW
         high_standard = recommendations[LEADING_MATERIALS_JOURNALS_VIEW]
+    elif expected_role == QUANT_FINANCE_REVIEWER_ROLE:
+        high_standard_view = LEADING_QUANT_FINANCE_JOURNALS_VIEW
+        high_standard = recommendations[LEADING_QUANT_FINANCE_JOURNALS_VIEW]
     else:
         high_standard_view = FOUR_TOP_MATH_JOURNALS_VIEW
         high_standard = recommendations[FOUR_TOP_MATH_JOURNALS_VIEW]

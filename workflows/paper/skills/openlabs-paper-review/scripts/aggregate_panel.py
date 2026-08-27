@@ -14,36 +14,36 @@ import hashlib
 import json
 import sys
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 WORKFLOW_ROOT = Path(__file__).resolve().parents[3]
 if str(WORKFLOW_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKFLOW_ROOT))
 
-from paper_writing.registry import load_paper_metadata, repository_root  # noqa: E402
-from paper_writing.review import (  # noqa: E402
+from paper_writing.registry import load_paper_metadata, repository_root
+from paper_writing.review import (
     CAS_ZONE_1_JOURNAL_VIEW,
     CONFERENCE_DECISIONS,
     FOUR_TOP_MATH_JOURNALS_VIEW,
     INDIVIDUAL_REVIEW_SCHEMA_VERSION,
     JOURNAL_DECISIONS,
-    MATHEMATICS_REVIEWER_ROLE,
     LEADING_MATERIALS_JOURNALS_VIEW,
+    LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     MATERIALS_REVIEWER_ROLE,
+    MATHEMATICS_REVIEWER_ROLE,
+    QUANT_FINANCE_REVIEWER_ROLE,
     REVIEW_DECISION_AGGREGATION,
     REVIEW_PANEL_SIZE,
-    REVIEWER_PROVIDER_CONTRACTS,
     REVIEW_SCHEMA_VERSION,
     REVIEW_SCORE_AGGREGATION,
+    REVIEWER_PROVIDER_CONTRACTS,
     TOP_CONFERENCE_VIEW,
     reviewer_role_for_domain,
     validate_review_panel_files,
     validate_review_record,
 )
-
 
 SCORE_KEYS = ("clarity", "soundness", "significance", "novelty", "overall")
 CONFIDENCE_ORDER = ("high", "medium", "low")
@@ -275,6 +275,15 @@ def main(argv: list[str] | None = None) -> int:
                 high_entries, order=JOURNAL_DECISIONS
             )
         }
+    elif expected_role == QUANT_FINANCE_REVIEWER_ROLE:
+        high_entries = [
+            entry[LEADING_QUANT_FINANCE_JOURNALS_VIEW] for entry in recommendations
+        ]
+        final_recommendations = {
+            LEADING_QUANT_FINANCE_JOURNALS_VIEW: _aggregate_recommendation(
+                high_entries, order=JOURNAL_DECISIONS
+            )
+        }
     else:
         high_entries = [
             entry[TOP_CONFERENCE_VIEW]["seven_point"] for entry in recommendations
@@ -321,7 +330,7 @@ def main(argv: list[str] | None = None) -> int:
                 "mechanical coordinatewise minimum and strictest-decision aggregation; "
                 "distinct findings and blockers preserved"
             ),
-            "reviewed_at_utc": datetime.now(timezone.utc).isoformat(),
+            "reviewed_at_utc": datetime.now(UTC).isoformat(),
             **common,
             "manuscript_unchanged": True,
             "review_panel": {

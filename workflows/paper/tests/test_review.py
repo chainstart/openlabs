@@ -9,37 +9,37 @@ from paper_writing.operations import apply_review_record
 from paper_writing.registry import load_paper_metadata
 from paper_writing.review import (
     CAS_ZONE_1_JOURNAL_VIEW,
-    CS_TOP_TIER_RUBRIC_ID,
     CS_TOP_TIER_REVIEWER_ROLE,
+    CS_TOP_TIER_RUBRIC_ID,
     FOUR_TOP_MATH_JOURNALS_VIEW,
     INDIVIDUAL_REVIEW_SCHEMA_VERSION,
-    LEGACY_REVIEW_SCHEMA_VERSION,
+    LEADING_MATERIALS_JOURNALS_VIEW,
+    LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     LEAN_OBJECTIVE_AUDIT_KIND,
     LEAN_OBJECTIVE_AUDIT_SCHEMA_VERSION,
-    LEADING_MATERIALS_JOURNALS_VIEW,
-    MATH_FOUR_JOURNALS_RUBRIC_ID,
+    LEGACY_REVIEW_SCHEMA_VERSION,
     MATERIALS_LEADING_JOURNALS_RUBRIC_ID,
     MATERIALS_REVIEWER_ROLE,
+    MATH_FOUR_JOURNALS_RUBRIC_ID,
     MATHEMATICS_REVIEWER_ROLE,
+    QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID,
+    QUANT_FINANCE_REVIEWER_ROLE,
     RECOMMENDATION_SCHEMA_VERSION,
     REVIEW_SCHEMA_VERSION,
     TOP_CONFERENCE_VIEW,
-    decision_meets_threshold,
     decision_meets_standard_threshold,
+    decision_meets_threshold,
     review_safe_registry,
-    rubric_id_for_role,
     reviewer_role_for_domain,
+    rubric_id_for_role,
     validate_review_panel_files,
     validate_review_record,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "validate_review.py"
 AGGREGATOR = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "aggregate_panel.py"
-CLAUDE_REVIEWER = (
-    ROOT / "skills" / "openlabs-paper-review" / "scripts" / "run_claude_reviewer.py"
-)
+CLAUDE_REVIEWER = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "run_claude_reviewer.py"
 
 
 def test_review_safe_registry_removes_all_review_projections() -> None:
@@ -66,9 +66,7 @@ def test_review_safe_registry_removes_all_review_projections() -> None:
     assert metadata["support"]["publication"]["release_binding"]["score"] == 6
 
 
-def _review(
-    *, paper_id: str = "20260804-ai-llm-review-test", role: str = "cs_top_tier"
-) -> dict:
+def _review(*, paper_id: str = "20260804-ai-llm-review-test", role: str = "cs_top_tier") -> dict:
     if role == MATHEMATICS_REVIEWER_ROLE:
         recommendations = {
             FOUR_TOP_MATH_JOURNALS_VIEW: {
@@ -88,6 +86,19 @@ def _review(
                 "decision": "major_revision",
                 "confidence": "high",
                 "rationale": "The evidence package needs stronger validation.",
+            },
+            CAS_ZONE_1_JOURNAL_VIEW: {
+                "decision": "major_revision",
+                "confidence": "high",
+                "rationale": "The study is promising but not yet ready.",
+            },
+        }
+    elif role == QUANT_FINANCE_REVIEWER_ROLE:
+        recommendations = {
+            LEADING_QUANT_FINANCE_JOURNALS_VIEW: {
+                "decision": "major_revision",
+                "confidence": "high",
+                "rationale": "The finance evidence package needs stronger validation.",
             },
             CAS_ZONE_1_JOURNAL_VIEW: {
                 "decision": "major_revision",
@@ -181,10 +192,14 @@ def _write_panel(
     records = []
     reviewer_payloads = []
     overall_values = [6, 7] if ready else [5, 6]
-    cas_decisions = ["accept", "minor_revision"] if ready else [
-        "major_revision",
-        "reject_and_resubmit",
-    ]
+    cas_decisions = (
+        ["accept", "minor_revision"]
+        if ready
+        else [
+            "major_revision",
+            "reject_and_resubmit",
+        ]
+    )
     for index in range(2):
         reviewer = _review(paper_id=paper_id, role=role)
         reviewer["scores"]["overall"] = overall_values[index]
@@ -204,9 +219,7 @@ def _write_panel(
             }
         )
         if index == 1:
-            reviewer["review_metadata"]["hidden_peer_review_sha256"] = records[0][
-                "sha256"
-            ]
+            reviewer["review_metadata"]["hidden_peer_review_sha256"] = records[0]["sha256"]
         if ready:
             reviewer["unresolved_blockers"] = []
             reviewer["publishability_summary"] = {
@@ -262,26 +275,33 @@ def test_domain_routing_matches_openlabs_roles() -> None:
         assert reviewer_role_for_domain(domain) == MATHEMATICS_REVIEWER_ROLE
     for domain in ("materials", "materials-science"):
         assert reviewer_role_for_domain(domain) == MATERIALS_REVIEWER_ROLE
+    for domain in ("quant", "finance", "quantitative-finance"):
+        assert reviewer_role_for_domain(domain) == QUANT_FINANCE_REVIEWER_ROLE
     assert rubric_id_for_role(CS_TOP_TIER_REVIEWER_ROLE) == CS_TOP_TIER_RUBRIC_ID
     assert rubric_id_for_role(MATHEMATICS_REVIEWER_ROLE) == MATH_FOUR_JOURNALS_RUBRIC_ID
     assert rubric_id_for_role(MATERIALS_REVIEWER_ROLE) == MATERIALS_LEADING_JOURNALS_RUBRIC_ID
+    assert (
+        rubric_id_for_role(QUANT_FINANCE_REVIEWER_ROLE) == QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID
+    )
 
 
 def test_review_validation_requires_integer_scores_and_role_specific_views() -> None:
     review = _review()
-    assert validate_review_record(
-        review,
-        expected_role=CS_TOP_TIER_REVIEWER_ROLE,
-        expected_paper_id="20260804-ai-llm-review-test",
-    ) == []
+    assert (
+        validate_review_record(
+            review,
+            expected_role=CS_TOP_TIER_REVIEWER_ROLE,
+            expected_paper_id="20260804-ai-llm-review-test",
+        )
+        == []
+    )
 
     review["scores"]["overall"] = 6.5
     del review["recommendations"][CAS_ZONE_1_JOURNAL_VIEW]
     errors = validate_review_record(review, expected_role=CS_TOP_TIER_REVIEWER_ROLE)
     assert "scores.overall must be an integer from 1 to 10" in errors
     assert any(
-        error.startswith(f"recommendations.{CAS_ZONE_1_JOURNAL_VIEW}.decision")
-        for error in errors
+        error.startswith(f"recommendations.{CAS_ZONE_1_JOURNAL_VIEW}.decision") for error in errors
     )
 
 
@@ -292,9 +312,7 @@ def test_review_validation_rejects_unknown_role_and_priority() -> None:
 
     errors = validate_review_record(review)
 
-    assert any(
-        error.startswith("review_metadata.reviewer_role must be one of") for error in errors
-    )
+    assert any(error.startswith("review_metadata.reviewer_role must be one of") for error in errors)
     assert any(error.startswith("change_requests[0].priority must be one of") for error in errors)
 
 
@@ -304,9 +322,7 @@ def test_math_review_requires_four_journal_rubric_id() -> None:
 
     errors = validate_review_record(review, expected_role=MATHEMATICS_REVIEWER_ROLE)
 
-    assert (
-        f"review_metadata.rubric_id must be {MATH_FOUR_JOURNALS_RUBRIC_ID}" in errors
-    )
+    assert f"review_metadata.rubric_id must be {MATH_FOUR_JOURNALS_RUBRIC_ID}" in errors
 
 
 def test_math_review_forbids_conference_view() -> None:
@@ -327,16 +343,39 @@ def test_math_review_forbids_conference_view() -> None:
 def test_materials_review_requires_its_domain_view() -> None:
     review = _review(role=MATERIALS_REVIEWER_ROLE)
 
-    assert validate_review_record(
-        review,
-        expected_role=MATERIALS_REVIEWER_ROLE,
-        expected_paper_id="20260804-ai-llm-review-test",
-    ) == []
+    assert (
+        validate_review_record(
+            review,
+            expected_role=MATERIALS_REVIEWER_ROLE,
+            expected_paper_id="20260804-ai-llm-review-test",
+        )
+        == []
+    )
 
     del review["recommendations"][LEADING_MATERIALS_JOURNALS_VIEW]
     errors = validate_review_record(review, expected_role=MATERIALS_REVIEWER_ROLE)
     assert any(
         error.startswith(f"recommendations.{LEADING_MATERIALS_JOURNALS_VIEW}.decision")
+        for error in errors
+    )
+
+
+def test_quant_finance_review_requires_its_domain_view() -> None:
+    review = _review(role=QUANT_FINANCE_REVIEWER_ROLE)
+
+    assert (
+        validate_review_record(
+            review,
+            expected_role=QUANT_FINANCE_REVIEWER_ROLE,
+            expected_paper_id="20260804-ai-llm-review-test",
+        )
+        == []
+    )
+
+    del review["recommendations"][LEADING_QUANT_FINANCE_JOURNALS_VIEW]
+    errors = validate_review_record(review, expected_role=QUANT_FINANCE_REVIEWER_ROLE)
+    assert any(
+        error.startswith(f"recommendations.{LEADING_QUANT_FINANCE_JOURNALS_VIEW}.decision")
         for error in errors
     )
 
@@ -636,14 +675,15 @@ latest_pdf: papers/{paper_id}/manuscript/main.pdf
     review = json.loads((review_dir / "reviewer-2.json").read_text(encoding="utf-8"))
     assert review["review_metadata"]["provider"] == "packy"
     assert review["review_metadata"]["model"] == "claude-opus-5"
-    assert review["review_metadata"]["hidden_peer_review_sha256"] == sha256_file(
-        peer_path
+    assert review["review_metadata"]["hidden_peer_review_sha256"] == sha256_file(peer_path)
+    assert (
+        validate_review_record(
+            review,
+            expected_role=CS_TOP_TIER_REVIEWER_ROLE,
+            expected_paper_id=paper_id,
+        )
+        == []
     )
-    assert validate_review_record(
-        review,
-        expected_role=CS_TOP_TIER_REVIEWER_ROLE,
-        expected_paper_id=paper_id,
-    ) == []
 
 
 def test_panel_validator_rejects_nonconservative_score_and_decision(tmp_path: Path) -> None:
@@ -670,6 +710,30 @@ def test_panel_validator_rejects_nonconservative_score_and_decision(tmp_path: Pa
 
     assert "scores.overall must equal coordinatewise_minimum 6, got 7" in errors
     assert any("strictest_decision minor_revision" in error for error in errors)
+
+
+def test_panel_validator_accepts_quant_finance_view(tmp_path: Path) -> None:
+    paper_id = "20260821-quant-finance-panel-test"
+    review_path = _write_panel(
+        tmp_path,
+        paper_id=paper_id,
+        role=QUANT_FINANCE_REVIEWER_ROLE,
+        snapshot="b" * 64,
+        main_tex_sha256="a" * 64,
+        ready=True,
+    )
+    panel = json.loads(review_path.read_text(encoding="utf-8"))
+
+    assert (
+        validate_review_panel_files(
+            panel,
+            review_path=review_path,
+            repo_root=tmp_path,
+            expected_role=QUANT_FINANCE_REVIEWER_ROLE,
+            expected_paper_id=paper_id,
+        )
+        == []
+    )
 
 
 def test_panel_validator_requires_sources_beside_panel_result(tmp_path: Path) -> None:
@@ -718,9 +782,7 @@ def test_panel_validator_keeps_historical_three_reviewer_records_readable(
     review_dir = review_path.parent
     reviewer_three = _review(paper_id=paper_id, role=CS_TOP_TIER_REVIEWER_ROLE)
     reviewer_three["scores"]["overall"] = 5
-    reviewer_three["recommendations"][CAS_ZONE_1_JOURNAL_VIEW][
-        "decision"
-    ] = "major_revision"
+    reviewer_three["recommendations"][CAS_ZONE_1_JOURNAL_VIEW]["decision"] = "major_revision"
     reviewer_three["unresolved_blockers"] = []
     reviewer_three["publishability_summary"] = {
         "text_ready": True,
@@ -754,13 +816,16 @@ def test_panel_validator_keeps_historical_three_reviewer_records_readable(
         }
     )
 
-    assert validate_review_panel_files(
-        panel,
-        review_path=review_path,
-        repo_root=tmp_path,
-        expected_role=CS_TOP_TIER_REVIEWER_ROLE,
-        expected_paper_id=paper_id,
-    ) == []
+    assert (
+        validate_review_panel_files(
+            panel,
+            review_path=review_path,
+            repo_root=tmp_path,
+            expected_role=CS_TOP_TIER_REVIEWER_ROLE,
+            expected_paper_id=paper_id,
+        )
+        == []
+    )
 
 
 def test_panel_validator_accepts_one_shared_bounded_lean_receipt(tmp_path: Path) -> None:
@@ -779,16 +844,12 @@ def test_panel_validator_accepts_one_shared_bounded_lean_receipt(tmp_path: Path)
     project.mkdir(parents=True)
     audit_file = project / "GuardAxiomAudit.lean"
     audit_file.write_text("#print axioms guard\n", encoding="utf-8")
-    (project / "lean-toolchain").write_text(
-        "leanprover/lean4:v4.26.0\n", encoding="utf-8"
-    )
+    (project / "lean-toolchain").write_text("leanprover/lean4:v4.26.0\n", encoding="utf-8")
     source_hashes = {
         path.relative_to(project).as_posix(): sha256_file(path)
         for path in (audit_file, project / "lean-toolchain")
     }
-    receipt_path = (
-        tmp_path / "reviews" / "objective-audits" / paper_id / snapshot / "lean.json"
-    )
+    receipt_path = tmp_path / "reviews" / "objective-audits" / paper_id / snapshot / "lean.json"
     receipt_path.parent.mkdir(parents=True)
     receipt = {
         "schema_version": LEAN_OBJECTIVE_AUDIT_SCHEMA_VERSION,
@@ -839,19 +900,22 @@ def test_panel_validator_accepts_one_shared_bounded_lean_receipt(tmp_path: Path)
     ]
     review_path.write_text(json.dumps(panel), encoding="utf-8")
 
-    assert validate_review_panel_files(
-        panel,
-        review_path=review_path,
-        repo_root=tmp_path,
-        expected_role=MATHEMATICS_REVIEWER_ROLE,
-        expected_paper_id=paper_id,
-    ) == []
+    assert (
+        validate_review_panel_files(
+            panel,
+            review_path=review_path,
+            repo_root=tmp_path,
+            expected_role=MATHEMATICS_REVIEWER_ROLE,
+            expected_paper_id=paper_id,
+        )
+        == []
+    )
 
     receipt["execution_count"] = 2
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
-    panel["review_metadata"]["review_panel"]["shared_objective_audits"][0][
-        "sha256"
-    ] = sha256_file(receipt_path)
+    panel["review_metadata"]["review_panel"]["shared_objective_audits"][0]["sha256"] = sha256_file(
+        receipt_path
+    )
     errors = validate_review_panel_files(
         panel,
         review_path=review_path,
@@ -903,10 +967,7 @@ subdomain: llm
     assert result.returncode == 0, result.stderr
     panel = json.loads(existing_panel.read_text(encoding="utf-8"))
     assert panel["scores"]["overall"] == 6
-    assert (
-        panel["recommendations"][CAS_ZONE_1_JOURNAL_VIEW]["decision"]
-        == "minor_revision"
-    )
+    assert panel["recommendations"][CAS_ZONE_1_JOURNAL_VIEW]["decision"] == "minor_revision"
     metadata = panel["review_metadata"]["review_panel"]
     assert metadata["panel_size"] == 2
     assert metadata["score_aggregation"] == "coordinatewise_minimum"
@@ -915,6 +976,52 @@ subdomain: llm
         "openai-codex",
         "packy",
     ]
+
+
+def test_skill_aggregator_supports_quant_finance(tmp_path: Path) -> None:
+    paper_id = "20260821-quant-finance-aggregate-test"
+    registry = tmp_path / "registry" / "papers"
+    registry.mkdir(parents=True)
+    (registry / f"{paper_id}.yaml").write_text(
+        f"""paper_id: {paper_id}
+created_at: 2026-08-21
+domain: quant
+subdomain: finance
+""",
+        encoding="utf-8",
+    )
+    panel_path = _write_panel(
+        tmp_path,
+        paper_id=paper_id,
+        role=QUANT_FINANCE_REVIEWER_ROLE,
+        snapshot="b" * 64,
+        main_tex_sha256="a" * 64,
+        ready=True,
+    )
+    panel_path.unlink()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(AGGREGATOR),
+            "--paper-id",
+            paper_id,
+            "--review-dir",
+            str(panel_path.parent),
+            "--root",
+            str(tmp_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    panel = json.loads(panel_path.read_text(encoding="utf-8"))
+    assert (
+        panel["recommendations"][LEADING_QUANT_FINANCE_JOURNALS_VIEW]["decision"]
+        == "major_revision"
+    )
 
 
 def test_apply_review_registers_skill_judgment_and_uses_cas_gate(tmp_path: Path) -> None:
@@ -980,7 +1087,5 @@ writing_release:
     assert metadata["ara_llm_self_review"]["high_standard_view"] == TOP_CONFERENCE_VIEW
     assert metadata["ara_llm_self_review"]["cas_zone_1_decision"] == "minor_revision"
     assert metadata["ara_llm_self_review"]["review_panel"]["panel_size"] == 2
-    assert metadata["ara_llm_self_review"]["source"] == (
-        f"reviews/fresh/{paper_id}/review.json"
-    )
+    assert metadata["ara_llm_self_review"]["source"] == (f"reviews/fresh/{paper_id}/review.json")
     assert metadata["writing_release"]["status"] == "ready"

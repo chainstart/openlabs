@@ -28,6 +28,14 @@ profiles:
       primary_writing: scientific-writing
       domain: statistical-analysis
       review_or_citation: peer-review
+  quantitative_finance:
+    entry_skill: openlabs-quant-paper
+    entry_path: skills/openlabs-quant-paper
+    domains: [quant]
+    components:
+      primary_writing: scientific-writing
+      domain: statistical-analysis
+      review_or_citation: peer-review
 quality_gate:
   review_mode: independent_dual_provider_panel
   review_panel_size: 2
@@ -52,12 +60,14 @@ quality_gate:
     se: top_conference
     math: four_top_math_journals
     materials: leading_materials_journals
+    quant: leading_quant_finance_journals
   recommendation_views:
     ai: [top_conference, cas_zone_1_journal]
     cs: [top_conference, cas_zone_1_journal]
     se: [top_conference, cas_zone_1_journal]
     math: [four_top_math_journals, cas_zone_1_journal]
     materials: [leading_materials_journals, cas_zone_1_journal]
+    quant: [leading_quant_finance_journals, cas_zone_1_journal]
   gate_decision_standard: cas_zone_1_journal
   cas_zone_1_scope: major_category
   reviewer_roles:
@@ -66,12 +76,14 @@ quality_gate:
     se: cs_top_tier
     math: math
     materials: materials
+    quant: quant_finance
   reviewer_rubric_ids:
     ai: ara.revision-agent.cs-top-tier.v1
     cs: ara.revision-agent.cs-top-tier.v1
     se: ara.revision-agent.cs-top-tier.v1
     math: ara.paper-writing.math-four-journals.v1
     materials: openlabs.paper-writing.materials-leading-journals.v1
+    quant: openlabs.paper-writing.quant-finance-leading-journals.v1
   settings_path: registry/settings.yaml
   settings_key: quality_gate
   required_before_submission_consideration: true

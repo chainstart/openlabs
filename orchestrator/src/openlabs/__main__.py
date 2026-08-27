@@ -53,7 +53,9 @@ def _parser() -> argparse.ArgumentParser:
 
     enqueue = commands.add_parser("enqueue", help="Add one bounded task")
     enqueue.add_argument("--campaign-id", required=True)
-    enqueue.add_argument("--domain", required=True, choices=("math", "ai", "materials", "physics"))
+    enqueue.add_argument(
+        "--domain", required=True, choices=("math", "ai", "materials", "quant", "physics")
+    )
     enqueue.add_argument("--title")
     enqueue.add_argument("--task-type", default="research")
     enqueue.add_argument("--objective", required=True)

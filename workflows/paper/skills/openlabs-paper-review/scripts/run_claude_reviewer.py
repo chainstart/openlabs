@@ -9,7 +9,6 @@ review-safe text packet with all tools disabled, and writes reviewer-2.json.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -17,27 +16,28 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-
 
 WORKFLOW_ROOT = Path(__file__).resolve().parents[3]
 if str(WORKFLOW_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKFLOW_ROOT))
 
-from paper_writing.handoff import manuscript_snapshot_sha256, sha256_file  # noqa: E402
-from paper_writing.registry import load_paper_metadata, repository_root  # noqa: E402
-from paper_writing.review import (  # noqa: E402
+from paper_writing.handoff import manuscript_snapshot_sha256, sha256_file
+from paper_writing.registry import load_paper_metadata, repository_root
+from paper_writing.review import (
     CAS_ZONE_1_JOURNAL_VIEW,
     CONFERENCE_DECISIONS,
     FOUR_TOP_MATH_JOURNALS_VIEW,
     INDIVIDUAL_REVIEW_SCHEMA_VERSION,
     JOURNAL_DECISIONS,
     LEADING_MATERIALS_JOURNALS_VIEW,
+    LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     MATERIALS_REVIEWER_ROLE,
     MATHEMATICS_REVIEWER_ROLE,
+    QUANT_FINANCE_REVIEWER_ROLE,
     RECOMMENDATION_SCHEMA_VERSION,
     REVIEWER_PROVIDER_CONTRACTS,
     TOP_CONFERENCE_VIEW,
@@ -46,7 +46,6 @@ from paper_writing.review import (  # noqa: E402
     rubric_id_for_role,
     validate_review_record,
 )
-
 
 CLAUDE_REVIEWER_ID = "reviewer-2"
 CLAUDE_PROVIDER = "packy"
@@ -93,6 +92,11 @@ def _judgment_schema(role: str) -> dict[str, Any]:
     elif role == MATERIALS_REVIEWER_ROLE:
         recommendation_properties = {
             LEADING_MATERIALS_JOURNALS_VIEW: recommendation,
+            CAS_ZONE_1_JOURNAL_VIEW: recommendation,
+        }
+    elif role == QUANT_FINANCE_REVIEWER_ROLE:
+        recommendation_properties = {
+            LEADING_QUANT_FINANCE_JOURNALS_VIEW: recommendation,
             CAS_ZONE_1_JOURNAL_VIEW: recommendation,
         }
     else:
@@ -473,7 +477,7 @@ def main(argv: list[str] | None = None) -> int:
             "provider": CLAUDE_PROVIDER,
             "model": CLAUDE_MODEL,
             "reasoning_effort": args.effort,
-            "reviewed_at_utc": datetime.now(timezone.utc).isoformat(),
+            "reviewed_at_utc": datetime.now(UTC).isoformat(),
             "main_tex_sha256": main_sha256_before,
             "manuscript_snapshot_sha256_before": snapshot_before,
             "manuscript_snapshot_sha256_after": snapshot_after,

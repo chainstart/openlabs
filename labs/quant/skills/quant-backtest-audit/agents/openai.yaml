@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Backtest Audit"
+  short_description: "Audit leakage, costs, multiplicity and claims"
+  default_prompt: "Use $quant-backtest-audit to independently challenge this quantitative-finance result."

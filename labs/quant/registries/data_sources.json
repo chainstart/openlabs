@@ -1,0 +1,41 @@
+{
+  "schema_version": "openlabs.quant_data_source_registry.v1",
+  "reviewed_at": "2026-08-21",
+  "sources": [
+    {
+      "source_id": "binance-public-data",
+      "name": "Binance Public Data",
+      "url": "https://github.com/binance/binance-public-data",
+      "access": "public",
+      "point_in_time_notes": "Record symbol availability, market type, interval and download date; never infer delist history from the current symbol list."
+    },
+    {
+      "source_id": "kenneth-french-data-library",
+      "name": "Kenneth R. French Data Library",
+      "url": "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html",
+      "access": "public",
+      "point_in_time_notes": "Record file vintage because historical series can be revised."
+    },
+    {
+      "source_id": "open-source-asset-pricing",
+      "name": "Open Source Asset Pricing",
+      "url": "https://www.openassetpricing.com/",
+      "access": "public_research",
+      "point_in_time_notes": "Preserve release/vintage and the project's construction metadata."
+    },
+    {
+      "source_id": "sec-edgar",
+      "name": "SEC EDGAR APIs",
+      "url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "access": "public_with_fair_access_policy",
+      "point_in_time_notes": "Use filing acceptance timestamps, amendment lineage and SEC fair-access identification."
+    },
+    {
+      "source_id": "fred-alfred",
+      "name": "FRED and ALFRED",
+      "url": "https://fred.stlouisfed.org/docs/api/fred/",
+      "access": "public_api_key_required",
+      "point_in_time_notes": "Use ALFRED vintages for real-time macro claims; final revised FRED series are not point-in-time data."
+    }
+  ]
+}
