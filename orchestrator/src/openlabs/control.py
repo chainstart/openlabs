@@ -175,7 +175,11 @@ def _halt_production_locked(
     worker_pids = [
         int(item["worker_pid"]) for item in active_cancelled if item.get("worker_pid") is not None
     ]
-    signalled = _terminate_recorded_workers(worker_pids) if stop_systemd else []
+    # Project/plan cancellation is always targeted first.  ``stop_systemd``
+    # controls only the factory-wide units; it must not leave the cancelled
+    # workers running when an operator deliberately keeps the rest of the
+    # factory online.
+    signalled = _terminate_recorded_workers(worker_pids)
     systemd: list[dict[str, Any]] = []
     if stop_systemd:
         systemd.append(_systemctl("stop", "openlabs-workers.target"))
@@ -286,7 +290,10 @@ def _halt_project_locked(
         for item in active_cancelled
         if item.get("worker_pid") is not None
     ]
-    signalled = _terminate_recorded_workers(worker_pids) if stop_systemd else []
+    # Keep project-local cancellation effective even when other projects must
+    # remain online.  The factory-wide targets below are optional; the recorded
+    # workers belonging to this project are not.
+    signalled = _terminate_recorded_workers(worker_pids)
     systemd: list[dict[str, Any]] = []
     if stop_systemd:
         systemd.append(_systemctl("stop", "openlabs-workers.target"))

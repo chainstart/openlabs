@@ -216,3 +216,76 @@ def test_halt_project_pauses_all_bound_campaigns_without_domain_config_coupling(
     for campaign_id in report["campaigns"]:
         assert db.campaign(campaign_id)["status"] == "production_paused"
         assert db.campaign(campaign_id)["continuous"] == 0
+
+
+def test_halt_project_keep_factory_still_terminates_recorded_workers(
+    tmp_path, monkeypatch
+) -> None:
+    paths = workspace_paths(tmp_path)
+    paths.ensure_runtime_directories()
+    project_root = paths.data / "workspaces/math/projects/run"
+    project_root.mkdir(parents=True)
+    project_path = atomic_write_json(
+        project_root / "project.json",
+        {
+            "schema_version": "openlabs.project.v1",
+            "project_id": "bounded-project",
+            "domain": "math",
+            "status": "active",
+        },
+    )
+    state_path = atomic_write_json(project_root / "state.json", {"status": "active"})
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign("bounded-stream", domain="math", title="Bounded stream")
+    db.configure_project_campaign(
+        "bounded-stream",
+        project_config_path=str(project_path.resolve()),
+        workstream_state_path=str(state_path.resolve()),
+        protocol_id="autonomous-math",
+        primary_skill="math-autonomous-research",
+        execution_policy={},
+    )
+    db.enqueue_task(
+        task_id="bounded-running",
+        campaign_id="bounded-stream",
+        domain="math",
+        task_type="research",
+        objective="Stop only this project.",
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=300, max_active=1)
+    assert task is not None
+    db.mark_running(
+        "bounded-running",
+        attempt_id=str(task["current_attempt_id"]),
+        owner="test",
+        pid=None,
+        lease_seconds=300,
+    )
+    db.set_worker_pid(
+        "bounded-running",
+        attempt_id=str(task["current_attempt_id"]),
+        pid=4242,
+    )
+    terminated: list[list[int]] = []
+    factory_calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        "openlabs.control._terminate_recorded_workers",
+        lambda pids: terminated.append(pids) or pids,
+    )
+    monkeypatch.setattr(
+        "openlabs.control._systemctl",
+        lambda *args: factory_calls.append(args) or {},
+    )
+
+    report = halt_project(
+        paths,
+        project_path=project_path,
+        reason="timebox_expired",
+        stop_systemd=False,
+    )
+
+    assert terminated == [[4242]]
+    assert report["worker_pids_signalled"] == [4242]
+    assert report["systemd"] == []
+    assert factory_calls == []

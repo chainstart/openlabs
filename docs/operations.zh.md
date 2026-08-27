@@ -208,6 +208,8 @@ python3 -m openlabs halt-project \
 ```
 
 它会在同一控制面锁下暂停项目，并取消所有静态或动态生成的绑定 campaign。
+共享工厂中还有其他项目需要继续运行时，加 `--keep-factory`；此时仍会取消并终止目标项目的
+已登记 worker，但不会停止 `openlabs-factory.target` 或其他项目的 worker。
 
 每个 Agent attempt 都在 `openlabs-artifacts/attempt-workspaces/` 的私有 campaign 副本中开始。
 新 attempt 同时获得独立的 `artifact-stage/`：可演化的小型状态写入私有 campaign，原始数据、

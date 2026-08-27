@@ -42,6 +42,11 @@ def _parser() -> argparse.ArgumentParser:
     halt.add_argument("--plan", type=Path, required=True)
     halt.add_argument("--reason", required=True)
     halt.add_argument("--report", type=Path)
+    halt.add_argument(
+        "--keep-factory",
+        action="store_true",
+        help="Cancel only this plan's workers and leave the shared factory online",
+    )
 
     halt_generic = commands.add_parser(
         "halt-project",
@@ -50,6 +55,11 @@ def _parser() -> argparse.ArgumentParser:
     halt_generic.add_argument("--project", type=Path, required=True)
     halt_generic.add_argument("--reason", required=True)
     halt_generic.add_argument("--report", type=Path)
+    halt_generic.add_argument(
+        "--keep-factory",
+        action="store_true",
+        help="Cancel only this project's workers and leave the shared factory online",
+    )
 
     enqueue = commands.add_parser("enqueue", help="Add one bounded task")
     enqueue.add_argument("--campaign-id", required=True)
@@ -178,6 +188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             plan_path=args.plan,
             reason=args.reason,
             report_path=args.report,
+            stop_systemd=not args.keep_factory,
         )
     elif args.command == "halt-project":
         payload = halt_project(
@@ -185,6 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             project_path=args.project,
             reason=args.reason,
             report_path=args.report,
+            stop_systemd=not args.keep_factory,
         )
     elif args.command == "enqueue":
         input_path = str(Path(args.input).expanduser().resolve()) if args.input else None
