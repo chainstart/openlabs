@@ -174,9 +174,11 @@ to the canonical campaign yourself.
     )
     execution = task.get("execution_policy")
     continuity_notice = ""
-    if isinstance(execution, Mapping):
-        if execution.get("continue_across_protocol_phases") is True:
-            continuity_notice = """
+    if (
+        isinstance(execution, Mapping)
+        and execution.get("continue_across_protocol_phases") is True
+    ):
+        continuity_notice = """
 Continue inside this Codex process across as many same-role protocol phases and ordinary
 checkpoints as the scientific work and wall budget allow. Protocol phases are durable state
 records, not process boundaries. Do not stop merely because a phase advanced. Stop only at an
@@ -375,6 +377,13 @@ def _positive_environment_number(name: str, default: float) -> float:
     return value if value > 0 else default
 
 
+def _environment_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _codex_base_url(command: list[str]) -> str | None:
     override = os.environ.get("OPENLABS_AGENT_PREFLIGHT_URL", "").strip()
     if override:
@@ -420,14 +429,21 @@ def _agent_connectivity_preflight(command: list[str]) -> str | None:
         10.0,
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout):  # noqa: S310 - configured endpoint
+        with urllib.request.urlopen(request, timeout=timeout):
             return None
     except urllib.error.HTTPError:
         # Authentication and method errors still prove DNS, proxy, TLS, and the
         # configured provider endpoint are reachable. Codex owns auth details.
         return None
     except (OSError, TimeoutError, urllib.error.URLError) as exc:
-        return f"Agent provider {endpoint} is unreachable: {type(exc).__name__}: {exc}"
+        error = f"Agent provider {endpoint} is unreachable: {type(exc).__name__}: {exc}"
+        if _environment_flag("OPENLABS_AGENT_PREFLIGHT_STRICT"):
+            return error
+        # urllib and Codex do not necessarily share a transport stack (for
+        # example, Codex may use its own proxy or authenticated transport).
+        # Treat this lightweight HEAD failure as advisory by default and let
+        # the bounded JSONL startup watchdog judge the real Agent process.
+        return None
 
 
 def _jsonl_startup_health(path: Path) -> tuple[int, bool]:

@@ -405,6 +405,7 @@ def test_codex_connectivity_preflight_fails_closed_and_redacts_credentials(
         raise runner.urllib.error.URLError("proxy refused connection")
 
     monkeypatch.setattr(runner.urllib.request, "urlopen", unreachable)
+    monkeypatch.setenv("OPENLABS_AGENT_PREFLIGHT_STRICT", "true")
     command = [
         "codex",
         "exec",
@@ -418,6 +419,25 @@ def test_codex_connectivity_preflight_fails_closed_and_redacts_credentials(
     assert error is not None
     assert "https://example.test" in error
     assert "secret" not in error
+
+
+def test_codex_connectivity_preflight_is_advisory_by_default(monkeypatch) -> None:
+    runner = _load_runner()
+
+    def unreachable(_request, *, timeout):
+        assert timeout == 10.0
+        raise runner.urllib.error.URLError("direct HEAD timed out")
+
+    monkeypatch.setattr(runner.urllib.request, "urlopen", unreachable)
+    command = [
+        "codex",
+        "exec",
+        "-c",
+        'model_providers.local.base_url="https://provider.example/api/codex"',
+        "-",
+    ]
+
+    assert runner._agent_connectivity_preflight(command) is None
 
 
 def test_codex_startup_health_distinguishes_transport_loop_from_progress(tmp_path) -> None:
