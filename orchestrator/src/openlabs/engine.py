@@ -1526,6 +1526,36 @@ def _apply_attempt_disposition(
     )
 
 
+def _codex_hook_receipt_status(
+    runtime: Mapping[str, Any],
+) -> tuple[str | None, str | None]:
+    """Return a fatal hook error and an optional compatibility warning.
+
+    The generated agent request already carries the task, authority, Skill,
+    transaction and result-path context. SessionStart remains useful as an
+    additional Codex context channel, but some non-interactive CLI versions do
+    not fire project-local SessionStart while still firing the trusted Stop
+    hook. Stop is the authoritative result gate and must always be present.
+    """
+
+    hooks = runtime.get("hooks")
+    if not isinstance(hooks, Mapping) or hooks.get("schema_version") != (
+        "openlabs.hook_runtime.v1"
+    ):
+        return "Codex lifecycle hook receipts are missing or invalid", None
+    if hooks.get("stop_passed") is not True:
+        return "Codex final Stop gate receipt is incomplete", None
+    if int(hooks.get("session_start_count") or 0) < 1:
+        return (
+            None,
+            (
+                "Codex emitted no project-local SessionStart receipt; accepted because the "
+                "trusted agent request carried the required context and the final Stop gate passed"
+            ),
+        )
+    return None, None
+
+
 def ingest_results(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -1665,20 +1695,17 @@ def ingest_results(
                     "state_path": authority.state_path,
                     "adjustments": authority_adjustments,
                 }
-            hooks = runtime.get("hooks")
             if (
                 result_status in {"completed", "succeeded"}
                 and str(runtime.get("adapter") or "") == "codex"
-                and (
-                    not isinstance(hooks, Mapping)
-                    or hooks.get("schema_version") != "openlabs.hook_runtime.v1"
-                    or int(hooks.get("session_start_count") or 0) < 1
-                    or hooks.get("stop_passed") is not True
-                )
             ):
-                result_status = "needs_replan"
-                runtime_error = "Codex lifecycle hook receipts are incomplete"
-                runtime["hook_receipt_error"] = runtime_error
+                hook_error, hook_warning = _codex_hook_receipt_status(runtime)
+                if hook_warning:
+                    runtime["hook_receipt_warning"] = hook_warning
+                if hook_error:
+                    result_status = "needs_replan"
+                    runtime_error = hook_error
+                    runtime["hook_receipt_error"] = runtime_error
             continuity_required = (
                 result_status in {"completed", "succeeded"}
                 and current_role != "reviewer"

@@ -1980,18 +1980,22 @@ class FactoryDB:
         *,
         attempt_id: str,
         expected_error_fragment: str,
+        runtime_error_key: str = "transaction_error",
         lease_seconds: int = 600,
     ) -> dict[str, Any]:
-        """Reopen one hash-bound result rejected only by validator infrastructure.
+        """Reopen one hash-bound result rejected only by named infrastructure.
 
         This is deliberately narrower than a general status override. The result
         envelope must already have passed its ordinary gate, and both the task and
-        attempt must identify the same terminal protocol failure. The prior runtime
-        charge is removed before replay so successful re-ingestion accounts it once.
+        attempt must identify the same terminal infrastructure failure. The prior
+        runtime charge is removed before replay so successful re-ingestion accounts
+        it once.
         """
 
         if not expected_error_fragment.strip():
             raise ValueError("expected_error_fragment must be non-empty")
+        if runtime_error_key not in {"transaction_error", "hook_receipt_error"}:
+            raise ValueError("runtime_error_key is not an approved replayable failure")
         now = utc_now()
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -2021,15 +2025,20 @@ class FactoryDB:
             if not bool(row["valid"]) or not bool(row["gate_passed"]):
                 raise ValueError("The result did not pass its ordinary evidence gate")
             runtime = json.loads(str(row["runtime_json"]))
-            transaction_error = str(runtime.get("transaction_error") or "")
+            infrastructure_error = str(runtime.get(runtime_error_key) or "")
             last_error = str(row["last_error"] or "")
-            if expected_error_fragment not in transaction_error or expected_error_fragment not in last_error:
-                raise ValueError("The recorded failure does not match the expected protocol error")
+            if (
+                expected_error_fragment not in infrastructure_error
+                or expected_error_fragment not in last_error
+            ):
+                raise ValueError(
+                    "The recorded failure does not match the expected infrastructure error"
+                )
             charged_seconds = max(0.0, float(row["run_seconds"] or 0.0))
             connection.execute(
                 """
                 UPDATE tasks
-                SET status='running', lease_owner='protocol-replay',
+                SET status='running', lease_owner='infrastructure-replay',
                     lease_expires_at=?, worker_pid=NULL, not_before=NULL,
                     last_error=NULL, updated_at=?
                 WHERE task_id=? AND current_attempt_id=?
@@ -2062,6 +2071,7 @@ class FactoryDB:
                 {
                     "attempt_id": attempt_id,
                     "expected_error_fragment": expected_error_fragment,
+                    "runtime_error_key": runtime_error_key,
                     "prior_run_seconds": charged_seconds,
                 },
             )
@@ -2069,6 +2079,7 @@ class FactoryDB:
             "task_id": task_id,
             "attempt_id": attempt_id,
             "campaign_id": str(row["campaign_id"]),
+            "runtime_error_key": runtime_error_key,
             "prior_run_seconds": charged_seconds,
         }
 

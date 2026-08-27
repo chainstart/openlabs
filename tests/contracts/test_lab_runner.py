@@ -318,6 +318,9 @@ def test_agent_resume_uses_only_the_declared_role_session(tmp_path, monkeypatch)
 
     assert json.loads(output.read_text(encoding="utf-8"))["session"] == "writer-session"
     assert runtime["resumed_from"] == "writer-session"
+    request_path = Path(runtime["agent_request_path"])
+    assert request_path == output.parent / "agent-request.md"
+    assert runtime["agent_request_sha256"] == runner.sha256_file(request_path)
 
 
 def test_codex_uses_full_access_and_generated_hooks(tmp_path) -> None:

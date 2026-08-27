@@ -1070,6 +1070,8 @@ def _run_agent(
             "agent_exit_code": process.returncode,
             "interrupted": termination_signal is not None,
             "termination_signal": termination_signal,
+            "agent_request_path": str(request_path.resolve()),
+            "agent_request_sha256": sha256_file(request_path),
         }
     )
     if termination_signal is not None:

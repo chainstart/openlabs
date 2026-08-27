@@ -107,6 +107,13 @@ provider 可用 `OPENLABS_AGENT_PREFLIGHT_URL` 明确指定预检地址。
 护栏约束。attempt workspace 仍是约定的研究与成果写入位置，正式成果只由控制面在协议验证
 后晋升。先用 smoke task 验证文件协议，再接入真实 Agent。
 
+受信 Agent request 本身携带任务、权限、Skill、隔离事务与结果路径等必要上下文。
+`SessionStart` hook 是额外的上下文增强通道；若某个非交互式 Codex CLI 版本未触发项目级
+`SessionStart`，但受信 request 完整且最终 `Stop` 闸门通过，控制面会记录兼容性告警并允许
+结果进入后续验证。最终 `Stop` 闸门仍是硬条件，缺失或失败时结果不得晋升。修复此类已确认的
+基础设施误判后，只能通过 `tools/replay_protocol_receipt.py` 按已归档 receipt、精确错误片段和
+白名单 runtime error key 重放；工具不提供通用状态覆盖能力。
+
 研究者、同一实验执行链和同一稿件修订链可按 session ID 恢复，但每个节点仍启动一个有界
 进程并在完成后退出。节点内部可以跨越多个不应持久化为边界的微步骤；等待外部实验、形成
 原子 checkpoint、改变角色或进入独立审阅时才结束节点。让同一 Codex OS 进程空转两天不会

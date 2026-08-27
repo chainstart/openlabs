@@ -132,6 +132,64 @@ def test_protocol_failure_replay_is_narrow_and_does_not_double_charge(tmp_path) 
     assert db.campaign("physics")["agent_seconds_used"] == 12.5
 
 
+def test_hook_receipt_failure_replay_requires_exact_named_error(tmp_path) -> None:
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    db.register_campaign("physics", domain="physics", title="Physics")
+    task_id = db.enqueue_task(
+        task_id="physics-hook-task",
+        campaign_id="physics",
+        domain="physics",
+        task_type="research",
+        objective="Replay only a known hook compatibility failure.",
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=60)
+    assert task is not None
+    attempt_id = str(task["current_attempt_id"])
+    db.mark_running(
+        task_id,
+        attempt_id=attempt_id,
+        owner="test",
+        pid=123,
+        lease_seconds=60,
+    )
+    error = "Codex lifecycle hook receipts are incomplete"
+    final = db.ingest_result(
+        task_id,
+        attempt_id=attempt_id,
+        status="needs_replan",
+        result_path="/tmp/result.json",
+        result_sha256="0" * 64,
+        valid=True,
+        gate_passed=True,
+        blockers=[],
+        run_seconds=7.5,
+        runtime={"hook_receipt_error": error},
+        error=error,
+    )
+    assert final == "needs_replan"
+    assert db.campaign("physics")["agent_seconds_used"] == 7.5
+
+    with pytest.raises(ValueError, match="expected infrastructure error"):
+        db.reopen_protocol_failed_attempt(
+            task_id,
+            attempt_id=attempt_id,
+            expected_error_fragment="different hook failure",
+            runtime_error_key="hook_receipt_error",
+        )
+
+    replay = db.reopen_protocol_failed_attempt(
+        task_id,
+        attempt_id=attempt_id,
+        expected_error_fragment=error,
+        runtime_error_key="hook_receipt_error",
+    )
+    assert replay["runtime_error_key"] == "hook_receipt_error"
+    assert replay["prior_run_seconds"] == 7.5
+    assert db.task(task_id)["status"] == "running"
+    assert db.campaign("physics")["agent_seconds_used"] == 0
+
+
 def test_research_records_are_a_file_owned_query_index(tmp_path) -> None:
     db = FactoryDB(tmp_path / "factory.sqlite")
     db.initialize()

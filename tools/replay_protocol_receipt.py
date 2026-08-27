@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay a receipt rejected solely by a repaired protocol-validator failure."""
+"""Replay a receipt rejected solely by a repaired ingestion-infrastructure failure."""
 
 from __future__ import annotations
 
@@ -19,6 +19,11 @@ def main() -> int:
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--expected-error-fragment", required=True)
+    parser.add_argument(
+        "--runtime-error-key",
+        choices=("transaction_error", "hook_receipt_error"),
+        default="transaction_error",
+    )
     args = parser.parse_args()
     paths = workspace_paths(args.workspace)
     paths.ensure_runtime_directories()
@@ -45,6 +50,7 @@ def main() -> int:
             task_id,
             attempt_id=attempt_id,
             expected_error_fragment=args.expected_error_fragment,
+            runtime_error_key=args.runtime_error_key,
         )
         target = paths.result_inbox / f"{task_id}-{attempt_id}.json"
         atomic_write_json(target, receipt)
