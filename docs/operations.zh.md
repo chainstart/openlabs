@@ -201,14 +201,21 @@ python3 -m openlabs halt-project \
 它会在同一控制面锁下暂停项目，并取消所有静态或动态生成的绑定 campaign。
 
 每个 Agent attempt 都在 `openlabs-artifacts/attempt-workspaces/` 的私有 campaign 副本中开始。
+新 attempt 同时获得独立的 `artifact-stage/`：可演化的小型状态写入私有 campaign，原始数据、
+求解器日志、数组、模型、归档和批量输出写入 artifact-stage，并逐项出现在
+`result.artifacts` 中。Agent 不得直接写 live `openlabs-artifacts/experiments/` 或 `objects/`。
 Codex adapter 使用原生 `danger-full-access`，因此它调起的 shell、Python、证明器、编译器和
 包管理器不会再被文件系统沙盒阻断。隔离目录此时是事务约定和默认 cwd，而不是内核强制的
 写边界；正式成果仍必须通过结果合同、协议验证、不可变归档和目录交换才能晋升。非 Codex
 adapter 仍由 worker 使用 bubblewrap 只开放本 attempt；本机缺少 bubblewrap 时拒绝启动，
 不会降级为共享写入。
-只有状态为完成、通过文件门禁且所有证据已复制到 `openlabs-artifacts/result-bundles/` 不可变
-归档的节点，才会以目录交换方式提升到正式 campaign；数据库确认入库前保留原目录作为回滚
-副本。取消、超时、失败和门禁拒绝的 attempt 只留下带原因的隔离 checkpoint。tick 与
+只有状态为完成、通过文件门禁且所有证据已冻结到 `openlabs-artifacts/result-bundles/` 不可变
+归档的节点，才会发布 `objects/sha256/` 对象与 `experiments/.../manifest.json`，并以目录交换
+方式把小型 campaign 状态及 `artifact-references/*.json` 提升到正式 data。门禁拒绝超过
+5 MiB 的单个新 campaign 文件、artifact-only 格式、超过 1000 个变更文件或 50 MiB 变更总量，
+也拒绝 artifact-stage 中未声明、哈希不符、符号链接逃逸或发布后改变的文件。数据库确认入库
+前保留原目录作为回滚副本；确认后清理成功 attempt 的临时 payload。取消、超时、失败和门禁
+拒绝的 attempt 只留下带原因的隔离 checkpoint。tick 与
 `halt-production` 共用跨进程排他锁，因此截止停机不能与结果提升交错执行。
 
 systemd 只保证 tick 被再次调用；科学恢复由 SQLite 租约、心跳、超时、有限重试、结果

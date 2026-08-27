@@ -78,6 +78,12 @@ openlabs-data 是一个整体的私有 Git 仓库。结构化状态、实验脚�
 `.gitignore` 排除。个人阶段只有一个写入者，单仓库比为每个 campaign/论文维护大量小仓库
 更简单；未来出现多用户高冲突后再按边界拆分。
 
+这里的判据是“是否属于需要合并、审阅和长期演化的知识状态”，不是“是否由程序生成”。小型
+证明源码、验证收据、结论摘要和 manifest 即使由程序生成也属于 data；原始下载、求解器转录、
+批量枚举、数组、模型和大 JSON/JSONL 即使对研究重要也属于 artifacts。新 attempt 的控制面
+门禁拒绝单个超过 5 MiB 的 campaign 新文件、artifact-only 格式、超过 1000 个变更文件或超过
+50 MiB 的变更总量。
+
 ### 2.3 openlabs-artifacts
 
 openlabs-artifacts 保存大型、不可变、可通过哈希寻址的产物，例如：
@@ -102,14 +108,23 @@ openlabs-artifacts/
 │       ├── supplement/
 │       └── manifest.json
 ├── experiments/
-│   └── <campaign-id>/...
+│   └── <campaign-token>/<task-token>/<attempt-token>/manifest.json
+├── result-bundles/
+│   └── <campaign-token>/<task-token>/<attempt-token>/...
 └── objects/
-    └── sha256/<前两位>/<完整哈希>/...
+    └── sha256/<前两位>/<完整哈希>/payload
 ~~~
 
 openlabs-data/papers 下的论文记录保存源码和 artifact manifest；编译 PDF、渲染图片和补充
 材料实体位于 openlabs-artifacts/papers。底层 objects 目录按内容哈希去重，URI 使用 file
-协议。
+协议。实验目录只保存便于浏览的小型 manifest；payload 实体统一落入 objects，结果证据同时
+由 result-bundles 冻结。两者在同一文件系统上尽量使用硬链接，避免重复占用字节。
+
+每个新 attempt 先写私有 `attempt-workspaces/.../artifact-stage/`，不得直接写 live
+`experiments/` 或 `objects/`。结果通过门禁后，控制面核对 `result.artifacts` 的 URI 和 SHA-256，
+发布内容寻址对象、生成 experiment manifest，并仅向 openlabs-data 晋升
+`artifact-references/*.json`。成功 attempt 的临时 campaign 与 artifact-stage 随后压缩清理；
+失败或被拒 attempt 完整隔离，供后续诊断和显式恢复。
 
 ### 2.4 openlabs-database
 

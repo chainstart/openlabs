@@ -3,12 +3,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from openlabs.attempts import (
+    ARTIFACT_POLICY_SCHEMA,
+    AttemptWorkspaceError,
     begin_attempt_promotion,
+    enforce_campaign_data_boundary,
     find_attempt_workspace,
     freeze_result_bundle,
     prepare_attempt_workspace,
     promote_attempt_workspace,
+    publish_staged_artifacts,
     quarantine_attempt_workspace,
     recover_attempt_promotion,
 )
@@ -108,6 +113,220 @@ def test_valid_attempt_is_promoted_as_one_campaign_transaction(tmp_path) -> None
     assert not (canonical / ".codex").exists()
     assert not (canonical / ".agents").exists()
     assert metadata["status"] == "committed"
+
+
+def test_campaign_boundary_rejects_large_or_artifact_only_payloads_at_promotion(
+    tmp_path,
+) -> None:
+    paths = _paths(tmp_path)
+    _db, task = _leased_task(paths)
+    workspace = prepare_attempt_workspace(paths, task, {})
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    metadata["artifact_policy"]["max_data_file_bytes"] = 16
+    atomic_write_json(workspace.metadata_path, metadata)
+    (workspace.campaign_root / "oversized.json").write_text("x" * 17, encoding="utf-8")
+    (workspace.campaign_root / "solver.jsonl").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(AttemptWorkspaceError, match="artifact_staging_root"):
+        promote_attempt_workspace(workspace)
+
+    assert not (workspace.canonical_campaign_root / "oversized.json").exists()
+    assert not (workspace.canonical_campaign_root / "solver.jsonl").exists()
+
+
+def test_campaign_boundary_rejects_bulk_file_counts(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _db, task = _leased_task(paths)
+    workspace = prepare_attempt_workspace(paths, task, {})
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    metadata["artifact_policy"]["max_changed_files"] = 2
+    atomic_write_json(workspace.metadata_path, metadata)
+    for index in range(3):
+        (workspace.campaign_root / f"part-{index}.txt").write_text("small\n", encoding="utf-8")
+
+    with pytest.raises(AttemptWorkspaceError, match="changed 3 files"):
+        enforce_campaign_data_boundary(workspace)
+
+
+def test_campaign_boundary_rejects_bulk_aggregate_bytes(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _db, task = _leased_task(paths)
+    workspace = prepare_attempt_workspace(paths, task, {})
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    metadata["artifact_policy"]["max_changed_bytes"] = 10
+    atomic_write_json(workspace.metadata_path, metadata)
+    (workspace.campaign_root / "part-a.txt").write_text("123456", encoding="utf-8")
+    (workspace.campaign_root / "part-b.txt").write_text("123456", encoding="utf-8")
+
+    with pytest.raises(AttemptWorkspaceError, match="changed 12 bytes"):
+        enforce_campaign_data_boundary(workspace)
+
+
+def test_pre_policy_attempt_remains_backward_compatible(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _db, task = _leased_task(paths)
+    workspace = prepare_attempt_workspace(paths, task, {})
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    metadata.pop("artifact_policy")
+    atomic_write_json(workspace.metadata_path, metadata)
+    (workspace.campaign_root / "legacy.jsonl").write_text("{}\n", encoding="utf-8")
+
+    promoted = promote_attempt_workspace(workspace)
+
+    assert promoted["status"] == "committed"
+    assert (workspace.canonical_campaign_root / "legacy.jsonl").is_file()
+    assert workspace.campaign_root.is_dir()
+
+
+def test_staged_payload_is_published_by_hash_and_only_reference_enters_data(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _db, task = _leased_task(paths)
+    workspace = prepare_attempt_workspace(paths, task, {})
+    payload_path = workspace.artifact_staging_root / "experiments" / "solver.jsonl"
+    payload_path.parent.mkdir(parents=True)
+    payload_path.write_text('{"candidate": 451}\n', encoding="utf-8")
+    digest = sha256_file(payload_path)
+    payload = {
+        "schema_version": RESULT_SCHEMA,
+        "task_id": "task",
+        "campaign_id": "campaign",
+        "lab_id": "math",
+        "domain": "math",
+        "status": "completed",
+        "summary": "A staged solver payload was produced.",
+        "artifacts": [
+            {
+                "artifact_id": "solver-output",
+                "uri": payload_path.resolve().as_uri(),
+                "sha256": digest,
+                "kind": "solver_transcript",
+            }
+        ],
+        "claims": [],
+        "next_actions": [],
+        "paper_candidate": False,
+    }
+    source_result = atomic_write_json(workspace.campaign_root / "results" / "result.json", payload)
+    frozen, _result_path, _result_sha = freeze_result_bundle(
+        paths,
+        payload,
+        attempt_id=str(task["current_attempt_id"]),
+        source_result_path=source_result,
+        source_result_sha256=sha256_file(source_result),
+        source_workspace=workspace.campaign_root,
+    )
+
+    reference = publish_staged_artifacts(
+        paths,
+        payload,
+        frozen,
+        workspace=workspace,
+        attempt_id=str(task["current_attempt_id"]),
+    )
+    assert reference is not None
+    record = json.loads(reference.read_text(encoding="utf-8"))
+    object_path = Path(record["artifacts"][0]["object_uri"].removeprefix("file://"))
+    experiment_manifest = Path(
+        record["experiment_manifest_uri"].removeprefix("file://")
+    )
+    assert object_path.name == "payload"
+    assert sha256_file(object_path) == digest
+    archived_path = Path(frozen["artifacts"][0]["uri"].removeprefix("file://"))
+    assert (object_path.stat().st_dev, object_path.stat().st_ino) == (
+        archived_path.stat().st_dev,
+        archived_path.stat().st_ino,
+    )
+    assert experiment_manifest.is_file()
+    assert enforce_campaign_data_boundary(workspace) == (
+        reference.relative_to(workspace.campaign_root).as_posix(),
+    )
+
+    promote_attempt_workspace(workspace)
+
+    canonical_reference = workspace.canonical_campaign_root / reference.relative_to(
+        workspace.campaign_root
+    )
+    assert canonical_reference.is_file()
+    assert not list(workspace.canonical_campaign_root.rglob("*.jsonl"))
+    assert not workspace.artifact_staging_root.exists()
+    assert not (workspace.root / "workspaces").exists()
+
+
+def test_artifact_stage_rejects_undeclared_files_and_symlinks(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _db, task = _leased_task(paths)
+    workspace = prepare_attempt_workspace(paths, task, {})
+    undeclared = workspace.artifact_staging_root / "undeclared.bin"
+    undeclared.write_bytes(b"payload")
+
+    with pytest.raises(AttemptWorkspaceError, match="absent from result.artifacts"):
+        publish_staged_artifacts(
+            paths,
+            {"artifacts": []},
+            {"artifacts": []},
+            workspace=workspace,
+            attempt_id=str(task["current_attempt_id"]),
+        )
+
+    undeclared.unlink()
+    (workspace.artifact_staging_root / "escape").symlink_to(tmp_path / "outside")
+    with pytest.raises(AttemptWorkspaceError, match="symlinks are not allowed"):
+        publish_staged_artifacts(
+            paths,
+            {"artifacts": []},
+            {"artifacts": []},
+            workspace=workspace,
+            attempt_id=str(task["current_attempt_id"]),
+        )
+
+
+def test_artifact_stage_cannot_change_after_publication(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _db, task = _leased_task(paths)
+    workspace = prepare_attempt_workspace(paths, task, {})
+    payload_path = workspace.artifact_staging_root / "solver.out"
+    payload_path.write_text("first\n", encoding="utf-8")
+    artifact = {
+        "artifact_id": "solver-output",
+        "uri": payload_path.resolve().as_uri(),
+        "sha256": sha256_file(payload_path),
+        "kind": "solver_transcript",
+    }
+    publish_staged_artifacts(
+        paths,
+        {"task_id": "task", "campaign_id": "campaign", "artifacts": [artifact]},
+        {"artifacts": [artifact]},
+        workspace=workspace,
+        attempt_id=str(task["current_attempt_id"]),
+    )
+    payload_path.write_text("changed\n", encoding="utf-8")
+
+    with pytest.raises(AttemptWorkspaceError, match="changed or was not published"):
+        begin_attempt_promotion(workspace)
+
+
+def test_new_payload_cannot_write_directly_to_live_artifact_tree(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _db, task = _leased_task(paths)
+    workspace = prepare_attempt_workspace(paths, task, {})
+    live = paths.artifacts / "experiments" / "unscoped.bin"
+    live.parent.mkdir(parents=True)
+    live.write_bytes(b"payload")
+    artifact = {
+        "artifact_id": "bad-live-write",
+        "uri": live.resolve().as_uri(),
+        "sha256": sha256_file(live),
+        "kind": "raw_output",
+    }
+
+    with pytest.raises(AttemptWorkspaceError, match="must use attempt staging"):
+        publish_staged_artifacts(
+            paths,
+            {"artifacts": [artifact]},
+            {"artifacts": [artifact]},
+            workspace=workspace,
+            attempt_id=str(task["current_attempt_id"]),
+        )
 
 
 def test_lease_recovery_quarantines_the_private_attempt_checkpoint(tmp_path) -> None:
@@ -397,6 +616,10 @@ def test_launch_writes_job_against_private_campaign_copy(tmp_path) -> None:
     assert job["transaction"]["canonical_campaign_workspace"] == str(
         workspace.canonical_campaign_root
     )
+    assert job["transaction"]["artifact_staging_root"] == str(
+        workspace.artifact_staging_root
+    )
+    assert job["transaction"]["artifact_policy"]["schema_version"] == ARTIFACT_POLICY_SCHEMA
     assert job["runtime_policy"]["sandbox"] == "danger-full-access"
     assert "$openlabs-research-factory" in job["runtime_policy"]["skills"]
     assert "$math-production-supervisor" not in job["runtime_policy"]["skills"]
@@ -412,6 +635,10 @@ def test_ingestion_commits_staged_state_and_indexes_immutable_result(tmp_path) -
     workspace = prepare_attempt_workspace(paths, task, {})
     output = workspace.campaign_root / "results" / "task" / "result.json"
     evidence = workspace.campaign_root / "evidence.json"
+    raw_output = workspace.artifact_staging_root / "experiments" / "search.jsonl"
+    raw_output.parent.mkdir(parents=True)
+    raw_output.write_text('{"candidate": 451}\n', encoding="utf-8")
+    raw_output_digest = sha256_file(raw_output)
     atomic_write_json(evidence, {"proved": True})
     atomic_write_json(workspace.campaign_root / "production_lane.json", {"nodes": ["node-1"]})
     result = atomic_write_json(
@@ -430,6 +657,12 @@ def test_ingestion_commits_staged_state_and_indexes_immutable_result(tmp_path) -
                     "uri": evidence.resolve().as_uri(),
                     "sha256": sha256_file(evidence),
                     "kind": "proof_certificate",
+                },
+                {
+                    "artifact_id": "raw-search-output",
+                    "uri": raw_output.resolve().as_uri(),
+                    "sha256": raw_output_digest,
+                    "kind": "solver_transcript",
                 }
             ],
             "claims": [
@@ -473,6 +706,12 @@ def test_ingestion_commits_staged_state_and_indexes_immutable_result(tmp_path) -
     assert json.loads(
         (workspace.canonical_campaign_root / "production_lane.json").read_text(encoding="utf-8")
     ) == {"nodes": ["node-1"]}
+    references = list((workspace.canonical_campaign_root / "artifact-references").glob("*.json"))
+    assert len(references) == 1
+    reference = json.loads(references[0].read_text(encoding="utf-8"))
+    object_path = Path(reference["artifacts"][0]["object_uri"].removeprefix("file://"))
+    assert sha256_file(object_path) == raw_output_digest
+    assert not workspace.artifact_staging_root.exists()
     assert report.attempts_committed == [
         {"task_id": "task", "attempt_id": attempt_id, "campaign_id": "campaign"}
     ]

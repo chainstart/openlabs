@@ -42,6 +42,37 @@ def test_task_contract_accepts_complete_project_execution_envelope() -> None:
     assert validate_task(task).valid
 
 
+def test_task_contract_accepts_artifact_boundary_and_rejects_partial_policy() -> None:
+    task = json.loads(
+        (CODE_ROOT / "packages/contracts/examples/smoke-task.json").read_text(encoding="utf-8")
+    )
+    task["transaction"] = {
+        "mode": "isolated_attempt_workspace",
+        "attempt_root": "/workspace/artifacts/attempt",
+        "staged_campaign_workspace": "/workspace/artifacts/attempt/workspaces/math/campaign",
+        "canonical_campaign_workspace": "/workspace/data/workspaces/math/campaign",
+        "artifact_staging_root": "/workspace/artifacts/attempt/artifact-stage",
+        "artifact_policy": {
+            "schema_version": "openlabs.artifact_policy.v1",
+            "max_data_file_bytes": 5 * 1024 * 1024,
+            "max_changed_files": 1000,
+            "max_changed_bytes": 50 * 1024 * 1024,
+            "artifact_only_suffixes": [".jsonl", ".parquet"],
+            "undeclared_staging_policy": "reject",
+        },
+        "promotion_policy": "validated_completed_results_only",
+    }
+
+    assert validate_task(task).valid
+
+    task["transaction"]["artifact_policy"]["artifact_only_suffixes"] = []
+    task["transaction"]["artifact_policy"]["undeclared_staging_policy"] = "ignore"
+    validation = validate_task(task)
+    assert not validation.valid
+    assert any("artifact_only_suffixes" in error for error in validation.errors)
+    assert any("undeclared_staging_policy" in error for error in validation.errors)
+
+
 def test_task_contract_rejects_partial_or_ill_typed_execution_policy() -> None:
     task = json.loads(
         (CODE_ROOT / "packages/contracts/examples/smoke-task.json").read_text(

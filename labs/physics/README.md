@@ -38,7 +38,10 @@
 
 - 可版本化的小型研究状态：`$OPENLABS_WORKSPACE/openlabs-data/workspaces/physics/<campaign-id>/`
 - 私有 attempt：`$OPENLABS_WORKSPACE/openlabs-artifacts/attempt-workspaces/`
-- 大型数据、模型和数值输出：`$OPENLABS_WORKSPACE/openlabs-artifacts/experiments/<campaign-id>/`
+- attempt 内大型数据、模型和数值输出：任务声明的 `artifact_staging_root`（physics runtime
+  暴露其 `experiments_root`）
+- 发布后的 payload：`$OPENLABS_WORKSPACE/openlabs-artifacts/objects/sha256/`；可浏览索引位于
+  `openlabs-artifacts/experiments/.../manifest.json`
 - 通过门禁的不可变结果：`$OPENLABS_WORKSPACE/openlabs-artifacts/result-bundles/`
 - 活任务、租约和 attempt 索引：`$OPENLABS_WORKSPACE/openlabs-database/live/factory.sqlite`
 
@@ -46,5 +49,8 @@
 解决。三题的科学判决保存在对应 workstream 的 `resolution_decision.json`；
 `tools/problem_verdict.py` 只在某条预先声明路线的全部原子条件均为 `met` 且证据文件存在时，
 才允许把 `problem_verdict: open` 改为解决态。项目协议在后续晋升时强制执行这条门禁。
+
+不要把 payload 直接写入 live artifacts 路径。每个 artifact-stage 文件都必须出现在
+`result.artifacts` 并携带 SHA-256；控制面只把小型引用 manifest 晋升进 campaign。
 
 先用 `uv sync --all-groups` 安装锁定环境；该命令及其他重计算必须通过仓库根目录的 `bin/openlabs-resource-guard` 运行。`tools/dataset_intake.py` 只接受 HTTP(S) 公共来源，并要求记录许可/条款、引用和 SHA-256；凭据和受限数据不得进入仓库。

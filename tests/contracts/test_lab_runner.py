@@ -664,6 +664,8 @@ def test_codex_transaction_requires_production_layout_outside_temporary_roots() 
             "attempt_root": str(attempt),
             "staged_campaign_workspace": str(staged),
             "canonical_campaign_workspace": str(canonical),
+            "artifact_staging_root": str(attempt / "artifact-stage"),
+            "artifact_policy": {"schema_version": "openlabs.artifact_policy.v1"},
         }
     }
 
@@ -672,6 +674,14 @@ def test_codex_transaction_requires_production_layout_outside_temporary_roots() 
         workspace=workspace,
         agent_workspace=staged,
     )
+
+    task["transaction"]["artifact_staging_root"] = str(attempt / "wrong-stage")
+    with pytest.raises(ValueError, match="attempt-private payload root"):
+        runner._validate_codex_transaction(
+            task,
+            workspace=workspace,
+            agent_workspace=staged,
+        )
 
     temporary_workspace = Path("/tmp/openlabs")
     temporary_attempt = temporary_workspace / "openlabs-artifacts" / "attempt-workspaces" / "one"

@@ -209,20 +209,22 @@ and public release remain external actions and are never implied by continuous p
 
 ## Bind evidence locally
 
-Source URLs identify literature; they are not result artifacts. Before returning a result, copy or
-generate every claimed evidence object inside the campaign workspace, verify its exact SHA-256,
-and bind it with a present `file://` URI. A remote URL may remain in provenance metadata but cannot
-satisfy the artifact gate. On a `production_gate_repair` task, repair only packaging: materialize
-the already referenced bytes, verify hashes, preserve scientific claims and limitations, and do
-not repeat searches, computations, solver runs, or downstream research.
+Source URLs identify literature; they are not result artifacts. Before returning a result, place
+small, human-readable claimed evidence inside the staged campaign and bulk/generated payloads
+inside `transaction.artifact_staging_root`; verify each exact SHA-256 and bind it with its present
+`file://` URI. Never write directly to the live artifact tree. A remote URL may remain in provenance
+metadata but cannot satisfy the artifact gate. On a `production_gate_repair` task, repair only
+packaging: materialize the already referenced bytes, verify hashes, preserve scientific claims and
+limitations, and do not repeat searches, computations, solver runs, or downstream research.
 
 Treat `production_lane.json`, `program_summary.json`, `paper_seed_registry.json`, AMRA state, and
 other control files as mutable state, not durable evidence objects. If a claim needs their exact
 bytes, write a node-specific snapshot under the current evidence directory and bind that snapshot.
-The control plane additionally copies every declared artifact into a content-addressed immutable
-archive before it promotes the staged campaign. A cancelled or failed node may leave useful work in
-its quarantined attempt workspace, but that work is not a completed node and must never be counted
-until a fresh bounded task explicitly adopts and validates it.
+The control plane additionally binds every declared artifact into a content-addressed immutable
+archive before it promotes the staged campaign; only its small reference manifest enters campaign
+state. A cancelled or failed node may leave useful work in its quarantined attempt workspace, but
+that work is not a completed node and must never be counted until a fresh bounded task explicitly
+adopts and validates it.
 
 ## Finish each node
 

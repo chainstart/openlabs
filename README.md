@@ -32,6 +32,11 @@ OpenLabs 是一个面向个人使用、可恢复、可连续运行的轻量科�
 `openlabs.task.v3` 并输出
 `openlabs.result_bundle.v1`，不能直接写数据库。
 
+新研究 attempt 把小型、可读、可合并的知识状态写入私有 campaign，把原始数据、求解器转录、
+数组、模型和批量输出写入独立 `artifact-stage`。控制面逐项校验 URI/SHA-256，把 payload 发布
+到 `openlabs-artifacts/objects/sha256/`，只向 `openlabs-data` 晋升小型引用 manifest；成功后清理
+暂存，失败则完整隔离。具体阈值和恢复流程见架构决策与个人运行手册。
+
 管理员为一个 campaign 播种首个有界任务后，通过门禁的 `next_actions` 可自动续接下一步；
 `needs_replan` 升级到高级 runner，`needs_human`、隔离、无下一步或 campaign 任务上限会停链。
 第一版没有让一个永久“大 Agent”自行扫描全部课题并无限消费预算。

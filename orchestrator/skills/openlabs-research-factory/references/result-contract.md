@@ -2,6 +2,14 @@
 
 Write one JSON object with this minimum shape:
 
+For an `openlabs.artifact_policy.v1` task, an artifact URI may point either to a small file in the
+staged campaign or to a payload under `transaction.artifact_staging_root`. Every file under the
+artifact staging root must be listed at least once in `artifacts` with its SHA-256; the
+control plane rejects undeclared bytes and replaces the staging location with immutable archive
+and object references during ingestion. Executable verification source and every
+`reproduction.inputs[].path` remain campaign-relative small files so the isolated replay closure
+is self-contained.
+
 ```json
 {
   "schema_version": "openlabs.result_bundle.v1",

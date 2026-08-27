@@ -11,6 +11,7 @@ OpenLabs 的自动化边界按“科研判断归 Codex、状态确定性归控�
                  │
                  ▼
 私有 campaign 副本
+  ├─ artifact-stage ──► attempt 私有的大型/批量 payload 暂存
   ├─ .agents/skills  ──► 仅协议激活的 Skill
   ├─ .agents/optional-methods ─► 可读但未注册生效的方法指南
   ├─ .codex/hooks.json ─► 简短 SessionStart 上下文 + Stop 结果自检
@@ -20,7 +21,7 @@ OpenLabs 的自动化边界按“科研判断归 Codex、状态确定性归控�
 Codex 自主分析、分解、调用工具并连续跨越同角色协议阶段
                  │
                  ▼
-结果身份封装 → 契约/证据门禁 → 不可变归档 → campaign 原子晋升
+结果身份封装 → 契约/证据/存储边界门禁 → 内容寻址归档 → campaign 小状态原子晋升
                  │                         └─ 失败：attempt 隔离并按策略续接
                  └─ 仅在角色边界、终态、阻塞或预算边界产生 next_actions
 ```
@@ -69,6 +70,9 @@ Hook 只负责：
    当前任务的强制规则。
 8. project index、review packet/cursor 属可重建或哈希绑定的控制面元数据；它们不放在
    reviewer 可写并可晋升的 campaign 树中，物化失败必须幂等重试。
+9. 新 attempt 的 campaign 只承载小型、可读、可合并的知识状态；大/批量 payload 必须进入
+   `artifact-stage` 并在结果中逐项声明。控制面发布 payload 后只晋升引用 manifest，成功后
+   清理暂存，失败则完整隔离。
 
 ## 项目与协议插件
 

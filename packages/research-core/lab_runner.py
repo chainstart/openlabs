@@ -141,10 +141,15 @@ def _agent_request(task: dict[str, Any], manifest: dict[str, Any], output: Path)
 This task runs in an isolated transaction workspace:
 
 - writable staged campaign: `{transaction.get("staged_campaign_workspace")}`
+- writable artifact staging: `{transaction.get("artifact_staging_root")}`
 - canonical campaign (do not write): `{transaction.get("canonical_campaign_workspace")}`
 - promotion rule: `{transaction.get("promotion_policy")}`
 
-Use only staged paths for every edit, generated proof object, state transition, and artifact URI.
+Keep human-readable state, proof text, small source files, summaries and manifests in the staged
+campaign. Put raw datasets, solver transcripts, archives, large generated JSON/JSONL, arrays,
+models and bulk outputs in artifact staging. Every staged payload must appear in result.artifacts
+with its exact file URI and SHA-256; undeclared payloads fail closed. The control plane publishes
+those bytes to content-addressed objects and promotes only a small reference into campaign data.
 The control plane promotes the staged tree only after a completed result passes all gates. A failed,
 cancelled, interrupted, or invalid attempt is quarantined automatically. Never copy staged changes
 to the canonical campaign yourself.
@@ -271,6 +276,10 @@ def _lab_runtime_setup(
         "{lab_root}": str(lab_root),
         "{agent_workspace}": str(agent_workspace),
         "{attempt_root}": attempt_root,
+        "{artifact_staging_root}": str(
+            (task.get("transaction") or {}).get("artifact_staging_root")
+            or (Path(attempt_root) / "artifact-stage")
+        ),
         "{task_file}": str(task.get("_task_file") or ""),
     }
     results: list[dict[str, Any]] = []
@@ -727,6 +736,13 @@ def _validate_codex_transaction(
         raise ValueError("Canonical campaign is outside the authoritative data store")
     if canonical == staged or canonical.is_relative_to(staged) or staged.is_relative_to(canonical):
         raise ValueError("Canonical and private campaign roots overlap")
+    artifact_policy = transaction.get("artifact_policy")
+    if isinstance(artifact_policy, Mapping):
+        artifact_staging = (
+            Path(str(transaction.get("artifact_staging_root") or "")).expanduser().resolve()
+        )
+        if artifact_staging != attempt_root / "artifact-stage":
+            raise ValueError("Artifact staging is not the declared attempt-private payload root")
     temporary_roots = {
         Path(tempfile.gettempdir()).resolve(),
         Path("/tmp").resolve(),

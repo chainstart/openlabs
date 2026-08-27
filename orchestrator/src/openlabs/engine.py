@@ -20,12 +20,15 @@ from typing import Any
 from .agent_runtime import configure_codex_runtime, runtime_context
 from .attempts import (
     AttemptWorkspace,
+    attempt_artifact_policy,
     attempt_output_path,
     begin_attempt_promotion,
+    enforce_campaign_data_boundary,
     finalize_attempt_promotion,
     find_attempt_workspace,
     freeze_result_bundle,
     prepare_attempt_workspace,
+    publish_staged_artifacts,
     quarantine_attempt_workspace,
     recover_attempt_promotion,
     rollback_attempt_promotion,
@@ -1722,6 +1725,7 @@ def ingest_results(
                             "protocol_gate_failed:" + "; ".join(protocol_errors)
                         )
                     runtime["protocol_gate"] = {"passed": True, "errors": []}
+                    source_payload = payload
                     payload, result_path, actual_sha = freeze_result_bundle(
                         paths,
                         payload,
@@ -1740,6 +1744,24 @@ def ingest_results(
                             "immutable archive failed result gate: " + "; ".join(gate.blockers)
                         )
                     if attempt_workspace is not None:
+                        policy = attempt_artifact_policy(attempt_workspace)
+                        if policy is not None:
+                            # Reject an invalid campaign before publishing any new
+                            # object, then recheck after the small reference is added.
+                            enforce_campaign_data_boundary(attempt_workspace)
+                            reference = publish_staged_artifacts(
+                                paths,
+                                source_payload,
+                                payload,
+                                workspace=attempt_workspace,
+                                attempt_id=attempt_id,
+                            )
+                            changed_files = enforce_campaign_data_boundary(attempt_workspace)
+                            runtime["artifact_policy"] = {
+                                "schema_version": policy["schema_version"],
+                                "campaign_changed_files": len(changed_files),
+                                "campaign_reference": str(reference) if reference else None,
+                            }
                         begin_attempt_promotion(attempt_workspace)
                         promotion_pending = True
                 except Exception as exc:  # noqa: BLE001
@@ -2300,6 +2322,21 @@ def _write_task_spec(
     agent_workspace = attempt_workspace.campaign_root
     agent_workspace.mkdir(parents=True, exist_ok=True)
     run_metadata_path = output_path.parent / "run-metadata.json"
+    transaction = {
+        "mode": "isolated_attempt_workspace",
+        "attempt_root": str(attempt_workspace.root),
+        "staged_campaign_workspace": str(attempt_workspace.campaign_root),
+        "canonical_campaign_workspace": str(attempt_workspace.canonical_campaign_root),
+        "promotion_policy": "validated_completed_results_only",
+    }
+    policy = attempt_artifact_policy(attempt_workspace)
+    if policy is not None:
+        transaction.update(
+            {
+                "artifact_staging_root": str(attempt_workspace.artifact_staging_root),
+                "artifact_policy": dict(policy),
+            }
+        )
     payload = {
         "schema_version": TASK_SCHEMA,
         "task_id": task["task_id"],
@@ -2318,13 +2355,7 @@ def _write_task_spec(
         "campaign_epoch": int(task.get("campaign_epoch") or 1),
         "agent_workspace": str(agent_workspace),
         "run_metadata_path": str(run_metadata_path),
-        "transaction": {
-            "mode": "isolated_attempt_workspace",
-            "attempt_root": str(attempt_workspace.root),
-            "staged_campaign_workspace": str(attempt_workspace.campaign_root),
-            "canonical_campaign_workspace": str(attempt_workspace.canonical_campaign_root),
-            "promotion_policy": "validated_completed_results_only",
-        },
+        "transaction": transaction,
         "routing_reason": task.get("routing_reason") or "manual",
         "parent_task_id": task.get("parent_task_id"),
         "agent": {

@@ -51,7 +51,7 @@
         "--agent-workspace",
         "{agent_workspace}",
         "--artifacts-root",
-        "{artifacts_root}"
+        "{artifact_staging_root}"
       ],
       "timeout_seconds": 180
     }

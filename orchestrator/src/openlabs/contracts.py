@@ -161,6 +161,43 @@ def validate_task(payload: Any) -> ValidationResult:
             ):
                 if not _text(transaction.get(field_name)):
                     errors.append(f"transaction.{field_name} must be a non-empty string")
+            artifact_policy = transaction.get("artifact_policy")
+            if artifact_policy is not None:
+                if not isinstance(artifact_policy, Mapping):
+                    errors.append("transaction.artifact_policy must be an object")
+                else:
+                    if artifact_policy.get("schema_version") != "openlabs.artifact_policy.v1":
+                        errors.append(
+                            "transaction.artifact_policy.schema_version must be "
+                            "openlabs.artifact_policy.v1"
+                        )
+                    for field_name in (
+                        "max_data_file_bytes",
+                        "max_changed_files",
+                        "max_changed_bytes",
+                    ):
+                        value = artifact_policy.get(field_name)
+                        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                            errors.append(
+                                f"transaction.artifact_policy.{field_name} must be a positive integer"
+                            )
+                    suffixes = artifact_policy.get("artifact_only_suffixes")
+                    if (
+                        not isinstance(suffixes, list)
+                        or not suffixes
+                        or any(not _text(item) or not str(item).startswith(".") for item in suffixes)
+                    ):
+                        errors.append(
+                            "transaction.artifact_policy.artifact_only_suffixes must be a "
+                            "non-empty array of dotted suffixes"
+                        )
+                    if artifact_policy.get("undeclared_staging_policy") != "reject":
+                        errors.append(
+                            "transaction.artifact_policy.undeclared_staging_policy must be reject"
+                        )
+                staging = _text(transaction.get("artifact_staging_root"))
+                if not staging or not Path(staging).is_absolute():
+                    errors.append("transaction.artifact_staging_root must be an absolute path")
     project = payload.get("project")
     if project is not None:
         if not isinstance(project, Mapping):

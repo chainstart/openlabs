@@ -45,7 +45,9 @@ Codex worker 与 `bin/openlabs-codex` 都使用 `approval_policy=never` 和
 | 项目/claim/小型代码与 manifest | `openlabs-data/workspaces/physics/...` | 私有、可版本化 canonical 状态 |
 | 当前暂停的选题项目 | `openlabs-data/workspaces/physics/projects/physics-open-problems/` | 控制面可发现但不会启动 |
 | 私有运行副本 | `openlabs-artifacts/attempt-workspaces/...` | 失败/取消时隔离保留 |
-| 公共数据副本、数组、模型与大输出 | `openlabs-artifacts/experiments/<campaign-id>/` | 私有大产物，按 URI/哈希引用 |
+| attempt 内公共数据副本、数组、模型与大输出 | `openlabs-artifacts/attempt-workspaces/.../artifact-stage/experiments/` | 私有暂存，必须按 URI/哈希声明 |
+| 发布后的实验索引 | `openlabs-artifacts/experiments/.../manifest.json` | 指向内容寻址 payload 的小型 manifest |
+| 发布后的 payload | `openlabs-artifacts/objects/sha256/.../payload` | 私有、不可变、按内容去重 |
 | 通过门禁的结果快照 | `openlabs-artifacts/result-bundles/...` | 不可变归档 |
 | campaign/task/lease/attempt 索引 | `openlabs-database/live/factory.sqlite` | 单写者活库，不直接手改 |
 

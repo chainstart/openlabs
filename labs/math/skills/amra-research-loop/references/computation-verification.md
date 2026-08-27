@@ -16,6 +16,12 @@ experiments/
 └── smt/
 ```
 
+These campaign directories are for small replayable source and typed receipts. Put captured solver
+streams, bulk model dumps, large tables/JSONL, arrays, and archives under the task's
+`transaction.artifact_staging_root`, then declare each payload in the OpenLabs result with its URI
+and SHA-256. The typed receipt may refer to those payload artifacts but must not copy their bytes
+back into campaign state.
+
 Use the verifier path from the laboratory runtime context. Typical invocations are:
 
 ```bash

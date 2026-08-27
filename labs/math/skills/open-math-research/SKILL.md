@@ -27,6 +27,11 @@ the statement is sufficiently precise.
 - Preserve verification receipts for any exact computation used in a claimed
   proof. The original rule against Lean remains in force unless the user
   separately requests formalization.
+- Keep proof state, registries, small source and receipts in the staged campaign.
+  Put SAT/SMT transcripts, bulk searches, large JSON/JSONL, archives and other
+  generated payloads under `transaction.artifact_staging_root`, and declare
+  every such file by URI and SHA-256 in the result. Never write new payloads
+  directly to the live artifact tree.
 
 ## Bind the current problem
 

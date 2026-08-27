@@ -74,6 +74,12 @@ staged campaign. Keep failed routes and contrary evidence. Update the small work
 factual checkpoint and links to durable artifacts; its layout is a memory aid, not a scientific
 rubric.
 
+Keep those human-readable files small. Raw searches, solver transcripts, bulk enumeration, large
+JSON/JSONL, arrays, archives, and generated binary payloads belong under the task's
+`transaction.artifact_staging_root`, not the campaign tree or live artifact store. Declare every
+staged payload with its exact URI and SHA-256 in the result; the control plane publishes it and
+promotes only a small campaign reference.
+
 ## Evidence and handoff
 
 Bind supported, verified, and refuted claims to present hash-addressed artifacts. Separate theorem,

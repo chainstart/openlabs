@@ -30,6 +30,49 @@ from .reproduction import materialize_reproduction
 
 ATTEMPT_SCHEMA = "openlabs.attempt_workspace.v1"
 ARCHIVE_SCHEMA = "openlabs.immutable_result_archive.v1"
+ARTIFACT_POLICY_SCHEMA = "openlabs.artifact_policy.v1"
+CAMPAIGN_ARTIFACT_MANIFEST_SCHEMA = "openlabs.campaign_artifact_manifest.v1"
+EXPERIMENT_ARTIFACT_MANIFEST_SCHEMA = "openlabs.experiment_artifact_manifest.v1"
+DEFAULT_MAX_DATA_FILE_BYTES = 5 * 1024 * 1024
+DEFAULT_MAX_CHANGED_FILES = 1_000
+DEFAULT_MAX_CHANGED_BYTES = 50 * 1024 * 1024
+_ARTIFACT_ONLY_SUFFIXES = (
+    ".7z",
+    ".bin",
+    ".bz2",
+    ".ckpt",
+    ".cnf",
+    ".db",
+    ".drat",
+    ".gz",
+    ".h5",
+    ".hdf5",
+    ".jsonl",
+    ".log",
+    ".mp4",
+    ".npy",
+    ".npz",
+    ".onnx",
+    ".out",
+    ".parquet",
+    ".pickle",
+    ".pkl",
+    ".pdf",
+    ".pth",
+    ".pt",
+    ".safetensors",
+    ".sqlite",
+    ".sqlite3",
+    ".stdout",
+    ".tar",
+    ".tar.gz",
+    ".tgz",
+    ".traj",
+    ".wav",
+    ".xz",
+    ".zst",
+    ".zip",
+)
 _SAFE_NAME = re.compile(r"[^a-zA-Z0-9._-]+")
 _RENAME_EXCHANGE = 2
 _ATTEMPT_RUNTIME_DIRS = frozenset({".agents", ".codex", ".openlabs"})
@@ -47,6 +90,12 @@ class AttemptWorkspace:
     canonical_domain_root: Path
     canonical_campaign_root: Path
     metadata_path: Path
+
+    @property
+    def artifact_staging_root(self) -> Path:
+        """Attempt-private payload staging that is never campaign state."""
+
+        return self.root / "artifact-stage"
 
     def map_path(self, value: str | Path | None) -> str | None:
         """Map a canonical domain path to its private counterpart when possible."""
@@ -90,6 +139,19 @@ def _token(value: object, *, prefix: str = "item") -> str:
     return f"{cleaned}-{digest}"
 
 
+def artifact_policy_payload() -> dict[str, Any]:
+    """Return the versioned storage boundary attached to every new attempt."""
+
+    return {
+        "schema_version": ARTIFACT_POLICY_SCHEMA,
+        "max_data_file_bytes": DEFAULT_MAX_DATA_FILE_BYTES,
+        "max_changed_files": DEFAULT_MAX_CHANGED_FILES,
+        "max_changed_bytes": DEFAULT_MAX_CHANGED_BYTES,
+        "artifact_only_suffixes": list(_ARTIFACT_ONLY_SUFFIXES),
+        "undeclared_staging_policy": "reject",
+    }
+
+
 def _inside(path: Path, root: Path) -> bool:
     resolved = path.resolve()
     base = root.resolve()
@@ -106,6 +168,35 @@ def _copy_file(source: Path, target: Path) -> None:
     except Exception:
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+def _link_or_copy_file(source: Path, target: Path) -> None:
+    """Atomically hard-link immutable bytes, falling back to a copy across filesystems."""
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    temporary.unlink()
+    try:
+        os.link(source, temporary)
+        os.replace(temporary, target)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        _copy_file(source, target)
+
+
+def _content_object(paths: WorkspacePaths, source: Path, digest: str) -> Path:
+    """Materialize one immutable, deduplicated object for verified bytes."""
+
+    target = paths.artifacts / "objects" / "sha256" / digest[:2] / digest / "payload"
+    if target.is_file():
+        if sha256_file(target) != digest:
+            raise AttemptWorkspaceError(f"content-addressed artifact collision: {target}")
+    else:
+        _copy_file(source, target)
+        target.chmod(0o444)
+    return target
 
 
 def _copy_plan_closure(
@@ -300,6 +391,7 @@ def prepare_attempt_workspace(
     try:
         temporary_domain = temporary / "workspaces" / domain
         temporary_campaign = temporary_domain / canonical_campaign.relative_to(canonical_domain)
+        (temporary / "artifact-stage").mkdir(parents=True)
         # Prior result bundles are immutable inputs referenced explicitly by the
         # task and must not be recursively recopied into every new attempt.
         shutil.copytree(
@@ -336,6 +428,8 @@ def prepare_attempt_workspace(
                 "created_at": _utc_now(),
                 "canonical_campaign_root": str(canonical_campaign),
                 "staged_campaign_root": str(temporary_campaign),
+                "artifact_staging_root": str(root / "artifact-stage"),
+                "artifact_policy": artifact_policy_payload(),
                 "staged_plan_path": str(staged_plan) if staged_plan else None,
                 "staged_project_path": str(staged_project) if staged_project else None,
                 "baseline": baseline,
@@ -553,6 +647,20 @@ def begin_attempt_promotion(workspace: AttemptWorkspace) -> dict[str, Any]:
         raise AttemptWorkspaceError(
             f"Attempt is not promotable from status {metadata.get('status')!r}"
         )
+    # Keep the storage boundary inside the promotion primitive so maintenance
+    # callers cannot accidentally bypass the same gate used by ingestion.
+    enforce_campaign_data_boundary(workspace)
+    policy = metadata.get("artifact_policy")
+    if isinstance(policy, Mapping) and policy.get("schema_version") == ARTIFACT_POLICY_SCHEMA:
+        stage_manifest = _artifact_stage_manifest(workspace)
+        publication = metadata.get("artifact_publication")
+        published_manifest = (
+            publication.get("stage_manifest") if isinstance(publication, Mapping) else None
+        )
+        if stage_manifest and published_manifest != stage_manifest:
+            raise AttemptWorkspaceError(
+                "artifact staging changed or was not published before promotion"
+            )
     baseline = metadata.get("baseline")
     if not isinstance(baseline, dict):
         raise AttemptWorkspaceError("Attempt baseline is missing")
@@ -633,10 +741,18 @@ def finalize_attempt_promotion(workspace: AttemptWorkspace) -> dict[str, Any]:
         raise AttemptWorkspaceError(f"Unsafe promotion rollback path: {rollback}")
     if rollback.exists():
         shutil.rmtree(rollback)
+    policy = metadata.get("artifact_policy")
+    compacted: list[str] = []
+    if isinstance(policy, Mapping) and policy.get("schema_version") == ARTIFACT_POLICY_SCHEMA:
+        for directory in (workspace.root / "workspaces", workspace.artifact_staging_root):
+            if directory.exists():
+                shutil.rmtree(directory)
+                compacted.append(str(directory))
     return _update_metadata(
         workspace,
         status="committed",
         committed_at=_utc_now(),
+        compacted_paths=compacted,
         promotion_candidate=None,
         rollback_path=None,
     )
@@ -770,13 +886,14 @@ def freeze_result_bundle(
             raise AttemptWorkspaceError(
                 f"Artifact changed before immutable snapshot: {item.get('artifact_id')}"
             )
+        content_object = _content_object(paths, source, digest)
         suffix = source.suffix[:24]
         target = archive / "artifacts" / f"{index:03d}-{digest}{suffix}"
         if target.is_file():
             if sha256_file(target) != digest:
                 raise AttemptWorkspaceError(f"Immutable artifact collision: {target}")
         else:
-            _copy_file(source, target)
+            _link_or_copy_file(content_object, target)
             target.chmod(0o444)
         item["uri"] = target.as_uri()
         if executable_artifact(artifact):
@@ -859,3 +976,223 @@ def freeze_result_bundle(
         },
     )
     return frozen, result_path, result_sha256
+
+
+def attempt_artifact_policy(workspace: AttemptWorkspace) -> Mapping[str, Any] | None:
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    policy = metadata.get("artifact_policy")
+    if not isinstance(policy, Mapping) or policy.get("schema_version") != ARTIFACT_POLICY_SCHEMA:
+        # Attempts created before artifact_policy.v1 remain governed by the
+        # contract that was active when their worker started.
+        return None
+    return policy
+
+
+def _artifact_declared_sources(payload: Mapping[str, Any]) -> dict[Path, list[dict[str, Any]]]:
+    declared: dict[Path, list[dict[str, Any]]] = {}
+    for item in payload.get("artifacts", []):
+        if not isinstance(item, Mapping):
+            continue
+        path = _artifact_path(item.get("uri"))
+        declared.setdefault(path, []).append(dict(item))
+    return declared
+
+
+def _artifact_stage_manifest(workspace: AttemptWorkspace) -> dict[str, str]:
+    staging = workspace.artifact_staging_root.resolve()
+    staging.mkdir(parents=True, exist_ok=True)
+    manifest: dict[str, str] = {}
+    for candidate in sorted(staging.rglob("*")):
+        if candidate.is_symlink():
+            raise AttemptWorkspaceError(
+                f"symlinks are not allowed in artifact staging: {candidate}"
+            )
+        if candidate.is_file():
+            resolved = candidate.resolve()
+            if not _inside(resolved, staging):
+                raise AttemptWorkspaceError(f"artifact staging path escapes its root: {candidate}")
+            manifest[candidate.relative_to(staging).as_posix()] = sha256_file(candidate)
+    return manifest
+
+
+def publish_staged_artifacts(
+    paths: WorkspacePaths,
+    source_payload: Mapping[str, Any],
+    archived_payload: Mapping[str, Any],
+    *,
+    workspace: AttemptWorkspace,
+    attempt_id: str,
+) -> Path | None:
+    """Publish declared attempt payloads and add only a small campaign reference.
+
+    Bytes staged under ``artifact-stage`` are content-addressed under ``objects``.
+    The browsable experiment tree and the staged campaign each receive a small
+    manifest. No payload byte is copied into the canonical data tree.
+    """
+
+    if attempt_artifact_policy(workspace) is None:
+        return None
+    staging = workspace.artifact_staging_root.resolve()
+    staging.mkdir(parents=True, exist_ok=True)
+    stage_manifest = _artifact_stage_manifest(workspace)
+    staged_files = tuple((staging / relative).resolve() for relative in stage_manifest)
+    declared = _artifact_declared_sources(source_payload)
+    declared_staged = {path for path in declared if _inside(path, staging)}
+    undeclared = [path for path in staged_files if path not in declared_staged]
+    if undeclared:
+        relative = [path.relative_to(staging).as_posix() for path in undeclared[:8]]
+        raise AttemptWorkspaceError(
+            "artifact staging contains files absent from result.artifacts: " + ", ".join(relative)
+        )
+    missing = [path for path in declared_staged if not path.is_file()]
+    if missing:
+        raise AttemptWorkspaceError(
+            "declared staged artifacts are missing: " + ", ".join(str(path) for path in missing[:8])
+        )
+
+    immutable_roots = (
+        (paths.artifacts / "objects").resolve(),
+        (paths.artifacts / "result-bundles").resolve(),
+    )
+    for source in declared:
+        if _inside(source, staging) or _inside(source, workspace.campaign_root):
+            continue
+        if any(_inside(source, root) for root in immutable_roots):
+            continue
+        if _inside(source, paths.artifacts):
+            raise AttemptWorkspaceError(
+                f"new artifact must use attempt staging, not a live artifact path: {source}"
+            )
+
+    if not staged_files:
+        _update_metadata(
+            workspace,
+            artifact_publication={
+                "schema_version": EXPERIMENT_ARTIFACT_MANIFEST_SCHEMA,
+                "published_at": _utc_now(),
+                "stage_manifest": {},
+                "experiment_manifest": None,
+                "campaign_reference": None,
+            },
+        )
+        return None
+
+    archived_by_id = {
+        str(item.get("artifact_id")): item
+        for item in archived_payload.get("artifacts", [])
+        if isinstance(item, Mapping)
+    }
+    campaign_id = str(source_payload.get("campaign_id") or "")
+    task_id = str(source_payload.get("task_id") or "")
+    experiment_dir = (
+        paths.artifacts
+        / "experiments"
+        / _token(campaign_id, prefix="campaign")
+        / _token(task_id, prefix="task")
+        / _token(attempt_id, prefix="attempt")
+    ).resolve()
+    entries: list[dict[str, Any]] = []
+    for source in staged_files:
+        for artifact in declared[source]:
+            digest = str(artifact.get("sha256") or "")
+            if not digest or sha256_file(source) != digest:
+                raise AttemptWorkspaceError(
+                    f"staged artifact SHA-256 mismatch: {artifact.get('artifact_id')}"
+                )
+            target = _content_object(paths, source, digest)
+            archived = archived_by_id.get(str(artifact.get("artifact_id")), {})
+            entries.append(
+                {
+                    "artifact_id": artifact.get("artifact_id"),
+                    "kind": artifact.get("kind"),
+                    "sha256": digest,
+                    "bytes": source.stat().st_size,
+                    "staged_path": source.relative_to(staging).as_posix(),
+                    "filename": source.name,
+                    "object_uri": target.resolve().as_uri(),
+                    "result_bundle_uri": archived.get("uri"),
+                }
+            )
+
+    reference_relative = (
+        Path("artifact-references")
+        / f"{_token(task_id, prefix='task')}-{_token(attempt_id, prefix='attempt')}.json"
+    )
+    experiment_manifest = experiment_dir / "manifest.json"
+    experiment_record = {
+        "schema_version": EXPERIMENT_ARTIFACT_MANIFEST_SCHEMA,
+        "campaign_id": campaign_id,
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "created_at": _utc_now(),
+        "campaign_reference_path": reference_relative.as_posix(),
+        "artifacts": entries,
+    }
+    atomic_write_json(experiment_manifest, experiment_record)
+    campaign_record = {
+        "schema_version": CAMPAIGN_ARTIFACT_MANIFEST_SCHEMA,
+        "campaign_id": campaign_id,
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "experiment_manifest_uri": experiment_manifest.resolve().as_uri(),
+        "artifacts": entries,
+    }
+    reference = atomic_write_json(workspace.campaign_root / reference_relative, campaign_record)
+    _update_metadata(
+        workspace,
+        artifact_publication={
+            "schema_version": EXPERIMENT_ARTIFACT_MANIFEST_SCHEMA,
+            "published_at": _utc_now(),
+            "stage_manifest": stage_manifest,
+            "experiment_manifest": str(experiment_manifest),
+            "campaign_reference": str(reference),
+        },
+    )
+    return reference
+
+
+def enforce_campaign_data_boundary(workspace: AttemptWorkspace) -> tuple[str, ...]:
+    """Reject new bulk/generated payloads before the staged campaign is promoted."""
+
+    policy = attempt_artifact_policy(workspace)
+    if policy is None:
+        return ()
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    baseline = metadata.get("baseline")
+    if not isinstance(baseline, Mapping):
+        raise AttemptWorkspaceError("Attempt baseline is missing")
+    current = _tree_manifest(workspace.campaign_root)
+    changed = sorted(
+        relative
+        for relative, digest in current.items()
+        if str(baseline.get(relative) or "") != digest
+    )
+    max_file = int(policy.get("max_data_file_bytes") or DEFAULT_MAX_DATA_FILE_BYTES)
+    max_files = int(policy.get("max_changed_files") or DEFAULT_MAX_CHANGED_FILES)
+    max_bytes = int(policy.get("max_changed_bytes") or DEFAULT_MAX_CHANGED_BYTES)
+    suffixes = tuple(
+        str(item).lower()
+        for item in policy.get("artifact_only_suffixes", _ARTIFACT_ONLY_SUFFIXES)
+        if str(item)
+    )
+    violations: list[str] = []
+    total_bytes = 0
+    for relative in changed:
+        path = workspace.campaign_root / relative
+        size = path.stat().st_size
+        total_bytes += size
+        lowered = relative.lower()
+        if size > max_file:
+            violations.append(f"{relative} is {size} bytes (limit {max_file})")
+        elif any(lowered.endswith(suffix) for suffix in suffixes):
+            violations.append(f"{relative} uses artifact-only format")
+    if len(changed) > max_files:
+        violations.append(f"campaign changed {len(changed)} files (limit {max_files})")
+    if total_bytes > max_bytes:
+        violations.append(f"campaign changed {total_bytes} bytes (limit {max_bytes})")
+    if violations:
+        raise AttemptWorkspaceError(
+            "campaign data boundary rejected payload; use artifact_staging_root: "
+            + "; ".join(violations[:12])
+        )
+    return tuple(changed)

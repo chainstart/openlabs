@@ -103,6 +103,11 @@ Read [campaign-schema.md](references/campaign-schema.md) before editing state ar
 
 Keep computational evidence in `evidence/` and independent audit material in `audit/`. Do not overwrite author evidence during blind reconstruction.
 
+Keep small sources, typed receipts, proof text, and audit summaries in those campaign directories.
+Put raw solver output, bulk enumeration, large JSON/JSONL, arrays, archives, and binary payloads in
+`transaction.artifact_staging_root`. Every staged payload must be declared with URI and SHA-256 in
+the result; never write it directly to the live artifact store.
+
 ## End each research turn
 
 Report:

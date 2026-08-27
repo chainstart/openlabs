@@ -36,6 +36,16 @@ The control plane is the sole committer: a validated completed node is promoted 
 interrupted, cancelled, failed, or rejected node remains a quarantined checkpoint and cannot alter
 the authoritative lane.
 
+The same transaction declares `artifact_staging_root`. Keep evolving, human-readable research
+state, proof/source text, small verification receipts, summaries, and manifests in the staged
+campaign. Put raw datasets, solver transcripts, archives, arrays, models, large generated JSON or
+JSONL, and bulk outputs in artifact staging. Declare every staged payload in `result.artifacts`
+with its exact `file://` URI and SHA-256. Do not write new payloads directly to the live
+`openlabs-artifacts/experiments/` or `objects/` trees. Undeclared staging files, artifact-only
+formats in campaign state, oversized campaign files, and bulk campaign changes fail promotion.
+After validation, the control plane publishes staged payloads as content-addressed objects and
+promotes only a small reference manifest into campaign state.
+
 ## Obey the Agent boundary
 
 Treat `agent.role` and `agent.session_mode` as authority, not suggestions. One OS process owns one

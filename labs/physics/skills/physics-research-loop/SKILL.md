@@ -39,8 +39,10 @@ open-problem verdict,
 ## OpenLabs boundary
 
 Keep plans, small code, manifests and claim state under
-`$OPENLABS_WORKSPACE/openlabs-data/workspaces/physics/<campaign-id>/`. Put raw datasets, large arrays,
-checkpoints and heavy numerical outputs under
-`$OPENLABS_WORKSPACE/openlabs-artifacts/experiments/<campaign-id>/`. Refer to artifacts by URI and
-SHA-256. The lab analyzes existing public data but never operates real instruments or executes a
-physical experiment. All heavy commands run through `bin/openlabs-resource-guard`.
+the task's staged campaign path. Put raw datasets, large arrays, checkpoints and heavy numerical
+outputs under `transaction.artifact_staging_root` (the prepared runtime exposes its
+`experiments_root`). Refer to every staged payload by URI and SHA-256 in `result.artifacts`; never
+write directly to the live `openlabs-artifacts/experiments/` tree. The control plane publishes the
+bytes and promotes only a small reference manifest. The lab analyzes existing public data but never
+operates real instruments or executes a physical experiment. All heavy commands run through
+`bin/openlabs-resource-guard`.
