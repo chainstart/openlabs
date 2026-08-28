@@ -82,6 +82,83 @@ def test_attempt_runtime_exposes_skills_and_checks_result_before_stop(tmp_path) 
     assert _stop_decision({}, context) == {}
 
 
+def test_stop_hook_preflights_bound_protocol_state_before_promotion(tmp_path) -> None:
+    workspace = tmp_path / "attempt" / "campaign"
+    workspace.mkdir(parents=True)
+    factory_skill = tmp_path / "code" / "factory-skill"
+    _skill(factory_skill, "factory-skill")
+    result = workspace / "results" / "result.json"
+    project = workspace / "project.json"
+    state = workspace / "state.json"
+    atomic_write_json(
+        project,
+        {
+            "schema_version": "openlabs.project.v1",
+            "domain": "math",
+            "project_id": "project-one",
+            "protocol": {"id": "autonomous-math"},
+            "workstreams": [{"state_path": "state.json"}],
+        },
+    )
+    invalid_state = {
+        "schema_version": "openlabs.math_research_workspace.v1",
+        "project_id": "project-one",
+        "workstream_id": "stream-one",
+        "mode": "free_exploration",
+        "status": "active",
+        "research_log": [],
+        "verification_receipts": [{"receipt_id": "inline-is-not-a-path"}],
+    }
+    atomic_write_json(state, invalid_state)
+    repository_root = Path(__file__).resolve().parents[2]
+    task = {
+        "task_id": "task-protocol-gate",
+        "campaign_id": "stream-one",
+        "lab_id": "math",
+        "domain": "math",
+        "lab_manifest": str(repository_root / "labs" / "math" / "lab.json"),
+        "objective": "Preflight the private protocol state.",
+        "agent": {"role": "researcher"},
+        "project": {
+            "config_path": str(project),
+            "workstream_state_path": str(state),
+            "protocol_id": "autonomous-math",
+        },
+        "transaction": {"canonical_campaign_workspace": "/canonical/campaign"},
+    }
+    configure_codex_runtime(
+        workspace,
+        task=task,
+        output_path=result,
+        skill_dirs=(factory_skill,),
+    )
+    atomic_write_json(
+        result,
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": "task-protocol-gate",
+            "campaign_id": "stream-one",
+            "lab_id": "math",
+            "domain": "math",
+            "status": "needs_replan",
+            "summary": "A promotable private checkpoint.",
+            "artifacts": [],
+            "claims": [],
+            "next_actions": ["Continue the same research lineage."],
+        },
+    )
+    context = runtime_context(workspace / ".codex" / "openlabs-context.json")
+
+    output, outcome, summary = _stop_evaluation({}, context)
+
+    assert output["decision"] == "block"
+    assert outcome == "result_gate_blocked"
+    assert "verification_receipts[0] must be a non-empty relative path" in summary
+
+    atomic_write_json(state, {**invalid_state, "verification_receipts": []})
+    assert _stop_decision({}, context) == {}
+
+
 def test_generated_hooks_run_from_an_isolated_codex_workspace(tmp_path) -> None:
     workspace = tmp_path / "attempt" / "campaign"
     workspace.mkdir(parents=True)

@@ -14,10 +14,12 @@ from typing import Any
 
 from .agent_runtime import runtime_context
 from .contracts import PROMOTABLE_RESULT_STATUSES, validate_result_bundle
+from .labs import load_lab
+from .protocols import validate_protocol_state
 from .reproduction import preflight_reproductions
 
 HOOK_RECEIPT_SCHEMA = "openlabs.codex_hook_receipt.v1"
-HOOK_VERSION = "openlabs.codex_hook.v3"
+HOOK_VERSION = "openlabs.codex_hook.v4"
 
 
 def _read_event() -> dict[str, Any]:
@@ -45,6 +47,36 @@ def _session_context(context: Mapping[str, Any]) -> dict[str, Any]:
             "additionalContext": message,
         }
     }
+
+
+def _protocol_gate_problems(context: Mapping[str, Any]) -> list[str]:
+    binding = context.get("protocol_binding")
+    if binding is None:
+        return []
+    if not isinstance(binding, Mapping):
+        return ["protocol binding must be an object"]
+    required = ("lab_manifest", "protocol_id", "project_config", "workstream_state")
+    values = {key: str(binding.get(key) or "").strip() for key in required}
+    missing = [key for key, value in values.items() if not value]
+    if missing:
+        return ["protocol binding is incomplete: " + ", ".join(missing)]
+    try:
+        lab = load_lab(values["lab_manifest"])
+        protocol = lab.protocol(values["protocol_id"])
+        if protocol is None:
+            return [
+                f"lab {lab.lab_id} does not register protocol {values['protocol_id']!r}"
+            ]
+        validation = validate_protocol_state(
+            lab,
+            protocol,
+            project_path=Path(values["project_config"]),
+            workstream_path=Path(values["workstream_state"]),
+            mode="commit",
+        )
+    except Exception as exc:  # noqa: BLE001 - the Stop gate must fail closed.
+        return [f"protocol validation failed: {exc}"]
+    return [f"protocol state: {error}" for error in validation.errors]
 
 
 def _stop_gate_problems(context: Mapping[str, Any]) -> list[str]:
@@ -77,6 +109,8 @@ def _stop_gate_problems(context: Mapping[str, Any]) -> list[str]:
                 .resolve(),
             )
             problems.extend(reproduction_errors)
+            if not reproduction_errors:
+                problems.extend(_protocol_gate_problems(context))
     elif payload is not None:
         problems.append("result bundle must be a JSON object")
     return problems

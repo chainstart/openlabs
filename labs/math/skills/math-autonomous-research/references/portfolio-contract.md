@@ -26,4 +26,5 @@ Declared mathematics workstreams use `openlabs.math_research_workspace.v1`; dyna
 candidate workstreams use the domain-neutral `openlabs.project_workstream.v1`. Required fields are only
 `project_id`, `workstream_id`, `mode`, `status`, `research_log`, and `verification_receipts`.
 Researchers may extend it freely. A receipt listed in `verification_receipts` is replayed by the
-trusted protocol validator when it declares Lean or another registered mathematics runtime.
+trusted protocol validator when it declares Lean or another registered mathematics runtime. Each
+list entry is a non-empty path relative to the workstream; inline receipt objects are invalid.

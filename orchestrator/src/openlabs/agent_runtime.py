@@ -118,6 +118,17 @@ def configure_codex_runtime(
         "lab_id": task["lab_id"],
         "domain": task["domain"],
     }
+    project = task.get("project")
+    protocol_binding: dict[str, Any] | None = None
+    if isinstance(project, Mapping):
+        binding = {
+            "lab_manifest": task.get("lab_manifest"),
+            "protocol_id": project.get("protocol_id"),
+            "project_config": project.get("config_path"),
+            "workstream_state": project.get("workstream_state_path"),
+        }
+        if any(str(value or "").strip() for value in binding.values()):
+            protocol_binding = binding
     skill_invocations = [f"${name}" for name in active_names]
     hook_receipt_path = codex_root / "hook-receipts.jsonl"
     context = {
@@ -132,6 +143,7 @@ def configure_codex_runtime(
         "session_mode": task.get("agent", {}).get("session_mode"),
         "objective": task.get("objective"),
         "project": task.get("project"),
+        "protocol_binding": protocol_binding,
         "execution_policy": task.get("execution_policy"),
         "skills": skill_invocations,
         "optional_methods": optional_methods,

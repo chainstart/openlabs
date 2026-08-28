@@ -74,6 +74,11 @@ staged campaign. Keep failed routes and contrary evidence. Update the small work
 factual checkpoint and links to durable artifacts; its layout is a memory aid, not a scientific
 rubric.
 
+In `research_state.json`, `verification_receipts` is an array of relative paths to receipt JSON
+files produced by a registered mathematics runtime. Never place inline receipt objects in that
+array. Ordinary Python replay scripts and their measured outcomes belong in the result bundle's
+replayable artifacts instead; they do not need a duplicate workstream receipt entry.
+
 Keep those human-readable files small. Raw searches, solver transcripts, bulk enumeration, large
 JSON/JSONL, arrays, archives, and generated binary payloads belong under the task's
 `transaction.artifact_staging_root`, not the campaign tree or live artifact store. Declare every
