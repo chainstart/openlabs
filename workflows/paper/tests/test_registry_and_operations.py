@@ -41,8 +41,9 @@ defaults: {}
 def test_real_registry_contains_migrated_papers() -> None:
     registry = load_registry(repository_root(), include_local_repositories=False)
 
-    assert len(registry["papers"]) == 45
+    assert len(registry["papers"]) == 46
     assert "papers/20260706aihealth0001" in registry["papers"]
+    assert "papers/20260828-physics-hep-p5-chain-bootstrap" in registry["papers"]
     for paper_id in (
         "20260718matherdos0001",
         "20260720matherdos0002",
