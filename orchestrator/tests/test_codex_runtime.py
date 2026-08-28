@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
+import subprocess
+from pathlib import Path
 
 from openlabs.agent_runtime import configure_codex_runtime, runtime_context
 from openlabs.codex_hook import (
@@ -50,6 +54,11 @@ def test_attempt_runtime_exposes_skills_and_checks_result_before_stop(tmp_path) 
     assert (workspace / ".agents" / "skills" / "factory-skill").resolve() == factory_skill
     hooks = json.loads((workspace / ".codex" / "hooks.json").read_text(encoding="utf-8"))
     assert set(hooks["hooks"]) == {"SessionStart", "Stop"}
+    session_command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert shlex.split(session_command)[:2] == [
+        "/usr/bin/env",
+        f"PYTHONPATH={Path(__file__).resolve().parents[1] / 'src'}",
+    ]
     context = runtime_context(workspace / ".codex" / "openlabs-context.json")
     session = _session_context(context)
     assert "$factory-skill" in session["hookSpecificOutput"]["additionalContext"]
@@ -71,6 +80,55 @@ def test_attempt_runtime_exposes_skills_and_checks_result_before_stop(tmp_path) 
         },
     )
     assert _stop_decision({}, context) == {}
+
+
+def test_generated_hooks_run_from_an_isolated_codex_workspace(tmp_path) -> None:
+    workspace = tmp_path / "attempt" / "campaign"
+    workspace.mkdir(parents=True)
+    factory_skill = tmp_path / "code" / "factory-skill"
+    _skill(factory_skill, "factory-skill")
+    result = workspace / "result.json"
+    task = {
+        "task_id": "task-isolated-hook",
+        "campaign_id": "campaign",
+        "lab_id": "math",
+        "domain": "math",
+        "objective": "Verify an isolated hook process.",
+        "agent": {"role": "researcher"},
+        "transaction": {"canonical_campaign_workspace": "/canonical/campaign"},
+    }
+    configure_codex_runtime(
+        workspace,
+        task=task,
+        output_path=result,
+        skill_dirs=(factory_skill,),
+    )
+    hooks = json.loads((workspace / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+    command = shlex.split(hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"])
+
+    completed = subprocess.run(
+        command,
+        cwd=workspace,
+        env={"HOME": os.environ.get("HOME", ""), "PATH": os.environ.get("PATH", "")},
+        input=json.dumps(
+            {
+                "session_id": "session-isolated",
+                "turn_id": "turn-isolated",
+                "hook_event_name": "SessionStart",
+                "source": "startup",
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    output = json.loads(completed.stdout)
+    assert output["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    receipt = json.loads((workspace / ".codex" / "hook-receipts.jsonl").read_text())
+    assert receipt["outcome"] == "context_injected"
+    assert receipt["session_id"] == "session-isolated"
 
 
 def test_stop_hook_cannot_create_an_infinite_continue_loop(tmp_path) -> None:

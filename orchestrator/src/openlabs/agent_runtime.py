@@ -139,7 +139,14 @@ def configure_codex_runtime(
         "hook_receipt_path": str(hook_receipt_path),
     }
     context_path = atomic_write_json(codex_root / "openlabs-context.json", context)
+    # Codex deliberately sanitizes hook subprocess environments.  In particular,
+    # it does not preserve the orchestrator's PYTHONPATH, so ``python -m openlabs``
+    # cannot be resolved from an isolated attempt workspace unless the generated
+    # command carries the package source root explicitly.
+    package_source_root = Path(__file__).resolve().parents[1]
     hook_command = [
+        "/usr/bin/env",
+        f"PYTHONPATH={package_source_root}",
         sys.executable,
         "-m",
         "openlabs.codex_hook",
