@@ -60,6 +60,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         ],
         "cs": ["2026 XinRui Computer Science", "2026 XinRui Medicine"],
         "se": ["2026 XinRui Computer Science", "2026 XinRui Medicine"],
+        "physics": ["2026 XinRui Physics and Astronomy"],
     }
     assert profiles["quality_gate"]["allowed_target_journal_tiers"] == [1, 2]
     assert profiles["quality_gate"]["require_no_mandatory_author_fee"] is True
@@ -165,6 +166,9 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     target_policy = settings["journal_target_policy"]
     assert target_policy["required_after_basic_draft"] is True
     assert target_policy["effective_from"] == "2026-08-27"
+    assert target_policy["classification_system"]["physics"] == [
+        "2026 XinRui Physics and Astronomy"
+    ]
     assert target_policy["allowed_tiers"] == [1, 2]
     assert target_policy["require_no_mandatory_author_fee"] is True
     assert target_policy["require_canonical_venue_format"] is True

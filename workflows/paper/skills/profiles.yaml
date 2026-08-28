@@ -59,6 +59,8 @@ quality_gate:
     se:
       - 2026 XinRui Computer Science
       - 2026 XinRui Medicine
+    physics:
+      - 2026 XinRui Physics and Astronomy
   allowed_target_journal_tiers: [1, 2]
   require_no_mandatory_author_fee: true
   require_canonical_target_journal_format: true
