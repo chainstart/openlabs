@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Mechanically aggregate two independent, provider-separated review records.
+"""Mechanically aggregate configured immutable review records.
 
 This helper never judges a manuscript and never derives a score from manuscript
-features. It verifies the Codex and Claude v2 records, applies the conservative
-minimum/strictest rules, preserves every finding and blocker, binds source
-hashes, and writes the current OpenLabs panel record.
+features. It verifies the source records, applies the configured mechanical
+aggregation, preserves every finding and blocker, binds source hashes, and
+writes the current OpenLabs panel record.
 """
 
 from __future__ import annotations
@@ -41,6 +41,10 @@ from paper_writing.review import (
     REVIEW_SCHEMA_VERSION,
     REVIEW_SCORE_AGGREGATION,
     REVIEWER_PROVIDER_CONTRACTS,
+    SINGLE_REVIEW_DECISION_AGGREGATION,
+    SINGLE_REVIEW_PANEL_SIZE,
+    SINGLE_REVIEW_SCHEMA_VERSION,
+    SINGLE_REVIEW_SCORE_AGGREGATION,
     TOP_CONFERENCE_VIEW,
     reviewer_role_for_domain,
     validate_review_panel_files,
@@ -109,14 +113,18 @@ def _least_confident(entries: list[dict[str, Any]]) -> str:
 
 
 def _aggregate_recommendation(
-    entries: list[dict[str, Any]], *, order: tuple[str, ...]
+    entries: list[dict[str, Any]], *, order: tuple[str, ...], single_reviewer: bool
 ) -> dict[str, str]:
     decisions = [str(entry["decision"]) for entry in entries]
     decision = _strictest_decision(decisions, order)
     source = next(entry for entry in entries if entry["decision"] == decision)
     rationale = (
-        f"Strictest of the two independent decisions "
-        f"({', '.join(decisions)}). {source['rationale']}"
+        f"One-member ordinal median ({decisions[0]}). {source['rationale']}"
+        if single_reviewer
+        else (
+            f"Strictest of the two independent decisions "
+            f"({', '.join(decisions)}). {source['rationale']}"
+        )
     )
     return {
         "decision": decision,
@@ -128,8 +136,8 @@ def _aggregate_recommendation(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Aggregate one Codex and one Packy Claude Opus 5 review into an "
-            "OpenLabs dual-provider panel."
+            "Aggregate the configured immutable reviewer records into an "
+            "OpenLabs panel."
         )
     )
     parser.add_argument("--paper-id", required=True)
@@ -139,9 +147,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--objective-audit",
         action="append",
         default=[],
-        help="repository-relative objective audit receipt shared with both reviewers",
+        help="repository-relative objective audit receipt shared with every reviewer",
     )
     parser.add_argument("--root", default=str(repository_root()))
+    parser.add_argument(
+        "--single-reviewer",
+        action="store_true",
+        help=(
+            "form a one-member median panel; allowed only when the paper "
+            "registry sets review_panel_size to 1"
+        ),
+    )
     parser.add_argument("--force", action="store_true")
     return parser
 
@@ -160,14 +176,35 @@ def main(argv: list[str] | None = None) -> int:
     if output.exists() and not args.force:
         raise FileExistsError(f"refusing to overwrite {output}; pass --force explicitly")
     if output.parent != review_dir:
-        raise ValueError("panel output must be stored beside both reviewer records")
+        raise ValueError("panel output must be stored beside its reviewer records")
 
     metadata = load_paper_metadata(args.paper_id, root)
     expected_role = reviewer_role_for_domain(metadata.get("domain"))
+    single_reviewer = bool(args.single_reviewer)
+    panel_size = SINGLE_REVIEW_PANEL_SIZE if single_reviewer else REVIEW_PANEL_SIZE
+    panel_schema = SINGLE_REVIEW_SCHEMA_VERSION if single_reviewer else REVIEW_SCHEMA_VERSION
+    score_aggregation = (
+        SINGLE_REVIEW_SCORE_AGGREGATION
+        if single_reviewer
+        else REVIEW_SCORE_AGGREGATION
+    )
+    decision_aggregation = (
+        SINGLE_REVIEW_DECISION_AGGREGATION
+        if single_reviewer
+        else REVIEW_DECISION_AGGREGATION
+    )
+    if single_reviewer:
+        settings_path = root / "registry" / "settings.yaml"
+        settings_text = settings_path.read_text(encoding="utf-8")
+        if "review_panel_size: 1" not in settings_text:
+            raise ValueError(
+                "single-reviewer aggregation requires registry/settings.yaml "
+                "to set review_panel_size: 1"
+            )
     reviews: list[dict[str, Any]] = []
     records: list[dict[str, str]] = []
     common: dict[str, str] | None = None
-    for index in range(1, REVIEW_PANEL_SIZE + 1):
+    for index in range(1, panel_size + 1):
         reviewer_id = f"reviewer-{index}"
         source_path = review_dir / f"{reviewer_id}.json"
         payload = json.loads(source_path.read_text(encoding="utf-8"))
@@ -219,9 +256,9 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     assert common is not None
-    if reviews[1]["review_metadata"].get("hidden_peer_review_sha256") != records[0][
-        "sha256"
-    ]:
+    if not single_reviewer and reviews[1]["review_metadata"].get(
+        "hidden_peer_review_sha256"
+    ) != records[0]["sha256"]:
         raise ValueError(
             "reviewer-2 must bind the frozen reviewer-1 hash without seeing its content"
         )
@@ -249,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
     panel = deepcopy(reviews[0])
-    panel["schema_version"] = REVIEW_SCHEMA_VERSION
+    panel["schema_version"] = panel_schema
     panel["scores"] = {
         key: _minimum([int(review["scores"][key]) for review in reviews])
         for key in SCORE_KEYS
@@ -267,21 +304,27 @@ def main(argv: list[str] | None = None) -> int:
         high_entries = [entry[FOUR_TOP_MATH_JOURNALS_VIEW] for entry in recommendations]
         final_recommendations = {
             FOUR_TOP_MATH_JOURNALS_VIEW: _aggregate_recommendation(
-                high_entries, order=JOURNAL_DECISIONS
+                high_entries,
+                order=JOURNAL_DECISIONS,
+                single_reviewer=single_reviewer,
             )
         }
     elif expected_role == MATERIALS_REVIEWER_ROLE:
         high_entries = [entry[LEADING_MATERIALS_JOURNALS_VIEW] for entry in recommendations]
         final_recommendations = {
             LEADING_MATERIALS_JOURNALS_VIEW: _aggregate_recommendation(
-                high_entries, order=JOURNAL_DECISIONS
+                high_entries,
+                order=JOURNAL_DECISIONS,
+                single_reviewer=single_reviewer,
             )
         }
     elif expected_role == PHYSICS_REVIEWER_ROLE:
         high_entries = [entry[LEADING_PHYSICS_JOURNALS_VIEW] for entry in recommendations]
         final_recommendations = {
             LEADING_PHYSICS_JOURNALS_VIEW: _aggregate_recommendation(
-                high_entries, order=JOURNAL_DECISIONS
+                high_entries,
+                order=JOURNAL_DECISIONS,
+                single_reviewer=single_reviewer,
             )
         }
     elif expected_role == QUANT_FINANCE_REVIEWER_ROLE:
@@ -290,7 +333,9 @@ def main(argv: list[str] | None = None) -> int:
         ]
         final_recommendations = {
             LEADING_QUANT_FINANCE_JOURNALS_VIEW: _aggregate_recommendation(
-                high_entries, order=JOURNAL_DECISIONS
+                high_entries,
+                order=JOURNAL_DECISIONS,
+                single_reviewer=single_reviewer,
             )
         }
     else:
@@ -300,13 +345,17 @@ def main(argv: list[str] | None = None) -> int:
         final_recommendations = {
             TOP_CONFERENCE_VIEW: {
                 "seven_point": _aggregate_recommendation(
-                    high_entries, order=CONFERENCE_DECISIONS
+                    high_entries,
+                    order=CONFERENCE_DECISIONS,
+                    single_reviewer=single_reviewer,
                 )
             }
         }
     cas_entries = [entry[CAS_ZONE_1_JOURNAL_VIEW] for entry in recommendations]
     final_recommendations[CAS_ZONE_1_JOURNAL_VIEW] = _aggregate_recommendation(
-        cas_entries, order=JOURNAL_DECISIONS
+        cas_entries,
+        order=JOURNAL_DECISIONS,
+        single_reviewer=single_reviewer,
     )
     panel["recommendations"] = final_recommendations
 
@@ -334,18 +383,27 @@ def main(argv: list[str] | None = None) -> int:
         panel_metadata.pop(key, None)
     panel_metadata.update(
         {
-            "model": "codex-plus-claude-opus-5-conservative-panel",
+            "model": (
+                "single-reviewer-median-panel"
+                if single_reviewer
+                else "codex-plus-claude-opus-5-conservative-panel"
+            ),
             "reasoning_effort": (
-                "mechanical coordinatewise minimum and strictest-decision aggregation; "
-                "distinct findings and blockers preserved"
+                "mechanical one-member coordinatewise and ordinal median aggregation; "
+                "findings and blockers preserved"
+                if single_reviewer
+                else (
+                    "mechanical coordinatewise minimum and strictest-decision aggregation; "
+                    "distinct findings and blockers preserved"
+                )
             ),
             "reviewed_at_utc": datetime.now(UTC).isoformat(),
             **common,
             "manuscript_unchanged": True,
             "review_panel": {
-                "panel_size": REVIEW_PANEL_SIZE,
-                "score_aggregation": REVIEW_SCORE_AGGREGATION,
-                "decision_aggregation": REVIEW_DECISION_AGGREGATION,
+                "panel_size": panel_size,
+                "score_aggregation": score_aggregation,
+                "decision_aggregation": decision_aggregation,
                 "parallel_execution": False,
                 "independent_contexts": True,
                 "prior_reviews_hidden": True,

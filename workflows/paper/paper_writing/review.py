@@ -30,6 +30,10 @@ REVIEW_SCHEMA_VERSION = "openlabs.paper_writing.review.v1"
 REVIEW_PANEL_SIZE = 2
 REVIEW_SCORE_AGGREGATION = "coordinatewise_minimum"
 REVIEW_DECISION_AGGREGATION = "strictest_decision"
+SINGLE_REVIEW_SCHEMA_VERSION = "openlabs.paper_writing.review.single.v1"
+SINGLE_REVIEW_PANEL_SIZE = 1
+SINGLE_REVIEW_SCORE_AGGREGATION = "coordinatewise_median"
+SINGLE_REVIEW_DECISION_AGGREGATION = "ordinal_median"
 REVIEWER_PROVIDER_CONTRACTS = {
     "reviewer-1": {"provider": "openai-codex", "model": None},
     "reviewer-2": {"provider": "packy", "model": "claude-opus-5"},
@@ -237,6 +241,13 @@ def _panel_contract(schema_version: Any) -> tuple[int, str, str, bool] | None:
             REVIEW_DECISION_AGGREGATION,
             False,
         )
+    if schema_version == SINGLE_REVIEW_SCHEMA_VERSION:
+        return (
+            SINGLE_REVIEW_PANEL_SIZE,
+            SINGLE_REVIEW_SCORE_AGGREGATION,
+            SINGLE_REVIEW_DECISION_AGGREGATION,
+            False,
+        )
     if schema_version == LEGACY_REVIEW_SCHEMA_VERSION:
         return (
             LEGACY_REVIEW_PANEL_SIZE,
@@ -317,11 +328,14 @@ def validate_review_record(
         INDIVIDUAL_REVIEW_SCHEMA_VERSION,
         LEGACY_REVIEW_SCHEMA_VERSION,
         REVIEW_SCHEMA_VERSION,
+        SINGLE_REVIEW_SCHEMA_VERSION,
     ):
         errors.append(
             "schema_version must be "
             f"{INDIVIDUAL_REVIEW_SCHEMA_VERSION} for an individual review or "
-            f"{REVIEW_SCHEMA_VERSION} for a current panel result "
+            f"{REVIEW_SCHEMA_VERSION} for a dual-provider panel result, "
+            f"{SINGLE_REVIEW_SCHEMA_VERSION} for an explicitly configured "
+            "single-reviewer result "
             f"({LEGACY_REVIEW_SCHEMA_VERSION} remains valid for historical panels)"
         )
 
@@ -637,7 +651,10 @@ def validate_review_record(
                     sources.append(source)
                 if not isinstance(sha256, str) or _SHA256.fullmatch(sha256) is None:
                     errors.append(f"{path}.sha256 must be a lowercase SHA-256")
-                if schema_version == REVIEW_SCHEMA_VERSION:
+                if schema_version in (
+                    REVIEW_SCHEMA_VERSION,
+                    SINGLE_REVIEW_SCHEMA_VERSION,
+                ):
                     expected_reviewer_id = f"reviewer-{index + 1}"
                     if reviewer_id != expected_reviewer_id:
                         errors.append(f"{path}.reviewer_id must be {expected_reviewer_id}")
@@ -725,7 +742,8 @@ def validate_review_panel_files(
     if panel_contract is None:
         errors.append(
             "final review must use panel schema "
-            f"{REVIEW_SCHEMA_VERSION} or historical {LEGACY_REVIEW_SCHEMA_VERSION}"
+            f"{REVIEW_SCHEMA_VERSION}, {SINGLE_REVIEW_SCHEMA_VERSION}, "
+            f"or historical {LEGACY_REVIEW_SCHEMA_VERSION}"
         )
         return errors
     (
@@ -801,7 +819,10 @@ def validate_review_panel_files(
             errors.append(f"reviewer record {index + 1} independent_context must be true")
         if reviewer_metadata.get("prior_reviews_hidden") is not True:
             errors.append(f"reviewer record {index + 1} prior_reviews_hidden must be true")
-        if schema_version == REVIEW_SCHEMA_VERSION:
+        if schema_version in (
+            REVIEW_SCHEMA_VERSION,
+            SINGLE_REVIEW_SCHEMA_VERSION,
+        ):
             reviewer_id = str(item.get("reviewer_id") or "")
             provider_contract = REVIEWER_PROVIDER_CONTRACTS.get(reviewer_id)
             if provider_contract is not None:

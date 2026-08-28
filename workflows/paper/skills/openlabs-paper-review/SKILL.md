@@ -1,11 +1,12 @@
 ---
 name: openlabs-paper-review
-description: Run OpenLabs' independent dual-provider paper gate for AI, computer-science, software-engineering, mathematics, materials-science, physics, or quantitative-finance manuscripts. Use when one fresh Codex reviewer and one blind Packy Claude Code Opus 5 reviewer must score the same frozen manuscript, or when validating their conservative panel result.
+description: Run OpenLabs' configured fresh-context paper gate for AI, computer-science, software-engineering, mathematics, materials-science, physics, or quantitative-finance manuscripts. Supports the default independent Codex-plus-Claude panel and an explicit one-Codex-reviewer ARA-compatible mode when the paper registry sets review_panel_size to 1.
 ---
 
 # OpenLabs paper review
 
-Use exactly two score-bearing reviewers:
+Read `registry/settings.yaml` before selecting the panel contract. The default contract uses exactly
+two score-bearing reviewers:
 
 - `reviewer-1`: a fresh Codex reviewer with `provider: openai-codex`;
 - `reviewer-2`: a fresh Claude Code process using Packy and exactly `claude-opus-5`.
@@ -13,6 +14,12 @@ Use exactly two score-bearing reviewers:
 The reviewers must be independent. Freeze reviewer-1 before Claude starts, never send its content
 to Claude, and never revise it after Claude returns. Deterministic code may validate provenance and
 combine completed judgments; it must never originate or improve a score.
+
+When, and only when, the paper-local registry explicitly sets `review_panel_size: 1`,
+`score_aggregation: coordinatewise_median`, and `decision_aggregation: ordinal_median`, use exactly
+one fresh Codex `reviewer-1`, do not launch Claude, and form the one-member panel with
+`aggregate_panel.py --single-reviewer`. This compatibility mode preserves the ARA single-reviewer
+exception without weakening snapshot, input-hygiene, provenance, rubric, or quality-gate checks.
 
 ## Establish the review boundary
 
@@ -35,9 +42,9 @@ combine completed judgments; it must never originate or improve a score.
    snapshot. Neither reviewer may edit the manuscript, evidence, registry, or sibling output.
 
 If a reviewer sees a prior evaluative projection or the snapshot changes, discard that reviewer
-record and rerun the complete two-review gate on a clean snapshot.
+record and rerun the complete configured panel on a clean snapshot.
 
-## Run the two independent reviewers
+## Run the configured reviewers
 
 ### Reviewer 1: Codex
 
@@ -58,6 +65,8 @@ These keys belong inside `review_metadata`. Validate and freeze the file before 
 Do not edit it afterward.
 
 ### Reviewer 2: Claude Code Opus 5 through Packy
+
+Skip this subsection entirely in the explicitly configured one-reviewer mode.
 
 Use the local Claude settings file containing `ANTHROPIC_BASE_URL` for Packy and either
 `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY`. Never copy the key into this repository, an
@@ -157,6 +166,11 @@ Read `references/review-schema.md` before writing either record.
 
 ## Aggregate conservatively
 
+In one-reviewer mode, freeze `reviewer-1.json`, preserve its scores, decisions, findings, and
+blockers exactly, and run the command below with `--single-reviewer`. The resulting
+`openlabs.paper_writing.review.single.v1` record uses one-member coordinatewise and ordinal medians.
+There is no reviewer-2 validation step in that mode.
+
 Only after both immutable source files exist may the coordinator read reviewer-2.
 
 1. For each score, take the lower of the two integers (`coordinatewise_minimum`).
@@ -234,8 +248,8 @@ When this Skill runs inside an OpenLabs `paper_review` task, write the required
 
 Do not combine text revision and evidence remediation in one action, ask the writer to manufacture
 missing evidence, or request another reviewer. After either repair path, the scheduler freezes a
-new manuscript candidate and starts a new independent two-reviewer panel.
+new manuscript candidate and starts a new panel under the same configured contract.
 
-Report both score vectors, the five conservative scores, both strictest simulated decisions,
-retained blockers, validation and gate results, actual provider/model identities, and confirmation
-that both reviewers used the same unchanged manuscript snapshot.
+Report every source score vector, the five aggregate scores, both simulated decisions, retained
+blockers, validation and gate results, actual provider/model identities, and confirmation that all
+configured reviewers used the same unchanged manuscript snapshot.

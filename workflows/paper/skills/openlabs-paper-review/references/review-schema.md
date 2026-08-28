@@ -2,9 +2,12 @@
 
 Each independent reviewer writes one JSON object using schema `ara.paper_writing.review.v2`.
 Scores are integers. Every source contains one role-specific high-standard opinion and one CAS
-Zone 1 journal opinion. After the Codex and Packy Claude reviewers finish, write one panel object
-using schema `openlabs.paper_writing.review.v1`; it preserves the common review shape, contains the
-exact conservative aggregation, and identifies both immutable source records.
+Zone 1 journal opinion. Under the default contract, after the Codex and Packy Claude reviewers
+finish, write one panel object using schema `openlabs.paper_writing.review.v1`; it preserves the
+common review shape, contains the exact conservative aggregation, and identifies both immutable
+source records. When the paper-local registry explicitly selects a one-reviewer panel, write schema
+`openlabs.paper_writing.review.single.v1`; it contains the unchanged one-member coordinatewise and
+ordinal medians and identifies the sole immutable Codex source.
 
 The individual record shape is:
 
@@ -77,6 +80,11 @@ For `reviewer-2`, set `provider: "packy"`, `model: "claude-opus-5"`, and
 `reviewer-1.json`. The adapter hashes that file but never includes its content in Claude's prompt.
 Both records must describe the same frozen manuscript and must not access sibling or historical
 review content.
+
+In one-reviewer mode, omit reviewer-2 and its hidden-peer binding. The sole source remains
+`reviewer-1.json` with provider `openai-codex`; the panel uses
+`openlabs.paper_writing.review.single.v1`, `panel_size: 1`,
+`score_aggregation: coordinatewise_median`, and `decision_aggregation: ordinal_median`.
 
 ## Panel result
 
