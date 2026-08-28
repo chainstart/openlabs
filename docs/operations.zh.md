@@ -136,8 +136,10 @@ reviewer 不接收作者或其他 reviewer 的 session。
 `handoff_kind: text_revision` 时，控制面从任务祖先链恢复原 writer 的 session，而不是恢复
 reviewer session。`evidence_remediation` 永远先启动空白 researcher/experimenter。
 
-项目 workstream 可同时声明单任务 `wall_seconds` 与该生产 epoch 的
+项目 workstream 可同时声明单任务 `wall_seconds` 与 campaign 全生命周期累计
 `max_agent_seconds`；后者会同步到 campaign 账本并在实际启动时再次收紧任务墙钟。
+production epoch 只刷新自动任务数量窗口和保留 lineage，绝不重置累计时间。预算耗尽后
+campaign 进入 `budget_exhausted`；只有显式把预算提高到大于已累计用量，才能重新授权。
 研究 workstream 只使用 `continuation: continuous`。中间证据增量不能终止活动课题；有效
 `needs_replan` 会连同私有状态原子晋级，并按其可执行动作继续。只有达到目标/质量门禁、总
 Agent-time 耗尽、真实外部阻塞、明确的独立角色边界，或协议状态被 Codex 标为终态时才停链。

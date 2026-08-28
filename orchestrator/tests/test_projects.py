@@ -222,6 +222,62 @@ def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
     assert FactoryDB(paths.database_file).task_count("stream-one") == 2
 
 
+def test_project_lifetime_budget_requires_explicit_increase_after_exhaustion(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    project_path, _ = _generic_project(paths)
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload["workstreams"][0].update(
+        {
+            "continuation": "continuous",
+            "wall_seconds": 10,
+            "max_agent_seconds": 10,
+        }
+    )
+    atomic_write_json(project_path, payload)
+
+    tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    db = FactoryDB(paths.database_file)
+    first = db.latest_task("stream-one")
+    assert first is not None
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET status='succeeded' WHERE task_id=?",
+            (first["task_id"],),
+        )
+        connection.execute(
+            """
+            UPDATE campaigns
+            SET agent_seconds_used=10, epoch_agent_seconds_used=10
+            WHERE campaign_id='stream-one'
+            """
+        )
+
+    exhausted = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    campaign = db.campaign("stream-one")
+    assert campaign is not None
+    assert campaign["status"] == "budget_exhausted"
+    assert campaign["continuous"] == 0
+    assert campaign["production_epoch"] == 1
+    assert db.task_count("stream-one") == 1
+    assert exhausted.rollovers == []
+
+    unchanged = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    assert db.campaign("stream-one")["status"] == "budget_exhausted"
+    assert unchanged.production_synced == []
+
+    payload["workstreams"][0]["max_agent_seconds"] = 20
+    atomic_write_json(project_path, payload)
+    reauthorized = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    campaign = db.campaign("stream-one")
+    assert campaign is not None
+    assert campaign["status"] == "active"
+    assert campaign["continuous"] == 1
+    assert campaign["max_agent_seconds"] == 20
+    assert campaign["agent_seconds_used"] == 10
+    assert db.task_count("stream-one") == 2
+    assert reauthorized.production_synced == ["stream-one"]
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

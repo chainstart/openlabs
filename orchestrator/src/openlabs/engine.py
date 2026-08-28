@@ -300,24 +300,17 @@ def _prepare_auto_task_room(
     task_count = (
         db.current_epoch_task_count(campaign_id) if continuous else db.task_count(campaign_id)
     )
-    raw_usage = (
-        campaign.get("epoch_agent_seconds_used")
-        if continuous
-        else campaign.get("agent_seconds_used")
-    )
-    used = float(raw_usage or 0)
+    # Agent time is a campaign-lifetime hard budget.  Epochs bound automatic
+    # task counts and preserve lineage; rolling an epoch must never mint more
+    # execution time.
+    used = float(campaign.get("agent_seconds_used") or 0)
     task_room = task_count < settings.max_auto_tasks_per_campaign
     budget_room = used + 1 <= float(campaign.get("max_agent_seconds") or 0)
     if task_room and budget_room:
         return AutoTaskRoom(True, epoch=epoch)
-    if not continuous or db.has_active_tasks(campaign_id):
+    if not budget_room or not continuous or db.has_active_tasks(campaign_id):
         return AutoTaskRoom(False, epoch=epoch)
-    reasons = []
-    if not task_room:
-        reasons.append("automatic_task_window_exhausted")
-    if not budget_room:
-        reasons.append("agent_time_window_exhausted")
-    reason = "+".join(reasons) or "continuous_idle_recovery"
+    reason = "automatic_task_window_exhausted"
     new_epoch = db.rollover_campaign_epoch(
         campaign_id,
         reason=reason,
@@ -722,7 +715,12 @@ def _sync_active_projects(
                 {"campaign_id": binding.workstream_id, "reason": "campaign_domain_mismatch"}
             )
             continue
-        if str(campaign.get("status")) not in {"active", "production_paused"}:
+        campaign_status = str(campaign.get("status"))
+        budget_reauthorized = (
+            campaign_status == "budget_exhausted"
+            and max_agent_seconds > float(campaign.get("agent_seconds_used") or 0)
+        )
+        if campaign_status not in {"active", "production_paused"} and not budget_reauthorized:
             report.production_blocked.append(
                 {
                     "campaign_id": binding.workstream_id,
@@ -736,6 +734,7 @@ def _sync_active_projects(
                 production_plan_path=str(binding.legacy_plan_path),
                 production_lane_path=str(binding.workstream_path),
                 priority=binding.priority,
+                max_agent_seconds=max_agent_seconds,
             )
         else:
             db.configure_project_campaign(
@@ -2315,11 +2314,7 @@ def _launch_task(
         raise ValueError(f"Unknown campaign: {task['campaign_id']}")
     attempt_workspace = prepare_attempt_workspace(paths, task, campaign)
     output_path = attempt_output_path(attempt_workspace, task)
-    used = (
-        float(campaign.get("epoch_agent_seconds_used") or 0)
-        if bool(campaign.get("continuous"))
-        else float(campaign["agent_seconds_used"])
-    )
+    used = float(campaign["agent_seconds_used"])
     remaining = max(0, int(float(campaign["max_agent_seconds"]) - used))
     if remaining < 1:
         raise ValueError(f"Campaign {task['campaign_id']} exhausted its Agent-time budget")
@@ -2412,9 +2407,9 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     report.cancelled.extend(recovery.cancelled)
     for disposition in recovery.attempts:
         _apply_attempt_disposition(paths, report, disposition)
+    report.budget_stopped.extend(db.stop_budget_exhausted_tasks())
     if settings.auto_continue:
         _replenish_continuous_campaigns(db, paths, settings, report)
-    report.budget_stopped.extend(db.stop_budget_exhausted_tasks())
 
     reserved = db.active_resource_totals()
     resource_capacity = effective_capacity(paths.workspace, settings, reserved)

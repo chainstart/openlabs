@@ -528,7 +528,7 @@ def test_global_concurrency_and_campaign_time_budget_are_hard_limits(tmp_path) -
     assert next_task is not None and next_task["campaign_id"] == "campaign-2"
 
 
-def test_continuous_campaign_renews_budget_without_erasing_lifetime_usage(tmp_path) -> None:
+def test_continuous_campaign_cannot_roll_over_its_lifetime_budget(tmp_path) -> None:
     db = FactoryDB(tmp_path / "factory.sqlite")
     db.initialize()
     db.register_campaign(
@@ -559,32 +559,29 @@ def test_continuous_campaign_renews_budget_without_erasing_lifetime_usage(tmp_pa
             """
         )
 
-    assert db.stop_budget_exhausted_tasks() == []
-    assert db.campaign("continuous")["status"] == "active"
-    assert (
-        db.rollover_campaign_epoch(
-            "continuous",
-            reason="agent_time_window_exhausted",
-            source_task_id="epoch-1",
-        )
-        == 2
-    )
     db.enqueue_task(
         task_id="epoch-2",
         campaign_id="continuous",
         domain="math",
         task_type="research",
-        objective="Use the renewed production window.",
+        objective="Must not receive a renewed time budget.",
     )
 
+    assert db.stop_budget_exhausted_tasks() == ["epoch-2"]
     campaign = db.campaign("continuous")
+    assert campaign["status"] == "budget_exhausted"
+    assert campaign["continuous"] == 0
     assert campaign["agent_seconds_used"] == 12
-    assert campaign["epoch_agent_seconds_used"] == 0
-    assert campaign["rollover_count"] == 1
-    assert db.task("epoch-1")["campaign_epoch"] == 1
-    assert db.task("epoch-2")["campaign_epoch"] == 2
-    claimed = db.claim_next_task(owner="test", lease_seconds=60)
-    assert claimed is not None and claimed["task_id"] == "epoch-2"
+    assert campaign["epoch_agent_seconds_used"] == 12
+    assert campaign["rollover_count"] == 0
+    assert db.task("epoch-2")["status"] == "needs_human"
+    with pytest.raises(ValueError, match="not continuous"):
+        db.rollover_campaign_epoch(
+            "continuous",
+            reason="agent_time_window_exhausted",
+            source_task_id="epoch-1",
+        )
+    assert db.claim_next_task(owner="test", lease_seconds=60) is None
 
 
 def test_overlapping_claims_cannot_overbook_resources(tmp_path) -> None:

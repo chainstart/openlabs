@@ -523,8 +523,9 @@ class FactoryDB:
         production_plan_path: str,
         production_lane_path: str,
         priority: int | None = None,
+        max_agent_seconds: int | None = None,
     ) -> bool:
-        """Bind an administrator-owned active production lane to a renewable epoch."""
+        """Bind an administrator-owned lane without renewing its lifetime budget."""
 
         now = utc_now()
         with self.connect() as connection:
@@ -534,7 +535,8 @@ class FactoryDB:
                        production_lane_path, project_config_path,
                        workstream_state_path, protocol_id, primary_skill,
                        execution_policy_json, project_id,
-                       workstream_policy_json, priority
+                       workstream_policy_json, priority, max_agent_seconds,
+                       agent_seconds_used
                 FROM campaigns WHERE campaign_id=?
                 """,
                 (campaign_id,),
@@ -542,9 +544,18 @@ class FactoryDB:
             if row is None:
                 raise KeyError(campaign_id)
             status = str(row["status"])
-            if status not in {"active", "production_paused"}:
-                raise ValueError(f"Campaign {campaign_id} cannot be activated from status {status}")
             desired_priority = int(row["priority"]) if priority is None else int(priority)
+            desired_budget = (
+                int(row["max_agent_seconds"])
+                if max_agent_seconds is None
+                else max(1, int(max_agent_seconds))
+            )
+            budget_reauthorized = (
+                status == "budget_exhausted"
+                and desired_budget > float(row["agent_seconds_used"])
+            )
+            if status not in {"active", "production_paused"} and not budget_reauthorized:
+                raise ValueError(f"Campaign {campaign_id} cannot be activated from status {status}")
             desired = (
                 "active",
                 1,
@@ -558,8 +569,9 @@ class FactoryDB:
                 None,
                 "{}",
                 desired_priority,
+                desired_budget,
             )
-            if tuple(row) == desired:
+            if tuple(row[:-1]) == desired:
                 return False
             connection.execute(
                 """
@@ -569,13 +581,14 @@ class FactoryDB:
                     workstream_state_path=NULL, protocol_id=NULL,
                     primary_skill=NULL, execution_policy_json='{}',
                     project_id=NULL, workstream_policy_json='{}',
-                    priority=?, updated_at=?
+                    priority=?, max_agent_seconds=?, updated_at=?
                 WHERE campaign_id=?
                 """,
                 (
                     production_plan_path,
                     production_lane_path,
                     desired_priority,
+                    desired_budget,
                     now,
                     campaign_id,
                 ),
@@ -589,6 +602,7 @@ class FactoryDB:
                     "production_plan_path": production_plan_path,
                     "production_lane_path": production_lane_path,
                     "priority": desired_priority,
+                    "max_agent_seconds": desired_budget,
                 },
             )
         return True
@@ -621,7 +635,8 @@ class FactoryDB:
                        production_lane_path, project_config_path,
                        workstream_state_path, protocol_id, primary_skill,
                        execution_policy_json, project_id,
-                       workstream_policy_json, priority, max_agent_seconds
+                       workstream_policy_json, priority, max_agent_seconds,
+                       agent_seconds_used
                 FROM campaigns WHERE campaign_id=?
                 """,
                 (campaign_id,),
@@ -629,14 +644,18 @@ class FactoryDB:
             if row is None:
                 raise KeyError(campaign_id)
             status = str(row["status"])
-            if status not in {"active", "production_paused"}:
-                raise ValueError(f"Campaign {campaign_id} cannot be activated from status {status}")
             desired_priority = int(row["priority"]) if priority is None else int(priority)
             desired_budget = (
                 int(row["max_agent_seconds"])
                 if max_agent_seconds is None
                 else max(1, int(max_agent_seconds))
             )
+            budget_reauthorized = (
+                status == "budget_exhausted"
+                and desired_budget > float(row["agent_seconds_used"])
+            )
+            if status not in {"active", "production_paused"} and not budget_reauthorized:
+                raise ValueError(f"Campaign {campaign_id} cannot be activated from status {status}")
             desired = (
                 "active",
                 1,
@@ -652,7 +671,7 @@ class FactoryDB:
                 desired_priority,
                 desired_budget,
             )
-            if tuple(row) == desired:
+            if tuple(row[:-1]) == desired:
                 return False
             connection.execute(
                 """
@@ -1258,14 +1277,15 @@ class FactoryDB:
         reason: str,
         source_task_id: str | None = None,
     ) -> int:
-        """Renew a continuous lane while retaining all lifetime tasks and usage."""
+        """Open a new task-count epoch without renewing Agent-time budget."""
 
         now = utc_now()
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             campaign = connection.execute(
                 """
-                SELECT continuous, status, production_epoch, epoch_agent_seconds_used
+                SELECT continuous, status, production_epoch, epoch_agent_seconds_used,
+                       agent_seconds_used, max_agent_seconds
                 FROM campaigns WHERE campaign_id=?
                 """,
                 (campaign_id,),
@@ -1276,6 +1296,8 @@ class FactoryDB:
                 raise ValueError(f"Campaign {campaign_id} is not continuous")
             if str(campaign["status"]) != "active":
                 raise ValueError(f"Campaign {campaign_id} is not active")
+            if float(campaign["agent_seconds_used"]) + 1 > int(campaign["max_agent_seconds"]):
+                raise ValueError(f"Campaign {campaign_id} exhausted its Agent-time budget")
             active = connection.execute(
                 """
                 SELECT COUNT(*) AS n FROM tasks
@@ -1346,15 +1368,8 @@ class FactoryDB:
                 JOIN campaigns USING(campaign_id)
                 WHERE tasks.status = 'queued'
                   AND campaigns.status = 'active'
-                  AND (
-                      (campaigns.continuous=1
-                       AND campaigns.epoch_agent_seconds_used + 1
-                           <= campaigns.max_agent_seconds)
-                      OR
-                      (campaigns.continuous=0
-                       AND campaigns.agent_seconds_used + 1
-                           <= campaigns.max_agent_seconds)
-                  )
+                  AND campaigns.agent_seconds_used + 1
+                      <= campaigns.max_agent_seconds
                   AND (
                       campaigns.continuous=0
                       OR tasks.campaign_epoch=campaigns.production_epoch
@@ -2094,7 +2109,7 @@ class FactoryDB:
                 """
                 SELECT campaign_id, agent_seconds_used, max_agent_seconds
                 FROM campaigns
-                WHERE status='active' AND continuous=0
+                WHERE status='active'
                   AND agent_seconds_used + 1 > max_agent_seconds
                 ORDER BY campaign_id
                 """
@@ -2119,7 +2134,8 @@ class FactoryDB:
                 )
                 connection.execute(
                     """
-                    UPDATE campaigns SET status='budget_exhausted', updated_at=?
+                    UPDATE campaigns
+                    SET status='budget_exhausted', continuous=0, updated_at=?
                     WHERE campaign_id=?
                     """,
                     (now, campaign_id),
