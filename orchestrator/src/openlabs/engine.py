@@ -121,6 +121,17 @@ def _next_action_plan(
 
     policy = execution_policy or ExecutionPolicy()
     if isinstance(action, str) and action.strip():
+        normalized = " ".join(action.strip().lower().split())
+        if normalized.startswith(
+            (
+                "no automatic continuation",
+                "no continuation is requested",
+                "automatic continuation is not requested",
+                "do not automatically continue",
+                "do not initiate automatic continuation",
+            )
+        ):
+            return None
         return ActionPlan(
             objective=action.strip(),
             agent_role=current_role,
@@ -1060,7 +1071,7 @@ def _replenish_continuous_campaign(
     latest_status = str(latest.get("status") or "") if latest else ""
     campaign = db.campaign(campaign_id) or dict(campaign)
     state_status = _workstream_state_status(campaign)
-    if stream_policy.get("dynamic") is True and state_status in {"paused", "completed"}:
+    if state_status in {"paused", "completed"}:
         db.pause_production_campaign(
             campaign_id,
             reason=f"agent_workstream_{state_status}",
@@ -1776,14 +1787,13 @@ def ingest_results(
                     advance_review_cursor(task)
                 except Exception as exc:  # noqa: BLE001 - retry review rather than lose result.
                     report.errors.append(f"Could not advance review cursor {task_id}: {exc}")
-            agent_closed_dynamic = bool(
+            agent_closed_workstream = bool(
                 campaign_binding is not None
-                and workstream_policy(campaign_binding).get("dynamic") is True
                 and _workstream_state_status(campaign_binding) in {"paused", "completed"}
                 and payload.get("paper_candidate") is not True
             )
-            successor_handled = agent_closed_dynamic
-            if agent_closed_dynamic:
+            successor_handled = agent_closed_workstream
+            if agent_closed_workstream:
                 state_status = _workstream_state_status(campaign_binding or {})
                 db.pause_production_campaign(
                     campaign_id,

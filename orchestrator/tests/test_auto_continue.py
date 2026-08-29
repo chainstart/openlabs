@@ -79,6 +79,57 @@ def test_independent_replication_forces_a_fresh_same_role_session() -> None:
     assert plan.wall_seconds == 2400
 
 
+@pytest.mark.parametrize(
+    "directive",
+    [
+        "No automatic continuation is requested. If separately authorized, audit it.",
+        "Do not automatically continue this route.",
+    ],
+)
+def test_negative_prose_directive_is_not_an_action(directive: str) -> None:
+    assert _next_action_plan(directive, current_role="researcher") is None
+
+
+def test_static_project_honors_paused_workstream_state(tmp_path) -> None:
+    paths = WorkspacePaths(
+        workspace=tmp_path,
+        code=tmp_path / "openlabs",
+        data=tmp_path / "data",
+        artifacts=tmp_path / "artifacts",
+        database=tmp_path / "database",
+        database_file=tmp_path / "database" / "live" / "factory.sqlite",
+    )
+    paths.ensure_runtime_directories()
+    state_path = atomic_write_json(tmp_path / "state.json", {"status": "paused"})
+    db = FactoryDB(paths.database_file)
+    db.initialize()
+    db.register_campaign("static-paused", domain="math", title="Static project")
+    db.configure_project_campaign(
+        "static-paused",
+        project_config_path=str(tmp_path / "project.json"),
+        workstream_state_path=str(state_path),
+        protocol_id="autonomous-math",
+        primary_skill="math-autonomous-research",
+        execution_policy={"default_session_mode": "resume"},
+        workstream_policy={"continuation": "continuous"},
+    )
+
+    report = TickReport()
+    campaign = db.campaign("static-paused")
+    assert campaign is not None
+    _replenish_continuous_campaign(
+        db,
+        paths,
+        FactorySettings(max_auto_tasks_per_campaign=4),
+        report,
+        campaign,
+    )
+
+    assert report.production_paused == ["static-paused"]
+    assert db.task_count("static-paused") == 0
+    assert db.campaign("static-paused")["status"] == "production_paused"
+
+
 def test_valid_next_action_enqueues_one_bounded_successor(tmp_path) -> None:
     paths = WorkspacePaths(
         workspace=tmp_path,
