@@ -70,6 +70,7 @@ The individual record shape is:
     "manuscript_unchanged": true,
     "panel_reviewer_id": "reviewer-1",
     "independent_context": true,
+    "isolated_process": true,
     "prior_reviews_hidden": true
   }
 }
@@ -102,6 +103,7 @@ rubric. Retain every distinct blocker and required change. Add this object insid
     "decision_aggregation": "strictest_decision",
     "parallel_execution": false,
     "independent_contexts": true,
+    "isolated_processes": true,
     "prior_reviews_hidden": true,
     "shared_objective_audits": [
       {
@@ -224,7 +226,7 @@ For `quant`, set `reviewer_role` to `quant_finance`, set `rubric_id` to
 ```
 
 For `physics`, set `reviewer_role` to `physics`, set `rubric_id` to
-`openlabs.paper-writing.physics-leading-journals.v1`, and use:
+`openlabs.paper-writing.physics-math-four-equivalent.v1`, and use:
 
 ```json
 {

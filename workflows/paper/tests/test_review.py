@@ -231,6 +231,7 @@ def _write_panel(
                 "manuscript_snapshot_sha256_after": snapshot,
                 "panel_reviewer_id": f"reviewer-{index + 1}",
                 "independent_context": True,
+                "isolated_process": True,
                 "prior_reviews_hidden": True,
             }
         )
@@ -262,6 +263,7 @@ def _write_panel(
     panel["recommendations"][CAS_ZONE_1_JOURNAL_VIEW]["decision"] = cas_decisions[-1]
     panel["review_metadata"].pop("panel_reviewer_id")
     panel["review_metadata"].pop("independent_context")
+    panel["review_metadata"].pop("isolated_process")
     panel["review_metadata"].pop("prior_reviews_hidden")
     panel["review_metadata"].pop("provider")
     panel["review_metadata"].update(
@@ -274,6 +276,7 @@ def _write_panel(
                 "decision_aggregation": "strictest_decision",
                 "parallel_execution": False,
                 "independent_contexts": True,
+                "isolated_processes": True,
                 "prior_reviews_hidden": True,
                 "reviewer_records": records,
             },
@@ -550,6 +553,7 @@ latest_pdf: papers/{paper_id}/manuscript/main.pdf
             "manuscript_snapshot_sha256_after": snapshot,
             "panel_reviewer_id": "reviewer-1",
             "independent_context": True,
+            "isolated_process": True,
             "prior_reviews_hidden": True,
         }
     )
@@ -615,6 +619,7 @@ latest_pdf: papers/{paper_id}/manuscript/main.pdf
             "manuscript_snapshot_sha256_after": snapshot,
             "panel_reviewer_id": "reviewer-1",
             "independent_context": True,
+            "isolated_process": True,
             "prior_reviews_hidden": True,
         }
     )
@@ -744,6 +749,37 @@ def test_panel_validator_rejects_nonconservative_score_and_decision(tmp_path: Pa
     assert any("strictest_decision minor_revision" in error for error in errors)
 
 
+def test_panel_validator_requires_isolated_reviewer_processes(tmp_path: Path) -> None:
+    paper_id = "20260804-ai-llm-isolated-panel-test"
+    review_path = _write_panel(
+        tmp_path,
+        paper_id=paper_id,
+        role=CS_TOP_TIER_REVIEWER_ROLE,
+        snapshot="b" * 64,
+        main_tex_sha256="a" * 64,
+        ready=True,
+    )
+    panel = json.loads(review_path.read_text(encoding="utf-8"))
+    panel["review_metadata"]["review_panel"].pop("isolated_processes")
+    record = panel["review_metadata"]["review_panel"]["reviewer_records"][0]
+    reviewer_path = tmp_path / record["source"]
+    reviewer = json.loads(reviewer_path.read_text(encoding="utf-8"))
+    reviewer["review_metadata"].pop("isolated_process")
+    reviewer_path.write_text(json.dumps(reviewer), encoding="utf-8")
+    record["sha256"] = sha256_file(reviewer_path)
+
+    errors = validate_review_panel_files(
+        panel,
+        review_path=review_path,
+        repo_root=tmp_path,
+        expected_role=CS_TOP_TIER_REVIEWER_ROLE,
+        expected_paper_id=paper_id,
+    )
+
+    assert "review_metadata.review_panel.isolated_processes must be true" in errors
+    assert "reviewer record 1 isolated_process must be true" in errors
+
+
 def test_panel_validator_accepts_quant_finance_view(tmp_path: Path) -> None:
     paper_id = "20260821-quant-finance-panel-test"
     review_path = _write_panel(
@@ -825,6 +861,7 @@ def test_panel_validator_keeps_historical_three_reviewer_records_readable(
         {
             "panel_reviewer_id": "reviewer-3",
             "independent_context": True,
+            "isolated_process": True,
             "prior_reviews_hidden": True,
         }
     )

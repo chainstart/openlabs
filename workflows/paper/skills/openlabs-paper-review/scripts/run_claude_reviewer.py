@@ -360,6 +360,8 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("peer review must be reviewer-1")
     if peer_metadata.get("independent_context") is not True:
         raise ValueError("reviewer-1 must be marked independent")
+    if peer_metadata.get("isolated_process") is not True:
+        raise ValueError("reviewer-1 must be marked as an isolated-process review")
     if peer_metadata.get("prior_reviews_hidden") is not True:
         raise ValueError("reviewer-1 must hide prior reviews")
     peer_contract = REVIEWER_PROVIDER_CONTRACTS["reviewer-1"]
@@ -491,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
             "manuscript_unchanged": True,
             "panel_reviewer_id": CLAUDE_REVIEWER_ID,
             "independent_context": True,
+            "isolated_process": True,
             "prior_reviews_hidden": True,
             "hidden_peer_review_sha256": peer_sha256_before,
         },

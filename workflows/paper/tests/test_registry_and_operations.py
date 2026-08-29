@@ -26,6 +26,7 @@ support_publication:
   zenodo_environment: sandbox
 quality_gate:
   minimum_score: 5.0
+  require_validated_independent_review: false
   maximum_revision_rounds: 3
   decision_standard: cas_zone_1_journal
   cas_zone_1_scope: major_category
@@ -260,6 +261,44 @@ def test_create_revision_and_quality_gate(tmp_path: Path) -> None:
     assert len(metadata["writing_release"]["manuscript_snapshot_sha256"]) == 64
     assert "submission" not in metadata
     assert metadata["version"] == "0.1.1"
+
+
+def test_direct_score_cannot_replace_required_independent_review(tmp_path: Path) -> None:
+    _settings(tmp_path)
+    settings = tmp_path / "registry" / "settings.yaml"
+    settings.write_text(
+        settings.read_text(encoding="utf-8").replace(
+            "require_validated_independent_review: false",
+            "require_validated_independent_review: true",
+        ),
+        encoding="utf-8",
+    )
+    paper_id = "20260829-physics-hep-independent-review-gate"
+    create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="An independent-review gate test",
+        created_at="2026-08-29",
+        domain="physics",
+        subdomain="hep",
+        venue_type="journal",
+    )
+
+    result = record_quality_gate(
+        paper_id,
+        venue_type="journal",
+        score=8,
+        decision="accept",
+        revision_rounds=0,
+        root=tmp_path,
+    )
+
+    assert result["passed"] is False
+    assert result["status"] == "revision_required"
+    assert any(
+        "direct score entry is not a review" in blocker
+        for blocker in result["unresolved_blockers"]
+    )
 
 
 def test_cas_zone_1_gate_is_independent_of_actual_venue_type(tmp_path: Path) -> None:

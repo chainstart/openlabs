@@ -24,6 +24,7 @@ def _write_settings(root: Path) -> None:
 require_registration: true
 quality_gate:
   minimum_score: 6.0
+  require_validated_independent_review: false
   maximum_revision_rounds: 3
   decision_standard: cas_zone_1_journal
   cas_zone_1_minimum_decision: minor_revision

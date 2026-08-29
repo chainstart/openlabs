@@ -70,6 +70,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert profiles["quality_gate"]["manuscript_style_command"] == (
         "python -m paper_writing style-check --paper-id <paper_id>"
     )
+    assert profiles["quality_gate"]["require_validated_independent_review"] is True
     assert profiles["quality_gate"]["require_ai_use_declaration"] is True
     assert profiles["quality_gate"]["ai_workflow_disclosure_location"] == (
         "final_ai_use_declaration_only"
@@ -80,6 +81,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert profiles["quality_gate"]["review_panel_size"] == 2
     assert profiles["quality_gate"]["parallel_execution"] is False
     assert profiles["quality_gate"]["independent_contexts"] == "required"
+    assert profiles["quality_gate"]["isolated_processes"] == "required"
     assert profiles["quality_gate"]["prior_reviews_hidden"] == "required"
     assert profiles["quality_gate"]["execution_order"] == "frozen_codex_then_blind_claude"
     assert profiles["quality_gate"]["reviewers"] == {
@@ -112,7 +114,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "se": "top_conference",
         "math": "four_top_math_journals",
         "materials": "leading_materials_journals",
-        "physics": "leading_physics_journals",
+        "physics": "physics_math_four_equivalent",
         "quant": "leading_quant_finance_journals",
     }
     assert profiles["quality_gate"]["recommendation_views"] == {
@@ -141,7 +143,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "se": "ara.revision-agent.cs-top-tier.v1",
         "math": "ara.paper-writing.math-four-journals.v1",
         "materials": "openlabs.paper-writing.materials-leading-journals.v1",
-        "physics": "openlabs.paper-writing.physics-leading-journals.v1",
+        "physics": "openlabs.paper-writing.physics-math-four-equivalent.v1",
         "quant": "openlabs.paper-writing.quant-finance-leading-journals.v1",
     }
     rubric_text = (review_skill / "references" / "rubrics.md").read_text(encoding="utf-8")
@@ -163,6 +165,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert gate["cas_zone_1_minimum_decision"] == "minor_revision"
     assert gate["require_manuscript_style_check"] is True
     assert gate["require_ai_use_declaration"] is True
+    assert gate["require_validated_independent_review"] is True
     target_policy = settings["journal_target_policy"]
     assert target_policy["required_after_basic_draft"] is True
     assert target_policy["effective_from"] == "2026-08-27"

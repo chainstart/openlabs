@@ -695,6 +695,7 @@ support_publication:
   zenodo_environment: sandbox
 quality_gate:
   minimum_score: 6.0
+  require_validated_independent_review: false
   maximum_revision_rounds: 3
   conference_minimum_decision: weak_accept
   journal_minimum_decision: minor_revision

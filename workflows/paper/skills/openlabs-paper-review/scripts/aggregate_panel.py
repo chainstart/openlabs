@@ -222,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(f"{reviewer_id} has a mismatched panel_reviewer_id")
         if review_metadata.get("independent_context") is not True:
             raise ValueError(f"{reviewer_id} is not marked independent")
+        if review_metadata.get("isolated_process") is not True:
+            raise ValueError(f"{reviewer_id} was not run in an isolated process")
         if review_metadata.get("prior_reviews_hidden") is not True:
             raise ValueError(f"{reviewer_id} did not hide prior reviews")
         provider_contract = REVIEWER_PROVIDER_CONTRACTS[reviewer_id]
@@ -376,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     for key in (
         "panel_reviewer_id",
         "independent_context",
+        "isolated_process",
         "prior_reviews_hidden",
         "hidden_peer_review_sha256",
         "provider",
@@ -406,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
                 "decision_aggregation": decision_aggregation,
                 "parallel_execution": False,
                 "independent_contexts": True,
+                "isolated_processes": True,
                 "prior_reviews_hidden": True,
                 "reviewer_records": records,
                 **(

@@ -43,7 +43,9 @@ LEAN_OBJECTIVE_AUDIT_KIND = "lean_mathlib"
 CS_TOP_TIER_RUBRIC_ID = "ara.revision-agent.cs-top-tier.v1"
 MATH_FOUR_JOURNALS_RUBRIC_ID = "ara.paper-writing.math-four-journals.v1"
 MATERIALS_LEADING_JOURNALS_RUBRIC_ID = "openlabs.paper-writing.materials-leading-journals.v1"
-PHYSICS_LEADING_JOURNALS_RUBRIC_ID = "openlabs.paper-writing.physics-leading-journals.v1"
+PHYSICS_LEADING_JOURNALS_RUBRIC_ID = (
+    "openlabs.paper-writing.physics-math-four-equivalent.v1"
+)
 QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID = (
     "openlabs.paper-writing.quant-finance-leading-journals.v1"
 )
@@ -624,6 +626,8 @@ def validate_review_record(
             )
         if panel.get("independent_contexts") is not True:
             errors.append("review_metadata.review_panel.independent_contexts must be true")
+        if panel.get("isolated_processes") is not True:
+            errors.append("review_metadata.review_panel.isolated_processes must be true")
         if panel.get("prior_reviews_hidden") is not True:
             errors.append("review_metadata.review_panel.prior_reviews_hidden must be true")
         reviewer_records = panel.get("reviewer_records")
@@ -817,6 +821,8 @@ def validate_review_panel_files(
             errors.append(f"reviewer record {index + 1} panel_reviewer_id does not match the panel")
         if reviewer_metadata.get("independent_context") is not True:
             errors.append(f"reviewer record {index + 1} independent_context must be true")
+        if reviewer_metadata.get("isolated_process") is not True:
+            errors.append(f"reviewer record {index + 1} isolated_process must be true")
         if reviewer_metadata.get("prior_reviews_hidden") is not True:
             errors.append(f"reviewer record {index + 1} prior_reviews_hidden must be true")
         if schema_version in (

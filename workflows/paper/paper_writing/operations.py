@@ -166,6 +166,124 @@ def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str,
     return {"paper_id": paper_id, "round": round_number, "version": new_version, "file": str(path.relative_to(repo_root))}
 
 
+def _validated_review_blockers(
+    *,
+    paper_id: str,
+    review: str | Path | None,
+    repo_root: Path,
+    metadata: Mapping[str, Any],
+    gate: Mapping[str, Any],
+    score: float,
+    decision: str,
+    snapshot_sha256: str,
+) -> list[str]:
+    """Return blockers for an absent, stale, non-independent, or mismatched review."""
+
+    prefix = "REVIEW-VALIDATION"
+    if review is None:
+        return [
+            f"{prefix}: a validated fresh-context review must be applied with "
+            "`paper-writing review apply`; direct score entry is not a review"
+        ]
+    review_path = Path(review)
+    if not review_path.is_absolute():
+        review_path = repo_root / review_path
+    review_path = review_path.resolve()
+    try:
+        review_path.relative_to(repo_root)
+    except ValueError:
+        return [f"{prefix}: review record escapes the paper repository"]
+    if not review_path.is_file():
+        return [f"{prefix}: review record does not exist: {review_path}"]
+    try:
+        review_payload = json.loads(review_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"{prefix}: review record is unreadable: {exc}"]
+    if not isinstance(review_payload, Mapping):
+        return [f"{prefix}: review record must be a JSON object"]
+
+    expected_role = reviewer_role_for_domain(metadata.get("domain"))
+    validation_errors = validate_review_panel_files(
+        review_payload,
+        review_path=review_path,
+        repo_root=repo_root,
+        expected_role=expected_role,
+        expected_paper_id=paper_id,
+    )
+    blockers = [f"{prefix}: {item}" for item in validation_errors]
+    review_metadata = review_payload.get("review_metadata")
+    review_metadata = review_metadata if isinstance(review_metadata, Mapping) else {}
+    panel = review_metadata.get("review_panel")
+    panel = panel if isinstance(panel, Mapping) else {}
+    configured_size = int(gate.get("review_panel_size", 2))
+    configured_score_aggregation = str(
+        gate.get(
+            "score_aggregation",
+            "coordinatewise_median" if configured_size == 1 else "coordinatewise_minimum",
+        )
+    )
+    configured_decision_aggregation = str(
+        gate.get(
+            "decision_aggregation",
+            "ordinal_median" if configured_size == 1 else "strictest_decision",
+        )
+    )
+    configured_contract = {
+        "panel_size": configured_size,
+        "score_aggregation": configured_score_aggregation,
+        "decision_aggregation": configured_decision_aggregation,
+        "independent_contexts": True,
+        "isolated_processes": True,
+        "prior_reviews_hidden": True,
+    }
+    for key, expected in configured_contract.items():
+        if panel.get(key) != expected:
+            blockers.append(
+                f"{prefix}: review_metadata.review_panel.{key} must be {expected!r} "
+                "under the active paper settings"
+            )
+
+    scores = review_payload.get("scores")
+    scores = scores if isinstance(scores, Mapping) else {}
+    if scores.get("overall") != score:
+        blockers.append(
+            f"{prefix}: supplied score {score!r} does not match panel overall "
+            f"{scores.get('overall')!r}"
+        )
+    recommendations = review_payload.get("recommendations")
+    recommendations = recommendations if isinstance(recommendations, Mapping) else {}
+    cas = recommendations.get(CAS_ZONE_1_JOURNAL_VIEW)
+    cas = cas if isinstance(cas, Mapping) else {}
+    if cas.get("decision") != decision:
+        blockers.append(
+            f"{prefix}: supplied decision {decision!r} does not match panel CAS Zone 1 "
+            f"decision {cas.get('decision')!r}"
+        )
+    for key in (
+        "manuscript_snapshot_sha256_before",
+        "manuscript_snapshot_sha256_after",
+    ):
+        if review_metadata.get(key) != snapshot_sha256:
+            blockers.append(
+                f"{prefix}: review {key} is not bound to the current manuscript snapshot"
+            )
+
+    panel_blockers = review_payload.get("unresolved_blockers")
+    if isinstance(panel_blockers, list):
+        blockers.extend(
+            str(item).strip()
+            for item in panel_blockers
+            if isinstance(item, str) and item.strip() and item not in blockers
+        )
+    publishability = review_payload.get("publishability_summary")
+    publishability = publishability if isinstance(publishability, Mapping) else {}
+    if publishability.get("text_ready") is not True:
+        blockers.append(f"{prefix}: review panel does not mark the manuscript text ready")
+    if publishability.get("scientific_ready") is not True:
+        blockers.append(f"{prefix}: review panel does not mark the manuscript scientifically ready")
+    return blockers
+
+
 def record_quality_gate(
     paper_id: str,
     *,
@@ -174,12 +292,15 @@ def record_quality_gate(
     decision: str,
     revision_rounds: int,
     unresolved_blockers: Iterable[str] = (),
+    review: str | Path | None = None,
     root: str | Path,
 ) -> dict[str, Any]:
     """Record and deterministically evaluate an LLM review result.
 
-    This does not run an LLM.  Codex or another reviewer supplies the assessment;
-    the function applies the repository's stable pass/freeze thresholds.
+    This does not run an LLM. The configured review workflow supplies a validated
+    fresh-context panel record; this function applies the repository's stable
+    pass/freeze thresholds. When independent review is required, an unbound
+    score can never advance the paper to ``ready``.
     """
 
     repo_root = Path(root).resolve()
@@ -244,6 +365,31 @@ def record_quality_gate(
         raise ValueError(
             f"Invalid configured {decision_standard} minimum decision: {minimum_decision}"
         )
+    payload = load_paper_metadata(paper_id, repo_root)
+    from paper_writing.handoff import manuscript_snapshot_sha256
+
+    manuscript = repo_root / str(
+        payload.get("manuscript_dir") or f"papers/{paper_id}/manuscript"
+    )
+    canonical_pdf = repo_root / str(
+        payload.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf"
+    )
+    if not manuscript.is_dir():
+        raise FileNotFoundError(manuscript)
+    snapshot_sha256 = manuscript_snapshot_sha256(manuscript, canonical_pdf)
+    if bool(gate.get("require_validated_independent_review", True)):
+        review_blockers = _validated_review_blockers(
+            paper_id=paper_id,
+            review=review,
+            repo_root=repo_root,
+            metadata=payload,
+            gate=gate,
+            score=score,
+            decision=decision,
+            snapshot_sha256=snapshot_sha256,
+        )
+        blockers.extend(item for item in review_blockers if item not in blockers)
+
     passed = (
         score >= minimum_score
         and decision_meets_standard_threshold(
@@ -262,18 +408,6 @@ def record_quality_gate(
         else "revision_required"
     )
 
-    payload = load_paper_metadata(paper_id, repo_root)
-    from paper_writing.handoff import manuscript_snapshot_sha256
-
-    manuscript = repo_root / str(
-        payload.get("manuscript_dir") or f"papers/{paper_id}/manuscript"
-    )
-    canonical_pdf = repo_root / str(
-        payload.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf"
-    )
-    if not manuscript.is_dir():
-        raise FileNotFoundError(manuscript)
-    snapshot_sha256 = manuscript_snapshot_sha256(manuscript, canonical_pdf)
     payload["venue_type"] = venue_type
     release_record = {
         "status": status,
@@ -446,6 +580,7 @@ def apply_review_record(
             decision=cas_zone_1["decision"],
             revision_rounds=rounds,
             unresolved_blockers=review_payload["unresolved_blockers"],
+            review=review_relative,
             root=repo_root,
         )
     except Exception:

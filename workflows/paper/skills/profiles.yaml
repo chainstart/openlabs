@@ -67,6 +67,7 @@ quality_gate:
   zenodo_public_identifier: display_id
   manuscript_style_check: required
   manuscript_style_command: python -m paper_writing style-check --paper-id <paper_id>
+  require_validated_independent_review: true
   require_ai_use_declaration: true
   ai_workflow_disclosure_location: final_ai_use_declaration_only
   require_code_and_formalization_purpose_disclosure: true
@@ -76,6 +77,7 @@ quality_gate:
   review_panel_size: 2
   parallel_execution: false
   independent_contexts: required
+  isolated_processes: required
   prior_reviews_hidden: required
   execution_order: frozen_codex_then_blind_claude
   reviewers:
@@ -95,7 +97,7 @@ quality_gate:
     se: top_conference
     math: four_top_math_journals
     materials: leading_materials_journals
-    physics: leading_physics_journals
+    physics: physics_math_four_equivalent
     quant: leading_quant_finance_journals
   recommendation_views:
     ai: [top_conference, cas_zone_1_journal]
@@ -121,7 +123,7 @@ quality_gate:
     se: ara.revision-agent.cs-top-tier.v1
     math: ara.paper-writing.math-four-journals.v1
     materials: openlabs.paper-writing.materials-leading-journals.v1
-    physics: openlabs.paper-writing.physics-leading-journals.v1
+    physics: openlabs.paper-writing.physics-math-four-equivalent.v1
     quant: openlabs.paper-writing.quant-finance-leading-journals.v1
   settings_path: registry/settings.yaml
   settings_key: quality_gate

@@ -20,6 +20,9 @@ When, and only when, the paper-local registry explicitly sets `review_panel_size
 one fresh Codex `reviewer-1`, do not launch Claude, and form the one-member panel with
 `aggregate_panel.py --single-reviewer`. This compatibility mode preserves the ARA single-reviewer
 exception without weakening snapshot, input-hygiene, provenance, rubric, or quality-gate checks.
+The sole reviewer must run in a new ephemeral process with no author-session state. A same-context
+self-review, a resumed author session, or a score supplied directly to `quality-gate` is invalid and
+must never advance `writing_release` to `ready`.
 
 ## Establish the review boundary
 
@@ -57,12 +60,14 @@ rubric. Write `reviewer-1.json` using `ara.paper_writing.review.v2`, including:
   "model": "<actual Codex model>",
   "panel_reviewer_id": "reviewer-1",
   "independent_context": true,
+  "isolated_process": true,
   "prior_reviews_hidden": true
 }
 ```
 
-These keys belong inside `review_metadata`. Validate and freeze the file before starting Claude.
-Do not edit it afterward.
+These keys belong inside `review_metadata`. The isolated-process flag is valid only when the
+review was produced by a newly launched, non-resumed, ephemeral reviewer process with no author
+conversation state. Validate and freeze the file before starting Claude. Do not edit it afterward.
 
 ### Reviewer 2: Claude Code Opus 5 through Packy
 
@@ -131,8 +136,9 @@ Read `references/rubrics.md` completely and route from the registry's literal do
   `cas_zone_1_journal` recommendations and no conference view;
 - `materials`: `materials`, with `leading_materials_journals` and
   `cas_zone_1_journal` recommendations;
-- `physics`: `physics`, with `leading_physics_journals` and
-  `cas_zone_1_journal` recommendations;
+- `physics`: `physics`, with the `leading_physics_journals` view calibrated to the same
+  exceptional selectivity as the four-leading-mathematics-journal benchmark, plus an independent
+  `cas_zone_1_journal` recommendation;
 - `quant`: `quant_finance`, with `leading_quant_finance_journals` and
   `cas_zone_1_journal` recommendations;
 - any other domain: stop; do not silently substitute a rubric.

@@ -1,10 +1,12 @@
 # OpenLabs reviewer rubrics
 
 The computer-science high standard preserves the validated ARA `RevisionAgent` semantics. The
-mathematics standard uses the repository's four-leading-journal benchmark, materials science uses a
-selective leading-journal benchmark, and quantitative finance uses a leading finance/econometrics
-journal benchmark. Every role also receives the separate CAS Zone 1 journal view defined below.
-Apply only the high-standard section selected from the paper registry domain.
+mathematics standard uses the repository's four-leading-journal benchmark. The physics standard is
+calibrated to the same exceptional selectivity, while applying discipline-appropriate tests of
+physical correctness and importance. Materials science uses a selective leading-journal benchmark,
+and quantitative finance uses a leading finance/econometrics journal benchmark. Every role also
+receives the separate CAS Zone 1 journal view defined below. Apply only the high-standard section
+selected from the paper registry domain.
 
 ## Common score calibration
 
@@ -128,13 +130,15 @@ Use the five-point journal vocabulary for `leading_materials_journals`, then mak
 view has the higher bar for novelty, breadth and field impact. Never emit a conference or
 four-leading-mathematics-journal recommendation for this role.
 
-## Physics: `physics_leading_journals`
+## Physics: `physics_math_four_equivalent`
 
-Act as an expert referee for a selective leading physics journal. Judge whether the manuscript
-contains a correct, original, physically meaningful result rather than an extensive calculation
-whose relation to the stated problem is unclear. Reconstruct the exact regime, assumptions,
-normalizations, units, sign/gauge/frame conventions, boundary conditions, analytic continuation,
-and the logical status of every central statement.
+Act as an expert referee at a highest-tier physics bar deliberately calibrated to the exceptional
+selectivity of the four-leading-mathematics-journal benchmark. This is a quality, depth,
+originality, reach, and lasting-impact benchmark rather than a claim that mathematics and physics
+venues have identical editorial scopes. Judge whether the manuscript contains a field-shaping,
+conceptually important physical result rather than only a correct specialist calculation.
+Reconstruct the exact regime, assumptions, normalizations, units, sign/gauge/frame conventions,
+boundary conditions, analytic continuation, and the logical status of every central statement.
 
 For analytical work, inspect identities, singularities, branches, factorization or limiting
 behavior, imported theorems, and any claim that finite samples or finite-field reconstruction imply
@@ -147,9 +151,33 @@ establish a mechanism or full solution without a completeness argument.
 Keep novelty, significance, and soundness separate. A rigorous scoped theorem, no-go result,
 counterexample, or reproducible computational certificate can be important, but must not be
 described as resolving the original open problem unless its declared resolution criteria are met.
-Use `leading_physics_journals` with the five-point journal vocabulary, then make an independent
-`cas_zone_1_journal` assessment. Never emit conference, mathematics, materials, or quantitative-
-finance recommendations for this role.
+A technically sound but narrow or mainly computational classification can score highly on
+soundness while remaining below this highest-tier bar on significance, novelty, and overall.
+Extensive exact computation, reproducibility, or difficulty alone does not establish field-level
+importance.
+
+Calibrate `overall` at the same selectivity as the mathematics four-journal scale:
+
+- `9--10`: an exceptionally deep or transformative physical result with complete support and a
+  compelling case for field-level, lasting impact; use very rarely;
+- `8`: a credible highest-tier physics candidate with major conceptual originality and
+  significance, no central scientific gap, and only bounded uncertainty about positioning or
+  exposition;
+- `7`: near that threshold but with material uncertainty about depth, reach, conceptual novelty,
+  or required scientific revision;
+- `5--6`: potentially sound and publishable physics, but below the math-four-equivalent bar or
+  without a demonstrated case for that level;
+- `3--4`: serious correctness, novelty, significance, physical-interpretation, or completeness
+  problems;
+- `1--2`: fundamentally invalid, unsupported, or non-viable in its present form.
+
+Interpret `leading_physics_journals` at this math-four-equivalent standard. `accept` and
+`minor_revision` require an already highest-tier-caliber contribution; `major_revision` means that
+level is plausible only after substantial same-cycle repair; `reject_and_resubmit` means new
+scientific work and a new review cycle are needed; and `reject` also covers sound specialist work
+that is clearly below this benchmark. Then make an independent `cas_zone_1_journal` assessment.
+Never emit conference, mathematics, materials, or quantitative-finance recommendations for this
+role.
 
 ## Quantitative finance: `quant_finance_leading_journals`
 

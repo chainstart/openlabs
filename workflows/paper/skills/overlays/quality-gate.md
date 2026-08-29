@@ -56,13 +56,14 @@ the same paths when they do not.
 The quality-gate recorder repeats this check and projects every failure into
 `unresolved_review_blockers`; neither score nor decision can override it.
 
-Then explicitly invoke `$openlabs-paper-review`. Freeze one judgment from a blank Codex reviewer,
-then run a new non-persistent Claude Code process through Packy with model `claude-opus-5`. Claude
-receives the same frozen scientific inputs but no author session, prior review, or reviewer-1
-content. Take the lower of the two values for every integer score, including `overall`, and the
-less favorable of the two simulated decisions. Deterministic code may verify provider identities,
-sources, hashes, and aggregation but must not originate a scientific judgment. If either genuinely
-independent provider is unavailable, leave the quality gate pending.
+Then explicitly invoke `$openlabs-paper-review`. Under the default two-reviewer contract, freeze one
+judgment from a blank Codex reviewer, then run a new non-persistent Claude Code process through
+Packy with model `claude-opus-5`. Claude receives the same frozen scientific inputs but no author
+session, prior review, or reviewer-1 content. Take the lower of the two values for every integer
+score, including `overall`, and the less favorable of the two simulated decisions. Deterministic
+code may verify provider identities, sources, hashes, and aggregation but must not originate a
+scientific judgment. If either genuinely independent configured provider is unavailable, leave the
+quality gate pending.
 
 The full paper registry contains the projected result of earlier panels and is therefore not safe
 review input. The coordinator reads it, but every reviewer receives/reads only an in-memory view
@@ -74,6 +75,13 @@ manuscript directory. Reviewers inspect only the canonical PDF, its explicit tra
 source set, the claim map, redacted-registry evidence, and the exact current support artifact;
 recursive searches over the whole paper directory are forbidden. Accidental exposure invalidates
 that context even if it came from a filename the coordinator did not intend as review input.
+
+When a paper-local registry explicitly configures the supported one-reviewer contract, the same
+isolation rules still apply: launch one fresh ephemeral Codex process, never resume the writer or
+coordinator context, mark the reviewer and panel records with the required isolated-process
+provenance, and form the validated one-member panel. A same-context self-review is not a weaker
+kind of valid review; it is invalid for readiness. The direct `quality-gate` command cannot
+substitute for `paper-writing review apply` with a validated panel record.
 
 Formal-tool reconstruction is objective evidence preparation, not a score-bearing review. When a
 Lean project is in scope, use one repository resource-capped Lean audit workflow for the frozen
@@ -109,9 +117,10 @@ Route the registry domain exactly as follows:
 - `materials`: a leading selective materials-journal benchmark using rubric ID
   `openlabs.paper-writing.materials-leading-journals.v1`, with `leading_materials_journals` plus
   `cas_zone_1_journal` opinions;
-- `physics`: a leading selective physics-journal benchmark using rubric ID
-  `openlabs.paper-writing.physics-leading-journals.v1`, with `leading_physics_journals` plus
-  `cas_zone_1_journal` opinions;
+- `physics`: a highest-tier physics benchmark calibrated to the same exceptional selectivity as
+  the mathematics four-journal standard, using rubric ID
+  `openlabs.paper-writing.physics-math-four-equivalent.v1`, with
+  `leading_physics_journals` plus `cas_zone_1_journal` opinions;
 - `quant`: a leading quantitative-finance/financial-econometrics journal benchmark using rubric ID
   `openlabs.paper-writing.quant-finance-leading-journals.v1`, with
   `leading_quant_finance_journals` plus `cas_zone_1_journal` opinions.
@@ -122,8 +131,8 @@ particular journal's current classification has been verified, use a generic Zon
 do not claim that the named target is actually Zone 1. These are internal reviewer recommendations,
 not actual venue decisions.
 
-Write two immutable individual JSON records and one immutable panel result under the same
-`reviews/<review_run_id>/<paper_id>/` directory. Include at least:
+Write the configured number of immutable individual JSON records and one immutable panel result
+under the same `reviews/<review_run_id>/<paper_id>/` directory. Include at least:
 
 - `scores.clarity`, `scores.soundness`, `scores.significance`, `scores.novelty`, and
   `scores.overall`, each an integer from 1 to 10; do not use decimals;
@@ -136,11 +145,11 @@ Write two immutable individual JSON records and one immutable panel result under
 - model, reasoning effort, UTC review time, paper ID, canonical main-TeX SHA-256, and whether the
   manuscript tree stayed unchanged during review.
 
-Use the panel's conservative `scores.overall` as the CLI score. It is the lower of two independent
-holistic judgments, not an arithmetic
-escape hatch: an unsupported central claim, unresolved scientific/proof flaw, stale build, or
-unverified critical artifact must also receive a decision below the configured review threshold or
-remain blocked.
+Use the panel's conservative `scores.overall` as the gate score. Under the default contract it is
+the lower of two independent holistic judgments; under the explicit one-reviewer contract it is
+the unchanged isolated reviewer's value. It is not an arithmetic escape hatch: an unsupported
+central claim, unresolved scientific/proof flaw, stale build, or unverified critical artifact must
+also receive a decision below the configured review threshold or remain blocked.
 
 Validate the completed panel with the helper shipped inside `$openlabs-paper-review`. It checks domain
 routing, integer score fields, role-specific recommendation schemas, immutable reviewer hashes,
@@ -149,13 +158,14 @@ judges the paper or alters a score.
 
 ## Apply the deterministic threshold
 
-Read the actual venue type and completed revision count from the paper record, then run with the CAS
-Zone 1 journal decision:
+Read the actual venue type and completed revision count from the paper record, then apply the
+validated review panel. `review apply` invokes the deterministic gate with the panel's CAS Zone 1
+journal decision:
 
 ```bash
-python -m paper_writing quality-gate \
-  --paper-id <paper_id> --venue-type <conference|journal> \
-  --score <scores.overall> --decision <cas_zone_1_journal_decision> \
+python -m paper_writing review apply \
+  --paper-id <paper_id> --review reviews/<run>/<paper_id>/review.json \
+  --venue-type <conference|journal> \
   --revision-rounds <completed_rounds>
 ```
 

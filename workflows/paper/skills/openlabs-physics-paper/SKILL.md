@@ -35,9 +35,12 @@ requires a Chinese Academy of Sciences major-category Zone 1 journal, verify tha
 separately: JCR Q1, a subject-category quartile, and a XinRui tier are not substitutes for the CAS
 major-category partition.
 
-Publication-level completion requires a current novelty audit, no unsupported central claim, a
-fresh dual-provider review, conservative scores of at least soundness 8, novelty 7, significance 7,
-and overall 7, a positive CAS major-category Zone 1 view, and no scientific blocker. A named
+Publication-level completion requires a current novelty audit, no unsupported central claim, and a
+fresh isolated review under the configured one- or two-reviewer contract. The physics high-standard
+rubric is calibrated to the same exceptional selectivity as the four-leading-mathematics-journal
+benchmark: a merely sound specialist result must not receive a top-tier score. Require conservative
+scores of at least soundness 8, novelty 7, significance 7, and overall 7, a positive CAS
+major-category Zone 1 view, and no scientific blocker. A named
 journal's classification and scope must be verified at review time; do not infer them from a stale
 list. After a passing gate, run `paper-writing zenodo release` for the exact prepared, hash-bound
 support draft without asking again. Internal readiness never authorizes submission, spending,
