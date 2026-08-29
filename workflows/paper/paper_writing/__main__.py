@@ -20,6 +20,7 @@ from paper_writing.operations import (
     apply_review_record,
     create_paper,
     record_quality_gate,
+    reuse_review_for_metadata_only_revision,
     start_revision,
     validate_repository,
 )
@@ -128,6 +129,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Defaults to the paper's existing completed-round count.",
     )
     review_apply.add_argument("--root", default=str(default_repo_root()))
+    review_reuse = review_commands.add_parser(
+        "reuse-metadata",
+        help=(
+            "Reuse a passing review only when scientific manuscript and support "
+            "fingerprints are unchanged."
+        ),
+    )
+    review_reuse.add_argument("--paper-id", required=True)
+    review_reuse.add_argument("--root", default=str(default_repo_root()))
 
     zenodo = subparsers.add_parser(
         "zenodo",
@@ -390,6 +400,13 @@ def main(argv: list[str] | None = None) -> int:
             review=args.review,
             venue_type=args.venue_type,
             revision_rounds=args.revision_rounds,
+            root=args.root,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "review" and args.review_command == "reuse-metadata":
+        result = reuse_review_for_metadata_only_revision(
+            args.paper_id,
             root=args.root,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))

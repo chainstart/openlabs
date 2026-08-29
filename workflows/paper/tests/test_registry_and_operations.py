@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from paper_writing.operations import create_paper, record_quality_gate, start_revision
+from paper_writing.operations import (
+    create_paper,
+    record_quality_gate,
+    reuse_review_for_metadata_only_revision,
+    start_revision,
+)
 from paper_writing.registry import (
     load_paper_metadata,
     load_registry,
@@ -299,6 +304,74 @@ def test_direct_score_cannot_replace_required_independent_review(tmp_path: Path)
         "direct score entry is not a review" in blocker
         for blocker in result["unresolved_blockers"]
     )
+
+
+def test_author_only_revision_reuses_review_but_body_change_fails_closed(
+    tmp_path: Path,
+) -> None:
+    _settings(tmp_path)
+    paper_id = "20260829-physics-hep-author-metadata-revision"
+    create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="An author metadata revision test",
+        created_at="2026-08-29",
+        domain="physics",
+        subdomain="hep",
+        venue_type="journal",
+    )
+    first_gate = record_quality_gate(
+        paper_id,
+        venue_type="journal",
+        score=8,
+        decision="accept",
+        revision_rounds=0,
+        root=tmp_path,
+    )
+    assert first_gate["passed"] is True
+    original_reviewed_at = load_paper_metadata(paper_id, tmp_path)["writing_release"][
+        "reviewed_at"
+    ]
+
+    revision = start_revision(paper_id, "add a second author", root=tmp_path)
+    assert revision["review_carry_forward_available"] is True
+    manuscript = tmp_path / "papers" / paper_id / "manuscript"
+    main = manuscript / "main.tex"
+    main.write_text(
+        main.read_text(encoding="utf-8").replace(
+            "\\author{}",
+            "\\author[a]{First Author}\n"
+            "\\author[b]{Second Author}\n"
+            "\\affiliation[a]{First Institute}\n"
+            "\\affiliation[b]{Second Institute}\n"
+            "\\emailAdd{second@example.test}",
+        ),
+        encoding="utf-8",
+    )
+    (manuscript / "main.pdf").write_bytes(b"%PDF rebuilt author edition")
+
+    reused = reuse_review_for_metadata_only_revision(paper_id, root=tmp_path)
+    assert reused["status"] == "ready"
+    assert reused["llm_review_rerun"] is False
+    metadata = load_paper_metadata(paper_id, tmp_path)
+    assert metadata["writing_release"]["reviewed_at"] == original_reviewed_at
+    assert metadata["writing_release"]["manuscript_version"] == "0.1.1"
+    assert metadata["writing_release"]["review_reuse"]["classification"] == (
+        "author_or_release_metadata_only"
+    )
+
+    next_revision = start_revision(paper_id, "change a result", root=tmp_path)
+    assert next_revision["review_carry_forward_available"] is True
+    main.write_text(
+        main.read_text(encoding="utf-8").replace(
+            "\\begin{abstract}\n\\end{abstract}",
+            "\\begin{abstract}\nA new scientific claim.\n\\end{abstract}",
+        ),
+        encoding="utf-8",
+    )
+    (manuscript / "main.pdf").write_bytes(b"%PDF scientific revision")
+    with pytest.raises(ValueError, match="Fresh scientific review required"):
+        reuse_review_for_metadata_only_revision(paper_id, root=tmp_path)
 
 
 def test_cas_zone_1_gate_is_independent_of_actual_venue_type(tmp_path: Path) -> None:

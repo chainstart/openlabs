@@ -138,6 +138,55 @@ def resolve_support_sources(
     return [resolved[key] for key in sorted(resolved)]
 
 
+def _review_logical_support_path(path: Path, root: Path) -> str:
+    """Return a version-insensitive but filename-sensitive support path."""
+
+    parts = list(path.relative_to(root).parts)
+    for index, part in enumerate(parts):
+        if re.fullmatch(r"public-support-v[0-9][A-Za-z0-9._-]*", part, re.IGNORECASE):
+            parts[index] = "public-support-v*"
+    return Path(*parts).as_posix()
+
+
+def support_sources_snapshot_sha256(
+    record: Mapping[str, Any],
+    *,
+    repo_root: str | Path,
+) -> str | None:
+    """Hash support evidence independently of its generated release envelope.
+
+    Zenodo's wrapper README, manifest, DOI, paper version and ZIP bytes change
+    for a metadata-only release.  This digest instead covers the configured
+    source filenames and exact bytes, while normalizing only the conventional
+    ``public-support-vX`` directory component.
+    """
+
+    publication = _publication(record)
+    configured = publication.get("source_files")
+    if not isinstance(configured, list) or not configured:
+        return None
+    root = Path(repo_root).resolve()
+    paths = resolve_support_sources(record, repo_root=root)
+    logical: dict[str, Path] = {}
+    for path in paths:
+        name = _review_logical_support_path(path, root)
+        if name in logical:
+            raise SupportPackageError(
+                f"Support sources collide after version normalization: {name}"
+            )
+        logical[name] = path
+    digest = hashlib.sha256(b"ara.paper_writing.support_sources.v1\0")
+    for name, path in sorted(logical.items()):
+        encoded = name.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(path.stat().st_size.to_bytes(8, "big"))
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+    return digest.hexdigest()
+
+
 def validate_git_frozen_paths(root: str | Path, paths: Iterable[str | Path]) -> None:
     """Require repository-owned paths to be tracked and unchanged at Git HEAD."""
 

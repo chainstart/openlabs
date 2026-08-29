@@ -71,6 +71,26 @@ EXCLUDED_ROOT_PDFS = {
     "supplementary_material.pdf",
 }
 
+# These commands carry author/depositor identity, not scientific claims.  The
+# review fingerprint removes them only from the TeX preamble.  The immutable
+# release snapshot below continues to hash their exact bytes and the rendered
+# PDF, so provenance and publication packaging remain strict.
+AUTHOR_METADATA_TEX_COMMANDS = frozenset(
+    {
+        "address",
+        "affiliation",
+        "author",
+        "correspondingauthor",
+        "cortext",
+        "ead",
+        "email",
+        "emailAdd",
+        "fntext",
+        "institute",
+        "note",
+    }
+)
+
 
 class HandoffError(RuntimeError):
     """Raised when package construction or API handoff fails."""
@@ -192,6 +212,140 @@ def manuscript_snapshot_sha256(manuscript: Path, canonical_pdf: Path) -> str:
         with path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _balanced_group_end(source: str, start: int, opener: str, closer: str) -> int | None:
+    """Return the first offset after one balanced TeX argument."""
+
+    if start >= len(source) or source[start] != opener:
+        return None
+    depth = 0
+    index = start
+    while index < len(source):
+        character = source[index]
+        if character == "\\":
+            # An escaped delimiter is data, not TeX grouping syntax.
+            index += 2
+            continue
+        if character == opener:
+            depth += 1
+        elif character == closer:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return None
+
+
+def _without_author_metadata_commands(source: str) -> str:
+    """Normalize narrowly scoped author commands in a TeX preamble.
+
+    A malformed or unfamiliar command is retained, making the comparison fail
+    closed.  Individual commands in the document body are retained because
+    names there can be part of attribution or scientific prose; only explicitly
+    headed author-contribution/correspondence blocks are normalized below.
+    """
+
+    marker = re.search(r"\\begin\s*\{\s*document\s*\}", source)
+    preamble_end = marker.start() if marker else len(source)
+    output: list[str] = []
+    index = 0
+    while index < len(source):
+        if index >= preamble_end or source[index] != "\\":
+            output.append(source[index])
+            index += 1
+            continue
+        command_match = re.match(r"\\([A-Za-z@]+)", source[index:])
+        if not command_match or command_match.group(1) not in AUTHOR_METADATA_TEX_COMMANDS:
+            output.append(source[index])
+            index += 1
+            continue
+
+        cursor = index + len(command_match.group(0))
+        while cursor < preamble_end and source[cursor].isspace():
+            cursor += 1
+        while cursor < preamble_end and source[cursor] == "[":
+            group_end = _balanced_group_end(source, cursor, "[", "]")
+            if group_end is None or group_end > preamble_end:
+                break
+            cursor = group_end
+            while cursor < preamble_end and source[cursor].isspace():
+                cursor += 1
+        if cursor >= preamble_end or source[cursor] != "{":
+            # Keep commands whose argument structure we do not understand.
+            output.append(source[index])
+            index += 1
+            continue
+        group_end = _balanced_group_end(source, cursor, "{", "}")
+        if group_end is None or group_end > preamble_end:
+            output.append(source[index])
+            index += 1
+            continue
+        output.append("\\AUTHOR_METADATA{}")
+        index = group_end
+    normalized = "".join(output)
+    # One author added to an existing block must not change the scientific
+    # fingerprint merely by adding another command or line break.
+    normalized = re.sub(
+        r"(?:[ \t\r\n]*\\AUTHOR_METADATA\{\}[ \t\r\n]*)+",
+        lambda _match: "\n\\AUTHOR_METADATA{}\n",
+        normalized,
+    )
+    # CRediT/correspondence prose is often rendered near the end of a paper
+    # rather than represented by preamble commands.  Normalize only explicitly
+    # titled author-administration blocks; adjacent scientific declarations
+    # (funding, data availability, limitations, etc.) remain hashed.
+    headings = (
+        r"(?:Author contributions?|CRediT authorship contribution statement|"
+        r"Correspondence)"
+    )
+    section_pattern = re.compile(
+        rf"(\\(?:section|subsection)\*?\s*\{{\s*{headings}\.?\s*\}}).*?"
+        r"(?=\\(?:section|subsection)\*?\s*\{|\\end\s*\{document\})",
+        re.IGNORECASE | re.DOTALL,
+    )
+    normalized = section_pattern.sub(
+        lambda match: match.group(1) + "\n\\AUTHOR_METADATA_SECTION{}\n",
+        normalized,
+    )
+    runin_pattern = re.compile(
+        rf"(\\noindent\s*\\textbf\s*\{{\s*{headings}\.?\s*\}}).*?"
+        r"(?=\\noindent\s*\\textbf\s*\{|"
+        r"\\(?:section|subsection)\*?\s*\{|\\end\s*\{document\})",
+        re.IGNORECASE | re.DOTALL,
+    )
+    return runin_pattern.sub(
+        lambda match: match.group(1) + "\n\\AUTHOR_METADATA_SECTION{}\n",
+        normalized,
+    )
+
+
+def manuscript_review_content_sha256(manuscript: Path, canonical_pdf: Path) -> str:
+    """Hash only content whose change invalidates scientific/textual review.
+
+    Unlike :func:`manuscript_snapshot_sha256`, this fingerprint excludes the
+    rendered PDF and normalizes a small allowlist of author-metadata commands
+    in TeX preambles.  Every other source byte, filename, figure, bibliography,
+    formula and non-authorship declaration remains review-significant.
+    """
+
+    digest = hashlib.sha256(b"ara.paper_writing.review_content.v1\0")
+    for path in _source_files(manuscript, canonical_pdf):
+        relative_text = path.relative_to(manuscript).as_posix()
+        relative = relative_text.encode("utf-8")
+        content = path.read_bytes()
+        if path.suffix.casefold() == ".tex":
+            try:
+                decoded = content.decode("utf-8")
+            except UnicodeDecodeError:
+                pass
+            else:
+                content = _without_author_metadata_commands(decoded).encode("utf-8")
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
     return digest.hexdigest()
 
 

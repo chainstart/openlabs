@@ -471,8 +471,10 @@ def prepare_zenodo_release(
     """Build and upload a deterministic package to a reversible Zenodo draft.
 
     The draft is recorded in the paper registry, including its reserved DOI and
-    exact local package digest. This operation deliberately does not run or
-    mutate the manuscript quality gate and never publishes the deposition.
+    exact local package digest. This operation never runs an LLM and never
+    publishes the deposition. If ``start-revision`` captured a passing baseline,
+    it may deterministically carry that review across an author/release-metadata
+    change after proving that manuscript and support evidence are unchanged.
     """
 
     root = Path(repo_root or default_repo_root()).resolve()
@@ -684,6 +686,23 @@ def prepare_zenodo_release(
     publication["zenodo"] = registered_zenodo
     raw_record["status_updated_at"] = prepared_at
     write_paper_metadata(paper_id, raw_record, root)
+    review_reuse: dict[str, Any] | None = None
+    writing_release = raw_record.get("writing_release")
+    writing_release = writing_release if isinstance(writing_release, Mapping) else {}
+    if isinstance(writing_release.get("review_carry_forward"), Mapping):
+        from paper_writing.operations import reuse_review_for_metadata_only_revision
+
+        try:
+            review_reuse = reuse_review_for_metadata_only_revision(
+                paper_id,
+                root=root,
+            )
+        except (OSError, SupportPackageError, ValueError) as exc:
+            review_reuse = {
+                "status": "fresh_review_required",
+                "llm_review_rerun": None,
+                "reason": str(exc),
+            }
     return {
         "paper_id": paper_id,
         "version": _record_version(record),
@@ -697,9 +716,13 @@ def prepare_zenodo_release(
         "receipt": _relative_path(receipt_path, root),
         "removed_draft_files": len(removed),
         "uploaded_files": len(uploads),
+        "review_reuse": review_reuse,
         "next_action": (
-            "Cite the reserved DOI if appropriate, rebuild/review the manuscript, pass the "
-            "quality gate, and commit the registry, manuscript, PDF and support package."
+            "Commit the registry, manuscript, PDF and support package, then release the "
+            "prepared draft."
+            if review_reuse and review_reuse.get("status") == "ready"
+            else "Cite the reserved DOI if appropriate, rebuild/review the manuscript, pass "
+            "the quality gate, and commit the registry, manuscript, PDF and support package."
         ),
     }
 

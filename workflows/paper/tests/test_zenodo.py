@@ -18,8 +18,28 @@ from paper_writing.support import (
     default_support_archive_path,
     md5_file,
     resolve_support_sources,
+    support_sources_snapshot_sha256,
     verify_support_archive,
 )
+
+
+def test_support_source_fingerprint_ignores_release_directory_version_only(
+    tmp_path: Path,
+) -> None:
+    old = tmp_path / "papers" / "paper" / "evidence" / "release" / "public-support-v1.0.0"
+    new = tmp_path / "papers" / "paper" / "evidence" / "release" / "public-support-v1.0.1"
+    old.mkdir(parents=True)
+    new.mkdir(parents=True)
+    (old / "claims.yaml").write_text("result: 42\n", encoding="utf-8")
+    (new / "claims.yaml").write_text("result: 42\n", encoding="utf-8")
+    old_record = {"support": {"publication": {"source_files": [str(old.relative_to(tmp_path))]}}}
+    new_record = {"support": {"publication": {"source_files": [str(new.relative_to(tmp_path))]}}}
+
+    baseline = support_sources_snapshot_sha256(old_record, repo_root=tmp_path)
+    assert support_sources_snapshot_sha256(new_record, repo_root=tmp_path) == baseline
+
+    (new / "claims.yaml").write_text("result: 43\n", encoding="utf-8")
+    assert support_sources_snapshot_sha256(new_record, repo_root=tmp_path) != baseline
 from paper_writing.zenodo import (
     ZenodoClient,
     create_version_with_files,

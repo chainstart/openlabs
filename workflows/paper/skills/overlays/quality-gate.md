@@ -14,6 +14,22 @@ official formatting source. The canonical `manuscript/` must be marked and check
 venue-specific edition. A side candidate alone is a blocker. Public Zenodo ZIP names and enclosing
 roots must use the registered `display_id`.
 
+## Route metadata-only revisions before launching reviewers
+
+If a revision was opened from a current passing gate and is intended to change only author
+identity/contact/affiliation, an explicitly titled author-contribution/correspondence block, or
+release-envelope metadata, do not launch `$openlabs-paper-review`. Rebuild the canonical PDF,
+prepare any versioned support package, and first run:
+
+```bash
+python -m paper_writing review reuse-metadata --paper-id <paper_id>
+```
+
+Success means the old judgment and score were carried forward without an LLM call. Failure means
+the captured scientific/textual, registry, or support-source fingerprint changed (or no trustworthy
+baseline exists); only then follow the full review procedure below. Never classify the diff by
+inspection or rewrite a historical review hash.
+
 ## Produce a review record
 
 After drafting, first run
@@ -184,8 +200,17 @@ but all new `$openlabs-paper-review` records use integers.
 
 Any subsequent change to a claim, proof, number, citation, figure, table, abstract, conclusion, or
 other score-bearing text invalidates the review. Run a new fresh-context review and record the gate
-again. Formatting-only changes still require a build check and an explicit note that the reviewed
-content hash did not change.
+again. A revision that changes only author identity/contact/affiliation commands or release-envelope
+metadata does not need an LLM re-review. Start it from the current ready gate with `paper
+start-revision`; after rebuilding the PDF and preparing any versioned support package, use the
+metadata-only routing command above. The command compares the captured scientific/textual
+fingerprint, review-significant registry
+metadata, and exact support-source fingerprint, then repeats deterministic support/style checks. It
+never changes a score. Unknown syntax or any substantive difference fails closed and requires a
+fresh isolated review. The immutable full manuscript/PDF and ZIP hashes remain version-specific for
+provenance. `zenodo prepare` invokes this same deterministic reuse automatically when a captured
+baseline is present. Formatting-only changes outside the narrow author-command allowlist remain
+review-significant unless a future deterministic classifier explicitly supports them.
 
 `writing_release.status=ready` is necessary before handoff or consideration for submission, but is
 not sufficient authorization to submit. It is an internal LLM quality gate, not scientific proof,

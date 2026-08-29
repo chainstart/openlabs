@@ -129,8 +129,18 @@ python -m paper_writing support-check --paper-id <paper_id>
 版本以及包内面向读者的 claim map/README 一致。工具或依赖版本、不可变的嵌套旧归档可以保留
 自己的真实标签，但不得被表述为当前记录。
 
-`writing_release.support_package_sha256` 在门禁被返修作废后会保留旧版本的哈希，直到下一次
-`review apply` 重新绑定。绑定不一致时 `release` 会拒绝发布，这是预期的保护行为。
+`writing_release.support_package_sha256` 必须绑定当前版本的包。科学内容或支撑证据有变化时，
+只能由新的 `review apply` 重新绑定。若返修从通过的门禁启动，且只改作者、邮箱、单位、通讯
+作者或发布封装元数据，`zenodo prepare` 会比较独立的科学内容指纹和支撑源文件指纹，并在确定
+二者未变后自动复用原评审、绑定新 PDF 与新 ZIP；不会启动 LLM 复评，也不会修改原评分。也可
+显式执行：
+
+```bash
+python -m paper_writing review reuse-metadata --paper-id <paper_id>
+```
+
+正文、公式、图表、摘要、参考文献、结论、题名或支撑证据只要有一项变化，该命令就会失败
+关闭并要求新的隔离评审。绑定不一致时 `release` 仍会拒绝发布。
 
 ## 正式发布
 

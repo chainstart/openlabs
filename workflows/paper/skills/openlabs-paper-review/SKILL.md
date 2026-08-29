@@ -24,6 +24,14 @@ The sole reviewer must run in a new ephemeral process with no author-session sta
 self-review, a resumed author session, or a score supplied directly to `quality-gate` is invalid and
 must never advance `writing_release` to `ready`.
 
+Do not launch either reviewer for a revision that was opened from a current passing gate and changes
+only author identity/contact/affiliation commands or release-envelope metadata. Run
+`paper-writing review reuse-metadata --paper-id <paper_id>` instead. That deterministic command is
+the sole classifier for this exception: it compares the captured scientific/textual, registry, and
+support-source fingerprints and reruns non-LLM checks. If it reports any difference or lacks a
+verified baseline, proceed with the normal fresh review below. Never decide metadata-only status by
+eyeballing a diff, and never edit an old review record to fit a new full snapshot.
+
 ## Establish the review boundary
 
 1. Resolve the private data root from `OPENLABS_DATA` or the configured workspace. Read
@@ -221,7 +229,9 @@ python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-revie
 ```
 
 Fix validation-only transcription errors in place. A substantive judgment change requires a new
-reviewer context; any score-bearing manuscript change invalidates both reviews.
+reviewer context; any score-bearing manuscript change invalidates both reviews. A changed full PDF
+hash caused solely by the deterministic metadata-only path above is recorded as review reuse, not a
+new review.
 
 Apply the validated panel with:
 

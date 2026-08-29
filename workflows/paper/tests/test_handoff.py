@@ -15,11 +15,78 @@ from paper_writing.handoff import (
     changed_registry_paper_ids,
     execute_ready_handoff_plan,
     load_handoff_manifest,
+    manuscript_review_content_sha256,
     manuscript_snapshot_sha256,
     plan_ready_handoffs,
     sync_writing_metadata_batch,
     validate_release_preconditions,
 )
+
+
+def test_review_content_fingerprint_ignores_only_preamble_author_metadata(
+    tmp_path: Path,
+) -> None:
+    manuscript = tmp_path / "manuscript"
+    manuscript.mkdir()
+    main = manuscript / "main.tex"
+    pdf = manuscript / "main.pdf"
+    bibliography = manuscript / "references.bib"
+    main.write_text(
+        """\\documentclass{article}
+\\title{A physical result}
+\\author[a]{First Author}
+\\affiliation[a]{First Institute}
+\\emailAdd{first@example.test}
+\\begin{document}
+The invariant is $E=mc^2$.
+\\noindent\\textbf{Author contributions.}
+First Author performed the analysis.
+\\noindent\\textbf{Funding.}
+No external funding.
+\\end{document}
+""",
+        encoding="utf-8",
+    )
+    bibliography.write_text("@article{x, title={Evidence}}\n", encoding="utf-8")
+    pdf.write_bytes(b"%PDF original")
+    review_digest = manuscript_review_content_sha256(manuscript, pdf)
+    full_digest = manuscript_snapshot_sha256(manuscript, pdf)
+
+    main.write_text(
+        """\\documentclass{article}
+\\title{A physical result}
+\\author[a]{First Author}
+\\affiliation[a]{First Institute}
+\\author[b]{Second Author}
+\\affiliation[b]{Second Institute}
+\\emailAdd{second@example.test}
+\\note{Corresponding author}
+\\begin{document}
+The invariant is $E=mc^2$.
+\\noindent\\textbf{Author contributions.}
+First and Second Author performed the analysis. Correspondence: Second Author.
+\\noindent\\textbf{Funding.}
+No external funding.
+\\end{document}
+""",
+        encoding="utf-8",
+    )
+    pdf.write_bytes(b"%PDF rebuilt with new author list")
+    assert manuscript_review_content_sha256(manuscript, pdf) == review_digest
+    assert manuscript_snapshot_sha256(manuscript, pdf) != full_digest
+
+    main.write_text(
+        main.read_text(encoding="utf-8").replace("E=mc^2", "E=0"),
+        encoding="utf-8",
+    )
+    assert manuscript_review_content_sha256(manuscript, pdf) != review_digest
+
+    main.write_text(
+        main.read_text(encoding="utf-8").replace("E=0", "E=mc^2"),
+        encoding="utf-8",
+    )
+    bibliography.write_text("@article{x, title={Different evidence}}\n", encoding="utf-8")
+    assert manuscript_review_content_sha256(manuscript, pdf) != review_digest
 
 
 def test_paper_projection_only_clears_an_explicit_target_journal() -> None:

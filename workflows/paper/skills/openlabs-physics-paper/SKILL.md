@@ -36,7 +36,9 @@ separately: JCR Q1, a subject-category quartile, and a XinRui tier are not subst
 major-category partition.
 
 Publication-level completion requires a current novelty audit, no unsupported central claim, and a
-fresh isolated review under the configured one- or two-reviewer contract. The physics high-standard
+fresh isolated review under the configured one- or two-reviewer contract for the latest
+score-bearing content. A later author/release-metadata-only edition may use the deterministic
+carry-forward procedure in the quality-gate overlay; it is not a new scientific review. The physics high-standard
 rubric separately simulates *Physical Review Letters*, *Physical Review X*, and *Nature Physics*;
 these explicit venues operationalize the exceptional selectivity comparison with the
 four-leading-mathematics-journal benchmark. A merely sound specialist result must not receive a

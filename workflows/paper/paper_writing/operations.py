@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,11 +43,128 @@ from paper_writing.review import (
     reviewer_role_for_domain,
     validate_review_panel_files,
 )
+from paper_writing.support import SupportPackageError
 from paper_writing.support_citations import audit_manuscript_support, support_audit_blockers
+
+
+REVIEW_CARRY_FORWARD_SCHEMA_VERSION = "ara.paper_writing.review_carry_forward.v1"
+REVIEW_SIGNIFICANT_REGISTRY_FIELDS = (
+    "abstract",
+    "description",
+    "domain",
+    "keywords",
+    "subdomain",
+    "subtitle",
+    "target_journal",
+    "target_journal_section",
+    "title",
+    "venue_type",
+)
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _registry_review_content_sha256(metadata: Mapping[str, Any]) -> str:
+    """Hash registry fields that can alter the reviewed public scientific claim."""
+
+    import hashlib
+
+    projected = {
+        field: metadata[field]
+        for field in REVIEW_SIGNIFICANT_REGISTRY_FIELDS
+        if metadata.get(field) is not None
+    }
+    encoded = json.dumps(
+        projected,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(
+        b"ara.paper_writing.registry_review_content.v1\0" + encoded
+    ).hexdigest()
+
+
+def _review_workspace_fingerprints(
+    paper_id: str,
+    metadata: Mapping[str, Any],
+    repo_root: Path,
+) -> dict[str, str | None]:
+    from paper_writing.handoff import (
+        manuscript_review_content_sha256,
+        manuscript_snapshot_sha256,
+    )
+    from paper_writing.support import support_sources_snapshot_sha256
+
+    manuscript = repo_root / str(
+        metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript"
+    )
+    canonical_pdf = repo_root / str(
+        metadata.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf"
+    )
+    if not manuscript.is_dir():
+        raise FileNotFoundError(manuscript)
+    return {
+        "manuscript_snapshot_sha256": manuscript_snapshot_sha256(
+            manuscript, canonical_pdf
+        ),
+        "review_content_sha256": manuscript_review_content_sha256(
+            manuscript, canonical_pdf
+        ),
+        "registry_review_content_sha256": _registry_review_content_sha256(metadata),
+        "support_sources_sha256": support_sources_snapshot_sha256(
+            metadata, repo_root=repo_root
+        ),
+    }
+
+
+def _review_carry_forward_candidate(
+    paper_id: str,
+    metadata: Mapping[str, Any],
+    repo_root: Path,
+) -> dict[str, Any] | None:
+    """Capture a verified baseline before a revision can modify any file."""
+
+    release = metadata.get("writing_release")
+    if not isinstance(release, Mapping) or release.get("status") != "ready":
+        return None
+    try:
+        fingerprints = _review_workspace_fingerprints(paper_id, metadata, repo_root)
+    except (OSError, ValueError, SupportPackageError):
+        return None
+    if (
+        release.get("manuscript_snapshot_sha256")
+        != fingerprints["manuscript_snapshot_sha256"]
+    ):
+        return None
+    for key in (
+        "review_content_sha256",
+        "registry_review_content_sha256",
+        "support_sources_sha256",
+    ):
+        if key in release and release.get(key) != fingerprints.get(key):
+            return None
+    if str(release.get("manuscript_version") or "") != str(
+        metadata.get("version") or "1.0.0"
+    ):
+        return None
+    support = metadata.get("support")
+    support = support if isinstance(support, Mapping) else {}
+    publication = support.get("publication")
+    publication = publication if isinstance(publication, Mapping) else {}
+    current_package = str(publication.get("package_sha256") or "")
+    gated_package = str(release.get("support_package_sha256") or "")
+    if current_package and gated_package != current_package:
+        return None
+    return {
+        "schema_version": REVIEW_CARRY_FORWARD_SCHEMA_VERSION,
+        "captured_at": _now(),
+        "source_release": deepcopy(dict(release)),
+        "source_review": deepcopy(metadata.get("ara_llm_self_review")),
+        **fingerprints,
+    }
 
 
 def create_paper(
@@ -138,9 +256,14 @@ def create_paper(
 def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str, Any]:
     repo_root = Path(root).resolve()
     payload = load_paper_metadata(paper_id, repo_root)
+    carry_forward = _review_carry_forward_candidate(paper_id, payload, repo_root)
     revision_root = repo_root / "papers" / paper_id / "revisions"
     revision_root.mkdir(parents=True, exist_ok=True)
-    existing = [int(match.group(1)) for path in revision_root.glob("round-*.md") if (match := re.fullmatch(r"round-(\d+)\.md", path.name))]
+    existing = [
+        int(match.group(1))
+        for path in revision_root.glob("round-*.md")
+        if (match := re.fullmatch(r"round-(\d+)\.md", path.name))
+    ]
     round_number = max(existing, default=0) + 1
     path = revision_root / f"round-{round_number:02d}.md"
     path.write_text(
@@ -157,14 +280,23 @@ def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str,
         new_version = f"{version}-revision-{round_number}"
     payload["version"] = new_version
     changed_at = _now()
-    payload["writing_release"] = {
+    draft_release: dict[str, Any] = {
         "status": "draft",
         "invalidated_at": changed_at,
         "invalidated_reason": "revision_started",
     }
+    if carry_forward is not None:
+        draft_release["review_carry_forward"] = carry_forward
+    payload["writing_release"] = draft_release
     payload["status_updated_at"] = changed_at
     write_paper_metadata(paper_id, payload, repo_root)
-    return {"paper_id": paper_id, "round": round_number, "version": new_version, "file": str(path.relative_to(repo_root))}
+    return {
+        "paper_id": paper_id,
+        "round": round_number,
+        "version": new_version,
+        "file": str(path.relative_to(repo_root)),
+        "review_carry_forward_available": carry_forward is not None,
+    }
 
 
 def _validated_review_blockers(
@@ -367,17 +499,8 @@ def record_quality_gate(
             f"Invalid configured {decision_standard} minimum decision: {minimum_decision}"
         )
     payload = load_paper_metadata(paper_id, repo_root)
-    from paper_writing.handoff import manuscript_snapshot_sha256
-
-    manuscript = repo_root / str(
-        payload.get("manuscript_dir") or f"papers/{paper_id}/manuscript"
-    )
-    canonical_pdf = repo_root / str(
-        payload.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf"
-    )
-    if not manuscript.is_dir():
-        raise FileNotFoundError(manuscript)
-    snapshot_sha256 = manuscript_snapshot_sha256(manuscript, canonical_pdf)
+    fingerprints = _review_workspace_fingerprints(paper_id, payload, repo_root)
+    snapshot_sha256 = str(fingerprints["manuscript_snapshot_sha256"])
     if bool(gate.get("require_validated_independent_review", True)):
         review_blockers = _validated_review_blockers(
             paper_id=paper_id,
@@ -422,8 +545,16 @@ def record_quality_gate(
         "max_revision_rounds": maximum_rounds,
         "reviewed_at": _now(),
         "manuscript_snapshot_sha256": snapshot_sha256,
+        "review_content_sha256": fingerprints["review_content_sha256"],
+        "registry_review_content_sha256": fingerprints[
+            "registry_review_content_sha256"
+        ],
         "manuscript_version": str(payload.get("version") or "1.0.0"),
     }
+    if fingerprints["support_sources_sha256"] is not None:
+        release_record["support_sources_sha256"] = fingerprints[
+            "support_sources_sha256"
+        ]
     if blockers:
         release_record["unresolved_review_blockers"] = blockers
     support = payload.get("support")
@@ -449,6 +580,11 @@ def record_quality_gate(
         "maximum_revision_rounds": maximum_rounds,
         "unresolved_blockers": blockers,
         "manuscript_snapshot_sha256": snapshot_sha256,
+        "review_content_sha256": fingerprints["review_content_sha256"],
+        "registry_review_content_sha256": fingerprints[
+            "registry_review_content_sha256"
+        ],
+        "support_sources_sha256": fingerprints["support_sources_sha256"],
         "support_package_sha256": release_record.get("support_package_sha256"),
         "support_materials_audit": support_audit,
         "manuscript_style_audit": style_audit,
@@ -567,6 +703,9 @@ def apply_review_record(
         "reasoning_effort": review_metadata["reasoning_effort"],
         "reviewed_at": review_metadata["reviewed_at_utc"],
         "manuscript_snapshot_sha256": current_snapshot,
+        "review_content_sha256": _review_workspace_fingerprints(
+            paper_id, metadata, repo_root
+        )["review_content_sha256"],
         "not_external_peer_review": True,
         "simulated_venue_decisions": True,
         "review_panel": dict(review_metadata["review_panel"]),
@@ -609,6 +748,207 @@ def apply_review_record(
         "high_standard_decision": high_standard["decision"],
         "cas_zone_1_decision": cas_zone_1["decision"],
         "quality_gate": gate,
+    }
+
+
+def reuse_review_for_metadata_only_revision(
+    paper_id: str,
+    *,
+    root: str | Path,
+) -> dict[str, Any]:
+    """Carry a passing review across a narrowly verified metadata-only revision.
+
+    The operation never calls an LLM and never changes a score.  It compares a
+    baseline captured by :func:`start_revision` with the current manuscript and
+    support source fingerprints, reruns deterministic gates, then binds the old
+    review to the new immutable release snapshot.  Unknown or scientific
+    changes fail closed.
+    """
+
+    repo_root = Path(root).resolve()
+    payload = load_paper_metadata(paper_id, repo_root)
+    release = payload.get("writing_release")
+    release = release if isinstance(release, Mapping) else {}
+    candidate = release.get("review_carry_forward")
+    if not isinstance(candidate, Mapping):
+        raise ValueError(
+            "No verified review carry-forward baseline is available; start the "
+            "revision from a current ready gate or run a fresh review"
+        )
+    if candidate.get("schema_version") != REVIEW_CARRY_FORWARD_SCHEMA_VERSION:
+        raise ValueError("Unsupported review carry-forward baseline")
+    source_release = candidate.get("source_release")
+    if (
+        not isinstance(source_release, Mapping)
+        or source_release.get("status") != "ready"
+    ):
+        raise ValueError("Review carry-forward baseline is not a passing quality gate")
+
+    current = _review_workspace_fingerprints(paper_id, payload, repo_root)
+    comparisons = (
+        "review_content_sha256",
+        "registry_review_content_sha256",
+        "support_sources_sha256",
+    )
+    changed = [key for key in comparisons if candidate.get(key) != current.get(key)]
+    if changed:
+        labels = {
+            "review_content_sha256": "manuscript scientific/textual sources",
+            "registry_review_content_sha256": "review-significant registry metadata",
+            "support_sources_sha256": "support evidence sources",
+        }
+        raise ValueError(
+            "Fresh scientific review required; changed: "
+            + ", ".join(labels[key] for key in changed)
+        )
+
+    canonical_pdf = repo_root / str(
+        payload.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf"
+    )
+    if not canonical_pdf.is_file():
+        raise ValueError("Metadata-only review reuse requires a rebuilt canonical PDF")
+
+    support = payload.get("support")
+    support = support if isinstance(support, Mapping) else {}
+    publication = support.get("publication")
+    publication = publication if isinstance(publication, Mapping) else {}
+    package_sha256 = str(publication.get("package_sha256") or "")
+    zenodo = publication.get("zenodo")
+    zenodo = zenodo if isinstance(zenodo, Mapping) else {}
+    package_version = str(zenodo.get("version") or "")
+    current_version = str(payload.get("version") or "1.0.0")
+    if package_sha256 and package_version and package_version != current_version:
+        raise ValueError(
+            "Support package is still bound to the previous paper version; run "
+            "`zenodo prepare` before reusing the review"
+        )
+
+    support_audit = audit_manuscript_support(paper_id, root=repo_root)
+    blockers = list(support_audit_blockers(support_audit))
+    settings = load_registry(repo_root)
+    gate = settings.get("quality_gate")
+    gate = gate if isinstance(gate, Mapping) else {}
+    style_audit: dict[str, Any] | None = None
+    if bool(gate.get("require_manuscript_style_check", False)):
+        style_audit = audit_manuscript_style(
+            paper_id,
+            root=repo_root,
+            require_ai_declaration=bool(gate.get("require_ai_use_declaration", True)),
+        )
+        blockers.extend(
+            blocker
+            for blocker in manuscript_style_blockers(style_audit)
+            if blocker not in blockers
+        )
+    if blockers:
+        raise ValueError(
+            "Metadata-only review reuse failed deterministic checks: "
+            + "; ".join(blockers)
+        )
+
+    minimum_score = float(gate.get("minimum_score", 5.0))
+    try:
+        score = float(source_release.get("score"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Source review score is missing") from exc
+    if score < minimum_score:
+        raise ValueError("Source review no longer meets the configured score threshold")
+    venue_type = str(
+        source_release.get("venue_type") or payload.get("venue_type") or ""
+    )
+    decision_standard = str(gate.get("decision_standard") or venue_type)
+    decision = str(source_release.get("decision") or "")
+    allowed = decisions_for_standard(decision_standard, venue_type=venue_type)
+    minimum_decision = str(
+        gate.get(
+            "cas_zone_1_minimum_decision"
+            if decision_standard == CAS_ZONE_1_JOURNAL_VIEW
+            else (
+                "conference_minimum_decision"
+                if decision_standard == "conference"
+                else "journal_minimum_decision"
+            ),
+            "minor_revision",
+        )
+    )
+    if (
+        decision not in allowed
+        or minimum_decision not in allowed
+        or not decision_meets_standard_threshold(
+            decision,
+            minimum_decision,
+            decision_standard,
+            venue_type=venue_type,
+        )
+    ):
+        raise ValueError("Source review no longer meets the configured decision threshold")
+
+    reused_at = _now()
+    refreshed = deepcopy(dict(source_release))
+    refreshed.update(
+        {
+            "status": "ready",
+            "target_score": minimum_score,
+            "decision_standard": decision_standard,
+            "minimum_decision": minimum_decision,
+            "manuscript_snapshot_sha256": current["manuscript_snapshot_sha256"],
+            "review_content_sha256": current["review_content_sha256"],
+            "registry_review_content_sha256": current[
+                "registry_review_content_sha256"
+            ],
+            "manuscript_version": current_version,
+            "review_carry_forward": deepcopy(dict(candidate)),
+            "review_reuse": {
+                "classification": "author_or_release_metadata_only",
+                "carried_forward_at": reused_at,
+                "source_reviewed_at": source_release.get("reviewed_at"),
+                "source_manuscript_snapshot_sha256": candidate.get(
+                    "manuscript_snapshot_sha256"
+                ),
+                "current_manuscript_snapshot_sha256": current[
+                    "manuscript_snapshot_sha256"
+                ],
+                "review_content_sha256": current["review_content_sha256"],
+                "support_sources_sha256": current["support_sources_sha256"],
+                "llm_review_rerun": False,
+                "deterministic_checks_rerun": True,
+            },
+        }
+    )
+    refreshed.pop("unresolved_review_blockers", None)
+    if current["support_sources_sha256"] is None:
+        refreshed.pop("support_sources_sha256", None)
+    else:
+        refreshed["support_sources_sha256"] = current["support_sources_sha256"]
+    if re.fullmatch(r"[0-9a-f]{64}", package_sha256):
+        refreshed["support_package_sha256"] = package_sha256
+    else:
+        refreshed.pop("support_package_sha256", None)
+    payload["writing_release"] = refreshed
+    review_projection = payload.get("ara_llm_self_review")
+    if isinstance(review_projection, Mapping):
+        projected = deepcopy(dict(review_projection))
+        projected.setdefault(
+            "review_content_sha256", candidate.get("review_content_sha256")
+        )
+        projected["last_reused_at"] = reused_at
+        projected["last_reused_for_manuscript_snapshot_sha256"] = current[
+            "manuscript_snapshot_sha256"
+        ]
+        payload["ara_llm_self_review"] = projected
+    payload["status_updated_at"] = reused_at
+    write_paper_metadata(paper_id, payload, repo_root)
+    return {
+        "paper_id": paper_id,
+        "status": "ready",
+        "classification": "author_or_release_metadata_only",
+        "llm_review_rerun": False,
+        "manuscript_snapshot_sha256": current["manuscript_snapshot_sha256"],
+        "review_content_sha256": current["review_content_sha256"],
+        "support_sources_sha256": current["support_sources_sha256"],
+        "support_package_sha256": refreshed.get("support_package_sha256"),
+        "support_materials_audit": support_audit,
+        "manuscript_style_audit": style_audit,
     }
 
 
