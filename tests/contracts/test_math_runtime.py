@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -100,6 +101,59 @@ def test_host_relative_limits_are_not_reduced_by_scheduler_reservations(
     assert limits.memory_mib == 33_000
     assert limits.threads == 15
     assert limits.cpu_seconds == 4_500
+
+
+def test_portable_receipt_check_does_not_require_attempt_runtime(tmp_path) -> None:
+    runtime = _load(MATH_RUNTIME_PATH, "openlabs_math_runtime_portable_test")
+    profile_id = "sage-exact-v10.8"
+    profile = runtime._profile(profile_id)
+    source = tmp_path / "experiments" / "sage" / "proof_check.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("print('{}')\n", encoding="utf-8")
+    receipt = source.parent / "receipt.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema_version": runtime.RECEIPT_SCHEMA,
+                "status": "passed",
+                "profile_id": profile_id,
+                "profile_sha256": runtime._profile_sha256(profile_id, profile),
+                "evidence_class": profile["evidence_class"],
+                "prepared_runtime_sha256": "0" * 64,
+                "source": "experiments/sage/proof_check.py",
+                "inputs": [
+                    {
+                        "path": "experiments/sage/proof_check.py",
+                        "sha256": runtime._sha256(source),
+                    }
+                ],
+                "engines": [
+                    {
+                        "engine_id": "sage",
+                        "version": "10.8",
+                        "returncode": 0,
+                    }
+                ],
+                "resource_limits": runtime._limits(
+                    profile,
+                    profile["resource_limits"]["wall_seconds"],
+                ).to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert runtime.check_receipt(
+        tmp_path,
+        "experiments/sage/receipt.json",
+        replay=False,
+        portable=True,
+    ) == []
+    assert "sage-exact-v10.8.json" in runtime.check_receipt(
+        tmp_path,
+        "experiments/sage/receipt.json",
+        replay=False,
+    )[0]
 
 
 def test_amra_protocol_rejects_unreceipted_passed_computation(tmp_path) -> None:

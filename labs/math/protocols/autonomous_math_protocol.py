@@ -76,7 +76,12 @@ def _validate_receipts(workstream_path: Path, state: dict, *, replay: bool) -> l
         elif schema == COMPUTATION_RECEIPT_SCHEMA:
             errors.extend(
                 f"{item}: {error}"
-                for error in check_computation_receipt(root, relative, replay=replay)
+                for error in check_computation_receipt(
+                    root,
+                    relative,
+                    replay=replay,
+                    portable=not replay,
+                )
             )
         else:
             errors.append(f"{item}: unregistered mathematics receipt schema {schema!r}")

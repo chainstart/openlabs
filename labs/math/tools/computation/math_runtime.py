@@ -671,6 +671,7 @@ def check_receipt(
     receipt: str,
     *,
     replay: bool,
+    portable: bool = False,
     timeout: int = 600,
 ) -> list[str]:
     root = workspace.expanduser().resolve()
@@ -681,11 +682,16 @@ def check_receipt(
     try:
         value = _read_object(path)
         profile_id = str(value.get("profile_id") or "")
-        prepared, profile, prepared_path = _prepared_runtime(
-            root,
-            profile_id,
-            timeout=timeout,
-        )
+        profile = _profile(profile_id)
+        if portable:
+            prepared = None
+            prepared_path = None
+        else:
+            prepared, profile, prepared_path = _prepared_runtime(
+                root,
+                profile_id,
+                timeout=timeout,
+            )
     except (OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError) as exc:
         return [str(exc)]
     errors: list[str] = []
@@ -697,8 +703,27 @@ def check_receipt(
         errors.append("mathematics computation receipt profile differs")
     if value.get("evidence_class") != profile["evidence_class"]:
         errors.append("mathematics computation receipt evidence class differs")
-    if value.get("prepared_runtime_sha256") != _sha256(prepared_path):
+    prepared_runtime_sha256 = value.get("prepared_runtime_sha256")
+    if portable:
+        if (
+            not isinstance(prepared_runtime_sha256, str)
+            or len(prepared_runtime_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in prepared_runtime_sha256)
+        ):
+            errors.append("mathematics computation prepared runtime hash is invalid")
+    elif value.get("prepared_runtime_sha256") != _sha256(prepared_path):
         errors.append("mathematics computation prepared runtime differs")
+    engines = value.get("engines")
+    if not isinstance(engines, list) or not engines:
+        errors.append("mathematics computation receipt has no engine record")
+    elif any(
+        not isinstance(engine, dict)
+        or engine.get("returncode") != 0
+        or not isinstance(engine.get("engine_id"), str)
+        or not isinstance(engine.get("version"), str)
+        for engine in engines
+    ):
+        errors.append("mathematics computation receipt has an invalid engine record")
     raw_inputs = value.get("inputs")
     if not isinstance(raw_inputs, list) or not raw_inputs:
         errors.append("mathematics computation receipt has no input closure")
@@ -725,7 +750,11 @@ def check_receipt(
     ):
         errors.append("mathematics computation input closure omits its source")
     receipt_limits = value.get("resource_limits")
-    prepared_limits = prepared.get("resource_limits")
+    prepared_limits = (
+        _limits(profile, int(profile["resource_limits"]["wall_seconds"])).to_dict()
+        if portable
+        else prepared.get("resource_limits")
+    )
     if not isinstance(receipt_limits, dict) or not isinstance(prepared_limits, dict):
         errors.append("mathematics computation resource limits are missing")
     elif any(
@@ -745,6 +774,8 @@ def check_receipt(
         )
     ):
         errors.append("mathematics computation resource limits exceed the prepared ceiling")
+    if replay and portable:
+        errors.append("portable mathematics receipt checks cannot replay")
     if replay and not errors:
         inputs = [
             str(item["path"])
