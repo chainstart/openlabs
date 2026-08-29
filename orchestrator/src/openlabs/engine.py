@@ -947,6 +947,20 @@ def _worker_unit_name(task: Mapping[str, Any]) -> str:
     return f"openlabs-worker-{digest}.service"
 
 
+def _user_systemd_available() -> bool:
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return False
+    completed = subprocess.run(
+        [systemctl, "--user", "show-environment"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
 def _launch_worker(
     *,
     task: Mapping[str, Any],
@@ -959,10 +973,10 @@ def _launch_worker(
     """Launch a worker outside the short-lived tick service cgroup when supervised."""
 
     command = [sys.executable, "-m", "openlabs", "_worker", str(job_path)]
-    if os.environ.get("INVOCATION_ID"):
+    if os.environ.get("INVOCATION_ID") or _user_systemd_available():
         systemd_run = shutil.which("systemd-run")
         if systemd_run is None:
-            raise RuntimeError("systemd tick requires systemd-run for detached workers")
+            raise RuntimeError("systemd worker supervision requires systemd-run")
         unit = _worker_unit_name(task)
         reserved = task_resources(task)
         cpu_quota_threads = max(reserved.cpu_threads, int(cpu_ceiling_threads or 0))
