@@ -38,7 +38,12 @@ from paper_writing.review import (
     LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     MATERIALS_REVIEWER_ROLE,
     MATHEMATICS_REVIEWER_ROLE,
+    PHYSICS_HIGHEST_TIER_BENCHMARK_ID,
+    PHYSICS_HIGHEST_TIER_VENUES,
     PHYSICS_REVIEWER_ROLE,
+    PHYSICS_SIMULATED_REVIEW_STAGES,
+    PHYSICS_VENUE_CRITERIA,
+    PHYSICS_VENUE_CRITERION_ROUTES,
     QUANT_FINANCE_REVIEWER_ROLE,
     RECOMMENDATION_SCHEMA_VERSION,
     REVIEWER_PROVIDER_CONTRACTS,
@@ -80,6 +85,87 @@ def _recommendation_schema(decisions: tuple[str, ...]) -> dict[str, Any]:
     )
 
 
+def _physics_highest_tier_schema() -> dict[str, Any]:
+    venue_properties: dict[str, Any] = {}
+    for venue in PHYSICS_HIGHEST_TIER_VENUES:
+        criteria = PHYSICS_VENUE_CRITERIA[venue]
+        venue_properties[venue] = _object_schema(
+            {
+                "score": {"type": "integer", "minimum": 1, "maximum": 10},
+                "decision": {"type": "string", "enum": list(JOURNAL_DECISIONS)},
+                "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                "simulated_stage": {
+                    "type": "string",
+                    "enum": list(PHYSICS_SIMULATED_REVIEW_STAGES),
+                },
+                "criterion_route": {
+                    "type": "string",
+                    "enum": list(PHYSICS_VENUE_CRITERION_ROUTES[venue]),
+                },
+                "criteria_scores": _object_schema(
+                    {
+                        criterion: {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                        }
+                        for criterion in criteria
+                    },
+                    list(criteria),
+                ),
+                "rationale": _string_schema(),
+            },
+            [
+                "score",
+                "decision",
+                "confidence",
+                "simulated_stage",
+                "criterion_route",
+                "criteria_scores",
+                "rationale",
+            ],
+        )
+    return _object_schema(
+        {
+            "benchmark_id": {
+                "type": "string",
+                "enum": [PHYSICS_HIGHEST_TIER_BENCHMARK_ID],
+            },
+            "benchmark_venues": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": list(PHYSICS_HIGHEST_TIER_VENUES),
+                },
+                "minItems": len(PHYSICS_HIGHEST_TIER_VENUES),
+                "maxItems": len(PHYSICS_HIGHEST_TIER_VENUES),
+                "uniqueItems": True,
+            },
+            "best_fit_venue": {
+                "type": "string",
+                "enum": list(PHYSICS_HIGHEST_TIER_VENUES),
+            },
+            "score": {"type": "integer", "minimum": 1, "maximum": 10},
+            "decision": {"type": "string", "enum": list(JOURNAL_DECISIONS)},
+            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+            "rationale": _string_schema(),
+            "venue_reviews": _object_schema(
+                venue_properties, list(PHYSICS_HIGHEST_TIER_VENUES)
+            ),
+        },
+        [
+            "benchmark_id",
+            "benchmark_venues",
+            "best_fit_venue",
+            "score",
+            "decision",
+            "confidence",
+            "rationale",
+            "venue_reviews",
+        ],
+    )
+
+
 def _judgment_schema(role: str) -> dict[str, Any]:
     score_properties = {
         key: {"type": "integer", "minimum": 1, "maximum": 10}
@@ -98,7 +184,7 @@ def _judgment_schema(role: str) -> dict[str, Any]:
         }
     elif role == PHYSICS_REVIEWER_ROLE:
         recommendation_properties = {
-            LEADING_PHYSICS_JOURNALS_VIEW: recommendation,
+            LEADING_PHYSICS_JOURNALS_VIEW: _physics_highest_tier_schema(),
             CAS_ZONE_1_JOURNAL_VIEW: recommendation,
         }
     elif role == QUANT_FINANCE_REVIEWER_ROLE:

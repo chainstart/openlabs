@@ -127,7 +127,8 @@ the review packet whether Lean validation was reused, incremental, or full.
 
 ## Select the rubric
 
-Read `references/rubrics.md` completely and route from the registry's literal domain:
+Read `references/rubrics.md` completely and route from the registry's literal domain. For
+physics, also read `references/physics-highest-tier-venues.md` completely:
 
 - `ai`, `cs`, `se`: `cs_top_tier`, with independent `top_conference` and
   `cas_zone_1_journal` recommendations;
@@ -136,8 +137,8 @@ Read `references/rubrics.md` completely and route from the registry's literal do
   `cas_zone_1_journal` recommendations and no conference view;
 - `materials`: `materials`, with `leading_materials_journals` and
   `cas_zone_1_journal` recommendations;
-- `physics`: `physics`, with the `leading_physics_journals` view calibrated to the same
-  exceptional selectivity as the four-leading-mathematics-journal benchmark, plus an independent
+- `physics`: `physics`, with separate scored simulations for *Physical Review Letters*,
+  *Physical Review X*, and *Nature Physics* inside `leading_physics_journals`, plus an independent
   `cas_zone_1_journal` recommendation;
 - `quant`: `quant_finance`, with `leading_quant_finance_journals` and
   `cas_zone_1_journal` recommendations;

@@ -24,7 +24,10 @@ from paper_writing.review import (
     MATH_FOUR_JOURNALS_RUBRIC_ID,
     MATHEMATICS_REVIEWER_ROLE,
     PHYSICS_LEADING_JOURNALS_RUBRIC_ID,
+    PHYSICS_HIGHEST_TIER_BENCHMARK_ID,
+    PHYSICS_HIGHEST_TIER_VENUES,
     PHYSICS_REVIEWER_ROLE,
+    PHYSICS_VENUE_CRITERIA,
     QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID,
     QUANT_FINANCE_REVIEWER_ROLE,
     RECOMMENDATION_SCHEMA_VERSION,
@@ -43,6 +46,39 @@ ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "validate_review.py"
 AGGREGATOR = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "aggregate_panel.py"
 CLAUDE_REVIEWER = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "run_claude_reviewer.py"
+
+
+def _physics_highest_tier_recommendation() -> dict:
+    scores = {
+        "physical_review_letters": 6,
+        "physical_review_x": 5,
+        "nature_physics": 4,
+    }
+    venue_reviews = {
+        venue: {
+            "score": scores[venue],
+            "decision": "major_revision",
+            "confidence": "high",
+            "simulated_stage": "external_review",
+            "criterion_route": "none",
+            "criteria_scores": {
+                criterion: scores[venue]
+                for criterion in PHYSICS_VENUE_CRITERIA[venue]
+            },
+            "rationale": f"The manuscript does not yet meet the {venue} criteria.",
+        }
+        for venue in PHYSICS_HIGHEST_TIER_VENUES
+    }
+    return {
+        "benchmark_id": PHYSICS_HIGHEST_TIER_BENCHMARK_ID,
+        "benchmark_venues": list(PHYSICS_HIGHEST_TIER_VENUES),
+        "best_fit_venue": "physical_review_letters",
+        "score": 6,
+        "decision": "major_revision",
+        "confidence": "high",
+        "rationale": "PRL is the least distant explicit highest-tier venue.",
+        "venue_reviews": venue_reviews,
+    }
 
 
 def test_review_safe_registry_removes_all_review_projections() -> None:
@@ -98,11 +134,7 @@ def _review(*, paper_id: str = "20260804-ai-llm-review-test", role: str = "cs_to
         }
     elif role == PHYSICS_REVIEWER_ROLE:
         recommendations = {
-            LEADING_PHYSICS_JOURNALS_VIEW: {
-                "decision": "major_revision",
-                "confidence": "high",
-                "rationale": "The physics evidence package needs stronger validation.",
-            },
+            LEADING_PHYSICS_JOURNALS_VIEW: _physics_highest_tier_recommendation(),
             CAS_ZONE_1_JOURNAL_VIEW: {
                 "decision": "major_revision",
                 "confidence": "high",
@@ -413,6 +445,24 @@ def test_physics_review_requires_its_domain_view() -> None:
         error.startswith(f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW}.decision")
         for error in errors
     )
+
+
+def test_physics_review_requires_all_named_venue_scores_and_best_fit() -> None:
+    review = _review(role=PHYSICS_REVIEWER_ROLE)
+    benchmark = review["recommendations"][LEADING_PHYSICS_JOURNALS_VIEW]
+    benchmark["venue_reviews"].pop("nature_physics")
+
+    errors = validate_review_record(review, expected_role=PHYSICS_REVIEWER_ROLE)
+
+    assert any("venue_reviews must contain exactly" in error for error in errors)
+
+    review = _review(role=PHYSICS_REVIEWER_ROLE)
+    review["recommendations"][LEADING_PHYSICS_JOURNALS_VIEW][
+        "best_fit_venue"
+    ] = "physical_review_x"
+    errors = validate_review_record(review, expected_role=PHYSICS_REVIEWER_ROLE)
+
+    assert any("best_fit_venue must be physical_review_letters" in error for error in errors)
 
 
 def test_verified_cas_zone_1_target_requires_classification_provenance() -> None:

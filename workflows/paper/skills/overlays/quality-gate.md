@@ -117,10 +117,11 @@ Route the registry domain exactly as follows:
 - `materials`: a leading selective materials-journal benchmark using rubric ID
   `openlabs.paper-writing.materials-leading-journals.v1`, with `leading_materials_journals` plus
   `cas_zone_1_journal` opinions;
-- `physics`: a highest-tier physics benchmark calibrated to the same exceptional selectivity as
-  the mathematics four-journal standard, using rubric ID
-  `openlabs.paper-writing.physics-math-four-equivalent.v1`, with
-  `leading_physics_journals` plus `cas_zone_1_journal` opinions;
+- `physics`: the explicit highest-tier original-physics set *Physical Review Letters*,
+  *Physical Review X*, and *Nature Physics*, using rubric ID
+  `openlabs.paper-writing.physics-explicit-highest-tier-venues.v1`; record a score and simulated
+  decision for every named venue inside `leading_physics_journals`, plus the independent
+  `cas_zone_1_journal` opinion;
 - `quant`: a leading quantitative-finance/financial-econometrics journal benchmark using rubric ID
   `openlabs.paper-writing.quant-finance-leading-journals.v1`, with
   `leading_quant_finance_journals` plus `cas_zone_1_journal` opinions.

@@ -34,7 +34,10 @@ from paper_writing.review import (
     LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     MATERIALS_REVIEWER_ROLE,
     MATHEMATICS_REVIEWER_ROLE,
+    PHYSICS_HIGHEST_TIER_BENCHMARK_ID,
+    PHYSICS_HIGHEST_TIER_VENUES,
     PHYSICS_REVIEWER_ROLE,
+    PHYSICS_VENUE_CRITERIA,
     QUANT_FINANCE_REVIEWER_ROLE,
     REVIEW_DECISION_AGGREGATION,
     REVIEW_PANEL_SIZE,
@@ -130,6 +133,66 @@ def _aggregate_recommendation(
         "decision": decision,
         "confidence": _least_confident(entries),
         "rationale": rationale,
+    }
+
+
+def _aggregate_physics_highest_tier(
+    entries: list[dict[str, Any]], *, single_reviewer: bool
+) -> dict[str, Any]:
+    """Aggregate each explicit venue, then derive the deterministic best fit."""
+
+    venue_reviews: dict[str, dict[str, Any]] = {}
+    for venue in PHYSICS_HIGHEST_TIER_VENUES:
+        sources = [entry["venue_reviews"][venue] for entry in entries]
+        recommendation = _aggregate_recommendation(
+            sources,
+            order=JOURNAL_DECISIONS,
+            single_reviewer=single_reviewer,
+        )
+        decisions = [str(source["decision"]) for source in sources]
+        strictest = _strictest_decision(decisions, JOURNAL_DECISIONS)
+        source = next(item for item in sources if item["decision"] == strictest)
+        recommendation.update(
+            {
+                "score": _minimum([int(item["score"]) for item in sources]),
+                "simulated_stage": source["simulated_stage"],
+                "criterion_route": source["criterion_route"],
+                "criteria_scores": {
+                    criterion: _minimum(
+                        [
+                            int(item["criteria_scores"][criterion])
+                            for item in sources
+                        ]
+                    )
+                    for criterion in PHYSICS_VENUE_CRITERIA[venue]
+                },
+            }
+        )
+        venue_reviews[venue] = recommendation
+
+    candidates = [
+        (
+            JOURNAL_DECISIONS.index(str(venue_reviews[venue]["decision"])),
+            -int(venue_reviews[venue]["score"]),
+            index,
+            venue,
+        )
+        for index, venue in enumerate(PHYSICS_HIGHEST_TIER_VENUES)
+    ]
+    _, _, _, best_fit = min(candidates)
+    best = venue_reviews[best_fit]
+    return {
+        "benchmark_id": PHYSICS_HIGHEST_TIER_BENCHMARK_ID,
+        "benchmark_venues": list(PHYSICS_HIGHEST_TIER_VENUES),
+        "best_fit_venue": best_fit,
+        "score": best["score"],
+        "decision": best["decision"],
+        "confidence": best["confidence"],
+        "rationale": (
+            f"Best fit among the fixed highest-tier physics venues is {best_fit}. "
+            f"{best['rationale']}"
+        ),
+        "venue_reviews": venue_reviews,
     }
 
 
@@ -323,9 +386,8 @@ def main(argv: list[str] | None = None) -> int:
     elif expected_role == PHYSICS_REVIEWER_ROLE:
         high_entries = [entry[LEADING_PHYSICS_JOURNALS_VIEW] for entry in recommendations]
         final_recommendations = {
-            LEADING_PHYSICS_JOURNALS_VIEW: _aggregate_recommendation(
+            LEADING_PHYSICS_JOURNALS_VIEW: _aggregate_physics_highest_tier(
                 high_entries,
-                order=JOURNAL_DECISIONS,
                 single_reviewer=single_reviewer,
             )
         }

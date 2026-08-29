@@ -44,7 +44,7 @@ CS_TOP_TIER_RUBRIC_ID = "ara.revision-agent.cs-top-tier.v1"
 MATH_FOUR_JOURNALS_RUBRIC_ID = "ara.paper-writing.math-four-journals.v1"
 MATERIALS_LEADING_JOURNALS_RUBRIC_ID = "openlabs.paper-writing.materials-leading-journals.v1"
 PHYSICS_LEADING_JOURNALS_RUBRIC_ID = (
-    "openlabs.paper-writing.physics-math-four-equivalent.v1"
+    "openlabs.paper-writing.physics-explicit-highest-tier-venues.v1"
 )
 QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID = (
     "openlabs.paper-writing.quant-finance-leading-journals.v1"
@@ -59,6 +59,62 @@ LEADING_QUANT_FINANCE_JOURNALS_VIEW = "leading_quant_finance_journals"
 CAS_ZONE_1_JOURNAL_VIEW = "cas_zone_1_journal"
 CAS_ZONE_1_SCOPE = "major_category"
 CAS_ZONE_1_BASIS_MODES = ("generic_standard", "verified_target")
+PHYSICS_HIGHEST_TIER_BENCHMARK_ID = (
+    "openlabs.physics-highest-tier-original-research.v1"
+)
+PHYSICS_HIGHEST_TIER_VENUES = (
+    "physical_review_letters",
+    "physical_review_x",
+    "nature_physics",
+)
+PHYSICS_SIMULATED_REVIEW_STAGES = ("editorial_screen", "external_review")
+PHYSICS_VENUE_CRITERIA = {
+    "physical_review_letters": (
+        "novelty",
+        "importance",
+        "broad_interest",
+        "presentation",
+        "standalone_letter_fit",
+    ),
+    "physical_review_x": (
+        "innovation",
+        "quality",
+        "long_term_impact",
+        "broad_physics_interest",
+        "criterion_route_strength",
+    ),
+    "nature_physics": (
+        "originality",
+        "fundamental_or_applied_importance",
+        "expert_excitement",
+        "physics_breadth",
+        "long_term_importance",
+    ),
+}
+PHYSICS_VENUE_CRITERION_ROUTES = {
+    "physical_review_letters": (
+        "opens_new_area",
+        "essential_step_critical_problem",
+        "high_impact_method",
+        "unusual_intrinsic_interest",
+        "none",
+    ),
+    "physical_review_x": (
+        "fundamental_discovery",
+        "fast_topic_landmark",
+        "new_connections",
+        "important_new_direction",
+        "state_of_art_advance",
+        "new_paradigm",
+        "community_tool",
+        "none",
+    ),
+    "nature_physics": (
+        "important_fundamental_advance",
+        "important_applied_or_technological_advance",
+        "none",
+    ),
+}
 
 RUBRIC_IDS_BY_ROLE = {
     CS_TOP_TIER_REVIEWER_ROLE: CS_TOP_TIER_RUBRIC_ID,
@@ -312,6 +368,120 @@ def _validate_recommendation_entry(
         errors.append(f"{path}.rationale must be a non-empty string")
 
 
+def _physics_best_fit(venue_reviews: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]] | None:
+    """Return the deterministic best-fit venue from complete simulated reviews."""
+
+    candidates: list[tuple[int, int, int, str, Mapping[str, Any]]] = []
+    for venue_index, venue in enumerate(PHYSICS_HIGHEST_TIER_VENUES):
+        entry = _mapping(venue_reviews.get(venue))
+        decision = entry.get("decision")
+        score = entry.get("score")
+        if (
+            decision not in JOURNAL_DECISIONS
+            or isinstance(score, bool)
+            or not isinstance(score, int)
+        ):
+            return None
+        candidates.append(
+            (JOURNAL_DECISIONS.index(decision), -score, venue_index, venue, entry)
+        )
+    if not candidates:
+        return None
+    _, _, _, venue, entry = min(candidates)
+    return venue, entry
+
+
+def _validate_physics_highest_tier(
+    entry: Mapping[str, Any],
+    *,
+    path: str,
+    errors: list[str],
+) -> None:
+    """Validate journal-specific highest-tier physics scores and decisions."""
+
+    _validate_recommendation_entry(
+        entry,
+        path=path,
+        decisions=JOURNAL_DECISIONS,
+        errors=errors,
+    )
+    if entry.get("benchmark_id") != PHYSICS_HIGHEST_TIER_BENCHMARK_ID:
+        errors.append(
+            f"{path}.benchmark_id must be {PHYSICS_HIGHEST_TIER_BENCHMARK_ID}"
+        )
+    if entry.get("benchmark_venues") != list(PHYSICS_HIGHEST_TIER_VENUES):
+        errors.append(
+            f"{path}.benchmark_venues must list exactly: "
+            f"{', '.join(PHYSICS_HIGHEST_TIER_VENUES)}"
+        )
+    score = entry.get("score")
+    if isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 10:
+        errors.append(f"{path}.score must be an integer from 1 to 10")
+
+    venue_reviews = _mapping(entry.get("venue_reviews"))
+    if set(venue_reviews) != set(PHYSICS_HIGHEST_TIER_VENUES):
+        errors.append(
+            f"{path}.venue_reviews must contain exactly: "
+            f"{', '.join(PHYSICS_HIGHEST_TIER_VENUES)}"
+        )
+    for venue in PHYSICS_HIGHEST_TIER_VENUES:
+        venue_path = f"{path}.venue_reviews.{venue}"
+        review = _mapping(venue_reviews.get(venue))
+        _validate_recommendation_entry(
+            review,
+            path=venue_path,
+            decisions=JOURNAL_DECISIONS,
+            errors=errors,
+        )
+        venue_score = review.get("score")
+        if (
+            isinstance(venue_score, bool)
+            or not isinstance(venue_score, int)
+            or not 1 <= venue_score <= 10
+        ):
+            errors.append(f"{venue_path}.score must be an integer from 1 to 10")
+        if review.get("simulated_stage") not in PHYSICS_SIMULATED_REVIEW_STAGES:
+            errors.append(
+                f"{venue_path}.simulated_stage must be one of: "
+                f"{', '.join(PHYSICS_SIMULATED_REVIEW_STAGES)}"
+            )
+        routes = PHYSICS_VENUE_CRITERION_ROUTES[venue]
+        if review.get("criterion_route") not in routes:
+            errors.append(
+                f"{venue_path}.criterion_route must be one of: {', '.join(routes)}"
+            )
+        criteria_scores = _mapping(review.get("criteria_scores"))
+        expected_criteria = PHYSICS_VENUE_CRITERIA[venue]
+        if set(criteria_scores) != set(expected_criteria):
+            errors.append(
+                f"{venue_path}.criteria_scores must contain exactly: "
+                f"{', '.join(expected_criteria)}"
+            )
+        for criterion in expected_criteria:
+            value = criteria_scores.get(criterion)
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 10:
+                errors.append(
+                    f"{venue_path}.criteria_scores.{criterion} must be an integer "
+                    "from 1 to 10"
+                )
+
+    best_fit = _physics_best_fit(venue_reviews)
+    if best_fit is not None:
+        best_venue, best_entry = best_fit
+        if entry.get("best_fit_venue") != best_venue:
+            errors.append(f"{path}.best_fit_venue must be {best_venue}")
+        if entry.get("decision") != best_entry.get("decision"):
+            errors.append(
+                f"{path}.decision must match the best-fit venue decision "
+                f"{best_entry.get('decision')}"
+            )
+        if entry.get("score") != best_entry.get("score"):
+            errors.append(
+                f"{path}.score must match the best-fit venue score "
+                f"{best_entry.get('score')}"
+            )
+
+
 def validate_review_record(
     payload: Any,
     *,
@@ -541,10 +711,9 @@ def validate_review_record(
                 )
     elif recommendation_role == PHYSICS_REVIEWER_ROLE:
         leading_physics = _mapping(recommendations.get(LEADING_PHYSICS_JOURNALS_VIEW))
-        _validate_recommendation_entry(
+        _validate_physics_highest_tier(
             leading_physics,
             path=f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW}",
-            decisions=JOURNAL_DECISIONS,
             errors=errors,
         )
         for forbidden in (
@@ -1095,22 +1264,65 @@ def validate_review_panel_files(
                     f"{decision_aggregation} {expected}"
                 )
     elif role == PHYSICS_REVIEWER_ROLE:
-        values = [
-            _mapping(
-                _mapping(review.get("recommendations")).get(LEADING_PHYSICS_JOURNALS_VIEW)
-            ).get("decision")
-            for review in reviewer_payloads
-        ]
-        if all(value in JOURNAL_DECISIONS for value in values):
-            expected = _aggregate_decision(values, JOURNAL_DECISIONS, decision_aggregation)
-            actual = _mapping(final_recommendations.get(LEADING_PHYSICS_JOURNALS_VIEW)).get(
-                "decision"
-            )
-            if actual != expected:
-                errors.append(
-                    f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW}.decision must equal "
-                    f"{decision_aggregation} {expected}"
+        final_physics = _mapping(
+            final_recommendations.get(LEADING_PHYSICS_JOURNALS_VIEW)
+        )
+        final_venues = _mapping(final_physics.get("venue_reviews"))
+        for venue in PHYSICS_HIGHEST_TIER_VENUES:
+            source_entries = [
+                _mapping(
+                    _mapping(
+                        _mapping(review.get("recommendations")).get(
+                            LEADING_PHYSICS_JOURNALS_VIEW
+                        )
+                    ).get("venue_reviews")
+                ).get(venue)
+                for review in reviewer_payloads
+            ]
+            decisions = [_mapping(item).get("decision") for item in source_entries]
+            if all(value in JOURNAL_DECISIONS for value in decisions):
+                expected_decision = _aggregate_decision(
+                    decisions, JOURNAL_DECISIONS, decision_aggregation
                 )
+                actual_decision = _mapping(final_venues.get(venue)).get("decision")
+                if actual_decision != expected_decision:
+                    errors.append(
+                        f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW}."
+                        f"venue_reviews.{venue}.decision must equal "
+                        f"{decision_aggregation} {expected_decision}"
+                    )
+            scores = [_mapping(item).get("score") for item in source_entries]
+            if all(
+                isinstance(value, int) and not isinstance(value, bool)
+                for value in scores
+            ):
+                expected_score = _aggregate_score(scores, score_aggregation)
+                actual_score = _mapping(final_venues.get(venue)).get("score")
+                if actual_score != expected_score:
+                    errors.append(
+                        f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW}."
+                        f"venue_reviews.{venue}.score must equal "
+                        f"{score_aggregation} {expected_score}"
+                    )
+            final_criteria = _mapping(
+                _mapping(final_venues.get(venue)).get("criteria_scores")
+            )
+            for criterion in PHYSICS_VENUE_CRITERIA[venue]:
+                values = [
+                    _mapping(_mapping(item).get("criteria_scores")).get(criterion)
+                    for item in source_entries
+                ]
+                if all(
+                    isinstance(value, int) and not isinstance(value, bool)
+                    for value in values
+                ):
+                    expected_score = _aggregate_score(values, score_aggregation)
+                    if final_criteria.get(criterion) != expected_score:
+                        errors.append(
+                            f"recommendations.{LEADING_PHYSICS_JOURNALS_VIEW}."
+                            f"venue_reviews.{venue}.criteria_scores.{criterion} "
+                            f"must equal {score_aggregation} {expected_score}"
+                        )
     elif role == QUANT_FINANCE_REVIEWER_ROLE:
         values = [
             _mapping(
@@ -1172,7 +1384,7 @@ def review_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
             _mapping(recommendations.get(TOP_CONFERENCE_VIEW)).get("seven_point")
         )
     cas_zone_1 = _mapping(recommendations.get(CAS_ZONE_1_JOURNAL_VIEW))
-    return {
+    summary = {
         "paper_id": metadata.get("paper_id"),
         "reviewer_role": reviewer_role,
         "rubric_id": metadata.get("rubric_id"),
@@ -1183,3 +1395,12 @@ def review_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
         "panel_size": _mapping(metadata.get("review_panel")).get("panel_size"),
         "score_aggregation": _mapping(metadata.get("review_panel")).get("score_aggregation"),
     }
+    if reviewer_role == PHYSICS_REVIEWER_ROLE:
+        summary["high_standard_score"] = high_standard.get("score")
+        summary["high_standard_best_fit_venue"] = high_standard.get("best_fit_venue")
+        venue_reviews = _mapping(high_standard.get("venue_reviews"))
+        summary["high_standard_venue_decisions"] = {
+            venue: _mapping(venue_reviews.get(venue)).get("decision")
+            for venue in PHYSICS_HIGHEST_TIER_VENUES
+        }
+    return summary

@@ -37,9 +37,11 @@ major-category partition.
 
 Publication-level completion requires a current novelty audit, no unsupported central claim, and a
 fresh isolated review under the configured one- or two-reviewer contract. The physics high-standard
-rubric is calibrated to the same exceptional selectivity as the four-leading-mathematics-journal
-benchmark: a merely sound specialist result must not receive a top-tier score. Require conservative
-scores of at least soundness 8, novelty 7, significance 7, and overall 7, a positive CAS
+rubric separately simulates *Physical Review Letters*, *Physical Review X*, and *Nature Physics*;
+these explicit venues operationalize the exceptional selectivity comparison with the
+four-leading-mathematics-journal benchmark. A merely sound specialist result must not receive a
+top-tier score. Require conservative scores of at least soundness 8, novelty 7, significance 7,
+and overall 7, a positive CAS
 major-category Zone 1 view, and no scientific blocker. A named
 journal's classification and scope must be verified at review time; do not infer them from a stale
 list. After a passing gate, run `paper-writing zenodo release` for the exact prepared, hash-bound

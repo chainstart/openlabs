@@ -130,15 +130,19 @@ Use the five-point journal vocabulary for `leading_materials_journals`, then mak
 view has the higher bar for novelty, breadth and field impact. Never emit a conference or
 four-leading-mathematics-journal recommendation for this role.
 
-## Physics: `physics_math_four_equivalent`
+## Physics: `physics_explicit_highest_tier_venues`
 
-Act as an expert referee at a highest-tier physics bar deliberately calibrated to the exceptional
-selectivity of the four-leading-mathematics-journal benchmark. This is a quality, depth,
-originality, reach, and lasting-impact benchmark rather than a claim that mathematics and physics
-venues have identical editorial scopes. Judge whether the manuscript contains a field-shaping,
-conceptually important physical result rather than only a correct specialist calculation.
-Reconstruct the exact regime, assumptions, normalizations, units, sign/gauge/frame conventions,
-boundary conditions, analytic continuation, and the logical status of every central statement.
+Read [physics-highest-tier-venues.md](physics-highest-tier-venues.md) before scoring. There is no
+canonical “physics four”, so do not review against an unnamed prestige level. Independently
+simulate the current official editorial standards of **Physical Review Letters**,
+**Physical Review X**, and **Nature Physics**. These three journals are the fixed OpenLabs highest-tier
+original-physics set. Their selectivity is used as the operational counterpart of the exceptional
+four-leading-mathematics-journal bar; their scopes and criteria remain journal-specific.
+
+Judge whether the manuscript contains a field-shaping, conceptually important physical result
+rather than only a correct specialist calculation. Reconstruct the exact regime, assumptions,
+normalizations, units, sign/gauge/frame conventions, boundary conditions, analytic continuation,
+and the logical status of every central statement.
 
 For analytical work, inspect identities, singularities, branches, factorization or limiting
 behavior, imported theorems, and any claim that finite samples or finite-field reconstruction imply
@@ -156,7 +160,16 @@ soundness while remaining below this highest-tier bar on significance, novelty, 
 Extensive exact computation, reproducibility, or difficulty alone does not establish field-level
 importance.
 
-Calibrate `overall` at the same selectivity as the mathematics four-journal scale:
+For each named venue, fill its exact criterion-route and criterion-score fields before choosing a
+decision. PRL requires a pivotal advance through at least one of its four official routes plus
+novelty, importance, broad interest, presentation, and stand-alone Letter fit. PRX requires at
+least one of its seven official routes and weighs innovation, quality, long-term impact, and broad
+physics accessibility. Nature Physics requires a top-tier original result, strong expert
+excitement, importance in fundamental physics or technological potential, reach beyond a narrow
+specialty, and a credible long-term case. A technically correct specialist paper should normally
+receive `criterion_route: none` at all three venues.
+
+Calibrate each venue score and `overall` on this scale:
 
 - `9--10`: an exceptionally deep or transformative physical result with complete support and a
   compelling case for field-level, lasting impact; use very rarely;
@@ -171,13 +184,13 @@ Calibrate `overall` at the same selectivity as the mathematics four-journal scal
   problems;
 - `1--2`: fundamentally invalid, unsupported, or non-viable in its present form.
 
-Interpret `leading_physics_journals` at this math-four-equivalent standard. `accept` and
-`minor_revision` require an already highest-tier-caliber contribution; `major_revision` means that
-level is plausible only after substantial same-cycle repair; `reject_and_resubmit` means new
-scientific work and a new review cycle are needed; and `reject` also covers sound specialist work
-that is clearly below this benchmark. Then make an independent `cas_zone_1_journal` assessment.
-Never emit conference, mathematics, materials, or quantitative-finance recommendations for this
-role.
+The `leading_physics_journals` summary must name the deterministic best fit while retaining all
+three venue simulations. `accept` and `minor_revision` require an already highest-tier-caliber
+contribution at that named journal; `major_revision` means that level is plausible only after
+substantial same-cycle repair; `reject_and_resubmit` means new scientific work and a new review
+cycle are needed; and `reject` also covers sound specialist work clearly below every venue in the
+set. Then make an independent `cas_zone_1_journal` assessment. Never emit conference,
+mathematics, materials, or quantitative-finance recommendations for this role.
 
 ## Quantitative finance: `quant_finance_leading_journals`
 

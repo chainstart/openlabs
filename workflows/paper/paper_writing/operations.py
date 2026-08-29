@@ -33,6 +33,7 @@ from paper_writing.review import (
     LEADING_PHYSICS_JOURNALS_VIEW,
     LEADING_QUANT_FINANCE_JOURNALS_VIEW,
     MATERIALS_REVIEWER_ROLE,
+    PHYSICS_HIGHEST_TIER_VENUES,
     PHYSICS_REVIEWER_ROLE,
     QUANT_FINANCE_REVIEWER_ROLE,
     TOP_CONFERENCE_VIEW,
@@ -571,6 +572,19 @@ def apply_review_record(
         "review_panel": dict(review_metadata["review_panel"]),
         "source": review_relative,
     }
+    if expected_role == PHYSICS_REVIEWER_ROLE:
+        venue_reviews = high_standard.get("venue_reviews")
+        venue_reviews = venue_reviews if isinstance(venue_reviews, Mapping) else {}
+        metadata["ara_llm_self_review"].update(
+            {
+                "high_standard_score": high_standard.get("score"),
+                "high_standard_best_fit_venue": high_standard.get("best_fit_venue"),
+                "high_standard_venue_reviews": {
+                    venue: dict(venue_reviews.get(venue, {}))
+                    for venue in PHYSICS_HIGHEST_TIER_VENUES
+                },
+            }
+        )
     write_paper_metadata(paper_id, metadata, repo_root)
     try:
         gate = record_quality_gate(

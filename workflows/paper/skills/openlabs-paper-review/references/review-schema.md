@@ -226,14 +226,70 @@ For `quant`, set `reviewer_role` to `quant_finance`, set `rubric_id` to
 ```
 
 For `physics`, set `reviewer_role` to `physics`, set `rubric_id` to
-`openlabs.paper-writing.physics-math-four-equivalent.v1`, and use:
+`openlabs.paper-writing.physics-explicit-highest-tier-venues.v1`, read
+`physics-highest-tier-venues.md`, and use:
 
 ```json
 {
   "leading_physics_journals": {
-    "decision": "major_revision",
+    "benchmark_id": "openlabs.physics-highest-tier-original-research.v1",
+    "benchmark_venues": [
+      "physical_review_letters",
+      "physical_review_x",
+      "nature_physics"
+    ],
+    "best_fit_venue": "physical_review_letters",
+    "score": 5,
+    "decision": "reject",
     "confidence": "medium",
-    "rationale": "physics-correctness, evidence, novelty, and significance explanation"
+    "rationale": "best-fit explanation after all three simulations",
+    "venue_reviews": {
+      "physical_review_letters": {
+        "score": 5,
+        "decision": "reject",
+        "confidence": "high",
+        "simulated_stage": "editorial_screen",
+        "criterion_route": "none",
+        "criteria_scores": {
+          "novelty": 6,
+          "importance": 5,
+          "broad_interest": 4,
+          "presentation": 6,
+          "standalone_letter_fit": 5
+        },
+        "rationale": "PRL-specific explanation"
+      },
+      "physical_review_x": {
+        "score": 4,
+        "decision": "reject",
+        "confidence": "high",
+        "simulated_stage": "editorial_screen",
+        "criterion_route": "none",
+        "criteria_scores": {
+          "innovation": 6,
+          "quality": 7,
+          "long_term_impact": 4,
+          "broad_physics_interest": 4,
+          "criterion_route_strength": 3
+        },
+        "rationale": "PRX-specific explanation"
+      },
+      "nature_physics": {
+        "score": 3,
+        "decision": "reject",
+        "confidence": "high",
+        "simulated_stage": "editorial_screen",
+        "criterion_route": "none",
+        "criteria_scores": {
+          "originality": 6,
+          "fundamental_or_applied_importance": 4,
+          "expert_excitement": 5,
+          "physics_breadth": 3,
+          "long_term_importance": 4
+        },
+        "rationale": "Nature Physics-specific explanation"
+      }
+    }
   },
   "cas_zone_1_journal": {
     "decision": "minor_revision",
