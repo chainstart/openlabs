@@ -44,7 +44,20 @@
       "properties": {
         "config_path": {"type": "string", "minLength": 1},
         "workstream_state_path": {"type": "string", "minLength": 1},
-        "protocol_id": {"type": "string", "minLength": 1}
+        "domain_config_path": {"type": ["string", "null"]},
+        "protocol_id": {"type": "string", "minLength": 1},
+        "read_resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "path"],
+            "properties": {
+              "label": {"type": "string", "minLength": 1},
+              "path": {"type": "string", "minLength": 1}
+            }
+          }
+        }
       }
     },
     "execution_policy": {

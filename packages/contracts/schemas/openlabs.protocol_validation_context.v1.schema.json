@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.protocol_validation_context.v1.schema.json",
+  "title": "OpenLabs protocol attempt-validation context v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event", "task", "canonical"],
+  "properties": {
+    "schema_version": {"const": "openlabs.protocol_validation_context.v1"},
+    "event": {"const": "attempt_commit"},
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_id",
+        "attempt_id",
+        "agent_role",
+        "session_mode",
+        "routing_reason"
+      ],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "agent_role": {
+          "enum": ["researcher", "experimenter", "writer", "reviewer"]
+        },
+        "session_mode": {"enum": ["resume", "fresh"]},
+        "routing_reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "canonical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_config", "workstream_state"],
+      "properties": {
+        "project_config": {"type": "string", "minLength": 1},
+        "workstream_state": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

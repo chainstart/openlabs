@@ -38,6 +38,8 @@ OpenLabs 是一个面向个人使用、可恢复、可连续运行的轻量科�
 暂存，失败则完整隔离。具体阈值和恢复流程见架构决策与个人运行手册。
 
 管理员为一个 campaign 播种首个有界任务后，通过门禁的 `next_actions` 可自动续接下一步；
+若项目显式选择带 continuation hook 的领域 protocol，则由该 hook 的配置化分配决定优先续接，
+结果自身的 `next_actions` 不能绕过领域门禁；
 有效 `needs_replan` 会先晋升可恢复状态，再升级到高级 runner。`needs_human`、隔离、缺失可
 执行后继动作或 campaign 的总 Agent-time 用尽会停链。
 第一版没有让一个永久“大 Agent”自行扫描全部课题并无限消费预算。

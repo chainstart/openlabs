@@ -734,6 +734,42 @@ class FactoryDB:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def project_workstream_activity(self, project_id: str) -> list[dict[str, Any]]:
+        """Return one query-only activity snapshot for a protocol hook."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT campaigns.campaign_id, campaigns.priority, campaigns.status,
+                       campaigns.workstream_state_path,
+                       EXISTS(
+                           SELECT 1 FROM tasks
+                           WHERE tasks.campaign_id=campaigns.campaign_id
+                             AND tasks.status IN ('leased', 'running')
+                       ) AS has_active_tasks,
+                       EXISTS(
+                           SELECT 1 FROM tasks
+                           WHERE tasks.campaign_id=campaigns.campaign_id
+                             AND tasks.status='queued'
+                       ) AS has_queued_tasks
+                FROM campaigns
+                WHERE campaigns.project_id=?
+                ORDER BY campaigns.priority DESC, campaigns.campaign_id
+                """,
+                (project_id,),
+            ).fetchall()
+        return [
+            {
+                "campaign_id": str(row["campaign_id"]),
+                "priority": int(row["priority"]),
+                "status": str(row["status"]),
+                "workstream_state_path": row["workstream_state_path"],
+                "has_active_tasks": bool(row["has_active_tasks"]),
+                "has_queued_tasks": bool(row["has_queued_tasks"]),
+            }
+            for row in rows
+        ]
+
     def production_campaigns(self) -> list[dict[str, Any]]:
         """Compatibility alias for legacy production-plan lifecycle commands."""
 
@@ -1200,6 +1236,35 @@ class FactoryDB:
                 (campaign_id,),
             ).fetchone()
         return int(row["n"])
+
+    def campaign_routing_usage(self, campaign_id: str) -> dict[str, dict[str, float | int]]:
+        """Return generic task and Agent-time accounting grouped by routing key.
+
+        Protocol hooks can use these counters to enforce configured allocation
+        envelopes without teaching the database what a scientific stage means.
+        """
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT tasks.routing_reason AS routing_key,
+                       COUNT(DISTINCT tasks.task_id) AS task_count,
+                       COALESCE(SUM(task_attempts.run_seconds), 0) AS agent_seconds
+                FROM tasks
+                LEFT JOIN task_attempts USING(task_id)
+                WHERE tasks.campaign_id=?
+                GROUP BY tasks.routing_reason
+                ORDER BY tasks.routing_reason
+                """,
+                (campaign_id,),
+            ).fetchall()
+        return {
+            str(row["routing_key"]): {
+                "task_count": int(row["task_count"]),
+                "agent_seconds": float(row["agent_seconds"]),
+            }
+            for row in rows
+        }
 
     def current_epoch_task_count(self, campaign_id: str) -> int:
         with self.connect() as connection:

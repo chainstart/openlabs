@@ -69,6 +69,69 @@ def test_task_lease_recovery_and_ingestion(tmp_path) -> None:
     assert db.campaign("campaign-1")["agent_seconds_used"] == recovered_seconds + 2.5
 
 
+def test_protocol_routing_usage_counts_tasks_and_actual_attempt_time(tmp_path) -> None:
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    db.register_campaign("policy-campaign", domain="math", title="Policy campaign")
+    db.enqueue_task(
+        task_id="stage-a-1",
+        campaign_id="policy-campaign",
+        domain="math",
+        task_type="research",
+        objective="Run stage A.",
+        routing_reason="protocol_hook:policy:stage-a",
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=60)
+    assert task is not None
+    attempt_id = str(task["current_attempt_id"])
+    db.mark_running(
+        "stage-a-1",
+        attempt_id=attempt_id,
+        owner="test",
+        pid=123,
+        lease_seconds=60,
+    )
+    db.ingest_result(
+        "stage-a-1",
+        attempt_id=attempt_id,
+        status="completed",
+        result_path="/tmp/result.json",
+        result_sha256="0" * 64,
+        valid=True,
+        gate_passed=True,
+        blockers=[],
+        run_seconds=12.5,
+        runtime={},
+    )
+    db.enqueue_task(
+        task_id="stage-a-2",
+        campaign_id="policy-campaign",
+        domain="math",
+        task_type="research",
+        objective="Run stage A again.",
+        routing_reason="protocol_hook:policy:stage-a",
+    )
+    db.enqueue_task(
+        task_id="stage-b-1",
+        campaign_id="policy-campaign",
+        domain="math",
+        task_type="research",
+        objective="Run stage B.",
+        routing_reason="protocol_hook:policy:stage-b",
+    )
+
+    usage = db.campaign_routing_usage("policy-campaign")
+
+    assert usage["protocol_hook:policy:stage-a"] == {
+        "task_count": 2,
+        "agent_seconds": 12.5,
+    }
+    assert usage["protocol_hook:policy:stage-b"] == {
+        "task_count": 1,
+        "agent_seconds": 0.0,
+    }
+
+
 def test_protocol_failure_replay_is_narrow_and_does_not_double_charge(tmp_path) -> None:
     db = FactoryDB(tmp_path / "factory.sqlite")
     db.initialize()

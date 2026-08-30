@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .agent_runtime import runtime_context
-from .contracts import PROMOTABLE_RESULT_STATUSES, validate_result_bundle
+from .contracts import COMMITTABLE_RESULT_STATUSES, validate_result_bundle
 from .labs import load_lab
 from .protocols import validate_protocol_state
 from .reproduction import preflight_reproductions
@@ -100,7 +100,7 @@ def _stop_gate_problems(context: Mapping[str, Any]) -> list[str]:
                     problems.append(f"{key} must be {value!r}")
         if (
             not validation.errors
-            and str(payload.get("status") or "") in PROMOTABLE_RESULT_STATUSES
+            and str(payload.get("status") or "") in COMMITTABLE_RESULT_STATUSES
         ):
             reproduction_errors, _receipts = preflight_reproductions(
                 payload,

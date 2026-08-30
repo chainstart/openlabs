@@ -14,11 +14,24 @@ LAB_SCHEMA = "openlabs.lab.v1"
 
 
 @dataclass(frozen=True)
+class ProtocolHookManifest:
+    """One optional, trusted lab hook registered for a protocol lifecycle event."""
+
+    hook_id: str
+    command: tuple[str, ...]
+    timeout_seconds: int
+
+
+@dataclass(frozen=True)
 class ProtocolManifest:
     protocol_id: str
     primary_skill: str
     runtime_skills: tuple[str, ...]
     validator_command: tuple[str, ...]
+    hooks: tuple[ProtocolHookManifest, ...] = ()
+
+    def hook(self, hook_id: str) -> ProtocolHookManifest | None:
+        return next((item for item in self.hooks if item.hook_id == hook_id), None)
 
 
 @dataclass(frozen=True)
@@ -117,6 +130,35 @@ def load_lab(path: str | Path) -> LabManifest:
             raise ValueError(
                 f"protocol runtime_skills must be unique and include primary_skill: {item}"
             )
+        hooks_value = item.get("hooks", {})
+        if not isinstance(hooks_value, Mapping):
+            raise ValueError(f"protocol hooks must be an object: {item}")
+        hooks: list[ProtocolHookManifest] = []
+        for raw_hook_id, raw_hook in hooks_value.items():
+            hook_id = _text(raw_hook_id)
+            if not IDENTIFIER.fullmatch(hook_id) or not isinstance(raw_hook, Mapping):
+                raise ValueError(f"invalid protocol hook registration in {manifest_path}: {item}")
+            hook_command = raw_hook.get("command")
+            hook_timeout = raw_hook.get("timeout_seconds", 60)
+            if (
+                not isinstance(hook_command, list)
+                or not hook_command
+                or any(not isinstance(token, str) or not token for token in hook_command)
+                or not isinstance(hook_timeout, int)
+                or isinstance(hook_timeout, bool)
+                or hook_timeout < 1
+                or hook_timeout > 300
+            ):
+                raise ValueError(
+                    f"invalid protocol hook registration in {manifest_path}: {item}"
+                )
+            hooks.append(
+                ProtocolHookManifest(
+                    hook_id=hook_id,
+                    command=tuple(hook_command),
+                    timeout_seconds=hook_timeout,
+                )
+            )
         if any(existing.protocol_id == protocol_id for existing in protocols):
             raise ValueError(f"duplicate protocol_id {protocol_id!r} in {manifest_path}")
         protocols.append(
@@ -125,6 +167,7 @@ def load_lab(path: str | Path) -> LabManifest:
                 primary_skill=primary_skill,
                 runtime_skills=runtime_skills,
                 validator_command=tuple(validator_command),
+                hooks=tuple(hooks),
             )
         )
     runtime_setups: list[RuntimeSetupManifest] = []

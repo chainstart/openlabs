@@ -43,13 +43,19 @@ Hook 只负责：
 - 最多阻止停止一次，让 Codex 自己补齐交付，而不规定补齐步骤；续接后的 Stop 必须重新
   验证最终结果并写入明确的通过或终态失败回执，不能把重入本身当作成功或忽略。
 
+这里的 Hook 是 Codex 会话安全 Hook。另有一种可选的领域 protocol lifecycle hook：它是实验室
+注册的只读确定性决策程序，只能从领域状态和配置返回通用 task envelope、暂停或显式
+`default`。控制面不理解其中的科学阶段和证据语义；没有选择该 protocol 的项目完全不受其
+约束。
+
 确定性 Python 代码只负责：
 
 - 租约、心跳、资源与时间上限；
 - 创建私有 attempt、Codex 原生沙箱策略和受信 Hook；
 - 绑定任务身份、验证本地证据、不可变存储和事务晋升；
-- 对每一种终止路径关闭 attempt，并执行 Codex 给出的 typed handoff；缺少 handoff 时只用
-  项目原始目标重新交还科学决策权，不在脚本里选择路线；
+- 对每一种终止路径关闭 attempt，并执行 Codex 给出的 typed handoff，或在项目显式选择时执行
+  protocol hook 返回的 typed allocation envelope；缺少二者时只用项目原始目标重新交还科学
+  决策权，不在脚本里选择路线；
 - 阻止提交、发布、越权写入和其他不可逆外部动作。
 
 ## 运行时不变量
@@ -79,8 +85,10 @@ Hook 只负责：
 
 控制面只发现 `openlabs.project.v1`，不解释项目的科学配置。项目通过 `protocol.id` 选择
 实验室在 `lab.json` 注册的领域协议，协议 validator 在项目发现和 attempt 提交前分别验证
-正式状态与私有修改状态。项目目标、workstream、Skill、优先级、周期审查和连续会话策略都由
-`project.json` 替换，无需修改调度器。详见
+正式状态与私有修改状态。可选 protocol hook 在结果提交之后、生成下一任务之前读取正式状态，
+并拥有对该协议续接的优先权，所以结果中的自由文本 `next_actions` 不能绕过策略门禁。项目
+目标、workstream、Skill、优先级、连续会话策略和 `domain_config` 都可替换，无需加入领域专用
+调度分支。详见
 [project-protocol-architecture.zh.md](project-protocol-architecture.zh.md)。
 
 新增故障应先判断它违反了哪一条不变量，再修改所属职责层；禁止在科研调度路径上继续堆叠

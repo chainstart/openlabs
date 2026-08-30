@@ -22,7 +22,8 @@
 项目、领域协议和 Codex 连续执行的可插拔接口见
 [project-protocol-architecture.zh.md](project-protocol-architecture.zh.md)。控制面只理解通用
 `openlabs.project.v1` 外壳；领域状态由实验室注册的 protocol validator 在发现和事务提交
-两个时点验证。
+两个时点验证。项目还可显式选择 protocol lifecycle hook，让实验室根据不透明领域配置返回
+通用分配决定；未选择时不存在额外状态机约束。
 
 ## 2. 四层物理存储结构
 
@@ -197,6 +198,10 @@ orchestrator 只负责：
 - 跨领域 Claim 和论文候选索引；
 - watchdog、通知和管理员控制。
 
+orchestrator 还可机械执行领域 protocol hook 返回的 `continue/pause/defer/default` 与通用任务信封，
+并提供按不透明 routing key 聚合的实际任务数和 Agent-time。它不解释 routing key，也不认识
+数学的准入、桥梁、证明或审计阶段。
+
 orchestrator 不包含数学证明策略、材料物理判据或 AI/ML 评测细节。AMRA、matfactory、AIRA 等历史名称可以保留为内部 Python 包名和 manifest 中的 lab ID，但不再形成额外目录层级。
 
 ### 3.2 领域实验室
@@ -207,6 +212,7 @@ orchestrator 不包含数学证明策略、材料物理判据或 AI/ML 评测细
 - 实验与验证工具；
 - 领域 oracle；
 - 内部状态机；
+- 可选、配置驱动的生命周期决策 hook；
 - 结果包扩展 Schema；
 - 环境、依赖和测试。
 

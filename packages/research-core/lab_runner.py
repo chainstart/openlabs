@@ -230,6 +230,7 @@ switch, pause, revive, or abandon approaches and use any installed laboratory ca
 - input state: `{task.get("input_path")}`
 - required result path: `{output}`
 - project config: `{project.get("config_path")}`
+- domain policy/config: `{project.get("domain_config_path")}`
 - workstream state: `{project.get("workstream_state_path")}`
 
 {independence}

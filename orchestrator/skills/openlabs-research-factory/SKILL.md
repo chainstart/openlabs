@@ -10,12 +10,14 @@ the route, set or replace intermediate milestones, and perform any safe in-scope
 useful. Domain Skills define evidence semantics, not a mandatory research sequence; this Skill is
 limited to resource, transaction, recovery, evidence, and independent-review boundaries.
 
-The control plane never chooses a scientific route, scores a prospective idea, interprets a result,
-or manufactures continuation. Project configuration may provide objectives, history, and available
-services, but these are context rather than an exhaustive action menu. Scientific researchers and
-independent reviewers own those judgments. Deterministic code is limited to resource admission,
-transactions, validation of declared evidence, storage, indexing, scheduling, and mechanically
-executing typed agent handoffs.
+The control plane never chooses a scientific route, scores a prospective idea, or interprets a
+result. A selected domain protocol may register a deterministic lifecycle hook that authorizes,
+pauses, or delegates the next bounded task from project-owned configuration and evidence state.
+The factory understands only that typed scheduling envelope; stage names and scientific gates
+remain opaque lab data. Scientific researchers and independent reviewers own route and transition
+judgments. Deterministic code is limited to resource admission, transactions, validation of
+declared evidence, storage, indexing, scheduling, and mechanically executing typed handoffs and
+protocol-hook decisions.
 
 ## Establish the task
 
@@ -115,7 +117,9 @@ tests, statistical checks, exact computation, simulation convergence checks, or 
 An LLM review is not a substitute for any applicable oracle.
 
 Use `needs_replan` only as a durable, evidence-valid checkpoint when the current process cannot
-safely continue before its budget ends; include the next executable route. Use `needs_human` only
+safely continue before its budget ends; include the next executable route. When the selected
+protocol owns continuation, that route is advisory input and cannot bypass its configured gate.
+Use `needs_human` only
 when new authority or a genuinely consequential external choice is required. A blocked campaign
 must not block unrelated campaigns.
 

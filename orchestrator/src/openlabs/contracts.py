@@ -26,7 +26,12 @@ RESULT_STATUSES = {
     "needs_human",
     "quarantined",
 }
-PROMOTABLE_RESULT_STATUSES = frozenset({"completed", "succeeded", "needs_replan"})
+# These statuses authorize committing a valid attempt checkpoint.  They do not
+# mean that a domain objective, theorem, or publication gate was promoted.
+COMMITTABLE_RESULT_STATUSES = frozenset({"completed", "succeeded", "needs_replan"})
+# Compatibility alias for callers outside this repository.  New code should
+# use the semantically precise name above.
+PROMOTABLE_RESULT_STATUSES = COMMITTABLE_RESULT_STATUSES
 AGENT_ROLES = {"researcher", "experimenter", "writer", "reviewer"}
 SESSION_MODES = {"resume", "fresh"}
 HANDOFF_KINDS = {
@@ -208,6 +213,12 @@ def validate_task(payload: Any) -> ValidationResult:
                     errors.append(f"project.{field_name} must be a non-empty string")
             if not _text(project.get("protocol_id")):
                 errors.append("project.protocol_id must be a non-empty string")
+            domain_config_path = project.get("domain_config_path")
+            if domain_config_path is not None and (
+                not _text(domain_config_path)
+                or not Path(str(domain_config_path)).is_absolute()
+            ):
+                errors.append("project.domain_config_path must be null or an absolute path")
             read_resources = project.get("read_resources", [])
             if not isinstance(read_resources, list):
                 errors.append("project.read_resources must be an array")
@@ -343,11 +354,11 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
         digest = _text(artifact.get("sha256"))
         if digest and not SHA256.fullmatch(digest):
             errors.append(f"{prefix}.sha256 must be a lowercase SHA-256 digest")
-        if status in PROMOTABLE_RESULT_STATUSES and not digest:
+        if status in COMMITTABLE_RESULT_STATUSES and not digest:
             warnings.append(f"{prefix} has no sha256; it cannot support a promoted claim")
         reproduction = artifact.get("reproduction")
         if (
-            status in PROMOTABLE_RESULT_STATUSES
+            status in COMMITTABLE_RESULT_STATUSES
             and executable_artifact(artifact)
             and not isinstance(reproduction, Mapping)
         ):

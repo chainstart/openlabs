@@ -35,6 +35,7 @@ from .attempts import (
 )
 from .config import FactorySettings, WorkspacePaths
 from .contracts import (
+    IDENTIFIER,
     TASK_SCHEMA,
     atomic_write_json,
     sha256_file,
@@ -43,7 +44,7 @@ from .contracts import (
 )
 from .db import AttemptDisposition, FactoryDB
 from .gates import evaluate_result_bundle
-from .labs import LabManifest, discover_labs, lab_for_domain
+from .labs import LabManifest, ProtocolManifest, discover_labs, lab_for_domain
 from .locking import factory_operation_lock
 from .portfolio import (
     advance_review_cursor,
@@ -58,7 +59,7 @@ from .projects import (
     load_project,
     workstream_policy,
 )
-from .protocols import validate_protocol_state
+from .protocols import run_protocol_hook, validate_protocol_state
 from .resources import (
     ResourceVector,
     default_task_resources,
@@ -86,6 +87,15 @@ class ActionPlan:
     handoff_kind: str
     resources: ResourceVector | None = None
     wall_seconds: int | None = None
+    runner: str | None = None
+
+
+@dataclass(frozen=True)
+class ProtocolContinuation:
+    decision: str
+    reason: str
+    action: ActionPlan | None = None
+    routing_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -182,6 +192,13 @@ def _next_action_plan(
         wall_seconds = requested_wall_seconds
     else:
         return None
+    runner_value = action.get("runner")
+    if runner_value is None:
+        runner = None
+    else:
+        runner = str(runner_value).strip()
+        if not IDENTIFIER.fullmatch(runner):
+            return None
     return ActionPlan(
         objective=objective,
         agent_role=target_role,
@@ -189,6 +206,7 @@ def _next_action_plan(
         handoff_kind=handoff_kind,
         resources=resources,
         wall_seconds=wall_seconds,
+        runner=runner,
     )
 
 
@@ -710,6 +728,21 @@ def _sync_active_projects(
             else settings.max_campaign_agent_seconds
         )
         campaign = db.campaign(binding.workstream_id)
+        if binding.legacy_plan_path is None:
+            bound_state_status = str(
+                _read_json_object(binding.workstream_path).get("status") or ""
+            ).strip()
+            if bound_state_status in {"paused", "completed"}:
+                if campaign is not None and (
+                    bool(campaign.get("continuous"))
+                    or str(campaign.get("status") or "") == "active"
+                ):
+                    db.pause_production_campaign(
+                        binding.workstream_id,
+                        reason=f"agent_workstream_{bound_state_status}",
+                    )
+                    report.production_paused.append(binding.workstream_id)
+                continue
         if campaign is None:
             db.register_campaign(
                 binding.workstream_id,
@@ -889,28 +922,200 @@ def _campaign_execution_policy(campaign: Mapping[str, Any]) -> ExecutionPolicy:
     return ExecutionPolicy()
 
 
+def _bound_protocol(
+    paths: WorkspacePaths,
+    campaign: Mapping[str, Any],
+) -> tuple[LabManifest, ProtocolManifest] | None:
+    """Resolve a generic project protocol while keeping domain code out of core."""
+
+    project_value = str(campaign.get("project_config_path") or "").strip()
+    state_value = str(campaign.get("workstream_state_path") or "").strip()
+    protocol_id = str(campaign.get("protocol_id") or "").strip()
+    if not project_value and not state_value and not protocol_id:
+        return None
+    if not project_value or not state_value or not protocol_id:
+        raise ValueError("generic project binding is incomplete")
+    lab = lab_for_domain(discover_labs(paths.code), str(campaign.get("domain") or ""))
+    protocol = lab.protocol(protocol_id)
+    if protocol is None:
+        raise ValueError(f"lab {lab.lab_id} does not register protocol {protocol_id!r}")
+    return lab, protocol
+
+
+def _campaign_uses_protocol_hook(
+    paths: WorkspacePaths,
+    campaign: Mapping[str, Any] | None,
+    hook_id: str,
+) -> bool:
+    if campaign is None:
+        return False
+    binding = _bound_protocol(paths, campaign)
+    return bool(binding and binding[1].hook(hook_id) is not None)
+
+
+def _protocol_continuation(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    campaign: Mapping[str, Any],
+    *,
+    latest: Mapping[str, Any] | None,
+    latest_result: Mapping[str, Any] | None,
+    execution_policy: ExecutionPolicy,
+) -> ProtocolContinuation | None:
+    """Ask an optional lab hook for a typed scheduling decision.
+
+    Only the transport-level decision and task envelope are interpreted here.
+    Stage names, evidence labels, promotion rules, and budget allocation remain
+    opaque lab-owned data.
+    """
+
+    binding = _bound_protocol(paths, campaign)
+    if binding is None:
+        return None
+    lab, protocol = binding
+    if protocol.hook("continuation") is None:
+        return None
+    campaign_id = str(campaign["campaign_id"])
+    latest_summary = None
+    if latest is not None:
+        latest_summary = {
+            key: latest.get(key)
+            for key in (
+                "task_id",
+                "task_type",
+                "status",
+                "agent_role",
+                "session_mode",
+                "runner",
+                "routing_reason",
+                "max_wall_seconds",
+                "result_sha256",
+            )
+        }
+    context = {
+        "schema_version": "openlabs.protocol_hook_context.v1",
+        "event": "continuation",
+        "campaign": {
+            "campaign_id": campaign_id,
+            "domain": campaign.get("domain"),
+            "project_id": campaign.get("project_id"),
+            "workstream_id": campaign_id,
+            "agent_seconds_used": float(campaign.get("agent_seconds_used") or 0),
+            "max_agent_seconds": int(campaign.get("max_agent_seconds") or 0),
+            "production_epoch": int(campaign.get("production_epoch") or 1),
+        },
+        "latest_task": latest_summary,
+        "latest_result": dict(latest_result) if latest_result is not None else None,
+        "routing_usage": db.campaign_routing_usage(campaign_id),
+        "project_workstreams": db.project_workstream_activity(
+            str(campaign.get("project_id") or "")
+        ),
+    }
+    result = run_protocol_hook(
+        lab,
+        protocol,
+        "continuation",
+        project_path=Path(str(campaign["project_config_path"])).expanduser().resolve(),
+        workstream_path=Path(str(campaign["workstream_state_path"])).expanduser().resolve(),
+        context=context,
+    )
+    if result is None:  # pragma: no cover - checked above for clarity.
+        return None
+    if not result.valid:
+        raise ValueError("; ".join(result.errors))
+    payload = result.payload
+    if payload.get("schema_version") != "openlabs.protocol_hook_decision.v1":
+        raise ValueError("protocol continuation hook returned an unsupported schema")
+    decision = str(payload.get("decision") or "").strip()
+    if decision not in {"continue", "pause", "defer", "default"}:
+        raise ValueError(
+            "protocol continuation decision must be continue, pause, defer, or default"
+        )
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise ValueError("protocol continuation decision requires a reason")
+    if decision != "continue":
+        if payload.get("action") is not None or payload.get("routing_key") is not None:
+            raise ValueError("only a continue decision may include action or routing_key")
+        return ProtocolContinuation(decision=decision, reason=reason)
+    current_role = str(latest.get("agent_role") or "researcher") if latest else "researcher"
+    action = _next_action_plan(
+        payload.get("action"),
+        current_role=current_role,
+        execution_policy=execution_policy,
+    )
+    if action is None:
+        raise ValueError("protocol continuation action is invalid")
+    routing_key = str(payload.get("routing_key") or "").strip()
+    if not IDENTIFIER.fullmatch(routing_key):
+        raise ValueError("protocol continuation routing_key is invalid")
+    return ProtocolContinuation(
+        decision=decision,
+        reason=reason,
+        action=action,
+        routing_key=routing_key,
+    )
+
+
+def _attempt_project_config_errors(
+    campaign: Mapping[str, Any],
+    attempt_workspace: AttemptWorkspace,
+) -> tuple[str, ...]:
+    """Keep administrator/control-plane project inputs immutable inside attempts."""
+
+    canonical_project_path = Path(
+        str(campaign.get("project_config_path") or "")
+    ).expanduser().resolve()
+    project = load_project(canonical_project_path)
+    canonical_paths = [canonical_project_path]
+    if project.domain_config_path is not None:
+        canonical_paths.append(project.domain_config_path)
+    errors: list[str] = []
+    for canonical in canonical_paths:
+        staged = Path(str(attempt_workspace.map_path(canonical))).resolve()
+        if not staged.is_file():
+            errors.append(f"attempt project input is missing: {canonical.name}")
+        elif sha256_file(staged) != sha256_file(canonical):
+            errors.append(f"attempt modified administrator-owned project input: {canonical.name}")
+    return tuple(errors)
+
+
 def _validate_bound_protocol(
     paths: WorkspacePaths,
     campaign: Mapping[str, Any],
     *,
     attempt_workspace: AttemptWorkspace | None = None,
+    task: Mapping[str, Any] | None = None,
     mode: str = "commit",
 ) -> tuple[str, ...]:
-    project_value = str(campaign.get("project_config_path") or "").strip()
-    state_value = str(campaign.get("workstream_state_path") or "").strip()
-    protocol_id = str(campaign.get("protocol_id") or "").strip()
-    if not project_value and not state_value and not protocol_id:
+    binding = _bound_protocol(paths, campaign)
+    if binding is None:
         return ()
-    if not project_value or not state_value or not protocol_id:
-        return ("generic project binding is incomplete",)
-    labs = discover_labs(paths.code)
-    lab = lab_for_domain(labs, str(campaign.get("domain") or ""))
-    protocol = lab.protocol(protocol_id)
-    if protocol is None:
-        return (f"lab {lab.lab_id} does not register protocol {protocol_id!r}",)
-    project_path = Path(project_value).expanduser().resolve()
-    state_path = Path(state_value).expanduser().resolve()
+    lab, protocol = binding
+    project_path = Path(str(campaign["project_config_path"])).expanduser().resolve()
+    state_path = Path(str(campaign["workstream_state_path"])).expanduser().resolve()
+    validation_context: dict[str, Any] | None = None
     if attempt_workspace is not None:
+        config_errors = _attempt_project_config_errors(campaign, attempt_workspace)
+        if config_errors:
+            return config_errors
+        if task is None:
+            return ("attempt protocol validation requires authenticated task identity",)
+        validation_context = {
+            "schema_version": "openlabs.protocol_validation_context.v1",
+            "event": "attempt_commit",
+            "task": {
+                "task_id": task.get("task_id"),
+                "attempt_id": task.get("current_attempt_id"),
+                "agent_role": task.get("agent_role"),
+                "session_mode": task.get("session_mode"),
+                "routing_reason": task.get("routing_reason"),
+            },
+            "canonical": {
+                "project_config": str(project_path),
+                "workstream_state": str(state_path),
+            },
+        }
         project_path = Path(str(attempt_workspace.map_path(project_path))).resolve()
         state_path = Path(str(attempt_workspace.map_path(state_path))).resolve()
     validation = validate_protocol_state(
@@ -919,6 +1124,7 @@ def _validate_bound_protocol(
         project_path=project_path,
         workstream_path=state_path,
         mode=mode,
+        validation_context=validation_context,
     )
     return validation.errors if not validation.valid else ()
 
@@ -1146,17 +1352,6 @@ def _replenish_continuous_campaign(
         )
         return
     current_role = str(latest.get("agent_role") or "researcher") if latest else "researcher"
-    actions = payload.get("next_actions") if payload else None
-    action = (
-        _next_action_plan(
-            actions[0],
-            current_role=current_role,
-            execution_policy=execution_policy,
-        )
-        if isinstance(actions, list) and actions
-        else None
-    )
-    action = action or _fallback_project_action(campaign, execution_policy)
     status = latest_status
     result_runtime = db.result_runtime(str(latest["task_id"])) if latest else {}
     failure_classes = (
@@ -1168,6 +1363,57 @@ def _replenish_continuous_campaign(
         and isinstance(failure_classes, list)
         and "artifact_binding" in failure_classes
     )
+    infrastructure_retry = bool(
+        latest
+        and payload
+        and status == "needs_replan"
+        and _missing_agent_bundle(payload, result_runtime)
+    )
+    protocol_continuation = (
+        None
+        if binding_failure or infrastructure_retry
+        else _protocol_continuation(
+            db,
+            paths,
+            campaign,
+            latest=latest,
+            latest_result=payload,
+            execution_policy=execution_policy,
+        )
+    )
+    if protocol_continuation is not None and protocol_continuation.decision in {
+        "pause",
+        "defer",
+    }:
+        if protocol_continuation.decision == "pause":
+            db.pause_production_campaign(
+                campaign_id,
+                reason=f"protocol_hook:{protocol_continuation.reason}",
+            )
+            report.production_paused.append(campaign_id)
+        report.production_blocked.append(
+            {"campaign_id": campaign_id, "reason": protocol_continuation.reason}
+        )
+        return
+    hook_managed = bool(
+        protocol_continuation is not None
+        and protocol_continuation.decision == "continue"
+    )
+    if hook_managed:
+        assert protocol_continuation is not None
+        action = protocol_continuation.action
+    else:
+        actions = payload.get("next_actions") if payload else None
+        action = (
+            _next_action_plan(
+                actions[0],
+                current_role=current_role,
+                execution_policy=execution_policy,
+            )
+            if isinstance(actions, list) and actions
+            else None
+        )
+        action = action or _fallback_project_action(campaign, execution_policy)
     if binding_failure:
         action = ActionPlan(
             objective=_binding_repair_objective(latest),
@@ -1175,7 +1421,20 @@ def _replenish_continuous_campaign(
             session_mode="resume",
             handoff_kind="evidence_remediation",
         )
-    elif status == "needs_replan" and action.agent_role != "researcher":
+    elif infrastructure_retry:
+        assert latest is not None
+        action = ActionPlan(
+            objective=_infrastructure_retry_objective(db, latest),
+            agent_role="researcher",
+            session_mode="resume",
+            handoff_kind="evidence_remediation",
+        )
+    elif (
+        not hook_managed
+        and status == "needs_replan"
+        and action is not None
+        and action.agent_role != "researcher"
+    ):
         action = ActionPlan(
             objective=action.objective,
             agent_role="researcher",
@@ -1183,8 +1442,9 @@ def _replenish_continuous_campaign(
             handoff_kind=action.handoff_kind,
             resources=action.resources,
             wall_seconds=action.wall_seconds,
+            runner=action.runner,
         )
-    if action is None:  # pragma: no cover - fallback always returns an action.
+    if action is None:
         return
     if action.agent_role == "writer" and current_role != "writer":
         report.production_blocked.append(
@@ -1206,6 +1466,7 @@ def _replenish_continuous_campaign(
             handoff_kind=action.handoff_kind,
             resources=action.resources,
             wall_seconds=action.wall_seconds,
+            runner=action.runner,
         )
     source = (
         str(latest.get("result_sha256") or latest.get("task_id") or "seed") if latest else "seed"
@@ -1225,7 +1486,9 @@ def _replenish_continuous_campaign(
         action.wall_seconds or prior_wall_seconds,
         settings.max_task_wall_seconds,
     )
-    if status == "needs_replan":
+    if action.runner is not None:
+        runner = action.runner
+    elif status == "needs_replan":
         runner = "frontier"
     elif latest:
         runner = str(latest.get("runner") or "balanced")
@@ -1260,6 +1523,10 @@ def _replenish_continuous_campaign(
         routing_reason=(
             "production_gate_repair"
             if binding_failure
+            else "infrastructure_retry"
+            if infrastructure_retry
+            else f"protocol_hook:{protocol_continuation.routing_key}"
+            if hook_managed and protocol_continuation is not None
             else "production_rollover"
             if room.rolled_over
             else "production_idle_reseed"
@@ -1452,6 +1719,11 @@ def ingest_results(
                 raise ValueError(f"Unknown task: {task_id}")
             campaign_binding = db.campaign(str(task["campaign_id"]))
             execution_policy = _campaign_execution_policy(campaign_binding or {})
+            protocol_managed_continuation = _campaign_uses_protocol_hook(
+                paths,
+                campaign_binding,
+                "continuation",
+            )
             expected = {
                 "attempt_id": task.get("current_attempt_id"),
                 "campaign_id": task.get("campaign_id"),
@@ -1586,6 +1858,7 @@ def ingest_results(
                         paths,
                         campaign_binding,
                         attempt_workspace=attempt_workspace,
+                        task=task,
                     )
                     if protocol_errors:
                         runtime["protocol_gate"] = {
@@ -2081,6 +2354,7 @@ def ingest_results(
                 and not _explicit_terminal_freeze(payload)
                 and payload.get("paper_candidate") is not True
                 and has_room
+                and not protocol_managed_continuation
             )
             is_continuation = final_status == "succeeded" and gate.passed
             is_replan = final_status == "needs_replan" and gate.validation.valid
@@ -2122,7 +2396,10 @@ def ingest_results(
                         objective=objective,
                         input_path=str(result_path),
                         skill_path=(str(task["skill_path"]) if task.get("skill_path") else None),
-                        runner="frontier" if is_replan else str(task.get("runner") or "balanced"),
+                        runner=(
+                            next_plan.runner
+                            or ("frontier" if is_replan else str(task.get("runner") or "balanced"))
+                        ),
                         routing_reason=(
                             "production_rollover"
                             if room.rolled_over
@@ -2255,6 +2532,11 @@ def _write_task_spec(
         payload["project"] = {
             "config_path": attempt_workspace.map_path(project_path),
             "workstream_state_path": attempt_workspace.map_path(workstream_path),
+            "domain_config_path": (
+                attempt_workspace.map_path(project_config.domain_config_path)
+                if project_config is not None and project_config.domain_config_path is not None
+                else None
+            ),
             "protocol_id": campaign.get("protocol_id") or "legacy-production-plan",
             "read_resources": (
                 [item.to_dict() for item in project_config.read_resources]

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.protocol_hook_decision.v1.schema.json",
+  "title": "OpenLabs protocol lifecycle hook scheduling decision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "decision", "reason"],
+  "properties": {
+    "schema_version": {"const": "openlabs.protocol_hook_decision.v1"},
+    "decision": {"enum": ["continue", "pause", "defer", "default"]},
+    "reason": {"type": "string", "minLength": 1},
+    "routing_key": {"type": "string", "minLength": 1, "maxLength": 128},
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective", "agent_role", "session_mode", "handoff_kind"],
+      "properties": {
+        "objective": {"type": "string", "minLength": 1},
+        "agent_role": {
+          "enum": ["researcher", "experimenter", "writer", "reviewer"]
+        },
+        "session_mode": {"enum": ["resume", "fresh"]},
+        "handoff_kind": {"type": "string", "minLength": 1},
+        "runner": {"type": "string", "minLength": 1},
+        "wall_seconds": {"type": "integer", "minimum": 1},
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cpu_threads", "memory_mib", "scratch_mib"],
+          "properties": {
+            "cpu_threads": {"type": "integer", "minimum": 1},
+            "memory_mib": {"type": "integer", "minimum": 1},
+            "scratch_mib": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"decision": {"const": "continue"}}},
+      "then": {"required": ["action", "routing_key"]},
+      "else": {
+        "not": {
+          "anyOf": [
+            {"required": ["action"]},
+            {"required": ["routing_key"]}
+          ]
+        }
+      }
+    }
+  ]
+}

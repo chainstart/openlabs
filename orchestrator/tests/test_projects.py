@@ -6,9 +6,20 @@ from pathlib import Path
 import pytest
 from openlabs.attempts import attempt_output_path, prepare_attempt_workspace
 from openlabs.config import FactorySettings, WorkspacePaths
-from openlabs.contracts import atomic_write_json
+from openlabs.contracts import (
+    RECEIPT_SCHEMA,
+    RESULT_SCHEMA,
+    atomic_write_json,
+    sha256_file,
+)
 from openlabs.db import FactoryDB
-from openlabs.engine import _validate_bound_protocol, _write_task_spec, tick
+from openlabs.engine import (
+    TickReport,
+    _validate_bound_protocol,
+    _write_task_spec,
+    ingest_results,
+    tick,
+)
 from openlabs.projects import load_project
 
 
@@ -42,12 +53,17 @@ def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tupl
         encoding="utf-8",
     )
     protocol_script.write_text(
-        "import argparse,json\n"
+        "import argparse,json,os\n"
         "from pathlib import Path\n"
         "p=argparse.ArgumentParser(); p.add_argument('--project'); "
         "p.add_argument('--state'); p.add_argument('--mode'); a=p.parse_args()\n"
         "state=json.loads(Path(a.state).read_text())\n"
         "errors=[] if state.get('valid') is True else ['state rejected by test protocol']\n"
+        "raw=os.environ.get('OPENLABS_PROTOCOL_VALIDATION_CONTEXT','')\n"
+        "context=json.loads(raw) if raw else None\n"
+        "expected=state.get('expected_task_id')\n"
+        "if expected and (not context or context.get('task',{}).get('task_id')!=expected): "
+        "errors.append('authenticated validation context is missing')\n"
         "print(json.dumps({'valid':not errors,'errors':errors}))\n"
         "raise SystemExit(1 if errors else 0)\n",
         encoding="utf-8",
@@ -107,6 +123,7 @@ def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tupl
         / "project-one"
         / "project.json"
     )
+    atomic_write_json(project.parent / "domain-context.json", {"mode": "test"})
     atomic_write_json(
         project,
         {
@@ -119,6 +136,7 @@ def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tupl
                 "id": "test-protocol",
                 "primary_skill": "test-protocol",
             },
+            "domain_config": {"path": "domain-context.json"},
             "execution": {
                 "default_session_mode": "resume",
                 "fresh_session_boundaries": [
@@ -137,6 +155,34 @@ def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tupl
         },
     )
     return project, state
+
+
+def _install_continuation_hook(paths: WorkspacePaths, decision: dict) -> None:
+    lab = paths.code / "labs" / "test"
+    hook_script = lab / "protocols" / "continuation.py"
+    hook_script.write_text(
+        "import json,sys\n"
+        "context=json.load(sys.stdin)\n"
+        "assert context['schema_version']=='openlabs.protocol_hook_context.v1'\n"
+        f"print(json.dumps({decision!r}))\n",
+        encoding="utf-8",
+    )
+    manifest_path = lab / "lab.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["protocols"][0]["hooks"] = {
+        "continuation": {
+            "command": [
+                "{python}",
+                "protocols/continuation.py",
+                "--project",
+                "{project_config}",
+                "--state",
+                "{workstream_state}",
+            ],
+            "timeout_seconds": 10,
+        }
+    }
+    atomic_write_json(manifest_path, manifest)
 
 
 def test_generic_project_config_selects_protocol_without_core_changes(tmp_path) -> None:
@@ -220,6 +266,175 @@ def test_project_workstream_limits_seed_the_task_envelope(tmp_path) -> None:
     assert campaign["status"] == "active"
     assert campaign["continuous"] == 1
     assert FactoryDB(paths.database_file).task_count("stream-one") == 2
+
+
+def test_protocol_continuation_hook_owns_the_task_envelope_without_core_science(
+    tmp_path,
+) -> None:
+    paths = _paths(tmp_path)
+    _generic_project(paths)
+    _install_continuation_hook(
+        paths,
+        {
+            "schema_version": "openlabs.protocol_hook_decision.v1",
+            "decision": "continue",
+            "reason": "configured_stage_active",
+            "routing_key": "configured-stage",
+            "action": {
+                "objective": "Run the domain-selected configured stage.",
+                "agent_role": "researcher",
+                "session_mode": "resume",
+                "handoff_kind": "role_handoff",
+                "runner": "cheap",
+                "wall_seconds": 1234,
+                "resources": {
+                    "cpu_threads": 3,
+                    "memory_mib": 6144,
+                    "scratch_mib": 7168,
+                },
+            },
+        },
+    )
+
+    report = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    task = FactoryDB(paths.database_file).latest_task("stream-one")
+
+    assert report.errors == []
+    assert report.production_reseeded == ["stream-one"]
+    assert task is not None
+    assert task["objective"] == "Run the domain-selected configured stage."
+    assert task["routing_reason"] == "protocol_hook:configured-stage"
+    assert task["runner"] == "cheap"
+    assert task["max_wall_seconds"] == 1234
+    assert task["cpu_threads"] == 3
+    assert task["memory_mib"] == 6144
+    assert task["scratch_mib"] == 7168
+
+
+def test_protocol_hook_prevents_result_next_action_from_bypassing_policy(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _generic_project(paths)
+    hook_decision = {
+        "schema_version": "openlabs.protocol_hook_decision.v1",
+        "decision": "continue",
+        "reason": "configured_stage_active",
+        "routing_key": "configured-stage",
+        "action": {
+            "objective": "Continue only through the configured policy hook.",
+            "agent_role": "researcher",
+            "session_mode": "resume",
+            "handoff_kind": "role_handoff",
+            "runner": "balanced",
+            "wall_seconds": 900,
+        },
+    }
+    _install_continuation_hook(paths, hook_decision)
+    tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    db = FactoryDB(paths.database_file)
+    claimed = db.claim_next_task(owner="hook-test", lease_seconds=60)
+    assert claimed is not None
+    output = paths.data / "workspaces" / "test-domain" / "hook-result.json"
+    db.bind_attempt_spec(
+        str(claimed["task_id"]),
+        attempt_id=str(claimed["current_attempt_id"]),
+        lab_id="test",
+        output_path=str(output),
+    )
+    db.mark_running(
+        str(claimed["task_id"]),
+        attempt_id=str(claimed["current_attempt_id"]),
+        owner="hook-test",
+        pid=123,
+        lease_seconds=60,
+    )
+    result = atomic_write_json(
+        output,
+        {
+            "schema_version": RESULT_SCHEMA,
+            "task_id": claimed["task_id"],
+            "campaign_id": "stream-one",
+            "lab_id": "test",
+            "domain": "test-domain",
+            "status": "completed",
+            "summary": "The configured stage checkpoint is valid.",
+            "artifacts": [],
+            "claims": [],
+            "next_actions": [
+                {
+                    "objective": "This result-authored action must not bypass the hook.",
+                    "agent_role": "researcher",
+                    "session_mode": "fresh",
+                    "handoff_kind": "route_reselection",
+                }
+            ],
+            "paper_candidate": False,
+        },
+    )
+    atomic_write_json(
+        paths.result_inbox / "hook-result.json",
+        {
+            "schema_version": RECEIPT_SCHEMA,
+            "task_id": claimed["task_id"],
+            "attempt_id": claimed["current_attempt_id"],
+            "campaign_id": "stream-one",
+            "lab_id": "test",
+            "domain": "test-domain",
+            "agent_role": "researcher",
+            "result_path": str(result),
+            "sha256": sha256_file(result),
+            "runtime": {"duration_seconds": 1.0, "exit_code": 0},
+        },
+    )
+    report = TickReport()
+
+    ingest_results(db, paths, FactorySettings(auto_continue=True), report)
+
+    assert report.errors == []
+    assert report.enqueued == []
+    assert db.task_count("stream-one") == 1
+    assert db.task(str(claimed["task_id"]))["status"] == "succeeded"
+
+
+def test_protocol_hook_can_defer_for_capacity_without_pausing_science(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _generic_project(paths)
+    _install_continuation_hook(
+        paths,
+        {
+            "schema_version": "openlabs.protocol_hook_decision.v1",
+            "decision": "defer",
+            "reason": "configured_capacity_wait",
+        },
+    )
+
+    report = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    db = FactoryDB(paths.database_file)
+
+    assert report.errors == []
+    assert report.production_paused == []
+    assert report.production_blocked == [
+        {"campaign_id": "stream-one", "reason": "configured_capacity_wait"}
+    ]
+    assert db.task_count("stream-one") == 0
+    assert db.campaign("stream-one")["status"] == "active"
+
+
+def test_agent_paused_project_state_is_not_reactivated_on_every_tick(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _project, state = _generic_project(paths)
+    tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    db = FactoryDB(paths.database_file)
+    payload = json.loads(state.read_text(encoding="utf-8"))
+    payload["status"] = "paused"
+    atomic_write_json(state, payload)
+
+    paused = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+    stable = tick(paths, FactorySettings(auto_continue=True, launch_jobs=False))
+
+    assert paused.production_paused == ["stream-one"]
+    assert stable.production_paused == []
+    assert db.campaign("stream-one")["status"] == "production_paused"
+    assert db.campaign("stream-one")["continuous"] == 0
 
 
 def test_project_lifetime_budget_requires_explicit_increase_after_exhaustion(tmp_path) -> None:
@@ -337,8 +552,87 @@ def test_protocol_commit_gate_validates_the_private_attempt_state(tmp_path) -> N
     atomic_write_json(staged_state, {"valid": False})
 
     assert _validate_bound_protocol(paths, campaign) == ()
-    errors = _validate_bound_protocol(paths, campaign, attempt_workspace=attempt)
+    errors = _validate_bound_protocol(
+        paths,
+        campaign,
+        attempt_workspace=attempt,
+        task=task,
+    )
     assert errors == ("state rejected by test protocol",)
+
+
+def test_attempt_protocol_validator_receives_authenticated_task_context(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _generic_project(paths)
+    tick(paths, FactorySettings(auto_continue=False, launch_jobs=False))
+    db = FactoryDB(paths.database_file)
+    db.enqueue_task(
+        task_id="context-task",
+        campaign_id="stream-one",
+        domain="test-domain",
+        task_type="research_continue",
+        objective="Validate the attempt identity transport.",
+        skill_path="test-protocol",
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=60)
+    assert task is not None
+    campaign = db.campaign("stream-one")
+    assert campaign is not None
+    attempt = prepare_attempt_workspace(paths, task, campaign)
+    staged_state = Path(str(attempt.map_path(campaign["workstream_state_path"])))
+    state = json.loads(staged_state.read_text(encoding="utf-8"))
+    state["expected_task_id"] = "context-task"
+    atomic_write_json(staged_state, state)
+
+    missing = _validate_bound_protocol(
+        paths,
+        campaign,
+        attempt_workspace=attempt,
+    )
+    accepted = _validate_bound_protocol(
+        paths,
+        campaign,
+        attempt_workspace=attempt,
+        task=task,
+    )
+
+    assert missing == ("attempt protocol validation requires authenticated task identity",)
+    assert accepted == ()
+
+
+def test_attempt_cannot_rewrite_project_policy_input_to_bypass_protocol(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    project_path, _state_path = _generic_project(paths)
+    tick(paths, FactorySettings(auto_continue=False, launch_jobs=False))
+    db = FactoryDB(paths.database_file)
+    db.enqueue_task(
+        task_id="mutate-policy",
+        campaign_id="stream-one",
+        domain="test-domain",
+        task_type="research_continue",
+        objective="Attempt to alter an administrator-owned policy input.",
+        skill_path="test-protocol",
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=60)
+    assert task is not None
+    campaign = db.campaign("stream-one")
+    assert campaign is not None
+    attempt = prepare_attempt_workspace(paths, task, campaign)
+    project = load_project(project_path)
+    assert project.domain_config_path is not None
+    staged_policy = Path(str(attempt.map_path(project.domain_config_path)))
+    atomic_write_json(staged_policy, {"mode": "weakened-inside-attempt"})
+
+    errors = _validate_bound_protocol(
+        paths,
+        campaign,
+        attempt_workspace=attempt,
+        task=task,
+    )
+
+    assert errors == (
+        "attempt modified administrator-owned project input: domain-context.json",
+    )
 
 
 def test_project_protocol_activates_only_its_declared_runtime_skills(tmp_path) -> None:
@@ -394,6 +688,10 @@ def test_project_protocol_activates_only_its_declared_runtime_skills(tmp_path) -
     assert (
         attempt.campaign_root / ".agents" / "optional-methods" / "unrelated-method"
     ).is_symlink()
+    assert Path(job["project"]["domain_config_path"]).is_file()
+    assert json.loads(
+        Path(job["project"]["domain_config_path"]).read_text(encoding="utf-8")
+    ) == {"mode": "test"}
 
 
 def test_project_task_cannot_activate_a_skill_outside_its_protocol(tmp_path) -> None:

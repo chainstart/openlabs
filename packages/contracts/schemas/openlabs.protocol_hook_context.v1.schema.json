@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.protocol_hook_context.v1.schema.json",
+  "title": "OpenLabs protocol lifecycle hook context v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event",
+    "campaign",
+    "latest_task",
+    "latest_result",
+    "routing_usage",
+    "project_workstreams"
+  ],
+  "properties": {
+    "schema_version": {"const": "openlabs.protocol_hook_context.v1"},
+    "event": {"const": "continuation"},
+    "campaign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "campaign_id",
+        "domain",
+        "project_id",
+        "workstream_id",
+        "agent_seconds_used",
+        "max_agent_seconds",
+        "production_epoch"
+      ],
+      "properties": {
+        "campaign_id": {"type": "string", "minLength": 1},
+        "domain": {"type": "string", "minLength": 1},
+        "project_id": {"type": ["string", "null"]},
+        "workstream_id": {"type": "string", "minLength": 1},
+        "agent_seconds_used": {"type": "number", "minimum": 0},
+        "max_agent_seconds": {"type": "integer", "minimum": 1},
+        "production_epoch": {"type": "integer", "minimum": 1}
+      }
+    },
+    "latest_task": {"type": ["object", "null"]},
+    "latest_result": {"type": ["object", "null"]},
+    "routing_usage": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_count", "agent_seconds"],
+        "properties": {
+          "task_count": {"type": "integer", "minimum": 0},
+          "agent_seconds": {"type": "number", "minimum": 0}
+        }
+      }
+    },
+    "project_workstreams": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "campaign_id",
+          "priority",
+          "status",
+          "workstream_state_path",
+          "has_active_tasks",
+          "has_queued_tasks"
+        ],
+        "properties": {
+          "campaign_id": {"type": "string", "minLength": 1},
+          "priority": {"type": "integer"},
+          "status": {"type": "string", "minLength": 1},
+          "workstream_state_path": {"type": ["string", "null"]},
+          "has_active_tasks": {"type": "boolean"},
+          "has_queued_tasks": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}
