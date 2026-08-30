@@ -33,6 +33,9 @@ def test_profiles_are_explicit_bounded_and_pinned() -> None:
 
         entry = ROOT / profile["entry_path"]
         assert (entry / "SKILL.md").is_file()
+        assert "../references/paper-identifiers.md" in (
+            entry / "SKILL.md"
+        ).read_text(encoding="utf-8")
         interface = _yaml(entry / "agents" / "openai.yaml")
         assert interface["policy"]["allow_implicit_invocation"] is False
         assert f"${profile['entry_skill']}" in interface["interface"]["default_prompt"]
@@ -42,6 +45,8 @@ def test_profiles_are_explicit_bounded_and_pinned() -> None:
             assert source["audit_status"].startswith("approved")
             assert re.fullmatch(r"[0-9a-f]{40}", source["commit"])
             assert (ROOT / source["installed_path"] / "SKILL.md").is_file()
+
+    assert (ROOT / "skills" / "references" / "paper-identifiers.md").is_file()
 
 
 def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:

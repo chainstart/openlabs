@@ -15,6 +15,8 @@ provide scientific writing, symbolic computation, and review guidance.
 2. Read the code-owned `workflows/paper/skills/profiles.yaml` and
    `workflows/paper/skills/overlays/quality-gate.md`, then read
    `<paper_root>/registry/settings.yaml` and `<paper_root>/registry/papers/<paper_id>.yaml`.
+   When creating a workspace or naming a reader-facing file, also read
+   [paper-identifiers.md](../references/paper-identifiers.md).
    If support publication is required, also read `docs/ZENODO_GUIDE.md` in the code repository.
 3. Confirm authorization before processing unpublished or confidential material, and keep it local
    unless external processing is explicitly authorized and venue-compatible.

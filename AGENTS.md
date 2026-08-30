@@ -32,3 +32,15 @@ For every journal manuscript beyond its basic draft, use the domain-specific tar
   quartile, and a XinRui tier must not be reported as the CAS major-category partition.
 - Journal selection and a passing paper gate never authorize submission, spending, or a journal
   event.
+
+# Paper identifier policy
+
+For every domain, follow `docs/PAPER_ID_POLICY.md` when creating a paper or naming a public
+manuscript file.
+
+- New `paper_id` values use `YYYYMMDD-domain-subdomain-keywords`; the date, domain and subdomain
+  must match the registry record.
+- Repository-local question, task, round and workstream labels such as `tp-042` are provenance,
+  not paper identifiers or public filenames.
+- Keep an established `paper_id` immutable. Use the domain-scoped `display_id` for reader-facing
+  names and `<display_id>-v<MAJOR.MINOR.PATCH>.pdf` for exported manuscripts.

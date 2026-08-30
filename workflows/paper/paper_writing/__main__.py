@@ -18,6 +18,7 @@ from paper_writing.inventory import (
 )
 from paper_writing.operations import (
     apply_review_record,
+    canonical_public_manuscript_filename,
     create_paper,
     record_quality_gate,
     reuse_review_for_metadata_only_revision,
@@ -91,6 +92,13 @@ def build_parser() -> argparse.ArgumentParser:
     revision.add_argument("--paper-id", required=True)
     revision.add_argument("--reason", required=True)
     revision.add_argument("--root", default=str(default_repo_root()))
+
+    public_name = paper_commands.add_parser(
+        "public-name",
+        help="Print the policy-compliant reader-facing PDF filename.",
+    )
+    public_name.add_argument("--paper-id", required=True)
+    public_name.add_argument("--root", default=str(default_repo_root()))
 
     quality = subparsers.add_parser("quality-gate", help="Record and evaluate an LLM review result.")
     quality.add_argument("--paper-id", required=True)
@@ -382,6 +390,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "paper" and args.paper_command == "start-revision":
         result = start_revision(args.paper_id, args.reason, root=args.root)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "paper" and args.paper_command == "public-name":
+        print(canonical_public_manuscript_filename(args.paper_id, root=args.root))
         return 0
     if args.command == "quality-gate":
         result = record_quality_gate(

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from paper_writing.operations import (
+    canonical_public_manuscript_filename,
     create_paper,
     record_quality_gate,
     reuse_review_for_metadata_only_revision,
@@ -444,5 +445,93 @@ def test_create_paper_rejects_legacy_or_mismatched_new_ids(tmp_path: Path) -> No
             created_at="2026-07-21",
             domain="ai",
             subdomain="llm",
+            venue_type="journal",
+        )
+
+
+@pytest.mark.parametrize(
+    "paper_id,tracking_label",
+    [
+        ("20260830-physics-hep-tp-042", "tp-042"),
+        ("20260830-physics-hep-tp042-bootstrap", "tp042"),
+        ("20260830-math-number-problem-29", "problem-29"),
+        ("20260830-ai-llm-round5-ablation", "round5"),
+    ],
+)
+def test_create_paper_rejects_repository_local_tracking_ids(
+    tmp_path: Path, paper_id: str, tracking_label: str
+) -> None:
+    _settings(tmp_path)
+    domain, subdomain = paper_id.split("-")[1:3]
+    with pytest.raises(ValueError, match=tracking_label):
+        create_paper(
+            root=tmp_path,
+            paper_id=paper_id,
+            title="Internal tracking must not become a paper identifier",
+            created_at="2026-08-30",
+            domain=domain,
+            subdomain=subdomain,
+            venue_type="journal",
+        )
+
+
+def test_public_manuscript_filename_uses_display_id_and_semantic_version(
+    tmp_path: Path,
+) -> None:
+    _settings(tmp_path)
+    paper_id = "20260830-physics-hep-p5-chain-bootstrap"
+    create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="A public naming test",
+        created_at="2026-08-30",
+        domain="physics",
+        subdomain="hep",
+        venue_type="journal",
+    )
+
+    assert canonical_public_manuscript_filename(paper_id, root=tmp_path) == (
+        "20260830-physics-hep-p5-chain-bootstrap-v0.1.0.pdf"
+    )
+
+    metadata = load_paper_metadata(paper_id, tmp_path)
+    metadata["display_id"] = "20260830-physics-hep-tp-042"
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    with pytest.raises(ValueError, match="repository-local tracking label 'tp-042'"):
+        load_registry(tmp_path, include_local_repositories=False)
+
+
+def test_create_paper_accepts_namespaced_external_problem_identifier(
+    tmp_path: Path,
+) -> None:
+    _settings(tmp_path)
+    paper_id = "20260830-math-erdos-866-sumfree-bound"
+
+    path = create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="A catalogued problem",
+        created_at="2026-08-30",
+        domain="math",
+        subdomain="erdos",
+        venue_type="journal",
+    )
+
+    assert path.name == f"{paper_id}.yaml"
+
+
+@pytest.mark.parametrize("created_at", ["2026-02-30", "20260830"])
+def test_create_paper_rejects_invalid_or_noncanonical_date(
+    tmp_path: Path, created_at: str
+) -> None:
+    _settings(tmp_path)
+    with pytest.raises(ValueError, match="valid YYYY-MM-DD"):
+        create_paper(
+            root=tmp_path,
+            paper_id="20260830-physics-hep-chain-bootstrap",
+            title="An invalid date",
+            created_at=created_at,
+            domain="physics",
+            subdomain="hep",
             venue_type="journal",
         )

@@ -9,7 +9,8 @@ Use this as a thin coordinator over the private paper registry and the migrated 
 Resolve `paper_root` from `OPENLABS_DATA` or `$OPENLABS_WORKSPACE/openlabs-data`, and read the selected paper
 record, its claim–evidence map, the materials result bundles, and the current target-journal policy.
 Read `workflows/paper/skills/overlays/quality-gate.md`; when support publication is required, also
-read `docs/ZENODO_GUIDE.md`.
+read `docs/ZENODO_GUIDE.md`. When creating a workspace or naming a reader-facing file, read
+[paper-identifiers.md](../references/paper-identifiers.md).
 
 ## Load the bounded components
 

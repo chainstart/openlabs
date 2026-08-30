@@ -13,6 +13,7 @@ from paper_writing.identifiers import (
     PAPER_ID_PATTERN,
     WORK_ID_PATTERN,
     domain_scoped_parts,
+    internal_tracking_reference,
     work_id_from_paper_id,
 )
 
@@ -143,6 +144,12 @@ def load_registry(
             ):
                 raise ValueError(
                     f"display_id domain/subdomain must match registry metadata for {paper_id}"
+                )
+            tracking_reference = internal_tracking_reference(display_id)
+            if tracking_reference:
+                raise ValueError(
+                    "display_id must describe the scientific subject, not repository-local "
+                    f"tracking label {tracking_reference!r} for {paper_id}"
                 )
             paper["display_id"] = display_id
         target_journal = paper.get("target_journal")

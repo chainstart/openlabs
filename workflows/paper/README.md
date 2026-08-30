@@ -9,6 +9,25 @@ By default, the workflow reads private state from `$OPENLABS_DATA`, or from
 `$OPENLABS_WORKSPACE/openlabs-data`. Pass `--root` for an explicit paper repository. The migrated data layout
 keeps `registry/`, `papers/`, and `reviews/` directly under that root.
 
+## Paper identifiers
+
+New papers use the immutable ID `YYYYMMDD-domain-subdomain-keywords`; the date is the workspace
+creation date and the domain/subdomain segments must match the registry. Keywords describe the
+scientific subject, not an OpenLabs question, task, round, or workstream number. New `display_id`
+values equal `paper_id`; legacy technical IDs remain immutable but receive a compliant
+domain-scoped `display_id` for public use.
+
+Reader-facing PDFs use `<display_id>-v<MAJOR.MINOR.PATCH>.pdf`. Obtain the exact filename with:
+
+```bash
+PYTHONPATH=workflows/paper python3 -m paper_writing paper public-name \
+  --paper-id 20260828-physics-hep-p5-chain-bootstrap \
+  --root "$OPENLABS_WORKSPACE/openlabs-data"
+```
+
+The complete policy, including public support archives and legacy migration, is in
+[`docs/PAPER_ID_POLICY.md`](../../docs/PAPER_ID_POLICY.md).
+
 ```bash
 PYTHONPATH=workflows/paper python3 -m paper_writing validate \
   --root "$OPENLABS_WORKSPACE/openlabs-data"

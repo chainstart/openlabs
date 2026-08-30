@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from paper_writing.identifiers import (
-    DOMAIN_SCOPED_PAPER_ID_PATTERN,
     domain_scoped_parts,
+    public_manuscript_filename,
+    validate_new_paper_id,
     work_id_from_paper_id,
 )
 from paper_writing.inventory import build_inventory
@@ -180,26 +181,12 @@ def create_paper(
     target_journal: str | None = None,
 ) -> Path:
     repo_root = Path(root).resolve()
-    if not DOMAIN_SCOPED_PAPER_ID_PATTERN.fullmatch(paper_id):
-        raise ValueError(
-            "New paper_id must use YYYYMMDD-domain-subdomain-keywords, for "
-            "example 20260802-math-graph-opg1757-active-newton"
-        )
-    expected = f"{created_at.replace('-', '')}-"
-    if not paper_id.startswith(expected):
-        raise ValueError(f"paper_id must start with {expected}")
-    parts = domain_scoped_parts(paper_id)
-    if parts is None:  # Guard the invariant established by the format check above.
-        raise AssertionError("domain-scoped paper_id did not parse")
-    if parts["domain"] != domain:
-        raise ValueError(
-            f"paper_id domain segment {parts['domain']!r} must match domain {domain!r}"
-        )
-    if parts["subdomain"] != subdomain:
-        raise ValueError(
-            "paper_id subdomain segment "
-            f"{parts['subdomain']!r} must match subdomain {subdomain!r}"
-        )
+    validate_new_paper_id(
+        paper_id,
+        created_at=created_at,
+        domain=domain,
+        subdomain=subdomain,
+    )
     path = paper_metadata_path(paper_id, repo_root)
     if path.exists() or (repo_root / "papers" / paper_id).exists():
         raise FileExistsError(paper_id)
@@ -251,6 +238,23 @@ def create_paper(
     if target_journal and target_journal.strip():
         payload["target_journal"] = target_journal.strip()
     return write_paper_metadata(paper_id, payload, repo_root)
+
+
+def canonical_public_manuscript_filename(
+    paper_id: str, *, root: str | Path
+) -> str:
+    """Resolve the policy-compliant public PDF name from registered metadata."""
+
+    metadata = load_paper_metadata(paper_id, Path(root).resolve())
+    display_id = str(metadata.get("display_id") or "").strip()
+    if not display_id and domain_scoped_parts(paper_id):
+        display_id = paper_id
+    if not display_id:
+        raise ValueError(
+            f"A domain-scoped display_id is required for public files: {paper_id}"
+        )
+    version = str(metadata.get("version") or "").strip()
+    return public_manuscript_filename(display_id, version)
 
 
 def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str, Any]:

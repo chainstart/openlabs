@@ -10,7 +10,8 @@ paper root from `OPENLABS_DATA` or `$OPENLABS_WORKSPACE/openlabs-data`, then rea
 record, claim–evidence map, trial ledger, point-in-time data manifests, canonical backtest receipts,
 independent audit, and current target-journal policy.
 Read `workflows/paper/skills/overlays/quality-gate.md`; when support publication is required, also
-read `docs/ZENODO_GUIDE.md`.
+read `docs/ZENODO_GUIDE.md`. When creating a workspace or naming a reader-facing file, read
+[paper-identifiers.md](../references/paper-identifiers.md).
 
 ## Load the bounded components
 

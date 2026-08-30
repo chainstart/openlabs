@@ -12,6 +12,8 @@ AI text as evidence.
 1. Read the paper registry record, frozen research result, independent readiness audit, and
    [physics-evidence-boundary.md](references/physics-evidence-boundary.md). Also read the shared
    `workflows/paper/skills/overlays/quality-gate.md` and, when needed, `docs/ZENODO_GUIDE.md`.
+   When creating a workspace or naming a reader-facing file, also read
+   [paper-identifiers.md](../references/paper-identifiers.md).
 2. Invoke `$scientific-writing` for manuscript structure, source verification, citation practice,
    and LaTeX. Invoke `$statistical-analysis` only when the result contains empirical inference or
    uncertainty estimates. `$peer-review` belongs to the independent reviewer, not the writer.
