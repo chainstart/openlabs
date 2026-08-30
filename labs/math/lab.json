@@ -23,6 +23,10 @@
       "path": "skills/math-autonomous-research/SKILL.md"
     },
     {
+      "skill_id": "math-research-state-machine",
+      "path": "skills/math-research-state-machine/SKILL.md"
+    },
+    {
       "skill_id": "open-math-research",
       "path": "skills/open-math-research/SKILL.md"
     },
@@ -95,6 +99,40 @@
           "open-math-research"
         ]
       }
+    },
+    {
+      "protocol_id": "math-state-machine",
+      "primary_skill": "math-research-state-machine",
+      "runtime_skills": [
+        "math-research-state-machine"
+      ],
+      "validator": {
+        "command": [
+          "{python}",
+          "protocols/research_state_machine.py",
+          "validate",
+          "--project",
+          "{project_config}",
+          "--workstream",
+          "{workstream_state}",
+          "--mode",
+          "{validation_mode}"
+        ]
+      },
+      "hooks": {
+        "continuation": {
+          "command": [
+            "{python}",
+            "protocols/research_state_machine.py",
+            "decide",
+            "--project",
+            "{project_config}",
+            "--workstream",
+            "{workstream_state}"
+          ],
+          "timeout_seconds": 30
+        }
+      }
     }
   ],
   "runtime_setup": [
@@ -154,6 +192,7 @@
   "capabilities": [
     "open-problem-selection",
     "persistent-multi-agent-proof-search",
+    "configurable-research-state-machines",
     "mechanism-falsification",
     "counterexample-search",
     "symbolic-computation",

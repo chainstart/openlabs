@@ -14,3 +14,16 @@ def test_five_labs_are_discoverable() -> None:
         assert lab.command
         assert lab.skill_path() is not None
         assert lab.skill_path().is_file()
+
+
+def test_math_state_machine_registers_an_optional_continuation_hook() -> None:
+    math = discover_labs(CODE_ROOT)["math"]
+    protocol = math.protocol("math-state-machine")
+
+    assert protocol is not None
+    assert protocol.primary_skill == "math-research-state-machine"
+    hook = protocol.hook("continuation")
+    assert hook is not None
+    assert hook.timeout_seconds == 30
+    assert "{project_config}" in hook.command
+    assert "{workstream_state}" in hook.command

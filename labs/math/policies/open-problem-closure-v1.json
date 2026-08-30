@@ -1,0 +1,429 @@
+{
+  "schema_version": "openlabs.math_research_policy.v1",
+  "policy_id": "open-problem-closure-v1",
+  "description": "A per-candidate selective allocation funnel for large candidate portfolios. It spends frontier resources only after an open problem and a concrete bridge survive evidence-bound admission and independent audit, while configured stage concurrency concentrates the portfolio on rare survivors.",
+  "initial_stage": "admission_probe",
+  "portfolio": {
+    "max_concurrent_tasks_by_stage": {
+      "admission_probe": 12,
+      "bridge_search": 3,
+      "bridge_audit": 2,
+      "deep_proof": 1,
+      "independent_solution_audit": 1,
+      "independent_intermediate_audit": 1,
+      "novelty_audit": 1
+    }
+  },
+  "autonomy_contract": {
+    "agent_owns": [
+      "problem interpretation within the frozen statement",
+      "proof route selection and replacement",
+      "intermediate conjectures and representations",
+      "tool choice and falsification strategy",
+      "whether evidence warrants a configured transition or pause"
+    ],
+    "policy_owns": [
+      "allocation ceilings",
+      "evidence needed to unlock the next allocation tier",
+      "fresh-session and reviewer boundaries",
+      "terminal outcome labels"
+    ]
+  },
+  "observation_types": {
+    "statement_frozen": {
+      "description": "The exact quantified public statement and success criterion are frozen.",
+      "evidence_required": true
+    },
+    "authoritative_source_verified": {
+      "description": "An authoritative source for the statement has been recorded.",
+      "evidence_required": true
+    },
+    "open_status_verified": {
+      "description": "A dated primary-source search supports that the exact statement remains open.",
+      "evidence_required": true
+    },
+    "duplicate_risk_cleared": {
+      "description": "Known direct corollaries and duplicate formulations were checked.",
+      "evidence_required": true
+    },
+    "decisive_kill_test_defined": {
+      "description": "A cheap test capable of killing the proposed attack has an executable specification.",
+      "evidence_required": true
+    },
+    "bridge_relevance_established": {
+      "description": "The candidate bridge has an explicit implication path to the original problem.",
+      "evidence_required": true
+    },
+    "admission_rejected": {
+      "description": "The target failed admission for a recorded mathematical or novelty reason.",
+      "evidence_required": true
+    },
+    "bridge_verified": {
+      "description": "A theorem-shaped bridge, reduction, invariant, or obstruction was proved with a complete implication interface.",
+      "evidence_required": true
+    },
+    "bridge_refuted": {
+      "description": "The bridge mechanism or its claimed implication was decisively refuted.",
+      "evidence_required": true
+    },
+    "independent_bridge_audit_passed": {
+      "description": "A fresh reviewer reconstructed the bridge and its relevance to the original statement.",
+      "evidence_required": true
+    },
+    "independent_bridge_audit_failed": {
+      "description": "A fresh reviewer found a fatal bridge or dependency defect.",
+      "evidence_required": true
+    },
+    "original_problem_closed": {
+      "description": "A complete proof of the frozen original statement is claimed with a dependency graph.",
+      "evidence_required": true
+    },
+    "counterexample_closed": {
+      "description": "A rigorous counterexample refuting the frozen original statement is claimed.",
+      "evidence_required": true
+    },
+    "standalone_theorem_candidate": {
+      "description": "A paper-scale intermediate theorem is stated exactly with proof and non-cosmetic consequence.",
+      "evidence_required": true
+    },
+    "deep_route_exhausted": {
+      "description": "The admitted route exhausted its configured deep allocation without a surviving closure mechanism.",
+      "evidence_required": true
+    },
+    "independent_solution_audit_passed": {
+      "description": "One fresh hostile reviewer reconstructed the complete proof or counterexample and verified all dependencies.",
+      "evidence_required": true
+    },
+    "independent_solution_audit_failed": {
+      "description": "A fresh hostile reviewer found a repairable or fatal defect in the claimed closure.",
+      "evidence_required": true
+    },
+    "standalone_theorem_audit_passed": {
+      "description": "A fresh reviewer reconstructed the intermediate theorem and its stated scope.",
+      "evidence_required": true
+    },
+    "standalone_theorem_audit_failed": {
+      "description": "A fresh reviewer rejected the intermediate theorem as stated.",
+      "evidence_required": true
+    },
+    "novelty_audit_passed": {
+      "description": "A dated independent search found no prior resolution of the exact closed statement.",
+      "evidence_required": true
+    },
+    "novelty_audit_failed": {
+      "description": "Independent novelty review found prior art or a statement mismatch that defeats the claimed resolution.",
+      "evidence_required": true
+    }
+  },
+  "stages": {
+    "admission_probe": {
+      "description": "Freeze and verify the problem, eliminate duplicates, and identify one executable bridge or decisive kill test before frontier allocation.",
+      "task": {
+        "objective": "Perform a bounded admission investigation. Verify the exact statement and current status, identify the strongest known frontier, design a decisive kill test, and either establish a concrete bridge to closure or reject the candidate. Do not begin an unconstrained long proof search.",
+        "agent_role": "researcher",
+        "session_mode": "fresh",
+        "handoff_kind": "route_reselection",
+        "runner": "balanced",
+        "wall_seconds": 1800,
+        "resources": {
+          "cpu_threads": 2,
+          "memory_mib": 4096,
+          "scratch_mib": 4096
+        }
+      },
+      "budget": {
+        "max_tasks": 2,
+        "max_agent_seconds": 3600,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "bridge_search",
+          "requires": {
+            "all": [
+              {"kind": "statement_frozen"},
+              {"kind": "authoritative_source_verified"},
+              {"kind": "open_status_verified"},
+              {"kind": "duplicate_risk_cleared"},
+              {"kind": "decisive_kill_test_defined"},
+              {"kind": "bridge_relevance_established"}
+            ]
+          }
+        },
+        {
+          "to": "rejected",
+          "requires": {
+            "all": [{"kind": "admission_rejected"}]
+          }
+        }
+      ]
+    },
+    "bridge_search": {
+      "description": "Prove or decisively kill a theorem-shaped bridge before unlocking deep proof search.",
+      "task": {
+        "objective": "Work on the admitted bridge with autonomous proof search and aggressive falsification. Change representations and routes whenever the evidence warrants it. Advance only with a complete bridge statement, proof evidence, and explicit implication interface to the original problem.",
+        "agent_role": "researcher",
+        "session_mode": "resume",
+        "handoff_kind": "role_handoff",
+        "runner": "frontier",
+        "wall_seconds": 14400,
+        "resources": {
+          "cpu_threads": 4,
+          "memory_mib": 8192,
+          "scratch_mib": 16384
+        }
+      },
+      "budget": {
+        "max_tasks": 3,
+        "max_agent_seconds": 43200,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "bridge_audit",
+          "requires": {"all": [{"kind": "bridge_verified"}]}
+        },
+        {
+          "to": "rejected",
+          "requires": {"all": [{"kind": "bridge_refuted"}]}
+        }
+      ]
+    },
+    "bridge_audit": {
+      "description": "Independently reconstruct the bridge before deep resources are authorized.",
+      "task": {
+        "objective": "Independently and adversarially reconstruct the frozen bridge from declared evidence. Check every quantifier, dependency, implication to the original problem, and failure regime. Do not continue the creator's proof search.",
+        "agent_role": "reviewer",
+        "session_mode": "fresh",
+        "handoff_kind": "adversarial_review",
+        "runner": "frontier",
+        "wall_seconds": 7200,
+        "resources": {
+          "cpu_threads": 3,
+          "memory_mib": 8192,
+          "scratch_mib": 8192
+        }
+      },
+      "budget": {
+        "max_tasks": 1,
+        "max_agent_seconds": 7200,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "deep_proof",
+          "requires": {
+            "all": [
+              {
+                "kind": "independent_bridge_audit_passed",
+                "actor_role": "reviewer"
+              }
+            ]
+          }
+        },
+        {
+          "to": "rejected",
+          "requires": {
+            "all": [
+              {
+                "kind": "independent_bridge_audit_failed",
+                "actor_role": "reviewer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "deep_proof": {
+      "description": "Concentrate long-horizon frontier resources on full closure while preserving paper-scale intermediate theorems.",
+      "task": {
+        "objective": "Pursue complete proof or disproof of the frozen open problem from the audited bridge. Run sustained proof-level work rather than another survey. Dynamically branch, merge, falsify, compute, or formalize as useful, but distinguish full closure from a standalone intermediate theorem and from search progress.",
+        "agent_role": "researcher",
+        "session_mode": "resume",
+        "handoff_kind": "role_handoff",
+        "runner": "frontier",
+        "wall_seconds": 43200,
+        "resources": {
+          "cpu_threads": 6,
+          "memory_mib": 16384,
+          "scratch_mib": 32768
+        }
+      },
+      "budget": {
+        "max_tasks": 4,
+        "max_agent_seconds": 172800,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "independent_solution_audit",
+          "requires": {
+            "any": [
+              {"kind": "original_problem_closed"},
+              {"kind": "counterexample_closed"}
+            ]
+          }
+        },
+        {
+          "to": "independent_intermediate_audit",
+          "requires": {
+            "all": [{"kind": "standalone_theorem_candidate"}]
+          }
+        },
+        {
+          "to": "rejected",
+          "requires": {"all": [{"kind": "deep_route_exhausted"}]}
+        }
+      ]
+    },
+    "independent_solution_audit": {
+      "description": "Run two fresh hostile reconstructions of the claimed complete solution or counterexample.",
+      "task": {
+        "objective": "Reconstruct the exact claimed resolution from frozen evidence without inheriting the creator's reasoning. Audit every imported theorem, limiting operation, exceptional case, computation boundary, and statement match. Return a pass only for a complete independently defensible resolution.",
+        "agent_role": "reviewer",
+        "session_mode": "fresh",
+        "handoff_kind": "adversarial_review",
+        "runner": "frontier",
+        "wall_seconds": 43200,
+        "resources": {
+          "cpu_threads": 5,
+          "memory_mib": 12288,
+          "scratch_mib": 16384
+        }
+      },
+      "budget": {
+        "max_tasks": 4,
+        "max_agent_seconds": 172800,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "novelty_audit",
+          "requires": {
+            "all": [
+              {
+                "kind": "independent_solution_audit_passed",
+                "actor_role": "reviewer",
+                "min_count": 2,
+                "distinct_source_tasks": true
+              }
+            ]
+          }
+        },
+        {
+          "to": "deep_proof",
+          "requires": {
+            "all": [
+              {
+                "kind": "independent_solution_audit_failed",
+                "actor_role": "reviewer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "independent_intermediate_audit": {
+      "description": "Reconstruct a paper-scale intermediate theorem without mistaking it for closure of the original problem.",
+      "task": {
+        "objective": "Independently reconstruct the exact intermediate theorem, its dependencies, sharp scope, and non-cosmetic consequence. Explicitly state that it does not close the original problem unless the original closure gate was separately met.",
+        "agent_role": "reviewer",
+        "session_mode": "fresh",
+        "handoff_kind": "adversarial_review",
+        "runner": "frontier",
+        "wall_seconds": 14400,
+        "resources": {
+          "cpu_threads": 4,
+          "memory_mib": 8192,
+          "scratch_mib": 8192
+        }
+      },
+      "budget": {
+        "max_tasks": 1,
+        "max_agent_seconds": 14400,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "paper_seed",
+          "requires": {
+            "all": [
+              {
+                "kind": "standalone_theorem_audit_passed",
+                "actor_role": "reviewer"
+              }
+            ]
+          }
+        },
+        {
+          "to": "deep_proof",
+          "requires": {
+            "all": [
+              {
+                "kind": "standalone_theorem_audit_failed",
+                "actor_role": "reviewer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "novelty_audit": {
+      "description": "Verify current novelty and exact statement identity only after mathematical reconstruction passes.",
+      "task": {
+        "objective": "Perform an independent, dated primary-source novelty and priority audit for the exact reconstructed resolution. Check equivalent formulations and recent results. Do not weaken or restate the theorem to obtain a pass.",
+        "agent_role": "reviewer",
+        "session_mode": "fresh",
+        "handoff_kind": "adversarial_review",
+        "runner": "frontier",
+        "wall_seconds": 14400,
+        "resources": {
+          "cpu_threads": 3,
+          "memory_mib": 6144,
+          "scratch_mib": 8192
+        }
+      },
+      "budget": {
+        "max_tasks": 1,
+        "max_agent_seconds": 14400,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "solved",
+          "requires": {
+            "all": [
+              {"kind": "novelty_audit_passed", "actor_role": "reviewer"}
+            ]
+          }
+        },
+        {
+          "to": "rejected",
+          "requires": {
+            "all": [
+              {"kind": "novelty_audit_failed", "actor_role": "reviewer"}
+            ]
+          }
+        }
+      ]
+    },
+    "solved": {
+      "description": "The original open problem has a reconstructed and novelty-audited proof or counterexample package.",
+      "terminal": true,
+      "completion": "completed",
+      "transitions": []
+    },
+    "paper_seed": {
+      "description": "A reconstructed standalone intermediate theorem is preserved for a separate publication-maturation policy; the original problem is not marked solved.",
+      "terminal": true,
+      "completion": "completed",
+      "transitions": []
+    },
+    "rejected": {
+      "description": "The candidate or admitted route is paused with durable negative evidence and no automatic reseed.",
+      "terminal": true,
+      "completion": "paused",
+      "transitions": []
+    }
+  }
+}

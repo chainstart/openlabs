@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.math_research_policy_binding.v1.schema.json",
+  "title": "OpenLabs math research policy binding v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "policy"],
+  "properties": {
+    "schema_version": {
+      "const": "openlabs.math_research_policy_binding.v1"
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {"type": "string", "minLength": 1, "maxLength": 128},
+        "inline": {
+          "$ref": "openlabs.math_research_policy.v1.schema.json"
+        },
+        "overrides": {"type": "object"}
+      },
+      "oneOf": [
+        {"required": ["profile"], "not": {"required": ["inline"]}},
+        {"required": ["inline"], "not": {"required": ["profile"]}}
+      ]
+    }
+  }
+}

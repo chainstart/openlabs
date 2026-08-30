@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.math_research_state.v1.schema.json",
+  "title": "OpenLabs mathematics research state v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "project_id",
+    "workstream_id",
+    "policy_id",
+    "policy_digest",
+    "status",
+    "stage",
+    "observations",
+    "transitions",
+    "research_log",
+    "verification_receipts",
+    "dispositions",
+    "policy_rebindings"
+  ],
+  "properties": {
+    "schema_version": {"const": "openlabs.math_research_state.v1"},
+    "project_id": {"type": "string", "minLength": 1},
+    "workstream_id": {"type": "string", "minLength": 1},
+    "policy_id": {"type": "string", "minLength": 1},
+    "policy_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"enum": ["active", "paused", "completed"]},
+    "stage": {"type": "string", "minLength": 1},
+    "observations": {"type": "array", "items": {"type": "object"}},
+    "transitions": {"type": "array", "items": {"type": "object"}},
+    "research_log": {"type": "array"},
+    "verification_receipts": {"type": "array", "items": {"type": "string"}},
+    "dispositions": {"type": "array", "items": {"type": "object"}},
+    "policy_rebindings": {"type": "array", "items": {"type": "object"}}
+  }
+}

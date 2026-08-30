@@ -1,0 +1,114 @@
+{
+  "schema_version": "openlabs.math_research_policy.v1",
+  "policy_id": "publishable-intermediates-v1",
+  "description": "An alternative broad-exploration policy demonstrating that the state-machine engine is not tied to open-problem triage or full closure.",
+  "initial_stage": "open_exploration",
+  "portfolio": {
+    "max_concurrent_tasks_by_stage": {
+      "open_exploration": 4,
+      "independent_result_audit": 2
+    }
+  },
+  "observation_types": {
+    "paper_scale_result_candidate": {
+      "description": "An exact potentially publishable theorem, counterexample, method, or negative result has evidence and a non-cosmetic consequence.",
+      "evidence_required": true
+    },
+    "independent_result_audit_passed": {
+      "description": "A fresh reviewer reconstructed the result at its exact stated scope.",
+      "evidence_required": true
+    },
+    "independent_result_audit_failed": {
+      "description": "A fresh reviewer identified a defect requiring renewed research.",
+      "evidence_required": true
+    },
+    "portfolio_exhausted": {
+      "description": "The broad exploration allocation ended without a result worth independent maturation.",
+      "evidence_required": true
+    }
+  },
+  "stages": {
+    "open_exploration": {
+      "description": "Explore a broad mathematical theme with agent-owned topic and route selection.",
+      "task": {
+        "objective": "Explore the declared mathematical theme broadly. Select, combine, replace, or abandon questions and methods as the evidence warrants. Prefer exact theorem-shaped advances, sharp counterexamples, useful no-go results, or reusable methods over activity volume.",
+        "agent_role": "researcher",
+        "session_mode": "resume",
+        "handoff_kind": "role_handoff",
+        "runner": "balanced",
+        "wall_seconds": 14400,
+        "resources": {
+          "cpu_threads": 4,
+          "memory_mib": 8192,
+          "scratch_mib": 16384
+        }
+      },
+      "budget": {
+        "max_tasks": 8,
+        "max_agent_seconds": 115200,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "independent_result_audit",
+          "requires": {"all": [{"kind": "paper_scale_result_candidate"}]}
+        },
+        {
+          "to": "exhausted",
+          "requires": {"all": [{"kind": "portfolio_exhausted"}]}
+        }
+      ]
+    },
+    "independent_result_audit": {
+      "description": "Independently reconstruct the selected intermediate result.",
+      "task": {
+        "objective": "Reconstruct the frozen candidate result from declared evidence, audit its maximal natural scope and closest prior art, and return either an exact pass or an actionable mathematical defect.",
+        "agent_role": "reviewer",
+        "session_mode": "fresh",
+        "handoff_kind": "adversarial_review",
+        "runner": "frontier",
+        "wall_seconds": 14400,
+        "resources": {
+          "cpu_threads": 4,
+          "memory_mib": 8192,
+          "scratch_mib": 8192
+        }
+      },
+      "budget": {
+        "max_tasks": 2,
+        "max_agent_seconds": 28800,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "paper_seed",
+          "requires": {
+            "all": [
+              {"kind": "independent_result_audit_passed", "actor_role": "reviewer"}
+            ]
+          }
+        },
+        {
+          "to": "open_exploration",
+          "requires": {
+            "all": [
+              {"kind": "independent_result_audit_failed", "actor_role": "reviewer"}
+            ]
+          }
+        }
+      ]
+    },
+    "paper_seed": {
+      "description": "A reconstructed intermediate result is ready for a separate novelty and manuscript-maturation policy.",
+      "terminal": true,
+      "completion": "completed",
+      "transitions": []
+    },
+    "exhausted": {
+      "description": "Broad exploration ended without a promoted intermediate result.",
+      "terminal": true,
+      "completion": "paused",
+      "transitions": []
+    }
+  }
+}

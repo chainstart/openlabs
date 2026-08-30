@@ -7,8 +7,8 @@ OpenLabs 将科研运行拆成四层，依赖方向只能自上而下：
 | 层 | 稳定接口 | 拥有的内容 |
 |---|---|---|
 | 工厂内核 | task/result/receipt、事务、资源、会话、角色 | 队列、并发、租约、隔离、哈希归档和原子提交 |
-| 领域协议插件 | lab `protocols` 注册和 validator 命令 | 领域状态/证据完整性与可重放 oracle；开放研究协议不规定科研阶段 |
-| 项目配置 | `openlabs.project.v1` | 科研目标、选用协议、Skill、workstream、审查触发和会话策略 |
+| 领域协议插件 | lab `protocols` 注册、validator 与可选 lifecycle hook | 领域状态/证据完整性、可重放 oracle，以及按需启用的配置化分配门禁 |
+| 项目配置 | `openlabs.project.v1` | 科研目标、选用协议、Skill、workstream、会话策略和不透明 `domain_config` |
 | Codex 自主执行 | Skill、工具和项目状态 | 路线推导、实验设计、反例、计算、证明和下一科学决策 |
 
 对应实现位置：
@@ -17,7 +17,8 @@ OpenLabs 将科研运行拆成四层，依赖方向只能自上而下：
 - 项目与协议接口：`orchestrator/src/openlabs/{projects,protocols,labs}.py`；
 - 项目契约：`packages/contracts/schemas/openlabs.project.v1.schema.json`；
 - 数学协议插件：`labs/math/protocols/{autonomous_math_protocol,amra_math_protocol}.py` 和
-  `labs/math/lab.json`；
+  `labs/math/lab.json`；配置化数学状态机位于
+  `labs/math/protocols/research_state_machine.py` 和 `labs/math/policies/`；
 - Codex 行为边界：工厂 Skill、领域 Skill 与 `packages/research-core/lab_runner.py`。
 
 通用项目路径不识别 RH、AMRA 阶段或材料计算细节。增加新项目只需：
@@ -56,6 +57,39 @@ validator 是可信、确定性的只读程序，输出：
 调用。后者验证的是私有工作副本，而不是尚未修改的正式状态。协议验证失败时 attempt 被
 隔离，不能晋升到正式工作区。
 
+协议还可以按需注册 lifecycle hook。当前通用控制面只调用 `continuation` 事件；未注册 hook
+的协议保持原有 `next_actions` 行为：
+
+```json
+{
+  "hooks": {
+    "continuation": {
+      "command": [
+        "{python}", "protocols/decide.py",
+        "--project", "{project_config}",
+        "--workstream", "{workstream_state}"
+      ],
+      "timeout_seconds": 30
+    }
+  }
+}
+```
+
+hook 从 stdin 接收版本化上下文，包括 campaign 总 Agent-time、最近任务/结果，以及按不透明
+`routing_key` 聚合的实际任务数和 Agent-time，以及同项目 workstream 的活动摘要。它只能返回
+`continue`、`pause`、`defer` 或 `default`：`continue` 携带普通 task envelope 与稳定 routing
+key；`defer` 等待项目级并发配额且不改变科学状态；`default` 显式把决定交还原续接逻辑。控制
+面验证角色、会话、资源和 wall time，仍以全局资源
+上限进行裁剪，但不解释 hook 的阶段名、证据标签或晋级含义。hook 超时、崩溃或返回畸形数据
+时 fail closed。
+
+项目原有的 `domain_config.path` 是领域策略绑定点。它仍只是控制面复制和传递的一个文件；其
+Schema 与内容由所选 protocol 拥有。因此新策略不需要给 `openlabs.project.v1` 增加数学、
+材料或物理专用字段。project 与 domain config 是管理员输入：attempt 虽然获得私有副本供
+validator 与 Agent 读取，但提交门禁逐文件比对其 SHA-256，不能由研究 Agent 在一次任务里
+改弱门禁或自增预算。research index 是可并发重建的控制面快照，继续遵循自身的结果哈希和
+cursor 契约，不作为静态策略文件锁死。
+
 workstream 可选 `continuous` 或 `review_on_new_results`。后者只按“出现了尚未审查的新
 结果”这一机械事实启动空白 reviewer；候选判断仍由 reviewer 完成。reviewer 写出的
 `candidate_branches` 被原样物化为独立、连续的 researcher campaign，原自由研究 campaign
@@ -83,7 +117,9 @@ review packet、cursor 位于 `openlabs-artifacts/portfolio-control/`，不在 r
 
 ## Codex 连续性
 
-协议阶段是持久化状态和审计检查点，不是进程边界。默认执行策略为：
+协议阶段是持久化状态和审计检查点，不是进程边界。提交验证器会获得一个领域无关、由
+调度器签发的 task/attempt/role/session 上下文；数学插件用它把本次新增观察绑定到真实任务，
+并把旧状态历史视为只可追加。内核不解释观察名称或数学阶段。默认执行策略为：
 
 ```json
 {
@@ -118,6 +154,50 @@ AMRA 的七个 phase 因而只写入 `campaign_state.json` 和 history；它们�
 提示词，不与 AMRA 默认门禁混用，但仍继承 OpenLabs 的 attempt、证据归档和资源护栏。正式
 运行必须同时为 Agent 和 provider 配置至少 8 小时 wall budget；到达基础设施硬截止时只写
 可恢复 checkpoint，不把该边界解释为数学路线已经失败。
+
+`math-state-machine` 是另一个显式选择、并非数学实验室默认值的协议。它的引擎只认识任意
+阶段图、配置化 observation 条件、task envelope 和实际 routing usage；数学阶段名称全部来自
+项目绑定的 policy。仓库提供两份互不相同的配置来验证这个边界：
+
+- `open-problem-closure-v1`：准入、桥梁证明、独立桥梁审查、深度证明、独立解答审查和新颖性
+  审查逐级解锁，只有最后通过的完整证明或反例进入 `solved`；
+- `publishable-intermediates-v1`：允许广泛选题和路线漂移，以经过独立重构的中间定理为终点，
+  不要求先筛选极少数开放问题。
+
+策略只拥有分配门禁。Agent 仍拥有路线选择、表示转换、猜想、工具、终止和是否提交某个迁移
+请求。所有 observation 必须先指向存在的小型证据文件，迁移由确定性 CLI 原子校验和写入；
+直接编辑 stage 或 transition history 不能通过 protocol validator。
+
+一个项目通过小型 domain config 选择配置，也可以只覆盖所需预算或任务信封：
+
+```json
+{
+  "schema_version": "openlabs.math_research_policy_binding.v1",
+  "policy": {
+    "profile": "open-problem-closure-v1",
+    "overrides": {
+      "stages": {
+        "deep_proof": {
+          "budget": {"max_tasks": 2, "max_agent_seconds": 86400}
+        }
+      }
+    }
+  }
+}
+```
+
+`project.json` 使用 `protocol.id: math-state-machine`、
+`primary_skill: math-research-state-machine`，并让 `domain_config.path` 指向该文件。项目文件和
+binding 建好后，用 `research_state_machine.py init` 创建首个 workstream state；首个 factory
+tick 随后通过同一 hook 生成该策略初始阶段的任务。全局 `openlabs.toml` 和 workstream 的
+`max_agent_seconds` 仍是不可突破的外层安全/授权上限。
+
+在开放问题筛选模式下，一个候选命题对应一个 workstream；候选可以由 Agent 生成、从既有
+portfolio 导入，或由管理员批量声明，而不是写进状态机代码。所有候选先进入配置的
+`initial_stage`。`max_concurrent_tasks_by_stage` 只限制同时占用某一档资源的 workstream：默认
+closure profile 可并行准入 12 个、桥梁搜索 3 个、深度证明 1 个。候选是否晋级仍取决于自身
+证据和 Agent 提交的迁移请求，不由调度器评分。配额暂满时 hook 返回 `defer`，状态保持 active，
+资源释放后可自动进入；阶段预算耗尽则按 policy 明确暂停或交回默认逻辑。
 
 ## 数学研究工作区
 

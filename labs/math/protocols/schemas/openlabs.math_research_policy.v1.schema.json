@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openlabs.local/schemas/openlabs.math_research_policy.v1.schema.json",
+  "title": "OpenLabs configurable mathematics research policy v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "policy_id",
+    "description",
+    "initial_stage",
+    "observation_types",
+    "stages"
+  ],
+  "properties": {
+    "schema_version": {"const": "openlabs.math_research_policy.v1"},
+    "policy_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "description": {"type": "string", "minLength": 1},
+    "initial_stage": {"type": "string", "minLength": 1},
+    "portfolio": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "max_concurrent_tasks_by_stage": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "observation_types": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description", "evidence_required"],
+        "properties": {
+          "description": {"type": "string", "minLength": 1},
+          "evidence_required": {"type": "boolean"}
+        }
+      }
+    },
+    "stages": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["description", "transitions"],
+        "properties": {
+          "description": {"type": "string", "minLength": 1},
+          "terminal": {"type": "boolean"},
+          "completion": {"enum": ["paused", "completed"]},
+          "task": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "objective",
+              "agent_role",
+              "session_mode",
+              "handoff_kind",
+              "runner",
+              "wall_seconds"
+            ],
+            "properties": {
+              "objective": {"type": "string", "minLength": 1},
+              "agent_role": {
+                "enum": ["researcher", "experimenter", "writer", "reviewer"]
+              },
+              "session_mode": {"enum": ["resume", "fresh"]},
+              "handoff_kind": {"type": "string", "minLength": 1},
+              "runner": {"type": "string", "minLength": 1},
+              "wall_seconds": {"type": "integer", "minimum": 1},
+              "resources": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["cpu_threads", "memory_mib", "scratch_mib"],
+                "properties": {
+                  "cpu_threads": {"type": "integer", "minimum": 1},
+                  "memory_mib": {"type": "integer", "minimum": 1},
+                  "scratch_mib": {"type": "integer", "minimum": 1}
+                }
+              }
+            }
+          },
+          "budget": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "max_tasks": {"type": "integer", "minimum": 1},
+              "max_agent_seconds": {"type": "integer", "minimum": 1},
+              "on_exhaustion": {"enum": ["pause", "defer", "default"]}
+            }
+          },
+          "transitions": {"type": "array"}
+        }
+      }
+    }
+  }
+}
