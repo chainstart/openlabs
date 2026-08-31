@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import subprocess
 import sys
@@ -46,6 +47,36 @@ ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "validate_review.py"
 AGGREGATOR = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "aggregate_panel.py"
 CLAUDE_REVIEWER = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "run_claude_reviewer.py"
+
+
+def _load_claude_reviewer_module():
+    spec = importlib.util.spec_from_file_location("openlabs_run_claude_reviewer", CLAUDE_REVIEWER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_claude_reviewer_prefers_native_wsl_binary(monkeypatch, tmp_path: Path) -> None:
+    module = _load_claude_reviewer_module()
+    native = tmp_path / ".local" / "bin" / "claude"
+    native.parent.mkdir(parents=True)
+    native.write_text("#!/bin/sh\n", encoding="utf-8")
+    native.chmod(0o755)
+
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    monkeypatch.setattr(module.shutil, "which", lambda _command: "/mnt/c/npm/claude")
+    monkeypatch.setattr(module.Path, "home", classmethod(lambda cls: tmp_path))
+
+    assert module._resolve_claude_executable("claude") == str(native.resolve())
+
+
+def test_claude_reviewer_keeps_explicit_binary_path(tmp_path: Path) -> None:
+    module = _load_claude_reviewer_module()
+    explicit = tmp_path / "custom-claude"
+    explicit.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    assert module._resolve_claude_executable(str(explicit)) == str(explicit.resolve())
 
 
 def _physics_highest_tier_recommendation() -> dict:

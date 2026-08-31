@@ -357,6 +357,33 @@ def _redacted(value: str, secret: str) -> str:
     return value.replace(secret, "<redacted>") if secret else value
 
 
+def _resolve_claude_executable(command: str) -> str | None:
+    """Prefer a native WSL executable over a Windows shim on a mounted drive.
+
+    Windows npm shims can be discovered before the native Claude binary in a
+    WSL PATH.  They work interactively, but may terminate a piped ``--print``
+    request without forwarding stderr.  An explicitly configured path always
+    wins; the fallback applies only to an unqualified command name.
+    """
+
+    if os.sep in command or (os.altsep is not None and os.altsep in command):
+        candidate = Path(command).expanduser()
+        return str(candidate.resolve()) if candidate.is_file() else None
+
+    executable = shutil.which(command)
+    if executable is None or not sys.platform.startswith("linux"):
+        return executable
+
+    resolved = Path(executable).resolve()
+    if not str(resolved).startswith("/mnt/"):
+        return executable
+
+    native = Path.home() / ".local" / "bin" / command
+    if native.is_file() and os.access(native, os.X_OK):
+        return str(native.resolve())
+    return executable
+
+
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
     temporary_path: Path | None = None
     try:
@@ -465,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = Path(args.settings).expanduser().resolve()
     _, secret = _load_packy_settings(settings)
-    executable = shutil.which(args.claude_command)
+    executable = _resolve_claude_executable(args.claude_command)
     if executable is None:
         raise FileNotFoundError(f"Claude Code command not found: {args.claude_command}")
 
@@ -523,7 +550,8 @@ def main(argv: list[str] | None = None) -> int:
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("Claude reviewer timed out") from exc
     if completed.returncode != 0:
-        detail = _redacted(completed.stderr.strip(), secret)
+        raw_detail = completed.stderr.strip() or completed.stdout.strip()
+        detail = _redacted(raw_detail, secret)[-4000:]
         raise RuntimeError(f"Claude reviewer failed (exit {completed.returncode}): {detail}")
     try:
         response = json.loads(completed.stdout)
