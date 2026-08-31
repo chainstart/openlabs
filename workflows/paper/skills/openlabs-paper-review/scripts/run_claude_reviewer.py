@@ -58,6 +58,8 @@ CLAUDE_REVIEWER_ID = "reviewer-2"
 CLAUDE_PROVIDER = "packy"
 CLAUDE_MODEL = "claude-opus-5"
 MAX_INPUT_BYTES = 2 * 1024 * 1024
+MAX_REVIEW_FINDINGS = 8
+MAX_SECTION_FEEDBACK = 12
 PACKY_HOST_SUFFIX = "packyapi.com"
 
 
@@ -201,7 +203,11 @@ def _judgment_schema(role: str) -> dict[str, Any]:
             CAS_ZONE_1_JOURNAL_VIEW: recommendation,
         }
 
-    text_array = {"type": "array", "items": _string_schema()}
+    text_array = {
+        "type": "array",
+        "items": _string_schema(),
+        "maxItems": MAX_REVIEW_FINDINGS,
+    }
     return _object_schema(
         {
             "scores": _object_schema(score_properties, list(score_properties)),
@@ -211,10 +217,12 @@ def _judgment_schema(role: str) -> dict[str, Any]:
                 "type": "object",
                 "additionalProperties": _string_schema(),
                 "minProperties": 1,
+                "maxProperties": MAX_SECTION_FEEDBACK,
             },
             "required_changes": text_array,
             "change_requests": {
                 "type": "array",
+                "maxItems": MAX_REVIEW_FINDINGS,
                 "items": _object_schema(
                     {
                         "request": _string_schema(),
@@ -340,6 +348,12 @@ evidence, soften blockers to help the paper pass, or request work merely for pol
 structured judgment required by the supplied JSON schema. Scores are independent holistic integer
 judgments from 1 to 10. If scientific_ready is false, blocking_reason must be non-empty.
 
+This is a bounded single-pass review. Prioritize central theorem correctness, claim--evidence
+alignment, novelty/significance, and the two venue decisions. Do not expose chain-of-thought or
+narrate proof search. Keep the response concise: at most eight findings in each list and at most
+twelve section-feedback entries. Consolidate overlapping issues instead of exhaustively listing
+minor stylistic observations.
+
 ## RUBRIC
 
 {rubric}
@@ -355,6 +369,30 @@ judgments from 1 to 10. If scientific_ready is false, blocking_reason must be no
 
 def _redacted(value: str, secret: str) -> str:
     return value.replace(secret, "<redacted>") if secret else value
+
+
+def _parse_claude_response(raw: str) -> Mapping[str, Any]:
+    """Accept either the legacy JSON envelope or a stream-json final event."""
+
+    stripped = raw.strip()
+    if not stripped:
+        raise RuntimeError("Claude reviewer returned an empty response")
+    try:
+        response = json.loads(stripped)
+    except json.JSONDecodeError:
+        response = None
+        for line in stripped.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Claude reviewer returned malformed stream JSON") from exc
+            if isinstance(event, Mapping) and event.get("type") == "result":
+                response = event
+        if response is None:
+            raise RuntimeError("Claude reviewer stream contained no final result")
+    if not isinstance(response, Mapping):
+        raise RuntimeError("Claude reviewer returned a non-object JSON envelope")
+    return response
 
 
 def _resolve_claude_executable(command: str) -> str | None:
@@ -522,7 +560,9 @@ def main(argv: list[str] | None = None) -> int:
         "--effort",
         args.effort,
         "--output-format",
-        "json",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
         "--json-schema",
         json.dumps(schema, separators=(",", ":")),
         "--tools",
@@ -553,10 +593,7 @@ def main(argv: list[str] | None = None) -> int:
         raw_detail = completed.stderr.strip() or completed.stdout.strip()
         detail = _redacted(raw_detail, secret)[-4000:]
         raise RuntimeError(f"Claude reviewer failed (exit {completed.returncode}): {detail}")
-    try:
-        response = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("Claude reviewer returned a non-JSON CLI envelope") from exc
+    response = _parse_claude_response(completed.stdout)
     if (
         not isinstance(response, Mapping)
         or response.get("subtype") != "success"

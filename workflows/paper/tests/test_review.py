@@ -79,6 +79,37 @@ def test_claude_reviewer_keeps_explicit_binary_path(tmp_path: Path) -> None:
     assert module._resolve_claude_executable(str(explicit)) == str(explicit.resolve())
 
 
+def test_claude_reviewer_parses_stream_json_final_event() -> None:
+    module = _load_claude_reviewer_module()
+    final = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "structured_output": {"status": "ok"},
+    }
+    stream = "\n".join(
+        [
+            json.dumps({"type": "system", "subtype": "init"}),
+            json.dumps({"type": "stream_event", "event": {"type": "message_start"}}),
+            json.dumps(final),
+        ]
+    )
+
+    assert module._parse_claude_response(stream) == final
+
+
+def test_claude_reviewer_bounds_free_text_findings() -> None:
+    module = _load_claude_reviewer_module()
+    schema = module._judgment_schema("math")
+    properties = schema["properties"]
+
+    assert properties["strengths"]["maxItems"] == module.MAX_REVIEW_FINDINGS
+    assert properties["weaknesses"]["maxItems"] == module.MAX_REVIEW_FINDINGS
+    assert properties["required_changes"]["maxItems"] == module.MAX_REVIEW_FINDINGS
+    assert properties["change_requests"]["maxItems"] == module.MAX_REVIEW_FINDINGS
+    assert properties["section_feedback"]["maxProperties"] == module.MAX_SECTION_FEEDBACK
+
+
 def _physics_highest_tier_recommendation() -> dict:
     scores = {
         "physical_review_letters": 6,
