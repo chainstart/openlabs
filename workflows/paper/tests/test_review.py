@@ -110,6 +110,31 @@ def test_claude_reviewer_bounds_free_text_findings() -> None:
     assert properties["section_feedback"]["maxProperties"] == module.MAX_SECTION_FEEDBACK
 
 
+def test_claude_prompt_defines_zone_1_text_readiness_boundary() -> None:
+    module = _load_claude_reviewer_module()
+
+    prompt = module._prompt(
+        role="math",
+        safe_metadata={"paper_id": "paper", "domain": "math"},
+        rubric="A strict rubric.",
+        packet="A frozen manuscript.",
+    )
+    normalized = " ".join(prompt.split())
+
+    assert "apply a submission-blocking boundary" in normalized
+    assert "would prevent submitting the frozen manuscript" in normalized
+    assert (
+        "materially false, unsupported, incomplete, misleading, or non-verifiable"
+        in normalized
+    )
+    assert "proof that is already complete and checkable as written" in normalized
+    assert "production edits are non-required suggestions only" in normalized
+    assert "do not put them in required_changes" in normalized
+    assert "A manuscript may have optional suggestions while text_ready is true" in normalized
+    assert "do not manufacture a new required revision agenda" in normalized
+    assert "If either readiness flag is false" in normalized
+
+
 def _physics_highest_tier_recommendation() -> dict:
     scores = {
         "physical_review_letters": 6,

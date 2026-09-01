@@ -376,7 +376,20 @@ Review role: {role}
 Apply the relevant rubric below strictly. Judge only what the frozen inputs support. Do not invent
 evidence, soften blockers to help the paper pass, or request work merely for polish. Return the
 structured judgment required by the supplied JSON schema. Scores are independent holistic integer
-judgments from 1 to 10. If scientific_ready is false, blocking_reason must be non-empty.
+judgments from 1 to 10.
+
+For the generic CAS Zone 1 view and publishability summary, apply a submission-blocking boundary.
+Put an item in required_changes or change_requests, or set text_ready to false, only when the defect
+would prevent submitting the frozen manuscript in its current form to a generic CAS Zone 1 journal,
+or would leave a materially false, unsupported, incomplete, misleading, or non-verifiable claim,
+proof, citation, or evidence presentation. Pure stylistic reorganization, optional examples or
+literature expansion, title or abstract preferences, additional exposition of a proof that is
+already complete and checkable as written, and production edits are non-required suggestions only:
+mention them in weaknesses or section_feedback when useful, but do not put them in required_changes
+or change_requests, and do not let them alone make text_ready false. A manuscript may have optional
+suggestions while text_ready is true. Once the manuscript meets this scientific and submission
+boundary, do not manufacture a new required revision agenda. If either readiness flag is false,
+blocking_reason must identify the boundary-crossing defect; otherwise it must be empty.
 
 This is a bounded single-pass review. Prioritize central theorem correctness, claim--evidence
 alignment, novelty/significance, and the two venue decisions. Do not expose chain-of-thought or
