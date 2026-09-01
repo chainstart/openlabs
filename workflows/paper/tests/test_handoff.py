@@ -89,6 +89,25 @@ No external funding.
     assert manuscript_review_content_sha256(manuscript, pdf) != review_digest
 
 
+def test_manuscript_fingerprints_ignore_generated_spl(tmp_path: Path) -> None:
+    manuscript = tmp_path / "manuscript"
+    manuscript.mkdir()
+    (manuscript / "main.tex").write_text(
+        "\\documentclass{article}\\begin{document}Result\\end{document}\n",
+        encoding="utf-8",
+    )
+    pdf = manuscript / "main.pdf"
+    pdf.write_bytes(b"%PDF stable")
+    snapshot = manuscript_snapshot_sha256(manuscript, pdf)
+    review_content = manuscript_review_content_sha256(manuscript, pdf)
+
+    generated = manuscript / "main.spl"
+    generated.write_text("generated front-matter scratch data\n", encoding="utf-8")
+
+    assert manuscript_snapshot_sha256(manuscript, pdf) == snapshot
+    assert manuscript_review_content_sha256(manuscript, pdf) == review_content
+
+
 def test_paper_projection_only_clears_an_explicit_target_journal() -> None:
     base = {"title": "Test", "version": "1.0.0"}
 
@@ -166,6 +185,7 @@ def test_build_handoff_contains_sources_images_and_pdf(tmp_path: Path) -> None:
     figures.mkdir(parents=True)
     (manuscript / "main.tex").write_text("\\documentclass{article}", encoding="utf-8")
     (manuscript / "main.aux").write_text("generated", encoding="utf-8")
+    (manuscript / "main.spl").write_text("generated", encoding="utf-8")
     (manuscript / "main.pdf").write_bytes(b"%PDF-1.4 test")
     (manuscript / "main.zh.pdf").write_bytes(b"%PDF-1.4 translated output")
     (manuscript / "cover_letter.pdf").write_bytes(b"%PDF-1.4 cover letter")

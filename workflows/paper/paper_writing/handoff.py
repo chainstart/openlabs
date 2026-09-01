@@ -47,6 +47,7 @@ EXCLUDED_SOURCE_SUFFIXES = {
     ".log",
     ".out",
     ".rar",
+    ".spl",
     ".synctex.gz",
     ".tar.gz",
     ".tgz",
