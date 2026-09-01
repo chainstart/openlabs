@@ -2,8 +2,9 @@
 
 The module deliberately separates local planning from external mutation:
 planning never requires a token, draft creation is reversible, and publishing
-is authorized by the paper's passing quality gate, which `publish_zenodo_release`
-revalidates against the frozen manuscript, Git state and remote package hashes.
+requires explicit human authorization in addition to the passing quality gate
+that `publish_zenodo_release` revalidates against the frozen manuscript, Git
+state and remote package hashes.
 Tokens are read only from the environment and are never written to repository
 files or command output.
 """
@@ -23,6 +24,10 @@ import httpx
 
 from paper_writing.inventory import build_inventory, default_repo_root, load_config
 from paper_writing.registry import load_paper_metadata, write_paper_metadata
+from paper_writing.support_policy import (
+    effective_publication_license,
+    publication_policy,
+)
 from paper_writing.support import (
     SupportPackageError,
     build_support_archive,
@@ -92,7 +97,9 @@ def find_paper_record(
     raise ZenodoError(f"Unknown registered paper_id: {paper_id}")
 
 
-def build_zenodo_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
+def build_zenodo_metadata(
+    record: Mapping[str, Any], *, default_license: str | None = None
+) -> dict[str, Any]:
     support = record.get("support") if isinstance(record.get("support"), Mapping) else {}
     publication = support.get("publication") if isinstance(support.get("publication"), Mapping) else {}
     mode = publication.get("mode")
@@ -154,7 +161,9 @@ def build_zenodo_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
         value = zenodo.get(field)
         if isinstance(value, str) and value.strip():
             metadata[field] = value.strip()
-    license_value = zenodo.get("license") or publication.get("license")
+    license_value = (
+        zenodo.get("license") or publication.get("license") or default_license
+    )
     if isinstance(license_value, str) and license_value.strip():
         metadata["license"] = license_value.strip()
     # ``support.publication.zenodo.version`` records the version associated
@@ -203,11 +212,17 @@ def build_deposit_plan(
     environment: str | None = None,
     repo_root: str | Path | None = None,
 ) -> dict[str, Any]:
+    root = Path(repo_root or default_repo_root()).resolve()
     publication = record.get("support", {}).get("publication", {})
     selected_environment = environment or publication.get("zenodo", {}).get("environment") or "sandbox"
     _environment(selected_environment)
-    metadata = build_zenodo_metadata(record)
-    paths = resolve_package_files(record, files, repo_root=repo_root)
+    settings_path = root / "registry" / "settings.yaml"
+    settings = load_config(settings_path) if settings_path.is_file() else {}
+    default_license = effective_publication_license(
+        {}, publication_policy(settings)
+    )
+    metadata = build_zenodo_metadata(record, default_license=default_license)
+    paths = resolve_package_files(record, files, repo_root=root)
     errors: list[str] = []
     if not paths:
         errors.append("No support-package files were selected.")
@@ -482,7 +497,16 @@ def prepare_zenodo_release(
     source_paths = resolve_support_sources(record, sources, repo_root=root)
     validate_git_frozen_paths(root, source_paths)
     origin_commit = git_head(root)
-    metadata = build_zenodo_metadata(record)
+    settings = load_config(config_path or root / "registry" / "settings.yaml")
+    policy = publication_policy(settings)
+    raw_publication = record.get("support", {}).get("publication", {})
+    raw_publication = (
+        raw_publication if isinstance(raw_publication, Mapping) else {}
+    )
+    metadata = build_zenodo_metadata(
+        record,
+        default_license=effective_publication_license(raw_publication, policy),
+    )
     selected_license = str(
         license_id
         or metadata.get("license")
@@ -738,15 +762,20 @@ def publish_zenodo_release(
 ) -> dict[str, Any]:
     """Publish a prepared draft after revalidating gate, Git and remote files.
 
-    The revalidated quality gate is the authorization for this irreversible
-    publication; no separate interactive confirmation is required.
+    The revalidated quality gate establishes eligibility for this irreversible
+    publication. The CLI separately requires explicit production and paper-ID
+    confirmation.
     """
 
     from paper_writing.handoff import HandoffError, validate_release_preconditions
 
     root = Path(repo_root or default_repo_root()).resolve()
     try:
-        gate = validate_release_preconditions(paper_id, root=root)
+        gate = validate_release_preconditions(
+            paper_id,
+            root=root,
+            support_gate_name="before_support_release",
+        )
     except HandoffError as exc:
         raise ZenodoError(f"Zenodo release gate failed: {exc}") from exc
     record = find_paper_record(paper_id, repo_root=root, config_path=config_path)

@@ -79,11 +79,14 @@ is opt-in and illustrative only; it cannot supply experimental evidence.
    disclosure to conceal AI use.
 7. Compile the real manuscript and run repository validation plus all relevant local checks,
    including `python -m paper_writing style-check --paper-id <paper_id>`. A failure blocks review.
-8. If the support DOI belongs in the paper, resolve the public files and license from the registry's
-   `support.publication`, then use `paper-writing zenodo prepare` to create only a reversible draft.
-   Add the reserved Version DOI with publication-state-neutral wording, run
-   `paper-writing zenodo verify-draft`, and rebuild before final review. Never choose a license
-   yourself or add confidential files to the public set; treat either gap as a blocker.
+8. Resolve the configured `support_publication.gates` before final review. Unless the paper is
+   explicitly `not_required` with a reason, resolve the public files and effective license (paper
+   override first, then the standing human-approved configured default),
+   use `paper-writing zenodo prepare` to create a reversible draft, add the reserved Version DOI
+   with publication-state-neutral wording, and cite it in the bibliography, first substantive
+   support mention, and availability statement. Run `paper-writing zenodo verify-draft` and
+   `support-check`, then rebuild. Apply the configured default without asking again; never invent
+   or silently change a license, and never publish confidential or incompatibly licensed files.
 9. In a factory `writer` task, stop after freezing the compiled snapshot and emit it as a
    `paper_candidate`; do not run or impersonate either reviewer. The scheduler creates a fresh
    `paper_review` task using `$openlabs-paper-review`, whose Codex and Packy Claude Opus 5 reviewers
@@ -100,10 +103,10 @@ allowed domain-specific 2026 XinRui system, with a publication route carrying no
 fee. Record ranking, fee, and official formatting sources and check dates. Convert the canonical
 `manuscript/` itself to the current venue format; a separate candidate does not satisfy this rule.
 
-After a passing gate, run `paper-writing zenodo release` for the prepared production draft without
-asking the user again; the gate is the authorization. Skip it only when venue policy forbids public
-support materials. Commit its DOI/receipt update before `paper-writing handoff release`. A passing
-score still never authorizes a submission, journal event, or publication fact.
+After a passing gate and explicit human authorization, run `paper-writing zenodo release` for the
+prepared production draft with the required confirmations. Commit its DOI/receipt update before
+`paper-writing handoff release`; the handoff gate requires the published Version DOI and reviewed
+package binding. Readiness never authorizes a submission, journal event, or publication fact.
 
 ## Finish
 

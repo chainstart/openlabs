@@ -802,6 +802,50 @@ writing_release:
         validate_release_preconditions(paper_id, root=tmp_path)
 
 
+def test_handoff_requires_published_support_when_configured(tmp_path: Path) -> None:
+    paper_id = "20260804aillm0002"
+    registry = tmp_path / "registry" / "papers"
+    registry.mkdir(parents=True)
+    (tmp_path / "registry" / "settings.yaml").write_text(
+        """schema_version: ara.paper_writing.registry.v1
+support_publication:
+  default_mode: zenodo_only
+  gates:
+    before_handoff:
+      minimum_status: published
+      require_version_doi: true
+      require_quality_gate_package_binding: true
+quality_gate:
+  minimum_score: 6.0
+  decision_standard: cas_zone_1_journal
+  cas_zone_1_minimum_decision: minor_revision
+""",
+        encoding="utf-8",
+    )
+    (registry / f"{paper_id}.yaml").write_text(
+        f"""paper_id: {paper_id}
+writing_release:
+  status: ready
+  target_score: 6.0
+  score: 7.0
+  venue_type: journal
+  decision_standard: cas_zone_1_journal
+  decision: minor_revision
+support:
+  publication:
+    mode: zenodo_only
+    status: planned
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        HandoffError,
+        match="configured before_handoff minimum 'published'",
+    ):
+        validate_release_preconditions(paper_id, root=tmp_path)
+
+
 def test_changed_registry_paper_ids_ignores_non_registry_commits(tmp_path: Path) -> None:
     paper_id = "20260721aillm0001"
     registry = tmp_path / "registry" / "papers"

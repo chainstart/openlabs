@@ -20,8 +20,17 @@ from typing import Any, Mapping
 
 import yaml
 
-from paper_writing.registry import load_paper_metadata
+from paper_writing.registry import load_paper_metadata, load_registry_settings
 from paper_writing.support import sha256_file, verify_support_archive
+from paper_writing.support_policy import (
+    SUPPORT_PUBLICATION_MODES,
+    effective_publication_license,
+    effective_publication_mode,
+    lifecycle_gate,
+    publication_policy,
+    require_not_required_reason,
+    status_meets_minimum,
+)
 
 
 CITE_PATTERN = re.compile(r"\\cite\w*\s*\{([^}]*)\}")
@@ -1141,28 +1150,82 @@ def audit_manuscript_support(paper_id: str, *, root: str | Path) -> dict[str, An
 
     repo_root = Path(root).resolve()
     metadata = load_paper_metadata(paper_id, repo_root)
+    settings = load_registry_settings(repo_root)
+    policy = publication_policy(settings)
     manuscript = repo_root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
     issues: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     support = metadata.get("support")
     publication = support.get("publication") if isinstance(support, Mapping) else {}
     publication = publication if isinstance(publication, Mapping) else {}
-    mode = str(publication.get("mode") or "")
+    mode = effective_publication_mode(publication, policy)
+    license_id = effective_publication_license(publication, policy)
     status, doi, version = _current_identity(metadata)
     paper_version = str(metadata.get("version") or "")
+    review_gate = lifecycle_gate(policy, "before_review")
+    minimum_status = str(review_gate.get("minimum_status") or "").strip()
+    require_version_doi = bool(review_gate.get("require_version_doi", False))
+    require_manuscript_citation = bool(
+        review_gate.get("require_manuscript_citation", False)
+    )
 
     if mode == "not_required":
+        if require_not_required_reason(policy) and not str(
+            publication.get("not_required_reason") or ""
+        ).strip():
+            issues.append(
+                _issue(
+                    "SUPPORT-NOT-REQUIRED-REASON",
+                    "support publication is exempted without an explicit reason",
+                    root=repo_root,
+                )
+            )
         return {
             "paper_id": paper_id,
-            "valid": True,
+            "valid": not issues,
             "mode": mode,
             "status": status,
             "current_version_doi": None,
             "current_support_version": None,
             "bibliography_key": None,
-            "errors": [],
+            "errors": issues,
             "warnings": [],
         }
+    if mode and mode not in SUPPORT_PUBLICATION_MODES:
+        issues.append(
+            _issue(
+                "SUPPORT-MODE-INVALID",
+                f"support publication mode {mode!r} is not supported",
+                root=repo_root,
+            )
+        )
+    if minimum_status and not status_meets_minimum(status, minimum_status):
+        issues.append(
+            _issue(
+                "SUPPORT-STATUS-BEFORE-REVIEW",
+                f"support publication status {status!r} does not meet the configured "
+                f"pre-review minimum {minimum_status!r}",
+                root=repo_root,
+            )
+        )
+    if minimum_status in {"draft", "published"}:
+        if not license_id:
+            issues.append(
+                _issue(
+                    "SUPPORT-LICENSE-MISSING",
+                    "no paper-level or configured default support-material license is available",
+                    root=repo_root,
+                )
+            )
+        source_files = publication.get("source_files")
+        if not isinstance(source_files, list) or not source_files:
+            issues.append(
+                _issue(
+                    "SUPPORT-SOURCES-MISSING",
+                    "the complete public support source set must be declared before review",
+                    root=repo_root,
+                )
+            )
     if not manuscript.is_dir():
         issues.append(_issue("SUPPORT-MANUSCRIPT-MISSING", "canonical manuscript directory is missing", path=manuscript, root=repo_root))
         return {
@@ -1181,6 +1244,14 @@ def audit_manuscript_support(paper_id: str, *, root: str | Path) -> dict[str, An
     prose_files = _reader_facing_manuscript_files(manuscript)
     paragraphs = [paragraph for path in prose_files for paragraph in _paragraphs(path)]
     support_is_mentioned = any(SUPPORT_MENTION.search(paragraph.text) for paragraph in paragraphs)
+    if require_manuscript_citation and not support_is_mentioned:
+        issues.append(
+            _issue(
+                "SUPPORT-MANUSCRIPT-CITATION-REQUIRED",
+                "configured policy requires the manuscript to identify and cite its supporting-material record",
+                root=repo_root,
+            )
+        )
     expected = _expected_metadata(publication, repo_root)
     paper_title = str(metadata.get("title") or "").strip()
     issues.extend(
@@ -1206,10 +1277,18 @@ def audit_manuscript_support(paper_id: str, *, root: str | Path) -> dict[str, An
                 root=repo_root,
             )
         )
-    if status in {"draft", "published"} and not doi:
-        issues.append(_issue("SUPPORT-DOI-MISSING", f"{status} support record has no current Version DOI", root=repo_root))
-    elif support_is_mentioned and not doi:
-        issues.append(_issue("SUPPORT-DOI-MISSING", "manuscript mentions supporting materials but no Version DOI is registered", root=repo_root))
+    if not doi and (
+        status in {"draft", "published"}
+        or support_is_mentioned
+        or require_version_doi
+    ):
+        issues.append(
+            _issue(
+                "SUPPORT-DOI-MISSING",
+                "no current Zenodo Version DOI is registered for the required support record",
+                root=repo_root,
+            )
+        )
     if status in {"draft", "published"} and not version:
         issues.append(_issue("SUPPORT-VERSION-MISSING", f"{status} support record has no current support version", root=repo_root))
     if status == "draft" and version and paper_version and version != paper_version:
@@ -1309,7 +1388,7 @@ def audit_manuscript_support(paper_id: str, *, root: str | Path) -> dict[str, An
 
     bib_path = manuscript / "references.bib"
     bibliography_key: str | None = None
-    if doi and support_is_mentioned:
+    if doi and (support_is_mentioned or require_manuscript_citation):
         if not bib_path.is_file():
             issues.append(_issue("SUPPORT-BIB-MISSING", "canonical bibliography is missing", path=bib_path, root=repo_root))
         else:

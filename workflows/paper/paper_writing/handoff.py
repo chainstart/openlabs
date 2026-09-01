@@ -25,6 +25,14 @@ from paper_writing.review import (
     decisions_for_standard,
 )
 from paper_writing.registry import load_paper_metadata, load_registry, paper_metadata_path
+from paper_writing.support_citations import audit_manuscript_support
+from paper_writing.support_policy import (
+    effective_publication_mode,
+    lifecycle_gate,
+    publication_policy,
+    require_not_required_reason,
+    status_meets_minimum,
+)
 
 
 WRITING_REPOSITORY = "chainstart/ara-paper-writing"
@@ -963,9 +971,12 @@ def validate_release_preconditions(
     paper_id: str,
     *,
     root: str | Path,
+    support_gate_name: str = "before_handoff",
 ) -> dict[str, Any]:
     """Require a passing, current quality gate and a Git-frozen paper tree."""
 
+    if support_gate_name not in {"before_support_release", "before_handoff"}:
+        raise HandoffError(f"Unsupported release support gate: {support_gate_name}")
     repo_root = Path(root).resolve()
     metadata = load_paper_metadata(paper_id, repo_root)
     release = metadata.get("writing_release")
@@ -977,6 +988,52 @@ def validate_release_preconditions(
     settings = load_registry(repo_root, include_local_repositories=False)
     configured_gate = settings.get("quality_gate")
     configured_gate = configured_gate if isinstance(configured_gate, Mapping) else {}
+    support_policy = publication_policy(settings)
+    support_gate = lifecycle_gate(support_policy, support_gate_name)
+    support = metadata.get("support")
+    support = support if isinstance(support, Mapping) else {}
+    publication = support.get("publication")
+    publication = publication if isinstance(publication, Mapping) else {}
+    support_mode = effective_publication_mode(publication, support_policy)
+    support_status = str(publication.get("status") or "planned").strip()
+    minimum_support_status = str(
+        support_gate.get("minimum_status") or ""
+    ).strip()
+    require_support_binding = bool(
+        support_gate.get("require_quality_gate_package_binding", False)
+    )
+    if support_mode == "not_required":
+        if require_not_required_reason(support_policy) and not str(
+            publication.get("not_required_reason") or ""
+        ).strip():
+            raise HandoffError(
+                "Support publication is marked not_required without an explicit reason"
+            )
+    else:
+        if minimum_support_status and not status_meets_minimum(
+            support_status, minimum_support_status
+        ):
+            raise HandoffError(
+                f"Support publication status {support_status!r} does not meet the "
+                f"configured {support_gate_name} minimum {minimum_support_status!r}"
+            )
+        if bool(support_gate.get("require_version_doi", False)) and not str(
+            publication.get("version_doi") or ""
+        ).strip():
+            raise HandoffError(
+                "A published Zenodo Version DOI is required before manuscript handoff"
+            )
+        if minimum_support_status or bool(
+            support_gate.get("require_manuscript_citation", False)
+        ):
+            support_audit = audit_manuscript_support(paper_id, root=repo_root)
+            if not support_audit.get("valid"):
+                first = next(iter(support_audit.get("errors", [])), {})
+                raise HandoffError(
+                    "Supporting-material check failed before handoff: "
+                    f"{first.get('code') or 'SUPPORT-CHECK'}: "
+                    f"{first.get('message') or 'unknown support-material error'}"
+                )
     minimum_score = float(configured_gate.get("minimum_score", 5.0))
     raw_score = release.get("score")
     raw_target_score = release.get("target_score")
@@ -1066,12 +1123,16 @@ def validate_release_preconditions(
             "Paper version changed after the quality review; rerun quality-gate"
         )
     gated_support_sha256 = str(release.get("support_package_sha256") or "")
-    if gated_support_sha256:
-        support = metadata.get("support")
-        support = support if isinstance(support, Mapping) else {}
-        publication = support.get("publication")
-        publication = publication if isinstance(publication, Mapping) else {}
-        current_support_sha256 = str(publication.get("package_sha256") or "")
+    current_support_sha256 = str(publication.get("package_sha256") or "")
+    if require_support_binding and support_mode != "not_required":
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", gated_support_sha256)
+            or current_support_sha256 != gated_support_sha256
+        ):
+            raise HandoffError(
+                "The quality gate must be bound to the current Zenodo support package"
+            )
+    elif gated_support_sha256:
         if (
             not re.fullmatch(r"[0-9a-f]{64}", gated_support_sha256)
             or current_support_sha256 != gated_support_sha256

@@ -71,6 +71,24 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert profiles["quality_gate"]["require_no_mandatory_author_fee"] is True
     assert profiles["quality_gate"]["require_canonical_target_journal_format"] is True
     assert profiles["quality_gate"]["zenodo_public_identifier"] == "display_id"
+    assert profiles["quality_gate"]["support_publication_settings_key"] == (
+        "support_publication"
+    )
+    assert profiles["quality_gate"]["support_publication_default_license_key"] == (
+        "default_license"
+    )
+    assert profiles["quality_gate"]["support_check_command"] == (
+        "python -m paper_writing support-check --paper-id <paper_id>"
+    )
+    assert profiles["quality_gate"]["support_review_gate"] == (
+        "prepared_version_doi_and_manuscript_citation"
+    )
+    assert profiles["quality_gate"]["support_release_gate"] == (
+        "prepared_version_and_reviewed_package_binding"
+    )
+    assert profiles["quality_gate"]["support_handoff_gate"] == (
+        "published_version_and_reviewed_package_binding"
+    )
     assert profiles["quality_gate"]["manuscript_style_check"] == "required"
     assert profiles["quality_gate"]["manuscript_style_command"] == (
         "python -m paper_writing style-check --paper-id <paper_id>"
@@ -199,6 +217,29 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert target_policy["require_canonical_venue_format"] is True
     assert settings["support_publication"]["public_archive_identifier"] == "display_id"
     assert settings["support_publication"]["public_archive_root_identifier"] == "display_id"
+    assert settings["support_publication"]["default_license"] == "cc-by-4.0"
+    assert settings["support_publication"]["gates"] == {
+        "before_review": {
+            "minimum_status": "draft",
+            "require_version_doi": True,
+            "require_manuscript_citation": True,
+        },
+        "before_support_release": {
+            "minimum_status": "draft",
+            "require_version_doi": True,
+            "require_manuscript_citation": True,
+            "require_quality_gate_package_binding": True,
+        },
+        "before_handoff": {
+            "minimum_status": "published",
+            "require_version_doi": True,
+            "require_manuscript_citation": True,
+            "require_quality_gate_package_binding": True,
+        },
+    }
+    assert settings["support_publication"]["not_required"] == {
+        "require_reason": True
+    }
     assert settings["lean_audit_policy"] == {
         "unchanged_inputs": "reuse_verified_pass_without_lean_execution",
         "support_hash_change_alone_invalidates_lean": False,

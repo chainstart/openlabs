@@ -28,6 +28,7 @@ def _settings(root: Path) -> None:
 require_registration: true
 support_publication:
   default_mode: zenodo_only
+  default_license: cc-by-4.0
   infer_github_mode_from_existing_url: false
   zenodo_environment: sandbox
 quality_gate:
@@ -472,6 +473,28 @@ def test_cas_zone_1_gate_is_independent_of_actual_venue_type(tmp_path: Path) -> 
     metadata = load_paper_metadata(paper_id, tmp_path)
     assert metadata["writing_release"]["venue_type"] == "conference"
     assert metadata["writing_release"]["decision_standard"] == "cas_zone_1_journal"
+
+
+def test_create_paper_applies_configured_support_license(tmp_path: Path) -> None:
+    _settings(tmp_path)
+    paper_id = "20260804-math-graph-default-license"
+
+    create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="A default-license test",
+        created_at="2026-08-04",
+        domain="math",
+        subdomain="graph",
+        venue_type="journal",
+    )
+
+    publication = load_paper_metadata(paper_id, tmp_path)["support"]["publication"]
+    assert publication == {
+        "mode": "zenodo_only",
+        "status": "planned",
+        "license": "cc-by-4.0",
+    }
 
 
 def test_create_paper_rejects_legacy_or_mismatched_new_ids(tmp_path: Path) -> None:

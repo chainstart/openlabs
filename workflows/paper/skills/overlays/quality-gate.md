@@ -54,6 +54,11 @@ manuscript cites the current Zenodo Version DOI and metadata, that the support-r
 identifies the paper's current title rather than a prior title, uses objective version-stable prose,
 contains no draft/release or old/new-version history, and does not claim public access for an
 unpublished draft.
+Resolve the support license from the paper-level override first and
+`registry/settings.yaml#support_publication.default_license` otherwise. A configured default is a
+standing human choice and may be applied without asking again. If third-party terms or the actual
+public file set conflict with that license, stop and surface the conflict instead of silently
+changing the license or excluding files.
 For a standalone reproducibility statement, a heading that names the paper must match the current
 registry title, and every declared claim identifier must occur in the canonical claim--evidence map
 or the current public `CLAIMS.yaml`. Replay-command, checker, suite, test, and certificate-group
@@ -226,9 +231,9 @@ draft, reservation, release, and prior-version fact in registry/receipt history 
 formal manuscript. When a prepared
 support package exists, the gate records its SHA-256 alongside the manuscript snapshot.
 
-The passing gate is the authorization for support-material publication. Once the gate is `ready`,
-run `paper-writing zenodo release` as a separate step without asking the user again; that command
-independently revalidates the gate and the exact local/remote package hashes, and it refuses to
-publish when the gate is stale, failing, or unbound from the package. Publishing support materials is
-the only external action a passing gate authorizes: it never authorizes a submission, a journal
-event, or any publication fact, all of which remain the accountable human's decision.
+The passing gate establishes eligibility for support-material publication but is not authorization.
+After explicit human authorization, run `paper-writing zenodo release` as a separate step with the
+production and exact-paper confirmations. The command independently revalidates the gate and the
+exact local/remote package hashes, and refuses to publish when the gate is stale, failing, or
+unbound from the package. Neither readiness nor support publication authorizes a submission,
+journal event, or article-publication claim, all of which remain the accountable human's decision.

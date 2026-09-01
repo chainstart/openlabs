@@ -10,6 +10,37 @@
 `zenodo_only`、`github_zenodo` 或 `not_required`。正式论文引用具体 Version DOI；Concept DOI
 用于指向该材料的所有版本。
 
+是否强制执行由 `registry/settings.yaml#support_publication.gates` 配置，而不是写死在某个学科：
+
+```yaml
+support_publication:
+  default_mode: zenodo_only
+  default_license: cc-by-4.0
+  gates:
+    before_review:
+      minimum_status: draft
+      require_version_doi: true
+      require_manuscript_citation: true
+    before_support_release:
+      minimum_status: draft
+      require_version_doi: true
+      require_manuscript_citation: true
+      require_quality_gate_package_binding: true
+    before_handoff:
+      minimum_status: published
+      require_version_doi: true
+      require_manuscript_citation: true
+      require_quality_gate_package_binding: true
+  not_required:
+    require_reason: true
+```
+
+`support-check` 实现审稿前门禁：非豁免论文必须至少具有已准备的 Zenodo 草稿、稳定的 Version
+DOI，以及正文首处材料说明、参考文献和 Data Availability 中一致的引用。`zenodo release`
+使用独立的发布前门禁，允许状态仍为 `draft`，但要求当前包已绑定通过审阅的快照；发布完成后，
+`handoff release` 再要求状态为 `published`。确实无需公开材料的论文可以选择 `not_required`，
+但必须登记具体原因。调整这些配置即可改变研究政策，无需修改学科 Skill 或新增常驻 Hook。
+
 公开归档命名是强制规则：ZIP 文件名和 ZIP 内唯一顶层目录都以 registry 的 domain-scoped
 `display_id` 开头，后接 `-support-vX.Y.Z`。不可变技术 `paper_id` 只出现在内部仓库路径、
 manifest、receipt 和 API。已发布 Zenodo 版本不可改名；需要纠正时在同一 concept record
@@ -26,16 +57,16 @@ Zenodo 使用两阶段流程，质量门禁不会调用网络：
    `zenodo verify-draft` 与 `support-check`，重新编译、独立审稿并通过当前质量门禁，然后提交
    稿件、PDF、registry、材料包和草稿回执。草稿、预留、发布步骤和旧版沿革只写入内部
    registry、回执或返修记录，绝不写入正式论文或当前 ZIP 内面向读者的 claim map/README。
-3. `zenodo release`：重新核对门禁快照、Git HEAD、本地 ZIP SHA-256 与 Zenodo 草稿文件，
-   全部一致即正式发布，无需额外人工确认。命令写回 Version DOI、Concept DOI 和发布回执，
-   但不会提交 Git。
+3. 获得明确的人类发布授权后运行 `zenodo release`：重新核对门禁快照、Git HEAD、本地 ZIP
+   SHA-256 与 Zenodo 草稿文件，全部一致才正式发布。命令写回 Version DOI、Concept DOI 和
+   发布回执，但不会提交 Git。
 4. 提交 DOI/回执更新并推送；OpenLabs 的完成与投影流程随后同步结构化状态。仅在自动任务
    失败时手工运行 `handoff release` 恢复。该步骤只同步写作产物，不创建投稿或期刊事件。
 
-通过质量门禁即构成支撑材料的公开发布授权：门禁为 `ready` 后可以直接执行 `zenodo release`，
-不需要用户再次确认。`release` 自身会重新校验门禁、Git 状态与远端文件，门禁失效、未达标或
-未绑定材料包时一律拒绝发布。生产**草稿**（`prepare`、`create-draft`、`new-version`）仍需
-`--confirm-production`，因为它发生在门禁之前。
+质量门禁是公开发布的必要条件，但不构成授权。`zenodo release` 还必须得到明确的人类授权并
+提供生产确认；命令自身会重新校验门禁、Git 状态与远端文件，门禁失效、未达标或未绑定材料包
+时一律拒绝发布。生产**草稿**（`prepare`、`create-draft`、`new-version`）同样需要
+`--confirm-production`。
 
 门禁授权的外部动作仅限支撑材料发布。投稿、期刊事件、录用/拒稿与论文发表状态始终由人类作者
 决定并由对应的外部管理系统记录，门禁绝不代替。
@@ -46,7 +77,9 @@ Zenodo 使用两阶段流程，质量门禁不会调用网络：
 `--source`。只要显式传入了 `--source`，这些参数就构成本次完整公开文件集并替换旧的
 `source_files`，不会与上一版本合并；不传时才沿用 registry。目录会递归展开，最终 registry
 记录展开后的逐文件路径。不得包含密钥、未获
-授权的数据、缓存或可重建的 LaTeX 中间文件。许可证必须由负责人选择，不能由 Codex 猜测：
+授权的数据、缓存或可重建的 LaTeX 中间文件。`default_license` 是负责人已经作出的长期选择；
+当前配置为 `cc-by-4.0`，后续论文无需重复询问。论文级 `license` 仅用于明确覆盖。若第三方材料
+条款与默认许可证冲突，必须停止并报告，不能静默改许可证或删减文件：
 
 ```yaml
 support:
@@ -75,8 +108,7 @@ Zenodo Sandbox 与 Production 使用不同账号/token。token 至少需要创�
 ```bash
 python -m paper_writing zenodo prepare \
   --paper-id <paper_id> --environment sandbox \
-  --source papers/<paper_id>/evidence/release \
-  --license cc-by-4.0
+  --source papers/<paper_id>/evidence/release
 ```
 
 生产草稿需要显式确认：
@@ -84,8 +116,7 @@ python -m paper_writing zenodo prepare \
 ```bash
 python -m paper_writing zenodo prepare \
   --paper-id <paper_id> --environment production --confirm-production \
-  --source papers/<paper_id>/evidence/release \
-  --license cc-by-4.0
+  --source papers/<paper_id>/evidence/release
 ```
 
 如果网络中断但草稿已经建立，错误信息会保留 deposition ID。使用
@@ -144,15 +175,16 @@ python -m paper_writing review reuse-metadata --paper-id <paper_id>
 
 ## 正式发布
 
-门禁通过后直接执行，无需用户确认：
+门禁通过且负责人明确授权后执行：
 
 ```bash
 python -m paper_writing zenodo release \
-  --paper-id <paper_id> --environment production
+  --paper-id <paper_id> --environment production \
+  --confirm-production --confirm-paper-id <paper_id>
 ```
 
-`--confirm-production` 与 `--confirm-paper-id` 仍被接受以兼容旧脚本；`--confirm-paper-id`
-如果给出则必须与 `--paper-id` 完全一致。
+`--confirm-production` 与 `--confirm-paper-id` 均为生产发布的显式授权边界；后者必须与
+`--paper-id` 完全一致。
 
 命令会拒绝以下情况：质量门禁未通过或快照失效、稿件/registry/材料未提交、材料包哈希
 变化、草稿 DOI/版本不符，或 Zenodo 远端文件名、大小、校验和与本地不一致。发布成功后：

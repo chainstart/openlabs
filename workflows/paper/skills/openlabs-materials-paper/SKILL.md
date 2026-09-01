@@ -43,7 +43,9 @@ Do not activate additional writing systems or create a second registry.
 Revise the canonical LaTeX only after updating the claim–evidence map. Verify each citation against
 the actual proposition used, compile the frozen manuscript, and run deterministic repository and
 support and style checks, including the single final truthful AI-use declaration required by the
-shared overlay. In a factory `writer` task, stop at the frozen `paper_candidate`; do not run or
+shared overlay. A non-exempt paper must first have a prepared Zenodo Version DOI cited in the
+bibliography, first substantive support mention, and availability statement; `not_required` needs
+the configured reason. In a factory `writer` task, stop at the frozen `paper_candidate`; do not run or
 impersonate either reviewer. The scheduler gives it to a fresh `$openlabs-paper-review` task, whose
 independent Codex and blind Packy Claude Opus 5 reviewers use the `materials` rubric and the
 `leading_materials_journals` plus `cas_zone_1_journal` simulated views. A `paper_revision` applies
@@ -51,7 +53,8 @@ only the declared request; requests for new physical evidence go through a fresh
 `evidence_remediation` task before returning to the same writer. Every revised candidate receives a
 new panel because any score-bearing edit makes the old panel stale.
 
-After a passing gate, run `paper-writing zenodo release` for an exact prepared support draft without
-asking again; the gate authorizes only that hash-bound release. It never authorizes remote handoff,
-submission, journal communication, spending, or a publication fact. Report remaining physical-model,
-convergence, sampling, literature, and reproducibility risks even when the manuscript passes.
+After a passing gate and explicit human authorization, run `paper-writing zenodo release` for the
+exact prepared support draft with the production confirmations. The gate establishes eligibility,
+not authorization. It never authorizes remote handoff, submission, journal communication, spending,
+or a publication fact. Report remaining physical-model, convergence, sampling, literature, and
+reproducibility risks even when the manuscript passes.

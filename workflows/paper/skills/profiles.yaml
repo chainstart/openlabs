@@ -65,6 +65,12 @@ quality_gate:
   require_no_mandatory_author_fee: true
   require_canonical_target_journal_format: true
   zenodo_public_identifier: display_id
+  support_publication_settings_key: support_publication
+  support_publication_default_license_key: default_license
+  support_check_command: python -m paper_writing support-check --paper-id <paper_id>
+  support_review_gate: prepared_version_doi_and_manuscript_citation
+  support_release_gate: prepared_version_and_reviewed_package_binding
+  support_handoff_gate: published_version_and_reviewed_package_binding
   manuscript_style_check: required
   manuscript_style_command: python -m paper_writing style-check --paper-id <paper_id>
   require_validated_independent_review: true

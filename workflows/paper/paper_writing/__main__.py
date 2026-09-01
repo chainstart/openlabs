@@ -149,7 +149,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     zenodo = subparsers.add_parser(
         "zenodo",
-        help="Plan or perform a Zenodo deposit; `release` is authorized by the quality gate.",
+        help=(
+            "Plan or perform a Zenodo deposit; production mutations require "
+            "explicit confirmation."
+        ),
     )
     zenodo_commands = zenodo.add_subparsers(dest="zenodo_command", required=True)
     plan = zenodo_commands.add_parser("plan", help="Validate metadata and files without using an account.")
@@ -181,20 +184,20 @@ def build_parser() -> argparse.ArgumentParser:
     release = zenodo_commands.add_parser(
         "release",
         help=(
-            "Gate-check and irreversibly publish the prepared Zenodo draft. A passing "
-            "quality gate authorizes this; no interactive confirmation is required."
+            "Gate-check and irreversibly publish the prepared Zenodo draft after "
+            "explicit human authorization."
         ),
     )
     _zenodo_release_arguments(release, include_sources=False)
     release.add_argument("--deposition-id")
     release.add_argument(
         "--confirm-paper-id",
-        help="Optional; when given it must match --paper-id exactly.",
+        help="Required for release and must match --paper-id exactly.",
     )
     release.add_argument(
         "--confirm-production",
         action="store_true",
-        help="Accepted for compatibility; the quality gate already authorizes release.",
+        help="Explicitly confirm the irreversible production release.",
     )
     publish = zenodo_commands.add_parser("publish", help="Irreversibly publish an existing draft.")
     _zenodo_paper_arguments(publish, include_files=False)
@@ -449,7 +452,13 @@ def _run_zenodo(args: argparse.Namespace) -> int:
     from paper_writing.support import SupportPackageError
 
     try:
-        if args.zenodo_command in {"create-draft", "new-version", "prepare", "publish"}:
+        if args.zenodo_command in {
+            "create-draft",
+            "new-version",
+            "prepare",
+            "release",
+            "publish",
+        }:
             if os.environ.get("OPENLABS_ENABLE_EXTERNAL_WRITES") != "1":
                 raise ZenodoError(
                     "External writes are disabled. An administrator must explicitly set "
@@ -462,12 +471,9 @@ def _run_zenodo(args: argparse.Namespace) -> int:
             result = build_deposit_plan(record, args.file, environment=environment, repo_root=args.root)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0 if result["ready"] else 1
-        # `release` is authorized by the passing quality gate that
-        # `publish_zenodo_release` revalidates, so it needs no interactive
-        # production confirmation.  Every other production mutation still does.
         if (
             environment == "production"
-            and args.zenodo_command not in {"release", "verify-draft"}
+            and args.zenodo_command != "verify-draft"
             and not args.confirm_production
         ):
             raise ZenodoError("Production access requires --confirm-production; test in sandbox first.")
@@ -489,7 +495,7 @@ def _run_zenodo(args: argparse.Namespace) -> int:
                 license_id=args.license,
             )
         elif args.zenodo_command == "release":
-            if args.confirm_paper_id is not None and args.confirm_paper_id != args.paper_id:
+            if args.confirm_paper_id != args.paper_id:
                 raise ZenodoError("--confirm-paper-id must exactly match --paper-id")
             result = publish_zenodo_release(
                 args.paper_id,

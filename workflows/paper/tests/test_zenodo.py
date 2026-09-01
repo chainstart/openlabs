@@ -255,6 +255,23 @@ def test_current_paper_version_overrides_stale_zenodo_draft_state() -> None:
     assert metadata["version"] == "0.1.3"
 
 
+def test_zenodo_metadata_uses_configured_default_license() -> None:
+    record = {
+        "id": "20260802mathgraph0001",
+        "title": "Licensed support",
+        "version": "0.1.3",
+        "authors": {"names": ["Ada Lovelace"]},
+        "support": {"publication": {"mode": "zenodo_only"}},
+    }
+
+    metadata = zenodo.build_zenodo_metadata(
+        record,
+        default_license="cc-by-4.0",
+    )
+
+    assert metadata["license"] == "cc-by-4.0"
+
+
 def test_zenodo_metadata_preserves_publication_type() -> None:
     record = {
         "id": "20260802mathgraph0001",
@@ -548,16 +565,17 @@ def _gate_only_release_repo(tmp_path: Path, paper_id: str) -> Path:
     return settings
 
 
-def test_production_release_needs_no_interactive_confirmation(
+def test_production_release_requires_explicit_confirmation(
     tmp_path: Path,
     monkeypatch: Any,
     capsys: Any,
 ) -> None:
-    """The quality gate authorizes release, so no --confirm-* flag is required."""
+    """A passing gate alone never authorizes the irreversible external action."""
 
     paper_id = "20260802mathgraph0001"
     settings = _gate_only_release_repo(tmp_path, paper_id)
     monkeypatch.setenv("ZENODO_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("OPENLABS_ENABLE_EXTERNAL_WRITES", "1")
 
     class NetworkMustNotRun:
         def __init__(self, *_: Any, **__: Any) -> None:
@@ -580,13 +598,11 @@ def test_production_release_needs_no_interactive_confirmation(
     )
 
     output = capsys.readouterr().out
-    # It must fail on the gate, never on a missing confirmation flag.
     assert exit_code == 2
-    assert "--confirm-production" not in output
-    assert "not release-ready" in output
+    assert "--confirm-production" in output
 
 
-def test_release_still_rejects_mismatched_optional_paper_id_confirmation(
+def test_confirmed_production_release_reaches_quality_gate(
     tmp_path: Path,
     monkeypatch: Any,
     capsys: Any,
@@ -594,6 +610,7 @@ def test_release_still_rejects_mismatched_optional_paper_id_confirmation(
     paper_id = "20260802mathgraph0001"
     settings = _gate_only_release_repo(tmp_path, paper_id)
     monkeypatch.setenv("ZENODO_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("OPENLABS_ENABLE_EXTERNAL_WRITES", "1")
 
     exit_code = main(
         [
@@ -607,6 +624,40 @@ def test_release_still_rejects_mismatched_optional_paper_id_confirmation(
             paper_id,
             "--environment",
             "production",
+            "--confirm-production",
+            "--confirm-paper-id",
+            paper_id,
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 2
+    assert "not release-ready" in output
+
+
+def test_release_still_rejects_mismatched_optional_paper_id_confirmation(
+    tmp_path: Path,
+    monkeypatch: Any,
+    capsys: Any,
+) -> None:
+    paper_id = "20260802mathgraph0001"
+    settings = _gate_only_release_repo(tmp_path, paper_id)
+    monkeypatch.setenv("ZENODO_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("OPENLABS_ENABLE_EXTERNAL_WRITES", "1")
+
+    exit_code = main(
+        [
+            "zenodo",
+            "release",
+            "--root",
+            str(tmp_path),
+            "--config",
+            str(settings),
+            "--paper-id",
+            paper_id,
+            "--environment",
+            "production",
+            "--confirm-production",
             "--confirm-paper-id",
             "20260802mathgraph0002",
         ]

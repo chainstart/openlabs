@@ -24,6 +24,7 @@ from paper_writing.manuscript_style import (
 from paper_writing.registry import (
     load_paper_metadata,
     load_registry,
+    load_registry_settings,
     paper_metadata_path,
     write_paper_metadata,
 )
@@ -45,6 +46,7 @@ from paper_writing.review import (
     validate_review_panel_files,
 )
 from paper_writing.support import SupportPackageError
+from paper_writing.support_policy import publication_policy
 from paper_writing.support_citations import audit_manuscript_support, support_audit_blockers
 
 
@@ -214,6 +216,20 @@ def create_paper(
     if work_id is None:  # Guard the invariant established by the format check above.
         raise AssertionError("descriptive paper_id did not produce a work_id")
     normalized_project_name = str(project_name or "").strip() or work_id
+    settings = load_registry_settings(repo_root)
+    support_policy = publication_policy(settings)
+    default_support_mode = str(
+        support_policy.get("default_mode") or "zenodo_only"
+    ).strip()
+    default_support_license = str(
+        support_policy.get("default_license") or ""
+    ).strip()
+    support_publication = {
+        "mode": default_support_mode,
+        "status": "planned",
+    }
+    if default_support_license:
+        support_publication["license"] = default_support_license
     payload = {
         "paper_id": paper_id,
         "display_id": paper_id,
@@ -232,7 +248,9 @@ def create_paper(
         "venue_type": venue_type,
         "evidence_bundles": [],
         "writing_release": {"status": "draft"},
-        "support": {"publication": {"mode": "zenodo_only", "status": "planned"}},
+        "support": {
+            "publication": support_publication
+        },
         "status_updated_at": _now(),
     }
     if target_journal and target_journal.strip():

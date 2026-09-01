@@ -22,6 +22,20 @@ def _write_settings(root: Path) -> None:
     (root / "registry" / "settings.yaml").write_text(
         """schema_version: ara.paper_writing.registry.v1
 require_registration: true
+support_publication:
+  default_mode: zenodo_only
+  default_license: cc-by-4.0
+  gates:
+    before_review:
+      minimum_status: draft
+      require_version_doi: true
+      require_manuscript_citation: true
+    before_handoff:
+      minimum_status: published
+      require_version_doi: true
+      require_quality_gate_package_binding: true
+  not_required:
+    require_reason: true
 quality_gate:
   minimum_score: 6.0
   require_validated_independent_review: false
@@ -317,6 +331,93 @@ def test_support_audit_accepts_current_neutral_citation(tmp_path: Path) -> None:
     assert result["valid"] is True
     assert result["bibliography_key"] == "supportRecord"
     assert result["current_version_doi"] == "10.5281/zenodo.12345678"
+
+
+def test_support_audit_accepts_configured_default_license(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    path = tmp_path / "registry" / "papers" / f"{PAPER_ID}.yaml"
+    record = yaml.safe_load(path.read_text(encoding="utf-8"))
+    publication = record["support"]["publication"]
+    publication.pop("license", None)
+    publication["zenodo"].pop("license", None)
+    path.write_text(yaml.safe_dump(record, sort_keys=False), encoding="utf-8")
+
+    result = audit_manuscript_support(PAPER_ID, root=tmp_path)
+
+    assert result["valid"] is True
+    assert "SUPPORT-LICENSE-MISSING" not in {
+        item["code"] for item in result["errors"]
+    }
+
+
+def test_support_audit_rejects_planned_record_when_prepared_doi_is_required(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    path = tmp_path / "registry" / "papers" / f"{PAPER_ID}.yaml"
+    record = yaml.safe_load(path.read_text(encoding="utf-8"))
+    publication = record["support"]["publication"]
+    publication["status"] = "planned"
+    publication.pop("version_doi", None)
+    publication.pop("record_url", None)
+    publication.pop("draft_receipt", None)
+    publication.pop("package_files", None)
+    publication.pop("package_sha256", None)
+    publication.pop("package_size", None)
+    publication.pop("zenodo", None)
+    path.write_text(yaml.safe_dump(record, sort_keys=False), encoding="utf-8")
+
+    result = audit_manuscript_support(PAPER_ID, root=tmp_path)
+    codes = {item["code"] for item in result["errors"]}
+
+    assert result["valid"] is False
+    assert "SUPPORT-STATUS-BEFORE-REVIEW" in codes
+    assert "SUPPORT-DOI-MISSING" in codes
+
+
+def test_support_audit_requires_manuscript_citation_under_policy(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    main = tmp_path / "papers" / PAPER_ID / "manuscript" / "main.tex"
+    main.write_text(
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "Finite calculations were performed.\n"
+        "\\section*{Data and code availability}\n"
+        "The calculations are reproducible from the stated procedures.\n"
+        "\\bibliography{references}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+
+    result = audit_manuscript_support(PAPER_ID, root=tmp_path)
+    codes = {item["code"] for item in result["errors"]}
+
+    assert result["valid"] is False
+    assert "SUPPORT-MANUSCRIPT-CITATION-REQUIRED" in codes
+    assert "SUPPORT-CITATION-MISSING" in codes
+
+
+def test_not_required_mode_needs_configured_reason(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    path = tmp_path / "registry" / "papers" / f"{PAPER_ID}.yaml"
+    record = yaml.safe_load(path.read_text(encoding="utf-8"))
+    publication = record["support"]["publication"]
+    publication["mode"] = "not_required"
+    publication["status"] = "planned"
+    path.write_text(yaml.safe_dump(record, sort_keys=False), encoding="utf-8")
+
+    missing = audit_manuscript_support(PAPER_ID, root=tmp_path)
+    assert missing["valid"] is False
+    assert {item["code"] for item in missing["errors"]} == {
+        "SUPPORT-NOT-REQUIRED-REASON"
+    }
+
+    publication["not_required_reason"] = "The paper has no external computational artifacts."
+    path.write_text(yaml.safe_dump(record, sort_keys=False), encoding="utf-8")
+    accepted = audit_manuscript_support(PAPER_ID, root=tmp_path)
+    assert accepted["valid"] is True
 
 
 def test_nested_support_zip_filename_is_valid_only_when_shipped() -> None:

@@ -42,13 +42,16 @@ Do not activate another writing system or create a second registry.
 
 Update the canonical claim–evidence map before strengthening prose, then compile the actual LaTeX and
 run deterministic support and style checks, including the single final truthful AI-use declaration
-required by the shared overlay. In a factory `writer` task, stop at a frozen `paper_candidate`; do not
+required by the shared overlay. Unless explicitly `not_required` with a reason, first prepare the
+Zenodo record and cite its Version DOI in the bibliography, first substantive support mention, and
+availability statement. In a factory `writer` task, stop at a frozen `paper_candidate`; do not
 impersonate either reviewer. The scheduler gives it to a fresh `$openlabs-paper-review` task whose
 independent Codex and blind Packy Claude Opus 5 reviewers apply the `quant_finance` rubric and the
 `leading_quant_finance_journals` plus `cas_zone_1_journal` simulated views.
 
 A `paper_revision` applies only the declared request. Missing data, backtests, statistical analysis or
 independent replication returns through `evidence_remediation`, after which the revised candidate gets
-a new panel. After a passing gate, run `paper-writing zenodo release` for the exact prepared,
-hash-bound support draft without asking again. It never authorizes submission, journal contact,
-real-money trading, spending, or a claim of acceptance/publication.
+a new panel. After a passing gate and explicit human authorization, run `paper-writing zenodo
+release` for the exact prepared, hash-bound support draft with the production confirmations. It
+never authorizes submission, journal contact, real-money trading, spending, or a claim of
+acceptance/publication.

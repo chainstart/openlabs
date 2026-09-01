@@ -82,8 +82,12 @@ central theorem:
    guard interruption may resume the same hash-bound incremental build, but formal axiom validation
    executes at most once across the receipt chain. Never ask each reviewer to rebuild the same
    formal project.
-4. Normalize every reader-facing supporting-material reference as described below, then run
-   `python -m paper_writing support-check --paper-id <paper_id>` and verify citation metadata and
+4. Resolve `registry/settings.yaml#support_publication.gates` before review. Unless the paper is
+   explicitly marked `not_required` with the configured reason, a merely `planned` record is a
+   blocker: prepare the Zenodo record, reserve its Version DOI, cite it in the bibliography and at
+   the first substantive support-material mention and availability statement, then run
+   `python -m paper_writing support-check --paper-id <paper_id>`. The deterministic check, not this
+   instruction, enforces the configured lifecycle state, citation metadata, archive identity, and
    proposition-level support.
 5. Require exactly one final venue-compatible AI-use declaration and consolidate truthful AI use
    there, not in the scientific body. Identify OpenAI GPT-5.6 through Codex and its actual purposes.
@@ -95,11 +99,15 @@ central theorem:
 6. Compile the real manuscript and run repository validation, citation/evidence checks, and
    `python -m paper_writing style-check --paper-id <paper_id>`. Treat any failure as a blocker; the
    command is a non-scoring formal check and does not judge mathematical quality.
-7. If the support DOI belongs in the paper, resolve the public files and license from the registry's
-   `support.publication`, then use `paper-writing zenodo prepare` to create only a reversible draft.
-   Add its current Version DOI with publication-state-neutral wording, run
-   `paper-writing zenodo verify-draft`, and rebuild before final review. Never choose a license
-   yourself or add confidential files to the public set; treat either gap as a blocker.
+7. For every non-exempt paper covered by the configured support gate, resolve the complete public
+   file set and the effective license (paper override first, then the standing human-approved
+   `support_publication.default_license`), then use
+   `paper-writing zenodo prepare` to create only a reversible draft. Add its current Version DOI
+   with publication-state-neutral wording, run `paper-writing zenodo verify-draft`, and rebuild
+   before final review. Apply a configured default without asking again; never invent or silently
+   change a license, and never add confidential or incompatibly licensed files to the public set.
+   Treat a missing license or a real license conflict as a blocker. Use `not_required` only for a
+   truthful documented exemption, never as a way to make the gate pass.
 8. In a factory `writer` task, stop after freezing the compiled snapshot and emit it as a
    `paper_candidate`; do not run or impersonate either reviewer. The scheduler creates a fresh
    `paper_review` task using `$openlabs-paper-review`, whose Codex and Packy Claude Opus 5 reviewers
@@ -189,10 +197,13 @@ Tier 1 or Tier 2 with a publication route carrying no mandatory author fee. Reco
 fee, and official formatting sources and check dates. Convert the canonical `manuscript/` itself
 to the current venue format; a separate candidate does not satisfy this requirement.
 
-After a passing gate, run `paper-writing zenodo release` for the prepared production draft without
-asking the user again; the gate is the authorization. Skip it only when venue policy forbids public
-support materials. Commit its DOI/receipt update before `paper-writing handoff release`. A passing
-score still never authorizes a submission, journal event, or publication fact.
+After a passing gate, obtain explicit human authorization for the irreversible public release and
+run `paper-writing zenodo release` for the prepared production draft. The gate proves only that the
+reviewed manuscript and support package are eligible for release; it is not the authorization.
+Skip publication only when the registered mode is `not_required` with its configured reason. Commit
+the DOI/receipt update before `paper-writing handoff release`; the handoff gate requires the
+published Version DOI and the reviewed package binding. Neither gate authorizes a journal
+submission, journal event, or article-publication claim.
 
 ## Finish
 

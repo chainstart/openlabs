@@ -23,8 +23,10 @@ AI text as evidence.
    computation, constraint, conjecture, no-go result, and reproduction explicitly.
 5. Make the source tree canonical and reproducible. Include equations, definitions, error controls,
    limiting checks, data provenance, and enough method detail to reproduce every claimed result.
-6. Run `python -m paper_writing support-check`, `python -m paper_writing style-check`, the LaTeX
-   build, unresolved-marker checks, and any artifact replay before freezing the manuscript.
+6. Resolve the configured support lifecycle before review. Unless explicitly `not_required` with a
+   reason, prepare the Zenodo record, cite its Version DOI in the required manuscript locations,
+   and run `python -m paper_writing support-check`, `python -m paper_writing style-check`, the
+   LaTeX build, unresolved-marker checks, and any artifact replay before freezing the manuscript.
 7. Hand the immutable manuscript and declared evidence to `$openlabs-paper-review`. The writer may
    answer a `text_revision` request but may not score or approve the manuscript.
 
@@ -48,6 +50,7 @@ top-tier score. Require conservative scores of at least soundness 8, novelty 7, 
 and overall 7, a positive CAS
 major-category Zone 1 view, and no scientific blocker. A named
 journal's classification and scope must be verified at review time; do not infer them from a stale
-list. After a passing gate, run `paper-writing zenodo release` for the exact prepared, hash-bound
-support draft without asking again. Internal readiness never authorizes submission, spending,
-authorship changes, journal events, or a publication fact.
+list. After a passing gate and explicit human authorization, run `paper-writing zenodo release`
+for the exact prepared, hash-bound support draft with the required production confirmations.
+Internal readiness never authorizes public release, submission, spending, authorship changes,
+journal events, or a publication fact.

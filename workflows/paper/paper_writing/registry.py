@@ -17,6 +17,7 @@ from paper_writing.identifiers import (
     internal_tracking_reference,
     work_id_from_paper_id,
 )
+from paper_writing.support_policy import validate_publication_policy
 
 
 REGISTRY_SCHEMA_VERSION = "ara.paper_writing.registry.v1"
@@ -73,6 +74,30 @@ def _load_yaml(path: Path, *, required: bool = True) -> dict[str, Any]:
     return payload
 
 
+def load_registry_settings(
+    root: str | Path | None = None,
+    *,
+    settings: str | Path | None = None,
+) -> dict[str, Any]:
+    """Load and validate repository-wide paper settings without paper records."""
+
+    repo_root = Path(root or repository_root()).resolve()
+    payload = _load_yaml(
+        Path(settings).resolve() if settings else settings_path(repo_root)
+    )
+    schema_version = payload.get("schema_version")
+    if schema_version != REGISTRY_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported registry schema {schema_version!r}; expected "
+            f"{REGISTRY_SCHEMA_VERSION!r}"
+        )
+    policy = payload.get("support_publication")
+    if policy is not None and not isinstance(policy, Mapping):
+        raise ValueError("support_publication must be an object")
+    validate_publication_policy(policy if isinstance(policy, Mapping) else {})
+    return payload
+
+
 def load_registry(
     root: str | Path | None = None,
     *,
@@ -89,12 +114,7 @@ def load_registry(
     """
 
     repo_root = Path(root or repository_root()).resolve()
-    global_settings = _load_yaml(Path(settings).resolve() if settings else settings_path(repo_root))
-    schema_version = global_settings.get("schema_version")
-    if schema_version != REGISTRY_SCHEMA_VERSION:
-        raise ValueError(
-            f"Unsupported registry schema {schema_version!r}; expected {REGISTRY_SCHEMA_VERSION!r}"
-        )
+    global_settings = load_registry_settings(repo_root, settings=settings)
 
     config = deepcopy(global_settings)
     config["papers"] = {}
