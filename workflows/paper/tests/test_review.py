@@ -702,7 +702,16 @@ def test_claude_reviewer_uses_packy_config_and_hides_peer_review(tmp_path: Path)
     manuscript.mkdir(parents=True)
     main_tex = manuscript / "main.tex"
     main_pdf = manuscript / "main.pdf"
-    main_tex.write_text("\\documentclass{article}\nEvidence only.\n", encoding="utf-8")
+    main_tex.write_text(
+        "\\documentclass{article}\n\\input{sections/result}\n",
+        encoding="utf-8",
+    )
+    sections = manuscript / "sections"
+    sections.mkdir()
+    (sections / "result.tex").write_text(
+        "NESTED-MANUSCRIPT-THEOREM\n",
+        encoding="utf-8",
+    )
     main_pdf.write_bytes(b"%PDF-1.4 claude reviewer fixture")
     snapshot = manuscript_snapshot_sha256(manuscript, main_pdf)
     registry = tmp_path / "registry" / "papers"
@@ -791,6 +800,8 @@ latest_pdf: papers/{paper_id}/manuscript/main.pdf
         "prompt = sys.stdin.read()\n"
         "if 'PEER-ONLY-SECRET' in prompt:\n"
         "    raise SystemExit(9)\n"
+        "if 'NESTED-MANUSCRIPT-THEOREM' not in prompt:\n"
+        "    raise SystemExit(10)\n"
         f"judgment = {judgment!r}\n"
         "print(json.dumps({'type': 'result', 'subtype': 'success', "
         "'is_error': False, 'structured_output': judgment, "

@@ -332,6 +332,36 @@ def _review_packet(paths: list[Path], *, root: Path) -> str:
     return "".join(sections)
 
 
+def _manuscript_tex_inputs(manuscript: Path, main_tex: Path) -> list[Path]:
+    """Return the complete, deterministic TeX source set for blind review.
+
+    A canonical ``main.tex`` is often only a wrapper around ``\\input`` files.
+    Sending that wrapper alone leaves the reviewer without the paper's theorem
+    statements and proofs.  Include every TeX source under the canonical
+    manuscript directory, with ``main.tex`` first and the remainder sorted.
+    Reject symlinks that escape the manuscript tree rather than silently
+    disclosing an unrelated file.
+    """
+
+    manuscript = manuscript.resolve()
+    main_tex = main_tex.resolve()
+    paths = [main_tex]
+    candidates = sorted(
+        manuscript.rglob("*.tex"), key=lambda path: path.as_posix()
+    )
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(manuscript)
+        except ValueError as exc:
+            raise ValueError(
+                f"manuscript TeX input escapes the manuscript directory: {candidate}"
+            ) from exc
+        if resolved not in paths:
+            paths.append(resolved)
+    return paths
+
+
 def _prompt(
     *, role: str, safe_metadata: dict[str, Any], rubric: str, packet: str
 ) -> str:
@@ -534,7 +564,7 @@ def main(argv: list[str] | None = None) -> int:
     if executable is None:
         raise FileNotFoundError(f"Claude Code command not found: {args.claude_command}")
 
-    input_paths = [main_tex.resolve()]
+    input_paths = _manuscript_tex_inputs(manuscript, main_tex)
     for value in args.input:
         path = _resolve_input(value, root=root, peer_review=peer_review)
         if path not in input_paths:
