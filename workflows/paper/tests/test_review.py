@@ -146,9 +146,15 @@ def _physics_highest_tier_recommendation() -> dict:
 def test_review_safe_registry_removes_all_review_projections() -> None:
     metadata = {
         "paper_id": "paper",
+        "domain": "math",
+        "title": "A fresh theorem",
         "review_file": "reviews/old.md",
         "ara_llm_self_review": {"score": 5},
         "writing_release": {"decision": "minor_revision"},
+        "notes": ["R2 conservative panel requested major revision"],
+        "evidence_sources": [
+            {"label": "R3 bounded repairs", "relationship": "revision_evidence"}
+        ],
         "support": {
             "publication": {
                 "version_doi": "10.5281/zenodo.1",
@@ -162,8 +168,14 @@ def test_review_safe_registry_removes_all_review_projections() -> None:
     assert "review_file" not in safe
     assert "ara_llm_self_review" not in safe
     assert "writing_release" not in safe
-    assert "release_binding" not in safe["support"]["publication"]
-    assert safe["support"]["publication"]["version_doi"] == "10.5281/zenodo.1"
+    assert "notes" not in safe
+    assert "evidence_sources" not in safe
+    assert "support" not in safe
+    assert safe == {
+        "paper_id": "paper",
+        "domain": "math",
+        "title": "A fresh theorem",
+    }
     assert metadata["support"]["publication"]["release_binding"]["score"] == 6
 
 
@@ -724,6 +736,8 @@ subdomain: llm
 manuscript_dir: papers/{paper_id}/manuscript
 latest_source: papers/{paper_id}/manuscript/main.tex
 latest_pdf: papers/{paper_id}/manuscript/main.pdf
+notes:
+  - PRIOR-PANEL-LEAK
 """,
         encoding="utf-8",
     )
@@ -800,6 +814,8 @@ latest_pdf: papers/{paper_id}/manuscript/main.pdf
         "prompt = sys.stdin.read()\n"
         "if 'PEER-ONLY-SECRET' in prompt:\n"
         "    raise SystemExit(9)\n"
+        "if 'PRIOR-PANEL-LEAK' in prompt:\n"
+        "    raise SystemExit(11)\n"
         "if 'NESTED-MANUSCRIPT-THEOREM' not in prompt:\n"
         "    raise SystemExit(10)\n"
         f"judgment = {judgment!r}\n"

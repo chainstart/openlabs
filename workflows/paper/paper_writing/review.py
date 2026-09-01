@@ -166,19 +166,36 @@ _PHYSICS_DOMAINS = {
 _QUANT_FINANCE_DOMAINS = {"finance", "quant", "quant_finance", "quantitative_finance"}
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
+_REVIEW_SAFE_REGISTRY_FIELDS = (
+    "paper_id",
+    "display_id",
+    "work_id",
+    "project_name",
+    "created_at",
+    "domain",
+    "subdomain",
+    "title",
+    "version",
+    "manuscript_dir",
+    "latest_source",
+    "latest_pdf",
+)
+
 
 def review_safe_registry(metadata: Mapping[str, Any]) -> dict[str, Any]:
-    """Return registry metadata with every repository review projection removed."""
+    """Return the minimal registry identity safe to expose to a blind reviewer.
 
-    safe = deepcopy(dict(metadata))
-    for field in ("ara_llm_self_review", "writing_release", "review_file"):
-        safe.pop(field, None)
-    support = safe.get("support")
-    if isinstance(support, dict):
-        publication = support.get("publication")
-        if isinstance(publication, dict):
-            publication.pop("release_binding", None)
-    return safe
+    A blacklist is insufficient here: free-text fields such as ``notes`` and
+    evidence labels can summarize earlier panel outcomes without using any of
+    the formal review keys.  Build this projection from an explicit allowlist
+    so future registry growth cannot silently pierce the hidden-prior boundary.
+    """
+
+    return {
+        field: deepcopy(metadata[field])
+        for field in _REVIEW_SAFE_REGISTRY_FIELDS
+        if field in metadata
+    }
 
 
 def _normalized_token(value: Any) -> str:
