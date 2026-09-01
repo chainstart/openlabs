@@ -458,7 +458,11 @@ def record_quality_gate(
         if blocker not in blockers
     )
 
-    settings = load_registry(repo_root)
+    settings = load_registry(
+        repo_root,
+        include_local_repositories=False,
+        paper_ids=[paper_id],
+    )
     gate = settings.get("quality_gate", {})
     style_audit: dict[str, Any] | None = None
     if bool(gate.get("require_manuscript_style_check", False)):
@@ -829,7 +833,11 @@ def reuse_review_for_metadata_only_revision(
 
     support_audit = audit_manuscript_support(paper_id, root=repo_root)
     blockers = list(support_audit_blockers(support_audit))
-    settings = load_registry(repo_root)
+    settings = load_registry(
+        repo_root,
+        include_local_repositories=False,
+        paper_ids=[paper_id],
+    )
     gate = settings.get("quality_gate")
     gate = gate if isinstance(gate, Mapping) else {}
     style_audit: dict[str, Any] | None = None

@@ -519,7 +519,11 @@ def audit_manuscript_style(
     """Audit the canonical compiled manuscript registered for ``paper_id``."""
 
     repo_root = Path(root).resolve()
-    settings = load_registry(repo_root, include_local_repositories=False)
+    settings = load_registry(
+        repo_root,
+        include_local_repositories=False,
+        paper_ids=[paper_id],
+    )
     if require_ai_declaration is None:
         require_ai_declaration = bool(
             settings.get("quality_gate", {}).get("require_ai_use_declaration", True)

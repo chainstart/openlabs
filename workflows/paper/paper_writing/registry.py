@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
@@ -77,12 +78,14 @@ def load_registry(
     *,
     settings: str | Path | None = None,
     include_local_repositories: bool = True,
+    paper_ids: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Return the compatibility config consumed by the inventory scanner.
 
     The public registry is split across small YAML files. This function projects it into the
     historical ``papers`` mapping so the proven inventory scanner can remain focused on file
-    discovery and derived status calculations.
+    discovery and derived status calculations. When ``paper_ids`` is provided, only those
+    records are loaded and validated; global settings are always loaded and validated.
     """
 
     repo_root = Path(root or repository_root()).resolve()
@@ -96,7 +99,16 @@ def load_registry(
     config = deepcopy(global_settings)
     config["papers"] = {}
     paper_dir = repo_root / "registry" / "papers"
-    for path in sorted(paper_dir.glob("*.yaml")):
+    if paper_ids is None:
+        paper_paths = sorted(paper_dir.glob("*.yaml"))
+    else:
+        requested_ids = sorted({str(paper_id).strip() for paper_id in paper_ids})
+        for paper_id in requested_ids:
+            if not PAPER_ID_PATTERN.fullmatch(paper_id):
+                raise ValueError(f"paper_id has an unsupported format: {paper_id!r}")
+        paper_paths = [paper_dir / f"{paper_id}.yaml" for paper_id in requested_ids]
+
+    for path in paper_paths:
         paper = _load_yaml(path)
         paper_id = str(paper.get("paper_id") or "").strip()
         if not paper_id:

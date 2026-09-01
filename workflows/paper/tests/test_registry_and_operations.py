@@ -269,6 +269,77 @@ def test_create_revision_and_quality_gate(tmp_path: Path) -> None:
     assert metadata["version"] == "0.1.1"
 
 
+def test_quality_gate_scopes_registry_validation_to_target_paper(tmp_path: Path) -> None:
+    _settings(tmp_path)
+    settings = tmp_path / "registry" / "settings.yaml"
+    settings.write_text(
+        settings.read_text(encoding="utf-8")
+        + """journal_target_policy:
+  required_after_basic_draft: true
+  classification_system: 2026 XinRui Physics
+  allowed_tiers: [1, 2]
+""",
+        encoding="utf-8",
+    )
+    paper_id = "20260901-math-combinatorics-scoped-gate"
+    create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="A scoped quality-gate test",
+        created_at="2026-09-01",
+        domain="math",
+        subdomain="combinatorics",
+        venue_type="journal",
+    )
+    unrelated_id = "20260901-physics-hep-transient-target"
+    create_paper(
+        root=tmp_path,
+        paper_id=unrelated_id,
+        title="An unrelated transient record",
+        created_at="2026-09-01",
+        domain="physics",
+        subdomain="hep",
+        venue_type="journal",
+        target_journal="A Physics Journal",
+    )
+    unrelated = load_paper_metadata(unrelated_id, tmp_path)
+    unrelated["target_journal_tier"] = 3
+    write_paper_metadata(unrelated_id, unrelated, tmp_path)
+
+    with pytest.raises(ValueError, match=unrelated_id):
+        load_registry(tmp_path, include_local_repositories=False)
+
+    scoped = load_registry(
+        tmp_path,
+        include_local_repositories=False,
+        paper_ids=[paper_id],
+    )
+    assert list(scoped["papers"]) == [f"papers/{paper_id}"]
+    result = record_quality_gate(
+        paper_id,
+        venue_type="journal",
+        score=6,
+        decision="minor_revision",
+        revision_rounds=0,
+        root=tmp_path,
+    )
+    assert result["passed"] is True
+
+    target = load_paper_metadata(paper_id, tmp_path)
+    target["target_journal"] = "A Mathematics Journal"
+    target["target_journal_tier"] = 3
+    write_paper_metadata(paper_id, target, tmp_path)
+    with pytest.raises(ValueError, match=paper_id):
+        record_quality_gate(
+            paper_id,
+            venue_type="journal",
+            score=6,
+            decision="minor_revision",
+            revision_rounds=0,
+            root=tmp_path,
+        )
+
+
 def test_direct_score_cannot_replace_required_independent_review(tmp_path: Path) -> None:
     _settings(tmp_path)
     settings = tmp_path / "registry" / "settings.yaml"

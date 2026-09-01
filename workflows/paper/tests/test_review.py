@@ -1295,6 +1295,29 @@ writing_release:
 """,
         encoding="utf-8",
     )
+    unrelated_id = "20260901-physics-hep-transient-review-target"
+    (registry / f"{unrelated_id}.yaml").write_text(
+        f"""paper_id: {unrelated_id}
+created_at: 2026-09-01
+domain: physics
+subdomain: hep
+venue_type: journal
+target_journal: A Physics Journal
+target_journal_tier: 3
+""",
+        encoding="utf-8",
+    )
+    settings_path = tmp_path / "registry" / "settings.yaml"
+    settings_path.write_text(
+        settings_path.read_text(encoding="utf-8")
+        + """journal_target_policy:
+  required_after_basic_draft: true
+  classification_system:
+    physics: 2026 XinRui Physics
+  allowed_tiers: [1, 2]
+""",
+        encoding="utf-8",
+    )
 
     review_path = _write_panel(
         tmp_path,
