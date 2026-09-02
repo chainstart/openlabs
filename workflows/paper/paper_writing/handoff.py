@@ -74,6 +74,10 @@ EXCLUDED_SOURCE_DIRECTORIES = {
     "supplements",
     "support-materials",
 }
+EXCLUDED_SOURCE_DIRECTORY_PREFIXES = (
+    "build-",
+    "_build-",
+)
 EXCLUDED_ROOT_PDFS = {
     "cover_letter.pdf",
     "paper.pdf",
@@ -180,6 +184,7 @@ def _source_files(manuscript: Path, canonical_pdf: Path) -> Iterable[Path]:
         relative = path.relative_to(manuscript)
         if any(
             part.casefold() in EXCLUDED_SOURCE_DIRECTORIES
+            or part.casefold().startswith(EXCLUDED_SOURCE_DIRECTORY_PREFIXES)
             for part in relative.parts[:-1]
         ):
             continue

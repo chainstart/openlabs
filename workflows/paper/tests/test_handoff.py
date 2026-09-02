@@ -108,6 +108,28 @@ def test_manuscript_fingerprints_ignore_generated_spl(tmp_path: Path) -> None:
     assert manuscript_review_content_sha256(manuscript, pdf) == review_content
 
 
+def test_manuscript_fingerprints_ignore_named_build_directories(tmp_path: Path) -> None:
+    manuscript = tmp_path / "manuscript"
+    manuscript.mkdir()
+    (manuscript / "main.tex").write_text(
+        "\\documentclass{article}\\begin{document}Result\\end{document}\n",
+        encoding="utf-8",
+    )
+    pdf = manuscript / "main.pdf"
+    pdf.write_bytes(b"%PDF stable")
+    snapshot = manuscript_snapshot_sha256(manuscript, pdf)
+    review_content = manuscript_review_content_sha256(manuscript, pdf)
+
+    generated = manuscript / "build-supplement"
+    generated.mkdir()
+    (generated / "supplement.bbl").write_text("generated bibliography\n", encoding="utf-8")
+    (generated / "supplement.pdf").write_bytes(b"%PDF generated supplement")
+    (generated / "supplementNotes.bib").write_text("", encoding="utf-8")
+
+    assert manuscript_snapshot_sha256(manuscript, pdf) == snapshot
+    assert manuscript_review_content_sha256(manuscript, pdf) == review_content
+
+
 def test_paper_projection_only_clears_an_explicit_target_journal() -> None:
     base = {"title": "Test", "version": "1.0.0"}
 
