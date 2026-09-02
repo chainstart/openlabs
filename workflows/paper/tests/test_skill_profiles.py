@@ -54,7 +54,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     settings = _yaml(repository_root() / profiles["quality_gate"]["settings_path"])
     review_skill = ROOT / profiles["quality_gate"]["review_skill_path"]
 
-    assert profiles["quality_gate"]["review_mode"] == "independent_dual_provider_panel"
+    assert profiles["quality_gate"]["review_mode"] == "configured_independent_panel"
     assert profiles["quality_gate"]["require_target_journal_after_basic_draft"] is True
     assert profiles["quality_gate"]["target_journal_classification_system"] == {
         "math": ["2026 XinRui Mathematics"],
@@ -77,6 +77,8 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert profiles["quality_gate"]["support_publication_default_license_key"] == (
         "default_license"
     )
+    assert profiles["quality_gate"]["support_release_after_ready"] == "automatic"
+    assert profiles["quality_gate"]["support_release_uses_standing_authorization"] is True
     assert profiles["quality_gate"]["support_check_command"] == (
         "python -m paper_writing support-check --paper-id <paper_id>"
     )
@@ -101,12 +103,14 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert profiles["quality_gate"]["require_code_and_formalization_purpose_disclosure"] is True
     assert profiles["quality_gate"]["forbid_internal_audit_terms_and_paths"] is True
     assert profiles["quality_gate"]["scan_bibliography_workflow_notes"] is True
-    assert profiles["quality_gate"]["review_panel_size"] == 2
+    assert profiles["quality_gate"]["review_panel_size"] == 1
     assert profiles["quality_gate"]["parallel_execution"] is False
     assert profiles["quality_gate"]["independent_contexts"] == "required"
     assert profiles["quality_gate"]["isolated_processes"] == "required"
     assert profiles["quality_gate"]["prior_reviews_hidden"] == "required"
-    assert profiles["quality_gate"]["execution_order"] == "frozen_codex_then_blind_claude"
+    assert profiles["quality_gate"]["execution_order"] == (
+        "frozen_codex_then_optional_blind_claude"
+    )
     assert profiles["quality_gate"]["reviewers"] == {
         "reviewer-1": {
             "runtime": "codex",
@@ -118,10 +122,17 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
             "provider": "packy",
             "model": "claude-opus-5",
             "session": "fresh",
+            "optional": True,
+            "enabled_when_panel_size": 2,
         },
     }
-    assert profiles["quality_gate"]["score_aggregation"] == "coordinatewise_minimum"
-    assert profiles["quality_gate"]["decision_aggregation"] == "strictest_decision"
+    assert profiles["quality_gate"]["score_aggregation"] == "coordinatewise_median"
+    assert profiles["quality_gate"]["decision_aggregation"] == "ordinal_median"
+    assert profiles["quality_gate"]["optional_dual_provider_contract"] == {
+        "review_panel_size": 2,
+        "score_aggregation": "coordinatewise_minimum",
+        "decision_aggregation": "strictest_decision",
+    }
     assert profiles["quality_gate"]["review_skill"] == "openlabs-paper-review"
     assert (review_skill / "SKILL.md").is_file()
     assert (review_skill / "references" / "rubrics.md").is_file()
@@ -195,11 +206,19 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     for journal in ("Physical Review Letters", "Physical Review X", "Nature Physics"):
         assert journal in rubric_text
     assert profiles["quality_gate"]["required_before_submission_consideration"] is True
+    assert profiles["quality_gate"]["submission_target"] == (
+        "ready_without_additional_author_intervention"
+    )
+    assert profiles["quality_gate"]["default_author_confirmation"] == "confirmed"
+    assert profiles["quality_gate"]["forbid_unconfirmed_language_in_submission_files"] is True
+    assert profiles["quality_gate"]["external_human_action_file"] == (
+        "production/human_action_checklist.md"
+    )
     gate = settings[profiles["quality_gate"]["settings_key"]]
     assert gate["minimum_score"] == 5.0
-    assert gate["review_panel_size"] == 2
-    assert gate["score_aggregation"] == "coordinatewise_minimum"
-    assert gate["decision_aggregation"] == "strictest_decision"
+    assert gate["review_panel_size"] == 1
+    assert gate["score_aggregation"] == "coordinatewise_median"
+    assert gate["decision_aggregation"] == "ordinal_median"
     assert gate["decision_standard"] == "cas_zone_1_journal"
     assert gate["cas_zone_1_scope"] == "major_category"
     assert gate["cas_zone_1_minimum_decision"] == "minor_revision"
@@ -218,6 +237,9 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert settings["support_publication"]["public_archive_identifier"] == "display_id"
     assert settings["support_publication"]["public_archive_root_identifier"] == "display_id"
     assert settings["support_publication"]["default_license"] == "cc-by-4.0"
+    assert settings["support_publication"]["zenodo_environment"] == "production"
+    assert settings["support_publication"]["release_after_ready"] == "automatic"
+    assert settings["support_publication"]["standing_production_release_authorization"] is True
     assert settings["support_publication"]["gates"] == {
         "before_review": {
             "minimum_status": "draft",
@@ -239,6 +261,14 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     }
     assert settings["support_publication"]["not_required"] == {
         "require_reason": True
+    }
+    assert settings["submission_readiness"]["target_state"] == (
+        "ready_without_additional_author_intervention"
+    )
+    assert settings["submission_readiness"]["default_author_confirmation"] == "confirmed"
+    assert settings["submission_readiness"]["human_action_checklist"] == {
+        "relative_path": "production/human_action_checklist.md",
+        "must_be_outside_submission_package": True,
     }
     assert settings["lean_audit_policy"] == {
         "unchanged_inputs": "reuse_verified_pass_without_lean_execution",

@@ -43,3 +43,25 @@ administrator-enabled operation. The sole exception is `zenodo release`: a curre
 authorizes publication of the exact prepared, hash-bound supporting-material package, and the
 command revalidates all bindings. It never authorizes manuscript submission, a journal event, a
 spending decision, or a publication claim.
+
+## Default submission-ready contract
+
+The repository default treats the registered author list, order, affiliations, CRediT allocation,
+funding statement, competing-interest statement, data statement, and truthful AI-use declaration
+as confirmed inputs.  Manuscripts, cover letters, and current journal packages must not contain
+draft-for-approval, pending-confirmation, pre-submission-gate, TODO, or similar internal workflow
+language.  A configured review may return `ready` only for a package intended to need no further
+author editing before upload.
+
+Human-only legal or portal actions that genuinely cannot be automated belong in
+`papers/<paper_id>/production/human_action_checklist.md`, outside every `journal-submissions/`
+package.  The file records external actions; it must not be copied into the manuscript or upload
+bundle and must not be used to conceal a scientific, evidence, ethics, authorship, or license
+blocker.
+
+After a passing current review and exact package binding, the standing repository policy is to
+publish the prepared production Zenodo record without asking the authors again.  Automation still
+passes the CLI's production and exact-paper confirmations, which remain fail-closed safeguards
+rather than interactive approval prompts.  A ready package plus its published Version DOI is the
+handoff target.  Actual journal-portal submission remains a separate audited external operation,
+but the package must be complete enough that it requires no additional author intervention.

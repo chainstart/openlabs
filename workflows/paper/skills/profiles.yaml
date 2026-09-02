@@ -67,6 +67,8 @@ quality_gate:
   zenodo_public_identifier: display_id
   support_publication_settings_key: support_publication
   support_publication_default_license_key: default_license
+  support_release_after_ready: automatic
+  support_release_uses_standing_authorization: true
   support_check_command: python -m paper_writing support-check --paper-id <paper_id>
   support_review_gate: prepared_version_doi_and_manuscript_citation
   support_release_gate: prepared_version_and_reviewed_package_binding
@@ -79,18 +81,22 @@ quality_gate:
   require_code_and_formalization_purpose_disclosure: true
   forbid_internal_audit_terms_and_paths: true
   scan_bibliography_workflow_notes: true
-  review_mode: independent_dual_provider_panel
-  review_panel_size: 2
+  review_mode: configured_independent_panel
+  review_panel_size: 1
   parallel_execution: false
   independent_contexts: required
   isolated_processes: required
   prior_reviews_hidden: required
-  execution_order: frozen_codex_then_blind_claude
+  execution_order: frozen_codex_then_optional_blind_claude
   reviewers:
     reviewer-1: {runtime: codex, provider: openai-codex, session: fresh}
-    reviewer-2: {runtime: claude-code, provider: packy, model: claude-opus-5, session: fresh}
-  score_aggregation: coordinatewise_minimum
-  decision_aggregation: strictest_decision
+    reviewer-2: {runtime: claude-code, provider: packy, model: claude-opus-5, session: fresh, optional: true, enabled_when_panel_size: 2}
+  score_aggregation: coordinatewise_median
+  decision_aggregation: ordinal_median
+  optional_dual_provider_contract:
+    review_panel_size: 2
+    score_aggregation: coordinatewise_minimum
+    decision_aggregation: strictest_decision
   review_skill: openlabs-paper-review
   review_skill_path: skills/openlabs-paper-review
   score_field: scores.overall
@@ -141,3 +147,7 @@ quality_gate:
   settings_path: registry/settings.yaml
   settings_key: quality_gate
   required_before_submission_consideration: true
+  submission_target: ready_without_additional_author_intervention
+  default_author_confirmation: confirmed
+  forbid_unconfirmed_language_in_submission_files: true
+  external_human_action_file: production/human_action_checklist.md

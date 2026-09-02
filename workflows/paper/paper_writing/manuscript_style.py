@@ -119,6 +119,17 @@ BIBLIOGRAPHY_WORKFLOW_MARKER = re.compile(
     r"reader[- ]facing|reviewer[- ]facing)\b",
     re.IGNORECASE,
 )
+UNRESOLVED_SUBMISSION_MARKER = re.compile(
+    r"\bauthor confirmation required\b|\bdraft for approval\b|"
+    r"\brequires confirmation\b|\bsubmission draft\b|"
+    r"\binternal drafting note\b|\bbefore portal upload\b|"
+    r"\bnot submission[- ]ready\b|\binternal draft\b|"
+    r"\bindependent validation pending\b|\bapproval remain(?:s)? required\b",
+    re.IGNORECASE,
+)
+UNRESOLVED_SOURCE_MARKER = re.compile(
+    r"(?:^|[^A-Za-z])(?:TODO|TBD|FIXME)(?:[^A-Za-z]|$)", re.IGNORECASE
+)
 
 
 def _strip_tex_comment(line: str) -> str:
@@ -319,6 +330,16 @@ def audit_tex_tree(
     for path in files:
         declaration_range = declaration_ranges.get(path, range(0, 0))
         for index, raw in enumerate(path.read_text(encoding="utf-8").splitlines()):
+            if UNRESOLVED_SOURCE_MARKER.search(raw):
+                issues.append(
+                    _issue(
+                        "STYLE-UNRESOLVED-MARKER",
+                        "remove unresolved TODO/TBD/FIXME markers from the submission manuscript",
+                        path=path,
+                        line=index + 1,
+                        root=report_root,
+                    )
+                )
             visible = _strip_tex_comment(raw)
             if index in declaration_range:
                 declaration_parts.append(visible)
@@ -342,6 +363,16 @@ def audit_tex_tree(
                     _issue(
                         "STYLE-AI-WORKFLOW-IN-BODY",
                         "AI tool or AI-assisted workflow narration is permitted only in the final AI-use declaration",
+                        path=path,
+                        line=index + 1,
+                        root=report_root,
+                    )
+                )
+            if UNRESOLVED_SUBMISSION_MARKER.search(scan_text):
+                issues.append(
+                    _issue(
+                        "STYLE-UNCONFIRMED-SUBMISSION-TEXT",
+                        "remove draft, pending-confirmation, or pre-submission gate language from reader-facing prose",
                         path=path,
                         line=index + 1,
                         root=report_root,
@@ -562,6 +593,53 @@ def audit_manuscript_style(
         root=repo_root,
         require_ai_declaration=require_ai_declaration,
     )
+    version = str(metadata.get("version") or "").strip()
+    submission_root = repo_root / f"papers/{paper_id}/journal-submissions"
+    package_files: list[Path] = []
+    if version and submission_root.is_dir():
+        for package in sorted(submission_root.glob(f"*/v{version}")):
+            for name in ("main.tex", "cover_letter.md", "submission_checklist.md"):
+                candidate = package / name
+                if candidate.is_file():
+                    package_files.append(candidate)
+                    for index, raw in enumerate(
+                        candidate.read_text(encoding="utf-8").splitlines()
+                    ):
+                        if UNRESOLVED_SOURCE_MARKER.search(raw):
+                            result["errors"].append(
+                                _issue(
+                                    "STYLE-UNRESOLVED-MARKER",
+                                    "remove unresolved TODO/TBD/FIXME markers from the current submission package",
+                                    path=candidate,
+                                    line=index + 1,
+                                    root=repo_root,
+                                )
+                            )
+                        if UNRESOLVED_SUBMISSION_MARKER.search(raw):
+                            result["errors"].append(
+                                _issue(
+                                    "STYLE-UNCONFIRMED-SUBMISSION-TEXT",
+                                    "move human-only follow-up items to production/human_action_checklist.md outside the submission package",
+                                    path=candidate,
+                                    line=index + 1,
+                                    root=repo_root,
+                                )
+                            )
+                        if name == "submission_checklist.md" and re.match(
+                            r"\s*-\s*\[\s\]", raw
+                        ):
+                            result["errors"].append(
+                                _issue(
+                                    "STYLE-UNCHECKED-SUBMISSION-ITEM",
+                                    "submission packages must not contain unchecked internal workflow items",
+                                    path=candidate,
+                                    line=index + 1,
+                                    root=repo_root,
+                                )
+                            )
+    result["submission_package_checked_files"] = [
+        _relative(path, repo_root) for path in package_files
+    ]
     defaults = settings.get("defaults")
     defaults = defaults if isinstance(defaults, Mapping) else {}
     policies = defaults.get("funding")

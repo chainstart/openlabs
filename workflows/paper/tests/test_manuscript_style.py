@@ -65,6 +65,27 @@ def test_style_check_rejects_internal_workflow_and_ai_narration_in_body(
     assert "STYLE-REPOSITORY-WORKFLOW" in codes
 
 
+def test_style_check_rejects_unconfirmed_submission_language(tmp_path: Path) -> None:
+    main = _write(
+        tmp_path,
+        "This internal draft is not submission-ready and requires confirmation.",
+    )
+
+    result = audit_tex_tree(main)
+    codes = {item["code"] for item in result["errors"]}
+
+    assert "STYLE-UNCONFIRMED-SUBMISSION-TEXT" in codes
+
+
+def test_style_check_rejects_todo_even_in_tex_comment(tmp_path: Path) -> None:
+    main = _write(tmp_path, "% TODO(AUTHOR): add the final author list.\nThe result holds.")
+
+    result = audit_tex_tree(main)
+    codes = {item["code"] for item in result["errors"]}
+
+    assert "STYLE-UNRESOLVED-MARKER" in codes
+
+
 def test_style_check_rejects_auditability_and_internal_literal_paths(
     tmp_path: Path,
 ) -> None:

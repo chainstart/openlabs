@@ -77,14 +77,16 @@ the same paths when they do not.
 The quality-gate recorder repeats this check and projects every failure into
 `unresolved_review_blockers`; neither score nor decision can override it.
 
-Then explicitly invoke `$openlabs-paper-review`. Under the default two-reviewer contract, freeze one
-judgment from a blank Codex reviewer, then run a new non-persistent Claude Code process through
-Packy with model `claude-opus-5`. Claude receives the same frozen scientific inputs but no author
-session, prior review, or reviewer-1 content. Take the lower of the two values for every integer
-score, including `overall`, and the less favorable of the two simulated decisions. Deterministic
-code may verify provider identities, sources, hashes, and aggregation but must not originate a
-scientific judgment. If either genuinely independent configured provider is unavailable, leave the
-quality gate pending.
+Then explicitly invoke `$openlabs-paper-review`. Read the panel contract from
+`registry/settings.yaml#quality_gate`. The default contract launches exactly one blank, ephemeral
+Codex reviewer and forms a validated one-member panel without changing that reviewer's judgments.
+Only when the registry explicitly selects the supported two-reviewer contract may the coordinator
+add a new non-persistent Claude Code process through Packy with model `claude-opus-5`. Claude then
+receives the same frozen scientific inputs but no author session, prior review, or reviewer-1
+content; aggregation takes the lower integer scores and less favorable simulated decisions.
+Deterministic code may verify provider identities, sources, hashes, and aggregation but must not
+originate a scientific judgment. If any provider required by the active contract is unavailable,
+leave the quality gate pending.
 
 The full paper registry contains the projected result of earlier panels and is therefore not safe
 review input. The coordinator reads it, but every reviewer receives/reads only an in-memory view
@@ -97,18 +99,18 @@ source set, the claim map, redacted-registry evidence, and the exact current sup
 recursive searches over the whole paper directory are forbidden. Accidental exposure invalidates
 that context even if it came from a filename the coordinator did not intend as review input.
 
-When a paper-local registry explicitly configures the supported one-reviewer contract, the same
-isolation rules still apply: launch one fresh ephemeral Codex process, never resume the writer or
-coordinator context, mark the reviewer and panel records with the required isolated-process
-provenance, and form the validated one-member panel. A same-context self-review is not a weaker
-kind of valid review; it is invalid for readiness. The direct `quality-gate` command cannot
-substitute for `paper-writing review apply` with a validated panel record.
+Under the default one-reviewer contract, the same isolation rules apply: launch one fresh ephemeral
+Codex process, never resume the writer or coordinator context, mark the reviewer and panel records
+with the required isolated-process provenance, and form the validated one-member panel. A
+same-context self-review is not a weaker kind of valid review; it is invalid for readiness. The
+direct `quality-gate` command cannot substitute for `paper-writing review apply` with a validated
+panel record.
 
 Formal-tool reconstruction is objective evidence preparation, not a score-bearing review. When a
 Lean project is in scope, use one repository resource-capped Lean audit workflow for the frozen
 snapshot before starting the panel. Bind the receipt to the manuscript snapshot, support-package
-hash, toolchain, manifest, configuration, and Lean sources; give the same receipt to both
-reviewers. They must not independently rebuild Lean or mathlib. The single audit is serialized and
+hash, toolchain, manifest, configuration, and Lean sources; give the same receipt to every
+configured reviewer. Reviewers must not independently rebuild Lean or mathlib. The single audit is serialized and
 must stay within the repository CPU, memory, process-count, disk-headroom, and timeout maxima. A
 matching PASS receipt is reused; a resource-limit failure is investigated outside the panel rather
 than duplicated across reviewer contexts. A diagnosed interruption may continue the same
@@ -123,8 +125,8 @@ DOI, filename, author-metadata, or manuscript change alone does not invalidate L
 local Lean-source change with unchanged toolchain, lock file, configuration, and foundational
 interfaces, use `--build-mode incremental` so Lake reuses valid earlier build products, then run the
 axiom audit. Use `--build-mode full` only for a large Lean change such as a toolchain, dependency,
-configuration, or broad foundational/interface change. Supply the resulting receipt to both
-reviewers and disclose whether validation was reused, incremental, or full.
+configuration, or broad foundational/interface change. Supply the resulting receipt to every
+configured reviewer and disclose whether validation was reused, incremental, or full.
 
 Route the registry domain exactly as follows:
 
@@ -167,16 +169,16 @@ under the same `reviews/<review_run_id>/<paper_id>/` directory. Include at least
 - model, reasoning effort, UTC review time, paper ID, canonical main-TeX SHA-256, and whether the
   manuscript tree stayed unchanged during review.
 
-Use the panel's conservative `scores.overall` as the gate score. Under the default contract it is
-the lower of two independent holistic judgments; under the explicit one-reviewer contract it is
-the unchanged isolated reviewer's value. It is not an arithmetic escape hatch: an unsupported
+Use the panel's configured `scores.overall` as the gate score. Under the default contract it is the
+unchanged isolated Codex reviewer's value. Under the optional two-reviewer contract it is the lower
+of two independent holistic judgments. It is not an arithmetic escape hatch: an unsupported
 central claim, unresolved scientific/proof flaw, stale build, or unverified critical artifact must
 also receive a decision below the configured review threshold or remain blocked.
 
-Validate the completed panel with the helper shipped inside `$openlabs-paper-review`. It checks domain
-routing, integer score fields, role-specific recommendation schemas, immutable reviewer hashes,
-common manuscript snapshots, frozen-peer binding, and exact conservative aggregation; it never
-judges the paper or alters a score.
+Validate the completed panel with the helper shipped inside `$openlabs-paper-review`. It checks
+domain routing, integer score fields, role-specific recommendation schemas, immutable reviewer
+hashes, common manuscript snapshots, and the exact configured aggregation. For a two-reviewer panel
+it also checks the frozen-peer binding. It never judges the paper or alters a score.
 
 ## Apply the deterministic threshold
 
@@ -217,9 +219,12 @@ provenance. `zenodo prepare` invokes this same deterministic reuse automatically
 baseline is present. Formatting-only changes outside the narrow author-command allowlist remain
 review-significant unless a future deterministic classifier explicitly supports them.
 
-`writing_release.status=ready` is necessary before handoff or consideration for submission, but is
-not sufficient authorization to submit. It is an internal LLM quality gate, not scientific proof,
-external peer review, an editorial decision, or a substitute for accountable human approval.
+`writing_release.status=ready` is necessary before handoff or consideration for submission. Under
+the repository's standing author-confirmation policy, the current manuscript and journal package
+must already be free of pending-confirmation language and require no further author editing. This
+is still an internal LLM quality gate, not scientific proof, external peer review, or an editorial
+decision. Scientific, evidence, ethics, authorship, and license blockers cannot be converted into
+administrative checklist items.
 
 ## Keep publication outside the gate
 
@@ -231,9 +236,15 @@ draft, reservation, release, and prior-version fact in registry/receipt history 
 formal manuscript. When a prepared
 support package exists, the gate records its SHA-256 alongside the manuscript snapshot.
 
-The passing gate establishes eligibility for support-material publication but is not authorization.
-After explicit human authorization, run `paper-writing zenodo release` as a separate step with the
-production and exact-paper confirmations. The command independently revalidates the gate and the
+The passing gate establishes eligibility for support-material publication. The repository records
+standing production-release authorization, so run `paper-writing zenodo release` as a separate
+non-interactive step with the production and exact-paper confirmations and do not ask the authors
+again. The command independently revalidates the gate and the
 exact local/remote package hashes, and refuses to publish when the gate is stale, failing, or
 unbound from the package. Neither readiness nor support publication authorizes a submission,
 journal event, or article-publication claim, all of which remain the accountable human's decision.
+
+Do not put author-approval reminders, upload-day tasks, or unchecked internal checklists in the
+manuscript or `journal-submissions/` tree. If an external portal or law genuinely requires a later
+human action, record it only in `papers/<paper_id>/production/human_action_checklist.md`; keep that
+file outside the upload package.

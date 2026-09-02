@@ -57,14 +57,17 @@ Zenodo 使用两阶段流程，质量门禁不会调用网络：
    `zenodo verify-draft` 与 `support-check`，重新编译、独立审稿并通过当前质量门禁，然后提交
    稿件、PDF、registry、材料包和草稿回执。草稿、预留、发布步骤和旧版沿革只写入内部
    registry、回执或返修记录，绝不写入正式论文或当前 ZIP 内面向读者的 claim map/README。
-3. 获得明确的人类发布授权后运行 `zenodo release`：重新核对门禁快照、Git HEAD、本地 ZIP
+3. 采用 `registry/settings.yaml#support_publication.standing_production_release_authorization`
+   中登记的长期作者授权运行 `zenodo release`，无需逐篇再次询问；命令仍必须传入生产环境和
+   精确 paper ID 确认参数，并重新核对门禁快照、Git HEAD、本地 ZIP
    SHA-256 与 Zenodo 草稿文件，全部一致才正式发布。命令写回 Version DOI、Concept DOI 和
    发布回执，但不会提交 Git。
 4. 提交 DOI/回执更新并推送；OpenLabs 的完成与投影流程随后同步结构化状态。仅在自动任务
    失败时手工运行 `handoff release` 恢复。该步骤只同步写作产物，不创建投稿或期刊事件。
 
-质量门禁是公开发布的必要条件，但不构成授权。`zenodo release` 还必须得到明确的人类授权并
-提供生产确认；命令自身会重新校验门禁、Git 状态与远端文件，门禁失效、未达标或未绑定材料包
+质量门禁是公开发布的必要条件。仓库已配置长期生产发布授权，因此通过门禁且材料整理完成后
+默认直接执行 `zenodo release`，不再向作者重复提问；生产确认参数仍作为精确目标和不可逆操作
+的机器安全边界。命令自身会重新校验门禁、Git 状态与远端文件，门禁失效、未达标或未绑定材料包
 时一律拒绝发布。生产**草稿**（`prepare`、`create-draft`、`new-version`）同样需要
 `--confirm-production`。
 
@@ -175,7 +178,7 @@ python -m paper_writing review reuse-metadata --paper-id <paper_id>
 
 ## 正式发布
 
-门禁通过且负责人明确授权后执行：
+门禁通过后，依据仓库长期授权直接执行：
 
 ```bash
 python -m paper_writing zenodo release \

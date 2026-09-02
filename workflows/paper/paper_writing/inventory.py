@@ -6,7 +6,7 @@ import json
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import yaml
 
@@ -98,15 +98,28 @@ def _release(metadata: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _research_outcomes(
-    metadata: Mapping[str, Any], release: Mapping[str, Any]
+    metadata: Mapping[str, Any],
+    release: Mapping[str, Any],
+    publication: Mapping[str, Any],
+    settings: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Keep scientific outcomes separate from the internal writing gate."""
 
     declared = _mapping(metadata.get("research_outcomes"))
+    support_mode = str(publication.get("mode") or "").strip()
+    support_status = str(publication.get("status") or "planned").strip()
+    reviewed_ready = release.get("status") == "ready"
+    support_ready = support_mode == "not_required" or support_status == "published"
+    support_policy = _mapping(settings.get("support_publication"))
+    auto_release = support_policy.get("release_after_ready") == "automatic"
     return {
         "original_problem_closed": declared.get("original_problem_closed"),
         "new_bound_or_scoped_theorem": declared.get("new_bound_or_scoped_theorem"),
-        "writing_package_ready": release.get("status") == "ready",
+        "writing_package_ready": reviewed_ready,
+        "submission_package_ready": reviewed_ready and support_ready,
+        "support_auto_release_pending": (
+            reviewed_ready and auto_release and support_mode != "not_required" and not support_ready
+        ),
         "evidence": _mapping(declared.get("evidence")),
         "scientific_validation": _mapping(metadata.get("scientific_validation")),
     }
@@ -124,10 +137,11 @@ def build_inventory(
     root: str | Path,
     *,
     config: Mapping[str, Any] | None = None,
+    paper_ids: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     repo_root = Path(root).resolve()
     settings = dict(config) if config is not None else load_config(repo_root / "registry" / "settings.yaml")
-    registry = load_registry(repo_root)
+    registry = load_registry(repo_root, paper_ids=paper_ids)
     papers: list[dict[str, Any]] = []
     warnings: list[str] = []
     for workspace, metadata_value in sorted(registry.get("papers", {}).items()):
@@ -164,7 +178,9 @@ def build_inventory(
                 },
                 "authors": _authors(metadata, settings),
                 "writing_release": release,
-                "research_outcomes": _research_outcomes(metadata, release),
+                "research_outcomes": _research_outcomes(
+                    metadata, release, publication, settings
+                ),
                 "support": support,
                 "warnings": paper_warnings,
             }
@@ -177,6 +193,12 @@ def build_inventory(
         item["research_outcomes"]["new_bound_or_scoped_theorem"] for item in papers
     ]
     writing_ready = [item["research_outcomes"]["writing_package_ready"] for item in papers]
+    submission_ready = [
+        item["research_outcomes"]["submission_package_ready"] for item in papers
+    ]
+    auto_release_pending = [
+        item["research_outcomes"]["support_auto_release_pending"] for item in papers
+    ]
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -188,6 +210,8 @@ def build_inventory(
                 "original_problem_closed": _tri_state_counts(original_closure),
                 "new_bound_or_scoped_theorem": _tri_state_counts(scoped_contribution),
                 "writing_package_ready": _tri_state_counts(writing_ready),
+                "submission_package_ready": _tri_state_counts(submission_ready),
+                "support_auto_release_pending": _tri_state_counts(auto_release_pending),
             },
             "needs_attention": sum(bool(item["warnings"]) for item in papers),
         },
