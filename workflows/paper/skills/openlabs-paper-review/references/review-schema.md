@@ -2,12 +2,13 @@
 
 Each independent reviewer writes one JSON object using schema `ara.paper_writing.review.v2`.
 Scores are integers. Every source contains one role-specific high-standard opinion and one CAS
-Zone 1 journal opinion. Under the default contract, after the Codex and Packy Claude reviewers
-finish, write one panel object using schema `openlabs.paper_writing.review.v1`; it preserves the
-common review shape, contains the exact conservative aggregation, and identifies both immutable
-source records. When the paper-local registry explicitly selects a one-reviewer panel, write schema
-`openlabs.paper_writing.review.single.v1`; it contains the unchanged one-member coordinatewise and
-ordinal medians and identifies the sole immutable Codex source.
+Zone 1 journal opinion. Under the default contract, after the fresh Codex reviewer finishes, write
+one panel object using schema `openlabs.paper_writing.review.single.v1`; it preserves the common
+review shape, contains the unchanged one-member coordinatewise and ordinal medians, and identifies
+the sole immutable Codex source. When the registry explicitly selects the optional two-reviewer
+contract, add the blind Packy Claude reviewer and write schema
+`openlabs.paper_writing.review.v1`; that panel contains the exact conservative aggregation and
+identifies both immutable source records.
 
 The individual record shape is:
 
@@ -76,31 +77,30 @@ The individual record shape is:
 }
 ```
 
-For `reviewer-2`, set `provider: "packy"`, `model: "claude-opus-5"`, and
+Only under the explicitly configured two-reviewer contract, for `reviewer-2` set
+`provider: "packy"`, `model: "claude-opus-5"`, and
 `panel_reviewer_id: "reviewer-2"`, and add `hidden_peer_review_sha256` with the frozen SHA-256 of
 `reviewer-1.json`. The adapter hashes that file but never includes its content in Claude's prompt.
 Both records must describe the same frozen manuscript and must not access sibling or historical
 review content.
 
-In one-reviewer mode, omit reviewer-2 and its hidden-peer binding. The sole source remains
+In the default one-reviewer mode, omit reviewer-2 and its hidden-peer binding. The sole source remains
 `reviewer-1.json` with provider `openai-codex`; the panel uses
 `openlabs.paper_writing.review.single.v1`, `panel_size: 1`,
 `score_aggregation: coordinatewise_median`, and `decision_aggregation: ordinal_median`.
 
 ## Panel result
 
-Copy the common fields into `review.json`, set `schema_version` to
-`openlabs.paper_writing.review.v1`, and set every score to the lower of the two individual values.
-Set each role-specific decision to the less favorable of the two using the decision order in the
-rubric. Retain every distinct blocker and required change. Add this object inside
-`review_metadata`:
+For the default contract, copy the common fields from `reviewer-1.json` into `review.json` without
+altering any judgment, set `schema_version` to `openlabs.paper_writing.review.single.v1`, and add
+this object inside `review_metadata`:
 
 ```json
 {
   "review_panel": {
-    "panel_size": 2,
-    "score_aggregation": "coordinatewise_minimum",
-    "decision_aggregation": "strictest_decision",
+    "panel_size": 1,
+    "score_aggregation": "coordinatewise_median",
+    "decision_aggregation": "ordinal_median",
     "parallel_execution": false,
     "independent_contexts": true,
     "isolated_processes": true,
@@ -122,13 +122,6 @@ rubric. Retain every distinct blocker and required change. Add this object insid
         "model": "<actual Codex model>",
         "source": "reviews/<run>/<paper_id>/reviewer-1.json",
         "sha256": "<SHA-256 of reviewer-1.json>"
-      },
-      {
-        "reviewer_id": "reviewer-2",
-        "provider": "packy",
-        "model": "claude-opus-5",
-        "source": "reviews/<run>/<paper_id>/reviewer-2.json",
-        "sha256": "<SHA-256 of reviewer-2.json>"
       }
     ]
   }
@@ -137,15 +130,19 @@ rubric. Retain every distinct blocker and required change. Add this object insid
 
 Omit `shared_objective_audits` when no formal-tool audit is in scope. When Lean/mathlib is in
 scope, it contains exactly one PASS receipt created by the bounded objective checker. The panel
-validator verifies the receipt hash, snapshot and support bindings, one formal-validation execution
-over the hash-linked receipt chain, source hashes, two sequential commands, dynamic host-memory
-headroom, and repository resource ceilings. It does not rerun Lean.
+validator verifies the receipt hash, snapshot and support bindings, the formal-validation execution
+over the hash-linked receipt chain, source hashes, dynamic host-memory headroom, and repository
+resource ceilings. It does not rerun Lean.
 
-For panel metadata, use `model: "codex-plus-claude-opus-5-conservative-panel"` and describe the
-mechanical aggregation in `reasoning_effort`. The validator loads both sources, verifies their
-provider/model identities, hashes, common snapshots, and the frozen-peer binding, then checks all
-score minima and strictest decisions mechanically. Historical `ara.paper_writing.review.v3`
-three-review median panels remain valid read-only records.
+For default panel metadata, use `model: "single-reviewer-median-panel"` and describe the mechanical
+one-member aggregation in `reasoning_effort`. Under the optional two-reviewer contract instead use
+schema `openlabs.paper_writing.review.v1`, `panel_size: 2`,
+`score_aggregation: coordinatewise_minimum`, `decision_aggregation: strictest_decision`, and model
+`codex-plus-claude-opus-5-conservative-panel`. Include both reviewer records, set every score to the
+lower source value, take the less favorable decision, and retain the union of blockers and required
+changes. The validator then verifies both provider/model identities, hashes, common snapshots, the
+frozen-peer binding, score minima, and strictest decisions mechanically. Historical
+`ara.paper_writing.review.v3` three-review median panels remain valid read-only records.
 
 For `ai`, `cs`, and `se`, set `reviewer_role` to `cs_top_tier`, set `rubric_id` to
 `ara.revision-agent.cs-top-tier.v1`, and replace `recommendations` with:

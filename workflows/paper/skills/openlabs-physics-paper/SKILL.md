@@ -50,7 +50,9 @@ top-tier score. Require conservative scores of at least soundness 8, novelty 7, 
 and overall 7, a positive CAS
 major-category Zone 1 view, and no scientific blocker. A named
 journal's classification and scope must be verified at review time; do not infer them from a stale
-list. After a passing gate and explicit human authorization, run `paper-writing zenodo release`
-for the exact prepared, hash-bound support draft with the required production confirmations.
-Internal readiness never authorizes public release, submission, spending, authorship changes,
+list. After a passing gate, use the repository's standing authorization and run `paper-writing
+zenodo release` without asking the authors again, for the exact prepared, hash-bound support draft
+with the required production confirmations. Submission-facing files must contain no pending author
+confirmation or internal gate language; unavoidable human portal actions belong only in
+`production/human_action_checklist.md` outside the journal package. Internal readiness never authorizes submission, spending, authorship changes,
 journal events, or a publication fact.

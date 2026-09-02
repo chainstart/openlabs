@@ -55,6 +55,26 @@ observation to the scheduler-authenticated task id, role, and session boundary. 
 current task as an independent reviewer, rewriting history, or crossing a configured fresh boundary
 inside one task is rejected.
 
+The reserved `original_problem_closed` and `counterexample_closed` observations have an additional
+hard gate. They cannot cite an ordinary proof note alone. Supply a workstream-relative AMRA v2
+campaign already at a fully validated exact-statement promotion and a new receipt path:
+
+```bash
+python3 labs/math/protocols/research_state_machine.py observe \
+  ... --kind original_problem_closed \
+  --amra-campaign amra/exact-source-campaign \
+  --closure-receipt evidence/exact-source-closure.json
+```
+
+The command creates the structured receipt and registers it in `verification_receipts`. Every later
+state validation reruns the complete AMRA promotion gate and checks the receipt, frozen statement
+identity, core campaign artifacts, cited evidence hashes, and receipt SHA-256. A non-exact AMRA
+target, an incomplete audit, a changed proof file, or a hand-written evidence text fails closed.
+The reviewer result must be a successful, fresh control-plane review bound to the frozen AMRA
+review-manifest hash. The AMRA decision and reviewer result must also agree on resolution polarity:
+`proof` for `original_problem_closed`, or `counterexample` for `counterexample_closed`; one cannot
+be relabeled as the other.
+
 If the current route or target no longer warrants automatic allocation, stop it explicitly:
 
 ```bash

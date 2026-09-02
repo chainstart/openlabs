@@ -13,6 +13,13 @@
 Agents may read the plan but must not silently change its score floors, WIP limits, external-action
 policy, or resource ceilings.
 
+For a `radar_scored` plan, `selection_gate.minimum_target_cards_per_cycle` is mapped to the lane's
+canonical `minimum_target_cards`, and
+`selection_gate.minimum_distinct_research_fronts_per_cycle` is mapped to
+`minimum_distinct_research_fronts`. Plan minima are authoritative: a lane may strengthen them but
+cannot weaken them. The effective snapshot always requires at least four cards and one named
+research front. A selected target also freezes the SHA-256 of the exact production-plan bytes.
+
 `status: active` is a control-plane continuity contract. Each lane whose `startup` is `active` is
 bound to a renewable production epoch. The factory retains lifetime tasks, evidence, and Agent-time
 accounting, but renews the bounded task/time safety window when an idle lane exhausts the current
@@ -41,9 +48,26 @@ preserve negative and null outcomes.
 For `program.execution_mode: operator_locked_parallel_routes`, the administrator has already
 chosen established routes and their public frontiers. Each lane uses
 `selection_mode: operator_locked_route`, begins directly in `research`, and contains a score-free
-`selected_target` initialized with `scripts/production_lane.py lock-route`. Candidate radar and
+`selected_target` initialized with `scripts/production_lane.py lock-route`. Target records preserve
+`source_original_statement`, `frozen_target_statement`, and `target_relation`; only an `exact`
+statement match can represent source-problem closure. Candidate radar and
 prospective publication scoring are forbidden in this mode. Publication assessment occurs only
 after a mathematical result has survived reconstruction.
+
+A `radar_scored` lane may enter research through `select` only when `target_relation` is `exact`
+and the source-original and frozen target statements match. Non-exact theorems belong to an
+explicitly scoped operator route or `branch-route`, never to open-problem selection. During
+research, lane validation requires all three target fields and checks them, together with `source`,
+against the nested AMRA `closure_contract.json`; changing only one record fails closed.
+The `selection.json` receipt uses `openlabs.math_target_selection.v1`. It freezes a primary-source
+artifact and exact locator, public open status, the plan-required number of candidate cards and
+distinct research fronts, score vector, selection-gate snapshot, closest-result/duplicate-search
+evidence, and a cleared blocking-novelty risk. Every counted card must use `target_relation: exact`,
+have matching normalized source-original and frozen statements, identify `open_problem` or
+`open_conjecture` status, clear blocking novelty risk, and carry a complete bounded score vector
+whose total is correct. The receipt and selected lane record bind the selected `research_front`,
+effective canonical gate, and production-plan SHA-256; the nested AMRA campaign copies the
+source-authority bundle inside its own evidence boundary.
 
 ## Production lane
 
@@ -59,7 +83,14 @@ after a mathematical result has survived reconstruction.
   "cycle": 1,
   "theme": {"name": "...", "include": [], "exclude": []},
   "plan_path": "../production/.../production_plan.json",
-  "selection_gate": {},
+  "selection_gate": {
+    "minimum_total": 75,
+    "minimum_novelty": 18,
+    "minimum_significance": 18,
+    "minimum_closure": 12,
+    "minimum_target_cards": 4,
+    "minimum_distinct_research_fronts": 1
+  },
   "node_policy": {
     "consecutive_no_progress_limit": 3,
     "max_radar_nodes_per_cycle": 3,
@@ -75,13 +106,17 @@ after a mathematical result has survived reconstruction.
 ```
 
 Allowed stages are `radar`, `research`, and `terminal`. A selected target contains its exact
-statement, source, score vector, first kill test, and relative nested AMRA campaign path.
+statement, source, score vector, frozen selection-gate snapshot, first kill test, and safe relative
+nested AMRA campaign path. The path must equal `research/cycle-NNN/<slugged-target-id>` inside the
+lane workspace, and nested campaign id, problem id, and title must match. Archived targets are
+revalidated rather than trusted as inert history.
 
 An operator-locked lane also contains a durable `route` object and uses
 `selection_basis: operator_locked_route` instead of a score vector. After a target freezes or
 promotes, `branch-route` may initialize the next evidence-driven subproblem in that same route with
 `selection_basis: post_result_route_branch`; it never returns to candidate radar. A frozen target's
-successor must change the exact statement and record both `branch_amendment` and
+successor must retain the source-original statement and problem id, change the scoped target, and
+record both `branch_amendment` and
 `defect_addressed`. The default permits one such repair: after two consecutive frozen targets
 without promotion, the route cannot branch again.
 

@@ -34,6 +34,7 @@ SINGLE_REVIEW_SCHEMA_VERSION = "openlabs.paper_writing.review.single.v1"
 SINGLE_REVIEW_PANEL_SIZE = 1
 SINGLE_REVIEW_SCORE_AGGREGATION = "coordinatewise_median"
 SINGLE_REVIEW_DECISION_AGGREGATION = "ordinal_median"
+DEFAULT_REVIEW_PANEL_SIZE = SINGLE_REVIEW_PANEL_SIZE
 REVIEWER_PROVIDER_CONTRACTS = {
     "reviewer-1": {"provider": "openai-codex", "model": None},
     "reviewer-2": {"provider": "packy", "model": "claude-opus-5"},
@@ -287,6 +288,49 @@ def decision_meets_standard_threshold(
         return decisions.index(decision) <= decisions.index(minimum)
     except (ValueError, TypeError):
         return False
+
+
+def configured_review_contract(gate: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Resolve the configured current review-panel contract.
+
+    One fresh Codex reviewer is the fail-closed default.  Setting
+    ``review_panel_size`` to two explicitly opts into the sequential blind
+    Claude reviewer and conservative dual-provider aggregation.
+    """
+
+    settings = gate if isinstance(gate, Mapping) else {}
+    try:
+        panel_size = int(settings.get("review_panel_size", DEFAULT_REVIEW_PANEL_SIZE))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("quality_gate.review_panel_size must be 1 or 2") from exc
+
+    if panel_size == SINGLE_REVIEW_PANEL_SIZE:
+        contract = {
+            "panel_size": SINGLE_REVIEW_PANEL_SIZE,
+            "schema_version": SINGLE_REVIEW_SCHEMA_VERSION,
+            "score_aggregation": SINGLE_REVIEW_SCORE_AGGREGATION,
+            "decision_aggregation": SINGLE_REVIEW_DECISION_AGGREGATION,
+            "claude_enabled": False,
+        }
+    elif panel_size == REVIEW_PANEL_SIZE:
+        contract = {
+            "panel_size": REVIEW_PANEL_SIZE,
+            "schema_version": REVIEW_SCHEMA_VERSION,
+            "score_aggregation": REVIEW_SCORE_AGGREGATION,
+            "decision_aggregation": REVIEW_DECISION_AGGREGATION,
+            "claude_enabled": True,
+        }
+    else:
+        raise ValueError("quality_gate.review_panel_size must be 1 or 2")
+
+    for key in ("score_aggregation", "decision_aggregation"):
+        configured = str(settings.get(key, contract[key]))
+        if configured != contract[key]:
+            raise ValueError(
+                f"quality_gate.{key} must be {contract[key]!r} when "
+                f"review_panel_size is {panel_size}"
+            )
+    return contract
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:

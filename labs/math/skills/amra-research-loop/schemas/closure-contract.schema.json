@@ -1,12 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "amra-research-loop/closure-contract.schema.json",
+  "$id": "closure-contract.schema.json",
   "title": "Research Closure Contract",
   "type": "object",
-  "required": ["exact_statement", "source", "success_conditions", "non_success_conditions"],
+  "required": [
+    "source_original_statement",
+    "frozen_target_statement",
+    "target_relation",
+    "source",
+    "success_conditions",
+    "non_success_conditions"
+  ],
   "properties": {
-    "exact_statement": {"type": "string", "minLength": 1},
+    "source_original_statement": {"type": "string", "minLength": 1},
+    "frozen_target_statement": {"type": "string", "minLength": 1},
+    "target_relation": {
+      "enum": ["exact", "specialization", "strengthening", "partial"]
+    },
     "source": {"type": "string", "minLength": 1},
+    "source_authority": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "source-authority.schema.json"}
+      ]
+    },
     "published_comparator": {"type": "string"},
     "admissible_inputs": {"type": "array", "items": {"type": "string"}},
     "false_world_controls": {
@@ -27,6 +44,7 @@
       "items": {
         "enum": [
           "original_problem_closed",
+          "scoped_theorem_proved",
           "main_term_improved",
           "main_exponent_improved",
           "global_interface_closed",
@@ -34,10 +52,44 @@
         ]
       },
       "minItems": 1,
+      "maxItems": 1,
       "uniqueItems": true
     },
     "non_success_conditions": {"type": "array", "items": {"type": "string"}},
     "scope_notes": {"type": "array", "items": {"type": "string"}}
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"target_relation": {"const": "exact"}},
+        "required": ["target_relation"]
+      },
+      "then": {
+        "required": ["source_authority"],
+        "properties": {
+          "success_conditions": {"const": ["original_problem_closed"]},
+          "source_authority": {"$ref": "source-authority.schema.json"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "target_relation": {
+            "enum": ["specialization", "strengthening", "partial"]
+          }
+        },
+        "required": ["target_relation"]
+      },
+      "then": {
+        "properties": {
+          "success_conditions": {
+            "contains": {"const": "scoped_theorem_proved"},
+            "not": {"contains": {"const": "original_problem_closed"}}
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": false
 }

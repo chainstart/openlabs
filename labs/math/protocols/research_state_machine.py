@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import sys
 import tempfile
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -40,6 +42,17 @@ HANDOFF_KINDS = {
 }
 VERDICTS = {"accepted", "rejected", "inconclusive"}
 STATUSES = {"active", "paused", "completed"}
+CLOSURE_OBSERVATION_KINDS = {
+    "original_problem_closed",
+    "counterexample_closed",
+}
+CLOSURE_RESOLUTION_TYPES = {
+    "original_problem_closed": "proof",
+    "counterexample_closed": "counterexample",
+}
+AMRA_CLOSURE_RECEIPT_SCHEMA = "openlabs.amra_closure_observation_receipt.v1"
+AMRA_SCHEMA = "amra-research-loop.v2"
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class StateMachineError(ValueError):
@@ -90,6 +103,14 @@ def _canonical_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
@@ -111,6 +132,419 @@ def _positive_int(value: Any, label: str, errors: list[str]) -> int | None:
 def _safe_relative(value: str) -> bool:
     path = PurePosixPath(value)
     return bool(value) and not path.is_absolute() and ".." not in path.parts
+
+
+@lru_cache(maxsize=1)
+def _amra_api() -> tuple[Any, Any, Any, Mapping[str, str]]:
+    """Load the standalone AMRA validator only when a closure claim needs it."""
+
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "skills"
+        / "amra-research-loop"
+        / "scripts"
+        / "loop_core.py"
+    ).resolve()
+    module: Any | None = None
+    # Unit/integration callers may already have loaded the canonical module
+    # and patched its control-plane root. Reuse it only after verifying the
+    # exact source path; never trust an arbitrary `loop_core` from sys.path.
+    legacy = sys.modules.get("loop_core")
+    legacy_file = getattr(legacy, "__file__", None)
+    if legacy_file and Path(str(legacy_file)).resolve() == module_path:
+        module = legacy
+    private_name = "_openlabs_math_research_amra_loop_core"
+    try:
+        if module is None:
+            existing = sys.modules.get(private_name)
+            existing_file = getattr(existing, "__file__", None)
+            if existing is not None:
+                if not existing_file or Path(str(existing_file)).resolve() != module_path:
+                    raise StateMachineError("cached AMRA validator has the wrong source path")
+                module = existing
+            else:
+                spec = importlib.util.spec_from_file_location(private_name, module_path)
+                if spec is None or spec.loader is None:
+                    raise StateMachineError("cannot construct the AMRA validator module")
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[private_name] = module
+                try:
+                    spec.loader.exec_module(module)
+                except Exception:
+                    sys.modules.pop(private_name, None)
+                    raise
+        load_campaign = module.load_campaign
+        validate_campaign = module.validate_campaign
+        validate_campaign_integrity = module.validate_campaign_integrity
+        artifact_files = module.ARTIFACT_FILES
+    except Exception as exc:  # noqa: BLE001 - validator loading must fail closed.
+        raise StateMachineError(f"AMRA validator is unavailable: {exc}") from exc
+    return (
+        load_campaign,
+        validate_campaign,
+        validate_campaign_integrity,
+        artifact_files,
+    )
+
+
+def _evidence_references(value: Any) -> set[str]:
+    """Collect AMRA evidence strings and path/SHA-256 reference objects."""
+
+    references: set[str] = set()
+    if isinstance(value, Mapping):
+        if (
+            isinstance(value.get("path"), str)
+            and value.get("path", "").strip()
+            and SHA256.fullmatch(str(value.get("sha256") or ""))
+        ):
+            references.add(str(value["path"]).strip())
+        for key, item in value.items():
+            if key == "control_plane_receipt":
+                # This authority lives in openlabs-data/ledger/receipts and is
+                # independently checked below; it is not campaign-local evidence.
+                continue
+            if key == "evidence":
+                if isinstance(item, str) and item.strip():
+                    references.add(item.strip())
+                elif isinstance(item, list):
+                    references.update(
+                        entry.strip()
+                        for entry in item
+                        if isinstance(entry, str) and entry.strip()
+                    )
+                    references.update(
+                        str(entry["path"]).strip()
+                        for entry in item
+                        if isinstance(entry, Mapping)
+                        and isinstance(entry.get("path"), str)
+                        and str(entry["path"]).strip()
+                    )
+            references.update(_evidence_references(item))
+    elif isinstance(value, list):
+        for item in value:
+            references.update(_evidence_references(item))
+    return references
+
+
+def _amra_reviewer_authority(
+    *,
+    campaign: Path,
+    campaign_state: Mapping[str, Any],
+    audit: Any,
+    expected_resolution: str,
+) -> dict[str, Any]:
+    """Bind closure polarity to a successful external reviewer result."""
+
+    data_root = next(
+        (parent for parent in (campaign, *campaign.parents) if parent.name == "openlabs-data"),
+        None,
+    )
+    if data_root is None:
+        raise StateMachineError("cannot locate openlabs-data for reviewer authority")
+    archive = (data_root / "ledger" / "receipts").resolve()
+    reconstruction = (
+        audit.get("independent_reconstruction") if isinstance(audit, Mapping) else None
+    )
+    reference = (
+        reconstruction.get("control_plane_receipt")
+        if isinstance(reconstruction, Mapping)
+        else None
+    )
+    if not isinstance(reference, Mapping):
+        raise StateMachineError("closure requires an independent reviewer receipt")
+    manifest_reference = (
+        audit.get("review_manifest") if isinstance(audit, Mapping) else None
+    )
+    if not isinstance(manifest_reference, Mapping):
+        raise StateMachineError("closure requires a frozen AMRA review manifest")
+    manifest_relative = _text(manifest_reference.get("path"))
+    manifest_digest = _text(manifest_reference.get("sha256"))
+    if not _safe_relative(manifest_relative) or not SHA256.fullmatch(manifest_digest):
+        raise StateMachineError("AMRA review manifest requires a path and SHA-256")
+    manifest_path = (campaign / manifest_relative).resolve()
+    if not manifest_path.is_relative_to(campaign) or not manifest_path.is_file():
+        raise StateMachineError("AMRA review manifest is missing or escapes the campaign")
+    if _sha256_file(manifest_path) != manifest_digest:
+        raise StateMachineError("AMRA review manifest SHA-256 does not match")
+    receipt_reference = _text(reference.get("path"))
+    receipt_digest = _text(reference.get("sha256"))
+    raw_receipt_path = Path(receipt_reference).expanduser()
+    receipt_path = (
+        raw_receipt_path if raw_receipt_path.is_absolute() else data_root / raw_receipt_path
+    ).resolve()
+    if not receipt_reference or not SHA256.fullmatch(receipt_digest):
+        raise StateMachineError(
+            "independent reviewer receipt requires a path and SHA-256"
+        )
+    if not receipt_path.is_relative_to(archive) or not receipt_path.is_file():
+        raise StateMachineError(
+            "independent reviewer receipt is missing or outside the control-plane archive"
+        )
+    if _sha256_file(receipt_path) != receipt_digest:
+        raise StateMachineError("independent reviewer receipt SHA-256 does not match")
+    receipt = _read(receipt_path)
+    runtime = receipt.get("runtime")
+    if (
+        receipt.get("schema_version") != "openlabs.result_receipt.v2"
+        or receipt.get("agent_role") != "reviewer"
+        or receipt.get("domain") != "math"
+        or not isinstance(runtime, Mapping)
+        or not isinstance(runtime.get("exit_code"), int)
+        or isinstance(runtime.get("exit_code"), bool)
+        or runtime.get("exit_code") != 0
+        or runtime.get("heartbeat_lost") is True
+    ):
+        raise StateMachineError(
+            "closure requires a successful math reviewer control-plane receipt"
+        )
+    result_value = _text(receipt.get("result_path"))
+    result_digest = _text(receipt.get("sha256"))
+    result_path = Path(result_value).expanduser()
+    if (
+        not result_value
+        or not result_path.is_absolute()
+        or not SHA256.fullmatch(result_digest)
+        or not result_path.resolve().is_file()
+    ):
+        raise StateMachineError(
+            "independent reviewer receipt needs an absolute result path and SHA-256"
+        )
+    result_path = result_path.resolve()
+    if _sha256_file(result_path) != result_digest:
+        raise StateMachineError("independent reviewer result SHA-256 does not match")
+    result = _read(result_path)
+    if (
+        result.get("schema_version") != "openlabs.result_bundle.v1"
+        or result.get("task_id") != receipt.get("task_id")
+        or result.get("campaign_id") != receipt.get("campaign_id")
+        or result.get("amra_campaign_id") != campaign_state.get("campaign_id")
+        or result.get("amra_statement_identity")
+        != campaign_state.get("statement_identity")
+        or result.get("amra_author_attempt_id")
+        != (
+            reconstruction.get("author_attempt_id")
+            if isinstance(reconstruction, Mapping)
+            else None
+        )
+        or result.get("status") not in {"completed", "succeeded"}
+        or result.get("amra_review_schema_version") != "openlabs.amra_review.v1"
+        or result.get("amra_audit_outcome") != "passed"
+        or result.get("amra_success_condition") != "original_problem_closed"
+        or result.get("amra_resolution_type") != expected_resolution
+        or result.get("amra_review_manifest_sha256") != manifest_digest
+    ):
+        raise StateMachineError(
+            "reviewer result must pass the same AMRA statement and resolution type"
+        )
+    return {
+        "receipt_path": receipt_path.relative_to(data_root).as_posix(),
+        "receipt_sha256": receipt_digest,
+        "task_id": receipt.get("task_id"),
+        "attempt_id": receipt.get("attempt_id"),
+        "result_path": str(result_path),
+        "result_sha256": result_digest,
+        "result_status": result.get("status"),
+        "review_schema_version": result.get("amra_review_schema_version"),
+        "audit_outcome": result.get("amra_audit_outcome"),
+        "success_condition": result.get("amra_success_condition"),
+        "resolution_type": result.get("amra_resolution_type"),
+        "review_manifest_path": manifest_relative,
+        "review_manifest_sha256": manifest_digest,
+    }
+
+
+def _amra_closure_receipt_payload(
+    *,
+    workstream_root: Path,
+    campaign_reference: str,
+    observation_id: str,
+    observation_kind: str,
+    source_task_id: str,
+) -> dict[str, Any]:
+    """Build a receipt only from a fully valid exact-source AMRA promotion."""
+
+    if observation_kind not in CLOSURE_OBSERVATION_KINDS:
+        raise StateMachineError("AMRA closure receipts are reserved for closure observations")
+    if not _safe_relative(campaign_reference):
+        raise StateMachineError("AMRA campaign path must be safe and workstream-relative")
+    normalized_reference = PurePosixPath(campaign_reference).as_posix()
+    workstream_root = workstream_root.resolve()
+    campaign = (workstream_root / normalized_reference).resolve()
+    if not campaign.is_relative_to(workstream_root) or not campaign.is_dir():
+        raise StateMachineError("AMRA campaign is missing or escapes the workstream")
+
+    (
+        load_campaign,
+        validate_campaign,
+        validate_campaign_integrity,
+        artifact_files,
+    ) = _amra_api()
+    try:
+        state, artifacts = load_campaign(campaign)
+        integrity_errors = list(validate_campaign_integrity(campaign))
+        full_errors = list(validate_campaign(campaign, target_phase="promotion"))
+    except Exception as exc:  # noqa: BLE001 - this boundary must fail closed.
+        raise StateMachineError(f"AMRA full validation failed: {exc}") from exc
+    validation_errors = list(dict.fromkeys([*integrity_errors, *full_errors]))
+    if validation_errors:
+        raise StateMachineError(
+            "AMRA full validation failed: " + "; ".join(validation_errors)
+        )
+
+    contract = artifacts.get("closure_contract")
+    decision = artifacts.get("decision")
+    identity = state.get("statement_identity")
+    if state.get("schema_version") != AMRA_SCHEMA:
+        raise StateMachineError(f"closure requires {AMRA_SCHEMA}")
+    if state.get("phase") != "promotion":
+        raise StateMachineError("closure requires an AMRA campaign in promotion")
+    if not isinstance(contract, Mapping) or not isinstance(identity, Mapping):
+        raise StateMachineError("closure requires an AMRA v2 statement identity")
+    if (
+        contract.get("target_relation") != "exact"
+        or identity.get("target_relation") != "exact"
+        or identity.get("source_original_sha256")
+        != identity.get("frozen_target_sha256")
+    ):
+        raise StateMachineError(
+            "closure requires an exact source-original/frozen-target statement match"
+        )
+    if contract.get("success_conditions") != ["original_problem_closed"]:
+        raise StateMachineError(
+            "closure requires the exact AMRA original_problem_closed contract"
+        )
+    if not isinstance(decision, Mapping) or (
+        decision.get("outcome") != "promote"
+        or decision.get("success_condition") != "original_problem_closed"
+    ):
+        raise StateMachineError(
+            "closure requires an AMRA original_problem_closed promotion decision"
+        )
+    expected_resolution = CLOSURE_RESOLUTION_TYPES[observation_kind]
+    if decision.get("resolution_type") != expected_resolution:
+        raise StateMachineError(
+            f"{observation_kind} requires AMRA decision.resolution_type="
+            f"{expected_resolution}"
+        )
+    reviewer_authority = _amra_reviewer_authority(
+        campaign=campaign,
+        campaign_state=state,
+        audit=artifacts.get("audit"),
+        expected_resolution=expected_resolution,
+    )
+
+    required_paths = {
+        "campaign_state.json",
+        *(str(filename) for filename in artifact_files.values()),
+    }
+    for artifact in artifacts.values():
+        required_paths.update(_evidence_references(artifact))
+    artifact_sha256: dict[str, str] = {}
+    for relative in sorted(required_paths):
+        if not _safe_relative(relative):
+            raise StateMachineError(
+                f"AMRA closure evidence path must be campaign-relative: {relative!r}"
+            )
+        normalized = PurePosixPath(relative).as_posix()
+        artifact_path = (campaign / normalized).resolve()
+        if not artifact_path.is_relative_to(campaign) or not artifact_path.is_file():
+            raise StateMachineError(
+                f"AMRA closure evidence is missing or escapes the campaign: {relative}"
+            )
+        try:
+            artifact_sha256[normalized] = _sha256_file(artifact_path)
+        except OSError as exc:
+            raise StateMachineError(
+                f"cannot hash AMRA closure evidence {relative}: {exc}"
+            ) from exc
+
+    frozen_identity = dict(identity)
+    if any(
+        not SHA256.fullmatch(str(frozen_identity[field] or ""))
+        for field in ("source_original_sha256", "frozen_target_sha256")
+    ):
+        raise StateMachineError("AMRA statement identity needs lowercase SHA-256 digests")
+    return {
+        "schema_version": AMRA_CLOSURE_RECEIPT_SCHEMA,
+        "observation_id": observation_id,
+        "observation_kind": observation_kind,
+        "source_task_id": source_task_id,
+        "campaign_path": normalized_reference,
+        "campaign_id": state.get("campaign_id"),
+        "problem_id": state.get("problem_id"),
+        "statement_identity": frozen_identity,
+        "decision": {
+            "outcome": decision.get("outcome"),
+            "success_condition": decision.get("success_condition"),
+            "resolution_type": decision.get("resolution_type"),
+        },
+        "reviewer_authority": reviewer_authority,
+        "artifact_sha256": artifact_sha256,
+    }
+
+
+def _closure_observation_errors(
+    observation: Mapping[str, Any],
+    *,
+    state_path: Path,
+    verification_receipts: list[Any],
+) -> list[str]:
+    """Revalidate one closure observation against its hash-bound AMRA campaign."""
+
+    kind = _text(observation.get("kind"))
+    if kind not in CLOSURE_OBSERVATION_KINDS:
+        return []
+    observation_id = _text(observation.get("observation_id"))
+    prefix = f"closure observation {observation_id or '<unknown>'}"
+    receipt_reference = _text(observation.get("closure_receipt"))
+    receipt_digest = _text(observation.get("closure_receipt_sha256"))
+    evidence = observation.get("evidence")
+    errors: list[str] = []
+    if not _safe_relative(receipt_reference) or not receipt_reference.endswith(".json"):
+        return [f"{prefix} requires a safe JSON closure_receipt"]
+    if not SHA256.fullmatch(receipt_digest):
+        errors.append(f"{prefix} requires closure_receipt_sha256")
+    if not isinstance(evidence, list) or receipt_reference not in evidence:
+        errors.append(f"{prefix} must list its closure receipt as evidence")
+    if receipt_reference not in verification_receipts:
+        errors.append(f"{prefix} closure receipt is not in verification_receipts")
+    receipt_path = (state_path.parent.resolve() / receipt_reference).resolve()
+    if not receipt_path.is_relative_to(state_path.parent.resolve()) or not receipt_path.is_file():
+        errors.append(f"{prefix} closure receipt is missing or escapes the workstream")
+        return errors
+    if receipt_digest:
+        try:
+            actual_receipt_digest = _sha256_file(receipt_path)
+        except OSError as exc:
+            errors.append(f"{prefix} closure receipt cannot be hashed: {exc}")
+            return errors
+        if actual_receipt_digest != receipt_digest:
+            errors.append(f"{prefix} closure receipt SHA-256 does not match")
+    try:
+        receipt = _read(receipt_path)
+    except StateMachineError as exc:
+        errors.append(f"{prefix} has an invalid closure receipt: {exc}")
+        return errors
+    if receipt.get("schema_version") != AMRA_CLOSURE_RECEIPT_SCHEMA:
+        errors.append(f"{prefix} has an unsupported closure receipt schema")
+        return errors
+    campaign_reference = _text(receipt.get("campaign_path"))
+    try:
+        expected = _amra_closure_receipt_payload(
+            workstream_root=state_path.parent,
+            campaign_reference=campaign_reference,
+            observation_id=observation_id,
+            observation_kind=kind,
+            source_task_id=_text(observation.get("source_task_id")),
+        )
+    except StateMachineError as exc:
+        errors.append(f"{prefix}: {exc}")
+        return errors
+    if receipt != expected:
+        errors.append(
+            f"{prefix} receipt does not match the fully validated, hash-bound AMRA campaign"
+        )
+    return errors
 
 
 def _deep_merge(base: Any, override: Any) -> Any:
@@ -514,6 +948,15 @@ def validate_state(
     receipts = state.get("verification_receipts", [])
     if isinstance(receipts, list) and any(not _safe_relative(_text(item)) for item in receipts):
         errors.append("verification_receipts must contain safe relative paths")
+    if isinstance(receipts, list):
+        for observation in observations:
+            errors.extend(
+                _closure_observation_errors(
+                    observation,
+                    state_path=state_path,
+                    verification_receipts=receipts,
+                )
+            )
     return errors
 
 
@@ -848,6 +1291,49 @@ def _observe_command(args: argparse.Namespace) -> int:
     for relative in evidence:
         if not (args.workstream.parent / relative).resolve().is_file():
             raise StateMachineError(f"evidence file does not exist: {relative}")
+    closure_fields: dict[str, str] = {}
+    if args.kind in CLOSURE_OBSERVATION_KINDS:
+        if not args.amra_campaign or not args.closure_receipt:
+            raise StateMachineError(
+                f"observation {args.kind} requires --amra-campaign and --closure-receipt"
+            )
+        if not _safe_relative(args.closure_receipt) or not args.closure_receipt.endswith(
+            ".json"
+        ):
+            raise StateMachineError(
+                "closure-receipt must be a safe workstream-relative JSON path"
+            )
+        receipt_reference = PurePosixPath(args.closure_receipt).as_posix()
+        receipt_path = (args.workstream.parent / receipt_reference).resolve()
+        if not receipt_path.is_relative_to(args.workstream.parent.resolve()):
+            raise StateMachineError("closure-receipt escapes the workstream")
+        receipt = _amra_closure_receipt_payload(
+            workstream_root=args.workstream.parent,
+            campaign_reference=args.amra_campaign,
+            observation_id=args.observation_id,
+            observation_kind=args.kind,
+            source_task_id=args.source_task_id,
+        )
+        if receipt_path.exists():
+            if _read(receipt_path) != receipt:
+                raise StateMachineError(
+                    "closure-receipt already exists with different contents"
+                )
+        else:
+            _write(receipt_path, receipt)
+        receipt_digest = _sha256_file(receipt_path)
+        if receipt_reference not in evidence:
+            evidence.append(receipt_reference)
+        if receipt_reference not in state["verification_receipts"]:
+            state["verification_receipts"].append(receipt_reference)
+        closure_fields = {
+            "closure_receipt": receipt_reference,
+            "closure_receipt_sha256": receipt_digest,
+        }
+    elif args.amra_campaign or args.closure_receipt:
+        raise StateMachineError(
+            "--amra-campaign and --closure-receipt are reserved for closure observations"
+        )
     spec = policy["observation_types"][args.kind]
     if spec.get("evidence_required", True) and not evidence:
         raise StateMachineError(f"observation {args.kind} requires evidence")
@@ -861,9 +1347,17 @@ def _observe_command(args: argparse.Namespace) -> int:
         "summary": args.summary.strip(),
         "evidence": evidence,
         "created_at": _utc_now(),
+        **closure_fields,
     }
     if not observation["summary"]:
         raise StateMachineError("summary is required")
+    closure_errors = _closure_observation_errors(
+        observation,
+        state_path=args.workstream,
+        verification_receipts=state["verification_receipts"],
+    )
+    if closure_errors:
+        raise StateMachineError("; ".join(closure_errors))
     state["observations"].append(observation)
     state["updated_at"] = _utc_now()
     _write(args.workstream, state)
@@ -1192,6 +1686,14 @@ def _parser() -> argparse.ArgumentParser:
     observe.add_argument("--source-task-id", required=True)
     observe.add_argument("--summary", required=True)
     observe.add_argument("--evidence", action="append", default=[])
+    observe.add_argument(
+        "--amra-campaign",
+        help="workstream-relative AMRA v2 campaign for a closure observation",
+    )
+    observe.add_argument(
+        "--closure-receipt",
+        help="workstream-relative JSON path to create for a closure observation",
+    )
     observe.set_defaults(func=_observe_command)
 
     transition = subparsers.add_parser("transition")

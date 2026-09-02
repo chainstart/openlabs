@@ -77,8 +77,8 @@ central theorem:
 3. Replay authorized computational or formal artifacts with pinned versions when the claim depends
    on them; record commands, hashes, assumptions, and results without calling the replay a proof of
    anything outside its contract. Use one centralized Lean/mathlib audit workflow per frozen
-   snapshot, outside the two score-bearing reviews, with the resource-capped objective checker
-   defined by `$openlabs-paper-review`; share its immutable receipt with both reviewers. A diagnosed
+   snapshot, outside the configured score-bearing review panel, with the resource-capped objective
+   checker defined by `$openlabs-paper-review`; share its immutable receipt with every configured reviewer. A diagnosed
    guard interruption may resume the same hash-bound incremental build, but formal axiom validation
    executes at most once across the receipt chain. Never ask each reviewer to rebuild the same
    formal project.
@@ -109,9 +109,10 @@ central theorem:
    Treat a missing license or a real license conflict as a blocker. Use `not_required` only for a
    truthful documented exemption, never as a way to make the gate pass.
 8. In a factory `writer` task, stop after freezing the compiled snapshot and emit it as a
-   `paper_candidate`; do not run or impersonate either reviewer. The scheduler creates a fresh
-   `paper_review` task using `$openlabs-paper-review`, whose Codex and Packy Claude Opus 5 reviewers
-   apply the four-leading-journal and CAS Zone 1 standards plus the mandatory local quality gate.
+   `paper_candidate`; do not run or impersonate a reviewer. The scheduler creates a fresh
+   `paper_review` task using `$openlabs-paper-review`; one isolated Codex reviewer runs by default,
+   and a blind Packy Claude reviewer is added only when the registry enables the optional panel.
+   The configured reviewers apply the four-leading-journal and CAS Zone 1 standards plus the mandatory local quality gate.
 9. On a `paper_revision` task, apply only the declared review request. If a new proof, computation,
    or other scientific evidence is needed, do not invent it; the reviewer must route an
    `evidence_remediation` task first. Freeze the revised snapshot as a new `paper_candidate` so both
@@ -197,9 +198,9 @@ Tier 1 or Tier 2 with a publication route carrying no mandatory author fee. Reco
 fee, and official formatting sources and check dates. Convert the canonical `manuscript/` itself
 to the current venue format; a separate candidate does not satisfy this requirement.
 
-After a passing gate, obtain explicit human authorization for the irreversible public release and
-run `paper-writing zenodo release` for the prepared production draft. The gate proves only that the
-reviewed manuscript and support package are eligible for release; it is not the authorization.
+After a passing gate, use the repository's standing production-release authorization and run
+`paper-writing zenodo release` for the prepared production draft without asking the authors again.
+The production and exact-paper confirmations remain fail-closed target safeguards.
 Skip publication only when the registered mode is `not_required` with its configured reason. Commit
 the DOI/receipt update before `paper-writing handoff release`; the handoff gate requires the
 published Version DOI and the reviewed package binding. Neither gate authorizes a journal
@@ -210,3 +211,8 @@ submission, journal event, or article-publication claim.
 Report changed files, proof/evidence gaps, computations and builds actually run, the review record,
 quality-gate result, and remaining mathematical risks. If the gate is not ready, state the next
 bounded revision rather than presenting the paper as submission-ready.
+
+The terminal target is a manuscript and journal package requiring no further author editing.
+Treat registered authorship and declarations as confirmed defaults; never put pending-confirmation
+or draft-for-approval language in reader or submission files. Put genuinely unavoidable later
+human portal actions only in `production/human_action_checklist.md`, outside the submission package.

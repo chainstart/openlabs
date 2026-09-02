@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-manifest.schema.json",
+  "title": "AMRA author-to-reviewer byte manifest",
+  "type": "object",
+  "required": [
+    "schema_version", "campaign_id", "problem_id", "statement_identity",
+    "author_attempt_id", "success_condition", "resolution_type",
+    "artifact_sha256", "referenced_evidence"
+  ],
+  "properties": {
+    "schema_version": {"const": "openlabs.amra_review_manifest.v1"},
+    "campaign_id": {"type": "string", "minLength": 1},
+    "problem_id": {"type": "string", "minLength": 1},
+    "statement_identity": {"type": "object"},
+    "author_attempt_id": {"type": "string", "minLength": 1},
+    "success_condition": {"enum": ["original_problem_closed", "scoped_theorem_proved"]},
+    "resolution_type": {"enum": ["proof", "counterexample"]},
+    "artifact_sha256": {
+      "type": "object",
+      "required": [
+        "closure_contract", "information_loss_map", "representations", "mechanisms",
+        "kill_tests", "survivors", "decisive_lemma", "decision"
+      ],
+      "properties": {
+        "closure_contract": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "information_loss_map": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "representations": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mechanisms": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "kill_tests": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "survivors": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "decisive_lemma": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "decision": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "referenced_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -66,13 +66,31 @@ and SHA-256; the orchestrator alone decides the factory task transition.
 
 ## Enforce the research contract
 
-- Preserve the exact public statement, source, quantifiers, and success conditions.
+- Preserve the exact source-original statement, source, and quantifiers separately from any frozen
+  local target. Record their typed relation; never relabel a specialization, strengthening, or
+  partial result as source-problem closure.
 - Identify the precise step where inherited methods lose information before extending them.
 - Generate mechanisms from genuinely different representation families. Read [mechanism-archetypes.md](references/mechanism-archetypes.md) during representation search.
 - Give every mechanism a decisive claim, claimed closure effect, and first kill test.
 - Falsify aggressively and retain at most three mechanisms.
-- Promote only an original-problem closure, main-term or main-exponent improvement, global-interface closure, or standalone decisive lemma.
-- Require independent reconstruction and statement, dependency, and novelty checks before promotion.
+- Promote an exact source-statement closure only as `original_problem_closed`. Promote every
+  specialization, strengthening, or partial target only as `scoped_theorem_proved`; a stronger
+  theorem may be imported into a separate exact-source closure campaign.
+- Use the same canonical success token in a proved survivor's `would_close` and a proved decisive
+  lemma's `closes`; non-exact proof artifacts may never carry `original_problem_closed`.
+- Require independent reconstruction and statement, dependency, and novelty checks before every promotion.
+- Require every proof, reconstruction, and promotion evidence file to exist under the campaign and
+  match its recorded SHA-256. Every promotion requires an archived control-plane reviewer receipt
+  from a fresh attempt distinct from the author, with successful task/attempt/result records in the
+  canonical SQLite ledger and a result bound to the frozen statement identity and success type.
+- Before dispatching that reviewer, write the complete promotion decision and run
+  `prepare-review --author-attempt-id ...`. The resulting review manifest freezes the core proof
+  artifacts and every referenced evidence byte; the reviewer result must repeat its SHA-256.
+- An exact target additionally requires a copied, hash-bound primary-source selection bundle with
+  at least four candidates, an exact source locator, dated open-status and duplicate searches,
+  frozen score/gate data, and no blocking novelty risk. Every comparison card must itself preserve
+  an exact source-original open problem or conjecture; scoped variants cannot be used to fill the
+  candidate quota. Recheck public open status at promotion.
 - Apply [evidence-policy.md](references/evidence-policy.md) whenever classifying a result.
 
 For a major open problem, make a paper-scale intermediate theorem the default research target.

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "source-authority.schema.json",
+  "title": "AMRA primary-source authority",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_kind",
+    "public_status",
+    "source_locator",
+    "source_statement_quote",
+    "open_status_quote",
+    "status_checked_at",
+    "selection_receipt",
+    "primary_source",
+    "status_evidence",
+    "novelty_evidence",
+    "target_cards",
+    "candidate_count"
+  ],
+  "properties": {
+    "schema_version": {"const": "openlabs.amra_source_authority.v1"},
+    "source_kind": {"const": "primary"},
+    "public_status": {"enum": ["open_problem", "open_conjecture"]},
+    "source_locator": {"type": "string", "minLength": 1},
+    "source_statement_quote": {"type": "string", "minLength": 1},
+    "open_status_quote": {"type": "string", "minLength": 1},
+    "status_checked_at": {"type": "string", "format": "date-time"},
+    "selection_receipt": {"$ref": "#/$defs/evidence"},
+    "primary_source": {"$ref": "#/$defs/evidence"},
+    "status_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/evidence"}
+    },
+    "novelty_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/evidence"}
+    },
+    "target_cards": {"$ref": "#/$defs/evidence"},
+    "candidate_count": {"type": "integer", "minimum": 4}
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

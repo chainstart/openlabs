@@ -1,11 +1,22 @@
 {
-  "schema_version": "amra-research-loop.v1",
+  "schema_version": "amra-research-loop.v2",
   "campaign_id": "replace-me",
   "problem_id": "replace-me",
   "title": "",
   "phase": "target_selection",
   "created_at": "",
   "updated_at": "",
+  "statement_identity": {
+    "source_original_sha256": "",
+    "frozen_target_sha256": "",
+    "target_relation": "exact",
+    "success_condition": "original_problem_closed",
+    "source_locator_sha256": "",
+    "problem_id_sha256": "",
+    "title_sha256": "",
+    "gate_policy_sha256": "",
+    "source_authority_sha256": ""
+  },
   "gates": {
     "min_representation_families": 4,
     "min_representations": 8,

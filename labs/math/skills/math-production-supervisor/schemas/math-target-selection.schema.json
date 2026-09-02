@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openlabs.math_target_selection.v1",
+  "title": "Auditable exact open-problem target selection",
+  "type": "object",
+  "required": [
+    "schema",
+    "target_id",
+    "problem_id",
+    "title",
+    "source_original_statement",
+    "frozen_target_statement",
+    "target_relation",
+    "source",
+    "research_front",
+    "source_kind",
+    "source_locator",
+    "source_statement_quote",
+    "open_status_quote",
+    "public_status",
+    "status_checked_at",
+    "source_artifact",
+    "status_evidence",
+    "target_cards",
+    "target_cards_sha256",
+    "score_vector",
+    "selection_gate_snapshot",
+    "selection_plan_sha256",
+    "blocking_novelty_risk",
+    "closest_published_result",
+    "duplicate_search_checked_at",
+    "novelty_evidence"
+  ],
+  "properties": {
+    "schema": {"const": "openlabs.math_target_selection.v1"},
+    "target_id": {"type": "string", "minLength": 1},
+    "problem_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "source_original_statement": {"type": "string", "minLength": 1},
+    "frozen_target_statement": {"type": "string", "minLength": 1},
+    "target_relation": {"const": "exact"},
+    "source": {"type": "string", "minLength": 1},
+    "research_front": {"type": "string", "minLength": 1},
+    "source_kind": {"const": "primary"},
+    "source_locator": {"type": "string", "minLength": 1},
+    "source_statement_quote": {"type": "string", "minLength": 1},
+    "open_status_quote": {"type": "string", "minLength": 1},
+    "public_status": {"enum": ["open_problem", "open_conjecture"]},
+    "status_checked_at": {"type": "string", "format": "date-time"},
+    "source_artifact": {"$ref": "#/$defs/evidence"},
+    "status_evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evidence"}},
+    "target_cards": {"type": "string", "minLength": 1},
+    "target_cards_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "score_vector": {
+      "type": "object",
+      "required": ["novelty", "significance", "closure", "auditability", "generality", "venue_fit", "total"],
+      "properties": {
+        "novelty": {"type": "integer", "minimum": 0, "maximum": 25},
+        "significance": {"type": "integer", "minimum": 0, "maximum": 25},
+        "closure": {"type": "integer", "minimum": 0, "maximum": 20},
+        "auditability": {"type": "integer", "minimum": 0, "maximum": 15},
+        "generality": {"type": "integer", "minimum": 0, "maximum": 10},
+        "venue_fit": {"type": "integer", "minimum": 0, "maximum": 5},
+        "total": {"type": "integer", "minimum": 0, "maximum": 100}
+      },
+      "additionalProperties": false
+    },
+    "selection_gate_snapshot": {
+      "type": "object",
+      "required": [
+        "minimum_total",
+        "minimum_novelty",
+        "minimum_significance",
+        "minimum_closure",
+        "minimum_target_cards",
+        "minimum_distinct_research_fronts"
+      ],
+      "properties": {
+        "minimum_total": {"type": "integer", "minimum": 0, "maximum": 100},
+        "minimum_novelty": {"type": "integer", "minimum": 0, "maximum": 25},
+        "minimum_significance": {"type": "integer", "minimum": 0, "maximum": 25},
+        "minimum_closure": {"type": "integer", "minimum": 0, "maximum": 20},
+        "minimum_target_cards": {"type": "integer", "minimum": 4},
+        "minimum_distinct_research_fronts": {"type": "integer", "minimum": 1}
+      }
+    },
+    "selection_plan_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "blocking_novelty_risk": {"const": false},
+    "closest_published_result": {"type": "string", "minLength": 1},
+    "duplicate_search_checked_at": {"type": "string", "format": "date-time"},
+    "novelty_evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evidence"}}
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

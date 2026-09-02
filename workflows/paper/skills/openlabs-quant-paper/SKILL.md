@@ -45,13 +45,15 @@ run deterministic support and style checks, including the single final truthful 
 required by the shared overlay. Unless explicitly `not_required` with a reason, first prepare the
 Zenodo record and cite its Version DOI in the bibliography, first substantive support mention, and
 availability statement. In a factory `writer` task, stop at a frozen `paper_candidate`; do not
-impersonate either reviewer. The scheduler gives it to a fresh `$openlabs-paper-review` task whose
-independent Codex and blind Packy Claude Opus 5 reviewers apply the `quant_finance` rubric and the
+impersonate a reviewer. The scheduler gives it to a fresh `$openlabs-paper-review` task. One isolated
+Codex reviewer runs by default; a blind Packy Claude reviewer is added only when the registry
+enables the optional two-reviewer panel. The configured reviewers apply the `quant_finance` rubric and the
 `leading_quant_finance_journals` plus `cas_zone_1_journal` simulated views.
 
 A `paper_revision` applies only the declared request. Missing data, backtests, statistical analysis or
 independent replication returns through `evidence_remediation`, after which the revised candidate gets
-a new panel. After a passing gate and explicit human authorization, run `paper-writing zenodo
-release` for the exact prepared, hash-bound support draft with the production confirmations. It
+a new panel. After a passing gate, use the repository's standing authorization and run `paper-writing zenodo
+release` for the exact prepared, hash-bound support draft with the production confirmations without
+asking the authors again. It
 never authorizes submission, journal contact, real-money trading, spending, or a claim of
 acceptance/publication.

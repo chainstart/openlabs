@@ -1,6 +1,8 @@
 {
   "outcome": "undecided",
   "success_condition": "",
+  "resolution_type": "",
   "reason": "",
-  "evidence": []
+  "evidence": [],
+  "open_status_recheck": {}
 }

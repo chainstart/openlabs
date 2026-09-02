@@ -42,6 +42,7 @@ from paper_writing.review import (
     TOP_CONFERENCE_VIEW,
     decision_meets_standard_threshold,
     decisions_for_standard,
+    configured_review_contract,
     reviewer_role_for_domain,
     validate_review_panel_files,
 )
@@ -370,23 +371,14 @@ def _validated_review_blockers(
     review_metadata = review_metadata if isinstance(review_metadata, Mapping) else {}
     panel = review_metadata.get("review_panel")
     panel = panel if isinstance(panel, Mapping) else {}
-    configured_size = int(gate.get("review_panel_size", 2))
-    configured_score_aggregation = str(
-        gate.get(
-            "score_aggregation",
-            "coordinatewise_median" if configured_size == 1 else "coordinatewise_minimum",
-        )
-    )
-    configured_decision_aggregation = str(
-        gate.get(
-            "decision_aggregation",
-            "ordinal_median" if configured_size == 1 else "strictest_decision",
-        )
-    )
+    try:
+        review_contract = configured_review_contract(gate)
+    except ValueError as exc:
+        return blockers + [f"{prefix}: invalid configured review contract: {exc}"]
     configured_contract = {
-        "panel_size": configured_size,
-        "score_aggregation": configured_score_aggregation,
-        "decision_aggregation": configured_decision_aggregation,
+        "panel_size": review_contract["panel_size"],
+        "score_aggregation": review_contract["score_aggregation"],
+        "decision_aggregation": review_contract["decision_aggregation"],
         "independent_contexts": True,
         "isolated_processes": True,
         "prior_reviews_hidden": True,

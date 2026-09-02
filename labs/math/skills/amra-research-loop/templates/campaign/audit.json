@@ -1,7 +1,10 @@
 {
+  "review_manifest": {},
   "independent_reconstruction": {
     "status": "not_started",
     "auditor": "",
+    "author_attempt_id": "",
+    "control_plane_receipt": {},
     "evidence": []
   },
   "statement_match": "unchecked",

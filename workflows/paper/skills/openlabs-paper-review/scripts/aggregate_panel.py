@@ -22,7 +22,7 @@ WORKFLOW_ROOT = Path(__file__).resolve().parents[3]
 if str(WORKFLOW_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKFLOW_ROOT))
 
-from paper_writing.registry import load_paper_metadata, repository_root
+from paper_writing.registry import load_paper_metadata, load_registry_settings, repository_root
 from paper_writing.review import (
     CAS_ZONE_1_JOURNAL_VIEW,
     CONFERENCE_DECISIONS,
@@ -39,16 +39,10 @@ from paper_writing.review import (
     PHYSICS_REVIEWER_ROLE,
     PHYSICS_VENUE_CRITERIA,
     QUANT_FINANCE_REVIEWER_ROLE,
-    REVIEW_DECISION_AGGREGATION,
-    REVIEW_PANEL_SIZE,
-    REVIEW_SCHEMA_VERSION,
-    REVIEW_SCORE_AGGREGATION,
     REVIEWER_PROVIDER_CONTRACTS,
-    SINGLE_REVIEW_DECISION_AGGREGATION,
     SINGLE_REVIEW_PANEL_SIZE,
-    SINGLE_REVIEW_SCHEMA_VERSION,
-    SINGLE_REVIEW_SCORE_AGGREGATION,
     TOP_CONFERENCE_VIEW,
+    configured_review_contract,
     reviewer_role_for_domain,
     validate_review_panel_files,
     validate_review_record,
@@ -217,8 +211,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--single-reviewer",
         action="store_true",
         help=(
-            "form a one-member median panel; allowed only when the paper "
-            "registry sets review_panel_size to 1"
+            "assert the configured one-reviewer contract; retained for "
+            "compatibility and no longer needed when review_panel_size is 1"
         ),
     )
     parser.add_argument("--force", action="store_true")
@@ -243,27 +237,17 @@ def main(argv: list[str] | None = None) -> int:
 
     metadata = load_paper_metadata(args.paper_id, root)
     expected_role = reviewer_role_for_domain(metadata.get("domain"))
-    single_reviewer = bool(args.single_reviewer)
-    panel_size = SINGLE_REVIEW_PANEL_SIZE if single_reviewer else REVIEW_PANEL_SIZE
-    panel_schema = SINGLE_REVIEW_SCHEMA_VERSION if single_reviewer else REVIEW_SCHEMA_VERSION
-    score_aggregation = (
-        SINGLE_REVIEW_SCORE_AGGREGATION
-        if single_reviewer
-        else REVIEW_SCORE_AGGREGATION
-    )
-    decision_aggregation = (
-        SINGLE_REVIEW_DECISION_AGGREGATION
-        if single_reviewer
-        else REVIEW_DECISION_AGGREGATION
-    )
-    if single_reviewer:
-        settings_path = root / "registry" / "settings.yaml"
-        settings_text = settings_path.read_text(encoding="utf-8")
-        if "review_panel_size: 1" not in settings_text:
-            raise ValueError(
-                "single-reviewer aggregation requires registry/settings.yaml "
-                "to set review_panel_size: 1"
-            )
+    settings = load_registry_settings(root)
+    contract = configured_review_contract(settings.get("quality_gate"))
+    panel_size = int(contract["panel_size"])
+    panel_schema = str(contract["schema_version"])
+    score_aggregation = str(contract["score_aggregation"])
+    decision_aggregation = str(contract["decision_aggregation"])
+    single_reviewer = panel_size == SINGLE_REVIEW_PANEL_SIZE
+    if args.single_reviewer and not single_reviewer:
+        raise ValueError(
+            "--single-reviewer conflicts with configured review_panel_size: 2"
+        )
     reviews: list[dict[str, Any]] = []
     records: list[dict[str, str]] = []
     common: dict[str, str] | None = None

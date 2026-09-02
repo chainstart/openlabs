@@ -1,0 +1,43 @@
+{
+  "schema": "openlabs.math_target_selection.v1",
+  "target_id": "",
+  "problem_id": "",
+  "title": "",
+  "source_original_statement": "",
+  "frozen_target_statement": "",
+  "target_relation": "exact",
+  "source": "",
+  "research_front": "",
+  "source_kind": "primary",
+  "source_locator": "",
+  "source_statement_quote": "",
+  "open_status_quote": "",
+  "public_status": "open_problem",
+  "status_checked_at": "",
+  "source_artifact": {"path": "", "sha256": ""},
+  "status_evidence": [],
+  "target_cards": "target_cards.json",
+  "target_cards_sha256": "",
+  "score_vector": {
+    "novelty": 0,
+    "significance": 0,
+    "closure": 0,
+    "auditability": 0,
+    "generality": 0,
+    "venue_fit": 0,
+    "total": 0
+  },
+  "selection_gate_snapshot": {
+    "minimum_total": 0,
+    "minimum_novelty": 0,
+    "minimum_significance": 0,
+    "minimum_closure": 0,
+    "minimum_target_cards": 4,
+    "minimum_distinct_research_fronts": 1
+  },
+  "selection_plan_sha256": "",
+  "blocking_novelty_risk": false,
+  "closest_published_result": "",
+  "duplicate_search_checked_at": "",
+  "novelty_evidence": []
+}

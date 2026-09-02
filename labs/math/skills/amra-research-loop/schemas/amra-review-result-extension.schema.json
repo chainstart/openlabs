@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "amra-research-loop/amra-review-result-extension.schema.json",
+  "title": "AMRA review fields carried by openlabs.result_bundle.v1",
+  "type": "object",
+  "required": [
+    "amra_review_schema_version",
+    "amra_audit_outcome",
+    "amra_campaign_id",
+    "amra_statement_identity",
+    "amra_author_attempt_id",
+    "amra_resolution_type",
+    "amra_success_condition",
+    "amra_review_manifest_sha256"
+  ],
+  "properties": {
+    "amra_review_schema_version": {"const": "openlabs.amra_review.v1"},
+    "amra_audit_outcome": {"const": "passed"},
+    "amra_campaign_id": {"type": "string", "minLength": 1},
+    "amra_statement_identity": {"type": "object"},
+    "amra_author_attempt_id": {"type": "string", "minLength": 1},
+    "amra_resolution_type": {"enum": ["proof", "counterexample"]},
+    "amra_success_condition": {
+      "enum": ["original_problem_closed", "scoped_theorem_proved"]
+    },
+    "amra_review_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": true
+}

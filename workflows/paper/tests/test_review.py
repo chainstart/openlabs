@@ -5,6 +5,8 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
+
 from paper_writing.handoff import manuscript_snapshot_sha256, sha256_file
 from paper_writing.operations import apply_review_record
 from paper_writing.registry import load_paper_metadata
@@ -33,7 +35,9 @@ from paper_writing.review import (
     QUANT_FINANCE_REVIEWER_ROLE,
     RECOMMENDATION_SCHEMA_VERSION,
     REVIEW_SCHEMA_VERSION,
+    SINGLE_REVIEW_SCHEMA_VERSION,
     TOP_CONFERENCE_VIEW,
+    configured_review_contract,
     decision_meets_standard_threshold,
     decision_meets_threshold,
     review_safe_registry,
@@ -47,6 +51,32 @@ ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "validate_review.py"
 AGGREGATOR = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "aggregate_panel.py"
 CLAUDE_REVIEWER = ROOT / "skills" / "openlabs-paper-review" / "scripts" / "run_claude_reviewer.py"
+
+
+def _write_review_settings(root: Path, *, panel_size: int = 1) -> None:
+    if panel_size == 1:
+        score_aggregation = "coordinatewise_median"
+        decision_aggregation = "ordinal_median"
+    elif panel_size == 2:
+        score_aggregation = "coordinatewise_minimum"
+        decision_aggregation = "strictest_decision"
+    else:
+        raise ValueError("test helper supports only one- or two-reviewer contracts")
+    registry = root / "registry"
+    registry.mkdir(parents=True, exist_ok=True)
+    (registry / "settings.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: ara.paper_writing.registry.v1",
+                "quality_gate:",
+                f"  review_panel_size: {panel_size}",
+                f"  score_aggregation: {score_aggregation}",
+                f"  decision_aggregation: {decision_aggregation}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def _load_claude_reviewer_module():
@@ -202,6 +232,63 @@ def test_review_safe_registry_removes_all_review_projections() -> None:
         "title": "A fresh theorem",
     }
     assert metadata["support"]["publication"]["release_binding"]["score"] == 6
+
+
+def test_configured_review_contract_defaults_to_codex_and_requires_consistent_opt_in() -> None:
+    assert configured_review_contract(None) == {
+        "panel_size": 1,
+        "schema_version": SINGLE_REVIEW_SCHEMA_VERSION,
+        "score_aggregation": "coordinatewise_median",
+        "decision_aggregation": "ordinal_median",
+        "claude_enabled": False,
+    }
+    assert configured_review_contract(
+        {
+            "review_panel_size": 2,
+            "score_aggregation": "coordinatewise_minimum",
+            "decision_aggregation": "strictest_decision",
+        }
+    ) == {
+        "panel_size": 2,
+        "schema_version": REVIEW_SCHEMA_VERSION,
+        "score_aggregation": "coordinatewise_minimum",
+        "decision_aggregation": "strictest_decision",
+        "claude_enabled": True,
+    }
+    with pytest.raises(ValueError, match="score_aggregation"):
+        configured_review_contract(
+            {"review_panel_size": 1, "score_aggregation": "coordinatewise_minimum"}
+        )
+
+
+def test_claude_reviewer_refuses_default_one_reviewer_contract(tmp_path: Path) -> None:
+    paper_id = "20260901-math-optional-claude-test"
+    papers = tmp_path / "registry" / "papers"
+    papers.mkdir(parents=True)
+    (papers / f"{paper_id}.yaml").write_text(
+        f"paper_id: {paper_id}\ndomain: math\n",
+        encoding="utf-8",
+    )
+    _write_review_settings(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CLAUDE_REVIEWER),
+            "--paper-id",
+            paper_id,
+            "--peer-review",
+            "reviews/unused/reviewer-1.json",
+            "--root",
+            str(tmp_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Claude reviewer-2 is optional and disabled" in result.stderr
 
 
 def _review(*, paper_id: str = "20260804-ai-llm-review-test", role: str = "cs_top_tier") -> dict:
@@ -766,6 +853,7 @@ notes:
 """,
         encoding="utf-8",
     )
+    _write_review_settings(tmp_path, panel_size=2)
     review_dir = tmp_path / "reviews" / "fresh" / paper_id
     review_dir.mkdir(parents=True)
     peer = _review(paper_id=paper_id, role=CS_TOP_TIER_REVIEWER_ROLE)
@@ -1159,6 +1247,60 @@ def test_panel_validator_accepts_one_shared_bounded_lean_receipt(tmp_path: Path)
     assert any("execution_count must equal 1" in error for error in errors)
 
 
+def test_skill_aggregator_defaults_to_one_codex_reviewer(tmp_path: Path) -> None:
+    paper_id = "20260804-ai-llm-single-aggregate-test"
+    registry = tmp_path / "registry" / "papers"
+    registry.mkdir(parents=True)
+    (registry / f"{paper_id}.yaml").write_text(
+        f"""paper_id: {paper_id}
+created_at: 2026-08-04
+domain: ai
+subdomain: llm
+""",
+        encoding="utf-8",
+    )
+    _write_review_settings(tmp_path)
+    panel_path = _write_panel(
+        tmp_path,
+        paper_id=paper_id,
+        role=CS_TOP_TIER_REVIEWER_ROLE,
+        snapshot="b" * 64,
+        main_tex_sha256="a" * 64,
+        ready=True,
+    )
+    panel_path.unlink()
+    (panel_path.parent / "reviewer-2.json").unlink()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(AGGREGATOR),
+            "--paper-id",
+            paper_id,
+            "--review-dir",
+            str(panel_path.parent),
+            "--root",
+            str(tmp_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    panel = json.loads(panel_path.read_text(encoding="utf-8"))
+    assert panel["schema_version"] == SINGLE_REVIEW_SCHEMA_VERSION
+    assert panel["scores"]["overall"] == 6
+    assert panel["recommendations"][CAS_ZONE_1_JOURNAL_VIEW]["decision"] == "accept"
+    metadata = panel["review_metadata"]["review_panel"]
+    assert metadata["panel_size"] == 1
+    assert metadata["score_aggregation"] == "coordinatewise_median"
+    assert metadata["decision_aggregation"] == "ordinal_median"
+    assert [record["provider"] for record in metadata["reviewer_records"]] == [
+        "openai-codex"
+    ]
+
+
 def test_skill_aggregator_applies_conservative_dual_review_rules(tmp_path: Path) -> None:
     paper_id = "20260804-ai-llm-aggregate-test"
     registry = tmp_path / "registry" / "papers"
@@ -1171,6 +1313,7 @@ subdomain: llm
 """,
         encoding="utf-8",
     )
+    _write_review_settings(tmp_path, panel_size=2)
     existing_panel = _write_panel(
         tmp_path,
         paper_id=paper_id,
@@ -1223,6 +1366,7 @@ subdomain: finance
 """,
         encoding="utf-8",
     )
+    _write_review_settings(tmp_path, panel_size=2)
     panel_path = _write_panel(
         tmp_path,
         paper_id=paper_id,
@@ -1274,6 +1418,9 @@ def test_apply_review_registers_skill_judgment_and_uses_cas_gate(tmp_path: Path)
 quality_gate:
   minimum_score: 6.0
   maximum_revision_rounds: 3
+  review_panel_size: 2
+  score_aggregation: coordinatewise_minimum
+  decision_aggregation: strictest_decision
   decision_standard: cas_zone_1_journal
   cas_zone_1_minimum_decision: minor_revision
 """,

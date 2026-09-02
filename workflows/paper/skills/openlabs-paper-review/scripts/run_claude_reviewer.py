@@ -26,7 +26,7 @@ if str(WORKFLOW_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKFLOW_ROOT))
 
 from paper_writing.handoff import manuscript_snapshot_sha256, sha256_file
-from paper_writing.registry import load_paper_metadata, repository_root
+from paper_writing.registry import load_paper_metadata, load_registry_settings, repository_root
 from paper_writing.review import (
     CAS_ZONE_1_JOURNAL_VIEW,
     CONFERENCE_DECISIONS,
@@ -48,6 +48,7 @@ from paper_writing.review import (
     RECOMMENDATION_SCHEMA_VERSION,
     REVIEWER_PROVIDER_CONTRACTS,
     TOP_CONFERENCE_VIEW,
+    configured_review_contract,
     review_safe_registry,
     reviewer_role_for_domain,
     rubric_id_for_role,
@@ -525,6 +526,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = Path(args.root).resolve()
     metadata = load_paper_metadata(args.paper_id, root)
+    settings = load_registry_settings(root)
+    contract = configured_review_contract(settings.get("quality_gate"))
+    if contract["claude_enabled"] is not True:
+        raise ValueError(
+            "Claude reviewer-2 is optional and disabled by the active review contract; "
+            "set registry/settings.yaml quality_gate.review_panel_size to 2 with "
+            "coordinatewise_minimum/strictest_decision to opt in"
+        )
     role = reviewer_role_for_domain(metadata.get("domain"))
     manuscript = root / str(
         metadata.get("manuscript_dir") or f"papers/{args.paper_id}/manuscript"

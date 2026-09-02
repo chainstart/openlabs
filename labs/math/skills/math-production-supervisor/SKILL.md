@@ -107,9 +107,13 @@ next branch only from that evidence and keep it inside the configured route. Sta
 ### Radar stage
 
 Use live search and primary sources to produce `radar/cycle-NNN/target_cards.json`. Include at least
-four non-cosmetic candidates in the lane's declared theme. For each card record:
+the plan's `minimum_target_cards_per_cycle` (never fewer than four) and cover at least its
+`minimum_distinct_research_fronts_per_cycle` when configured. Every counted card must itself be an
+exact source-original open problem or conjecture, not a scoped surrogate. For each card record:
 
-- exact target statement and primary source;
+- its declared `research_front`, exact source-original statement, identical frozen target,
+  `target_relation: exact`, primary-source locator, and current `open_problem` or
+  `open_conjecture` status;
 - closest verified results and dated search scope;
 - why the result is not already known or a direct corollary;
 - one theorem-shaped contribution, sharpness route, and downstream consequence;
@@ -120,8 +124,20 @@ four non-cosmetic candidates in the lane's declared theme. For each card record:
 Do not select a target unless it passes every score floor in the lane configuration and has no
 unresolved direct-corollary or duplicate-result risk. Famous provenance is not significance.
 
-When one target passes, write a hash-bound `selection.json`, then use
-`scripts/production_lane.py select` to initialize a nested AMRA campaign. Return one structured
+Never overwrite the source-original statement with a narrower target. The radar-scored `select`
+gate accepts only `target_relation=exact`: a specialization, strengthening, or partial theorem may
+be pursued only through an explicitly scoped operator route or a post-result branch, and cannot be
+selected or reported as closure of an open problem. When one exact target passes, write a
+hash-bound `openlabs.math_target_selection.v1` `selection.json` conforming to
+`schemas/math-target-selection.schema.json`. It binds the primary-source snapshot and exact
+locator, dated open-status and duplicate searches, the effective minimum number of target cards,
+the score vector,
+the effective plan-derived selection-gate snapshot (including canonical target-card and distinct-
+front minima), selected `research_front`, production-plan SHA-256, closest published result,
+novelty evidence, and an explicit cleared blocking-risk verdict. Every comparison card must clear
+blocking novelty risk and carry a complete bounded score vector with a correct total. Then use
+`scripts/production_lane.py select` with `--source-statement`, `--target-statement`, and
+`--target-relation` to initialize a nested AMRA campaign. Return one structured
 next action for a **fresh researcher** to begin the AMRA target-selection gate. Do not perform proof
 work in the radar node.
 
@@ -173,6 +189,14 @@ reviewer`, `session_mode: fresh`, and `handoff_kind: independent_replication`. T
 reads only the frozen claim and declared evidence, reconstructs it independently, and applies
 AMRA's statement, dependency, and novelty checks. The generic role and fresh-session gates enforce
 this transfer.
+
+The reviewer must return a valid `openlabs.result_bundle.v1` with the
+`openlabs.amra_review.v1` extension: `amra_review_schema_version`, explicit
+`amra_audit_outcome`, nested `amra_campaign_id` and complete `amra_statement_identity`, the audited
+`amra_author_attempt_id`, `amra_resolution_type` (`proof` or `counterexample`), and the frozen
+`amra_success_condition`. A passing result contains exactly one evidenced verified claim named
+`amra-<hyphenated-success-condition>`. Every promotion—not just original-problem closure—must be
+traceable to this fresh result through the canonical archived receipt and SQLite lineage.
 
 ### Terminal outcomes
 

@@ -31,7 +31,7 @@
   },
   "observation_types": {
     "statement_frozen": {
-      "description": "The exact quantified public statement and success criterion are frozen.",
+      "description": "The exact quantified source-original statement, any distinct local target, their typed relation, and the success criterion are frozen separately.",
       "evidence_required": true
     },
     "authoritative_source_verified": {
@@ -75,7 +75,7 @@
       "evidence_required": true
     },
     "original_problem_closed": {
-      "description": "A complete proof of the frozen original statement is claimed with a dependency graph.",
+      "description": "A complete proof is claimed with a dependency graph, and the frozen target exactly matches the separately recorded source-original statement; no specialization, strengthening, or partial target qualifies.",
       "evidence_required": true
     },
     "counterexample_closed": {
@@ -83,7 +83,7 @@
       "evidence_required": true
     },
     "standalone_theorem_candidate": {
-      "description": "A paper-scale intermediate theorem is stated exactly with proof and non-cosmetic consequence.",
+      "description": "A paper-scale scoped theorem, including a specialization, strengthening, or partial result, is stated exactly with proof and non-cosmetic consequence without claiming source-problem closure.",
       "evidence_required": true
     },
     "deep_route_exhausted": {

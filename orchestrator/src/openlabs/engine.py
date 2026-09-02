@@ -2215,8 +2215,9 @@ def ingest_results(
                         "suffix": "paper-review",
                         "task_type": "paper_review",
                         "objective": (
-                            "Review the frozen manuscript with the independent Codex and Packy "
-                            "Claude Opus 5 panel. Do not edit it. If it fails, return exactly "
+                            "Review the frozen manuscript with the configured independent panel "
+                            "(one fresh Codex reviewer by default; add blind Packy Claude only "
+                            "when enabled). Do not edit it. If it fails, return exactly "
                             "one structured text_revision or evidence_remediation action."
                         ),
                         "skill": "openlabs-paper-review",

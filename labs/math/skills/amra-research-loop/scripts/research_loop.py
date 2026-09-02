@@ -15,6 +15,8 @@ from loop_core import (
     freeze_campaign,
     init_campaign,
     load_campaign,
+    migrate_campaign_contract,
+    prepare_review_manifest,
     set_mechanism_status,
     validate_campaign,
     validate_campaign_integrity,
@@ -30,8 +32,19 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--campaign-id", required=True)
     init.add_argument("--problem-id", required=True)
     init.add_argument("--title", required=True)
-    init.add_argument("--statement", required=True)
+    init.add_argument("--source-statement", required=True)
+    init.add_argument("--target-statement", required=True)
+    init.add_argument(
+        "--target-relation",
+        choices=("exact", "specialization", "strengthening", "partial"),
+        required=True,
+    )
     init.add_argument("--source", required=True)
+    init.add_argument(
+        "--source-authority-receipt",
+        type=Path,
+        help="required selection.json bundle for an exact open-problem target",
+    )
 
     for name in ("status", "validate", "validate-integrity"):
         command = commands.add_parser(name)
@@ -60,6 +73,23 @@ def parser() -> argparse.ArgumentParser:
     freeze.add_argument("--campaign", type=Path, required=True)
     freeze.add_argument("--reason", required=True)
     freeze.add_argument("--evidence", action="append", default=[])
+
+    migrate = commands.add_parser(
+        "migrate-contract",
+        help="migrate a v1 contract while preserving its legacy local target",
+    )
+    migrate.add_argument("--campaign", type=Path, required=True)
+    migrate.add_argument("--source-statement", required=True)
+    migrate.add_argument("--target-statement", required=True)
+    migrate.add_argument(
+        "--target-relation",
+        choices=("exact", "specialization", "strengthening", "partial"),
+        required=True,
+    )
+    migrate.add_argument("--reason", required=True)
+    review = commands.add_parser("prepare-review", help="freeze author-side bytes for a fresh reviewer")
+    review.add_argument("--campaign", type=Path, required=True)
+    review.add_argument("--author-attempt-id", required=True)
     return result
 
 
@@ -72,8 +102,11 @@ def main(argv: list[str] | None = None) -> int:
                 campaign_id=args.campaign_id,
                 problem_id=args.problem_id,
                 title=args.title,
-                exact_statement=args.statement,
+                source_original_statement=args.source_statement,
+                frozen_target_statement=args.target_statement,
+                target_relation=args.target_relation,
                 source=args.source,
+                source_authority_receipt=args.source_authority_receipt,
             )
             print(path)
         elif args.command == "status":
@@ -102,6 +135,20 @@ def main(argv: list[str] | None = None) -> int:
             set_mechanism_status(args.campaign, args.id, args.status, args.evidence)
         elif args.command == "freeze":
             print(json.dumps(freeze_campaign(args.campaign, args.reason, args.evidence), indent=2, ensure_ascii=False))
+        elif args.command == "migrate-contract":
+            print(json.dumps(migrate_campaign_contract(
+                args.campaign,
+                source_original_statement=args.source_statement,
+                frozen_target_statement=args.target_statement,
+                target_relation=args.target_relation,
+                reason=args.reason,
+            ), indent=2, ensure_ascii=False))
+        elif args.command == "prepare-review":
+            print(json.dumps(
+                prepare_review_manifest(args.campaign, args.author_attempt_id),
+                indent=2,
+                ensure_ascii=False,
+            ))
     except CampaignError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

@@ -3,9 +3,9 @@
   "$id": "amra-research-loop/campaign-state.schema.json",
   "title": "AMRA Research Loop Campaign State",
   "type": "object",
-  "required": ["schema_version", "campaign_id", "problem_id", "phase", "gates", "artifacts", "history"],
+  "required": ["schema_version", "campaign_id", "problem_id", "phase", "statement_identity", "gates", "artifacts", "history"],
   "properties": {
-    "schema_version": {"const": "amra-research-loop.v1"},
+    "schema_version": {"const": "amra-research-loop.v2"},
     "campaign_id": {"type": "string", "minLength": 1},
     "problem_id": {"type": "string", "minLength": 1},
     "title": {"type": "string"},
@@ -20,6 +20,43 @@
         "promotion",
         "frozen"
       ]
+    },
+    "statement_identity": {
+      "type": "object",
+      "required": [
+        "source_original_sha256",
+        "frozen_target_sha256",
+        "target_relation",
+        "success_condition",
+        "source_locator_sha256",
+        "problem_id_sha256",
+        "title_sha256",
+        "gate_policy_sha256",
+        "source_authority_sha256"
+      ],
+      "properties": {
+        "source_original_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "frozen_target_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "target_relation": {
+          "enum": ["exact", "specialization", "strengthening", "partial"]
+        },
+        "success_condition": {
+          "enum": [
+            "original_problem_closed",
+            "scoped_theorem_proved",
+            "main_term_improved",
+            "main_exponent_improved",
+            "global_interface_closed",
+            "standalone_decisive_lemma"
+          ]
+        },
+        "source_locator_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "problem_id_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "title_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "gate_policy_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "source_authority_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
     },
     "gates": {"type": "object"},
     "artifacts": {"type": "object"},

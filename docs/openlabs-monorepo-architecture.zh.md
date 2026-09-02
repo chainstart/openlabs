@@ -228,12 +228,12 @@ workflows/paper 是所有领域共用、按需调用的下游工作流，不是�
 - 使用确定性代码完成 registry、结果包、构建、引用、质量门和不可变版本校验；
 - 投稿、期刊事件和一般外部副作用等待管理员批准；通过门禁只授权精确绑定的 Zenodo 支撑材料发布。
 
-现有 paper workflow 以 AI/ML、数学、材料、物理和量化金融薄协调 Skill 覆盖领域证据边界；审稿由空白 Codex 与经 Packy 调用的空白 Claude Code Opus 5 组成双供应商面板。它们依赖 vendored 写作/统计/审稿 Skill、仓库 registry、claim-evidence map，以及 paper_writing 确定性 Python。纯复制 Skill 只能获得写作方法，不能获得可审计论文流水线。
+现有 paper workflow 以 AI/ML、数学、材料、物理和量化金融薄协调 Skill 覆盖领域证据边界；审稿默认由一个空白、独立的 Codex 完成，registry 可按需启用经 Packy 调用的空白 Claude Code Opus 5 作为第二位审阅人。它们依赖 vendored 写作/统计/审稿 Skill、仓库 registry、claim-evidence map，以及 paper_writing 确定性 Python。纯复制 Skill 只能获得写作方法，不能获得可审计论文流水线。
 
 迁入 OpenLabs 时保留“Skill 决策层 + 薄确定性 workflow”：
 
 - skills：领域写作、期刊适配、审稿和修订策略；
-- src：registry、bundle、build、citation、保守双审阅人聚合和状态门；
+- src：registry、bundle、build、citation、配置驱动的审阅面板聚合和状态门；
 - templates：论文、期刊 overlay、cover letter 和 response 模板；
 - tests：协议、构建、引用和门禁测试。
 
@@ -255,7 +255,7 @@ Zenodo、远程 handoff 和真实投稿属于外部适配器。Zenodo 支撑材�
 
 | 类型 | 本质 | 示例 |
 |---|---|---|
-| workflow | 把 Skill、确定性代码和状态门组合成可恢复的完整任务 | 论文撰写、双供应商审稿和期刊版本构建 |
+| workflow | 把 Skill、确定性代码和状态门组合成可恢复的完整任务 | 论文撰写、配置化独立审稿和期刊版本构建 |
 | package | 可导入、可测试、确定性的稳定代码 | Schema、哈希、统计、仿真分析器 |
 | Skill | 告诉 Agent 如何完成某类任务的流程说明、约束和参考材料 | 文献调研、Idea 生成、论文审稿 |
 
@@ -459,9 +459,10 @@ campaign、同使命使用 `codex exec resume`；节点输入应优先指向最�
 | 审阅要求新证据 | 新 `researcher`/`experimenter`，完成后恢复原 `writer` | 让证据生产与写作独立，再重新审阅 |
 
 控制面硬性保证 session 只能来自同一 campaign、同一角色且位于当前任务祖先链中的任务；reviewer
-任务的 session mode 固定为 `fresh`。当前论文门禁先冻结 Codex reviewer-1，再以 Packy 上的
-Claude Code Opus 5 启动 reviewer-2；第二位只能获得同一冻结科学输入和 reviewer-1 的哈希，
-不得读取其内容。角色切换不能在一个对话里靠提示词“扮演”，必须新建任务。
+任务的 session mode 固定为 `fresh`。当前论文门禁默认只冻结 Codex reviewer-1 并形成单成员
+面板；只有 registry 显式启用双审时，才以 Packy 上的 Claude Code Opus 5 启动 reviewer-2。
+第二位只能获得同一冻结科学输入和 reviewer-1 的哈希，不得读取其内容。角色切换不能在一个
+对话里靠提示词“扮演”，必须新建任务。
 结果包中的普通字符串 `next_action` 表示当前角色续接；需要换角色或启动独立同角色运行时，
 必须写出含 `objective`、`agent_role`、`session_mode` 的结构化 action；审阅回流还必须声明
 `text_revision` 或 `evidence_remediation`。控制面在角色切换时默认强制 `fresh`，唯一跨角色
@@ -472,7 +473,7 @@ session。研究/实验结果不能绕过 paper-readiness 审查直接生成 wri
 研究/实验 paper_candidate
   → fresh paper_readiness reviewer
   → fresh writer
-  → fresh Codex + fresh Packy Claude Opus 5 review panel
+  → fresh Codex review（可配置增加 fresh Packy Claude Opus 5）
       ├── 通过：内部终止态
       ├── text_revision：恢复原 writer → 再次 fresh review
       └── evidence_remediation：fresh researcher/experimenter

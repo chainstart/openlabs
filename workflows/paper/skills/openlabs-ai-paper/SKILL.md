@@ -88,12 +88,13 @@ is opt-in and illustrative only; it cannot supply experimental evidence.
    `support-check`, then rebuild. Apply the configured default without asking again; never invent
    or silently change a license, and never publish confidential or incompatibly licensed files.
 9. In a factory `writer` task, stop after freezing the compiled snapshot and emit it as a
-   `paper_candidate`; do not run or impersonate either reviewer. The scheduler creates a fresh
-   `paper_review` task using `$openlabs-paper-review`, whose Codex and Packy Claude Opus 5 reviewers
-   apply the `cs_top_tier` standard and the mandatory local quality gate.
+   `paper_candidate`; do not run or impersonate a reviewer. The scheduler creates a fresh
+   `paper_review` task using `$openlabs-paper-review`; one isolated Codex reviewer runs by default,
+   and a blind Packy Claude reviewer is added only when the registry enables the optional panel.
+   The configured reviewers apply the `cs_top_tier` standard and the mandatory local quality gate.
 10. On a `paper_revision` task, apply only the declared review request. If new scientific evidence
    is needed, do not invent it; the reviewer must route an `evidence_remediation` task first. Freeze
-   the revised snapshot as a new `paper_candidate` so both reviewers assess it again.
+   the revised snapshot as a new `paper_candidate` so every configured reviewer assesses it again.
 
 Only a `writing_release.status` of `ready` permits consideration for handoff. It does not mean the
 paper has been submitted or accepted, and it never replaces human scientific judgment.
@@ -103,7 +104,7 @@ allowed domain-specific 2026 XinRui system, with a publication route carrying no
 fee. Record ranking, fee, and official formatting sources and check dates. Convert the canonical
 `manuscript/` itself to the current venue format; a separate candidate does not satisfy this rule.
 
-After a passing gate and explicit human authorization, run `paper-writing zenodo release` for the
+After a passing gate, use the repository's standing authorization and run `paper-writing zenodo release` for the
 prepared production draft with the required confirmations. Commit its DOI/receipt update before
 `paper-writing handoff release`; the handoff gate requires the published Version DOI and reviewed
 package binding. Readiness never authorizes a submission, journal event, or publication fact.
@@ -113,3 +114,7 @@ package binding. Readiness never authorizes a submission, journal event, or publ
 Report the files changed, evidence gaps, checks and build commands run, and remaining scientific
 risks. A reviewer additionally reports the review record and quality-gate result. If the gate is
 not ready, state the next bounded revision rather than presenting the paper as submission-ready.
+
+Submission-facing files must contain no pending author-confirmation or draft-for-approval language.
+Place unavoidable later human portal actions only in `production/human_action_checklist.md`, outside
+the journal package.

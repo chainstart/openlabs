@@ -90,7 +90,7 @@ def find_paper_record(
 ) -> dict[str, Any]:
     root = Path(repo_root or default_repo_root()).resolve()
     config = load_config(config_path or root / "registry" / "settings.yaml")
-    payload = build_inventory(root, config=config)
+    payload = build_inventory(root, config=config, paper_ids=[paper_id])
     for paper in payload.get("papers", []):
         if isinstance(paper, dict) and paper.get("id") == paper_id:
             return paper

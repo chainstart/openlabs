@@ -46,15 +46,16 @@ support and style checks, including the single final truthful AI-use declaration
 shared overlay. A non-exempt paper must first have a prepared Zenodo Version DOI cited in the
 bibliography, first substantive support mention, and availability statement; `not_required` needs
 the configured reason. In a factory `writer` task, stop at the frozen `paper_candidate`; do not run or
-impersonate either reviewer. The scheduler gives it to a fresh `$openlabs-paper-review` task, whose
-independent Codex and blind Packy Claude Opus 5 reviewers use the `materials` rubric and the
+impersonate a reviewer. The scheduler gives it to a fresh `$openlabs-paper-review` task. One isolated
+Codex reviewer runs by default; a blind Packy Claude reviewer is added only when the registry
+enables the optional two-reviewer panel. The configured reviewers use the `materials` rubric and the
 `leading_materials_journals` plus `cas_zone_1_journal` simulated views. A `paper_revision` applies
 only the declared request; requests for new physical evidence go through a fresh
 `evidence_remediation` task before returning to the same writer. Every revised candidate receives a
 new panel because any score-bearing edit makes the old panel stale.
 
-After a passing gate and explicit human authorization, run `paper-writing zenodo release` for the
-exact prepared support draft with the production confirmations. The gate establishes eligibility,
-not authorization. It never authorizes remote handoff, submission, journal communication, spending,
+After a passing gate, use the repository's standing authorization and run `paper-writing zenodo release` for the
+exact prepared support draft with the production confirmations without asking the authors again.
+It never authorizes remote handoff, submission, journal communication, spending,
 or a publication fact. Report remaining physical-model, convergence, sampling, literature, and
 reproducibility risks even when the manuscript passes.
