@@ -104,6 +104,7 @@ def load_registry(
     settings: str | Path | None = None,
     include_local_repositories: bool = True,
     paper_ids: Iterable[str] | None = None,
+    enforce_target_policy: bool = True,
 ) -> dict[str, Any]:
     """Return the compatibility config consumed by the inventory scanner.
 
@@ -111,6 +112,9 @@ def load_registry(
     historical ``papers`` mapping so the proven inventory scanner can remain focused on file
     discovery and derived status calculations. When ``paper_ids`` is provided, only those
     records are loaded and validated; global settings are always loaded and validated.
+    Query-only consumers may set ``enforce_target_policy`` to false so an explicitly recorded
+    out-of-policy target remains visible in dashboards. Quality gates keep the default strict
+    behavior.
     """
 
     repo_root = Path(root or repository_root()).resolve()
@@ -191,11 +195,12 @@ def load_registry(
             if len(target_journal.strip()) > 500:
                 raise ValueError(f"target_journal is too long for {paper_id}")
             paper["target_journal"] = target_journal.strip()
-            _validate_journal_target_policy(
-                paper,
-                paper_id=paper_id,
-                policy=global_settings.get("journal_target_policy"),
-            )
+            if enforce_target_policy:
+                _validate_journal_target_policy(
+                    paper,
+                    paper_id=paper_id,
+                    policy=global_settings.get("journal_target_policy"),
+                )
         _validate_research_outcomes(paper, paper_id=paper_id)
         workspace = str(paper.pop("workspace", f"papers/{paper_id}")).strip("/")
         paper.setdefault("manuscript_dir", f"{workspace}/manuscript")
@@ -302,7 +307,10 @@ def _validate_journal_target_policy(
         if isinstance(value, int) and not isinstance(value, bool)
     }
     tier = paper.get("target_journal_tier")
-    if tier not in allowed_tiers:
+    if tier not in allowed_tiers and not _has_approved_target_tier_override(
+        paper,
+        tier=tier,
+    ):
         raise ValueError(
             f"target_journal_tier must be one of {sorted(allowed_tiers)} for {paper_id}"
         )
@@ -336,6 +344,28 @@ def _validate_journal_target_policy(
             raise ValueError(
                 f"target_journal_format.checked_at must be YYYY-MM-DD for {paper_id}"
             )
+
+
+def _has_approved_target_tier_override(
+    paper: Mapping[str, Any],
+    *,
+    tier: Any,
+) -> bool:
+    """Accept a narrowly scoped, explicitly recorded user override for one target."""
+
+    exception = paper.get("target_policy_exception")
+    if not isinstance(exception, Mapping):
+        return False
+    return (
+        exception.get("status") == "approved"
+        and exception.get("kind") == "target_journal_tier_override"
+        and exception.get("scope") == "this_paper_and_target_only"
+        and exception.get("target_journal") == paper.get("target_journal")
+        and exception.get("target_journal_tier") == tier
+        and exception.get("authorized_by") == "user"
+        and _iso_date(str(exception.get("authorized_at") or "")[:10])
+        and bool(str(exception.get("reason") or "").strip())
+    )
 
 
 def _coerce_allowed_classification_systems(

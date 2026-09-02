@@ -91,6 +91,13 @@ def test_journal_target_policy_requires_tier_fee_and_canonical_format(tmp_path: 
     with pytest.raises(ValueError, match="target_journal_tier"):
         load_registry(tmp_path, include_local_repositories=False)
 
+    indexed = load_registry(
+        tmp_path,
+        include_local_repositories=False,
+        enforce_target_policy=False,
+    )
+    assert indexed["papers"][f"papers/{paper_id}"]["target_journal"] == "A Journal"
+
     metadata = load_paper_metadata(paper_id, tmp_path)
     metadata.update(
         {
@@ -154,6 +161,62 @@ def test_journal_target_policy_supports_domain_specific_systems(tmp_path: Path) 
         }
     )
     write_paper_metadata(paper_id, metadata, tmp_path)
+    assert load_registry(tmp_path, include_local_repositories=False)["papers"]
+
+
+def test_journal_target_policy_accepts_scoped_user_tier_override(tmp_path: Path) -> None:
+    _settings(tmp_path)
+    settings = tmp_path / "registry" / "settings.yaml"
+    settings.write_text(
+        settings.read_text(encoding="utf-8")
+        + """journal_target_policy:
+  required_after_basic_draft: true
+  classification_system: 2026 XinRui Mathematics
+  allowed_tiers: [1, 2]
+  require_no_mandatory_author_fee: true
+  require_canonical_venue_format: true
+""",
+        encoding="utf-8",
+    )
+    paper_id = "20260902-math-group-tier-override"
+    create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="A scoped target override test",
+        created_at="2026-09-02",
+        domain="math",
+        subdomain="group",
+        venue_type="journal",
+        target_journal="A Specialist Journal",
+    )
+    metadata = load_paper_metadata(paper_id, tmp_path)
+    metadata.update(
+        {
+            "target_journal_tier": 3,
+            "target_journal_ranking_system": "2026 XinRui Mathematics",
+            "target_journal_ranking_source": "https://example.test/ranking",
+            "target_journal_fee_policy": "no_mandatory_author_fee",
+            "target_journal_fee_source": "https://example.test/fees",
+            "target_journal_checked_at": "2026-09-02",
+            "target_journal_format": {
+                "canonical": True,
+                "source": "https://example.test/format",
+                "checked_at": "2026-09-02",
+            },
+            "target_policy_exception": {
+                "status": "approved",
+                "kind": "target_journal_tier_override",
+                "scope": "this_paper_and_target_only",
+                "target_journal": "A Specialist Journal",
+                "target_journal_tier": 3,
+                "authorized_by": "user",
+                "authorized_at": "2026-09-02T06:05:49+00:00",
+                "reason": "The user explicitly selected this specialist venue.",
+            },
+        }
+    )
+    write_paper_metadata(paper_id, metadata, tmp_path)
+
     assert load_registry(tmp_path, include_local_repositories=False)["papers"]
 
 

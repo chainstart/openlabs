@@ -123,7 +123,13 @@ def _index_math(db: FactoryDB, data: Path) -> tuple[int, int]:
 
 
 def _index_papers(db: FactoryDB, data: Path) -> int:
-    registry = load_registry(data, include_local_repositories=False)
+    # The query index must expose truthful out-of-policy targets as draft/blocked records.
+    # Submission and quality-gate callers retain strict target-policy enforcement.
+    registry = load_registry(
+        data,
+        include_local_repositories=False,
+        enforce_target_policy=False,
+    )
     papers = registry.get("papers", {})
     for workspace, value in sorted(papers.items()):
         if not isinstance(value, dict):
@@ -131,7 +137,14 @@ def _index_papers(db: FactoryDB, data: Path) -> int:
         paper_id = str(value.get("paper_id") or Path(workspace).name)
         release = value.get("writing_release")
         release = release if isinstance(release, dict) else {}
-        status = str(release.get("status") or value.get("record_status") or "draft")
+        submission_state = value.get("submission_state")
+        submission_state = submission_state if isinstance(submission_state, dict) else {}
+        status = str(
+            submission_state.get("current_status")
+            or release.get("status")
+            or value.get("record_status")
+            or "draft"
+        )
         db.upsert_research_record(
             f"paper:{paper_id}",
             kind="paper",
@@ -142,8 +155,18 @@ def _index_papers(db: FactoryDB, data: Path) -> int:
             metadata={
                 "version": value.get("version"),
                 "target_journal": value.get("target_journal"),
+                "formatting_target": value.get("formatting_target"),
+                "target_journal_tier": value.get("target_journal_tier"),
+                "target_journal_ranking_system": value.get(
+                    "target_journal_ranking_system"
+                ),
+                "target_policy_exception": value.get("target_policy_exception"),
                 "manuscript_dir": value.get("manuscript_dir"),
+                "writing_release_status": release.get("status"),
                 "score": release.get("score"),
+                "submission_history": value.get("submission_history", []),
+                "submission_state": submission_state or None,
+                "submission_preparation": value.get("submission_preparation"),
             },
         )
     return len(papers)
