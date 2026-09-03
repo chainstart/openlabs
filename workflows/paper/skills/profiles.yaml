@@ -64,6 +64,10 @@ quality_gate:
   allowed_target_journal_tiers: [1, 2]
   require_no_mandatory_author_fee: true
   require_canonical_target_journal_format: true
+  require_evidence_backed_target_fit: true
+  target_fit_dimensions: [scope, audience, contribution_scale]
+  require_two_recent_article_sources: true
+  require_same_target_history_check: true
   zenodo_public_identifier: display_id
   support_publication_settings_key: support_publication
   support_publication_default_license_key: default_license

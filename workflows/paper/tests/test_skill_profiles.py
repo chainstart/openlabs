@@ -70,6 +70,14 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert profiles["quality_gate"]["allowed_target_journal_tiers"] == [1, 2]
     assert profiles["quality_gate"]["require_no_mandatory_author_fee"] is True
     assert profiles["quality_gate"]["require_canonical_target_journal_format"] is True
+    assert profiles["quality_gate"]["require_evidence_backed_target_fit"] is True
+    assert profiles["quality_gate"]["target_fit_dimensions"] == [
+        "scope",
+        "audience",
+        "contribution_scale",
+    ]
+    assert profiles["quality_gate"]["require_two_recent_article_sources"] is True
+    assert profiles["quality_gate"]["require_same_target_history_check"] is True
     assert profiles["quality_gate"]["zenodo_public_identifier"] == "display_id"
     assert profiles["quality_gate"]["support_publication_settings_key"] == (
         "support_publication"

@@ -66,6 +66,11 @@ central theorem:
 ## Work the paper
 
 1. Build or update the theorem/claim–evidence map before changing the manuscript's claims.
+   Before selecting a journal, check the shared submission history and record an evidence-backed
+   `target_journal_fit` assessment for scope, core readership, and contribution scale. Verify at
+   least two recent topically adjacent articles from the journal itself. Broad subject labels or
+   keyword overlap are not evidence of editorial fit. A same-journal rejection blocks reselection
+   unless the record identifies a material scientific revision since that decision.
 2. Establish the contribution boundary and dated literature position, then revise the canonical
    LaTeX for readable definitions, lemmas, proofs, dependencies, limitations, and artifact scope.
    Write only neutral scholarly prose. Keep prompts, agents, model orchestration, review/gate

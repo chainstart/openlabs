@@ -14,6 +14,13 @@ official formatting source. The canonical `manuscript/` must be marked and check
 venue-specific edition. A side candidate alone is a blocker. Public Zenodo ZIP names and enclosing
 roots must use the registered `display_id`.
 
+For targets checked on or after the configured fit-policy date, the registry must also contain an
+approved `target_journal_fit` record. It must separately justify scope, core readership, and
+contribution scale; cite the official scope and at least two recent topically adjacent journal
+articles; and record a shared-history check. A broad category or keyword match is insufficient.
+A prior rejection at the same target remains blocking until a material scientific revision is
+identified; reformatting, reframing, or a new cover letter is not such a revision.
+
 ## Route metadata-only revisions before launching reviewers
 
 If a revision was opened from a current passing gate and is intended to change only author

@@ -35,6 +35,8 @@ SCIENTIFIC_VALIDATION_STATUSES = {
     "independently_reconstructed",
     "externally_reviewed",
 }
+JOURNAL_FIT_ASSESSMENTS = {"strong_fit", "fit"}
+JOURNAL_HISTORY_CLEAR_STATUSES = {"clear", "material_scientific_revision"}
 
 
 def repository_root() -> Path:
@@ -344,6 +346,106 @@ def _validate_journal_target_policy(
             raise ValueError(
                 f"target_journal_format.checked_at must be YYYY-MM-DD for {paper_id}"
             )
+    fit_effective_from = str(
+        policy.get("fit_effective_from") or effective_from
+    ).strip()
+    if policy.get("require_evidence_backed_fit") and (
+        not _iso_date(fit_effective_from) or checked_at >= fit_effective_from
+    ):
+        _validate_journal_target_fit(paper, paper_id=paper_id)
+
+
+def _validate_journal_target_fit(
+    paper: Mapping[str, Any],
+    *,
+    paper_id: str,
+) -> None:
+    """Validate an accountable editorial-fit decision for a selected journal."""
+
+    fit = paper.get("target_journal_fit")
+    if not isinstance(fit, Mapping):
+        raise ValueError(f"target_journal_fit must be an object for {paper_id}")
+    if fit.get("status") != "approved":
+        raise ValueError(f"target_journal_fit.status must be approved for {paper_id}")
+    checked_at = str(fit.get("checked_at") or "")
+    if not _iso_date(checked_at):
+        raise ValueError(f"target_journal_fit.checked_at must be YYYY-MM-DD for {paper_id}")
+
+    for dimension in ("scope", "audience", "contribution_scale"):
+        assessment = fit.get(dimension)
+        if not isinstance(assessment, Mapping):
+            raise ValueError(
+                f"target_journal_fit.{dimension} must be an object for {paper_id}"
+            )
+        if assessment.get("assessment") not in JOURNAL_FIT_ASSESSMENTS:
+            raise ValueError(
+                f"target_journal_fit.{dimension}.assessment must be one of "
+                f"{sorted(JOURNAL_FIT_ASSESSMENTS)} for {paper_id}"
+            )
+        if not str(assessment.get("rationale") or "").strip():
+            raise ValueError(
+                f"target_journal_fit.{dimension}.rationale is required for {paper_id}"
+            )
+
+    _require_http_source(
+        fit["scope"],
+        "source",
+        paper_id,
+        prefix="target_journal_fit.scope",
+    )
+    _require_http_source(
+        fit["audience"],
+        "source",
+        paper_id,
+        prefix="target_journal_fit.audience",
+    )
+    if not str(fit["contribution_scale"].get("evidence") or "").strip():
+        raise ValueError(
+            f"target_journal_fit.contribution_scale.evidence is required for {paper_id}"
+        )
+
+    article_sources = fit.get("recent_article_sources")
+    valid_article_sources = (
+        isinstance(article_sources, list)
+        and all(
+            isinstance(source, str)
+            and source.startswith(("https://", "http://"))
+            for source in article_sources
+        )
+    )
+    if not valid_article_sources or len(set(article_sources)) < 2:
+        raise ValueError(
+            f"target_journal_fit.recent_article_sources needs at least two unique "
+            f"HTTP(S) sources for {paper_id}"
+        )
+
+    history = fit.get("same_target_history")
+    if not isinstance(history, Mapping):
+        raise ValueError(
+            f"target_journal_fit.same_target_history must be an object for {paper_id}"
+        )
+    history_status = history.get("status")
+    if history_status not in JOURNAL_HISTORY_CLEAR_STATUSES:
+        raise ValueError(
+            f"target_journal_fit.same_target_history.status must be one of "
+            f"{sorted(JOURNAL_HISTORY_CLEAR_STATUSES)} for {paper_id}"
+        )
+    if not _iso_date(str(history.get("checked_at") or "")):
+        raise ValueError(
+            f"target_journal_fit.same_target_history.checked_at must be YYYY-MM-DD "
+            f"for {paper_id}"
+        )
+    if not str(history.get("source") or "").strip():
+        raise ValueError(
+            f"target_journal_fit.same_target_history.source is required for {paper_id}"
+        )
+    if history_status == "material_scientific_revision" and not str(
+        history.get("rationale") or ""
+    ).strip():
+        raise ValueError(
+            f"target_journal_fit.same_target_history.rationale is required after a "
+            f"same-target rejection for {paper_id}"
+        )
 
 
 def _has_approved_target_tier_override(

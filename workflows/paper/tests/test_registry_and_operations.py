@@ -220,6 +220,84 @@ def test_journal_target_policy_accepts_scoped_user_tier_override(tmp_path: Path)
     assert load_registry(tmp_path, include_local_repositories=False)["papers"]
 
 
+def test_journal_target_policy_requires_evidence_backed_editorial_fit(
+    tmp_path: Path,
+) -> None:
+    _settings(tmp_path)
+    settings = tmp_path / "registry" / "settings.yaml"
+    settings.write_text(
+        settings.read_text(encoding="utf-8")
+        + """journal_target_policy:
+  required_after_basic_draft: true
+  effective_from: '2026-09-03'
+  fit_effective_from: '2026-09-03'
+  classification_system: 2026 XinRui Mathematics
+  allowed_tiers: [1, 2]
+  require_evidence_backed_fit: true
+""",
+        encoding="utf-8",
+    )
+    paper_id = "20260903-math-graph-editorial-fit"
+    create_paper(
+        root=tmp_path,
+        paper_id=paper_id,
+        title="An editorial-fit policy test",
+        created_at="2026-09-03",
+        domain="math",
+        subdomain="graph",
+        venue_type="journal",
+        target_journal="A Graph Journal",
+    )
+    metadata = load_paper_metadata(paper_id, tmp_path)
+    metadata.update(
+        {
+            "target_journal_tier": 2,
+            "target_journal_ranking_system": "2026 XinRui Mathematics",
+            "target_journal_ranking_source": "https://example.test/ranking",
+            "target_journal_checked_at": "2026-09-03",
+        }
+    )
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    with pytest.raises(ValueError, match="target_journal_fit"):
+        load_registry(tmp_path, include_local_repositories=False)
+
+    metadata["target_journal_fit"] = {
+        "status": "approved",
+        "checked_at": "2026-09-03",
+        "scope": {
+            "assessment": "strong_fit",
+            "source": "https://example.test/scope",
+            "rationale": "The theorem is in the journal's stated graph scope.",
+        },
+        "audience": {
+            "assessment": "fit",
+            "source": "https://example.test/scope",
+            "rationale": "The core readers work on this graph invariant.",
+        },
+        "contribution_scale": {
+            "assessment": "fit",
+            "evidence": "current independent review and theorem inventory",
+            "rationale": "The theorem scale matches recent full articles.",
+        },
+        "recent_article_sources": [
+            "https://doi.org/10.1000/example-a",
+            "https://doi.org/10.1000/example-b",
+        ],
+        "same_target_history": {
+            "status": "clear",
+            "checked_at": "2026-09-03",
+            "source": "shared submission tracker",
+        },
+    }
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    assert load_registry(tmp_path, include_local_repositories=False)["papers"]
+
+    metadata["target_journal_fit"]["same_target_history"]["status"] = "rejected_unchanged"
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    with pytest.raises(ValueError, match="same_target_history.status"):
+        load_registry(tmp_path, include_local_repositories=False)
+
+
 def test_journal_target_policy_grandfathers_truthful_pre_policy_metadata(
     tmp_path: Path,
 ) -> None:

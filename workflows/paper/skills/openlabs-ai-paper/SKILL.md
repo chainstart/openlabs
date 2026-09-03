@@ -57,6 +57,11 @@ is opt-in and illustrative only; it cannot supply experimental evidence.
 ## Work the paper
 
 1. Inventory the verified evidence, current manuscript, venue constraints, and unresolved gaps.
+   Before selecting a journal, check the shared submission history and record an evidence-backed
+   `target_journal_fit` assessment for scope, core readership, and contribution scale. Verify at
+   least two recent topically adjacent articles from the journal itself. Broad subject labels or
+   keyword overlap are not evidence of editorial fit. A same-journal rejection blocks reselection
+   unless the record identifies a material scientific revision since that decision.
 2. Build or update the claim–evidence map before strengthening claims or adding numbers.
 3. Establish the thesis, contribution boundary, and claims to avoid, then revise the canonical
    LaTeX directly. Preserve negative, mixed, incomplete, and null results.

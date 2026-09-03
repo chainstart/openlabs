@@ -35,6 +35,8 @@ PYTHONPATH=workflows/paper python3 -m paper_writing validate \
 
 Every post-basic-draft journal target in a configured domain must satisfy the prospective registry policy for an allowed
 2026 XinRui Tier 1/2 system, an official no-mandatory-author-fee route, and canonical venue format.
+Targets newly checked under the fit policy must also document topic-level scope, core readership,
+contribution scale, two recent adjacent articles, and a clear same-target history check.
 `style-check` and `support-check` are mandatory before review. See
 [`docs/ZENODO_GUIDE.md`](../../docs/ZENODO_GUIDE.md) for controlled support-material publication.
 
