@@ -5,14 +5,21 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import stat
 import tomllib
 from collections.abc import MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 _ENVIRONMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_ZENODO_ENVIRONMENT_NAMES = frozenset(
+    {
+        "ZENODO_ACCESS_TOKEN",
+        "ZENODO_SANDBOX_ACCESS_TOKEN",
+        "ZENODO_ENVIRONMENT",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -94,6 +101,18 @@ def _environment_file_value(raw: str) -> str:
     return parsed[0]
 
 
+def _require_private_environment_file(path: Path) -> None:
+    """Reject a credential file that another local account could replace/read."""
+
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"private environment file must be a regular file: {path}")
+    if hasattr(os, "getuid") and metadata.st_uid != os.getuid():
+        raise ValueError(f"private environment file must be owned by the current user: {path}")
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise ValueError(f"private environment file must use owner-only permissions: {path}")
+
+
 def load_local_environment(
     environment: MutableMapping[str, str] | None = None,
     *,
@@ -102,7 +121,9 @@ def load_local_environment(
     """Load the same local Agent/proxy files for every OpenLabs CLI entrypoint.
 
     Existing process values always win. Files are parsed as data and are never
-    sourced, so a local configuration line cannot execute shell code.
+    sourced, so a local configuration line cannot execute shell code. The
+    default Zenodo credential file is additionally owner/mode checked and may
+    define only the three explicitly supported Zenodo variables.
     """
 
     target = environment if environment is not None else os.environ
@@ -113,18 +134,24 @@ def load_local_environment(
         else Path(target.get("HOME") or Path.home()).expanduser() / ".config"
     )
     explicit = str(target.get("OPENLABS_ENV_FILES") or "").strip()
-    paths = (
-        tuple(Path(item).expanduser() for item in explicit.split(os.pathsep) if item.strip())
-        if explicit
-        else (
-            root / "openlabs" / "env",
-            root / "environment.d" / "90-openlabs-proxy.conf",
+    if explicit:
+        file_specs = tuple(
+            (Path(item).expanduser(), None, False)
+            for item in explicit.split(os.pathsep)
+            if item.strip()
         )
-    )
+    else:
+        file_specs = (
+            (root / "ara" / "zenodo.env", _ZENODO_ENVIRONMENT_NAMES, True),
+            (root / "openlabs" / "env", None, False),
+            (root / "environment.d" / "90-openlabs-proxy.conf", None, False),
+        )
     loaded: list[Path] = []
-    for path in paths:
+    for path, allowed_names, require_private in file_specs:
         if not path.is_file():
             continue
+        if require_private:
+            _require_private_environment_file(path)
         for line_number, raw_line in enumerate(
             path.read_text(encoding="utf-8").splitlines(),
             start=1,
@@ -140,6 +167,10 @@ def load_local_environment(
             name = name.strip()
             if not _ENVIRONMENT_NAME.fullmatch(name):
                 raise ValueError(f"{path}:{line_number}: invalid environment name {name!r}")
+            if allowed_names is not None and name not in allowed_names:
+                raise ValueError(
+                    f"{path}:{line_number}: unsupported private environment name {name!r}"
+                )
             target.setdefault(name, _environment_file_value(raw_value))
         loaded.append(path.resolve())
     return tuple(loaded)

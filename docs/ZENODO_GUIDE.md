@@ -101,6 +101,13 @@ export ZENODO_SANDBOX_ACCESS_TOKEN='...'
 export ZENODO_ACCESS_TOKEN='...'
 ```
 
+OpenLabs 入口还会以数据文件而非 shell 脚本的方式读取
+`~/.config/ara/zenodo.env`。该文件必须由当前用户拥有、是普通文件且权限不宽于 `0600`，并且
+只允许 `ZENODO_ACCESS_TOKEN`、`ZENODO_SANDBOX_ACCESS_TOKEN` 和 `ZENODO_ENVIRONMENT`。
+这样由 `bin/openlabs-codex`、`python -m openlabs tick` 和 factory 启动的进程可正常继承
+Zenodo 凭据，同时普通 shell 仍保持默认无凭据。当前进程已有的同名变量优先；
+`OPENLABS_ENABLE_EXTERNAL_WRITES` 不会从该文件加载，仍须为一次明确的外部写操作单独设置。
+
 Zenodo Sandbox 与 Production 使用不同账号/token。token 至少需要创建/更新 deposit 和
 执行 publish action 的权限；绝不把 token 写进 registry、回执或命令输出。
 

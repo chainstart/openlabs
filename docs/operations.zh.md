@@ -93,8 +93,13 @@ OPENLABS_CLAUDE_COMMAND=claude
 必须包含独立的 `{session_id}` 参数。如果 runner 未配置，
 工厂会安全地产生 `needs_human`，不会假装完成研究。
 所有 `python -m openlabs` 入口都会以“当前进程环境优先”的规则读取
-`~/.config/openlabs/env` 和 `~/.config/environment.d/90-openlabs-proxy.conf`，因此手工
+`~/.config/openlabs/env`、`~/.config/environment.d/90-openlabs-proxy.conf`，以及可选的
+`~/.config/ara/zenodo.env`，因此手工
 `tick`、timer 和 worker 使用同一份 Agent/proxy 配置；这些文件按数据解析，不经过 shell。
+Zenodo 文件必须是当前用户拥有的普通文件且权限不宽于 `0600`，只允许
+`ZENODO_ACCESS_TOKEN`、`ZENODO_SANDBOX_ACCESS_TOKEN` 和 `ZENODO_ENVIRONMENT`；OpenLabs
+启动的 Codex/worker 可以继承它们，但普通登录 shell 仍不会自动携带密钥。该加载机制也不会
+设置 `OPENLABS_ENABLE_EXTERNAL_WRITES`，外部写操作仍须按下文针对一次明确操作单独开启。
 `tick` 和 `bin/openlabs-codex` 在启动研究前还会执行严格网络门禁：依次探测当前进程继承的
 代理和持久代理文件。若当前进程携带一个新的可用代理，它会原子更新
 `90-openlabs-proxy.conf`，并通过 `systemctl --user import-environment` 同步大小写代理变量；

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from openlabs.config import load_local_environment, load_settings, workspace_paths
 
 
@@ -85,3 +86,46 @@ def test_local_environment_treats_shell_syntax_as_inert_text(tmp_path) -> None:
 
     assert environment["INERT_VALUE"] == f"$(touch {marker})"
     assert not marker.exists()
+
+
+def test_local_environment_loads_owner_only_zenodo_credentials(tmp_path) -> None:
+    ara = tmp_path / "ara"
+    ara.mkdir()
+    credentials = ara / "zenodo.env"
+    credentials.write_text(
+        "ZENODO_ENVIRONMENT=production\nZENODO_ACCESS_TOKEN='test-production-token'\n",
+        encoding="utf-8",
+    )
+    credentials.chmod(0o600)
+    environment: dict[str, str] = {}
+
+    loaded = load_local_environment(environment, config_home=tmp_path)
+
+    assert loaded == (credentials.resolve(),)
+    assert environment["ZENODO_ENVIRONMENT"] == "production"
+    assert environment["ZENODO_ACCESS_TOKEN"] == "test-production-token"
+
+
+def test_local_environment_rejects_insecure_zenodo_credentials(tmp_path) -> None:
+    ara = tmp_path / "ara"
+    ara.mkdir()
+    credentials = ara / "zenodo.env"
+    credentials.write_text("ZENODO_ACCESS_TOKEN=test-token\n", encoding="utf-8")
+    credentials.chmod(0o644)
+
+    with pytest.raises(ValueError, match="owner-only permissions"):
+        load_local_environment({}, config_home=tmp_path)
+
+
+def test_local_environment_rejects_unrelated_zenodo_file_variables(tmp_path) -> None:
+    ara = tmp_path / "ara"
+    ara.mkdir()
+    credentials = ara / "zenodo.env"
+    credentials.write_text(
+        "ZENODO_ACCESS_TOKEN=test-token\nUNRELATED_SECRET=must-not-load\n",
+        encoding="utf-8",
+    )
+    credentials.chmod(0o600)
+
+    with pytest.raises(ValueError, match="unsupported private environment name"):
+        load_local_environment({}, config_home=tmp_path)
