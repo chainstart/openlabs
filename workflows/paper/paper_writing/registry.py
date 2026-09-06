@@ -320,6 +320,25 @@ def _validate_journal_target_policy(
         raise ValueError(
             f"target_journal_ranking_system must be one of {sorted(systems)!r} for {paper_id}"
         )
+    expected_year = policy.get("classification_year")
+    if isinstance(expected_year, int) and not isinstance(expected_year, bool):
+        if paper.get("target_journal_ranking_year") != expected_year:
+            raise ValueError(
+                f"target_journal_ranking_year must be {expected_year} for {paper_id}"
+            )
+    expected_scope = str(policy.get("classification_scope") or "").strip()
+    if expected_scope and str(
+        paper.get("target_journal_ranking_scope") or ""
+    ).strip() != expected_scope:
+        raise ValueError(
+            f"target_journal_ranking_scope must be {expected_scope!r} for {paper_id}"
+        )
+    if expected_scope == "major_category" and not str(
+        paper.get("target_journal_ranking_category") or ""
+    ).strip():
+        raise ValueError(
+            f"target_journal_ranking_category is required for {paper_id}"
+        )
     _require_http_source(paper, "target_journal_ranking_source", paper_id)
     if policy.get("require_no_mandatory_author_fee"):
         if paper.get("target_journal_fee_policy") != "no_mandatory_author_fee":

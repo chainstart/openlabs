@@ -77,7 +77,9 @@ is opt-in and illustrative only; it cannot supply experimental evidence.
 5. Verify each citation's metadata and sentence-level support. A search result or related paper's
    bibliography is discovery material, not verification.
 6. Require exactly one final venue-compatible AI-use declaration and consolidate truthful AI use
-   there. Identify OpenAI GPT-5.6 through Codex and its actual purposes, including source-code
+   there. Identify OpenAI Codex and the model identifiers actually used, bound to runtime evidence
+   in `declarations.ai_use.model_usage` under the shared quality overlay. Never substitute a
+   template's model version or relabel historical work. Disclose actual purposes, including source-code
    development and computational verification when applicable; state the human checks performed.
    If Codex assisted Lean work, disclose preparation/checking of Lean code and attribute formal
    checking to the pinned Lean toolchain rather than to AI output. Do not weaken a truthful
@@ -104,9 +106,11 @@ is opt-in and illustrative only; it cannot supply experimental evidence.
 Only a `writing_release.status` of `ready` permits consideration for handoff. It does not mean the
 paper has been submitted or accepted, and it never replaces human scientific judgment.
 
-After a basic manuscript is complete, select a target journal verified as Tier 1 or Tier 2 in an
-allowed domain-specific 2026 XinRui system, with a publication route carrying no mandatory author
-fee. Record ranking, fee, and official formatting sources and check dates. Convert the canonical
+After a basic manuscript is complete, select a target journal verified as major-category Zone 1 or
+Zone 2 in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, with a
+publication route carrying no mandatory author fee. Record the 2025 year, `major_category` scope,
+category name, ranking source and check date, plus fee and official formatting evidence. Do not
+substitute a JCR/WOS/JCI quartile, subject-category partition, or XinRui tier. Convert the canonical
 `manuscript/` itself to the current venue format; a separate candidate does not satisfy this rule.
 
 After a passing gate, use the repository's standing authorization and run `paper-writing zenodo release` for the

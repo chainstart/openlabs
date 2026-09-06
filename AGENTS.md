@@ -1,17 +1,42 @@
-# OpenLabs resource policy
+# OpenLabs mandatory resource policy
 
-All long-running or potentially memory- or CPU-intensive work started from this
-repository must run inside the repository aggregate resource guard.
+Every process that can plausibly consume substantial memory or CPU must run
+inside the repository aggregate resource guard. This is a hard requirement,
+not a recommendation. When resource use is uncertain, treat the command as
+resource-intensive and use the guard.
 
-- Launch interactive Codex research with `bin/openlabs-codex`.
-- Launch scripts, Python searches, solvers, package synchronization and other
-  heavy commands with `bin/openlabs-resource-guard -- <command> [args...]`.
-- Do not bypass the guard for background jobs, resumed campaigns or child
-  processes. Nested wrapper calls intentionally reuse the shared slice.
+- Launch interactive Codex research with `bin/openlabs-codex` so every child
+  process inherits the guard.
+- If the current Codex or shell is not already inside `openlabs-workers.slice`,
+  launch each potentially resource-intensive command with
+  `bin/openlabs-resource-guard -- <command> [args...]`.
+- Always guard interpreters and runtimes that execute repository or generated
+  code, including Python, R, Julia, Java, Node.js, Bun and Deno. Inline scripts,
+  one-off probes and commands expected to use only a small input are not exempt.
+- Always guard tests, benchmarks, fuzzers, solvers, symbolic or exact
+  computation, model inference or training, compilers, linkers, documentation
+  and PDF builds, package installation or synchronization, browser or Electron
+  automation, container builds, archive or dataset processing, and nested
+  Codex invocations.
+- Put the whole pipeline or command group inside one guard. For example, use
+  `bin/openlabs-resource-guard -- bash -lc '<producer> | <consumer>'`; guarding
+  only one stage is insufficient.
+- Background jobs, asynchronous exec sessions, `nohup`, `tmux`, `timeout`,
+  resumed campaigns, workers, subagents and child processes must not bypass the
+  guard. Nested wrapper calls intentionally reuse the shared slice.
+- Only commands whose memory use is inherently small and bounded may run
+  directly, such as `pwd`, `ls`, `find` over a narrowly bounded tree, `rg`,
+  `sed`, `head`, `tail`, `stat`, `git status`, `git diff`, `systemctl status`
+  and bounded `journalctl` queries. If a command reads an unbounded file/tree,
+  loads project code, or can fan out into child processes, it is not exempt.
+- Before relying on inherited protection, verify `/proc/self/cgroup` contains
+  `openlabs-workers.slice`. Do not infer protection merely because another
+  guarded job is running elsewhere.
 - The aggregate limit is 75% of visible logical CPUs, 30 GiB memory soft, 34
   GiB memory hard, 4 GiB swap and 512 tasks.
-- If the guard or its systemd slice is unavailable, fail closed and repair it
-  instead of running heavy work unbounded.
+- If the guard, systemd user manager or cgroup v2 controllers are unavailable,
+  fail closed: do not start the command unbounded. Repair or install the guard
+  first.
 
 See `RESOURCE_GUARD.md` for installation, monitoring and recovery commands.
 
@@ -21,15 +46,23 @@ For every journal manuscript beyond its basic draft, use the domain-specific tar
 `workflows/paper/skills/profiles.yaml` and the active data repository's
 `registry/settings.yaml`.
 
-- Select only a configured 2026 XinRui Tier 1 or Tier 2 journal with an official publication route
-  carrying no mandatory author fee. Optional paid open access is acceptable only when a fee-free
-  subscription route remains available.
-- Record dated official sources for scope, article type, author fees, and formatting, together with
-  a dated ranking source. Apply the verified venue format to the canonical manuscript; a side
-  candidate alone is insufficient.
-- If the requested target is specifically a Chinese Academy of Sciences major-category Zone 1
-  journal, verify that partition directly and record the dated source. JCR Q1, a subject-category
-  quartile, and a XinRui tier must not be reported as the CAS major-category partition.
+- Select only a journal verified as Zone 1 or Zone 2 in the **2025 edition of the Chinese Academy
+  of Sciences Journal Ranking Table, upgraded edition, major-category partition**. This 2025 CAS
+  major-category table is the repository's fixed journal-classification baseline until a human
+  explicitly changes the policy. JCR/WOS/JCI quartiles, CAS subject-category partitions, and
+  XinRui tiers are different systems and must never be substituted or relabeled as this value.
+- Record the numeric major-category zone in the compatibility field `target_journal_tier`, plus
+  `target_journal_ranking_year: 2025`, `target_journal_ranking_scope: major_category`, the CAS
+  major-category name, a dated classification source, and the check date. If the 2025 CAS value
+  cannot be verified, leave the target blocked rather than infer it from another ranking.
+- Missing local ranking metadata is a lookup task, not a reason to stop at `unverified`: query the
+  2025 CAS major-category record from the official service or an auditable public index, verify the
+  exact title/ISSN, and write the zone, category, source, and check date back into local metadata.
+  Use `unverified` only when those searches genuinely fail or conflict, and record the conflict.
+- Require an official publication route carrying no mandatory author fee. Optional paid open
+  access is acceptable only when a fee-free subscription route remains available. Record dated
+  official sources for scope, article type, author fees, and formatting, and apply the verified
+  venue format to the canonical manuscript; a side candidate alone is insufficient.
 - Journal selection and a passing paper gate never authorize submission, spending, or a journal
   event.
 

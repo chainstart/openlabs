@@ -8,11 +8,13 @@ and test updates.
 
 For a journal manuscript beyond its basic draft in a domain configured by
 `journal_target_policy`, the registry must identify a verified
-2026 XinRui target system (Math Tier 1/2, Medicine Tier 1/2, or Computer Science
-Tier 1/2 per domain policy), an official no-mandatory-author-fee publication route, and the
-official formatting source. The canonical `manuscript/` must be marked and checked as the
-venue-specific edition. A side candidate alone is a blocker. Public Zenodo ZIP names and enclosing
-roots must use the registered `display_id`.
+Zone 1/2 target in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition,
+using its major-category partition, an official no-mandatory-author-fee publication route, and the
+official formatting source. The record must bind year `2025`, scope `major_category`, the
+major-category name, source, and check date. Never relabel a JCR/WOS/JCI quartile, a CAS
+subject-category result, or a XinRui tier as the CAS major-category zone. The canonical
+`manuscript/` must be marked and checked as the venue-specific edition. A side candidate alone is
+a blocker. Public Zenodo ZIP names and enclosing roots must use the registered `display_id`.
 
 For targets checked on or after the configured fit-policy date, the registry must also contain an
 approved `target_journal_fit` record. It must separately justify scope, core readership, and
@@ -36,6 +38,33 @@ Success means the old judgment and score were carried forward without an LLM cal
 the captured scientific/textual, registry, or support-source fingerprint changed (or no trustworthy
 baseline exists); only then follow the full review procedure below. Never classify the diff by
 inspection or rewrite a historical review hash.
+
+## Disclose the model actually used
+
+New AI-use declarations identify OpenAI Codex and the exact model identifiers supported by
+the work's runtime records, not a globally preferred version. Register each use under
+`declarations.ai_use.model_usage` with `provider: openai-codex`, `tool: Codex`, `model`, its
+actual purpose, and `evidence: {path, sha256, json_pointer}`. The evidence path is relative
+to the data root and points to a bounded JSON runtime record; the JSON pointer selects
+the model identifier. Keep this provenance in private metadata, not scientific prose.
+
+The style and declaration checks compare registered identifiers with the statement and
+verify the evidence hash and selected JSON value. An empty new-use list, changed record,
+wrong model, or invented identifier blocks review. Multiple recorded models must all be
+disclosed with their actual purposes. Paper records predating 2026-09-06 without structured
+model-use metadata retain their legacy textual checks; new papers, deleted new-use fields,
+and explicit null usage cannot take this legacy route. Never rewrite an old model identity merely
+to use a newer model name. The scaffold does not guess a model or attest completed human
+verification; fill its empty model-use record from actual evidence before final review.
+These checks establish consistency with the identified local record, not cryptographic
+authentication of a provider or proof that an arbitrary local JSON file describes a real run.
+The preparer must select and inspect genuine runtime provenance; missing data-root access
+does not count as verified evidence.
+
+Model provenance does not attest that authors inspected or executed code. All existing
+purpose, human-verification, accountability, single-final-declaration and publication
+requirements remain in force. If the human checks have not occurred, disclose honestly
+and retain the blocker rather than writing an untrue completion statement.
 
 ## Produce a review record
 
@@ -156,9 +185,9 @@ Route the registry domain exactly as follows:
   `openlabs.paper-writing.quant-finance-leading-journals.v1`, with
   `leading_quant_finance_journals` plus `cas_zone_1_journal` opinions.
 
-The CAS Zone 1 view uses the configured major-category scope and a lower selectivity bar than the
+The CAS Zone 1 view uses the configured 2025 major-category baseline and a lower selectivity bar than the
 domain's high-standard view, while preserving correctness and evidence requirements. Unless a
-particular journal's current classification has been verified, use a generic Zone 1 standard and
+particular journal's 2025 CAS major-category classification has been verified, use a generic Zone 1 standard and
 do not claim that the named target is actually Zone 1. These are internal reviewer recommendations,
 not actual venue decisions.
 

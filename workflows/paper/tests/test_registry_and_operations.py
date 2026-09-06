@@ -69,7 +69,9 @@ def test_journal_target_policy_requires_tier_fee_and_canonical_format(tmp_path: 
         settings.read_text(encoding="utf-8")
         + """journal_target_policy:
   required_after_basic_draft: true
-  classification_system: 2026 XinRui Mathematics
+  classification_system: 2025 CAS Journal Ranking Table (Major Category)
+  classification_year: 2025
+  classification_scope: major_category
   allowed_tiers: [1, 2]
   require_no_mandatory_author_fee: true
   require_canonical_venue_format: true
@@ -102,7 +104,9 @@ def test_journal_target_policy_requires_tier_fee_and_canonical_format(tmp_path: 
     metadata.update(
         {
             "target_journal_tier": 2,
-            "target_journal_ranking_system": "2026 XinRui Mathematics",
+            "target_journal_ranking_system": (
+                "2025 CAS Journal Ranking Table (Major Category)"
+            ),
             "target_journal_ranking_source": "https://example.test/ranking",
             "target_journal_fee_policy": "no_mandatory_author_fee",
             "target_journal_fee_source": "https://example.test/fees",
@@ -115,6 +119,18 @@ def test_journal_target_policy_requires_tier_fee_and_canonical_format(tmp_path: 
         }
     )
     write_paper_metadata(paper_id, metadata, tmp_path)
+    with pytest.raises(ValueError, match="target_journal_ranking_year"):
+        load_registry(tmp_path, include_local_repositories=False)
+    metadata["target_journal_ranking_year"] = 2025
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    with pytest.raises(ValueError, match="target_journal_ranking_scope"):
+        load_registry(tmp_path, include_local_repositories=False)
+    metadata["target_journal_ranking_scope"] = "major_category"
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    with pytest.raises(ValueError, match="target_journal_ranking_category"):
+        load_registry(tmp_path, include_local_repositories=False)
+    metadata["target_journal_ranking_category"] = "Mathematics"
+    write_paper_metadata(paper_id, metadata, tmp_path)
     assert load_registry(tmp_path, include_local_repositories=False)["papers"]
 
 
@@ -126,7 +142,9 @@ def test_journal_target_policy_supports_domain_specific_systems(tmp_path: Path) 
         + """journal_target_policy:
   required_after_basic_draft: true
   classification_system:
-    ai: [2026 XinRui Computer Science, 2026 XinRui Medicine]
+    ai: [2025 CAS Journal Ranking Table (Major Category)]
+  classification_year: 2025
+  classification_scope: major_category
   allowed_tiers: [1, 2]
   require_no_mandatory_author_fee: true
   require_canonical_venue_format: true
@@ -148,7 +166,12 @@ def test_journal_target_policy_supports_domain_specific_systems(tmp_path: Path) 
     metadata.update(
         {
             "target_journal_tier": 2,
-            "target_journal_ranking_system": "2026 XinRui Medicine",
+            "target_journal_ranking_system": (
+                "2025 CAS Journal Ranking Table (Major Category)"
+            ),
+            "target_journal_ranking_year": 2025,
+            "target_journal_ranking_scope": "major_category",
+            "target_journal_ranking_category": "Medicine",
             "target_journal_ranking_source": "https://example.test/ranking",
             "target_journal_fee_policy": "no_mandatory_author_fee",
             "target_journal_fee_source": "https://example.test/fees",
@@ -171,7 +194,9 @@ def test_journal_target_policy_accepts_scoped_user_tier_override(tmp_path: Path)
         settings.read_text(encoding="utf-8")
         + """journal_target_policy:
   required_after_basic_draft: true
-  classification_system: 2026 XinRui Mathematics
+  classification_system: 2025 CAS Journal Ranking Table (Major Category)
+  classification_year: 2025
+  classification_scope: major_category
   allowed_tiers: [1, 2]
   require_no_mandatory_author_fee: true
   require_canonical_venue_format: true
@@ -193,7 +218,12 @@ def test_journal_target_policy_accepts_scoped_user_tier_override(tmp_path: Path)
     metadata.update(
         {
             "target_journal_tier": 3,
-            "target_journal_ranking_system": "2026 XinRui Mathematics",
+            "target_journal_ranking_system": (
+                "2025 CAS Journal Ranking Table (Major Category)"
+            ),
+            "target_journal_ranking_year": 2025,
+            "target_journal_ranking_scope": "major_category",
+            "target_journal_ranking_category": "Mathematics",
             "target_journal_ranking_source": "https://example.test/ranking",
             "target_journal_fee_policy": "no_mandatory_author_fee",
             "target_journal_fee_source": "https://example.test/fees",
@@ -231,7 +261,9 @@ def test_journal_target_policy_requires_evidence_backed_editorial_fit(
   required_after_basic_draft: true
   effective_from: '2026-09-03'
   fit_effective_from: '2026-09-03'
-  classification_system: 2026 XinRui Mathematics
+  classification_system: 2025 CAS Journal Ranking Table (Major Category)
+  classification_year: 2025
+  classification_scope: major_category
   allowed_tiers: [1, 2]
   require_evidence_backed_fit: true
 """,
@@ -252,7 +284,12 @@ def test_journal_target_policy_requires_evidence_backed_editorial_fit(
     metadata.update(
         {
             "target_journal_tier": 2,
-            "target_journal_ranking_system": "2026 XinRui Mathematics",
+            "target_journal_ranking_system": (
+                "2025 CAS Journal Ranking Table (Major Category)"
+            ),
+            "target_journal_ranking_year": 2025,
+            "target_journal_ranking_scope": "major_category",
+            "target_journal_ranking_category": "Mathematics",
             "target_journal_ranking_source": "https://example.test/ranking",
             "target_journal_checked_at": "2026-09-03",
         }
@@ -418,7 +455,9 @@ def test_quality_gate_scopes_registry_validation_to_target_paper(tmp_path: Path)
         settings.read_text(encoding="utf-8")
         + """journal_target_policy:
   required_after_basic_draft: true
-  classification_system: 2026 XinRui Physics
+  classification_system: 2025 CAS Journal Ranking Table (Major Category)
+  classification_year: 2025
+  classification_scope: major_category
   allowed_tiers: [1, 2]
 """,
         encoding="utf-8",

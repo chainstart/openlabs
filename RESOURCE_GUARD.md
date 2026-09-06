@@ -63,3 +63,26 @@ systemctl --user status openlabs-workers.slice
 ```
 
 Do not raise these limits without reviewing both WSL and Windows host budgets.
+
+## Mathematics allocation alongside physics (2026-09-06)
+
+The user reserves 16 GiB for physics. Mathematics receives the remainder of the
+existing 34 GiB aggregate research ceiling: **18 GiB shared hard limit, 16 GiB
+soft throttle, no swap, 256 tasks**. The observed WSL physical memory is about
+39.2 GiB, leaving about 5.2 GiB outside the aggregate ceiling for other WSL work.
+This is a cap, not preallocated RAM or a guarantee that unrelated workloads cannot
+consume the remaining system memory. Physics limits and running jobs are not changed.
+
+```bash
+bin/openlabs-resource-guard -- bin/install-math-resource-guard
+bin/openlabs-math-resource-guard -- <command> [args...]
+```
+
+`openlabs-workers-math.slice` is a child of `openlabs-workers.slice`. All math
+workers, checks, builds and their subprocesses must start through the math wrapper
+or inherit that math cgroup. Five research processes do **not** each receive 18 GiB.
+The wrapper first enters the ordinary `openlabs-resource-guard`, then the shared
+math slice, and refuses to launch if the installed math limits have drifted.
+Nested ordinary guard calls preserve the inherited math cap. The installer only
+installs the math child slice; it neither changes physics nor starts researchers,
+factory workers, timers or campaigns.

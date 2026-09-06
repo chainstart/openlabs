@@ -56,17 +56,13 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
 
     assert profiles["quality_gate"]["review_mode"] == "configured_independent_panel"
     assert profiles["quality_gate"]["require_target_journal_after_basic_draft"] is True
-    assert profiles["quality_gate"]["target_journal_classification_system"] == {
-        "math": ["2026 XinRui Mathematics"],
-        "ai": [
-            "2026 XinRui Mathematics",
-            "2026 XinRui Medicine",
-            "2026 XinRui Computer Science",
-        ],
-        "cs": ["2026 XinRui Computer Science", "2026 XinRui Medicine"],
-        "se": ["2026 XinRui Computer Science", "2026 XinRui Medicine"],
-        "physics": ["2026 XinRui Physics and Astronomy"],
-    }
+    assert profiles["quality_gate"]["target_journal_classification_system"] == (
+        "2025 CAS Journal Ranking Table (Major Category)"
+    )
+    assert profiles["quality_gate"]["target_journal_classification_year"] == 2025
+    assert profiles["quality_gate"]["target_journal_classification_scope"] == (
+        "major_category"
+    )
     assert profiles["quality_gate"]["allowed_target_journal_tiers"] == [1, 2]
     assert profiles["quality_gate"]["require_no_mandatory_author_fee"] is True
     assert profiles["quality_gate"]["require_canonical_target_journal_format"] is True
@@ -235,10 +231,13 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert gate["require_validated_independent_review"] is True
     target_policy = settings["journal_target_policy"]
     assert target_policy["required_after_basic_draft"] is True
-    assert target_policy["effective_from"] == "2026-08-27"
-    assert target_policy["classification_system"]["physics"] == [
-        "2026 XinRui Physics and Astronomy"
-    ]
+    assert target_policy["effective_from"] == "2026-09-05"
+    assert target_policy["classification_system"] == (
+        "2025 CAS Journal Ranking Table (Major Category)"
+    )
+    assert target_policy["classification_year"] == 2025
+    assert target_policy["classification_scope"] == "major_category"
+    assert target_policy["classification_reference"] == "https://www.fenqubiao.com/"
     assert target_policy["allowed_tiers"] == [1, 2]
     assert target_policy["require_no_mandatory_author_fee"] is True
     assert target_policy["require_canonical_venue_format"] is True

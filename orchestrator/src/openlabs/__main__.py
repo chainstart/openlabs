@@ -5,14 +5,20 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from .config import load_local_environment, load_settings, workspace_paths
+from .contracts import atomic_write_json
 from .control import halt_production, halt_project
 from .db import FactoryDB
 from .engine import tick
+from .math_catalog import (
+    KINDS, CatalogValidationError, catalog_receipt_path, catalog_stats, ingest_bundle,
+    parse_metadata_filters, show_catalog,
+)
 from .proxy import ProxyPreflightError, ensure_proxy_ready
 from .resources import effective_capacity
 from .worker import run_worker
@@ -36,6 +42,21 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("init", help="Initialize the local SQLite schema")
     commands.add_parser("tick", help="Run one idempotent scheduling tick")
     commands.add_parser("status", help="Print task counts")
+    catalog = commands.add_parser("math-catalog", help="Import or query the isolated mathematics catalog")
+    catalog_commands = catalog.add_subparsers(dest="catalog_command", required=True)
+    catalog_ingest = catalog_commands.add_parser("ingest", help="Atomically import a hash-pinned data bundle")
+    catalog_ingest.add_argument("--bundle", required=True, type=Path)
+    catalog_ingest.add_argument("--expected-sha256", required=True)
+    catalog_ingest.add_argument("--receipt", type=Path, help="Save the full receipt under a data catalog root and print a compact summary")
+    for name in ("show", "stats"):
+        query = catalog_commands.add_parser(name, help=f"{name.title()} catalog records without scheduling work")
+        query.add_argument("--record-id")
+        query.add_argument("--kind", choices=sorted(KINDS))
+        query.add_argument("--status")
+        query.add_argument("--metadata", action="append", metavar="KEY=JSON", help="Exact metadata match; dot paths allowed")
+        if name == "show":
+            query.add_argument("--limit", type=int, default=100)
+            query.add_argument("--offset", type=int, default=0)
     network = commands.add_parser(
         "network-preflight",
         help="Probe Agent connectivity and synchronize a reachable proxy",
@@ -154,6 +175,39 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(network_report, ensure_ascii=False, indent=2, sort_keys=True))
             return 0
     paths = workspace_paths(args.workspace)
+    if args.command == "math-catalog":
+        # The catalog is an explicit, narrow write path. It neither initializes
+        # runtime directories/schema nor enters research scheduling.
+        db = FactoryDB(paths.database_file)
+        try:
+            if args.catalog_command == "ingest":
+                receipt_path = catalog_receipt_path(paths.data, args.receipt) if args.receipt is not None else None
+                payload = ingest_bundle(db, data_root=paths.data, bundle=args.bundle,
+                                        expected_sha256=args.expected_sha256)
+                if receipt_path is not None:
+                    summary = {key: value for key, value in payload.items() if key != "record_ids"}
+                    summary["receipt_path"] = receipt_path.relative_to(paths.data.resolve()).as_posix()
+                    try:
+                        atomic_write_json(receipt_path, payload)
+                    except OSError as exc:
+                        # SQLite already committed and retains the full receipt
+                        # event; do not claim that the import was rejected.
+                        print(json.dumps({"status": "imported_receipt_write_failed", "error": str(exc),
+                                          "receipt_summary": summary}, ensure_ascii=False), file=sys.stderr)
+                        return 74
+                    payload = summary
+            else:
+                filters = {"kind": args.kind, "status": args.status, "record_id": args.record_id,
+                           "metadata_filters": parse_metadata_filters(args.metadata)}
+                if args.catalog_command == "show":
+                    payload = show_catalog(db, limit=args.limit, offset=args.offset, **filters)
+                else:
+                    payload = catalog_stats(db, **filters)
+        except (CatalogValidationError, OSError, sqlite3.Error) as exc:
+            print(json.dumps({"status": "rejected", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+            return 65
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
     paths.ensure_runtime_directories()
     db = FactoryDB(paths.database_file)
     db.initialize()

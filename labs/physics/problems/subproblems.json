@@ -1,0 +1,403 @@
+{
+  "schema_version": "openlabs.physics_recognized_subproblems.v1",
+  "policy_version": "openlabs.physics_subproblem_selection.v1",
+  "audited_at": "2026-09-02",
+  "status": "recognized_subproblem_portfolio_execution_paused",
+  "parent_portfolio": "portfolio.json",
+  "required_resolution_significance": "prl_class_scientific_gate",
+  "venue_claim": "No venue is guaranteed; PRL-class means the scientific significance gate in SUBPROBLEM_POLICY.md is met before submission.",
+  "sources": [
+    {
+      "source_id": "SRC-CLAY-YM",
+      "authority": "Clay Mathematics Institute",
+      "kind": "prize_problem",
+      "url": "https://www.claymath.org/millennium/yang-mills-the-maths-gap/",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-NSAC-2023",
+      "authority": "US DOE Nuclear Science Advisory Committee",
+      "kind": "official_strategy",
+      "url": "https://science.osti.gov/-/media/np/pdf/Reports/2024/2024-NSAC-LRP-Report_Final.pdf",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-LATTICE",
+      "authority": "Snowmass Lattice Gauge Theory Topical Group",
+      "kind": "community_frontier_report",
+      "url": "https://arxiv.org/abs/2209.10758",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-EIC-YELLOW",
+      "authority": "Electron-Ion Collider User Group",
+      "kind": "community_program_report",
+      "url": "https://arxiv.org/abs/2103.05419",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-P5-QUANTUM",
+      "authority": "2023 Particle Physics Project Prioritization Panel",
+      "kind": "official_strategy",
+      "url": "https://www.usparticlephysics.org/2023-p5-report/decipher-the-quantum-realm.html",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-P5-COSMIC",
+      "authority": "2023 Particle Physics Project Prioritization Panel",
+      "kind": "official_strategy",
+      "url": "https://www.usparticlephysics.org/2023-p5-report/illuminate-the-invisible-universe.html",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-P5-PARADIGMS",
+      "authority": "2023 Particle Physics Project Prioritization Panel",
+      "kind": "official_strategy",
+      "url": "https://www.usparticlephysics.org/2023-p5-report/explore-new-paradigms-in-physics.html",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-DM",
+      "authority": "Snowmass Particle Dark Matter Topical Group",
+      "kind": "community_frontier_report",
+      "url": "https://arxiv.org/abs/2209.07426",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-AXION",
+      "authority": "Snowmass Axion Dark Matter Community",
+      "kind": "community_frontier_report",
+      "url": "https://arxiv.org/abs/2203.14923",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-NEUTRINO",
+      "authority": "Snowmass Neutrino Frontier",
+      "kind": "community_frontier_report",
+      "url": "https://arxiv.org/abs/2211.08641",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-NDBD-ROADMAP",
+      "authority": "Snowmass Neutrinoless Double-Beta Decay Community",
+      "kind": "community_program_report",
+      "url": "https://arxiv.org/abs/2203.12169",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-HIGGS",
+      "authority": "Snowmass Higgs Topical Group",
+      "kind": "community_frontier_report",
+      "url": "https://arxiv.org/abs/2209.07510",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-COSMIC-LATE",
+      "authority": "Snowmass Dark Energy and Cosmic Acceleration Topical Group",
+      "kind": "community_frontier_report",
+      "url": "https://arxiv.org/abs/2209.08049",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-COSMIC-EARLY",
+      "authority": "Snowmass Cosmic Dawn and Before Topical Group",
+      "kind": "community_frontier_report",
+      "url": "https://arxiv.org/abs/2209.08265",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-BARYOGENESIS",
+      "authority": "Snowmass Testable Baryogenesis Community",
+      "kind": "community_frontier_report",
+      "url": "https://arxiv.org/abs/2203.07059",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-HNL",
+      "authority": "Snowmass Heavy Neutral Lepton Community",
+      "kind": "community_program_report",
+      "url": "https://arxiv.org/abs/2203.08039",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-QG",
+      "authority": "Snowmass Quantum Gravity String Theory and Black Holes Topical Group",
+      "kind": "community_frontier_report",
+      "url": "https://arxiv.org/abs/2210.01737",
+      "accessed_at": "2026-09-02"
+    },
+    {
+      "source_id": "SRC-SNOWMASS-BH",
+      "authority": "Snowmass Quantum Aspects of Black Holes Community",
+      "kind": "community_program_report",
+      "url": "https://arxiv.org/abs/2201.03096",
+      "accessed_at": "2026-09-02"
+    }
+  ],
+  "subproblems": [
+    {
+      "subproblem_id": "PHY-001-SP-01",
+      "parent_problem_id": "PHY-001",
+      "title": "Rigorous four-dimensional Yang-Mills construction and positive mass gap",
+      "status": "recognized_open",
+      "open_question": "Can interacting four-dimensional quantum Yang-Mills theory be constructed rigorously and shown to possess a strictly positive mass gap?",
+      "recognition_source_ids": ["SRC-CLAY-YM", "SRC-SNOWMASS-LATTICE"],
+      "decisive_resolution": ["a complete axiomatic construction with continuum limit and positive gap", "a rigorous obstruction that decisively invalidates a major construction route"],
+      "excluded_outputs": ["a finite-lattice numerical gap alone", "one improved bound without a controlled continuum theorem"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-001-SP-02",
+      "parent_problem_id": "PHY-001",
+      "title": "Universal nonperturbative mechanism of color confinement",
+      "status": "recognized_open",
+      "open_question": "Which gauge-invariant mechanism produces color confinement and nonzero continuum string tension in non-Abelian gauge theory?",
+      "recognition_source_ids": ["SRC-NSAC-2023", "SRC-SNOWMASS-LATTICE"],
+      "decisive_resolution": ["a continuum-controlled confinement criterion with universal spectral consequences", "a decisive exclusion of a major proposed confinement mechanism across its stated domain"],
+      "excluded_outputs": ["one small Wilson-loop bound", "a gauge-dependent diagnostic without universality tests"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-001-SP-03",
+      "parent_problem_id": "PHY-001",
+      "title": "QCD origin of proton mass and spin",
+      "status": "recognized_open",
+      "open_question": "How do quark and gluon energy, orbital motion and quantum anomalies quantitatively generate the proton mass and spin?",
+      "recognition_source_ids": ["SRC-NSAC-2023", "SRC-EIC-YELLOW"],
+      "decisive_resolution": ["a scheme-explicit closed mass or spin decomposition consistent across first-principles theory and experiment", "resolution of a recognized missing gluon or orbital component with controlled evolution"],
+      "excluded_outputs": ["one PDF fit with unchanged uncertainty", "a decomposition whose scheme dependence is hidden"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-002-SP-01",
+      "parent_problem_id": "PHY-002",
+      "title": "Existence and location of a QCD critical point",
+      "status": "recognized_open",
+      "open_question": "Does QCD contain a critical endpoint or first-order transition at finite baryon density, and where is it located?",
+      "recognition_source_ids": ["SRC-NSAC-2023", "SRC-SNOWMASS-LATTICE"],
+      "decisive_resolution": ["controlled establishment of critical behavior in a predeclared physical region", "controlled exclusion of a materially complete region targeted by current programs"],
+      "excluded_outputs": ["a single fluctuation anomaly", "analytic continuation without a systematic-error closure"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-002-SP-02",
+      "parent_problem_id": "PHY-002",
+      "title": "Phases and degrees of freedom of cold dense QCD matter",
+      "status": "recognized_open",
+      "open_question": "Are neutron-star cores hadronic, deconfined, superfluid or color superconducting, and what equation of state selects among them?",
+      "recognition_source_ids": ["SRC-NSAC-2023", "SRC-SNOWMASS-LATTICE"],
+      "decisive_resolution": ["a multimessenger and first-principles discrimination among major core phases", "a robust phase or equation-of-state exclusion over a predeclared density range"],
+      "excluded_outputs": ["one flexible equation-of-state fit", "a model preference dominated by an untested prior"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-002-SP-03",
+      "parent_problem_id": "PHY-002",
+      "title": "Controlled access to finite-density QCD despite the sign problem",
+      "status": "recognized_open",
+      "open_question": "Can finite-density QCD observables be computed with controlled errors in a physically new region beyond current sign-problem limits?",
+      "recognition_source_ids": ["SRC-NSAC-2023", "SRC-SNOWMASS-LATTICE"],
+      "decisive_resolution": ["a cross-validated method reaching a new physical QCD region with controlled bias", "a rigorous reach or impossibility boundary for a major method class"],
+      "excluded_outputs": ["a toy-model speedup", "a method benchmark with no QCD phase consequence"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-003-SP-01",
+      "parent_problem_id": "PHY-003",
+      "title": "Decisive test of thermal WIMP dark matter",
+      "status": "recognized_open",
+      "open_question": "Does a thermal weakly interacting massive particle constitute cosmological dark matter?",
+      "recognition_source_ids": ["SRC-P5-COSMIC", "SRC-SNOWMASS-DM"],
+      "decisive_resolution": ["cross-probe discovery with a consistent relic history", "credible exclusion of a recognized complete benchmark domain to its limiting backgrounds"],
+      "excluded_outputs": ["one exclusion-curve replot", "a local excess without independent confirmation"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-003-SP-02",
+      "parent_problem_id": "PHY-003",
+      "title": "QCD axion as dark matter",
+      "status": "recognized_open",
+      "open_question": "Does the QCD axion exist and account for a substantial or dominant fraction of dark matter?",
+      "recognition_source_ids": ["SRC-P5-COSMIC", "SRC-SNOWMASS-AXION"],
+      "decisive_resolution": ["repeatable detection on the QCD mass-coupling relation with astrophysical consistency", "closure of a predeclared cosmological QCD-axion window under explicit production assumptions"],
+      "excluded_outputs": ["an axion-like-particle hint off the QCD relation", "a limit whose cosmological assumptions are implicit"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-003-SP-03",
+      "parent_problem_id": "PHY-003",
+      "title": "Sub-GeV and hidden-sector particle dark matter",
+      "status": "recognized_open",
+      "open_question": "Do light or feebly coupled hidden-sector particles with viable cosmological histories constitute dark matter?",
+      "recognition_source_ids": ["SRC-P5-COSMIC", "SRC-SNOWMASS-DM"],
+      "decisive_resolution": ["discovery linked consistently across production and cosmology", "combined closure of a major motivated model class rather than isolated benchmark points"],
+      "excluded_outputs": ["one benchmark point", "a collider state not shown to be cosmological dark matter"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-004-SP-01",
+      "parent_problem_id": "PHY-004",
+      "title": "Neutrino mass ordering and leptonic CP violation",
+      "status": "recognized_open",
+      "open_question": "What is the neutrino mass ordering, and does the lepton sector violate CP through the oscillation phase?",
+      "recognition_source_ids": ["SRC-P5-QUANTUM", "SRC-SNOWMASS-NEUTRINO"],
+      "decisive_resolution": ["ordering determination robust to degeneracies and matter effects", "establishment or exclusion of CP violation with combined-systematic closure"],
+      "excluded_outputs": ["one-experiment local preference", "a fit that omits leading cross-section degeneracies"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-004-SP-02",
+      "parent_problem_id": "PHY-004",
+      "title": "Majorana versus Dirac nature of neutrinos",
+      "status": "recognized_open",
+      "open_question": "Are neutrinos Majorana particles, as tested most directly by lepton-number-violating neutrinoless double-beta decay?",
+      "recognition_source_ids": ["SRC-NSAC-2023", "SRC-NDBD-ROADMAP", "SRC-SNOWMASS-NEUTRINO"],
+      "decisive_resolution": ["independently confirmed lepton-number-violating signal with nuclear and background closure", "exclusion of a major ordering region with audited matrix-element uncertainties"],
+      "excluded_outputs": ["one nuclear matrix-element calculation", "a spectral excess without isotope or detector cross-checks"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-004-SP-03",
+      "parent_problem_id": "PHY-004",
+      "title": "Absolute neutrino mass scale and lightest mass",
+      "status": "recognized_open",
+      "open_question": "What is the absolute neutrino mass scale and the mass of the lightest neutrino?",
+      "recognition_source_ids": ["SRC-P5-QUANTUM", "SRC-SNOWMASS-NEUTRINO"],
+      "decisive_resolution": ["consistent beta-decay, oscillation and cosmological determination with transparent model dependence", "a robust upper bound that excludes a recognized mass regime across probes"],
+      "excluded_outputs": ["a cosmological bound under one hidden prior", "a sensitivity forecast without data"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-005-SP-01",
+      "parent_problem_id": "PHY-005",
+      "title": "Higgs self-coupling and the shape of the Higgs potential",
+      "status": "recognized_open",
+      "open_question": "What is the Higgs self-coupling, and is the observed Higgs potential the Standard Model potential?",
+      "recognition_source_ids": ["SRC-P5-QUANTUM", "SRC-SNOWMASS-HIGGS"],
+      "decisive_resolution": ["decisive nonzero trilinear-coupling measurement with global degeneracy control", "discrimination between the Standard Model potential and a major extension class"],
+      "excluded_outputs": ["one higher-order coefficient", "a projected sensitivity with no new inference"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-005-SP-02",
+      "parent_problem_id": "PHY-005",
+      "title": "Elementary, composite or extended nature of the Higgs sector",
+      "status": "recognized_open",
+      "open_question": "Is the Higgs elementary and unique, or part of a composite or extended scalar sector?",
+      "recognition_source_ids": ["SRC-P5-QUANTUM", "SRC-SNOWMASS-HIGGS"],
+      "decisive_resolution": ["a global coupling and width pattern establishing a non-Standard-Model mechanism", "combined exclusion of a major composite or extended-Higgs domain"],
+      "excluded_outputs": ["an unconstrained model scan", "one-channel deviation without global consistency"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-005-SP-03",
+      "parent_problem_id": "PHY-005",
+      "title": "Order and dynamics of the electroweak phase transition",
+      "status": "recognized_open",
+      "open_question": "Was the electroweak phase transition a strong first-order transition, crossover, or something more complex?",
+      "recognition_source_ids": ["SRC-P5-QUANTUM", "SRC-SNOWMASS-HIGGS", "SRC-SNOWMASS-BARYOGENESIS"],
+      "decisive_resolution": ["cross-probe establishment of a strong first-order transition", "closure of a recognized testable transition domain using collider, EDM and gravitational-wave constraints"],
+      "excluded_outputs": ["one thermal-potential scan", "a gravitational-wave template without particle-physics consistency"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-006-SP-01",
+      "parent_problem_id": "PHY-006",
+      "title": "Inflationary energy scale and primordial tensor modes",
+      "status": "recognized_open",
+      "open_question": "Did inflation generate primordial gravitational waves, and what do they imply for its energy scale and mechanism?",
+      "recognition_source_ids": ["SRC-P5-COSMIC", "SRC-SNOWMASS-COSMIC-EARLY"],
+      "decisive_resolution": ["independently confirmed primordial tensor detection with foreground closure", "a bound that decisively excludes a major large-field inflation domain"],
+      "excluded_outputs": ["a B-mode excess without foreground closure", "one model forecast"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-006-SP-02",
+      "parent_problem_id": "PHY-006",
+      "title": "Primordial non-Gaussianity and inflation consistency relations",
+      "status": "recognized_open",
+      "open_question": "Do primordial fluctuations obey single-field single-clock consistency, or reveal additional fields and interactions during inflation?",
+      "recognition_source_ids": ["SRC-P5-COSMIC", "SRC-SNOWMASS-COSMIC-LATE", "SRC-SNOWMASS-COSMIC-EARLY"],
+      "decisive_resolution": ["systematics-closed primordial non-Gaussian or feature detection that selects a mechanism class", "bounds reaching a predeclared threshold that excludes major multi-field or interaction scenarios"],
+      "excluded_outputs": ["an a posteriori feature", "a template preference without trials and survey-systematic closure"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-006-SP-03",
+      "parent_problem_id": "PHY-006",
+      "title": "Cosmological constant, dynamical dark energy or modified gravity",
+      "status": "recognized_open",
+      "open_question": "Is late-time acceleration caused by a cosmological constant, evolving dark energy or modified gravity?",
+      "recognition_source_ids": ["SRC-P5-COSMIC", "SRC-SNOWMASS-COSMIC-LATE"],
+      "decisive_resolution": ["consistent expansion-and-growth evidence for departure from Lambda and general relativity", "combined exclusion of a major dynamical-dark-energy or modified-gravity class"],
+      "excluded_outputs": ["one-survey tension", "a parameter preference without calibration and model-selection closure"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-007-SP-01",
+      "parent_problem_id": "PHY-007",
+      "title": "Viability of electroweak baryogenesis",
+      "status": "recognized_open",
+      "open_question": "Can a strong electroweak phase transition and new CP violation generate the observed baryon asymmetry?",
+      "recognition_source_ids": ["SRC-P5-PARADIGMS", "SRC-SNOWMASS-BARYOGENESIS", "SRC-SNOWMASS-HIGGS"],
+      "decisive_resolution": ["simultaneous closure of phase-transition and CP requirements for a viable mechanism", "model-class-wide exclusion over a recognized testable domain"],
+      "excluded_outputs": ["a parameter scan disconnected from EDM or collider probes", "a phase transition without sufficient baryon production"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-007-SP-02",
+      "parent_problem_id": "PHY-007",
+      "title": "Low-scale leptogenesis and heavy neutral leptons",
+      "status": "recognized_open",
+      "open_question": "Can experimentally accessible heavy neutral leptons generate the observed asymmetry through low-scale leptogenesis?",
+      "recognition_source_ids": ["SRC-P5-PARADIGMS", "SRC-SNOWMASS-BARYOGENESIS", "SRC-SNOWMASS-HNL"],
+      "decisive_resolution": ["discovery with parameters sufficient for a quantitatively closed leptogenesis history", "combined exclusion of a major low-scale leptogenesis domain"],
+      "excluded_outputs": ["an HNL signal without baryogenesis closure", "one production-channel limit"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-007-SP-03",
+      "parent_problem_id": "PHY-007",
+      "title": "Observable baryon-number violation and post-sphaleron baryogenesis",
+      "status": "recognized_open",
+      "open_question": "Does observable baryon-number violation such as neutron-antineutron transformation support a post-sphaleron origin of the asymmetry?",
+      "recognition_source_ids": ["SRC-NSAC-2023", "SRC-SNOWMASS-BARYOGENESIS"],
+      "decisive_resolution": ["independently confirmed baryon-number-violating process linked to a viable cosmological mechanism", "decisive closure of a major experimentally testable post-sphaleron domain"],
+      "excluded_outputs": ["one operator coefficient", "a model point without cosmological consistency"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-008-SP-01",
+      "parent_problem_id": "PHY-008",
+      "title": "Unitary black-hole evaporation and the interior",
+      "status": "recognized_open",
+      "open_question": "How can black-hole evaporation, semiclassical causality, interior physics and unitary quantum mechanics be mutually consistent?",
+      "recognition_source_ids": ["SRC-P5-PARADIGMS", "SRC-SNOWMASS-QG", "SRC-SNOWMASS-BH"],
+      "decisive_resolution": ["a self-consistent information-recovery mechanism beyond a special solvable model", "a theorem excluding a major class of proposed interior or evaporation mechanisms"],
+      "excluded_outputs": ["one Page-curve calculation in a fixed toy model", "an entropy identity with no interior or unitarity consequence"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-008-SP-02",
+      "parent_problem_id": "PHY-008",
+      "title": "Emergence of semiclassical spacetime and bulk locality",
+      "status": "recognized_open",
+      "open_question": "Under what quantum-information conditions do semiclassical geometry, causal structure and approximate bulk locality emerge?",
+      "recognition_source_ids": ["SRC-P5-PARADIGMS", "SRC-SNOWMASS-QG", "SRC-SNOWMASS-BH"],
+      "decisive_resolution": ["general reconstruction or error-correction conditions with explicit validity and failure domains", "a no-go theorem separating emergent-locality mechanisms"],
+      "excluded_outputs": ["one tensor-network benchmark", "a model-specific reconstruction without a universality statement"],
+      "work_package_status": "unselected"
+    },
+    {
+      "subproblem_id": "PHY-008-SP-03",
+      "parent_problem_id": "PHY-008",
+      "title": "Nonperturbative observables and state space of de Sitter quantum gravity",
+      "status": "recognized_open",
+      "open_question": "What are the observables, Hilbert-space structure and microscopic entropy of a consistent quantum theory of de Sitter spacetime?",
+      "recognition_source_ids": ["SRC-P5-PARADIGMS", "SRC-SNOWMASS-QG", "SRC-SNOWMASS-BH"],
+      "decisive_resolution": ["a consistent nonperturbative definition with controlled semiclassical observables", "a theorem excluding a major class of de Sitter constructions"],
+      "excluded_outputs": ["one de Sitter correlator identity", "a finite-dimensional toy model without a controlled gravity limit"],
+      "work_package_status": "unselected"
+    }
+  ]
+}

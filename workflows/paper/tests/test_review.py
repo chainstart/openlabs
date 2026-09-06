@@ -1459,8 +1459,9 @@ target_journal_tier: 3
         settings_path.read_text(encoding="utf-8")
         + """journal_target_policy:
   required_after_basic_draft: true
-  classification_system:
-    physics: 2026 XinRui Physics
+  classification_system: 2025 CAS Journal Ranking Table (Major Category)
+  classification_year: 2025
+  classification_scope: major_category
   allowed_tiers: [1, 2]
 """,
         encoding="utf-8",

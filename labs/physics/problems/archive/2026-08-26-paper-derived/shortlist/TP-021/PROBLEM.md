@@ -1,6 +1,6 @@
-# TP-021：d>2 无质量粒子的 dual S-matrix bootstrap 原型
+# 已归档 TP-021：d>2 无质量粒子的 dual S-matrix bootstrap 原型
 
-- 状态：`candidate`
+- 状态：`retired_microtopic`
 - 开放性证据：B
 - 最近审计：2026-08-26
 - 首轮资源：M

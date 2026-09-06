@@ -200,9 +200,9 @@ def create_paper(
         "\\documentclass{article}\n\\title{" + title + "}\n\\author{}\n"
         "\\begin{document}\n\\maketitle\n\\begin{abstract}\n\\end{abstract}\n"
         "\\section*{Generative AI declaration}\n"
-        "During the preparation of this work, the authors used OpenAI GPT-5.6 "
-        "through Codex to assist with manuscript drafting, editing, and technical "
-        "preparation. The authors reviewed and edited all AI-assisted text and take "
+        "During the preparation of this work, the authors used OpenAI Codex "
+        "to assist with manuscript drafting, editing, and technical "
+        "preparation. The authors take "
         "full responsibility for the article. AI-generated output was not treated as "
         "evidence, mathematical proof, formal verification, or external peer review.\n"
         "\\end{document}\n",
@@ -249,6 +249,7 @@ def create_paper(
         "venue_type": venue_type,
         "evidence_bundles": [],
         "writing_release": {"status": "draft"},
+        "declarations": {"ai_use": {"model_usage": []}},
         "support": {
             "publication": support_publication
         },

@@ -9,6 +9,13 @@ Own the configured physics objective and freely choose its decomposition, hypoth
 route, computation, public data, tools, milestones, and route changes. The items below are
 claim-quality requirements, not a prescribed research process.
 
+- Before selecting work, load `problems/SELECTION_POLICY.md`, `problems/SUBPROBLEM_POLICY.md`,
+  `problems/portfolio.json`, and `problems/subproblems.json`. A mother problem is never directly
+  executable. A proposal must name a `recognized_open` `PHY-NNN-SP-NN`, its active `PHY-NNN`
+  parent, and the decisive physical boundary it changes. A legacy `TP-NNN`, a single-paper outlook, an
+  extra coefficient/graph/truncation, or a method benchmark has no independent activation right.
+  If a potentially important mother problem is absent, pause execution and run a portfolio review
+  instead of silently promoting it through a workstream.
 - State the exact question, regime, observable, assumptions, units, sign/gauge/frame conventions,
   comparator, and falsifier for every promoted claim. Load `resolution_decision.json` so changes in
   scope are explicit rather than silent.

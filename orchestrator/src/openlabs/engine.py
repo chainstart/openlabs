@@ -2549,6 +2549,10 @@ def _write_task_spec(
     skill_dirs = [
         paths.code / "orchestrator" / "skills" / "openlabs-research-factory",
     ]
+    if str(task.get("agent_role") or "researcher") == "researcher":
+        skill_dirs.append(
+            paths.code / "orchestrator" / "skills" / "vendor" / "paper-lookup"
+        )
     runtime_lab = lab_for_domain(discover_labs(paths.code), str(task["domain"]))
     runtime_skill_ids = _campaign_runtime_skill_ids(runtime_lab, campaign)
     skill_dirs.extend(

@@ -23,6 +23,12 @@ read `docs/ZENODO_GUIDE.md`. When creating a workspace or naming a reader-facing
 
 Do not activate additional writing systems or create a second registry.
 
+After the basic manuscript, select only a target verified as major-category Zone 1 or Zone 2 in
+the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition and satisfying the
+shared fee, fit, and canonical-format policy. Record year `2025`, scope `major_category`, category,
+source, and check date; never substitute a JCR/WOS/JCI quartile, subject-category partition, or
+XinRui tier.
+
 ## Enforce the materials evidence boundary
 
 1. Map every claimed composition, phase, structure, preparation, temperature/pressure, observable,

@@ -95,7 +95,10 @@ central theorem:
    instruction, enforces the configured lifecycle state, citation metadata, archive identity, and
    proposition-level support.
 5. Require exactly one final venue-compatible AI-use declaration and consolidate truthful AI use
-   there, not in the scientific body. Identify OpenAI GPT-5.6 through Codex and its actual purposes.
+   there, not in the scientific body. Identify OpenAI Codex, the model identifiers actually used,
+   and their actual purposes. Bind new model-use declarations to runtime evidence under
+   `declarations.ai_use.model_usage` as specified by the shared quality overlay; never substitute
+   a template's model version or relabel historical work.
    When code is in scope, disclose source-code development and computational-verification
    assistance and state how the human authors inspected and executed it. When Codex assisted a
    Lean formalization, also disclose preparation and checking of Lean code and state that formal
@@ -198,10 +201,12 @@ For figures, never rely on color or gray level alone to encode distinct mathemat
 redundant cue such as fill pattern, shape, stroke, or direct labeling, state the mapping in the
 caption, and inspect the rendered PDF in grayscale.
 
-After a basic manuscript is complete, select a target journal verified as 2026 XinRui Mathematics
-Tier 1 or Tier 2 with a publication route carrying no mandatory author fee. Record the ranking,
-fee, and official formatting sources and check dates. Convert the canonical `manuscript/` itself
-to the current venue format; a separate candidate does not satisfy this requirement.
+After a basic manuscript is complete, select a target journal verified as major-category Zone 1 or
+Zone 2 in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, with a
+publication route carrying no mandatory author fee. Record the 2025 year, `major_category` scope,
+category name, ranking source and check date, plus fee and official formatting evidence. Do not
+substitute a JCR/WOS/JCI quartile, subject-category partition, or XinRui tier. Convert the canonical
+`manuscript/` itself to the current venue format; a separate candidate does not satisfy this requirement.
 
 After a passing gate, use the repository's standing production-release authorization and run
 `paper-writing zenodo release` for the prepared production draft without asking the authors again.

@@ -30,14 +30,14 @@ AI text as evidence.
 7. Hand the immutable manuscript and declared evidence to `$openlabs-paper-review`. The writer may
    answer a `text_revision` request but may not score or approve the manuscript.
 
-After the basic manuscript is complete, select and verify a target journal in the configured 2026
-XinRui Physics and Astronomy Tier 1/2 system with a publication route carrying no mandatory author
-fee. Optional paid open access is compatible only when a fee-free subscription route remains
-available. Record dated ranking, official fee-policy, scope, article-type, and formatting sources,
-and adapt the canonical manuscript rather than only a side candidate. When a task specifically
-requires a Chinese Academy of Sciences major-category Zone 1 journal, verify that classification
-separately: JCR Q1, a subject-category quartile, and a XinRui tier are not substitutes for the CAS
-major-category partition.
+After the basic manuscript is complete, select and verify a target journal as major-category Zone 1
+or Zone 2 in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, with a
+publication route carrying no mandatory author fee. Optional paid open access is compatible only
+when a fee-free subscription route remains available. Record the 2025 year, `major_category` scope,
+category name, ranking source and check date, plus dated official fee-policy, scope, article-type,
+and formatting sources, and adapt the canonical manuscript rather than only a side candidate. JCR
+Q1, WOS/JCI quartiles, CAS subject-category partitions, and XinRui tiers are not substitutes for the
+2025 CAS major-category partition.
 
 Publication-level completion requires a current novelty audit, no unsupported central claim, and a
 fresh isolated review under the configured one- or two-reviewer contract for the latest

@@ -73,10 +73,10 @@ ${EDITOR:-vi} "$HOME/.config/openlabs/env"
 文件内容示意：
 
 ```text
-OPENLABS_AGENT_COMMAND_CHEAP_JSON='["codex","exec","--profile","openlabs-cheap","-"]'
-OPENLABS_AGENT_COMMAND_BALANCED_JSON='["codex","exec","--profile","openlabs-balanced","-"]'
-OPENLABS_AGENT_COMMAND_FRONTIER_JSON='["codex","exec","--profile","openlabs-frontier","-"]'
-OPENLABS_AGENT_RESUME_COMMAND_JSON='["codex","exec","resume","{session_id}","-"]'
+OPENLABS_AGENT_COMMAND_CHEAP_JSON='["codex","exec","--profile","openlabs-cheap","-c","web_search=\"live\"","-"]'
+OPENLABS_AGENT_COMMAND_BALANCED_JSON='["codex","exec","--profile","openlabs-balanced","-c","web_search=\"live\"","-"]'
+OPENLABS_AGENT_COMMAND_FRONTIER_JSON='["codex","exec","--profile","openlabs-frontier","-c","web_search=\"live\"","-"]'
+OPENLABS_AGENT_RESUME_COMMAND_JSON='["codex","exec","resume","-c","web_search=\"live\"","{session_id}","-"]'
 OPENLABS_AGENT_TIMEOUT_SECONDS=14400
 OPENLABS_AGENT_PREFLIGHT_TIMEOUT_SECONDS=10
 OPENLABS_AGENT_PREFLIGHT_STRICT=false

@@ -632,6 +632,32 @@ def _config_override_keys(command: list[str]) -> set[str]:
     return keys
 
 
+def _remove_config_overrides(command: list[str], keys: set[str]) -> list[str]:
+    """Remove selected Codex config overrides so factory policy stays authoritative."""
+
+    filtered: list[str] = []
+    index = 0
+    while index < len(command):
+        token = command[index]
+        if token in {"-c", "--config"}:
+            if index + 1 >= len(command):
+                raise ValueError("Codex command ends with an option that requires a value")
+            value = command[index + 1]
+            if value.split("=", 1)[0].strip() not in keys:
+                filtered.extend((token, value))
+            index += 2
+            continue
+        if token.startswith(("-c=", "--config=")):
+            value = token.split("=", 1)[1]
+            if value.split("=", 1)[0].strip() not in keys:
+                filtered.append(token)
+            index += 1
+            continue
+        filtered.append(token)
+        index += 1
+    return filtered
+
+
 def _prepare_codex_command(
     command: list[str],
     *,
@@ -675,13 +701,15 @@ def _prepare_codex_command(
     if configured_sandbox not in {None, "danger-full-access"}:
         raise ValueError("OpenLabs Codex tasks require the danger-full-access runtime")
 
-    tail = _remove_value_options(command[2:], {"--sandbox", "-s", "--cd", "-C"})
+    tail = _remove_config_overrides(command[2:], {"web_search"})
+    tail = _remove_value_options(tail, {"--sandbox", "-s", "--cd", "-C"})
     tail = _remove_flags(
         tail,
         {
             "--approve-for-me",
             "--full-auto",
             "--json",
+            "--search",
             "--skip-git-repo-check",
             "--dangerously-bypass-hook-trust",
         },
@@ -689,6 +717,8 @@ def _prepare_codex_command(
     policy = [
         "-c",
         'approval_policy="never"',
+        "-c",
+        'web_search="live"',
         "--enable",
         "hooks",
         "--sandbox",

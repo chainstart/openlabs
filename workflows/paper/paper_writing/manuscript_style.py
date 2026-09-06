@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from paper_writing.ai_disclosure import model_disclosure_issues, model_usage_for_record
 from paper_writing.funding import ineligible_funding
 from paper_writing.registry import load_paper_metadata, load_registry
 
@@ -313,6 +314,7 @@ def audit_tex_tree(
     manuscript: str | Path | None = None,
     root: str | Path | None = None,
     require_ai_declaration: bool = True,
+    model_usage: Any = None,
 ) -> dict[str, Any]:
     """Check one compiled TeX tree without assigning a prose score."""
 
@@ -424,8 +426,8 @@ def audit_tex_tree(
         requirements: tuple[tuple[str, re.Pattern[str], str], ...] = (
             (
                 "STYLE-AI-DISCLOSURE-TOOL",
-                re.compile(r"OpenAI\s+GPT[- ]?5\.6.{0,80}Codex", re.IGNORECASE),
-                "identify OpenAI GPT-5.6 through Codex in the AI-use declaration",
+                re.compile(r"\bOpenAI\b.{0,160}\bCodex\b|\bCodex\b.{0,160}\bOpenAI\b", re.IGNORECASE),
+                "identify OpenAI and Codex truthfully in the AI-use declaration",
             ),
             (
                 "STYLE-AI-DISCLOSURE-TEXT-PURPOSES",
@@ -461,6 +463,9 @@ def audit_tex_tree(
                 issues.append(
                     _issue(code, message, path=next(iter(declaration_ranges)), root=report_root)
                 )
+        for code, message in model_disclosure_issues(declaration_text, model_usage, root=report_root):
+            issues.append(_issue("STYLE-AI-DISCLOSURE-" + code, message,
+                                 path=next(iter(declaration_ranges)), root=report_root))
         if code_assistance_relevant:
             if not re.search(
                 r"source[- ]code development|development.{0,60}(?:source )?code",
@@ -592,6 +597,7 @@ def audit_manuscript_style(
         manuscript=manuscript,
         root=repo_root,
         require_ai_declaration=require_ai_declaration,
+        model_usage=model_usage_for_record(metadata),
     )
     version = str(metadata.get("version") or "").strip()
     submission_root = repo_root / f"papers/{paper_id}/journal-submissions"

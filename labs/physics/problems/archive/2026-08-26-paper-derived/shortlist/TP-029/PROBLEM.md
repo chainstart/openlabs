@@ -1,6 +1,6 @@
-# TP-029：两圈六点 MHV 的 137-letter alphabet 为何普适？
+# 已归档 TP-029：两圈六点 MHV 的 137-letter alphabet 为何普适？
 
-- 状态：`candidate`
+- 状态：`retired_microtopic`
 - 开放性证据：A
 - 最近审计：2026-08-26
 - 首轮资源：M

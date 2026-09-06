@@ -357,6 +357,7 @@ def test_codex_uses_full_access_and_generated_hooks(tmp_path) -> None:
     assert wrapped == command
     assert command[:2] == ["codex", "exec"]
     assert 'approval_policy="never"' in command
+    assert command.count('web_search="live"') == 1
     assert command[command.index("--sandbox") + 1] == "danger-full-access"
     assert "sandbox_workspace_write.network_access=true" not in command
     assert command[command.index("-C") + 1] == str(workspace)
@@ -365,6 +366,27 @@ def test_codex_uses_full_access_and_generated_hooks(tmp_path) -> None:
     assert command[command.index("--enable") + 1] == "hooks"
     assert command.index('approval_policy="never"') < command.index("resume")
     assert sandbox == "codex-native-danger-full-access"
+
+
+def test_codex_factory_forces_live_web_search(tmp_path) -> None:
+    runner = _load_runner()
+
+    command = runner._prepare_codex_command(
+        [
+            "codex",
+            "exec",
+            "-c",
+            'web_search="disabled"',
+            "--search",
+            "-",
+        ],
+        agent_workspace=tmp_path,
+        trust_generated_hooks=False,
+    )
+
+    assert command.count('web_search="live"') == 1
+    assert 'web_search="disabled"' not in command
+    assert "--search" not in command
 
 
 def test_codex_connectivity_preflight_uses_configured_provider_and_accepts_http_error(

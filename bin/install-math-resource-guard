@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+if ! rg -q '(^|/)openlabs-workers\.slice(/|$)' /proc/self/cgroup; then
+  exec "$ROOT/bin/openlabs-resource-guard" -- "$0" "$@"
+fi
+SLICE=openlabs-workers-math.slice
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+if [[ $(systemctl --user show openlabs-workers.slice -p MemoryMax --value) != 36507222016 ]]; then
+  printf 'Expected the existing 34 GiB aggregate budget; review changed host limits before installing math allocation.\n' >&2
+  exit 78
+fi
+install -m 0644 "$ROOT/deploy/systemd/$SLICE" "$UNIT_DIR/$SLICE"
+systemctl --user daemon-reload
+systemctl --user start "$SLICE"
+systemctl --user show "$SLICE" -p ActiveState -p ControlGroup -p MemoryHigh -p MemoryMax -p MemorySwapMax -p TasksMax

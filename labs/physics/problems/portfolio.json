@@ -1,0 +1,280 @@
+{
+  "schema_version": "openlabs.physics_problem_portfolio.v1",
+  "selection_policy_version": "openlabs.physics_problem_selection.v2",
+  "audited_at": "2026-09-02",
+  "status": "active_portfolio_execution_paused",
+  "problems": [
+    {
+      "problem_id": "PHY-001",
+      "title": "Nonperturbative QCD and Yang-Mills: construction, mass gap, confinement and hadron structure",
+      "status": "active",
+      "open_question": "How does four-dimensional non-Abelian gauge theory rigorously exist and generate a positive mass gap and confinement, and how does nonperturbative QCD generate hadron mass and spin?",
+      "field_level_impact": "This is a Clay Millennium Prize problem and a foundation of the theoretical explanation of strongly interacting matter.",
+      "recognition_evidence": [
+        {
+          "authority": "Clay Mathematics Institute",
+          "kind": "prize_problem",
+          "url": "https://www.claymath.org/millennium/yang-mills-the-maths-gap/",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "authority": "US DOE Nuclear Science Advisory Committee",
+          "kind": "official_strategy",
+          "url": "https://science.osti.gov/-/media/np/pdf/Reports/2024/2024-NSAC-LRP-Report_Final.pdf",
+          "accessed_at": "2026-09-02"
+        }
+      ],
+      "legacy_alignment": ["TP-005", "TP-006", "TP-007", "TP-009", "TP-049"],
+      "recognized_subproblem_domains": [
+        "rigorous continuum-limit or spectral-gap bounds",
+        "certified confinement observables tied to the continuum theory",
+        "nonperturbative mechanisms with explicit universality tests"
+      ],
+      "excluded_as_standalone": [
+        "one additional Wilson-loop bound",
+        "a solver or truncation benchmark without continuum or confinement consequences"
+      ]
+    },
+    {
+      "problem_id": "PHY-002",
+      "title": "Finite-density QCD phase structure",
+      "status": "active",
+      "open_question": "What is the phase diagram of QCD at finite baryon density, and does a critical point or first-order transition exist?",
+      "field_level_impact": "The answer controls the understanding of strongly interacting matter in heavy-ion collisions and compact stars and is a central nuclear-science program.",
+      "recognition_evidence": [
+        {
+          "authority": "US DOE Nuclear Science Advisory Committee",
+          "kind": "official_strategy",
+          "url": "https://science.osti.gov/-/media/np/pdf/Reports/2024/2024-NSAC-LRP-Report_Final.pdf",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "authority": "Snowmass Lattice Gauge Theory Topical Group",
+          "kind": "community_frontier_report",
+          "url": "https://arxiv.org/abs/2209.10758",
+          "accessed_at": "2026-09-02"
+        }
+      ],
+      "legacy_alignment": ["TP-020", "TP-049", "TP-050"],
+      "recognized_subproblem_domains": [
+        "controlled methods that overcome or delimit the finite-density sign problem",
+        "critical-region inference joining lattice calculations and public collision data",
+        "equation-of-state constraints with audited continuation and systematic errors"
+      ],
+      "excluded_as_standalone": [
+        "generic sign-problem toy models with no QCD consequence",
+        "algorithm speedups without a new physical exclusion or phase constraint"
+      ]
+    },
+    {
+      "problem_id": "PHY-003",
+      "title": "Microscopic nature of dark matter",
+      "status": "active",
+      "open_question": "What microscopic degrees of freedom constitute dark matter, and how do they interact with visible matter and themselves?",
+      "field_level_impact": "Dark matter is a core science driver spanning underground experiments, accelerators, astronomy and cosmology.",
+      "recognition_evidence": [
+        {
+          "authority": "2023 Particle Physics Project Prioritization Panel",
+          "kind": "official_strategy",
+          "url": "https://www.usparticlephysics.org/2023-p5-report/illuminate-the-invisible-universe.html",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "authority": "US National Academies Astro2020",
+          "kind": "decadal_survey",
+          "url": "https://nap.nationalacademies.org/resource/26141/interactive/",
+          "accessed_at": "2026-09-02"
+        }
+      ],
+      "legacy_alignment": [],
+      "recognized_subproblem_domains": [
+        "cross-experiment public-data constraints on motivated candidate classes",
+        "systematics-robust tests combining direct, indirect, collider and cosmological probes",
+        "model-independent exclusions with reproducible likelihoods"
+      ],
+      "excluded_as_standalone": [
+        "replotting one public exclusion curve",
+        "a new benchmark point without cross-probe or model-class consequences"
+      ]
+    },
+    {
+      "problem_id": "PHY-004",
+      "title": "Origin and nature of neutrino mass",
+      "status": "active",
+      "open_question": "What generates neutrino masses, what is their ordering and absolute scale, how large is leptonic CP violation, and are neutrinos Dirac or Majorana particles?",
+      "field_level_impact": "These questions drive major oscillation, cosmology and neutrinoless-double-beta-decay programs and probe physics beyond the Standard Model.",
+      "recognition_evidence": [
+        {
+          "authority": "2023 Particle Physics Project Prioritization Panel",
+          "kind": "official_strategy",
+          "url": "https://www.usparticlephysics.org/2023-p5-report/decipher-the-quantum-realm.html",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "authority": "Snowmass Neutrino Frontier",
+          "kind": "community_frontier_report",
+          "url": "https://arxiv.org/abs/2211.08641",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "authority": "US DOE Nuclear Science Advisory Committee",
+          "kind": "official_strategy",
+          "url": "https://science.osti.gov/-/media/np/pdf/Reports/2024/2024-NSAC-LRP-Report_Final.pdf",
+          "accessed_at": "2026-09-02"
+        }
+      ],
+      "legacy_alignment": [],
+      "recognized_subproblem_domains": [
+        "reproducible global fits joining oscillation, cosmology and beta-decay constraints",
+        "nuclear-matrix-element uncertainty audits that alter Majorana sensitivity",
+        "robust CP and mass-ordering inference with explicit degeneracy tests"
+      ],
+      "excluded_as_standalone": [
+        "one-channel parameter refinements below current systematic uncertainty",
+        "phenomenology scans without a falsifiable experimental interface"
+      ]
+    },
+    {
+      "problem_id": "PHY-005",
+      "title": "Nature of the Higgs sector and electroweak symmetry breaking",
+      "status": "active",
+      "open_question": "Is the observed Higgs field fundamental and unique, what is its potential, and what dynamics set and stabilize the electroweak scale?",
+      "field_level_impact": "The Higgs sector is a central particle-physics science driver connected to mass generation, new particles, vacuum stability and the early universe.",
+      "recognition_evidence": [
+        {
+          "authority": "2023 Particle Physics Project Prioritization Panel",
+          "kind": "official_strategy",
+          "url": "https://www.usparticlephysics.org/2023-p5-report/decipher-the-quantum-realm.html",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "authority": "Snowmass Higgs Topical Group",
+          "kind": "community_frontier_report",
+          "url": "https://arxiv.org/abs/2209.07510",
+          "accessed_at": "2026-09-02"
+        }
+      ],
+      "legacy_alignment": ["TP-027"],
+      "recognized_subproblem_domains": [
+        "global EFT constraints that distinguish Higgs-sector mechanisms",
+        "self-coupling and electroweak-phase-transition inference",
+        "cross-channel tests of additional or composite Higgs sectors"
+      ],
+      "excluded_as_standalone": [
+        "one Wilson coefficient or one-loop correction with no global consequence",
+        "an unconstrained model scan"
+      ]
+    },
+    {
+      "problem_id": "PHY-006",
+      "title": "Physical origin of inflation and cosmic acceleration",
+      "status": "active",
+      "open_question": "What physics drove primordial inflation and the present accelerated expansion, and are they caused by fields, vacuum energy or modified gravity?",
+      "field_level_impact": "Inflation and dark energy determine the origin and fate of cosmic structure and are major particle-physics and astronomy priorities.",
+      "recognition_evidence": [
+        {
+          "authority": "2023 Particle Physics Project Prioritization Panel",
+          "kind": "official_strategy",
+          "url": "https://www.usparticlephysics.org/2023-p5-report/illuminate-the-invisible-universe.html",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "authority": "US National Academies Astro2020",
+          "kind": "decadal_survey",
+          "url": "https://nap.nationalacademies.org/resource/26141/interactive/",
+          "accessed_at": "2026-09-02"
+        }
+      ],
+      "legacy_alignment": ["TP-044"],
+      "recognized_subproblem_domains": [
+        "model-independent reconstruction using public cosmological data",
+        "systematics audits of tensions that distinguish early- and late-universe mechanisms",
+        "falsifiable primordial signatures with cross-survey forecasts"
+      ],
+      "excluded_as_standalone": [
+        "one graph alphabet or correlator identity",
+        "one dataset tension without a systematic-error and model-comparison audit"
+      ]
+    },
+    {
+      "problem_id": "PHY-007",
+      "title": "Origin of the cosmic matter-antimatter asymmetry",
+      "status": "active",
+      "open_question": "Which beyond-Standard-Model dynamics generated the observed baryon asymmetry of the universe?",
+      "field_level_impact": "The Standard Model does not explain why a matter-dominated universe survived, connecting collider, neutrino, EDM, flavor, phase-transition and gravitational-wave programs.",
+      "recognition_evidence": [
+        {
+          "authority": "2023 Particle Physics Project Prioritization Panel",
+          "kind": "official_strategy",
+          "url": "https://www.usparticlephysics.org/2023-p5-report/explore-new-paradigms-in-physics.html",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "authority": "Snowmass Testable Baryogenesis Community",
+          "kind": "community_frontier_report",
+          "url": "https://arxiv.org/abs/2203.07059",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "authority": "US DOE Nuclear Science Advisory Committee",
+          "kind": "official_strategy",
+          "url": "https://science.osti.gov/-/media/np/pdf/Reports/2024/2024-NSAC-LRP-Report_Final.pdf",
+          "accessed_at": "2026-09-02"
+        }
+      ],
+      "legacy_alignment": [],
+      "recognized_subproblem_domains": [
+        "joint exclusions of testable baryogenesis or leptogenesis mechanisms",
+        "CP- and lepton-number-violation constraints with complete uncertainty propagation",
+        "electroweak phase-transition predictions linked to collider and gravitational-wave probes"
+      ],
+      "excluded_as_standalone": [
+        "a parameter scan disconnected from reachable observables",
+        "a model variant with no discriminating signature"
+      ]
+    },
+    {
+      "problem_id": "PHY-008",
+      "title": "Quantum gravity, black-hole information and emergence of spacetime",
+      "status": "active",
+      "open_question": "How does spacetime and semiclassical gravity emerge from quantum degrees of freedom, and how are black-hole evaporation and interiors compatible with unitary quantum mechanics?",
+      "field_level_impact": "A quantum description of gravity is a fundamental gap in present physics; black holes provide its sharpest consistency tests.",
+      "recognition_evidence": [
+        {
+          "authority": "2023 Particle Physics Project Prioritization Panel",
+          "kind": "official_strategy",
+          "url": "https://www.usparticlephysics.org/2023-p5-report/explore-new-paradigms-in-physics.html",
+          "accessed_at": "2026-09-02"
+        },
+        {
+          "authority": "Snowmass Quantum Gravity String Theory and Black Holes Topical Group",
+          "kind": "community_frontier_report",
+          "url": "https://arxiv.org/abs/2210.01737",
+          "accessed_at": "2026-09-02"
+        }
+      ],
+      "legacy_alignment": [
+        "TP-002",
+        "TP-003",
+        "TP-025",
+        "TP-026",
+        "TP-028",
+        "TP-037",
+        "TP-038",
+        "TP-045",
+        "TP-046",
+        "TP-047",
+        "TP-048"
+      ],
+      "recognized_subproblem_domains": [
+        "exact models that test universal claims about information recovery or spacetime emergence",
+        "holographic or de Sitter consistency conditions with explicit observable consequences",
+        "amplitude and double-copy structures tied to quantum-gravity consistency rather than isolated algebra"
+      ],
+      "excluded_as_standalone": [
+        "one matrix-model truncation improvement",
+        "one amplitude alphabet, graph family or integral identity without a quantum-gravity consequence"
+      ]
+    }
+  ]
+}

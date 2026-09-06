@@ -160,6 +160,21 @@ def _index_papers(db: FactoryDB, data: Path) -> int:
                 "target_journal_ranking_system": value.get(
                     "target_journal_ranking_system"
                 ),
+                "target_journal_ranking_year": value.get(
+                    "target_journal_ranking_year"
+                ),
+                "target_journal_ranking_scope": value.get(
+                    "target_journal_ranking_scope"
+                ),
+                "target_journal_ranking_category": value.get(
+                    "target_journal_ranking_category"
+                ),
+                "target_journal_ranking_source": value.get(
+                    "target_journal_ranking_source"
+                ),
+                "target_journal_checked_at": value.get(
+                    "target_journal_checked_at"
+                ),
                 "target_policy_exception": value.get("target_policy_exception"),
                 "manuscript_dir": value.get("manuscript_dir"),
                 "writing_release_status": release.get("status"),

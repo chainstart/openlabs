@@ -13,7 +13,7 @@ import tempfile
 import time
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
 import httpx
@@ -83,6 +83,14 @@ EXCLUDED_ROOT_PDFS = {
     "paper.pdf",
     "supplementary_material.pdf",
 }
+
+# Handoff sources contain manuscript inputs, not research logs, internal reviews,
+# agent instructions, datasets, scripts, caches or compiled manuscript outputs.
+CLEAN_SOURCE_SUFFIXES = frozenset({
+    ".tex", ".bib", ".bbl", ".bst", ".cls", ".sty", ".clo", ".def",
+    ".fd", ".cfg", ".eps", ".pdf", ".png", ".jpg", ".jpeg", ".svg",
+    ".tikz", ".pgf",
+})
 
 # These commands carry author/depositor identity, not scientific claims.  The
 # review fingerprint removes them only from the TeX preamble.  The immutable
@@ -654,6 +662,19 @@ def build_writing_projection(
         }
         if metadata.get("target_journal_section"):
             projected_target["section"] = str(metadata["target_journal_section"])
+        target_ranking_fields = {
+            "target_journal_tier": "tier",
+            "target_journal_ranking_system": "ranking_system",
+            "target_journal_ranking_year": "ranking_year",
+            "target_journal_ranking_scope": "ranking_scope",
+            "target_journal_ranking_category": "ranking_category",
+            "target_journal_ranking_source": "ranking_source",
+            "target_journal_checked_at": "ranking_checked_at",
+        }
+        for source_field, projected_field in target_ranking_fields.items():
+            value = metadata.get(source_field)
+            if value is not None and str(value).strip():
+                projected_target[projected_field] = value
         projection["target_journal"] = projected_target
     return projection
 
@@ -685,6 +706,61 @@ def _paper_projection(
     return projection
 
 
+def _verified_journal_source_archive(
+    metadata: Mapping[str, Any], repo_root: Path, manuscript: Path,
+    files: list[Path], supplement_source: Path | None,
+) -> tuple[Path, int] | None:
+    package = metadata.get("submission_package")
+    if package is None:
+        return None
+    if (
+        not isinstance(package, Mapping)
+        or not package.get("source_archive")
+        or package.get("status") in {"building", "planned", "pending", "failed", "draft"}
+    ):
+        raise HandoffError("Configured journal source package is not built; do not fall back to canonical files")
+    archive_path = (repo_root / str(package["source_archive"])).resolve()
+    if (
+        not archive_path.is_relative_to(repo_root)
+        or not archive_path.is_file()
+        or str(package.get("version")) != str(metadata.get("version") or "1.0.0")
+        or sha256_file(archive_path) != package.get("source_archive_sha256")
+    ):
+        raise HandoffError("Journal source archive is missing, stale, or has an invalid SHA-256")
+    allowed = {path.relative_to(manuscript).as_posix(): path for path in files}
+    if any(not path.resolve().is_relative_to(manuscript.resolve()) for path in files):
+        raise HandoffError("LaTeX source symlink escapes the canonical manuscript")
+    names: set[str] = set()
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            members = archive.infolist()
+            if len(members) > 4096 or sum(item.file_size for item in members) > 104857600:
+                raise HandoffError("Journal source archive exceeds bounded source-package limits")
+            for item in members:
+                name = item.filename
+                relative = PurePosixPath(name)
+                if (
+                    relative.is_absolute() or ".." in relative.parts or "\\" in name
+                    or (item.external_attr >> 16) & 0o170000 == 0o120000
+                ):
+                    raise HandoffError(f"Unsafe journal source archive member: {name}")
+                if item.is_dir():
+                    continue
+                if name in names or name not in allowed:
+                    raise HandoffError(f"Non-source or unbound journal archive member: {name}")
+                if archive.read(item) != allowed[name].read_bytes():
+                    raise HandoffError(f"Journal archive differs from canonical source: {name}")
+                names.add(name)
+    except zipfile.BadZipFile as exc:
+        raise HandoffError("Journal source archive is not a valid ZIP") from exc
+    required = {"main.tex"}
+    if supplement_source is not None:
+        required.add(supplement_source.with_suffix(".tex").name)
+    if not required.issubset(names):
+        raise HandoffError("Journal source archive omits a manuscript document's LaTeX source")
+    return archive_path, len(names)
+
+
 def build_handoff_package(
     paper_id: str,
     *,
@@ -704,28 +780,78 @@ def build_handoff_package(
         raise HandoffError(f"Manuscript directory does not exist: {manuscript}")
     if not pdf_source.is_file():
         raise HandoffError(f"Compile the canonical PDF before handoff: {pdf_source}")
+    supplement_source: Path | None = None
+    if metadata.get("latest_supplementary_pdf"):
+        supplement_source = (repo_root / str(metadata["latest_supplementary_pdf"])).resolve()
+        # Keep the supplement inside the exact canonical snapshot reviewed by the
+        # gate. In particular, do not attach an unreviewed build-cache/export PDF.
+        if (
+            supplement_source.parent != manuscript.resolve()
+            or supplement_source == pdf_source.resolve()
+            or supplement_source.suffix.casefold() != ".pdf"
+            or not supplement_source.is_file()
+            or not supplement_source.with_suffix(".tex").is_file()
+        ):
+            raise HandoffError(
+                "latest_supplementary_pdf must name a distinct compiled PDF and "
+                "matching .tex source in the canonical manuscript root"
+            )
     target = Path(output).resolve()
     target.mkdir(parents=True, exist_ok=True)
     source_zip = target / "source.zip"
     files = list(_source_files(manuscript, pdf_source))
+    if supplement_source is not None:
+        # _source_files deliberately includes this PDF in the review snapshot;
+        # only the clean LaTeX ZIP excludes its separately delivered output.
+        if supplement_source not in {path.resolve() for path in files}:
+            raise HandoffError("Supplementary PDF is excluded from the manuscript snapshot")
+        files = [path for path in files if path.resolve() != supplement_source]
+    files = [path for path in files if (
+        path.suffix.casefold() in CLEAN_SOURCE_SUFFIXES
+        and not (
+            path.parent == manuscript
+            and path.suffix.casefold() == ".pdf"
+            and path.with_suffix(".tex").is_file()
+        )
+    )]
     if not files:
         raise HandoffError("No LaTeX source files were found")
-    with zipfile.ZipFile(
-        source_zip,
-        "w",
-        compression=zipfile.ZIP_DEFLATED,
-        compresslevel=9,
-    ) as archive:
-        for path in files:
-            info = zipfile.ZipInfo(path.relative_to(manuscript).as_posix())
-            info.date_time = (1980, 1, 1, 0, 0, 0)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o100644 << 16
-            archive.writestr(info, path.read_bytes())
+    verified_archive = _verified_journal_source_archive(
+        metadata, repo_root, manuscript, files, supplement_source,
+    )
+    file_count = len(files)
+    if verified_archive is not None:
+        archive_path, file_count = verified_archive
+        shutil.copyfile(archive_path, source_zip)
+    else:
+        with zipfile.ZipFile(
+            source_zip,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+            compresslevel=9,
+        ) as archive:
+            for path in files:
+                if not path.resolve().is_relative_to(manuscript.resolve()):
+                    raise HandoffError("LaTeX source symlink escapes the canonical manuscript")
+                info = zipfile.ZipInfo(path.relative_to(manuscript).as_posix())
+                info.date_time = (1980, 1, 1, 0, 0, 0)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o100644 << 16
+                archive.writestr(info, path.read_bytes())
     pdf = target / "paper.pdf"
     shutil.copyfile(pdf_source, pdf)
     source_hash = sha256_file(source_zip)
     pdf_hash = sha256_file(pdf)
+    supplement = None
+    if supplement_source is not None:
+        supplement_pdf = target / "supplement.pdf"
+        shutil.copyfile(supplement_source, supplement_pdf)
+        supplement = {
+            "path": supplement_pdf.name,
+            "filename": supplement_pdf.name,
+            "size": supplement_pdf.stat().st_size,
+            "sha256": sha256_file(supplement_pdf),
+        }
     version = str(metadata.get("version") or "1.0.0")
     origin_commit = _git_head(repo_root)
     release = _release_snapshot(metadata)
@@ -738,6 +864,8 @@ def build_handoff_package(
         f"pkg_{paper_id}_{_safe_version(version)}_"
         f"{source_hash[:6]}{pdf_hash[:6]}{release_hash[:6]}"
     )
+    if supplement is not None:
+        package_id += f"s{supplement['sha256'][:12]}"
     origin = metadata.get("origin") if isinstance(metadata.get("origin"), Mapping) else {}
     manifest = {
         "schema_version": HANDOFF_SCHEMA_VERSION,
@@ -757,7 +885,11 @@ def build_handoff_package(
             "filename": "source.zip",
             "size": source_zip.stat().st_size,
             "sha256": source_hash,
-            "file_count": len(files),
+            "file_count": file_count,
+            "assembly": (
+                "verified_journal_source_archive" if verified_archive is not None
+                else "canonical_source_allowlist"
+            ),
         },
         "pdf": {
             "path": pdf.name,
@@ -766,6 +898,8 @@ def build_handoff_package(
             "sha256": pdf_hash,
         },
     }
+    if supplement is not None:
+        manifest["supplementary_pdf"] = supplement
     manifest_path = target / "handoff.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -793,7 +927,10 @@ def load_handoff_manifest(path: str | Path) -> dict[str, Any]:
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if payload.get("schema_version") not in SUPPORTED_HANDOFF_SCHEMAS:
         raise HandoffError("Unsupported handoff manifest")
-    for section in ("source", "pdf"):
+    sections = ["source", "pdf"]
+    if "supplementary_pdf" in payload:
+        sections.append("supplementary_pdf")
+    for section in sections:
         artifact = payload.get(section)
         if not isinstance(artifact, dict):
             raise HandoffError(f"{section} metadata is missing")
@@ -804,6 +941,14 @@ def load_handoff_manifest(path: str | Path) -> dict[str, Any]:
             raise HandoffError(f"{section} file is missing: {local}")
         if sha256_file(local) != artifact.get("sha256"):
             raise HandoffError(f"{section} SHA-256 no longer matches the manifest")
+        # Legacy v1 manifests may omit sizes; when declared, every artifact must
+        # match its size as well as its digest before any upload is attempted.
+        if (section == "supplementary_pdf" or "size" in artifact) and (
+            type(artifact.get("size")) is not int
+            or not 0 < artifact["size"] <= 104857600
+            or local.stat().st_size != artifact["size"]
+        ):
+            raise HandoffError(f"{section} size no longer matches the manifest")
         # Consumers need a resolved path for upload, while the on-disk manifest
         # stays portable across checkouts and machines.
         artifact["path"] = str(local.resolve())
@@ -1334,6 +1479,9 @@ class ManageApiClient:
         package_id = str(manifest["package_id"])
         source = manifest["source"]
         pdf = manifest["pdf"]
+        supplement = manifest.get("supplementary_pdf")
+        if "supplementary_pdf" in manifest and not isinstance(supplement, Mapping):
+            raise HandoffError("supplementary_pdf metadata is missing or invalid")
         registration_body = {
             "package_id": package_id,
             "version": manifest["version"],
@@ -1346,6 +1494,11 @@ class ManageApiClient:
             "pdf_sha256": pdf["sha256"],
             "pdf_size": pdf["size"],
         }
+        if isinstance(supplement, Mapping):
+            registration_body.update({
+                "supplementary_pdf_sha256": supplement["sha256"],
+                "supplementary_pdf_size": supplement["size"],
+            })
         registration_key = f"package:{package_id}:register"
 
         def register_package() -> Any:
@@ -1359,10 +1512,14 @@ class ManageApiClient:
         registration = register_package()
         upload = registration.get("upload") if isinstance(registration, Mapping) else None
         if isinstance(upload, Mapping):
-            artifacts = (
+            artifacts = [
                 ("source", Path(source["path"]), "application/zip"),
                 ("pdf", Path(pdf["path"]), "application/pdf"),
-            )
+            ]
+            if isinstance(supplement, Mapping):
+                artifacts.append((
+                    "supplementary_pdf", Path(supplement["path"]), "application/pdf",
+                ))
             for artifact, path, content_type in artifacts:
                 if artifact not in upload:
                     raise HandoffError(
@@ -1558,6 +1715,11 @@ def save_release_receipt(
             ),
         },
     }
+    if isinstance(manifest.get("supplementary_pdf"), Mapping):
+        receipt["supplementary_pdf"] = {
+            key: manifest["supplementary_pdf"][key]
+            for key in ("filename", "size", "sha256")
+        }
     if receipt_path.exists():
         existing = json.loads(receipt_path.read_text(encoding="utf-8"))
         identity = (
@@ -1568,6 +1730,7 @@ def save_release_receipt(
             "origin_commit",
             "source",
             "pdf",
+            "supplementary_pdf",
             "release",
         )
         if any(existing.get(field) != receipt.get(field) for field in identity):
@@ -1761,7 +1924,12 @@ def _receipt_matches_artifacts(
         for field in ("paper_id", "version")
     ):
         return False
-    for section in ("source", "pdf"):
+    if bool(receipt.get("supplementary_pdf")) != bool(manifest.get("supplementary_pdf")):
+        return False
+    sections = ["source", "pdf"]
+    if manifest.get("supplementary_pdf"):
+        sections.append("supplementary_pdf")
+    for section in sections:
         receipt_artifact = receipt.get(section)
         manifest_artifact = manifest.get(section)
         if not isinstance(receipt_artifact, Mapping) or not isinstance(

@@ -1,4 +1,5 @@
 import json
+import hashlib
 import subprocess
 import zipfile
 from pathlib import Path
@@ -10,6 +11,7 @@ from paper_writing.handoff import (
     HandoffError,
     ManageApiClient,
     _paper_projection,
+    _receipt_matches_artifacts,
     build_handoff_package,
     build_writing_projection,
     changed_registry_paper_ids,
@@ -18,6 +20,7 @@ from paper_writing.handoff import (
     manuscript_review_content_sha256,
     manuscript_snapshot_sha256,
     plan_ready_handoffs,
+    save_release_receipt,
     sync_writing_metadata_batch,
     validate_release_preconditions,
 )
@@ -230,6 +233,13 @@ display_id: 20260721-ai-llm-reliability-audit
 work_id: erdos866-pairwise-sum-bounds
 target_journal: Acta Arithmetica
 target_journal_section: Combinatorial Number Theory
+target_journal_tier: 3
+target_journal_ranking_system: 2025 CAS Journal Ranking Table (Major Category)
+target_journal_ranking_year: 2025
+target_journal_ranking_scope: major_category
+target_journal_ranking_category: Mathematics
+target_journal_ranking_source: https://example.test/cas-2025/acta-arithmetica
+target_journal_checked_at: '2026-09-04'
 manuscript_dir: papers/{paper_id}/manuscript
 latest_pdf: papers/{paper_id}/manuscript/main.pdf
 authors:
@@ -267,6 +277,13 @@ authors:
         "name": "Acta Arithmetica",
         "section": "Combinatorial Number Theory",
         "source": "ara-paper-writing registry",
+        "tier": 3,
+        "ranking_system": "2025 CAS Journal Ranking Table (Major Category)",
+        "ranking_year": 2025,
+        "ranking_scope": "major_category",
+        "ranking_category": "Mathematics",
+        "ranking_source": "https://example.test/cas-2025/acta-arithmetica",
+        "ranking_checked_at": "2026-09-04",
     }
     assert result["source"]["file_count"] == 3
     assert result["source"]["path"] == "source.zip"
@@ -296,6 +313,135 @@ def test_handoff_manifest_detects_modified_artifact(tmp_path: Path) -> None:
         assert "SHA-256" in str(error)
     else:
         raise AssertionError("modified artifact should fail validation")
+
+
+def _supplement_repo(tmp_path: Path) -> tuple[str, Path, Path]:
+    paper_id = "20260906-physics-hep-supplement-test"
+    manuscript = tmp_path / "papers" / paper_id / "manuscript"
+    manuscript.mkdir(parents=True)
+    for stem in ("main", "supplement"):
+        (manuscript / f"{stem}.tex").write_text(
+            "\\documentclass{article}\\begin{document}Result\\end{document}", encoding="utf-8",
+        )
+        (manuscript / f"{stem}.pdf").write_bytes(f"%PDF {stem}".encode())
+    (manuscript / "README.md").write_text("internal review notes", encoding="utf-8")
+    (manuscript / "VALIDATION.md").write_text("agent evidence", encoding="utf-8")
+    (manuscript / "validation.json").write_text("{}", encoding="utf-8")
+    registry = tmp_path / "registry" / "papers" / f"{paper_id}.yaml"
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        f"paper_id: {paper_id}\ntitle: Supplement test\nversion: 1.0.0\n"
+        f"manuscript_dir: papers/{paper_id}/manuscript\n"
+        f"latest_pdf: papers/{paper_id}/manuscript/main.pdf\n"
+        f"latest_supplementary_pdf: papers/{paper_id}/manuscript/supplement.pdf\n",
+        encoding="utf-8",
+    )
+    return paper_id, manuscript, registry
+
+
+def test_supplement_package_has_clean_sources_and_snapshot_bound_pdf(tmp_path: Path) -> None:
+    paper_id, manuscript, _ = _supplement_repo(tmp_path)
+    original_snapshot = manuscript_snapshot_sha256(manuscript, manuscript / "main.pdf")
+    result = build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+    with zipfile.ZipFile(tmp_path / "dist" / "source.zip") as archive:
+        assert archive.namelist() == ["main.tex", "supplement.tex"]
+    assert result["supplementary_pdf"]["path"] == "supplement.pdf"
+    loaded = load_handoff_manifest(tmp_path / "dist" / "handoff.json")
+    assert loaded["supplementary_pdf"]["path"] == str(tmp_path / "dist" / "supplement.pdf")
+    (manuscript / "supplement.pdf").write_bytes(b"%PDF changed supplement")
+    changed = build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist-2")
+    assert changed["package_id"] != result["package_id"]
+    assert changed["source"]["sha256"] == result["source"]["sha256"]
+    assert manuscript_snapshot_sha256(manuscript, manuscript / "main.pdf") != original_snapshot
+
+
+def test_journal_source_archive_is_reused_only_when_clean_current_and_exact(tmp_path: Path) -> None:
+    paper_id, manuscript, registry = _supplement_repo(tmp_path)
+    archive_path = tmp_path / "journal-source.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        for name in ("main.tex", "supplement.tex"):
+            archive.write(manuscript / name, name)
+    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    registry.write_text(registry.read_text() + (
+        "submission_package:\n  version: 1.0.0\n  source_archive: journal-source.zip\n"
+        f"  source_archive_sha256: {digest}\n"
+    ), encoding="utf-8")
+    result = build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+    assert result["source"]["sha256"] == digest
+    assert result["source"]["file_count"] == 2
+    assert result["source"]["assembly"] == "verified_journal_source_archive"
+    (manuscript / "supplement.tex").write_text("a new proof", encoding="utf-8")
+    with pytest.raises(HandoffError, match="differs from canonical"):
+        build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "stale")
+
+
+def test_configured_but_unbuilt_journal_package_cannot_fall_back(tmp_path: Path) -> None:
+    paper_id, _, registry = _supplement_repo(tmp_path)
+    registry.write_text(registry.read_text() + (
+        "submission_package:\n  version: 1.0.0\n  status: building\n"
+    ), encoding="utf-8")
+    with pytest.raises(HandoffError, match="not built; do not fall back"):
+        build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+
+
+@pytest.mark.parametrize("bad_member", ["README.md", "main.pdf", "../escape.tex", "build/internal.tex"])
+def test_journal_archive_rejects_internal_or_unsafe_members(tmp_path: Path, bad_member: str) -> None:
+    paper_id, manuscript, registry = _supplement_repo(tmp_path)
+    archive_path = tmp_path / "journal-source.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        for name in ("main.tex", "supplement.tex"):
+            archive.write(manuscript / name, name)
+        archive.writestr(bad_member, "internal")
+    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    registry.write_text(registry.read_text() + (
+        "submission_package:\n  version: 1.0.0\n  source_archive: journal-source.zip\n"
+        f"  source_archive_sha256: {digest}\n"
+    ), encoding="utf-8")
+    with pytest.raises(HandoffError, match="archive member"):
+        build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+
+
+@pytest.mark.parametrize("bad_value", ["main.pdf", "missing.pdf", "build-supplement/supplement.pdf"])
+def test_supplement_requires_canonical_pdf_and_tex(tmp_path: Path, bad_value: str) -> None:
+    paper_id, _, registry = _supplement_repo(tmp_path)
+    registry.write_text(registry.read_text().replace(
+        f"latest_supplementary_pdf: papers/{paper_id}/manuscript/supplement.pdf",
+        f"latest_supplementary_pdf: papers/{paper_id}/manuscript/{bad_value}",
+    ), encoding="utf-8")
+    with pytest.raises(HandoffError, match="canonical manuscript root"):
+        build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+
+
+@pytest.mark.parametrize("change", ["hash", "size", "missing"])
+def test_supplement_manifest_validates_bytes_and_size(tmp_path: Path, change: str) -> None:
+    paper_id, _, _ = _supplement_repo(tmp_path)
+    build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+    manifest_path = tmp_path / "dist" / "handoff.json"
+    if change == "hash":
+        (tmp_path / "dist" / "supplement.pdf").write_bytes(b"tampered")
+    elif change == "missing":
+        (tmp_path / "dist" / "supplement.pdf").unlink()
+    else:
+        manifest = json.loads(manifest_path.read_text())
+        manifest["supplementary_pdf"]["size"] += 1
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(HandoffError, match="supplementary_pdf"):
+        load_handoff_manifest(manifest_path)
+
+
+def test_supplement_is_bound_in_release_receipts(tmp_path: Path) -> None:
+    paper_id, _, _ = _supplement_repo(tmp_path)
+    manifest = build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+    _, receipt = save_release_receipt(
+        manifest, manage_paper={}, manage_package={}, root=tmp_path,
+        manage_api_url="https://manage.example",
+    )
+    assert receipt["supplementary_pdf"]["sha256"] == manifest["supplementary_pdf"]["sha256"]
+    assert _receipt_matches_artifacts(receipt, manifest)
+    without_supplement = {key: value for key, value in manifest.items() if key != "supplementary_pdf"}
+    assert not _receipt_matches_artifacts(receipt, without_supplement)
+    receipt["supplementary_pdf"]["size"] += 1
+    assert not _receipt_matches_artifacts(receipt, manifest)
 
 
 def test_signed_upload_normalizes_cloudbase_gateway_path(tmp_path: Path) -> None:
@@ -379,6 +525,42 @@ def _signed_uploads(registration: int) -> dict[str, object]:
             }
         }
     }
+
+
+def test_manage_client_uploads_and_retries_only_the_supplement(tmp_path: Path) -> None:
+    manifest = _upload_manifest(tmp_path)
+    supplement = tmp_path / "supplement.pdf"
+    supplement.write_bytes(b"%PDF supplement")
+    manifest["supplementary_pdf"] = {
+        "path": str(supplement), "size": supplement.stat().st_size,
+        "sha256": hashlib.sha256(supplement.read_bytes()).hexdigest(),
+    }
+    registrations = []
+    uploads = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "storage.example":
+            uploads.append(request.url.path)
+            if request.url.path == "/supplement" and uploads.count("/supplement") == 1:
+                return _expired_upload_response()
+            return httpx.Response(200)
+        if request.url.path.endswith("/complete"):
+            return httpx.Response(200, json={"data": {"status": "ready"}})
+        registrations.append(json.loads(request.read()))
+        uploaded_siblings = len(registrations) > 1
+        return httpx.Response(200, json={"data": {"upload": {
+            "source": None if uploaded_siblings else {"url": "https://storage.example/source"},
+            "pdf": None if uploaded_siblings else {"url": "https://storage.example/pdf"},
+            "supplementary_pdf": {"url": "https://storage.example/supplement"},
+        }}})
+
+    with httpx.Client(transport=httpx.MockTransport(api)) as http_client:
+        client = ManageApiClient("https://manage.example", "ara_test_secret", client=http_client)
+        assert client.push_package(manifest)["status"] == "ready"
+    assert uploads == ["/source", "/pdf", "/supplement", "/supplement"]
+    assert registrations[0] == registrations[1]
+    assert registrations[0]["supplementary_pdf_sha256"] == manifest["supplementary_pdf"]["sha256"]
+    assert registrations[0]["supplementary_pdf_size"] == supplement.stat().st_size
 
 
 def _expired_upload_response() -> httpx.Response:

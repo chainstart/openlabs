@@ -1,6 +1,6 @@
-# TP-005：有限 N SU(3) 的非平凡小 Wilson-loop 严格界
+# 已归档 TP-005：有限 N SU(3) 的非平凡小 Wilson-loop 严格界
 
-- 状态：`candidate`
+- 状态：`aligned_work_package_only`
 - 开放性证据：A
 - 最近审计：2026-08-26
 - 首轮资源：H（从 L/M 级小基开始，硬上限 30 GiB）

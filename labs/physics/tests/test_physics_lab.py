@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
+from copy import deepcopy
 from pathlib import Path
 
 from protocols.physics_research_protocol import validate
 from tools.dataset_intake import _identifier
 from tools.physics_runtime import report
+from tools.problem_portfolio import validate_portfolio, validate_subproblems
 from tools.problem_verdict import derive_problem_verdict, validate_resolution
 
 LAB_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = LAB_ROOT / "protocols" / "examples"
+PORTFOLIO = LAB_ROOT / "problems" / "portfolio.json"
+PORTFOLIO_AUDIT = LAB_ROOT / "problems" / "AUDIT-2026-09-02.md"
+SUBPROBLEMS = LAB_ROOT / "problems" / "subproblems.json"
 
 
 def test_example_protocol_passes_discovery_and_commit() -> None:
@@ -72,3 +78,65 @@ def test_problem_verdict_is_derived_only_from_all_route_criteria() -> None:
     decision["problem_verdict"] = "solved_positive"
     assert derive_problem_verdict(decision)[0] == "solved_positive"
     assert validate_resolution(decision) == []
+
+
+def test_active_problem_portfolio_passes_importance_gate() -> None:
+    portfolio = json.loads(PORTFOLIO.read_text(encoding="utf-8"))
+    assert validate_portfolio(portfolio) == []
+
+
+def test_problem_portfolio_rejects_single_authority_promotion() -> None:
+    portfolio = json.loads(PORTFOLIO.read_text(encoding="utf-8"))
+    invalid = deepcopy(portfolio)
+    invalid["problems"][0]["recognition_evidence"] = [
+        invalid["problems"][0]["recognition_evidence"][0]
+    ]
+    errors = validate_portfolio(invalid)
+    assert any("at least 2 recognition evidence" in error for error in errors)
+
+
+def test_problem_portfolio_rejects_paper_only_promotion() -> None:
+    portfolio = json.loads(PORTFOLIO.read_text(encoding="utf-8"))
+    invalid = deepcopy(portfolio)
+    for record in invalid["problems"][0]["recognition_evidence"]:
+        record["kind"] = "community_frontier_report"
+    errors = validate_portfolio(invalid)
+    assert any("official strategy" in error for error in errors)
+
+
+def test_legacy_catalog_audit_covers_every_tp_problem_once() -> None:
+    audit = PORTFOLIO_AUDIT.read_text(encoding="utf-8")
+    audited_ids = re.findall(
+        r"^\| (TP-\d{3}) \| (?:aligned_work_package_only|retired_microtopic) \|",
+        audit,
+        re.MULTILINE,
+    )
+    assert audited_ids == [f"TP-{number:03d}" for number in range(1, 51)]
+
+
+def test_recognized_subproblems_pass_hierarchy_and_significance_gate() -> None:
+    portfolio = json.loads(PORTFOLIO.read_text(encoding="utf-8"))
+    subproblems = json.loads(SUBPROBLEMS.read_text(encoding="utf-8"))
+    assert validate_subproblems(subproblems, portfolio) == []
+    assert len(subproblems["subproblems"]) == 24
+
+
+def test_subproblem_cannot_activate_itself_or_claim_a_guaranteed_venue() -> None:
+    portfolio = json.loads(PORTFOLIO.read_text(encoding="utf-8"))
+    subproblems = json.loads(SUBPROBLEMS.read_text(encoding="utf-8"))
+    invalid = deepcopy(subproblems)
+    invalid["venue_claim"] = "Guaranteed publication in Physical Review Letters."
+    invalid["subproblems"][0]["work_package_status"] = "active"
+    errors = validate_subproblems(invalid, portfolio)
+    assert any("no venue is guaranteed" in error for error in errors)
+    assert any("must remain unselected" in error for error in errors)
+
+
+def test_subproblem_requires_independent_recognition_sources() -> None:
+    portfolio = json.loads(PORTFOLIO.read_text(encoding="utf-8"))
+    subproblems = json.loads(SUBPROBLEMS.read_text(encoding="utf-8"))
+    invalid = deepcopy(subproblems)
+    source_id = invalid["subproblems"][0]["recognition_source_ids"][0]
+    invalid["subproblems"][0]["recognition_source_ids"] = [source_id, source_id]
+    errors = validate_subproblems(invalid, portfolio)
+    assert any("2 independent recognition authorities" in error for error in errors)

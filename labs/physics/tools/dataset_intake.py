@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,6 +44,7 @@ def download(
     filename: str | None,
     expected_sha256: str | None,
     max_bytes: int,
+    retries: int = 4,
 ) -> tuple[Path, dict[str, object]]:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
@@ -53,6 +55,8 @@ def download(
     filename = _identifier(filename or inferred, "filename")
     if max_bytes < 1:
         raise ValueError("max_bytes must be positive")
+    if retries < 0:
+        raise ValueError("retries must be non-negative")
     if expected_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
         raise ValueError("expected_sha256 must be lowercase SHA-256")
 
@@ -64,17 +68,50 @@ def download(
     temporary = output.with_name(f".{output.name}.{os.getpid()}.part")
     digest = hashlib.sha256()
     size = 0
-    request = urllib.request.Request(url, headers={"User-Agent": "OpenLabs/physics-dataset-intake"})
+    headers = None
     try:
-        response = urllib.request.urlopen(request, timeout=60)
-        with response, temporary.open("xb") as handle:
-            while chunk := response.read(1024 * 1024):
-                size += len(chunk)
-                if size > max_bytes:
-                    raise ValueError(f"download exceeds max_bytes={max_bytes}")
-                digest.update(chunk)
-                handle.write(chunk)
-            headers = response.headers
+        temporary.touch(exist_ok=False)
+        for attempt in range(retries + 1):
+            request_headers = {"User-Agent": "OpenLabs/physics-dataset-intake"}
+            if size:
+                request_headers["Range"] = f"bytes={size}-"
+            request = urllib.request.Request(url, headers=request_headers)
+            try:
+                response = urllib.request.urlopen(request, timeout=60)
+                status = getattr(response, "status", response.getcode())
+                if size and status != 206:
+                    # The server ignored Range. Restart rather than append a duplicate body.
+                    temporary.write_bytes(b"")
+                    digest = hashlib.sha256()
+                    size = 0
+                response_size = 0
+                response_headers = response.headers
+                expected_response_size = int(response_headers.get("Content-Length") or 0)
+                with response, temporary.open("ab") as handle:
+                    while chunk := response.read(1024 * 1024):
+                        response_size += len(chunk)
+                        size += len(chunk)
+                        if size > max_bytes:
+                            raise ValueError(f"download exceeds max_bytes={max_bytes}")
+                        digest.update(chunk)
+                        handle.write(chunk)
+                if expected_response_size and response_size != expected_response_size:
+                    raise EOFError(
+                        f"short HTTP response: expected {expected_response_size} bytes, received {response_size}"
+                    )
+                content_range = response_headers.get("Content-Range")
+                if content_range and "/" in content_range:
+                    total = content_range.rsplit("/", 1)[1]
+                    if total != "*" and size != int(total):
+                        raise EOFError(f"incomplete ranged download: expected total {total}, received {size}")
+                headers = response_headers
+                break
+            except Exception:
+                if attempt >= retries:
+                    raise
+                time.sleep(min(2**attempt, 30))
+        if headers is None:
+            raise RuntimeError("download completed without HTTP response metadata")
         actual_sha256 = digest.hexdigest()
         if expected_sha256 is not None and actual_sha256 != expected_sha256:
             raise ValueError("downloaded SHA-256 does not match expected_sha256")
@@ -117,6 +154,7 @@ def main() -> int:
     parser.add_argument("--filename")
     parser.add_argument("--expected-sha256")
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
+    parser.add_argument("--retries", type=int, default=4)
     parser.add_argument("--manifest", type=Path, required=True)
     args = parser.parse_args()
     output, manifest = download(
@@ -130,6 +168,7 @@ def main() -> int:
         filename=args.filename,
         expected_sha256=args.expected_sha256,
         max_bytes=args.max_bytes,
+        retries=args.retries,
     )
     _atomic_json(args.manifest.resolve(), manifest)
     print(json.dumps({"artifact": str(output), "manifest": str(args.manifest.resolve())}))

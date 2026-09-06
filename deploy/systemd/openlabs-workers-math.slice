@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenLabs mathematics shared memory budget (physics reserves 16 GiB)
+
+[Slice]
+# The name makes this a child of openlabs-workers.slice (34 GiB aggregate).
+# All mathematics scopes share this limit, not 18 GiB per research process.
+MemoryAccounting=yes
+MemoryHigh=16G
+MemoryMax=18G
+MemorySwapMax=0
+TasksAccounting=yes
+TasksMax=256
+CPUAccounting=yes

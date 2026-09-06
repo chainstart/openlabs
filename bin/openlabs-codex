@@ -16,4 +16,4 @@ fi
 
 exec /usr/bin/env PYTHONPATH="$OPENLABS_PYTHONPATH" /usr/bin/python3 -m openlabs \
   --workspace "$WORKSPACE" network-preflight --exec \
-  "$GUARD" -- codex -C "$ROOT" -a never -s danger-full-access "$@"
+  "$GUARD" -- codex --search -C "$ROOT" -a never -s danger-full-access "$@"

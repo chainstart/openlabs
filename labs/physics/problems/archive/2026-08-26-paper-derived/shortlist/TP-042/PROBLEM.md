@@ -1,6 +1,6 @@
-# TP-042：n≥5 宇宙学图的 cluster alphabet 与唯一性
+# 已归档 TP-042：n≥5 宇宙学图的 cluster alphabet 与唯一性
 
-- 状态：`candidate`
+- 状态：`retired_microtopic`
 - 开放性证据：A
 - 最近审计：2026-08-26
 - 首轮资源：M

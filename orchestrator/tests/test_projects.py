@@ -41,8 +41,10 @@ def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tupl
     skill = lab / "skills" / "test-protocol"
     unrelated_skill = lab / "skills" / "unrelated-method"
     protocol_script = lab / "protocols" / "validate.py"
+    paper_lookup = paths.code / "orchestrator" / "skills" / "vendor" / "paper-lookup"
     skill.mkdir(parents=True)
     unrelated_skill.mkdir(parents=True)
+    paper_lookup.mkdir(parents=True)
     protocol_script.parent.mkdir(parents=True)
     (skill / "SKILL.md").write_text(
         "---\nname: test-protocol\ndescription: Test protocol.\n---\n",
@@ -50,6 +52,10 @@ def _generic_project(paths: WorkspacePaths, *, valid_state: bool = True) -> tupl
     )
     (unrelated_skill / "SKILL.md").write_text(
         "---\nname: unrelated-method\ndescription: Must remain optional.\n---\n",
+        encoding="utf-8",
+    )
+    (paper_lookup / "SKILL.md").write_text(
+        "---\nname: paper-lookup\ndescription: Test literature lookup.\n---\n",
         encoding="utf-8",
     )
     protocol_script.write_text(
@@ -678,6 +684,7 @@ def test_project_protocol_activates_only_its_declared_runtime_skills(tmp_path) -
 
     assert job["runtime_policy"]["skills"] == [
         "$openlabs-research-factory",
+        "$paper-lookup",
         "$test-protocol",
     ]
     assert "$unrelated-method" not in job["runtime_policy"]["skills"]

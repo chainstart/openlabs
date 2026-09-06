@@ -622,6 +622,7 @@ def test_launch_writes_job_against_private_campaign_copy(tmp_path) -> None:
     assert job["transaction"]["artifact_policy"]["schema_version"] == ARTIFACT_POLICY_SCHEMA
     assert job["runtime_policy"]["sandbox"] == "danger-full-access"
     assert "$openlabs-research-factory" in job["runtime_policy"]["skills"]
+    assert "$paper-lookup" in job["runtime_policy"]["skills"]
     assert "$math-production-supervisor" not in job["runtime_policy"]["skills"]
     assert (workspace.campaign_root / ".codex" / "hooks.json").is_file()
     assert (workspace.campaign_root / ".agents" / "skills" / "amra-research-loop").is_symlink()
