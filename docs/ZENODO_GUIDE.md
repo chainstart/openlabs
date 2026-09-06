@@ -74,6 +74,48 @@ Zenodo 使用两阶段流程，质量门禁不会调用网络：
 门禁授权的外部动作仅限支撑材料发布。投稿、期刊事件、录用/拒稿与论文发表状态始终由人类作者
 决定并由对应的外部管理系统记录，门禁绝不代替。
 
+## 大型科学 payload：Git 清单与 sibling artifacts 双重绑定
+
+`openlabs-data` 的 5 MiB 新文件限制不得提高、绕过或通过拆分数据规避。科学上必需的完整
+大型数组保存在 sibling `openlabs-artifacts`；data 中相同逻辑路径只保留被忽略的组包缓存。
+`source_files` 与公开 ZIP 的文件名和完整内容不变，不删行、不转换浮点、不把 URI 当成数据。
+
+使用既有 `artifact_uri` + SHA-256 约定，以一个小型、已提交且与 Git HEAD 逐字节相同的 JSON
+manifest 明确登记每个逻辑文件。论文配置 `support.publication.artifact_manifests` 为这些内部
+清单的 data-repo 相对路径列表；它们不要加入公开 `source_files`，以免暴露本地存储 URI。
+
+```json
+{
+  "schema_version": "ara.paper_writing.support_artifacts.v1",
+  "files": [{
+    "path": "papers/PAPER/support-materials/public-support-vVERSION/results/full.npz",
+    "artifact_uri": "file:///WORKSPACE/openlabs-artifacts/paper-support/sha256/ACTUAL_SHA256/full.npz",
+    "size": 7255196,
+    "sha256": "ACTUAL_LOWERCASE_64_CHARACTER_SHA256"
+  }]
+}
+```
+
+上例仅说明字段，实际 URI 必须包含本项真实 SHA-256 的内容寻址目录。可在资源 guard 内调用
+`paper_writing.support.write_support_artifact_manifest(repo_root, paths, manifest_path)`，机械地
+复制完整字节并生成清单。该函数不会提交 Git、改变 registry 或调用网络；已经存在但内容不符的
+内容寻址对象绝不会被覆盖。只提交小清单、声明和常规小源文件，不强行暂存大型缓存。
+
+`prepare` 与 `release` 都重新验证清单的 Git HEAD 字节、每个本地缓存和对应 artifact 原件的
+size/SHA-256；任何缺缓存、缺原件、同长度篡改、清单未提交或 dirty、重复绑定、越界路径、符号
+链接或非内容寻址 URI 都会阻断。Git 的 `assume-unchanged` / `skip-worktree` 状态提示不能隐藏
+清单字节变化。已由 Git 跟踪的源仍必须通过原有 HEAD 未修改检查，不能用 manifest 绕过。
+
+超过 5 MiB 的生成 ZIP 也自动保存完整 artifact 副本，并产生同目录小型 `.artifacts.json`；
+`prepare` 将该清单追加到论文的 `artifact_manifests`。发布前须提交它和 `.zip.sha256`、registry、
+回执等小记录，ZIP 本身继续被忽略。较小包保持原有 Git 冻结方式，旧已发布包不会自动迁移。
+
+这种双端绑定不弱于把 payload 内容冻结进 Git：已提交清单固定精确逻辑路径、大小和 SHA-256，
+组包时必须读取匹配的完整字节，review snapshot 仍逐字节哈希全部科学源（不是只哈希指针），
+ZIP 内部 manifest / SHA256SUMS、本地 ZIP SHA-256、当前源对照和远端传输校验仍全部执行。
+机器迁移时必须恢复声明 URI 的完整原件和缓存，或显式提交新的存储绑定；不能静默接受另一个位置
+或同名文件。artifact 存储清单属于内部 provenance，不是 Zenodo 发布回执或作者核验声明。
+
 ## 配置材料与账号
 
 材料源通过 registry 的 `support.publication.source_files` 声明，也可在准备时重复传入

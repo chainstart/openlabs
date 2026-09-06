@@ -742,10 +742,16 @@ def test_legacy_cli_cannot_bypass_production_release_gate(
     assert "Direct production publish is disabled" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("artifact_backed_package", [False, True])
 def test_prepare_and_publish_release_bind_gate_git_and_remote_files(
     tmp_path: Path,
     monkeypatch: Any,
+    artifact_backed_package: bool,
 ) -> None:
+    if artifact_backed_package:
+        import paper_writing.support as support_module
+        monkeypatch.setattr(support_module, "GIT_PAYLOAD_LIMIT_BYTES", 1)
+        (tmp_path / ".gitignore").write_text("*.zip\n*.npz\n", encoding="utf-8")
     paper_id = "20260802mathgraph0001"
     manuscript = tmp_path / "papers" / paper_id / "manuscript"
     evidence = tmp_path / "papers" / paper_id / "evidence" / "release"
@@ -806,6 +812,15 @@ support:
 """,
         encoding="utf-8",
     )
+    if artifact_backed_package:
+        payload = evidence / "complete_predictions.npz"
+        payload.write_bytes(b"complete unchanged array payload")
+        binding = support_module.write_support_artifact_manifest(
+            tmp_path, [payload], f"papers/{paper_id}/artifact-bindings.json"
+        )
+        record_path = registry / f"{paper_id}.yaml"
+        record_path.write_text(record_path.read_text() +
+                               f"    artifact_manifests:\n      - {binding.relative_to(tmp_path).as_posix()}\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "registry", "papers"], cwd=tmp_path, check=True)
     subprocess.run(
@@ -910,6 +925,8 @@ support:
     assert prepared["reserved_version_doi"] == "10.5281/zenodo.123"
     prepared_record = load_paper_metadata(paper_id, tmp_path)
     assert prepared_record["support"]["publication"]["package_sha256"]
+    if artifact_backed_package:
+        assert len(prepared_record["support"]["publication"]["artifact_manifests"]) == 2
     assert "verification_files" not in prepared_record["support"]["publication"]
     assert (
         prepared_record["support"]["publication"]["version_doi"]

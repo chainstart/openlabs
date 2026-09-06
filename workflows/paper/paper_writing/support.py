@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from urllib.parse import unquote, urlparse
 
 from paper_writing.identifiers import PAPER_ID_PATTERN, domain_scoped_parts
 
@@ -19,6 +20,9 @@ SUPPORT_ARCHIVE_SCHEMA_VERSION = "ara.paper_writing.support_archive.v1"
 FIXED_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 MAX_SUPPORT_BYTES = 50_000_000_000
 MAX_SUPPORT_FILES = 100_000
+SUPPORT_ARTIFACT_SCHEMA_VERSION = "ara.paper_writing.support_artifacts.v1"
+GIT_PAYLOAD_LIMIT_BYTES = 5 * 1024 * 1024
+MAX_ARTIFACT_MANIFEST_BYTES = 1024 * 1024
 EXCLUDED_NAMES = {
     ".DS_Store",
     ".env",
@@ -167,6 +171,11 @@ def support_sources_snapshot_sha256(
         return None
     root = Path(repo_root).resolve()
     paths = resolve_support_sources(record, repo_root=root)
+    bindings = _load_artifact_bindings(root, support_artifact_manifests(record))
+    for path in paths:
+        binding = bindings.get(path.relative_to(root).as_posix())
+        if binding is not None:
+            _verify_artifact_binding(root, path, binding)
     logical: dict[str, Path] = {}
     for path in paths:
         name = _review_logical_support_path(path, root)
@@ -187,8 +196,52 @@ def support_sources_snapshot_sha256(
     return digest.hexdigest()
 
 
-def validate_git_frozen_paths(root: str | Path, paths: Iterable[str | Path]) -> None:
-    """Require repository-owned paths to be tracked and unchanged at Git HEAD."""
+def validate_git_frozen_paths(
+    root: str | Path,
+    paths: Iterable[str | Path],
+    *,
+    artifact_manifests: Iterable[str | Path] = (),
+) -> None:
+    """Require Git-frozen bytes or an explicit Git-frozen artifact binding.
+
+    Artifact-backed paths are ignored/untracked assembly caches, never a way to
+    bypass a dirty tracked file. Both cache and content-addressed sibling copy
+    must match the size/SHA-256 committed in the binding manifest at HEAD.
+    """
+
+    repo_root = Path(root).resolve()
+    manifests = _artifact_manifest_paths(repo_root, artifact_manifests)
+    if manifests:
+        _validate_git_tracked_paths(repo_root, manifests)
+        for manifest in manifests:
+            if manifest.stat().st_size > MAX_ARTIFACT_MANIFEST_BYTES:
+                raise SupportPackageError("Support artifact manifest exceeds the bounded metadata limit")
+            relative = manifest.relative_to(repo_root).as_posix()
+            blob = subprocess.run(["git", "cat-file", "blob", f"HEAD:{relative}"], cwd=repo_root,
+                                  capture_output=True, check=False)
+            if blob.returncode or blob.stdout != manifest.read_bytes():
+                raise SupportPackageError(f"Support artifact manifest bytes differ from Git HEAD: {relative}")
+    bindings = _load_artifact_bindings(repo_root, manifests)
+    selected = [_safe_local_path(Path(value), repo_root) for value in paths]
+    if not selected:
+        raise SupportPackageError("No release paths were selected for Git validation")
+    relatives = [path.relative_to(repo_root).as_posix() for path in selected]
+    tracked = set(_git_output(repo_root, ["ls-files", "--cached", "-z", "--", *relatives]).split("\0"))
+    normal = []
+    for path, relative in zip(selected, relatives):
+        if not path.is_file():
+            raise SupportPackageError(f"Release file is missing: {path}")
+        binding = bindings.get(relative)
+        if binding is not None:
+            _verify_artifact_binding(repo_root, path, binding)
+        if binding is None or relative in tracked:
+            normal.append(path)
+    if normal:
+        _validate_git_tracked_paths(repo_root, normal)
+
+
+def _validate_git_tracked_paths(root: str | Path, paths: Iterable[str | Path]) -> None:
+    """Strict original Git-HEAD contract; manifests cannot recursively exempt it."""
 
     repo_root = Path(root).resolve()
     relatives: list[str] = []
@@ -221,6 +274,161 @@ def validate_git_frozen_paths(root: str | Path, paths: Iterable[str | Path]) -> 
             "Support release files differ from Git HEAD: "
             + "; ".join(status.splitlines()[:5])
         )
+
+
+def support_artifact_manifests(record: Mapping[str, Any]) -> list[str]:
+    value = _publication(record).get("artifact_manifests", [])
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise SupportPackageError("support.publication.artifact_manifests must be a list of paths")
+    return value
+
+
+def _safe_local_path(path: Path, root: Path) -> Path:
+    path = path if path.is_absolute() else root / path
+    if ".." in path.parts:
+        raise SupportPackageError(f"Artifact/release path traversal is not allowed: {path}")
+    _require_inside_root(path, root)
+    for candidate in [path, *path.parents]:
+        if candidate.is_symlink():
+            raise SupportPackageError(f"Artifact/release symlinks are not allowed: {candidate}")
+        if candidate == root:
+            break
+    resolved = path.resolve()
+    _require_inside_root(resolved, root)
+    return resolved
+
+
+def _artifact_manifest_paths(root: Path, values: Iterable[str | Path]) -> list[Path]:
+    result = [_safe_local_path(Path(value), root) for value in values]
+    if len(result) != len(set(result)):
+        raise SupportPackageError("Duplicate support artifact manifest path")
+    return result
+
+
+def _load_artifact_bindings(root: Path, manifests: Iterable[str | Path]) -> dict[str, Mapping[str, Any]]:
+    bindings: dict[str, Mapping[str, Any]] = {}
+    for manifest in _artifact_manifest_paths(root, manifests):
+        if not manifest.is_file():
+            raise SupportPackageError(f"Support artifact manifest is missing: {manifest}")
+        if manifest.stat().st_size > MAX_ARTIFACT_MANIFEST_BYTES:
+            raise SupportPackageError("Support artifact manifest exceeds the bounded metadata limit")
+        try:
+            content = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise SupportPackageError(f"Malformed support artifact manifest: {manifest}") from exc
+        if not isinstance(content, Mapping) or content.get("schema_version") != SUPPORT_ARTIFACT_SCHEMA_VERSION:
+            raise SupportPackageError("Unsupported support artifact manifest schema")
+        files = content.get("files")
+        if not isinstance(files, list) or not files or len(files) > MAX_SUPPORT_FILES:
+            raise SupportPackageError("Support artifact manifest requires a bounded nonempty file list")
+        for item in files:
+            if not isinstance(item, Mapping):
+                raise SupportPackageError("Invalid support artifact manifest entry")
+            name, size, digest = item.get("path"), item.get("size"), item.get("sha256")
+            if not isinstance(name, str) or not name or Path(name).is_absolute():
+                raise SupportPackageError("Artifact cache path must be repository-relative")
+            cache = _safe_local_path(Path(name), root)
+            if cache.relative_to(root).as_posix() != name or name in bindings:
+                raise SupportPackageError(f"Duplicate or noncanonical artifact cache path: {name}")
+            if not isinstance(size, int) or isinstance(size, bool) or not 0 <= size <= MAX_SUPPORT_BYTES:
+                raise SupportPackageError("Artifact size must be a bounded nonnegative integer")
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise SupportPackageError("Artifact SHA-256 must be lowercase and complete")
+            _artifact_uri_path(root, item.get("artifact_uri"), digest)
+            bindings[name] = item
+    return bindings
+
+
+def _artifact_uri_path(root: Path, uri: Any, digest: str) -> Path:
+    if not isinstance(uri, str):
+        raise SupportPackageError("Artifact URI must be a content-addressed local file URI")
+    parsed = urlparse(uri)
+    if parsed.scheme != "file" or parsed.netloc or parsed.query or parsed.fragment:
+        raise SupportPackageError("Artifact URI must be a content-addressed local file URI")
+    path = Path(unquote(parsed.path))
+    artifact_root = root.parent / "openlabs-artifacts"
+    if not path.is_absolute() or "\0" in str(path):
+        raise SupportPackageError("Artifact URI must contain an absolute local path")
+    path = _safe_local_path(path, artifact_root)
+    relative = path.relative_to(artifact_root).parts
+    if len(relative) != 4 or relative[:3] != ("paper-support", "sha256", digest):
+        raise SupportPackageError("Artifact URI must name sibling paper-support/sha256/<SHA-256>/<filename>")
+    if path.as_uri() != uri:
+        raise SupportPackageError("Artifact URI is not canonical")
+    return path
+
+
+def _verify_artifact_binding(root: Path, cache: Path, binding: Mapping[str, Any]) -> None:
+    original = _artifact_uri_path(root, binding["artifact_uri"], str(binding["sha256"]))
+    for label, path in (("assembly cache", cache), ("authoritative artifact", original)):
+        if not path.is_file():
+            raise SupportPackageError(f"Support {label} is missing: {path}")
+        if path.stat().st_size != binding["size"] or sha256_file(path) != binding["sha256"]:
+            raise SupportPackageError(f"Support {label} size/SHA-256 does not match its frozen manifest: {path}")
+
+
+def write_support_artifact_manifest(
+    root: str | Path,
+    paths: Iterable[str | Path],
+    manifest_path: str | Path,
+) -> Path:
+    """Copy complete payloads to immutable sibling storage and write a small binding.
+
+    This mechanical preparation step does not commit anything. Release validation
+    still requires the resulting manifest to be committed and unchanged at HEAD.
+    Local repository copies remain ignored assembly caches; no symlinks or
+    precision-changing conversions are used.
+    """
+    repo_root = Path(root).resolve()
+    manifest = _safe_local_path(Path(manifest_path), repo_root)
+    selected = [_safe_local_path(Path(value), repo_root) for value in paths]
+    if not selected or len(selected) != len(set(selected)):
+        raise SupportPackageError("Artifact preparation requires distinct payload paths")
+    entries = []
+    for cache in sorted(selected):
+        if not cache.is_file():
+            raise SupportPackageError(f"Artifact payload is missing: {cache}")
+        size, digest = cache.stat().st_size, sha256_file(cache)
+        if size > MAX_SUPPORT_BYTES:
+            raise SupportPackageError("Artifact payload exceeds support size limit")
+        original = repo_root.parent / "openlabs-artifacts" / "paper-support" / "sha256" / digest / cache.name
+        _artifact_uri_path(repo_root, original.as_uri(), digest)
+        original.parent.mkdir(parents=True, exist_ok=True)
+        if not original.exists():
+            temporary_path = None
+            try:
+                with tempfile.NamedTemporaryFile(dir=original.parent, prefix=".artifact-", delete=False) as handle:
+                    temporary_path = Path(handle.name)
+                    with cache.open("rb") as source:
+                        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                            handle.write(chunk)
+                if temporary_path.stat().st_size != size or sha256_file(temporary_path) != digest:
+                    raise SupportPackageError("Artifact payload changed while being copied")
+                try:
+                    os.link(temporary_path, original)
+                except FileExistsError:
+                    pass  # Another identical preparation may have installed it; verify below.
+            finally:
+                if temporary_path is not None:
+                    temporary_path.unlink(missing_ok=True)
+        entry = {"path": cache.relative_to(repo_root).as_posix(), "artifact_uri": original.as_uri(),
+                 "size": size, "sha256": digest}
+        _verify_artifact_binding(repo_root, cache, entry)
+        entries.append(entry)
+    payload = json.dumps({"schema_version": SUPPORT_ARTIFACT_SCHEMA_VERSION, "files": entries},
+                         indent=2, sort_keys=True) + "\n"
+    if len(payload.encode("utf-8")) > MAX_ARTIFACT_MANIFEST_BYTES:
+        raise SupportPackageError("Generated artifact manifest exceeds metadata limit")
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=manifest.parent, prefix=".artifact-manifest-", mode="w",
+                                     encoding="utf-8", delete=False) as handle:
+        temporary = Path(handle.name)
+        handle.write(payload)
+    try:
+        os.replace(temporary, manifest)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return manifest
 
 
 def default_support_archive_path(
@@ -379,6 +587,11 @@ def build_support_archive(
     archive_sha256 = sha256_file(archive)
     checksum_path = archive.with_suffix(archive.suffix + ".sha256")
     checksum_path.write_text(f"{archive_sha256}  {archive.name}\n", encoding="utf-8")
+    artifact_manifest = None
+    if archive.stat().st_size > GIT_PAYLOAD_LIMIT_BYTES:
+        artifact_manifest = write_support_artifact_manifest(
+            root, [archive], archive.with_suffix(".artifacts.json")
+        )
     return {
         "schema_version": SUPPORT_ARCHIVE_SCHEMA_VERSION,
         "paper_id": paper_id,
@@ -393,6 +606,7 @@ def build_support_archive(
         "archive_size": archive.stat().st_size,
         "source_files": [path.relative_to(root).as_posix() for path in paths],
         "file_count": len(entries),
+        "artifact_manifest": artifact_manifest,
     }
 
 

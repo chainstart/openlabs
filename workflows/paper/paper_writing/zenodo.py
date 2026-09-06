@@ -35,6 +35,7 @@ from paper_writing.support import (
     md5_file,
     resolve_support_sources,
     sha256_file,
+    support_artifact_manifests,
     validate_git_frozen_paths,
     verify_support_archive,
 )
@@ -495,7 +496,7 @@ def prepare_zenodo_release(
     root = Path(repo_root or default_repo_root()).resolve()
     record = find_paper_record(paper_id, repo_root=root, config_path=config_path)
     source_paths = resolve_support_sources(record, sources, repo_root=root)
-    validate_git_frozen_paths(root, source_paths)
+    validate_git_frozen_paths(root, source_paths, artifact_manifests=support_artifact_manifests(record))
     origin_commit = git_head(root)
     settings = load_config(config_path or root / "registry" / "settings.yaml")
     policy = publication_policy(settings)
@@ -687,6 +688,11 @@ def prepare_zenodo_release(
     # in ``package_files``.  Retaining both representations makes the same
     # sidecar appear twice to the support audit and release verifier.
     publication.pop("verification_files", None)
+    if package.get("artifact_manifest"):
+        manifest_path = _relative_path(Path(package["artifact_manifest"]), root)
+        publication["artifact_manifests"] = list(dict.fromkeys([
+            *support_artifact_manifests(record), manifest_path,
+        ]))
     registered_zenodo.update(
         {
             "environment": environment,
@@ -807,7 +813,9 @@ def publish_zenodo_release(
     if not isinstance(raw_sources, list) or not raw_sources:
         raise ZenodoError("Prepared release is missing its expanded support source file list")
     source_paths = [root / str(value) for value in raw_sources]
-    validate_git_frozen_paths(root, [*source_paths, *package_paths])
+    validate_git_frozen_paths(
+        root, [*source_paths, *package_paths], artifact_manifests=support_artifact_manifests(record)
+    )
     archive = archive_paths[0]
     checksum = checksum_paths[0]
     archive_result = verify_support_archive(archive)
