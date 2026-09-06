@@ -25,6 +25,7 @@ from paper_writing.review import (
     decisions_for_standard,
 )
 from paper_writing.registry import load_paper_metadata, load_registry, paper_metadata_path
+from paper_writing.revision_policy import validate_release_revision_policy
 from paper_writing.support_citations import audit_manuscript_support
 from paper_writing.support_policy import (
     effective_publication_mode,
@@ -481,6 +482,7 @@ def _release_snapshot(metadata: Mapping[str, Any]) -> dict[str, Any]:
             "minimum_decision",
             "revision_rounds_completed",
             "max_revision_rounds",
+            "quality_gate_revision_exception",
             "unresolved_review_blockers",
             "reviewed_at",
             "manuscript_snapshot_sha256",
@@ -1272,6 +1274,12 @@ def validate_release_preconditions(
         raise HandoffError(
             "Paper version changed after the quality review; rerun quality-gate"
         )
+    try:
+        revision_exception = validate_release_revision_policy(
+            paper_id, metadata, configured_gate, root=repo_root
+        )
+    except (ValueError, OSError) as exc:
+        raise HandoffError(f"Writing quality-gate revision policy is invalid: {exc}") from exc
     gated_support_sha256 = str(release.get("support_package_sha256") or "")
     current_support_sha256 = str(publication.get("package_sha256") or "")
     if require_support_binding and support_mode != "not_required":
@@ -1292,6 +1300,8 @@ def validate_release_preconditions(
             )
 
     manuscript, pdf, files = _release_paths(paper_id, repo_root, metadata)
+    if revision_exception is not None:
+        files.append(repo_root / revision_exception["authorization"]["record"])
     current_snapshot = manuscript_snapshot_sha256(manuscript, pdf)
     gated_snapshot = str(release.get("manuscript_snapshot_sha256") or "")
     if not re.fullmatch(r"[0-9a-f]{64}", gated_snapshot):

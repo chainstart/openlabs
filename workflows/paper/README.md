@@ -51,6 +51,51 @@ spending decision, or a publication claim.
 
 ## Default submission-ready contract
 
+### Temporary revision-round exceptions
+
+The repository-wide `quality_gate.maximum_revision_rounds` remains the default.
+Only an explicit human authorization may increase a particular paper's revision
+budget. This is not a score, scientific-readiness, review, or publication waiver.
+Preserve the actual completed round count; do not reset or relabel historical rounds.
+
+A paper can bind one exact current version to a temporary exception:
+
+```yaml
+quality_gate_revision_exception:
+  schema_version: ara.paper_writing.revision_round_exception.v1
+  paper_id: 20260901-math-combinatorics-example
+  manuscript_version: 0.1.0
+  active: true
+  scope: revision_round_budget_only
+  maximum_revision_rounds: 7
+  authorization:
+    actor: user
+    confirmed: true
+    confirmed_at: '2026-09-06T10:00:00+00:00'
+    source: 'user-message:an-auditable-reference'
+    quote: '<the actual explicit human authorization, not a generated attestation>'
+    record: registry/quality-gate-exceptions/example.json
+    sha256: '<SHA256 of the exact authorization JSON bytes>'
+```
+
+The local JSON record must contain exactly `schema_version` (set to
+`ara.paper_writing.revision_round_authorization.v1`), `paper_ids` (an explicit,
+nonempty list of authorized IDs, without wildcards), `scope`,
+`maximum_revision_rounds`, `actor`, `confirmed`, `confirmed_at`, `source`, and
+`quote`. The latter seven values must agree with the bound exception. Timestamps
+must include a timezone and must not be future-dated. The file must be at most
+64 KiB, cannot be a symlink, and must sit directly in
+`registry/quality-gate-exceptions/`. Creating this record preserves an existing
+human instruction; the validator cannot authenticate the human or grant new
+authority.
+
+The gate records the complete verified exception in `writing_release`; handoff
+revalidates it and requires the authorization file to be Git-frozen along with
+the manuscript. Set `active: false` to revoke it. Version changes do not inherit
+the exception: an operator must explicitly rebind an eligible new version within
+the already authorized scope, then obtain a fresh gate. No configuration here
+changes any score, recommendation, support, style, or independent-review check.
+
 ### Reusable paper declarations
 
 Paper-bound declarations live in the data repository at

@@ -47,6 +47,7 @@ from paper_writing.review import (
     validate_review_panel_files,
 )
 from paper_writing.support import SupportPackageError
+from paper_writing.revision_policy import EXCEPTION_FIELD, revision_round_policy
 from paper_writing.support_policy import publication_policy
 from paper_writing.support_citations import audit_manuscript_support, support_audit_blockers
 
@@ -456,8 +457,8 @@ def record_quality_gate(
         raise ValueError("venue_type must be conference or journal")
     if not 0 <= score <= 10:
         raise ValueError("score must be between 0 and 10")
-    if revision_rounds < 0:
-        raise ValueError("revision_rounds cannot be negative")
+    if type(revision_rounds) is not int or revision_rounds < 0:
+        raise ValueError("revision_rounds must be a nonnegative integer")
     blockers = [str(item).strip() for item in unresolved_blockers]
     if any(not item for item in blockers):
         raise ValueError("unresolved_blockers must contain only non-empty strings")
@@ -488,7 +489,10 @@ def record_quality_gate(
             if blocker not in blockers
         )
     minimum_score = float(gate.get("minimum_score", 5.0))
-    maximum_rounds = int(gate.get("maximum_revision_rounds", 3))
+    payload = load_paper_metadata(paper_id, repo_root)
+    maximum_rounds, revision_exception = revision_round_policy(
+        paper_id, payload, gate, root=repo_root
+    )
     if revision_rounds > maximum_rounds:
         raise ValueError(
             "revision_rounds cannot exceed the configured maximum of "
@@ -517,7 +521,6 @@ def record_quality_gate(
         raise ValueError(
             f"Invalid configured {decision_standard} minimum decision: {minimum_decision}"
         )
-    payload = load_paper_metadata(paper_id, repo_root)
     fingerprints = _review_workspace_fingerprints(paper_id, payload, repo_root)
     snapshot_sha256 = str(fingerprints["manuscript_snapshot_sha256"])
     if bool(gate.get("require_validated_independent_review", True)):
@@ -570,6 +573,8 @@ def record_quality_gate(
         ],
         "manuscript_version": str(payload.get("version") or "1.0.0"),
     }
+    if revision_exception is not None:
+        release_record[EXCEPTION_FIELD] = revision_exception
     if fingerprints["support_sources_sha256"] is not None:
         release_record["support_sources_sha256"] = fingerprints[
             "support_sources_sha256"
@@ -597,6 +602,7 @@ def record_quality_gate(
         "minimum_decision": minimum_decision,
         "revision_rounds": revision_rounds,
         "maximum_revision_rounds": maximum_rounds,
+        EXCEPTION_FIELD: revision_exception,
         "unresolved_blockers": blockers,
         "manuscript_snapshot_sha256": snapshot_sha256,
         "review_content_sha256": fingerprints["review_content_sha256"],
