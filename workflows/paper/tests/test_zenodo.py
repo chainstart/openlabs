@@ -255,6 +255,22 @@ def test_current_paper_version_overrides_stale_zenodo_draft_state() -> None:
     assert metadata["version"] == "0.1.3"
 
 
+def test_explicit_material_release_version_is_independent_of_manuscript() -> None:
+    from paper_writing import support
+
+    record = {
+        "id": "20260522mathgraph0002", "title": "Versioned materials",
+        "version": "1.0.3", "authors": {"names": ["Ada Lovelace"]},
+        "support": {"publication": {
+            "release_version": "1.0.1", "version": "1.0.0",
+            "zenodo": {"version": "1.0.0"},
+        }},
+    }
+    assert zenodo.build_zenodo_metadata(record)["version"] == "1.0.1"
+    assert support._record_version(record) == "1.0.1"
+    assert record["version"] == "1.0.3"
+
+
 def test_zenodo_metadata_uses_configured_default_license() -> None:
     record = {
         "id": "20260802mathgraph0001",

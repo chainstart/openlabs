@@ -719,6 +719,11 @@ def _public_id(record: Mapping[str, Any]) -> str:
 
 
 def _record_version(record: Mapping[str, Any]) -> str:
+    # Supporting materials may have a monotone version independent of the paper.
+    # Do not infer this from legacy publication.version or previous Zenodo state.
+    release_version = _publication(record).get("release_version")
+    if isinstance(release_version, str) and release_version.strip():
+        return release_version.strip()
     direct = record.get("version")
     if isinstance(direct, str) and direct.strip():
         return direct.strip()

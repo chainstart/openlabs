@@ -250,6 +250,11 @@ git push origin main
 材料未变化的纯文字返修可继续引用原 Version DOI；材料内容发生变化时使用同一 Zenodo
 记录创建新版本。旧 Version DOI 永久保留，新版本获得新的 Version DOI，Concept DOI 不变。
 
+材料自身版本与论文版本不同的情况下，显式设置
+`support.publication.release_version`。该字段只控制材料的 ZIP、目录、回执与 Zenodo
+版本，不改变论文的 `version` 或评审快照；未设置时保留沿用论文版本的兼容行为。
+不要用旧 `publication.version` 或上一条 Zenodo 记录推断本次材料版本。
+
 Zenodo 的 `version` 元数据接受任意字符串，只是建议采用语义化版本标签；Zenodo 不要求版本号
 连续。因此，从 `1.0.0` 直接登记为 `1.2.4` 在平台层面是有效的，不需要补建中间版本。不过，
 本仓库只在该标签确实是材料自身的既有版本标识时允许跳号：不得为了追随论文版本、掩盖缺失

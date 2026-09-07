@@ -17,6 +17,21 @@ from paper_writing.support_citations import (
 PAPER_ID = "20260806-math-graph-support-citation-audit"
 
 
+def test_explicit_material_version_keeps_draft_checks_strict(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    path = tmp_path / "registry/papers" / f"{PAPER_ID}.yaml"
+    record = yaml.safe_load(path.read_text())
+    record["version"] = "1.0.3"
+    record["support"]["publication"]["release_version"] = "1.0.0"
+    path.write_text(yaml.safe_dump(record))
+    assert audit_manuscript_support(PAPER_ID, root=tmp_path)["valid"]
+    record["support"]["publication"]["release_version"] = "1.0.1"
+    path.write_text(yaml.safe_dump(record))
+    result = audit_manuscript_support(PAPER_ID, root=tmp_path)
+    assert not result["valid"]
+    assert any(item["code"] == "SUPPORT-DRAFT-VERSION" for item in result["errors"])
+
+
 def _write_settings(root: Path) -> None:
     (root / "registry" / "papers").mkdir(parents=True)
     (root / "registry" / "settings.yaml").write_text(

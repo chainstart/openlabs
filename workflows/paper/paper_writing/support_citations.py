@@ -1162,6 +1162,9 @@ def audit_manuscript_support(paper_id: str, *, root: str | Path) -> dict[str, An
     license_id = effective_publication_license(publication, policy)
     status, doi, version = _current_identity(metadata)
     paper_version = str(metadata.get("version") or "")
+    # An explicit material version is independent of manuscript revision labels.
+    # Legacy publication.version is deliberately not an override.
+    expected_release_version = str(publication.get("release_version") or paper_version).strip()
     review_gate = lifecycle_gate(policy, "before_review")
     minimum_status = str(review_gate.get("minimum_status") or "").strip()
     require_version_doi = bool(review_gate.get("require_version_doi", False))
@@ -1291,13 +1294,13 @@ def audit_manuscript_support(paper_id: str, *, root: str | Path) -> dict[str, An
         )
     if status in {"draft", "published"} and not version:
         issues.append(_issue("SUPPORT-VERSION-MISSING", f"{status} support record has no current support version", root=repo_root))
-    if status == "draft" and version and paper_version and version != paper_version:
-        issues.append(_issue("SUPPORT-DRAFT-VERSION", f"prepared support version {version!r} does not match manuscript version {paper_version!r}", root=repo_root))
+    if status == "draft" and version and expected_release_version and version != expected_release_version:
+        issues.append(_issue("SUPPORT-DRAFT-VERSION", f"prepared support version {version!r} does not match expected material version {expected_release_version!r}", root=repo_root))
 
     issues.extend(
         _receipt_checks(
             paper_id=paper_id,
-            paper_version=paper_version,
+            paper_version=expected_release_version,
             publication=publication,
             status=status,
             doi=doi,

@@ -1086,6 +1086,11 @@ def publication_registration(record: Mapping[str, Any], response: Mapping[str, A
 
 
 def _record_version(record: Mapping[str, Any]) -> str:
+    support = record.get("support")
+    publication = support.get("publication") if isinstance(support, Mapping) else None
+    release_version = publication.get("release_version") if isinstance(publication, Mapping) else None
+    if isinstance(release_version, str) and release_version.strip():
+        return release_version.strip()
     direct = record.get("version")
     if isinstance(direct, str) and direct.strip():
         return direct.strip()
