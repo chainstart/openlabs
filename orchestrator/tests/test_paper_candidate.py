@@ -356,6 +356,10 @@ def test_valid_paper_candidate_enqueues_one_frontier_readiness_task(tmp_path) ->
     assert paper_review["agent_role"] == "reviewer"
     assert paper_review["session_mode"] == "fresh"
     assert paper_review["skill_path"] == "openlabs-paper-review"
+    assert paper_review["routing_reason"] == "paper_review_scope_selection"
+    assert "review route" in paper_review["objective"]
+    assert "delta" in paper_review["objective"]
+    assert "blocked stops" in paper_review["objective"]
 
     claimed_panel = db.claim_next_task(owner="panel", lease_seconds=60)
     assert claimed_panel is not None and claimed_panel["task_id"] == paper_review["task_id"]

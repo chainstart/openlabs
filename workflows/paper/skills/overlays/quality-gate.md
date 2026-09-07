@@ -23,7 +23,17 @@ articles; and record a shared-history check. A broad category or keyword match i
 A prior rejection at the same target remains blocking until a material scientific revision is
 identified; reformatting, reframing, or a new cover letter is not such a revision.
 
-## Route metadata-only revisions before launching reviewers
+## Route revisions before launching reviewers
+
+Run `paper-writing review route --paper-id <paper_id>` under the resource guard before launching
+a scored reviewer. Follow `metadata_reuse`, `delta`, `full`, or `blocked` exactly. Incremental
+editorial review is enabled only by `quality_gate.incremental_review.enabled: true` with
+`scope: editorial_only`. Open the revision before editing to freeze a valid full-review baseline.
+It can be scientifically ready with remaining text-only requests, even when its release is not ready.
+The new fresh referee examines the complete cumulative diff, required issue list and affected
+context; it does not rescore unaffected science. See `openlabs-paper-review/SKILL.md` for the
+runner and validate/apply commands. Full baseline + all delta receipts are revalidated at release.
+Applied delta judgments consume the same total round budget; optional polishing does not block.
 
 If a revision was opened from a current passing gate and is intended to change only author
 identity/contact/affiliation, an explicitly titled author-contribution/correspondence block, or
@@ -242,8 +252,10 @@ Do not round a review score before applying the gate. Historical decimal records
 but all new `$openlabs-paper-review` records use integers.
 
 Any subsequent change to a claim, proof, number, citation, figure, table, abstract, conclusion, or
-other score-bearing text invalidates the review. Run a new fresh-context review and record the gate
-again. A revision that changes only author identity/contact/affiliation commands or release-envelope
+other score-bearing text invalidates the old review for the new snapshot. The scope router may
+use an independent cumulative editorial delta for eligible citation, wording or layout changes;
+scientific changes and unknown scope still require full review. Never rewrite the old full review.
+A revision that changes only author identity/contact/affiliation commands or release-envelope
 metadata does not need an LLM re-review. Start it from the current ready gate with `paper
 start-revision`; after rebuilding the PDF and preparing any versioned support package, use the
 metadata-only routing command above. The command compares the captured scientific/textual
@@ -252,8 +264,8 @@ metadata, and exact support-source fingerprint, then repeats deterministic suppo
 never changes a score. Unknown syntax or any substantive difference fails closed and requires a
 fresh isolated review. The immutable full manuscript/PDF and ZIP hashes remain version-specific for
 provenance. `zenodo prepare` invokes this same deterministic reuse automatically when a captured
-baseline is present. Formatting-only changes outside the narrow author-command allowlist remain
-review-significant unless a future deterministic classifier explicitly supports them.
+baseline is present. Formatting outside the narrow metadata allowlist needs an eligible independent
+delta or a full review; passing a syntactic classifier alone cannot establish semantic equivalence.
 
 `writing_release.status=ready` is necessary before handoff or consideration for submission. Under
 the repository's standing author-confirmation policy, the current manuscript and journal package

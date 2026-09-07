@@ -2215,13 +2215,17 @@ def ingest_results(
                         "suffix": "paper-review",
                         "task_type": "paper_review",
                         "objective": (
-                            "Review the frozen manuscript with the configured independent panel "
-                            "(one fresh Codex reviewer by default; add blind Packy Claude only "
-                            "when enabled). Do not edit it. If it fails, return exactly "
+                            "Resolve the paper ID from the writer's registered artifacts and run "
+                            "`paper-writing review route --paper-id <id>` before launching a scored reviewer. "
+                            "Follow its validated route: metadata_reuse is terminal; delta uses the "
+                            "fresh editorial delta runner, validates/applies its receipt without new scores; "
+                            "full uses the configured independent full panel; blocked stops without "
+                            "another reviewer launch. Never select scope from "
+                            "the writer's text_only assertion. Do not edit the manuscript. If it fails, return exactly "
                             "one structured text_revision or evidence_remediation action."
                         ),
                         "skill": "openlabs-paper-review",
-                        "routing_reason": "fresh_paper_review",
+                        "routing_reason": "paper_review_scope_selection",
                         "agent_role": "reviewer",
                     }
                 elif current_role == "reviewer" and task_type == "paper_review":

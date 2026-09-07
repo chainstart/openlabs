@@ -282,6 +282,12 @@ def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str,
     repo_root = Path(root).resolve()
     payload = load_paper_metadata(paper_id, repo_root)
     carry_forward = _review_carry_forward_candidate(paper_id, payload, repo_root)
+    from paper_writing.review_delta import capture_baseline
+    delta_state, delta_reason = None, None
+    try:
+        delta_state = capture_baseline(paper_id, payload, repo_root)
+    except (ValueError, OSError, KeyError, TypeError, SupportPackageError) as exc:
+        delta_reason = str(exc)
     revision_root = repo_root / "papers" / paper_id / "revisions"
     revision_root.mkdir(parents=True, exist_ok=True)
     existing = [
@@ -309,7 +315,12 @@ def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str,
         "status": "draft",
         "invalidated_at": changed_at,
         "invalidated_reason": "revision_started",
+        "revision_rounds_completed": payload.get("writing_release", {}).get("revision_rounds_completed", 0),
     }
+    if delta_state is not None:
+        draft_release["review_delta"] = delta_state
+    if delta_state is not None or payload.get("writing_release", {}).get("review_delta"):
+        draft_release["minimum_next_review_round"] = draft_release["revision_rounds_completed"] + 1
     if carry_forward is not None:
         draft_release["review_carry_forward"] = carry_forward
     payload["writing_release"] = draft_release
@@ -321,6 +332,8 @@ def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str,
         "version": new_version,
         "file": str(path.relative_to(repo_root)),
         "review_carry_forward_available": carry_forward is not None,
+        "delta_baseline_available": delta_state is not None,
+        "delta_baseline_reason": delta_reason,
     }
 
 
@@ -705,11 +718,13 @@ def apply_review_record(
 
     existing_release = metadata.get("writing_release")
     existing_release = existing_release if isinstance(existing_release, Mapping) else {}
-    rounds = (
-        int(existing_release.get("revision_rounds_completed") or 0)
-        if revision_rounds is None
-        else revision_rounds
-    )
+    minimum_round = int(existing_release.get("minimum_next_review_round") or 0)
+    if existing_release.get("review_delta"):
+        minimum_round = max(minimum_round, int(existing_release.get("revision_rounds_completed") or 0) + 1)
+    rounds = (max(minimum_round, int(existing_release.get("revision_rounds_completed") or 0))
+              if revision_rounds is None else revision_rounds)
+    if rounds < minimum_round:
+        raise ValueError("Full review after a delta baseline must consume the next review round")
     original_metadata = dict(metadata)
     metadata["ara_llm_self_review"] = {
         "schema_version": review_payload["schema_version"],
@@ -803,6 +818,8 @@ def reuse_review_for_metadata_only_revision(
     if candidate.get("schema_version") != REVIEW_CARRY_FORWARD_SCHEMA_VERSION:
         raise ValueError("Unsupported review carry-forward baseline")
     source_release = candidate.get("source_release")
+    if isinstance(source_release, Mapping) and source_release.get("review_delta"):
+        raise ValueError("Use review route to revalidate the cumulative delta chain")
     if (
         not isinstance(source_release, Mapping)
         or source_release.get("status") != "ready"

@@ -484,7 +484,6 @@ def _release_snapshot(metadata: Mapping[str, Any]) -> dict[str, Any]:
             "max_revision_rounds",
             "quality_gate_revision_exception",
             "minor_revision_closeout",
-            "targeted_review_closeout",
             "nonblocking_venue_findings",
             "unresolved_review_blockers",
             "reviewed_at",
@@ -1119,11 +1118,13 @@ def _release_paths(
         files.extend(validate_release_minor_closeout(paper_id, metadata, root=repo_root))
     except (ValueError, OSError) as exc:
         raise HandoffError(f"Minor-revision closeout is invalid: {exc}") from exc
-    from paper_writing.targeted_closeout import validate_release as validate_targeted_closeout
-    try:
-        files.extend(validate_targeted_closeout(paper_id, metadata, repo_root))
-    except (ValueError, OSError, KeyError, TypeError) as exc:
-        raise HandoffError(f"Targeted-review closeout is invalid: {exc}") from exc
+    from paper_writing.review_delta import validate_state
+    if "review_delta" in metadata.get("writing_release", {}):
+        try:
+            files.extend(validate_state(paper_id, metadata["writing_release"]["review_delta"],
+                metadata, repo_root, require_ready=True))
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            raise HandoffError(f"Incremental review chain is invalid: {exc}") from exc
     try:
         for path in files:
             path.resolve().relative_to(repo_root)

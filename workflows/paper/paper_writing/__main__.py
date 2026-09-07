@@ -147,6 +147,13 @@ def build_parser() -> argparse.ArgumentParser:
     review_reuse.add_argument("--paper-id", required=True)
     review_reuse.add_argument("--root", default=str(default_repo_root()))
 
+    for command in ("route", "prepare-delta", "validate-delta", "apply-delta"):
+        delta = review_commands.add_parser(command, help="Route or validate cumulative editorial re-review.")
+        delta.add_argument("--paper-id", required=True)
+        delta.add_argument("--root", default=str(default_repo_root()))
+        if command in {"validate-delta", "apply-delta"}:
+            delta.add_argument("--receipt", required=True, help="Immutable runner receipt, relative to data root.")
+
     minor_prepare = review_commands.add_parser("prepare-minor-closeout", help="Inspect immutable evidence and emit an unsigned author-side closeout template.")
     minor_prepare.add_argument("--paper-id", required=True)
     minor_prepare.add_argument("--authorization", required=True)
@@ -437,6 +444,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
+    if args.command == "review" and args.review_command in {"route", "prepare-delta", "validate-delta", "apply-delta"}:
+        from paper_writing.review_delta import (apply_delta, binding, prepare_delta,
+            route_review, safe_path, validate_receipt, require)
+        root = Path(args.root).resolve()
+        if args.review_command == "route":
+            result = route_review(args.paper_id, root=root)
+        elif args.review_command == "prepare-delta":
+            result = prepare_delta(args.paper_id, root=root)
+        elif args.review_command == "apply-delta":
+            result = apply_delta(args.paper_id, receipt=args.receipt, root=root)
+        else:
+            checked = validate_receipt(binding(safe_path(root, args.receipt), root), root)
+            require(checked["packet"] == prepare_delta(args.paper_id, root=root)["packet"], "stale or incomplete packet")
+            result = {"valid": True, "verdict": checked["result"]["verdict"]}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1 if result.get("passed") is False else 0
     if args.command == "review" and args.review_command in {"prepare-minor-closeout", "validate-minor-closeout", "closeout-minor"}:
         from paper_writing.minor_closeout import inspect_minor_closeout, validate_minor_closeout, apply_minor_closeout
         if args.review_command == "prepare-minor-closeout":

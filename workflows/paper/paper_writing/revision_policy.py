@@ -23,6 +23,21 @@ EXCEPTION_FIELD = "quality_gate_revision_exception"
 EXCEPTION_SCHEMA = "ara.paper_writing.revision_round_exception.v1"
 AUTHORIZATION_SCHEMA = "ara.paper_writing.revision_round_authorization.v1"
 EXCEPTION_SCOPE = "revision_round_budget_only"
+
+
+class ReviewBudgetExceeded(ValueError):
+    """No additional scientific or incremental judgment fits the current budget."""
+
+
+def delta_round_policy(paper_id, metadata, gate, full_rounds, delta_rounds, *, root):
+    """Applied delta judgments consume the existing total budget; technical retries do not."""
+    maximum, _ = revision_round_policy(paper_id, metadata, gate, root=root)
+    if any(type(n) is not int or n < 0 for n in (full_rounds, delta_rounds)):
+        raise ValueError("Invalid full/delta completed-round counts")
+    total = full_rounds + delta_rounds
+    if total > maximum or delta_rounds > 32:
+        raise ReviewBudgetExceeded("Delta review exceeds the existing total revision-round budget")
+    return {"at_full_baseline": full_rounds, "delta": delta_rounds, "total": total, "maximum": maximum}
 _EXCEPTION_KEYS = {
     "schema_version", "paper_id", "manuscript_version", "active", "scope",
     "maximum_revision_rounds", "authorization",

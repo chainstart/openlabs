@@ -5,6 +5,44 @@ description: Run OpenLabs' configured fresh-context paper gate for AI, computer-
 
 # OpenLabs paper review
 
+## Select scope before launching a scored referee
+
+For every completed draft/revision, run `paper-writing review route --paper-id <paper_id>`
+under the repository resource guard. This is the shared deterministic routing entry point.
+It returns `metadata_reuse` (already applied, terminal), `delta` (a frozen cumulative packet),
+`full` (use the full-review procedure below), or `blocked` (budget exhausted; stop, do not
+launch another reviewer). Never choose scope from the author's `text_only` assertion.
+
+When `quality_gate.incremental_review.enabled: true` and `scope: editorial_only`, a validated
+single-reviewer CAS baseline with sufficient score, scientific readiness, no unresolved blockers,
+and only editorial requests can support a cumulative delta review. A baseline may have
+`text_ready: false`. Open revisions with `paper start-revision` BEFORE editing; this freezes
+the original complete sources/PDF and binds the original full review. Missing/stale baselines,
+scientific or support changes, global macros/dependencies, or changed policy require full review.
+V1 deliberately escalates any changed proof/formula/theorem environment; it does not infer a
+mathematical dependency graph. Syntax checks are tripwires, not proof of semantic equivalence.
+
+For a `delta` route, run `scripts/run_delta_reviewer.py --paper-id <id> --root <data-root>
+--model <actual-configured-model> --effort high` under the resource guard. The runner performs
+a clean PDF build, compares extracted text to the canonical PDF, renders pages, and starts a
+new ephemeral Codex process with only the cumulative diff, original issue list, and source/PDF
+context. Prior scores and author conversation are excluded; prior issue text is intentionally
+included and is recorded as such. It never supplies a new whole-paper score. Inspect the
+returned receipt with `review validate-delta --paper-id <id> --receipt <relative-path>`, then
+use `review apply-delta` with the same arguments. Neither command publishes anything.
+
+Resolve every cumulative hunk and mandatory issue, including blockers found in preceding delta
+rounds. Check attribution and affected assumptions, claims, dependencies, and layout; expand
+context or escalate when meaning/scope changes or cannot be established. Keep optional polishing
+in `optional_suggestions`; it is not a release blocker. A successful application is terminal.
+An `unresolved` editorial result returns one `text_revision`; `escalate` requires full scientific
+review/remediation. Technical launch or schema failures keep their receipts but do not count as
+applied judgments. Applied deltas consume the existing total revision-round budget.
+
+The full-review rules below, including hiding *all* previous evaluations, apply to `full` only.
+The separate, explicitly authorized `closeout-minor` path remains author-side closeout, not an
+independent delta review. Do not manufacture its per-paper authorization to route a new paper.
+
 Read `registry/settings.yaml` before selecting the panel contract. The default contract uses exactly
 one score-bearing reviewer: a fresh Codex `reviewer-1` with `provider: openai-codex`. Do not launch
 Claude under this contract. Form the validated one-member panel with `aggregate_panel.py`, which
@@ -245,7 +283,9 @@ python "$OPENLABS_WORKSPACE/openlabs/workflows/paper/skills/openlabs-paper-revie
 ```
 
 Fix validation-only transcription errors in place. A substantive judgment change requires a new
-reviewer context; any score-bearing manuscript change invalidates every configured review. A changed full PDF
+reviewer context; any score-bearing manuscript change invalidates every configured full review for
+the new snapshot. The scope router may instead bind an eligible editorial delta to the immutable
+old full review; do not rewrite the old review hashes or scores. A changed full PDF
 hash caused solely by the deterministic metadata-only path above is recorded as review reuse, not a
 new review.
 

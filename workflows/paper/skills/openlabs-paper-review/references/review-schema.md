@@ -1,5 +1,34 @@
 # Review record schema
 
+## Cumulative editorial delta records
+
+Full review schemas below remain immutable and version-specific. Editorial re-review uses the
+separate `openlabs.paper_writing.delta_result.v1` schema, defined executably by
+`paper_writing.review_delta_runner.result_schema` and validated by
+`paper_writing.review_delta.check_result`. It has NO scores or simulated venue decisions.
+
+Required fields: `schema_version`, `packet_sha256`, `verdict` (`resolved`, `unresolved`, `escalate`),
+`scientific_content_unchanged`, `changes` (ordered path/status/evidence rows), `issues` (ordered
+id/status/evidence rows), `new_blockers`, `optional_suggestions`, `build_check`, `visual_check`.
+Every cumulative changed source and issue must appear exactly once in packet order. Checks use
+`PASS`, `FAIL`, or `UNVERIFIED` with concrete evidence. `resolved` requires scientific invariance,
+all mandatory rows resolved, both checks PASS and no new blockers. Scientific change or uncertainty
+requires escalation. Optional suggestions never block by themselves.
+
+The runner owns `openlabs.paper_writing.delta_receipt.v1`: exact command/model, old/new snapshot,
+input manifest, clean-build receipt, result/prompt/events/stderr bindings, and truthful process
+provenance. `prior_issue_list_supplied: true`, `prior_scores_supplied: false`, and
+`author_conversation_supplied: false` describe this different boundary; never claim all prior
+reviews were hidden. It remains internal AI review, not external peer review.
+
+The immutable baseline stores the full review reference, policy fingerprint, sources/PDF and the
+used round budget at that full-review anchor. Each packet repeats the complete cumulative diff
+from that baseline and references all preceding applied receipts. New delta blockers receive stable
+IDs and remain in subsequent issue lists. Release preserves the baseline score, decision and full
+review timestamp, while binding the latest version through `writing_release.review_delta`.
+
+## Full review records
+
 Each independent reviewer writes one JSON object using schema `ara.paper_writing.review.v2`.
 Scores are integers. Every source contains one role-specific high-standard opinion and one CAS
 Zone 1 journal opinion. Under the default contract, after the fresh Codex reviewer finishes, write
