@@ -141,7 +141,7 @@ def _members(values: Mapping[str, bytes]) -> dict[str, str]:
 
 def _complete_sources(old_packet: Mapping[str, bytes], new_packet: Mapping[str, bytes],
                       current: Mapping[str, bytes], old_pdf: bytes, old_hash: str) -> tuple[dict, list]:
-    """Recover unchanged snapshot-only Markdown without claiming it was reviewed.
+    """Recover unchanged snapshot-only metadata without claiming it was reviewed.
 
     Journal source ZIPs may omit private manuscript notes even though the
     canonical snapshot includes them. Current note bytes are admissible only
@@ -151,8 +151,9 @@ def _complete_sources(old_packet: Mapping[str, bytes], new_packet: Mapping[str, 
     _require(all(name in current and current[name] == value for name, value in new_packet.items()),
              "journal source ZIP differs from current source bytes")
     extras = {name: value for name, value in current.items() if name not in new_packet}
-    _require(all(PurePosixPath(name).suffix == ".md" for name in extras),
-             "only unchanged snapshot-only Markdown may be absent from source ZIP")
+    _require(all(PurePosixPath(name).suffix in {".md", ".json"}
+                 or name == "cover_letter.tex" for name in extras),
+             "only unchanged snapshot-only metadata or cover letter may be absent from source ZIP")
     original = {**old_packet, **extras}
     _require(_snapshot(original, old_pdf) == old_hash,
              "original complete source/PDF snapshot does not reconstruct")
@@ -330,7 +331,7 @@ def inspect_minor_closeout(paper_id: str, *, authorization: str, source_run: str
     from paper_writing.operations import _review_workspace_fingerprints
     from paper_writing.registry import load_paper_metadata
     from paper_writing.review import validate_review_panel_files, reviewer_role_for_domain
-    from paper_writing.support import verify_support_archive, resolve_support_sources
+    from paper_writing.support import verify_support_archive, resolve_support_sources, _record_version
     from paper_writing.zenodo import _verify_archive_sources
 
     root = Path(root).resolve()
@@ -395,12 +396,19 @@ def inspect_minor_closeout(paper_id: str, *, authorization: str, source_run: str
     support_path = _path(support_archive, root)
     support = verify_support_archive(support_path)
     _verify_archive_sources(support, resolve_support_sources(metadata, repo_root=root), root)
-    _require(support.get("paper_id") == paper_id and support.get("paper_version") == auth["target_version"], "support archive identity differs")
+    target_support_version = _record_version(metadata)
+    _require(support.get("paper_id") == paper_id and support.get("paper_version") == target_support_version, "support archive identity differs")
     _require(_sha(support_path) == metadata.get("support", {}).get("publication", {}).get("package_sha256"), "support draft package binding differs")
-    old_support = _support_members(_archive(_bound(source["packet/support.zip"], root, artifact=True)), auth["source_version"])
-    new_support = _support_members(_archive(support_path), auth["target_version"])
+    old_support_path = _bound(source["packet/support.zip"], root, artifact=True)
+    old_support_record = verify_support_archive(old_support_path)
+    _require(old_support_record.get("paper_id") == paper_id, "original support paper identity differs")
+    source_support_version = old_support_record.get("paper_version")
+    _require(isinstance(source_support_version, str)
+             and bool(re.fullmatch(r"\d+\.\d+\.\d+", source_support_version)), "invalid original support version")
+    old_support = _support_members(_archive(old_support_path), source_support_version)
+    new_support = _support_members(_archive(support_path), target_support_version)
     delta = _deltas(old_sources, current_sources, "manuscript") + _deltas(
-        old_support, new_support, "support", auth["source_version"], auth["target_version"],
+        old_support, new_support, "support", source_support_version, target_support_version,
         auth.get("support_text_edits"))
     target = {"version": auth["target_version"], **_review_workspace_fingerprints(paper_id, metadata, root),
               "pdf": _binding(str(pdf.relative_to(root)), root),

@@ -163,6 +163,25 @@ def test_closeout_preserves_original_review_scores_and_rounds_and_freezes_eviden
     assert path in files and b["auth_path"] in files and b["root"] / "maintenance/closeout/evidence.md" in files
 
 
+def test_text_revision_can_keep_hash_identical_independent_support_version(bundle):
+    b = bundle
+    metadata = load_paper_metadata(PID, b["root"])
+    metadata["version"] = "0.1.1"
+    metadata["submission_package"]["version"] = "0.1.1"
+    metadata["support"]["publication"]["release_version"] = "0.1.0"
+    write_paper_metadata(PID, metadata, b["root"])
+    b["auth"]["papers"][PID]["target_version"] = "0.1.1"
+    write(b["auth_path"], b["auth"])
+    cert = prepare(b)
+    assert cert["target"]["version"] == "0.1.1"
+    assert cert["support_files_before"] == cert["support_files_after"]
+    assert not [d for d in cert["delta"] if d["path"].startswith("support/")]
+    metadata["support"]["publication"]["release_version"] = "0.1.2"
+    write_paper_metadata(PID, metadata, b["root"])
+    with pytest.raises(ValueError, match="support archive identity differs"):
+        prepare(b)
+
+
 @pytest.mark.parametrize("field", ["schema_version", "paper_id", "source_version", "revision_rounds_completed", "source_run"])
 def test_certificate_cannot_relabel_identity_or_rounds(bundle, field):
     path, c = certificate(bundle)
@@ -366,15 +385,16 @@ def test_document_authorization_cannot_whitelist_scientific_files(bundle, path):
         prepare(bundle)
 
 
-def test_snapshot_only_notes_are_bound_without_claiming_packet_coverage():
+@pytest.mark.parametrize("name", ["README.md", "manuscript_manifest.json", "cover_letter.tex"])
+def test_snapshot_only_notes_are_bound_without_claiming_packet_coverage(name):
     old = {"main.tex": b"old prose"}
     new = {"main.tex": b"clear prose"}
-    complete_old = {**old, "README.md": b"private unchanged note"}
+    complete_old = {**old, name: b"private unchanged note"}
     full, extras = closeout._complete_sources(old, new,
-        {**new, "README.md": complete_old["README.md"]}, b"original PDF",
+        {**new, name: complete_old[name]}, b"original PDF",
         closeout._snapshot(complete_old, b"original PDF"))
     assert full == complete_old
-    assert extras == [{"path": "README.md", "sha256": closeout.hashlib.sha256(complete_old["README.md"]).hexdigest(),
+    assert extras == [{"path": name, "sha256": closeout.hashlib.sha256(complete_old[name]).hexdigest(),
                        "in_review_packet": False}]
 
 
