@@ -295,6 +295,77 @@ def test_duplicate_json_keys_and_symlinks_are_rejected(tmp_path):
     with pytest.raises(ValueError, match="symlinked"): closeout._path("alias.json", tmp_path)
 
 
+def integrity_rebinding_fixture():
+    before_manifest = b'{"version":"0.1.0","science":"unchanged"}'
+    after_manifest = b'{"version":"0.1.1","science":"unchanged"}'
+    old_hash = closeout.hashlib.sha256(before_manifest).hexdigest()
+    new_hash = closeout.hashlib.sha256(after_manifest).hexdigest()
+    old = ('EXPECTED_BUNDLE_MANIFEST_SHA256 = "' + old_hash + '"\n'
+           'assert version == "0.1.0"\nassert scientific_result == 7\n').encode()
+    new = old.replace(old_hash.encode(), new_hash.encode()).replace(b'0.1.0', b'0.1.1')
+    return {"evidence_bundle_manifest.json": before_manifest, "verify_support_bundle.py": old}, {
+        "evidence_bundle_manifest.json": after_manifest, "verify_support_bundle.py": new}
+
+
+def test_integrity_verifier_rebinding_preserves_all_logic():
+    before, after = integrity_rebinding_fixture()
+    rows = closeout._deltas(before, after, "support", "0.1.0", "0.1.1")
+    assert {row["path"] for row in rows} == {
+        "support/evidence_bundle_manifest.json", "support/verify_support_bundle.py"}
+
+
+@pytest.mark.parametrize("change", ["predicate", "constant", "wrong_hash", "missing_manifest", "other_program"])
+def test_integrity_rebinding_cannot_hide_code_changes(change):
+    before, after = integrity_rebinding_fixture()
+    if change == "predicate":
+        after["verify_support_bundle.py"] = after["verify_support_bundle.py"].replace(b"== 7", b"!= 7")
+    elif change == "constant":
+        after["verify_support_bundle.py"] = after["verify_support_bundle.py"].replace(b"== 7", b"== 8")
+    elif change == "wrong_hash":
+        after["verify_support_bundle.py"] = closeout.re.sub(rb'[0-9a-f]{64}', b'0' * 64, after["verify_support_bundle.py"])
+    elif change == "missing_manifest":
+        before.pop("evidence_bundle_manifest.json")
+        after.pop("evidence_bundle_manifest.json")
+    else:
+        before["science.py"] = before.pop("verify_support_bundle.py")
+        after["science.py"] = after.pop("verify_support_bundle.py")
+    with pytest.raises(ValueError, match="scientific support"):
+        closeout._deltas(before, after, "support", "0.1.0", "0.1.1")
+
+
+def test_claim_evidence_map_allows_version_only_not_claim_changes():
+    before = {"evidence/claim_evidence_map.md": b"# 0.1.0\nA bounded claim\n"}
+    after = {"evidence/claim_evidence_map.md": b"# 0.1.1\nA bounded claim\n"}
+    assert len(closeout._deltas(before, after, "support", "0.1.0", "0.1.1")) == 1
+    after["evidence/claim_evidence_map.md"] += b"A new universal claim\n"
+    with pytest.raises(ValueError, match="scientific support"):
+        closeout._deltas(before, after, "support", "0.1.0", "0.1.1")
+
+
+def test_reproduction_text_change_requires_exact_authorized_hashes():
+    before = {"REPRODUCE.md": b"Old release guide\n"}
+    after = {"REPRODUCE.md": b"Clarified guide; commands unchanged\n"}
+    authorization = [{"path": "REPRODUCE.md", "before_sha256": closeout.hashlib.sha256(before["REPRODUCE.md"]).hexdigest(),
+                      "after_sha256": closeout.hashlib.sha256(after["REPRODUCE.md"]).hexdigest()}]
+    with pytest.raises(ValueError, match="scientific support"):
+        closeout._deltas(before, after, "support", "0.1.0", "0.1.1")
+    assert len(closeout._deltas(before, after, "support", "0.1.0", "0.1.1", authorization)) == 1
+    after["REPRODUCE.md"] += b"An unapproved command\n"
+    with pytest.raises(ValueError, match="exact authorization"):
+        closeout._deltas(before, after, "support", "0.1.0", "0.1.1", authorization)
+    with pytest.raises(ValueError, match="delta is missing"):
+        closeout._deltas(before, before, "support", "0.1.0", "0.1.1", authorization)
+
+
+@pytest.mark.parametrize("path", ["science.py", "CLAIMS.yaml", "evidence/claim_evidence_map.md", "../REPRODUCE.md"])
+def test_document_authorization_cannot_whitelist_scientific_files(bundle, path):
+    bundle["auth"]["papers"][PID]["support_text_edits"] = [
+        {"path": path, "before_sha256": "a" * 64, "after_sha256": "b" * 64}]
+    write(bundle["auth_path"], bundle["auth"])
+    with pytest.raises(ValueError, match="reproduction-guide"):
+        prepare(bundle)
+
+
 def test_snapshot_only_notes_are_bound_without_claiming_packet_coverage():
     old = {"main.tex": b"old prose"}
     new = {"main.tex": b"clear prose"}

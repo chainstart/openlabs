@@ -174,9 +174,38 @@ def _support_members(values: Mapping[str, bytes], version: str) -> dict[str, byt
     return output
 
 
+def _integrity_verifier_rebinding(name: str, old: bytes, new: bytes,
+                                 before: Mapping[str, bytes], after: Mapping[str, bytes],
+                                 source_version: str, target_version: str) -> bool:
+    """Permit only version literals and a verified sibling-manifest hash rebind.
+
+    No execution, predicate, scientific constant, file list or result may change.
+    In particular, replacing the expected hash with an arbitrary value is rejected.
+    """
+    path = PurePosixPath(name)
+    if path.name != "verify_support_bundle.py" or not source_version or source_version == target_version:
+        return False
+    manifest = str(path.parent / "evidence_bundle_manifest.json")
+    if manifest not in before or manifest not in after:
+        return False
+    pattern = re.compile(rb'^EXPECTED_BUNDLE_MANIFEST_SHA256 = "([0-9a-f]{64})"$', re.MULTILINE)
+    old_matches, new_matches = list(pattern.finditer(old)), list(pattern.finditer(new))
+    if len(old_matches) != 1 or len(new_matches) != 1:
+        return False
+    old_hash = hashlib.sha256(before[manifest]).hexdigest().encode()
+    new_hash = hashlib.sha256(after[manifest]).hexdigest().encode()
+    if old_matches[0].group(1) != old_hash or new_matches[0].group(1) != new_hash:
+        return False
+    rebound = pattern.sub(lambda match: match.group(0).replace(old_hash, new_hash), old)
+    return rebound.replace(source_version.encode(), target_version.encode()) == new
+
+
 def _deltas(before: Mapping[str, bytes], after: Mapping[str, bytes], area: str,
-            source_version: str = "", target_version: str = "") -> list[dict]:
+            source_version: str = "", target_version: str = "",
+            support_text_edits: list[dict] | None = None) -> list[dict]:
     result = []
+    authorized_docs = {row["path"]: row for row in (support_text_edits or [])}
+    used_docs = set()
     for name in sorted(set(before) | set(after)):
         old, new = before.get(name), after.get(name)
         if old == new:
@@ -185,14 +214,25 @@ def _deltas(before: Mapping[str, bytes], after: Mapping[str, bytes], area: str,
         _require(old is not None and new is not None, f"added/deleted {area} file requires full review: {name}")
         allowed = (PurePosixPath(name).suffix in {".tex", ".bib", ".bbl", ".cls", ".sty"}
                    if area == "manuscript" else PurePosixPath(name).name in _SUPPORT_METADATA)
-        version_only = (area == "support" and PurePosixPath(name).name in {"CLAIMS.yaml", "REPRODUCE.md"}
+        version_only = (area == "support" and PurePosixPath(name).name in {"CLAIMS.yaml", "REPRODUCE.md", "claim_evidence_map.md"}
                         and source_version != target_version and bool(source_version)
                         and old.replace(source_version.encode(), target_version.encode()) == new)
-        allowed = allowed or version_only
+        documented = area == "support" and name in authorized_docs
+        if documented:
+            row = authorized_docs[name]
+            _require(PurePosixPath(name).name == "REPRODUCE.md"
+                     and row["before_sha256"] == hashlib.sha256(old).hexdigest()
+                     and row["after_sha256"] == hashlib.sha256(new).hexdigest(),
+                     "reproduction-document delta differs from exact authorization")
+            used_docs.add(name)
+        integrity_only = area == "support" and _integrity_verifier_rebinding(
+            name, old, new, before, after, source_version, target_version)
+        allowed = allowed or version_only or documented or integrity_only
         _require(allowed, f"non-text or scientific support change cannot be closed out: {area}/{name}")
         old.decode("utf-8"); new.decode("utf-8")
         result.append({"path": f"{area}/{name}", "before_sha256": hashlib.sha256(old).hexdigest(),
                        "after_sha256": hashlib.sha256(new).hexdigest()})
+    _require(used_docs == set(authorized_docs), "authorized reproduction-document delta is missing")
     return result
 
 
@@ -212,8 +252,26 @@ def _authorization(paper_id: str, item: Any, root: Path) -> tuple[dict, dict]:
     papers = auth["papers"]
     _require(isinstance(papers, dict) and papers and all(PAPER_ID_PATTERN.fullmatch(k) for k in papers)
              and paper_id in papers, "paper is not explicitly authorized")
-    entry = _keys(papers[paper_id], {"source_version", "target_version", "source_review_sha256", "venue_suitability_blockers",
-                  "venue_suitability_change_requests", "venue_suitability_required_changes", "optional_not_required_change_requests"}, "paper authorization")
+    entry = papers[paper_id]
+    fields = {"source_version", "target_version", "source_review_sha256", "venue_suitability_blockers",
+              "venue_suitability_change_requests", "venue_suitability_required_changes", "optional_not_required_change_requests"}
+    _require(isinstance(entry, Mapping), "invalid paper authorization")
+    _keys(entry, fields | ({"support_text_edits"} if "support_text_edits" in entry else set()), "paper authorization")
+    documents = entry.get("support_text_edits", [])
+    _require(isinstance(documents, list), "invalid reproduction-document authorizations")
+    seen_documents = set()
+    for document in documents:
+        _keys(document, {"path", "before_sha256", "after_sha256"}, "reproduction-document authorization")
+        name = document["path"]
+        _require(isinstance(name, str), "invalid reproduction-document path")
+        path = PurePosixPath(name)
+        _require(not path.is_absolute() and ".." not in path.parts and "\\" not in name
+                 and name == path.as_posix() and path.name == "REPRODUCE.md"
+                 and name not in seen_documents, "only exact reproduction-guide edits may be authorized")
+        _require(all(isinstance(document[k], str) and bool(_SHA.fullmatch(document[k]))
+                     for k in ("before_sha256", "after_sha256")), "invalid reproduction-document hashes")
+        _require(document["before_sha256"] != document["after_sha256"], "reproduction-document authorization requires a real delta")
+        seen_documents.add(name)
     for key in ("source_version", "target_version"):
         _require(isinstance(entry[key], str) and bool(re.fullmatch(r"\d+\.\d+\.\d+", entry[key])), "invalid authorized version")
     _require(bool(_SHA.fullmatch(str(entry["source_review_sha256"]))), "invalid raw review hash")
@@ -342,7 +400,8 @@ def inspect_minor_closeout(paper_id: str, *, authorization: str, source_run: str
     old_support = _support_members(_archive(_bound(source["packet/support.zip"], root, artifact=True)), auth["source_version"])
     new_support = _support_members(_archive(support_path), auth["target_version"])
     delta = _deltas(old_sources, current_sources, "manuscript") + _deltas(
-        old_support, new_support, "support", auth["source_version"], auth["target_version"])
+        old_support, new_support, "support", auth["source_version"], auth["target_version"],
+        auth.get("support_text_edits"))
     target = {"version": auth["target_version"], **_review_workspace_fingerprints(paper_id, metadata, root),
               "pdf": _binding(str(pdf.relative_to(root)), root),
               "source_archive": _binding(str(archive[0].relative_to(root)), root),

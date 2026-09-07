@@ -166,7 +166,14 @@ from the original journal source ZIP is explicitly marked **not in the review
 packet**. Its unchanged bytes must reconstruct the original snapshot hash;
 this cannot excuse changed, added or removed notes. Science code/data and
 added/deleted source files cannot use this mechanism. `CLAIMS.yaml` and
-`REPRODUCE.md` permit only literal source-to-target version substitution.
+`claim_evidence_map.md` permit only literal source-to-target version substitution.
+`REPRODUCE.md` has the same default restriction; a scoped authorization may
+add `support_text_edits` entries containing its exact normalized support `path`,
+`before_sha256`, and `after_sha256` for an inspected explanatory-only edit.
+This does not whitelist other evidence or program files. The integrity helper
+`verify_support_bundle.py` may change only literal version strings and its single
+`EXPECTED_BUNDLE_MANIFEST_SHA256` assignment, with both old and new values checked
+against the corresponding sibling manifests. Any other program change fails.
 
 Save the template as an auditable certificate, then fill every mandatory request,
 required-change and delta resolution with a reason and repository-relative
