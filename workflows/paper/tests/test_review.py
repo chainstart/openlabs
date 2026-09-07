@@ -1246,6 +1246,39 @@ def test_panel_validator_accepts_one_shared_bounded_lean_receipt(tmp_path: Path)
     )
     assert any("execution_count must equal 1" in error for error in errors)
 
+    # A manuscript/support-only change may reuse precisely the same Lean inputs.
+    receipt["execution_count"] = 1
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    reuse_path = receipt_path.with_name("lean-reuse.json")
+    reuse = {k: v for k, v in receipt.items() if k not in {"preflight", "resource_limits"}}
+    reuse.update(schema_version="ara.paper_writing.lean_objective_audit.v2", commands=[],
+                 execution_count=0, formal_validation_execution_count=0,
+                 reuse_reason="lean_sources_and_configuration_unchanged",
+                 reused_pass_receipt={"source": receipt_path.relative_to(tmp_path).as_posix(),
+                                      "sha256": sha256_file(receipt_path)})
+    item = panel["review_metadata"]["review_panel"]["shared_objective_audits"][0]
+    item["source"] = reuse_path.relative_to(tmp_path).as_posix()
+    def check_reuse():
+        reuse_path.write_text(json.dumps(reuse), encoding="utf-8")
+        item["sha256"] = sha256_file(reuse_path)
+        return validate_review_panel_files(panel, review_path=review_path,
+            repo_root=tmp_path, expected_role=MATHEMATICS_REVIEWER_ROLE,
+            expected_paper_id=paper_id)
+    assert check_reuse() == []
+    reuse["execution_count"] = 1
+    assert check_reuse()
+    reuse["execution_count"] = 0
+    reuse["source_sha256"] = {**source_hashes, "missing.lean": "a" * 64}
+    assert check_reuse()
+    reuse["source_sha256"] = source_hashes
+    reuse["reused_pass_receipt"]["sha256"] = "a" * 64
+    assert check_reuse()
+    reuse["reused_pass_receipt"]["sha256"] = sha256_file(receipt_path)
+    receipt["commands"][1]["return_code"] = 1
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    reuse["reused_pass_receipt"]["sha256"] = sha256_file(receipt_path)
+    assert check_reuse()
+
 
 def test_skill_aggregator_defaults_to_one_codex_reviewer(tmp_path: Path) -> None:
     paper_id = "20260804-ai-llm-single-aggregate-test"

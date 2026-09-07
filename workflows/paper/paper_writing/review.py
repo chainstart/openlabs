@@ -1127,16 +1127,51 @@ def validate_review_panel_files(
                 continue
             prefix = f"objective audit {index + 1}"
             expected_snapshot = metadata.get("manuscript_snapshot_sha256_before")
+            reused = receipt.get("schema_version") == "ara.paper_writing.lean_objective_audit.v2"
+            execution_receipt = receipt
+            if reused:
+                link = _mapping(receipt.get("reused_pass_receipt"))
+                name = link.get("source")
+                predecessor = (root / name).resolve() if isinstance(name, str) else None
+                if (predecessor is None or not predecessor.is_relative_to(root / "reviews" / "objective-audits")
+                        or predecessor == receipt_path or not predecessor.is_file()
+                        or hashlib.sha256(predecessor.read_bytes()).hexdigest() != link.get("sha256")):
+                    errors.append(f"{prefix} invalid hash-bound executing predecessor")
+                    continue
+                try:
+                    execution_receipt = json.loads(predecessor.read_text())
+                except (OSError, json.JSONDecodeError):
+                    errors.append(f"{prefix} invalid predecessor JSON")
+                    continue
+                if not isinstance(execution_receipt, Mapping):
+                    errors.append(f"{prefix} predecessor must be an object")
+                    continue
+                required_predecessor = {
+                    "schema_version": LEAN_OBJECTIVE_AUDIT_SCHEMA_VERSION,
+                    "status": "PASS", "paper_id": receipt.get("paper_id"),
+                    "audit_file": receipt.get("audit_file"),
+                    "source_sha256": receipt.get("source_sha256"),
+                    "objective_only": True, "score_bearing": False,
+                    "execution_count": 1, "formal_validation_execution_count": 1,
+                    "cumulative_formal_validation_execution_count": 1,
+                }
+                for key, value in required_predecessor.items():
+                    if execution_receipt.get(key) != value:
+                        errors.append(f"{prefix} executing predecessor {key} mismatch")
+                if (receipt.get("commands") != [] or receipt.get("reuse_reason") != "lean_sources_and_configuration_unchanged"
+                        or _SHA256.fullmatch(str(execution_receipt.get("manuscript_snapshot_sha256"))) is None
+                        or _SHA256.fullmatch(str(execution_receipt.get("support_package_sha256"))) is None):
+                    errors.append(f"{prefix} invalid zero-execution reuse contract")
             checks = (
-                ("schema_version", LEAN_OBJECTIVE_AUDIT_SCHEMA_VERSION),
+                ("schema_version", "ara.paper_writing.lean_objective_audit.v2" if reused else LEAN_OBJECTIVE_AUDIT_SCHEMA_VERSION),
                 ("status", "PASS"),
                 ("paper_id", expected_paper_id or metadata.get("paper_id")),
                 ("manuscript_snapshot_sha256", expected_snapshot),
                 ("support_package_sha256", item.get("support_package_sha256")),
                 ("objective_only", True),
                 ("score_bearing", False),
-                ("execution_count", 1),
-                ("formal_validation_execution_count", 1),
+                ("execution_count", 0 if reused else 1),
+                ("formal_validation_execution_count", 0 if reused else 1),
                 ("cumulative_formal_validation_execution_count", 1),
             )
             for key, expected in checks:
@@ -1149,7 +1184,7 @@ def validate_review_panel_files(
             if item.get("status") != receipt.get("status"):
                 errors.append(f"{prefix} panel status does not match the receipt")
 
-            limits = _mapping(receipt.get("resource_limits"))
+            limits = _mapping(execution_receipt.get("resource_limits"))
             bounded_limits = (
                 ("threads", 1, 4),
                 ("aggregate_rss_mib", 1024, 24576),
@@ -1167,7 +1202,7 @@ def validate_review_panel_files(
                     errors.append(
                         f"{prefix} resource_limits.{key} must be between {minimum} and {maximum}"
                     )
-            preflight = _mapping(receipt.get("preflight"))
+            preflight = _mapping(execution_receipt.get("preflight"))
             total_memory = preflight.get("total_memory_mib")
             available_memory = preflight.get("available_memory_mib")
             reserved_headroom = preflight.get("reserved_headroom_mib")
@@ -1197,7 +1232,7 @@ def validate_review_panel_files(
                 if available_memory < required_available:
                     errors.append(f"{prefix} available memory did not preserve the host headroom")
             audit_file = receipt.get("audit_file")
-            commands = receipt.get("commands")
+            commands = execution_receipt.get("commands")
             expected_commands = (
                 ["lake", "build", "--quiet"],
                 ["lake", "env", "lean", audit_file],
