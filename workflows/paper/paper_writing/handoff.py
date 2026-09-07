@@ -1144,7 +1144,7 @@ def validate_release_preconditions(
             f"{paper_id} is not release-ready; run and pass the quality gate first"
         )
 
-    settings = load_registry(repo_root, include_local_repositories=False)
+    settings = load_registry(repo_root, include_local_repositories=False, paper_ids=[paper_id])
     configured_gate = settings.get("quality_gate")
     configured_gate = configured_gate if isinstance(configured_gate, Mapping) else {}
     support_policy = publication_policy(settings)

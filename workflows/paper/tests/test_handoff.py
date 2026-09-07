@@ -905,6 +905,23 @@ writing_release:
     assert result["score"] == 6.0
     assert result["manuscript_snapshot_sha256"] == snapshot
 
+    # An unrelated draft must not block this paper's release; the selected
+    # record and global settings must still be validated strictly.
+    unrelated = registry / "20260907-math-graph-unfinished.yaml"
+    unrelated.write_text("paper_id: mismatched\n", encoding="utf-8")
+    assert validate_release_preconditions(paper_id, root=tmp_path)["score"] == 6.0
+    original_record = paper_registry.read_text(encoding="utf-8")
+    paper_registry.write_text(original_record + "target_journal: []\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="target_journal must be a non-empty string"):
+        validate_release_preconditions(paper_id, root=tmp_path)
+    paper_registry.write_text(original_record, encoding="utf-8")
+    settings_file = tmp_path / "registry" / "settings.yaml"
+    original_settings = settings_file.read_text(encoding="utf-8")
+    settings_file.write_text("schema_version: invalid\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Unsupported registry schema"):
+        validate_release_preconditions(paper_id, root=tmp_path)
+    settings_file.write_text(original_settings, encoding="utf-8")
+
     class FakeManageClient:
         base_url = "https://manage.example"
 
