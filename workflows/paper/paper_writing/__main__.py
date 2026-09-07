@@ -147,6 +147,18 @@ def build_parser() -> argparse.ArgumentParser:
     review_reuse.add_argument("--paper-id", required=True)
     review_reuse.add_argument("--root", default=str(default_repo_root()))
 
+    minor_prepare = review_commands.add_parser("prepare-minor-closeout", help="Inspect immutable evidence and emit an unsigned author-side closeout template.")
+    minor_prepare.add_argument("--paper-id", required=True)
+    minor_prepare.add_argument("--authorization", required=True)
+    minor_prepare.add_argument("--source-run", required=True, help="Run/paper directory relative to sibling openlabs-artifacts.")
+    minor_prepare.add_argument("--support-archive", required=True)
+    minor_prepare.add_argument("--root", default=str(default_repo_root()))
+    for command in ("validate-minor-closeout", "closeout-minor"):
+        minor = review_commands.add_parser(command, help="Validate/apply an explicitly authorized text-only closeout, without a new review round.")
+        minor.add_argument("--paper-id", required=True)
+        minor.add_argument("--certificate", required=True)
+        minor.add_argument("--root", default=str(default_repo_root()))
+
     zenodo = subparsers.add_parser(
         "zenodo",
         help=(
@@ -423,6 +435,19 @@ def main(argv: list[str] | None = None) -> int:
             args.paper_id,
             root=args.root,
         )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "review" and args.review_command in {"prepare-minor-closeout", "validate-minor-closeout", "closeout-minor"}:
+        from paper_writing.minor_closeout import inspect_minor_closeout, validate_minor_closeout, apply_minor_closeout
+        if args.review_command == "prepare-minor-closeout":
+            result = inspect_minor_closeout(args.paper_id, authorization=args.authorization,
+                source_run=args.source_run, support_archive=args.support_archive, root=args.root)
+        elif args.review_command == "closeout-minor":
+            result = apply_minor_closeout(args.paper_id, certificate=args.certificate, root=args.root)
+        else:
+            checked = validate_minor_closeout(args.paper_id, args.certificate, root=args.root)
+            result = {"paper_id": args.paper_id, "valid": True, "certificate": checked["certificate_binding"],
+                      "new_independent_review": False, "rounds_added": 0}
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command == "zenodo":

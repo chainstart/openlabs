@@ -483,6 +483,8 @@ def _release_snapshot(metadata: Mapping[str, Any]) -> dict[str, Any]:
             "revision_rounds_completed",
             "max_revision_rounds",
             "quality_gate_revision_exception",
+            "minor_revision_closeout",
+            "nonblocking_venue_findings",
             "unresolved_review_blockers",
             "reviewed_at",
             "manuscript_snapshot_sha256",
@@ -1111,6 +1113,11 @@ def _release_paths(
         if not review_path.is_file():
             raise HandoffError(f"Registered quality review is missing: {review_path}")
         files.append(review_path)
+    from paper_writing.minor_closeout import validate_release_minor_closeout
+    try:
+        files.extend(validate_release_minor_closeout(paper_id, metadata, root=repo_root))
+    except (ValueError, OSError) as exc:
+        raise HandoffError(f"Minor-revision closeout is invalid: {exc}") from exc
     try:
         for path in files:
             path.resolve().relative_to(repo_root)
