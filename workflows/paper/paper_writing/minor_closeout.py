@@ -161,6 +161,88 @@ def _complete_sources(old_packet: Mapping[str, bytes], new_packet: Mapping[str, 
                       for name, sha in _members(extras).items()]
 
 
+def _legacy_sources(root: Path, source_run: str, paper_id: str, raw: dict,
+                    raw_binding: dict, source: dict, applied: dict, version: str) -> tuple[dict, bytes, list]:
+    """Read the original native math packet, never synthesize postvalidation.
+
+    A separately recorded reconstruction may restore snapshot-only bytes. The
+    complete historical snapshot must match the immutable raw review exactly;
+    these ancillary bytes are explicitly NOT represented as reviewer inputs.
+    """
+    _require(source_run.startswith("staging/"), "unsupported legacy review layout")
+    def bind(name):
+        item = _binding(f"{source_run}/{name}", root, artifact=True)
+        source[name] = item
+        return _bound(item, root, artifact=True)
+    snap = _json(bind("snapshot.json"))
+    inputs = _json(bind("packet/input-binding.json"))
+    manifest = _json(bind("packet-manifest.json"))
+    old_hash = raw["review_metadata"]["manuscript_snapshot_sha256_before"]
+    _require(snap == inputs and snap.get("paper_id") == paper_id
+             and snap.get("version") == version
+             and snap.get("manuscript_snapshot_sha256") == old_hash,
+             "legacy input identity mismatch")
+    run = root.parent / "openlabs-artifacts" / source_run
+    validations = sorted(run.glob("panel-validation-*/summary.json"))
+    _require(len(validations) == 1, "ambiguous legacy postvalidation")
+    summary_name = validations[0].relative_to(run).as_posix()
+    summary = _json(bind(summary_name))
+    _require(summary.get("paper_id") == paper_id
+             and summary.get("native_review_sha256") == raw_binding["sha256"]
+             and summary.get("review_unchanged") is True
+             and summary.get("all_steps_passed") is True
+             and len(summary.get("steps", [])) == 4
+             and all(s.get("exit_code") == 0 for s in summary["steps"]),
+             "legacy native validation failed")
+    original_apply = _json(bind(str(PurePosixPath(summary_name).parent / "3.stdout.txt")))
+    _require(original_apply.get("quality_gate") == applied
+             and applied.get("manuscript_snapshot_sha256") == old_hash,
+             "legacy applied record differs from original native output")
+    packet = run / "packet/manuscript"
+    reviewed = {}
+    for path in sorted(packet.rglob("*")):
+        if path.is_file():
+            name = path.relative_to(packet).as_posix()
+            value = bind("packet/manuscript/" + name).read_bytes()
+            _require(hashlib.sha256(value).hexdigest() == manifest.get("manuscript/" + name),
+                     "legacy reviewed source differs from packet manifest")
+            reviewed[name] = value
+    _require(set(reviewed) == {n.removeprefix("manuscript/") for n in manifest if n.startswith("manuscript/")},
+             "legacy reviewed source omitted")
+    pdf_path = bind("packet/manuscript.pdf")
+    _require(_sha(pdf_path) == snap.get("canonical_pdf_sha256") == manifest.get("manuscript.pdf"),
+             "legacy PDF binding mismatch")
+    support_name = snap.get("support_archive")
+    _require(isinstance(support_name, str) and PurePosixPath(support_name).name == support_name,
+             "unsafe legacy support filename")
+    support = bind("packet/" + support_name)
+    source["packet/support.zip"] = source["packet/" + support_name]
+    _require(_sha(support) == snap.get("support_package_sha256") == manifest.get(support_name),
+             "legacy support binding mismatch")
+    recovery_name = str(PurePosixPath(source["review"]["path"]).parent / "snapshot-reconstruction.json")
+    source["snapshot_reconstruction"] = _binding(recovery_name, root)
+    recovery = _json(_bound(source["snapshot_reconstruction"], root))
+    _keys(recovery, {"schema_version", "paper_id", "reconstructed_at", "provenance", "snapshot_only_sources"}, "snapshot reconstruction")
+    _require(recovery["schema_version"] == "ara.paper_writing.legacy_snapshot_reconstruction.v1"
+             and recovery["paper_id"] == paper_id and _text(recovery["provenance"]),
+             "invalid legacy reconstruction provenance")
+    _timestamp(recovery["reconstructed_at"])
+    extra = recovery["snapshot_only_sources"]
+    _require(isinstance(extra, dict) and not set(extra) & (set(reviewed) | {"main.pdf"}),
+             "reconstruction cannot replace reviewed bytes")
+    recovered = {}
+    for name, item in extra.items():
+        p = PurePosixPath(name)
+        _require(not p.is_absolute() and ".." not in p.parts and "\\" not in name
+                 and name == p.as_posix(), "unsafe recovered source name")
+        recovered[name] = _bound(item, root, artifact=True).read_bytes()
+    old = {**reviewed, **recovered}
+    pdf = pdf_path.read_bytes()
+    _require(_snapshot(old, pdf) == old_hash, "legacy complete snapshot does not reconstruct")
+    return old, pdf, [{"path": n, "sha256": h, "in_review_packet": False}
+                     for n, h in _members(recovered).items()]
+
+
 def _support_members(values: Mapping[str, bytes], version: str) -> dict[str, bytes]:
     """Normalize only archive-root and versioned public-support directory names."""
     output = {}
@@ -360,28 +442,34 @@ def inspect_minor_closeout(paper_id: str, *, authorization: str, source_run: str
     requests, required_changes, excluded_requests = _request_plan(raw, auth)
     source = {"review": _binding(review_name, root), "raw": raw_binding,
               "applied": _binding(str(review_path.relative_to(root).parent / "apply-cli.json"), root)}
-    for name in ("postvalidation.json", "snapshot.json", "packet/input-binding.json", "packet/source.zip", "packet/support.zip", "packet/main.pdf"):
-        source[name] = _binding(f"{source_run}/{name}", root, artifact=True)
     applied = _json(_bound(source["applied"], root))["quality_gate"]
-    snap = _json(_bound(source["snapshot.json"], root, artifact=True))
-    post = _json(_bound(source["postvalidation.json"], root, artifact=True))
-    bind = _json(_bound(source["packet/input-binding.json"], root, artifact=True))
     old_hash = raw["review_metadata"]["manuscript_snapshot_sha256_before"]
-    _require(post.get("valid") is True and post.get("errors") == [] and post.get("review_sha256") == raw_binding["sha256"]
-             and post.get("packet_sha256") == snap.get("packet_sha256"), "source review lacks matching valid postvalidation")
-    _require(snap.get("paper_id") == paper_id and bind.get("paper_id") == paper_id
-             and snap.get("version") == bind.get("version") == auth["source_version"]
-             and snap.get("manuscript_snapshot_sha256") == bind.get("manuscript_snapshot_sha256") == old_hash
-             and applied.get("paper_id") == paper_id and applied.get("manuscript_snapshot_sha256") == old_hash,
-             "source version/snapshot/apply binding mismatch")
+    legacy = source_run.startswith("staging/")
+    if legacy:
+        old_sources, old_pdf, snapshot_only_sources = _legacy_sources(
+            root, source_run, paper_id, raw, raw_binding, source, applied, auth["source_version"])
+    else:
+        for name in ("postvalidation.json", "snapshot.json", "packet/input-binding.json", "packet/source.zip", "packet/support.zip", "packet/main.pdf"):
+            source[name] = _binding(f"{source_run}/{name}", root, artifact=True)
+        snap = _json(_bound(source["snapshot.json"], root, artifact=True))
+        post = _json(_bound(source["postvalidation.json"], root, artifact=True))
+        bind = _json(_bound(source["packet/input-binding.json"], root, artifact=True))
+        _require(post.get("valid") is True and post.get("errors") == [] and post.get("review_sha256") == raw_binding["sha256"]
+                 and post.get("packet_sha256") == snap.get("packet_sha256"), "source review lacks matching valid postvalidation")
+        _require(snap.get("paper_id") == paper_id and bind.get("paper_id") == paper_id
+                 and snap.get("version") == bind.get("version") == auth["source_version"]
+                 and snap.get("manuscript_snapshot_sha256") == bind.get("manuscript_snapshot_sha256") == old_hash,
+                 "source version/snapshot binding mismatch")
+        for file, field in (("source.zip", "source_archive_sha256"), ("support.zip", "support_package_sha256"), ("main.pdf", "canonical_pdf_sha256")):
+            _require(source[f"packet/{file}"]["sha256"] == snap.get(field) == bind.get(field), "original artifact binding mismatch")
+        old_sources = _archive(_bound(source["packet/source.zip"], root, artifact=True))
+        old_pdf = _bound(source["packet/main.pdf"], root, artifact=True).read_bytes()
+    _require(applied.get("paper_id") == paper_id and applied.get("manuscript_snapshot_sha256") == old_hash,
+             "source apply identity mismatch")
     _require(applied.get("score") == raw["scores"]["overall"]
              and applied.get("decision") == raw["recommendations"]["cas_zone_1_journal"]["decision"], "applied scores differ from raw")
     rounds = applied.get("revision_rounds")
     _require(type(rounds) is int and rounds >= 1, "missing real completed-round count")
-    for file, field in (("source.zip", "source_archive_sha256"), ("support.zip", "support_package_sha256"), ("main.pdf", "canonical_pdf_sha256")):
-        _require(source[f"packet/{file}"]["sha256"] == snap.get(field) == bind.get(field), "original artifact binding mismatch")
-    old_sources = _archive(_bound(source["packet/source.zip"], root, artifact=True))
-    old_pdf = _bound(source["packet/main.pdf"], root, artifact=True).read_bytes()
     manuscript = root / str(metadata["manuscript_dir"])
     pdf = _path(metadata["latest_pdf"], root)
     _require(pdf == manuscript / "main.pdf", "only a canonical main.pdf closeout is supported")
@@ -391,8 +479,13 @@ def inspect_minor_closeout(paper_id: str, *, authorization: str, source_run: str
     current_sources = {p.relative_to(manuscript).as_posix(): p.read_bytes() for p in files}
     archive = _verified_journal_source_archive(metadata, root, manuscript, files, None)
     _require(archive is not None, "current journal source archive is required")
-    old_sources, snapshot_only_sources = _complete_sources(
-        old_sources, _archive(archive[0]), current_sources, old_pdf, old_hash)
+    if legacy:
+        _require(set(old_sources) == set(current_sources), "legacy source set changed")
+        _require(all(current_sources.get(n) == v for n, v in _archive(archive[0]).items()),
+                 "journal source ZIP differs from current source bytes")
+    else:
+        old_sources, snapshot_only_sources = _complete_sources(
+            old_sources, _archive(archive[0]), current_sources, old_pdf, old_hash)
     support_path = _path(support_archive, root)
     support = verify_support_archive(support_path)
     _verify_archive_sources(support, resolve_support_sources(metadata, repo_root=root), root)
@@ -477,6 +570,8 @@ def validate_minor_closeout(paper_id: str, certificate: str | Path, *, root: str
     _require(not blockers, "deterministic safety gates failed: " + "; ".join(blockers))
     source = cert["source"]
     evidence.extend(_bound(source[key], root) for key in ("review", "raw", "applied"))
+    if "snapshot_reconstruction" in source:
+        evidence.append(_bound(source["snapshot_reconstruction"], root))
     return {"certificate": cert, "certificate_binding": _binding(name, root),
             "evidence_paths": list(dict.fromkeys(evidence)), "maximum_revision_rounds": maximum,
             "revision_exception": exception, "support_audit": support_audit, "style_audit": style_audit}
