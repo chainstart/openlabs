@@ -276,6 +276,13 @@ administrative checklist items.
 
 ## Keep publication outside the gate
 
+Before new supporting-material uploads, enforce the code-first package policy in
+`docs/ZENODO_GUIDE.md` and `support_publication.package_policy`. Preserve large generated
+evidence locally; ship its generators, parameters and instructions, with small summaries.
+External original data need stable source/version/access references. A missing unique
+input is not a removable intermediate. A smaller public inventory requires truthful
+availability wording and a newly bound reviewed package, not a scientific waiver.
+
 The quality-gate command itself must never upload files, create external records, or publish a
 Zenodo draft. If the paper cites a reserved support-material DOI, run `paper-writing zenodo prepare`
 and `paper-writing zenodo verify-draft` before the final review, add the DOI with neutral wording

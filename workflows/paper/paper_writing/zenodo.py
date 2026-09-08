@@ -233,6 +233,11 @@ def build_deposit_plan(
     if duplicate_names:
         errors.append(f"Duplicate upload filenames: {', '.join(duplicate_names)}")
     file_records: list[dict[str, Any]] = []
+    from paper_writing.support_upload_policy import validate_upload_packages
+    try:
+        validate_upload_packages([path for path in paths if path.is_file()], repo_root=root, settings=settings)
+    except SupportPackageError as exc:
+        errors.append(str(exc))
     total_bytes = 0
     for path in paths:
         if not path.is_file():
@@ -245,7 +250,7 @@ def build_deposit_plan(
                 "path": str(path),
                 "name": path.name,
                 "size": size,
-                "sha256": _sha256(path),
+                "sha256": _sha256(path) if not errors else None,
             }
         )
     if total_bytes > MAX_TOTAL_BYTES:
@@ -496,6 +501,9 @@ def prepare_zenodo_release(
     root = Path(repo_root or default_repo_root()).resolve()
     record = find_paper_record(paper_id, repo_root=root, config_path=config_path)
     source_paths = resolve_support_sources(record, sources, repo_root=root)
+    from paper_writing.support_upload_policy import validate_upload_sources
+    validate_upload_sources(source_paths, repo_root=root,
+                            settings=load_config(config_path or root / "registry" / "settings.yaml"))
     validate_git_frozen_paths(root, source_paths, artifact_manifests=support_artifact_manifests(record))
     origin_commit = git_head(root)
     settings = load_config(config_path or root / "registry" / "settings.yaml")
@@ -602,6 +610,9 @@ def prepare_zenodo_release(
                 origin_commit=origin_commit,
                 license_id=selected_license,
             )
+            from paper_writing.support_upload_policy import validate_upload_packages
+            validate_upload_packages([package["archive"], package["checksum"]], repo_root=root,
+                                     settings=load_config(config_path or root / "registry" / "settings.yaml"))
             removed = [
                 client.delete_file(active_draft_id, item["id"])
                 for item in draft.get("files", [])
@@ -813,6 +824,12 @@ def publish_zenodo_release(
     if not isinstance(raw_sources, list) or not raw_sources:
         raise ZenodoError("Prepared release is missing its expanded support source file list")
     source_paths = [root / str(value) for value in raw_sources]
+    from paper_writing.support_upload_policy import validate_upload_sources
+    validate_upload_sources(source_paths, repo_root=root,
+                            settings=load_config(config_path or root / "registry" / "settings.yaml"))
+    from paper_writing.support_upload_policy import validate_upload_packages
+    validate_upload_packages(package_paths, repo_root=root,
+                             settings=load_config(config_path or root / "registry" / "settings.yaml"))
     validate_git_frozen_paths(
         root, [*source_paths, *package_paths], artifact_manifests=support_artifact_manifests(record)
     )

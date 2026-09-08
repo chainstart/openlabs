@@ -152,7 +152,8 @@ def test_new_version_removes_inherited_files_before_upload(
     monkeypatch: Any,
 ) -> None:
     package = tmp_path / "support-v2.zip"
-    package.write_bytes(b"new support")
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("README.md", "new support")
     events: list[tuple[str, Any]] = []
 
     class FakeZenodoClient:
@@ -767,7 +768,7 @@ def test_prepare_and_publish_release_bind_gate_git_and_remote_files(
     if artifact_backed_package:
         import paper_writing.support as support_module
         monkeypatch.setattr(support_module, "GIT_PAYLOAD_LIMIT_BYTES", 1)
-        (tmp_path / ".gitignore").write_text("*.zip\n*.npz\n", encoding="utf-8")
+        (tmp_path / ".gitignore").write_text("*.zip\nreference-summary.txt\n", encoding="utf-8")
     paper_id = "20260802mathgraph0001"
     manuscript = tmp_path / "papers" / paper_id / "manuscript"
     evidence = tmp_path / "papers" / paper_id / "evidence" / "release"
@@ -829,8 +830,8 @@ support:
         encoding="utf-8",
     )
     if artifact_backed_package:
-        payload = evidence / "complete_predictions.npz"
-        payload.write_bytes(b"complete unchanged array payload")
+        payload = evidence / "reference-summary.txt"
+        payload.write_bytes(b"small unchanged reference summary")
         binding = support_module.write_support_artifact_manifest(
             tmp_path, [payload], f"papers/{paper_id}/artifact-bindings.json"
         )

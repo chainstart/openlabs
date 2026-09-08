@@ -131,6 +131,14 @@ necessary local gate, not proof, external peer review, acceptance, or authorizat
 
 ## Cite supporting materials from one current record
 
+Apply the code-first upload policy in `docs/ZENODO_GUIDE.md` before selecting files.
+Ship generators, verifiers, pinned dependencies, parameters and reproduction instructions,
+not all generated certificates, matrices, caches or intermediate outputs. Cite external
+data sources/versions instead of duplicating them. Preserve complete local evidence.
+Ensure regeneration does not depend on omitted outputs and describe the actual verified
+scope honestly; do not rerun a complete scientific campaign merely to shrink packaging.
+The upload size/type checks do not waive scientific review or artifact bindings.
+
 Treat the exact current Zenodo Version DOI registered for the paper as the sole reader-facing
 source of supporting materials. For a prepared release this is the reserved Version DOI that will
 remain unchanged after publication; for a published release it is the published Version DOI. Apply
