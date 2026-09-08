@@ -143,7 +143,9 @@ def issue_list(review):
     issues = []
     for index, row in enumerate(review["change_requests"]):
         optional = (review["publishability_summary"]["text_ready"] is True
-                    and row.get("priority") == "low" and row["request"].startswith("Optionally "))
+                    and row.get("text_only") is True
+                    and row.get("priority") == "low"
+                    and row["request"].startswith(("Optionally ", "Optional editorial improvement: ")))
         if optional:
             continue
         require(row.get("text_only") is True, "scientific change request requires full review")

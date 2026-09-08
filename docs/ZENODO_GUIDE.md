@@ -118,6 +118,12 @@ ZIP 内部 manifest / SHA256SUMS、本地 ZIP SHA-256、当前源对照和远端
 
 ## 配置材料与账号
 
+稿件构建产物同样不必进入 Git。对 Git 忽略且从未跟踪的稿件 `.pdf` / `.bbl`，
+可用上述内容寻址双副本机制生成 `papers/<paper_id>/production/release-artifacts.json`，
+并在 `submission_package.artifact_manifest` 绑定其 `path` 和 `sha256`。
+清单本身必须提交且与 HEAD 字节一致；交付时同时核验两个文件副本及原审阅快照。
+这个入口不适用于 TeX、科学源、评阅记录或已经由 Git 跟踪的文件，也不改变质量门禁。
+
 材料源通过 registry 的 `support.publication.source_files` 声明，也可在准备时重复传入
 `--source`。只要显式传入了 `--source`，这些参数就构成本次完整公开文件集并替换旧的
 `source_files`，不会与上一版本合并；不传时才沿用 registry。目录会递归展开，最终 registry

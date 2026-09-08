@@ -1139,6 +1139,47 @@ def _release_paths(
     return manuscript, pdf, files
 
 
+def _release_artifact_bindings(paper_id, metadata, root, files):
+    """Freeze ignored build products through a committed content-addressed manifest.
+
+Source text still has to be in Git. The same two-copy size/SHA checks used by
+support payloads apply at every release, in addition to the reviewed snapshot.
+"""
+    from paper_writing.support import _load_artifact_bindings, _verify_artifact_binding, SupportPackageError
+    pointer = metadata.get("submission_package", {}).get("artifact_manifest")
+    if pointer is None:
+        return None, set()
+    if not isinstance(pointer, Mapping) or set(pointer) != {"path", "sha256"}:
+        raise HandoffError("Invalid manuscript artifact manifest binding")
+    expected_name = f"papers/{paper_id}/production/release-artifacts.json"
+    if pointer["path"] != expected_name:
+        raise HandoffError("Manuscript artifact manifest must be paper-scoped")
+    manifest = root / expected_name
+    try:
+        if manifest.is_symlink() or hashlib.sha256(manifest.read_bytes()).hexdigest() != pointer["sha256"]:
+            raise HandoffError("Manuscript artifact manifest hash changed")
+        frozen = subprocess.run(["git", "show", "HEAD:" + expected_name], cwd=root,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if frozen.returncode or frozen.stdout != manifest.read_bytes():
+            raise HandoffError("Manuscript artifact manifest is not frozen at Git HEAD")
+        bindings = _load_artifact_bindings(root, [expected_name])
+        allowed = {p.relative_to(root).as_posix() for p in files
+                   if p.is_relative_to(root / metadata["manuscript_dir"])
+                   and p.suffix.lower() in {".pdf", ".bbl"}}
+        if not set(bindings) <= allowed:
+            raise HandoffError("Only canonical manuscript PDF/bibliography build products may use artifact storage")
+        for name, binding in bindings.items():
+            # Never use this mechanism to stop freezing an already tracked file.
+            if _git_output(root, ["ls-files", "--cached", "--", name]).strip():
+                raise HandoffError("Tracked manuscript artifacts must remain Git-frozen")
+            if not _git_output(root, ["check-ignore", "--", name]).strip():
+                raise HandoffError("Manuscript artifact cache must be Git-ignored")
+            _verify_artifact_binding(root, root / name, binding)
+    except (ValueError, OSError, SupportPackageError) as exc:
+        raise HandoffError(f"Manuscript artifact validation failed: {exc}") from exc
+    return manifest, set(bindings)
+
+
 def validate_release_preconditions(
     paper_id: str,
     *,
@@ -1320,6 +1361,9 @@ def validate_release_preconditions(
             )
 
     manuscript, pdf, files = _release_paths(paper_id, repo_root, metadata)
+    artifact_manifest, artifact_files = _release_artifact_bindings(paper_id, metadata, repo_root, files)
+    if artifact_manifest is not None:
+        files.append(artifact_manifest)
     if revision_exception is not None:
         files.append(repo_root / revision_exception["authorization"]["record"])
     current_snapshot = manuscript_snapshot_sha256(manuscript, pdf)
@@ -1351,7 +1395,7 @@ def validate_release_preconditions(
     )
     tracked = {item for item in tracked_output.split("\0") if item}
     expected = {path.resolve().relative_to(repo_root).as_posix() for path in files}
-    missing = sorted(expected - tracked)
+    missing = sorted(expected - tracked - artifact_files)
     if missing:
         sample = ", ".join(missing[:5])
         suffix = " ..." if len(missing) > 5 else ""

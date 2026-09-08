@@ -14,6 +14,24 @@ from test_review import _review, AGGREGATOR
 PID = "20260907-math-graph-delta-test"
 
 
+@pytest.mark.parametrize("prefix", ["Optionally ", "Optional editorial improvement: "])
+def test_explicit_optional_editorial_suggestions_remain_nonblocking(prefix):
+    review = {"publishability_summary": {"text_ready": True}, "required_changes": [],
+              "change_requests": [{"request": prefix + "add a locator.",
+                  "text_only": True, "priority": "low"}]}
+    assert delta.issue_list(review) == []
+    review["required_changes"] = ["Add the required locator."]
+    assert [r["id"] for r in delta.issue_list(review)] == ["required:0"]
+    review["publishability_summary"]["text_ready"] = False
+    assert [r["id"] for r in delta.issue_list(review)] == ["change:0", "required:0"]
+    review["publishability_summary"]["text_ready"] = True
+    review["change_requests"][0]["priority"] = "medium"
+    assert [r["id"] for r in delta.issue_list(review)] == ["change:0", "required:0"]
+    review["change_requests"][0].update(priority="low", text_only=False)
+    with pytest.raises(ValueError, match="scientific change request"):
+        delta.issue_list(review)
+
+
 @pytest.fixture
 def paper(tmp_path, monkeypatch):
     root = tmp_path.resolve()
