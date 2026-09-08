@@ -51,6 +51,55 @@ def _documentary_support_path(name):
     return Path(name).suffix in {'.md', '.svg'} or Path(name).name == 'CLAIMS.yaml'
 
 
+def _validate_code_first_repackaging(old, new, packet, authorization, assessment,
+                                    old_archive_sha256, new_archive_sha256):
+    """Explicitly authorized inventory revision, independently assessed, not reuse.
+
+    Keep the full old evidence hash-bound. Scientific construction modules and
+    retained entry points cannot change. Only a new orchestration entry point and
+    compact summary may be added. Missing-input judgments belong to the isolated
+    reviewer, not to filename heuristics or the author-side closeout.
+    """
+    import hashlib
+    packet = Path(packet)
+    inventory_path = packet / 'support-repackaging.json'
+    inventory = m._json(inventory_path)
+    sha = m._sha(inventory_path)
+    changes = [{'path': n, 'before_sha256': old.get(n), 'after_sha256': new.get(n)}
+               for n in sorted(set(old) | set(new)) if old.get(n) != new.get(n)]
+    m._require(authorization.get('actor') == 'user' and authorization.get('confirmed') is True
+               and m._text(authorization.get('quote'))
+               and authorization.get('scope') == 'code_first_repackaging_targeted_review'
+               and authorization.get('inventory_sha256') == sha,
+               'explicit exact-inventory repackaging authorization required')
+    m._require(inventory == {'before': old, 'after': new, 'changes': changes,
+                'baseline_archive_sha256': old_archive_sha256,
+                'current_archive_sha256': new_archive_sha256},
+               'support repackaging inventory differs from complete archives')
+    m._require(assessment.get('inventory_sha256') == sha
+               and all(assessment.get(k) is True for k in
+                       ('ready', 'unchanged_scientific_code', 'no_required_input_lost',
+                        'documentation_matches_manuscript'))
+               and sorted(assessment.get('changed_paths_reviewed', [])) == [r['path'] for r in changes]
+               and m._text(assessment.get('reason')),
+               'independent support repackaging assessment incomplete or blocking')
+    for name, digest in old.items():
+        path = Path(name)
+        if path.parent.name == 'src' or path.name in {'requirements.txt', 'LICENSE', 'LICENSE.txt'}:
+            m._require(new.get(name) == digest, 'scientific source/dependency/license lost or changed: ' + name)
+        if name in new and path.suffix == '.py':
+            m._require(new[name] == digest, 'retained scientific entry point changed: ' + name)
+    for name in set(new) - set(old):
+        m._require(name in {'support-materials/public-support-v{version}/reproduce.py',
+                           'support-materials/public-support-v{version}/reference-summary.json'},
+                   'new support input exceeds code-first orchestration scope: ' + name)
+    # The referee must receive the exact complete CURRENT public file set, not
+    # just a coordinator-generated list or a prose claim that code was retained.
+    actual = {str(p.relative_to(packet/'current-support')): hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in (packet/'current-support').rglob('*') if p.is_file()}
+    m._require(actual == new, 'reviewer did not receive the exact complete current public package')
+
+
 def validate(paper_id, certificate, metadata, root):
     from paper_writing.handoff import _source_files, _verified_journal_source_archive
     from paper_writing.operations import _review_workspace_fingerprints
@@ -194,24 +243,35 @@ def validate(paper_id, certificate, metadata, root):
     old_version = verify_support_archive(old_support_path)['paper_version']
     old_support = _support_digests(old_support_path, old_version)
     new_support = _support_digests(support_path, support['paper_version'])
-    m._require(set(old_support) == set(new_support), 'support membership changed')
     documented = [r for r in delta if r['path'].startswith('support/')]
-    used = []
-    for name in sorted(old_support):
-        before, after = old_support[name], new_support[name]
-        if before == after:
-            continue
-        if Path(name).name in m._SUPPORT_METADATA:
-            continue
-        matching = [r for r in documented if name.endswith('/' + r['path'][8:])]
-        m._require(len(matching) == 1, 'unreviewed supporting science/code change: ' + name)
-        row = matching[0]
-        m._require(_documentary_support_path(name)
-                   and row['before_sha256'] == before
-                   and row['after_sha256'] == after, 'support delta differs')
-        used.append(row)
-    m._require(sorted(r['path'] for r in used) == sorted(r['path'] for r in documented),
-               'reviewed support changes missing')
+    if 'support_repackaging_authorization' in bindings:
+        repack_auth = m._json(bound(bindings['support_repackaging_authorization']))
+        m._require(repack_auth.get('paper_id') == paper_id
+                   and repack_auth.get('target_version') == metadata['version']
+                   and not documented, 'invalid or mixed repackaging review identity')
+        m._timestamp(repack_auth['recorded_at'])
+        _validate_code_first_repackaging(old_support, new_support, packet, repack_auth,
+            addendum.get('support_repackaging', {}), m._sha(old_support_path), m._sha(support_path))
+        from paper_writing.support_upload_policy import validate_upload_packages
+        validate_upload_packages([support_path], repo_root=root)
+    else:
+        m._require(set(old_support) == set(new_support), 'support membership changed')
+        used = []
+        for name in sorted(old_support):
+            before, after = old_support[name], new_support[name]
+            if before == after:
+                continue
+            if Path(name).name in m._SUPPORT_METADATA:
+                continue
+            matching = [r for r in documented if name.endswith('/' + r['path'][8:])]
+            m._require(len(matching) == 1, 'unreviewed supporting science/code change: ' + name)
+            row = matching[0]
+            m._require(_documentary_support_path(name)
+                       and row['before_sha256'] == before
+                       and row['after_sha256'] == after, 'support delta differs')
+            used.append(row)
+        m._require(sorted(r['path'] for r in used) == sorted(r['path'] for r in documented),
+                   'reviewed support changes missing')
     target = cert['target']
     m._require(target['fingerprints'] == _review_workspace_fingerprints(paper_id, metadata, root)
                and target['source_archive_sha256'] == m._sha(verified_zip[0])
