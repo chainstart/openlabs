@@ -7,6 +7,33 @@ def test_absent_closeout_is_noop(tmp_path):
     assert t.validate_release('p', {}, tmp_path) == []
 
 
+def test_streamed_support_hashes_all_bytes(tmp_path):
+    import hashlib
+    import zipfile
+    data = b'x' * (3 * 1024 * 1024) + b'end'
+    path = tmp_path / 'support.zip'
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('p-support-v0.1.0/support-materials/public-support-v0.1.0/data.bin', data)
+    assert t._support_digests(path, '0.1.0') == {
+        'support-materials/public-support-v{version}/data.bin': hashlib.sha256(data).hexdigest()}
+
+
+@pytest.mark.parametrize('name', ['/absolute', '../escape', 'p-support-v0.1.0/../escape', 'bad-root/data'])
+def test_streamed_support_rejects_unsafe_paths(tmp_path, name):
+    import zipfile
+    path = tmp_path / 'support.zip'
+    with zipfile.ZipFile(path, 'w') as z:
+        z.writestr(name, b'x')
+    with pytest.raises(ValueError):
+        t._support_digests(path, '0.1.0')
+
+
+def test_only_exact_claim_map_yaml_is_documentary():
+    assert t._documentary_support_path('support/CLAIMS.yaml')
+    assert not t._documentary_support_path('support/config.yaml')
+    assert not t._documentary_support_path('support/check.py')
+
+
 @pytest.mark.parametrize('field,value', [
     (None, None), ('score', 9), ('decision', 'accept'),
     ('revision_rounds_completed', 4), ('manuscript_version', '1.0.5'),

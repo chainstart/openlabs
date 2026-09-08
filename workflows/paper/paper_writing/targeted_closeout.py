@@ -11,6 +11,46 @@ FIELD = 'targeted_review_closeout'
 SCHEMA = 'openlabs.targeted_review_closeout.v1'
 
 
+def _support_digests(path, version):
+    """Bounded-memory comparison of complete payloads, including large archives.
+
+    This never treats archive CRCs or a manifest as proof of member equality.
+    Every uncompressed member is streamed through SHA-256; path checks remain
+    identical to the small-archive reader. No payload is dropped or truncated.
+    """
+    import hashlib
+    import zipfile
+    from pathlib import PurePosixPath
+    result = {}
+    with zipfile.ZipFile(path) as archive:
+        m._require(len(archive.infolist()) <= 10000, 'too many support members')
+        for item in archive.infolist():
+            name = item.filename
+            p = PurePosixPath(name)
+            m._require(not p.is_absolute() and '..' not in p.parts and '\\' not in name
+                       and (item.external_attr >> 16) & 0o170000 != 0o120000,
+                       'unsafe archive member')
+            if item.is_dir():
+                continue
+            key = next(iter(m._support_members({name: b''}, version)))
+            m._require(key not in result, 'duplicate normalized support member')
+            digest = hashlib.sha256()
+            size = 0
+            with archive.open(item) as stream:
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+                    size += len(chunk)
+            m._require(size == item.file_size, 'support member size mismatch')
+            result[key] = digest.hexdigest()
+    return result
+
+
+def _documentary_support_path(name):
+    # CLAIMS.yaml is declarative claim-to-evidence mapping, not executable code.
+    # It is accepted only through the exact independently reviewed delta below.
+    return Path(name).suffix in {'.md', '.svg'} or Path(name).name == 'CLAIMS.yaml'
+
+
 def validate(paper_id, certificate, metadata, root):
     from paper_writing.handoff import _source_files, _verified_journal_source_archive
     from paper_writing.operations import _review_workspace_fingerprints
@@ -54,7 +94,10 @@ def validate(paper_id, certificate, metadata, root):
     records = panel['review_metadata']['review_panel']['reviewer_records']
     m._require(len(records) == 1 and records[0]['sha256'] == bindings['baseline_review']['sha256']
                == auth['source_review_sha256'], 'baseline review mismatch')
-    applied = m._json(bound(bindings['baseline_apply']))['quality_gate']
+    applied_record = m._json(bound(bindings['baseline_apply']))
+    # Historical final-gate.json records store the same gate at the root.
+    # Bind the original record, never manufacture a replacement application.
+    applied = applied_record.get('quality_gate', applied_record)
     m._require(applied['score'] == baseline['scores']['overall'] >= 5
                and applied['decision'] == baseline['recommendations']['cas_zone_1_journal']['decision']
                and applied['manuscript_snapshot_sha256'] == baseline['review_metadata']['manuscript_snapshot_sha256_before'],
@@ -149,8 +192,8 @@ def validate(paper_id, certificate, metadata, root):
                'current supporting package mismatch')
     old_support_path = bound(cert['artifact_bindings']['baseline_support_archive'], True)
     old_version = verify_support_archive(old_support_path)['paper_version']
-    old_support = m._support_members(m._archive(old_support_path), old_version)
-    new_support = m._support_members(m._archive(support_path), support['paper_version'])
+    old_support = _support_digests(old_support_path, old_version)
+    new_support = _support_digests(support_path, support['paper_version'])
     m._require(set(old_support) == set(new_support), 'support membership changed')
     documented = [r for r in delta if r['path'].startswith('support/')]
     used = []
@@ -163,9 +206,9 @@ def validate(paper_id, certificate, metadata, root):
         matching = [r for r in documented if name.endswith('/' + r['path'][8:])]
         m._require(len(matching) == 1, 'unreviewed supporting science/code change: ' + name)
         row = matching[0]
-        m._require(Path(name).suffix in {'.md', '.svg'}
-                   and row['before_sha256'] == m._members({'x': before})['x']
-                   and row['after_sha256'] == m._members({'x': after})['x'], 'support delta differs')
+        m._require(_documentary_support_path(name)
+                   and row['before_sha256'] == before
+                   and row['after_sha256'] == after, 'support delta differs')
         used.append(row)
     m._require(sorted(r['path'] for r in used) == sorted(r['path'] for r in documented),
                'reviewed support changes missing')
