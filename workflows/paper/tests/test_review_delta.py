@@ -264,7 +264,8 @@ def test_prior_scientific_escalation_cannot_be_closed_by_next_delta(paper):
     assert delta.route_review(PID, root=root)["route"] == "full"
 
 
-def test_fresh_runner_end_to_end_with_explicitly_mocked_model(paper, monkeypatch):
+@pytest.mark.parametrize("effort", ["high", "ultra"])
+def test_fresh_runner_end_to_end_with_explicitly_mocked_model(paper, monkeypatch, effort):
     from paper_writing import review_delta_runner as runner
     root, _ = paper
     prepared = revise(paper)
@@ -288,8 +289,9 @@ def test_fresh_runner_end_to_end_with_explicitly_mocked_model(paper, monkeypatch
             self.output.write_bytes(delta.encoded(result))
 
     monkeypatch.setattr(runner.subprocess, "Popen", ModelFixture)
-    response = runner.run_delta(PID, root=root, model="explicit-offline-fixture")
+    response = runner.run_delta(PID, root=root, model="explicit-offline-fixture", effort=effort)
     cmd = calls[-1]
+    assert "model_reasoning_effort=" + json.dumps(effort) in cmd
     assert "--ephemeral" in cmd and "--ignore-user-config" in cmd and "resume" not in cmd
     assert cmd[cmd.index("-s") + 1] == "read-only"
     assert response["verdict"] == "resolved" and response["applied"] is False

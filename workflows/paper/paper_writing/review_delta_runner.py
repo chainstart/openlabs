@@ -76,7 +76,7 @@ def clean_build(content, directory, root, packet):
 def run_delta(paper_id, *, root, model, effort="high", timeout=900):
     delta.require("openlabs-workers.slice" in Path("/proc/self/cgroup").read_text(), "run through openlabs-resource-guard")
     delta.require(isinstance(model, str) and bool(model.strip()), "explicit actual model required")
-    delta.require(effort in {"low", "medium", "high", "xhigh"} and 30 <= timeout <= 3600, "invalid effort/timeout")
+    delta.require(effort in {"low", "medium", "high", "xhigh", "ultra"} and 30 <= timeout <= 3600, "invalid effort/timeout")
     root = Path(root).resolve()
     prepared = delta.prepare_delta(paper_id, root=root)
     packet = prepared["packet"]
