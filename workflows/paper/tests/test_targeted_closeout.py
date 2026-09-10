@@ -7,6 +7,56 @@ def test_absent_closeout_is_noop(tmp_path):
     assert t.validate_release('p', {}, tmp_path) == []
 
 
+def template_fixture():
+    import hashlib
+    before = {'main.tex': b'old'}
+    after = {'main.tex': b'new', 'sn-jnl.cls': b'publisher class'}
+    assets = {'sn-jnl.cls': hashlib.sha256(after['sn-jnl.cls']).hexdigest()}
+    return before, after, {'template_asset_sha256': assets}, {
+        'url': 'https://cms-resources.apps.public.k8s.springernature.io/template',
+        'files': dict(assets)}, {'template_assets_reviewed': ['sn-jnl.cls']}
+
+
+def test_exact_publisher_asset_in_targeted_addendum():
+    rows = t._cumulative_manuscript_delta(*template_fixture())
+    assert [r['path'] for r in rows] == ['manuscript/main.tex', 'manuscript/sn-jnl.cls']
+    assert rows[1]['before_sha256'] is None
+
+
+@pytest.mark.parametrize('mutation', ['hash', 'missing_authorization', 'missing_review',
+    'duplicate_review', 'wrong_publisher', 'removed_source', 'new_science', 'changed_asset'])
+def test_template_addendum_fails_closed(mutation):
+    before, after, auth, provenance, assessment = template_fixture()
+    if mutation == 'hash': auth['template_asset_sha256']['sn-jnl.cls'] = '0' * 64
+    if mutation == 'missing_authorization': auth.clear()
+    if mutation == 'missing_review': assessment.clear()
+    if mutation == 'duplicate_review': assessment['template_assets_reviewed'] *= 2
+    if mutation == 'wrong_publisher': provenance['url'] = 'https://evil.test/template'
+    if mutation == 'removed_source': after.pop('main.tex')
+    if mutation == 'new_science': after['new-proof.tex'] = b'new science'
+    if mutation == 'changed_asset': after['sn-jnl.cls'] += b'tampered'
+    with pytest.raises(ValueError):
+        t._cumulative_manuscript_delta(before, after, auth, provenance, assessment)
+
+
+@pytest.mark.parametrize('tamper', [False, True])
+def test_integrity_archive_rebinding_is_not_code_permission(tmp_path, tamper):
+    import hashlib, zipfile
+    paths=[]
+    for v in ['0.2.18', '0.2.19']:
+        manifest=('version '+v).encode()
+        script=('EXPECTED_BUNDLE_MANIFEST_SHA256 = "'+hashlib.sha256(manifest).hexdigest()+'"\nVERSION="'+v+'"\nassert check()\n').encode()
+        if tamper and v == '0.2.19': script=script.replace(b'assert check()', b'assert True')
+        p=tmp_path/(v+'.zip');paths.append(p)
+        with zipfile.ZipFile(p,'w') as z:
+            base='p-support-v'+v+'/support-materials/public-support-v'+v+'/'
+            z.writestr(base+'evidence_bundle_manifest.json',manifest)
+            z.writestr(base+'verify_support_bundle.py',script)
+    assert t._integrity_rebinding_from_archives(
+        'support-materials/public-support-v{version}/verify_support_bundle.py',
+        *paths, '0.2.18', '0.2.19') is (not tamper)
+
+
 def test_streamed_support_hashes_all_bytes(tmp_path):
     import hashlib
     import zipfile

@@ -51,6 +51,64 @@ def _documentary_support_path(name):
     return Path(name).suffix in {'.md', '.svg'} or Path(name).name == 'CLAIMS.yaml'
 
 
+def _cumulative_manuscript_delta(before, after, authorization, provenance, assessment):
+    """Permit new publisher template assets only when byte-bound and reviewed.
+
+    This is exclusive to an explicitly authorized targeted addendum. It does not
+    make a global-template change eligible for ordinary automatic delta reuse.
+    Removed files and new scientific sources remain forbidden.
+    """
+    from urllib.parse import urlparse
+    additions = sorted(set(after) - set(before))
+    m._require(not (set(before) - set(after)), 'removed manuscript input')
+    if not additions:
+        return m._deltas(before, after, 'manuscript')
+    assets = authorization.get('template_asset_sha256', {})
+    m._require(set(assets) == set(additions)
+               and provenance.get('files') == assets
+               and sorted(assessment.get('template_assets_reviewed', [])) == additions,
+               'new template files lack exact authorization/provenance/review')
+    url = urlparse(provenance.get('url', ''))
+    m._require(url.scheme == 'https' and url.hostname is not None
+               and (url.hostname == 'springernature.com'
+                    or url.hostname.endswith('.springernature.com')
+                    or url.hostname.endswith('.springernature.io')),
+               'unverified publisher template provenance')
+    import hashlib
+    for name in additions:
+        m._require(Path(name).name == name and Path(name).suffix in {'.cls', '.bst', '.sty'}
+                   and hashlib.sha256(after[name]).hexdigest() == assets[name],
+                   'new manuscript file exceeds publisher template boundary')
+    result = m._deltas(before, {n: after[n] for n in before}, 'manuscript')
+    result += [{'path': 'manuscript/' + n, 'before_sha256': None,
+                'after_sha256': assets[n]} for n in additions]
+    return sorted(result, key=lambda row: row['path'])
+
+
+def _integrity_rebinding_from_archives(name, old_path, new_path, old_version, new_version):
+    """Read only the verifier and sibling manifest, then use the strict checker."""
+    import zipfile
+    if Path(name).name != 'verify_support_bundle.py':
+        return False
+    needed = {name, str(Path(name).parent / 'evidence_bundle_manifest.json')}
+    def selected(path, version):
+        found = {}
+        with zipfile.ZipFile(path) as archive:
+            for item in archive.infolist():
+                if item.is_dir():
+                    continue
+                key = next(iter(m._support_members({item.filename: b''}, version)))
+                if key not in needed:
+                    continue
+                m._require(key not in found and item.file_size <= 2 * 1024 * 1024,
+                           'oversized or duplicate integrity metadata')
+                found[key] = archive.read(item)
+        return found
+    before, after = selected(old_path, old_version), selected(new_path, new_version)
+    return name in before and name in after and m._integrity_verifier_rebinding(
+        name, before[name], after[name], before, after, old_version, new_version)
+
+
 def _validate_code_first_repackaging(old, new, packet, authorization, assessment,
                                     old_archive_sha256, new_archive_sha256):
     """Explicitly authorized inventory revision, independently assessed, not reuse.
@@ -175,10 +233,14 @@ def validate(paper_id, certificate, metadata, root):
                and addendum['cas_zone_1_decision'] in {'minor_revision', 'accept'},
                'independent scientific readiness/CAS threshold not met')
     dispositions = addendum['request_dispositions']
-    m._require(sorted(r['index'] for r in dispositions) == list(range(len(baseline['change_requests'])))
+    # Some isolated reviewers label the complete original list 1..N. Retain
+    # their raw judgment unchanged and bind the explicit indexing convention.
+    index_base = cert.get('request_index_base', 0)
+    m._require(type(index_base) is int and index_base in {0, 1}, 'invalid request index base')
+    m._require(sorted(r['index'] - index_base for r in dispositions) == list(range(len(baseline['change_requests'])))
                and all(r['status'] in {'open', 'closed'} and m._text(r['reason']) for r in dispositions),
                'missing or duplicate original request dispositions')
-    open_requests = [r['index'] for r in dispositions if r['status'] == 'open']
+    open_requests = [r['index'] - index_base for r in dispositions if r['status'] == 'open']
     m._require(all(baseline['change_requests'][i].get('text_only') is True for i in open_requests),
                'author-side closeout cannot resolve scientific requests')
     m._require(cert['closed_text_request_indices'] == open_requests,
@@ -228,7 +290,10 @@ def validate(paper_id, certificate, metadata, root):
                'full-review snapshot does not reconstruct')
     import json
     delta = json.loads((packet / 'delta.json').read_text())
-    m._require(m._deltas(old_complete, reviewed, 'manuscript') ==
+    template_provenance = (m._json(bound(bindings['template_provenance']))
+                           if 'template_provenance' in bindings else {})
+    m._require(_cumulative_manuscript_delta(old_complete, reviewed, auth,
+                                           template_provenance, addendum) ==
                [r for r in delta if r['path'].startswith('manuscript/')],
                'targeted packet omitted an intermediate manuscript change')
     # The supporting archive may change only metadata or the exact documentary
@@ -240,6 +305,8 @@ def validate(paper_id, certificate, metadata, root):
                and m._sha(support_path) == metadata['support']['publication']['package_sha256'],
                'current supporting package mismatch')
     old_support_path = bound(cert['artifact_bindings']['baseline_support_archive'], True)
+    m._require(m._sha(old_support_path) == applied['support_package_sha256'],
+               'support baseline differs from original applied judgment')
     old_version = verify_support_archive(old_support_path)['paper_version']
     old_support = _support_digests(old_support_path, old_version)
     new_support = _support_digests(support_path, support['paper_version'])
@@ -263,10 +330,14 @@ def validate(paper_id, certificate, metadata, root):
                 continue
             if Path(name).name in m._SUPPORT_METADATA:
                 continue
-            matching = [r for r in documented if name.endswith('/' + r['path'][8:])]
+            matching = [r for r in documented if name == r['path'][8:]
+                        or name.endswith('/' + r['path'][8:])]
             m._require(len(matching) == 1, 'unreviewed supporting science/code change: ' + name)
             row = matching[0]
-            m._require(_documentary_support_path(name)
+            integrity_only = (row['path'] in addendum.get('support_integrity_rebinding_reviewed', [])
+                              and _integrity_rebinding_from_archives(name, old_support_path,
+                                  support_path, old_version, support['paper_version']))
+            m._require((_documentary_support_path(name) or integrity_only)
                        and row['before_sha256'] == before
                        and row['after_sha256'] == after, 'support delta differs')
             used.append(row)
