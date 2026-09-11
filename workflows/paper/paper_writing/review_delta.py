@@ -503,6 +503,17 @@ def route_review(paper_id, *, root):
     from paper_writing.revision_policy import ReviewBudgetExceeded
     root = Path(root).resolve()
     metadata = load_paper_metadata(paper_id, root)
+    if metadata.get('editorial_closeout_preparation'):
+        from paper_writing.editorial_closeout import inspect, validate_release, FIELD as editorial_field
+        try:
+            if editorial_field in metadata.get('writing_release', {}):
+                validate_release(paper_id, metadata, root)
+                return {'route': 'metadata_reuse', 'mode': 'already_validated_editorial_closeout', 'passed': True}
+            checked = inspect(paper_id, metadata['editorial_closeout_preparation'], metadata, root)
+            return {'route': 'closeout_delta', 'rounds_after_application': checked['rounds'],
+                    'maximum_rounds': checked['maximum'], 'preparation': metadata['editorial_closeout_preparation']}
+        except (ValueError, OSError, KeyError) as exc:
+            return {'route': 'blocked', 'reason': str(exc)}
     # Never let the older metadata mechanism carry an unvalidated delta chain.
     try:
         reused = reuse_review_for_metadata_only_revision(paper_id, root=root)

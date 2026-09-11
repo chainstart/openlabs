@@ -485,6 +485,7 @@ def _release_snapshot(metadata: Mapping[str, Any]) -> dict[str, Any]:
             "quality_gate_revision_exception",
             "minor_revision_closeout",
             "targeted_review_closeout",
+            "editorial_closeout",
             "nonblocking_venue_findings",
             "unresolved_review_blockers",
             "reviewed_at",
@@ -1120,6 +1121,11 @@ def _release_paths(
     except (ValueError, OSError) as exc:
         raise HandoffError(f"Minor-revision closeout is invalid: {exc}") from exc
     from paper_writing.review_delta import validate_state
+    from paper_writing.editorial_closeout import validate_release as validate_editorial_closeout
+    try:
+        files.extend(validate_editorial_closeout(paper_id, metadata, repo_root))
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise HandoffError(f"Editorial closeout chain is invalid: {exc}") from exc
     from paper_writing.targeted_closeout import validate_release as validate_targeted_closeout
     try:
         files.extend(validate_targeted_closeout(paper_id, metadata, repo_root))

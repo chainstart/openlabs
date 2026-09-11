@@ -7,6 +7,13 @@ description: Run OpenLabs' configured fresh-context paper gate for AI, computer-
 
 ## Select scope before launching a scored referee
 
+An explicitly authorized `editorial_closeout_preparation` can produce the
+`closeout_delta` route. See `workflows/paper/docs/EDITORIAL_CLOSEOUT.md`. This
+replays a historical ready minor/targeted closeout in a read-only namespace and
+requires one new isolated changes-only judgment; it is not ordinary metadata
+reuse. Do not feed that route into the ordinary delta runner or repeat the old
+full review. Historical scores and ALL completed rounds remain intact.
+
 For every completed draft/revision, run `paper-writing review route --paper-id <paper_id>`
 under the repository resource guard. This is the shared deterministic routing entry point.
 It returns `metadata_reuse` (already applied, terminal), `delta` (a frozen cumulative packet),
