@@ -113,17 +113,48 @@ def validate_baseline(binding, root):
             p = shadow / name; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(value)
         old_registry = Path(tmp)/'registry.json'
         old_registry.write_text(json.dumps(meta))
+        # A historical readiness replay must not retroactively apply a later
+        # journal exclusion. Only an exact, hash-bound settings file from an
+        # ancestor Git commit is eligible, and it is mounted ONLY in this
+        # read-only, network-isolated worker. inspect()/release still validate
+        # the live candidate against the current policy.
+        policy_mount = []
+        if 'historical_settings' in baseline:
+            historical = _historical_settings(baseline['historical_settings'], root)
+            old_settings = Path(tmp)/'settings.yaml'
+            old_settings.write_bytes(historical)
+            policy_mount = ['--ro-bind', str(old_settings), str(root/'registry/settings.yaml')]
         env = {'PATH': '/usr/bin:/bin', 'PYTHONPATH': str(Path(__file__).resolve().parents[1]),
                'PYTHONDONTWRITEBYTECODE': '1', 'LANG': 'C.UTF-8'}
         command = [bwrap, '--unshare-user', '--unshare-pid', '--unshare-net', '--die-with-parent',
                    '--ro-bind', '/', '/', '--ro-bind', str(shadow), str(manuscript),
                    '--ro-bind', str(old_registry), str(root/'registry/papers'/f'{meta["paper_id"]}.yaml'),
+                   *policy_mount,
                    sys.executable, '-m', 'paper_writing.editorial_closeout', '_worker', str(root), str(path)]
         result = subprocess.run(command, capture_output=True, text=True, env=env, timeout=180)
         m._require(result.returncode == 0, 'historical chain replay failed: ' + result.stderr[-3000:])
         checked = json.loads(result.stdout)
     m._require(checked['gate'] == gate, 'historical replay changed gate')
     return baseline, content, checked
+
+
+def _historical_settings(binding, root):
+    """Read a pinned historical policy, never accept caller-supplied YAML."""
+    import hashlib
+    import re
+    commit = binding.get('git_commit', '')
+    digest = binding.get('sha256', '')
+    m._require(re.fullmatch(r'[0-9a-f]{40}', commit) is not None
+               and re.fullmatch(r'[0-9a-f]{64}', digest) is not None,
+               'invalid historical settings binding')
+    ancestry = subprocess.run(['git', '-C', str(root), 'merge-base', '--is-ancestor', commit, 'HEAD'],
+                              capture_output=True, timeout=20)
+    m._require(ancestry.returncode == 0, 'historical settings commit is not an ancestor')
+    result = subprocess.run(['git', '-C', str(root), 'show', commit + ':registry/settings.yaml'],
+                            capture_output=True, timeout=20)
+    m._require(result.returncode == 0 and hashlib.sha256(result.stdout).hexdigest() == digest,
+               'historical settings bytes mismatch')
+    return result.stdout
 
 
 def bibliography_restoration(reviewed, final, original):
@@ -140,9 +171,10 @@ def bibliography_restoration(reviewed, final, original):
 def inspect(paper_id, preparation, metadata, root, *, final=None):
     from paper_writing.handoff import _source_files, _verified_journal_source_archive
     from paper_writing.operations import _review_workspace_fingerprints
-    from paper_writing.registry import load_registry_settings
+    from paper_writing.registry import load_registry, load_registry_settings
     from paper_writing.revision_policy import revision_round_policy
     root = Path(root).resolve(); prep_path = m._bound(preparation, root); prep = m._json(prep_path)
+    load_registry(root, include_local_repositories=False, paper_ids=[paper_id])
     auth_path = m._bound(prep['authorization'], root); auth = m._json(auth_path)
     m._require(auth_path.parent == root/'registry/quality-gate-exceptions'
                and auth['actor'] == 'user' and auth['confirmed'] is True and m._text(auth['quote'])

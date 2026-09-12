@@ -85,6 +85,40 @@ def test_missing_historical_archive_fails_closed(tmp_path):
         e.validate_baseline({'path': '../escape', 'sha256': '0'*64}, tmp_path)
 
 
+def test_historical_settings_require_exact_ancestor_bytes(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    content = b'quality_gate: {minimum_score: 5}\n'
+    calls = []
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=content)
+    monkeypatch.setattr(e.subprocess, 'run', run)
+    binding = {'git_commit': 'a'*40, 'sha256': hashlib.sha256(content).hexdigest()}
+    assert e._historical_settings(binding, tmp_path) == content
+    assert calls[0][-4:] == ['merge-base', '--is-ancestor', 'a'*40, 'HEAD']
+    assert calls[1][-1] == 'a'*40 + ':registry/settings.yaml'
+    with pytest.raises(ValueError, match='bytes mismatch'):
+        e._historical_settings({**binding, 'sha256': 'b'*64}, tmp_path)
+    with pytest.raises(ValueError, match='binding'):
+        e._historical_settings({**binding, 'git_commit': '--help'}, tmp_path)
+    monkeypatch.setattr(e.subprocess, 'run', lambda *a, **k: SimpleNamespace(returncode=1))
+    with pytest.raises(ValueError, match='not an ancestor'):
+        e._historical_settings(binding, tmp_path)
+
+
+def test_live_candidate_still_requires_strict_target_policy(monkeypatch, tmp_path):
+    from paper_writing import registry
+    preparation = tmp_path/'preparation.json'
+    preparation.write_text('{}')
+    def strict(root, **kwargs):
+        assert kwargs == {'include_local_repositories': False, 'paper_ids': ['p']}
+        raise ValueError('journal explicitly excluded by current policy')
+    monkeypatch.setattr(registry, 'load_registry', strict)
+    binding = {'path': 'preparation.json', 'sha256': hashlib.sha256(b'{}').hexdigest()}
+    with pytest.raises(ValueError, match='excluded by current policy'):
+        e.inspect('p', binding, {'target_journal': 'EPJC'}, tmp_path)
+
+
 def test_exact_bibliography_restoration_only():
     reviewed = {'main.tex': b'body\\bibliographystyle{plain}', 'main.bbl': b'lost locators', 'proof.tex': b'proof'}
     original = {'main.bbl': b'all original DOI/arXiv locators'}

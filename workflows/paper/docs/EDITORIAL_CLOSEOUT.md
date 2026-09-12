@@ -16,6 +16,15 @@ minor/targeted validators, including their raw reviews, previous addendum and
 support bindings. No live source is replaced and no historical judgment is
 rewritten. Unsupported baselines and unavailable isolation fail closed.
 
+If a later target-policy exclusion would otherwise prevent a genuine historical
+replay, the baseline may pin `historical_settings` with an ancestor data-repository
+`git_commit` (full 40-character hash) and the SHA-256 of that commit's
+`registry/settings.yaml`. The worker reads the exact Git object and mounts it
+read-only only in its network-isolated historical namespace. It does not accept
+arbitrary caller-supplied policy YAML or modify live settings. Current-candidate
+inspection still loads the live registry under strict target-policy validation;
+this historical binding cannot re-enable an excluded journal for a new release.
+
 Only main-TeX, generated bibliography and author wrapper changes are eligible.
 All scientific source files and complete support metadata/payload must remain
 unchanged. New official publisher style files require an exact filename, HTTPS
