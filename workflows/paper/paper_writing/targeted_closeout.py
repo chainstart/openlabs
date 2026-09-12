@@ -51,6 +51,49 @@ def _documentary_support_path(name):
     return Path(name).suffix in {'.md', '.svg'} or Path(name).name == 'CLAIMS.yaml'
 
 
+def _authorized_module_docstring_delta(row, authorization, assessment, packet):
+    """Exact opt-in documentation edit, not permission to change executable AST.
+
+    The isolated referee must also assess docstring use at runtime. Byte equality
+    outside the leading string prevents an AST-equivalent code rewrite slipping
+    through. Authorization is already paper/version bound by validate().
+    """
+    import ast
+    import hashlib
+    if (row not in authorization.get('support_docstring_only_changes', [])
+            or row['path'] not in assessment.get('support_docstring_only_reviewed', [])
+            or not row['path'].startswith('support/') or not row['path'].endswith('.py')):
+        return False
+    relative = Path(row['path'])
+    if '..' in relative.parts or relative.is_absolute():return False
+    values = [(Path(packet)/'before'/relative).read_bytes(), (Path(packet)/relative).read_bytes()]
+    if [hashlib.sha256(v).hexdigest() for v in values] != [row['before_sha256'], row['after_sha256']]:return False
+    stripped=[]
+    for value in values:
+        try:
+            tree=ast.parse(value)
+            node=tree.body[0]
+            if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)):return False
+            lines=value.splitlines(keepends=True)
+            start=sum(map(len,lines[:node.lineno-1]))+node.col_offset
+            end=sum(map(len,lines[:node.end_lineno-1]))+node.end_col_offset
+            stripped.append(value[:start]+b'"""DOCSTRING"""'+value[end:])
+            # Only the conventional argparse help description may consume it.
+            # The independently supplied assessment still decides semantic scope.
+            parents={child:parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+            for n in ast.walk(tree):
+                if isinstance(n,ast.Attribute) and n.attr=='__doc__':return False
+                if not (isinstance(n,ast.Name) and n.id=='__doc__'):continue
+                kw=parents.get(n);call=parents.get(kw)
+                if not (isinstance(kw,ast.keyword) and kw.arg=='description'
+                        and isinstance(call,ast.Call) and isinstance(call.func,ast.Attribute)
+                        and isinstance(call.func.value,ast.Name) and call.func.value.id=='argparse'
+                        and call.func.attr=='ArgumentParser'):return False
+        except (SyntaxError,IndexError,UnicodeError):return False
+    return stripped[0]==stripped[1]
+
+
 def _cumulative_manuscript_delta(before, after, authorization, provenance, assessment):
     """Permit new publisher template assets only when byte-bound and reviewed.
 
@@ -337,7 +380,8 @@ def validate(paper_id, certificate, metadata, root):
             integrity_only = (row['path'] in addendum.get('support_integrity_rebinding_reviewed', [])
                               and _integrity_rebinding_from_archives(name, old_support_path,
                                   support_path, old_version, support['paper_version']))
-            m._require((_documentary_support_path(name) or integrity_only)
+            docstring_only = _authorized_module_docstring_delta(row, auth, addendum, packet)
+            m._require((_documentary_support_path(name) or integrity_only or docstring_only)
                        and row['before_sha256'] == before
                        and row['after_sha256'] == after, 'support delta differs')
             used.append(row)

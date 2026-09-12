@@ -47,6 +47,21 @@ Declaration, support, style, clean-build and archive checks remain mandatory.
 Handoff replays this entire chain and requires Git-frozen evidence. No gate
 operation submits a manuscript to a journal or performs a remote upload.
 
+For a flat publisher upload layout, an exact `source_relocations` authorization
+may bind a new root-level filename to an existing historical source path and
+SHA-256. Both copies must be byte-identical and the original must remain unchanged.
+These are not new scientific inputs. The independent referee must inspect every
+relocation and its manuscript reference interfaces; unbound additions, removed
+originals and any byte changes still fail closed.
+
+The separate targeted-addendum validator also supports an explicitly authorized
+`support_docstring_only_changes` list. Each row binds exact before/after Python
+file hashes, and the isolated addendum must list it as independently inspected.
+Bytes outside the leading module docstring must be identical. Reading `__doc__`
+is forbidden except as the conventional `argparse.ArgumentParser` description;
+the referee must confirm that this is help wording only, not scientific behavior.
+This cannot authorize a computational change or substitute for a reviewer judgment.
+
 A narrowly checked author-side bibliography closeout may retain an unresolved
 referee record when its sole blocker is lost electronic bibliography locators,
 scientific preservation is explicitly affirmed, and the only final source edits

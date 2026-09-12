@@ -7,6 +7,24 @@ def test_absent_closeout_is_noop(tmp_path):
     assert t.validate_release('p', {}, tmp_path) == []
 
 
+@pytest.mark.parametrize('mutation', ['none','help_only','code','outside_comment','runtime_doc','unauthorized','unreviewed','wrong_hash'])
+def test_docstring_exception_is_exact_and_independently_reviewed(tmp_path, mutation):
+    import hashlib
+    name='support/code.py';old=b'"""old documentation"""\nx=1\n';new=b'"""correct documentation"""\nx=1\n'
+    if mutation=='code':new=new.replace(b'x=1',b'x=2')
+    if mutation=='outside_comment':new+=b'# unrelated\n'
+    if mutation=='runtime_doc':old+=b'print(__doc__)\n';new+=b'print(__doc__)\n'
+    if mutation=='help_only':old+=b'parser=argparse.ArgumentParser(description=__doc__)\n';new+=b'parser=argparse.ArgumentParser(description=__doc__)\n'
+    for path,value in [(tmp_path/'before'/name,old),(tmp_path/name,new)]:
+        path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(value)
+    row={'path':name,'before_sha256':hashlib.sha256(old).hexdigest(),'after_sha256':hashlib.sha256(new).hexdigest()}
+    auth={'support_docstring_only_changes':[row]};assessment={'support_docstring_only_reviewed':[name]}
+    if mutation=='unauthorized':auth={}
+    if mutation=='unreviewed':assessment={}
+    if mutation=='wrong_hash':row['after_sha256']='0'*64
+    assert t._authorized_module_docstring_delta(row,auth,assessment,tmp_path) is (mutation in {'none','help_only'})
+
+
 def template_fixture():
     import hashlib
     before = {'main.tex': b'old'}

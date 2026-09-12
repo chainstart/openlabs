@@ -136,3 +136,17 @@ def test_router_does_not_fall_back_on_invalid_opt_in(monkeypatch, tmp_path):
     monkeypatch.setattr(e, 'inspect', lambda *a: (_ for _ in ()).throw(ValueError('invalid historical chain')))
     result = review_delta.route_review('p', root=tmp_path)
     assert result == {'route': 'blocked', 'reason': 'invalid historical chain'}
+@pytest.mark.parametrize('mutation',['none','changed','removed_original','wrong_hash','unbound','unsafe'])
+def test_flat_source_relocations_preserve_exact_inputs(mutation):
+    import hashlib
+    before={'main.tex':b'old','figures/one.pdf':b'figure'}
+    after={**before,'main.tex':b'new','one.pdf':b'figure'}
+    auth={'source_relocations':{'one.pdf':{'source_path':'figures/one.pdf','sha256':hashlib.sha256(b'figure').hexdigest()}}}
+    if mutation=='changed':after['one.pdf']=b'changed'
+    if mutation=='removed_original':after.pop('figures/one.pdf')
+    if mutation=='wrong_hash':auth['source_relocations']['one.pdf']['sha256']='0'*64
+    if mutation=='unbound':auth={}
+    if mutation=='unsafe':after['../one.pdf']=after.pop('one.pdf');auth['source_relocations']['../one.pdf']=auth['source_relocations'].pop('one.pdf')
+    if mutation=='none':assert len(e.check_scope(before,after,auth))==2
+    else:
+        with pytest.raises(ValueError):e.check_scope(before,after,auth)

@@ -54,8 +54,19 @@ def check_scope(before, after, authorization):
     from urllib.parse import urlparse
     m._require(not (set(before) - set(after)), 'editorial bridge cannot remove sources')
     assets = authorization.get('template_assets', {})
+    relocations = authorization.get('source_relocations', {})
     additions = set(after) - set(before)
-    m._require(additions == set(assets), 'unbound new source/template asset')
+    m._require(not(set(assets)&set(relocations)) and additions == set(assets)|set(relocations),
+               'unbound new source/template asset')
+    # Flat publisher upload layout: exact existing inputs copied, never new data.
+    # Keep originals for the historical chain. The referee checks reference paths.
+    for name,row in relocations.items():
+        old_name=row.get('source_path','')
+        m._require(name == Path(name).name and name not in WRAPPERS
+                   and old_name in before and after[name] == before[old_name]
+                   and after.get(old_name) == before[old_name]
+                   and m._members({name:after[name]})[name] == row.get('sha256'),
+                   'source relocation is not byte-identical to a preserved historical input')
     for name, row in assets.items():
         url = urlparse(row['url'])
         m._require(name == Path(name).name and Path(name).suffix in {'.sty', '.cls', '.bst'}
