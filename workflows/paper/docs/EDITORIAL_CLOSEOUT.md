@@ -70,5 +70,22 @@ byte-identical to the previous ready bibliography. The reviewed intermediate
 source/PDF remain independently hash-bound; no other change or blocker fits this
 path. It adds no independent judgment and never rewrites the referee's verdict.
 
+An expressly authorized `production_followup` instead retains an unsuccessful
+editorial review and adds one **new** independent judgment. Its narrow
+`independent_elsarticle_production_followup` contract permits exactly five
+duplicate appendix-prefix removals and four preprint-note separator insertions;
+the regenerated bibliography may differ only in those separators and whitespace.
+Every other input remains byte-identical. This is not a general path for closing
+an escalating scientific review or for author-side acceptance.
+
+The follow-up receives the original unsuccessful result, exact current source
+ZIP, extracted sources, actual standalone and canonical PDFs, build logs and
+hash-bound build evidence. It must independently close every retained blocker,
+affirm scientific/judgment preservation and return resolved. Both executions and
+both snapshots remain bound. Release recomputes ZIP/source and PDF-text equality,
+replays the old gate, and counts the old ready total plus **two**, subject to an
+explicitly increased version-scoped budget. Missing inputs, negative judgments,
+modified prior records or unrelated source changes fail closed.
+
 Implementation: `paper_writing/editorial_closeout.py`. Ordinary delta and minor
 closeout behavior is unchanged for records without this explicit opt-in.

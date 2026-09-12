@@ -185,15 +185,22 @@ def inspect(paper_id, preparation, metadata, root, *, final=None):
     from paper_writing.registry import load_registry, load_registry_settings
     from paper_writing.revision_policy import revision_round_policy
     root = Path(root).resolve(); prep_path = m._bound(preparation, root); prep = m._json(prep_path)
+    from paper_writing import editorial_followup as follow
+    final = final or prep.get('production_followup')
+    production = final is not None and final.get('kind') == follow.KIND
     load_registry(root, include_local_repositories=False, paper_ids=[paper_id])
     auth_path = m._bound(prep['authorization'], root); auth = m._json(auth_path)
     m._require(auth_path.parent == root/'registry/quality-gate-exceptions'
                and auth['actor'] == 'user' and auth['confirmed'] is True and m._text(auth['quote'])
                and auth['scope'] == SCOPE and auth['paper_id'] == paper_id
-               and auth['target_version'] == metadata['version']
+               and auth['target_version'] == (final['reviewed_version'] if production else metadata['version'])
                and auth['target_journal'] == metadata['target_journal']
                and auth['baseline'] == prep['baseline'], 'invalid editorial authorization')
     m._timestamp(auth['recorded_at'])
+    follow_evidence = []
+    if production:
+        _, follow_auth_path = follow.inspect_authorization(paper_id,final,prep,metadata,root)
+        follow_evidence = [follow_auth_path,m._bound(final['prior_preparation'],root)]
     baseline, old, replay = validate_baseline(prep['baseline'], root)
     oldmeta = baseline['metadata']; oldgate = oldmeta['writing_release']
     m._require(oldmeta['paper_id'] == paper_id and oldmeta['version'] == auth['source_version'], 'baseline identity mismatch')
@@ -205,14 +212,15 @@ def inspect(paper_id, preparation, metadata, root, *, final=None):
     reviewed = current
     delivery = prep
     if final is not None:
-        m._require(final['kind'] == 'exact_prior_bibliography_restoration', 'unsupported final closeout')
+        m._require(final['kind'] == 'exact_prior_bibliography_restoration' or production, 'unsupported final closeout')
         oldzip = m._archive(m._bound(final['reviewed_source_archive'], root))
         reviewed_pdf = m._bound(final['reviewed_pdf'], root)
         m._require(final['reviewed_source_archive']['sha256'] == prep['source_archive']['sha256']
                    and final['reviewed_pdf']['sha256'] == prep['pdf']['sha256'], 'intermediate delivery changed')
         reviewed = {**current, **oldzip}
         m._require(m._snapshot(reviewed, reviewed_pdf.read_bytes()) == prep['fingerprints']['manuscript_snapshot_sha256'], 'intermediate full snapshot changed')
-        bibliography_restoration(reviewed, current, old)
+        if production:follow.typography_delta(reviewed,current)
+        else:bibliography_restoration(reviewed, current, old)
         delivery = final
     changes = check_scope({k:v for k,v in old.items() if k != 'main.pdf'}, reviewed, auth)
     m._require(changes == prep['delta'], 'editorial delta changed')
@@ -228,11 +236,11 @@ def inspect(paper_id, preparation, metadata, root, *, final=None):
                and gate['cas_zone_1_minimum_decision'] == 'minor_revision'
                and gate.get('review_panel_size', 1) == 1, 'unsupported gate policy')
     maximum, exception = revision_round_policy(paper_id, metadata, gate, root=root)
-    rounds = oldgate['revision_rounds_completed'] + 1
+    rounds = oldgate['revision_rounds_completed'] + 1 + int(production)
     m._require(rounds <= maximum, 'new judgment exceeds total authorized budget')
     return {'preparation': prep, 'delivery': delivery, 'baseline': baseline, 'old_sources': old, 'replay': replay,
             'rounds': rounds, 'maximum': maximum, 'exception': exception,
-            'evidence': [prep_path, auth_path, m._bound(prep['baseline'], root)] +
+            'evidence': [prep_path, auth_path, m._bound(prep['baseline'], root)] + follow_evidence +
                         [root/n for n in replay['evidence']]}
 
 
@@ -242,7 +250,9 @@ def validate(paper_id, certificate, metadata, root):
     from paper_writing.support_citations import audit_manuscript_support
     root = Path(root).resolve(); path = m._bound(certificate, root); cert = m._json(path)
     m._require(cert['schema_version'] == SCHEMA and cert['paper_id'] == paper_id, 'invalid bridge certificate')
-    final = cert.get('bibliography_restoration')
+    from paper_writing import editorial_followup as follow
+    final = cert.get('bibliography_restoration') or cert.get('production_followup')
+    production = final is not None and final.get('kind') == follow.KIND
     checked = inspect(paper_id, cert['preparation'], metadata, root, final=final); prep = checked['preparation']; delivery = checked['delivery']
     result_path = m._bound(cert['result'], root); result = m._json(result_path)
     execution = m._json(m._bound(cert['execution'], root, artifact=True))
@@ -276,11 +286,19 @@ def validate(paper_id, certificate, metadata, root):
         and 'bibliography' in result['remaining_blockers'][0].lower()
         and 'DOI' in result['remaining_blockers'][0]
         and 'locator' in result['remaining_blockers'][0].lower())
+    if production:
+        checked['evidence'] += follow.validate(paper_id,final,result,root)
+        editorial_closed = True  # Only the independently validated follow-up closes it.
+    reviewed_paths = sorted(result['changed_paths_reviewed'])
+    required_paths = [r['path'] for r in prep['delta']]
+    # The retained first referee additionally listed the supplied cover context.
+    if production and reviewed_paths == sorted(required_paths + list(prep.get('context_bindings',{}).keys() & {'cover-letter.tex'})):
+        reviewed_paths = required_paths
     m._require(result['scope'] == 'editorial_delta_after_validated_closeout'
                and ((result['verdict'] == 'resolved' and result['remaining_blockers'] == [] and final is None) or editorial_closed)
                and result['scientific_content_preserved'] is True
                and result['prior_judgments_preserved'] is True
-               and sorted(result['changed_paths_reviewed']) == [r['path'] for r in prep['delta']]
+               and reviewed_paths == required_paths
                and m._text(result['assessment']), 'independent changes-only review unresolved')
     build_path = m._bound(cert['build'], root); build = m._json(build_path)
     m._require(build['version'] == metadata['version'] and build['canonical_standalone_pdf_text_equal'] is True
