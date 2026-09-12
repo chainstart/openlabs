@@ -5,6 +5,7 @@ typography repairs and completion of previously omitted build/package evidence.
 Both independent executions remain bound and consume separate review rounds.
 """
 from pathlib import Path
+import json
 import re
 from paper_writing import minor_closeout as m
 
@@ -77,7 +78,7 @@ def validate(paper_id, final, primary, root):
     current = m._archive(m._bound(final['source_archive'], root))
     typography_delta(prior, current)
     changes = delta(prior, current)
-    m._require(m._json(packet/'delta.json') == changes
+    m._require(json.loads((packet/'delta.json').read_text()) == changes
                and all((packet/'current'/n).read_bytes() == v for n,v in current.items())
                and all((packet/'before'/r['path']).read_bytes() == prior[r['path']] for r in changes)
                and (packet/'source.zip').read_bytes() == m._bound(final['source_archive'],root).read_bytes()
