@@ -1178,7 +1178,10 @@ def _launch_worker(
 ) -> int | None:
     """Launch a worker outside the short-lived tick service cgroup when supervised."""
 
-    command = [sys.executable, "-m", "openlabs", "_worker", str(job_path)]
+    command = [
+        sys.executable, str(Path(__file__).with_name("gpu_guard.py")), "--",
+        sys.executable, "-m", "openlabs", "_worker", str(job_path),
+    ]
     if os.environ.get("INVOCATION_ID") or _user_systemd_available():
         systemd_run = shutil.which("systemd-run")
         if systemd_run is None:

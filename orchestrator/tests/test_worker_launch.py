@@ -65,6 +65,7 @@ def test_systemd_tick_launches_burst_capable_worker_in_transient_service(
     assert "--setenv=OPENLABS_SECRET" in calls[0]
     assert "--setenv=INVOCATION_ID" not in calls[0]
     assert all("must-not-appear-in-argv" not in token for token in calls[0])
+    assert any(token.endswith("/openlabs/gpu_guard.py") for token in calls[0])
 
 
 def test_manual_tick_uses_transient_service_when_user_systemd_is_available(
@@ -118,3 +119,4 @@ def test_manual_tick_uses_transient_service_when_user_systemd_is_available(
     assert calls[0][0:3] == ["/usr/bin/systemctl", "--user", "show-environment"]
     assert calls[1][0] == "/usr/bin/systemd-run"
     assert "--slice=openlabs-workers.slice" in calls[1]
+    assert any(token.endswith("/openlabs/gpu_guard.py") for token in calls[1])

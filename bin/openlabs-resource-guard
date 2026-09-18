@@ -7,20 +7,30 @@ MEMORY_SWAP_MAX=4G
 TASKS_MAX=512
 CPU_PERCENT=75
 SLICE=openlabs-workers.slice
+GUARD_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+gpu_options=()
+while [[ ${1-} == --gpu-memory-mib || ${1-} == --gpu-device ]]; do
+  if (( $# < 2 )); then
+    printf 'GPU option requires a value.\n' >&2
+    exit 64
+  fi
+  gpu_options+=("$1" "$2")
+  shift 2
+done
 
 if [[ ${1-} == -- ]]; then
   shift
 fi
 
 if (( $# == 0 )); then
-  printf 'Usage: %s -- <command> [args...]\n' "${0##*/}" >&2
+  printf 'Usage: %s [--gpu-memory-mib N] [--gpu-device N] -- <command> [args...]\n' "${0##*/}" >&2
   exit 64
 fi
 
 # A guarded Codex session passes this cgroup to all tools it starts. Reuse the
 # shared guard instead of nesting another transient scope.
 if rg -q '(^|/)openlabs-workers\.slice(/|$)' /proc/self/cgroup 2>/dev/null; then
-  exec "$@"
+  exec /usr/bin/python3 "$GUARD_ROOT/orchestrator/src/openlabs/gpu_guard.py" "${gpu_options[@]}" -- "$@"
 fi
 
 if ! command -v systemd-run >/dev/null 2>&1 || ! command -v systemctl >/dev/null 2>&1; then
@@ -70,4 +80,4 @@ exec systemd-run --user --scope --quiet \
   --property=TasksAccounting=yes \
   --property=TasksMax="$TASKS_MAX" \
   --property=OOMPolicy=kill \
-  "$@"
+  /usr/bin/python3 "$GUARD_ROOT/orchestrator/src/openlabs/gpu_guard.py" "${gpu_options[@]}" -- "$@"

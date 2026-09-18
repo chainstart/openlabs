@@ -50,6 +50,8 @@ quality_gate:
   target_journal_classification_year: 2025
   target_journal_classification_scope: major_category
   allowed_target_journal_tiers: [1, 2]
+  excluded_target_journals: [EPJC, The European Physical Journal C, Eur. Phys. J. C, JHEP, Journal of High Energy Physics, J. High Energy Phys.]
+  journal_exclusions_settings_key: journal_target_policy.excluded_journals
   require_no_mandatory_author_fee: true
   require_canonical_target_journal_format: true
   require_evidence_backed_target_fit: true

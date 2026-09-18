@@ -6,6 +6,17 @@ up, average around, or bypass it inside a profile. Change the threshold policy o
 human authorization and synchronized repository policy, settings, runtime, skill, documentation,
 and test updates.
 
+Before ranking or recommending targets, exclude every title and alias in
+`registry/settings.yaml#journal_target_policy.excluded_journals`. EPJC / The European Physical
+Journal C / Eur. Phys. J. C is excluded by the user's 2026-09-12 operational instruction.
+JHEP / Journal of High Energy Physics / J. High Energy Phys. is also excluded: its official
+author instructions and submission FAQ require an arXiv ID even for direct web uploads
+(verified 2026-09-12 at https://jhep.sissa.it/jhep/help/JHEP/JHEP_author.jsp).
+Keep truthful historical submissions and citations; do not replace the target with an alias or
+erase history. For replacement journals explicitly check whether prior arXiv posting is mandatory;
+permission to post a preprint is not a requirement to do so. Do not mark an unverified policy as
+compliant. Historical ranking dates do not waive an explicit current exclusion.
+
 For a journal manuscript beyond its basic draft in a domain configured by
 `journal_target_policy`, the registry must identify a verified
 Zone 1/2 target in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition,

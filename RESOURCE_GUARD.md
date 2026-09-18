@@ -11,6 +11,8 @@ On this 20-thread WSL host the limits are:
 - memory hard limit: 34 GiB
 - swap: 4 GiB
 - tasks: 512
+- GPU: one declared research job per device, 75% total VRAM ceiling, at least
+  2048 MiB free, stop at 85 C; default declared job budget below is 8192 MiB.
 
 The memory, swap and task limits match the installed OpenMath guard. OpenMath
 does not currently define a CPU quota; OpenLabs retains its pre-existing 75%
@@ -47,6 +49,7 @@ continuation actions. It does not inject messages into an active Codex TUI.
 bin/openlabs-codex
 bin/openlabs-resource-guard -- uv run pytest -q
 bin/openlabs-resource-guard -- python path/to/heavy_search.py
+bin/openlabs-resource-guard --gpu-memory-mib 8192 --gpu-device 0 -- python train.py
 ```
 
 Nested calls reuse the current cgroup, so scripts may invoke the wrapper safely.
@@ -63,6 +66,54 @@ systemctl --user status openlabs-workers.slice
 ```
 
 Do not raise these limits without reviewing both WSL and Windows host budgets.
+
+## GPU admission and supervision
+
+GPU remains enabled. Declare a budget for every GPU workload, including work
+launched by an already guarded Codex/factory worker. A private advisory `flock`
+under `$XDG_RUNTIME_DIR/openlabs-gpu-guard/` allows one declared job per GPU UUID.
+Admission fails promptly when occupied; queue/retry after the current job ends.
+The budget includes allocator memory, contexts, and other CUDA allocations.
+CPU commands and downloads can run alongside the reserved GPU job.
+
+On this RTX 5070 (12227 MiB), the global used-memory ceiling is **9170 MiB**,
+leaving at least **3057 MiB** for the display/host and transient pressure. An
+8192 MiB job is admitted only when current usage plus 8192 fits below that ceiling.
+Its PyTorch native allocator receives **7424 MiB** (768 MiB context reserve).
+The allocator environment key is verified against installed PyTorch 2.10; other
+frameworks/older versions need their own allocator cap before allocation.
+`HF_DEACTIVATE_ASYNC_LOAD=1` makes Transformers 5.3 load and quantize weights
+sequentially, preventing queued full-precision GPU copies from consuming the
+budget before conversion. GPU inference remains enabled.
+
+The stdlib supervisor `orchestrator/src/openlabs/gpu_guard.py` checks GPU memory
+and temperature every 0.5 s (each telemetry call has a 2 s timeout). Excess global
+usage, job-attributed global growth above the reservation, 85 C, inventory change,
+or telemetry failure stops the owned process tree: SIGINT, then SIGTERM, then
+SIGKILL if necessary. Normal exit also cleans up remaining descendants and
+releases the lock. It does not kill unrelated processes or alter driver clocks,
+power settings, compute modes, or display configuration. WSL lacks reliable
+per-process VRAM telemetry, so external GPU pressure may also stop our job.
+
+Ordinary wrapper commands and factory workers run through the same monitor and
+receive a conservative PyTorch allocator cap. They do not reserve a GPU merely
+to execute CPU work. Explicit GPU reservations remain mandatory: advisory locks
+cannot prevent uncooperative/unmarked code from using CUDA. Nested calls reuse
+an actual ancestor supervisor; an inherited cgroup alone does not bypass GPU
+protection. Nested explicit reservations must match the outer budget/device.
+
+This is **not a kernel VRAM quota**: non-PyTorch/driver allocation can overshoot
+between samples, and non-interruptible GPU kernels may take time to exit. Keep
+headroom and use framework allocator caps. GPU compute utilization can still
+reach 100% during useful work; WSL offers no cgroup percentage throttle for GPU
+compute. High utilization alone is not VRAM exhaustion. Do not run concurrent GPU
+children under one reservation or override the supplied allocator environment.
+
+No service installation is needed for this GPU change; new wrapper invocations
+and newly launched factory workers use it immediately. Existing processes need
+a checkpoint and guarded restart. Monitor with `nvidia-smi` and check the job's
+stderr for admission or stop reasons. A watchdog stop exits 75; forwarded signals
+return 128 plus signal number. Preserve interrupted outputs before restarting.
 
 ## Mathematics allocation alongside physics (2026-09-06)
 

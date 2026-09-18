@@ -13,7 +13,23 @@ not own global scheduling or write the OpenLabs SQLite database.
 Run its tests from this directory:
 
 ```bash
-python3 -m pytest -q
+../../bin/openlabs-resource-guard -- python3 -m pytest -q
 ```
 
 The original project overview is retained as `README.legacy.md` for provenance.
+
+Exploratory projects can bind to the `ai-research-pilot` protocol with primary
+skill `ai-research-loop`. Its validator checks project/workstream identity,
+relative paths, plan and environment hashes, and evidence hashes. Completed
+pilots require evidence; pilot claims remain hypotheses, provisional observations,
+or refuted hypotheses, and `paper_candidate` must be false. Passing this validator
+does not establish scientific validity, novelty, independent replication, or
+publication readiness. Both discovery and commit modes check the hashes.
+
+Use project-local scripts for new experiments. Record the unit of analysis,
+controls, budgets, stopping rules, environment and untouched holdout boundary
+before running. Keep bulk trajectories and model files in `openlabs-artifacts`;
+store small summaries and hash manifests in the data project. A manually executed
+bounded pilot should use `startup: paused` to prevent duplicate scheduler runs.
+Starting an autonomous workstream is a separate execution setting; merely creating
+a project configuration does not mean a background researcher is running.

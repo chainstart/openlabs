@@ -17,7 +17,7 @@ fi
 
 # Children and ordinary nested OpenLabs guard calls inherit the same math cap.
 if rg -q '(^|/)openlabs-workers-math\.slice(/|$)' /proc/self/cgroup; then
-  exec "$@"
+  exec "$ROOT/bin/openlabs-resource-guard" -- "$@"
 fi
 
 if ! systemctl --user cat "$SLICE" >/dev/null 2>&1; then
@@ -38,4 +38,4 @@ printf 'OpenLabs math guard: shared high=16G max=18G swap=0 tasks=256; physics r
 exec systemd-run --user --scope --quiet --unit="$unit" --slice="$SLICE" \
   --property=MemoryAccounting=yes --property=MemoryHigh=16G --property=MemoryMax=18G \
   --property=MemorySwapMax=0 --property=TasksAccounting=yes --property=TasksMax=256 \
-  --property=OOMPolicy=kill "$@"
+  --property=OOMPolicy=kill "$ROOT/bin/openlabs-resource-guard" -- "$@"

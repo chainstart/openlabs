@@ -286,7 +286,25 @@ def _validate_journal_target_policy(
 ) -> None:
     """Validate the evidence-backed target required after a journal basic draft."""
 
-    if not isinstance(policy, Mapping) or not policy.get("required_after_basic_draft"):
+    if not isinstance(policy, Mapping):
+        return
+    # Explicit operational exclusions also apply to historically ranked targets.
+    # Read-only inventory may still use enforce_target_policy=False to retain history.
+    def journal_key(value: str) -> str:
+        import re
+        value = re.sub(r"[^a-z0-9]", "", value.casefold())
+        return value.removeprefix("the")
+
+    excluded = policy.get("excluded_journals", [])
+    if not isinstance(excluded, list) or any(
+        not isinstance(name, str) or not name.strip() for name in excluded
+    ):
+        raise ValueError("journal_target_policy.excluded_journals must be a list of names")
+    if journal_key(str(paper.get("target_journal") or "")) in {
+        journal_key(name) for name in excluded
+    }:
+        raise ValueError(f"target_journal is excluded by journal_target_policy for {paper_id}")
+    if not policy.get("required_after_basic_draft"):
         return
     if str(paper.get("venue_type") or "journal") != "journal":
         return

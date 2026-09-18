@@ -34,6 +34,23 @@ resource-intensive and use the guard.
   guarded job is running elsewhere.
 - The aggregate limit is 75% of visible logical CPUs, 30 GiB memory soft, 34
   GiB memory hard, 4 GiB swap and 512 tasks.
+- Keep GPU available. Every model inference/training or other CUDA workload
+  must explicitly reserve its GPU with
+  `bin/openlabs-resource-guard --gpu-memory-mib 8192 --gpu-device 0 -- <command>`
+  (choose a smaller budget when sufficient). Only one declared GPU job may run
+  on each device at a time; CPU research can continue in parallel. Call this
+  wrapper even inside an inherited worker cgroup to acquire the GPU reservation.
+- GPU admission and supervision preserve at least 25% VRAM and 2048 MiB free,
+  enforce an 85 C temperature stop, and fail closed on telemetry loss. PyTorch
+  receives a native allocator cap with 768 MiB of each budget reserved for
+  contexts/other allocations. Do not unset/override the allocator cap, launch
+  parallel GPU children inside one lease, or bypass the supervisor. For another
+  framework, configure its allocator budget explicitly before model allocation.
+  Global sampling is a backstop, not a kernel-level VRAM or utilization quota.
+- Ordinary guarded commands and factory workers also receive GPU monitoring
+  and a PyTorch cap without hiding CUDA. This does not replace explicit GPU
+  admission for GPU workloads. Never solve GPU pressure by disabling CUDA or
+  increasing ceilings; reduce batch/context/model memory, offload, or queue work.
 - If the guard, systemd user manager or cgroup v2 controllers are unavailable,
   fail closed: do not start the command unbounded. Repair or install the guard
   first.

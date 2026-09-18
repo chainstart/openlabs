@@ -20,6 +20,16 @@
       "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"
     }
   ],
+  "protocols": [
+    {
+      "protocol_id": "ai-research-pilot",
+      "primary_skill": "ai-research-loop",
+      "runtime_skills": ["ai-research-loop"],
+      "validator": {
+        "command": ["{python}", "protocols/research_pilot.py", "--project", "{project_config}", "--workstream", "{workstream_state}", "--mode", "{validation_mode}"]
+      }
+    }
+  ],
   "capabilities": [
     "literature-grounded-hypotheses",
     "benchmark-design",
