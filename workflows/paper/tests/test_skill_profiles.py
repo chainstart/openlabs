@@ -64,6 +64,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "major_category"
     )
     assert profiles["quality_gate"]["allowed_target_journal_tiers"] == [1, 2]
+    assert profiles["quality_gate"]["allowed_target_journal_tiers_after_rejections"] == {1: [1, 2, 3], 2: [1, 2, 3, 4]}
     assert profiles["quality_gate"]["require_no_mandatory_author_fee"] is True
     assert profiles["quality_gate"]["require_canonical_target_journal_format"] is True
     assert profiles["quality_gate"]["require_evidence_backed_target_fit"] is True
@@ -239,6 +240,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert target_policy["classification_scope"] == "major_category"
     assert target_policy["classification_reference"] == "https://www.fenqubiao.com/"
     assert target_policy["allowed_tiers"] == [1, 2]
+    assert target_policy["allowed_tiers_after_rejections"] == {1: [1, 2, 3], 2: [1, 2, 3, 4]}
     assert target_policy["require_no_mandatory_author_fee"] is True
     assert target_policy["require_canonical_venue_format"] is True
     assert settings["support_publication"]["public_archive_identifier"] == "display_id"

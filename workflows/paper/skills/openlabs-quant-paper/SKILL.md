@@ -23,7 +23,7 @@ read `docs/ZENODO_GUIDE.md`. When creating a workspace or naming a reader-facing
 
 Do not activate another writing system or create a second registry.
 
-After the basic manuscript, select only a target verified as major-category Zone 1 or Zone 2 in
+After the basic manuscript, select only a target verified as major-category Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections in
 the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition and satisfying the
 shared fee, fit, and canonical-format policy. Record year `2025`, scope `major_category`, category,
 source, and check date; never substitute a JCR/WOS/JCI quartile, subject-category partition, or

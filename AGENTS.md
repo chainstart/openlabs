@@ -63,11 +63,14 @@ For every journal manuscript beyond its basic draft, use the domain-specific tar
 `workflows/paper/skills/profiles.yaml` and the active data repository's
 `registry/settings.yaml`.
 
-- Select only a journal verified as Zone 1 or Zone 2 in the **2025 edition of the Chinese Academy
+- Select only a journal verified as Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections in the **2025 edition of the Chinese Academy
   of Sciences Journal Ranking Table, upgraded edition, major-category partition**. This 2025 CAS
   major-category table is the repository's fixed journal-classification baseline until a human
   explicitly changes the policy. JCR/WOS/JCI quartiles, CAS subject-category partitions, and
   XinRui tiers are different systems and must never be substituted or relabeled as this value.
+- Before using the relaxed transfer tiers, record distinct sourced external decisions in
+  `journal_rejections` as specified in `workflows/paper/skills/overlays/quality-gate.md`.
+  Internal reviews, withdrawals and duplicate letters do not increase the rejection count.
 - Record the numeric major-category zone in the compatibility field `target_journal_tier`, plus
   `target_journal_ranking_year: 2025`, `target_journal_ranking_scope: major_category`, the CAS
   major-category name, a dated classification source, and the check date. If the 2025 CAS value

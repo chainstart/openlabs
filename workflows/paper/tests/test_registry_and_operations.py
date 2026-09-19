@@ -809,3 +809,44 @@ def test_create_paper_rejects_invalid_or_noncanonical_date(
             subdomain="hep",
             venue_type="journal",
         )
+
+
+@pytest.mark.parametrize("count,expected", [(0, {1, 2}), (1, {1, 2, 3}), (2, {1, 2, 3, 4}), (3, {1, 2, 3, 4})])
+def test_rejection_stage_target_tiers(count, expected):
+    from paper_writing.registry import _allowed_target_tiers
+    policy = {"allowed_tiers": [1, 2], "allowed_tiers_after_rejections": {1: [1, 2, 3], 2: [1, 2, 3, 4]}}
+    records = [{"journal": "Journal", "manuscript_number": str(i), "rejected_at": "2026-09-18", "source": "audit/receipt.json"} for i in range(count)]
+    paper = {"journal_rejections": records, "target_journal_checked_at": "2026-09-19"}
+    assert _allowed_target_tiers(paper, policy=policy, paper_id="test") == expected
+    # Repeated notification is not a second submission decision.
+    paper["journal_rejections"] = records + records
+    assert _allowed_target_tiers(paper, policy=policy, paper_id="test") == expected
+    # Internal review data cannot relax the target policy.
+    paper["journal_rejections"] = []
+    paper["review_rounds"] = [{"decision": "reject"}] * 3
+    assert _allowed_target_tiers(paper, policy=policy, paper_id="test") == {1, 2}
+
+
+@pytest.mark.parametrize("change", [{"source": ""}, {"manuscript_number": ""}, {"rejected_at": "2026-09-20"}, {"rejected_at": "2026-02-30"}])
+def test_rejection_stage_requires_dated_evidence(change):
+    from paper_writing.registry import _allowed_target_tiers
+    record = {"journal": "Journal", "manuscript_number": "J-1", "rejected_at": "2026-09-18", "source": "audit/receipt.json", **change}
+    with pytest.raises(ValueError, match="journal_rejections"):
+        _allowed_target_tiers({"journal_rejections": [record], "target_journal_checked_at": "2026-09-19"}, policy={"allowed_tiers_after_rejections": {1: [1, 2, 3], 2: [1, 2, 3, 4]}}, paper_id="test")
+
+
+@pytest.mark.parametrize("count,tier,passes", [(0, 2, True), (0, 3, False), (1, 3, True), (1, 4, False), (2, 4, True)])
+def test_rejection_stage_enforced_by_target_validator(count, tier, passes):
+    from paper_writing.registry import _validate_journal_target_policy
+    policy = {"required_after_basic_draft": True, "classification_system": "CAS", "allowed_tiers": [1, 2], "allowed_tiers_after_rejections": {1: [1, 2, 3], 2: [1, 2, 3, 4]}}
+    paper = {
+        "target_journal_tier": tier, "target_journal_ranking_system": "CAS",
+        "target_journal_ranking_source": "https://example.test/ranking",
+        "target_journal_checked_at": "2026-09-19",
+        "journal_rejections": [{"journal": "Journal", "manuscript_number": str(i), "rejected_at": "2026-09-18", "source": "audit/receipt.json"} for i in range(count)],
+    }
+    if passes:
+        _validate_journal_target_policy(paper, paper_id="test", policy=policy)
+    else:
+        with pytest.raises(ValueError, match="target_journal_tier"):
+            _validate_journal_target_policy(paper, paper_id="test", policy=policy)

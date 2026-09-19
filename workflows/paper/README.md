@@ -33,7 +33,7 @@ PYTHONPATH=workflows/paper python3 -m paper_writing validate \
   --root "$OPENLABS_WORKSPACE/openlabs-data"
 ```
 
-Every post-basic-draft journal target in a configured domain must satisfy the prospective registry policy for Zone 1/2 in
+Every post-basic-draft journal target in a configured domain must satisfy the prospective registry policy for Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections in
 the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, using the major-category partition, plus an
 official no-mandatory-author-fee route and canonical venue format. The compatibility field
 `target_journal_tier` stores that CAS zone only; JCR/WOS/JCI quartiles, subject-category partitions,

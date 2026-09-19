@@ -106,8 +106,7 @@ is opt-in and illustrative only; it cannot supply experimental evidence.
 Only a `writing_release.status` of `ready` permits consideration for handoff. It does not mean the
 paper has been submitted or accepted, and it never replaces human scientific judgment.
 
-After a basic manuscript is complete, select a target journal verified as major-category Zone 1 or
-Zone 2 in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, with a
+After a basic manuscript is complete, select a target journal verified as major-category Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, with a
 publication route carrying no mandatory author fee. Record the 2025 year, `major_category` scope,
 category name, ranking source and check date, plus fee and official formatting evidence. Do not
 substitute a JCR/WOS/JCI quartile, subject-category partition, or XinRui tier. Convert the canonical

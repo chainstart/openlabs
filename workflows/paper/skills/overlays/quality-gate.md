@@ -19,13 +19,37 @@ compliant. Historical ranking dates do not waive an explicit current exclusion.
 
 For a journal manuscript beyond its basic draft in a domain configured by
 `journal_target_policy`, the registry must identify a verified
-Zone 1/2 target in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition,
+Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections target in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition,
 using its major-category partition, an official no-mandatory-author-fee publication route, and the
 official formatting source. The record must bind year `2025`, scope `major_category`, the
 major-category name, source, and check date. Never relabel a JCR/WOS/JCI quartile, a CAS
 subject-category result, or a XinRui tier as the CAS major-category zone. The canonical
 `manuscript/` must be marked and checked as the venue-specific edition. A side candidate alone is
 a blocker. Public Zenodo ZIP names and enclosing roots must use the registered `display_id`.
+
+The rejection-stage rule was authorized on 2026-09-19. `allowed_tiers` is the first-submission
+baseline; `allowed_tiers_after_rejections` maps one rejection to zones 1–3 and two or more to
+zones 1–4. Before selecting a lower-zone transfer target, reconcile management-site submission
+history with actual decision letters and record distinct external journal rejections in the paper's
+`journal_rejections` list. Each entry requires `journal` (canonical title), `manuscript_number`,
+`rejected_at` (YYYY-MM-DD, no later than target verification), and `source` (auditable local
+receipt or management event reference, without private access tokens). For example:
+
+```yaml
+journal_rejections:
+  - journal: Example Journal
+    manuscript_number: EXAMPLE-26-001
+    rejected_at: '2026-09-19'
+    source: maintenance/decision-audit/decision-receipt.json
+```
+
+Use the same canonical title and manuscript number across duplicate letters. Desk rejections
+and rejections after peer review both count; withdrawals, transfer recommendations alone,
+internal LLM decisions and unverified claims do not. Missing evidence retains the first-submission
+limit until reconciled. A transfer recommendation accompanying a rejection is not another
+rejection. Never overwrite historical decisions or infer a rejection count from revision numbers.
+The internal review threshold, fee-free route, fit checks and same-journal resubmission rules
+continue to apply at every stage. The tier policy does not itself authorize an actual submission.
 
 For targets checked on or after the configured fit-policy date, the registry must also contain an
 approved `target_journal_fit` record. It must separately justify scope, core readership, and

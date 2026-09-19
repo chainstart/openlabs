@@ -30,8 +30,7 @@ AI text as evidence.
 7. Hand the immutable manuscript and declared evidence to `$openlabs-paper-review`. The writer may
    answer a `text_revision` request but may not score or approve the manuscript.
 
-After the basic manuscript is complete, select and verify a target journal as major-category Zone 1
-or Zone 2 in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, with a
+After the basic manuscript is complete, select and verify a target journal as major-category Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, with a
 publication route carrying no mandatory author fee. Optional paid open access is compatible only
 when a fee-free subscription route remains available. Record the 2025 year, `major_category` scope,
 category name, ranking source and check date, plus dated official fee-policy, scope, article-type,

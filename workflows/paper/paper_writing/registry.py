@@ -320,12 +320,7 @@ def _validate_journal_target_policy(
     )
     if not systems:
         return
-    allowed = policy.get("allowed_tiers")
-    allowed_tiers = {
-        value
-        for value in (allowed if isinstance(allowed, list) else [1, 2])
-        if isinstance(value, int) and not isinstance(value, bool)
-    }
+    allowed_tiers = _allowed_target_tiers(paper, policy=policy, paper_id=paper_id)
     tier = paper.get("target_journal_tier")
     if tier not in allowed_tiers and not _has_approved_target_tier_override(
         paper,
@@ -483,6 +478,48 @@ def _validate_journal_target_fit(
             f"target_journal_fit.same_target_history.rationale is required after a "
             f"same-target rejection for {paper_id}"
         )
+
+
+
+def _allowed_target_tiers(
+    paper: Mapping[str, Any], *, policy: Mapping[str, Any], paper_id: str,
+) -> set[int]:
+    """Count distinct, sourced journal decisions, never internal review decisions."""
+    from datetime import date as calendar_date
+
+    allowed = policy.get("allowed_tiers", [1, 2])
+    stages = policy.get("allowed_tiers_after_rejections")
+    if stages is not None:
+        if not isinstance(stages, Mapping) or set(stages) != {1, 2}:
+            raise ValueError("allowed_tiers_after_rejections requires stages 1 and 2")
+        history = paper.get("journal_rejections", [])
+        if not isinstance(history, list):
+            raise ValueError(f"journal_rejections must be a list for {paper_id}")
+        attempts = set()
+        for record in history:
+            if not isinstance(record, Mapping) or any(
+                not isinstance(record.get(field), str) or not record[field].strip()
+                for field in ("journal", "manuscript_number", "rejected_at", "source")
+            ):
+                raise ValueError(f"journal_rejections needs journal, manuscript_number, rejected_at and source for {paper_id}")
+            date = record["rejected_at"]
+            checked = str(paper.get("target_journal_checked_at") or "")
+            try:
+                calendar_date.fromisoformat(date)
+                calendar_date.fromisoformat(checked)
+            except ValueError:
+                raise ValueError(f"journal_rejections requires valid calendar dates for {paper_id}") from None
+            if not _iso_date(date) or not _iso_date(checked) or date > checked:
+                raise ValueError(f"journal_rejections must precede target verification for {paper_id}")
+            # Multiple letters/events about one manuscript are one rejection.
+            attempts.add((record["journal"].strip().casefold(), record["manuscript_number"].strip().casefold()))
+        if attempts:
+            allowed = stages[min(len(attempts), 2)]
+    if not isinstance(allowed, list) or not allowed or any(
+        type(value) is not int or value not in {1, 2, 3, 4} for value in allowed
+    ):
+        raise ValueError("journal target allowed tiers must be a nonempty list of CAS zones 1–4")
+    return set(allowed)
 
 
 def _has_approved_target_tier_override(
