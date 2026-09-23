@@ -143,12 +143,27 @@ def test_stale_inherited_metadata_does_not_bypass_monitor(fake_gpu):
 
 
 def test_telemetry_timeout_is_bounded_and_fails_closed(monkeypatch):
+    attempts = []
     def timeout(command, **kwargs):
         assert kwargs["timeout"] == 2
+        attempts.append(1)
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
     monkeypatch.setattr(guard.subprocess, "run", timeout)
     with pytest.raises(guard.GuardError, match="telemetry unavailable"):
         guard.snapshot()
+    assert len(attempts) == 3
+
+
+def test_telemetry_recovers_from_one_timeout(monkeypatch):
+    attempts = []
+    def transient(command, **kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0, "0, GPU-test, 12227, 543, 40\n", "")
+    monkeypatch.setattr(guard.subprocess, "run", transient)
+    assert guard.snapshot() == [guard.GPU(0, "GPU-test", 12227, 543, 40)]
+    assert len(attempts) == 2
 
 
 def test_missing_gpu_monitor_rejects_gpu_request(monkeypatch):

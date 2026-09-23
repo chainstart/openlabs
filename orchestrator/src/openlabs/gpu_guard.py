@@ -49,11 +49,22 @@ class GPU:
 
 def snapshot() -> list[GPU]:
     try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,uuid,memory.total,memory.used,temperature.gpu",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=TELEMETRY_TIMEOUT, check=True,
-        )
+        # A single NVML query can stall while another process initializes CUDA.
+        # Retry only timeouts; every successful sample still passes the full
+        # inventory, VRAM and temperature checks below. Repeated failure stops
+        # the workload as before.
+        for attempt in range(3):
+            try:
+                result = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=index,uuid,memory.total,memory.used,temperature.gpu",
+                     "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=TELEMETRY_TIMEOUT, check=True,
+                )
+                break
+            except subprocess.TimeoutExpired:
+                if attempt == 2:
+                    raise
+                time.sleep(0.1)
         rows = []
         for line in result.stdout.splitlines():
             index, uuid, total, used, temperature = [part.strip() for part in line.split(",")]
