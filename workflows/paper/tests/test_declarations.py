@@ -25,6 +25,14 @@ def test_metadata_matches_and_layout_is_not_disclosure():
     assert "sloppy" not in section(tex, "ai_use")[1]
 
 
+def test_nocite_is_not_disclosure_and_does_not_hide_later_prose():
+    metadata, tex = sample()
+    tex = tex.replace(r"\sloppy", r"\nocite{*}")
+    assert check_record(metadata, tex)["valid"]
+    assert not check_record(metadata, tex.replace(r"\nocite{*}",
+                                                 r"\nocite{*} Extra claim."))["valid"]
+
+
 def test_partial_author_statement_rejected():
     metadata, tex = sample()
     tex = tex.replace("Alice: Software. ", "")
