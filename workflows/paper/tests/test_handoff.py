@@ -921,6 +921,15 @@ writing_release:
     with pytest.raises(ValueError, match="Unsupported registry schema"):
         validate_release_preconditions(paper_id, root=tmp_path)
     settings_file.write_text(original_settings, encoding="utf-8")
+    settings_file.write_text(
+        original_settings.replace(
+            "quality_gate:\n", "quality_gate:\n  require_target_editorial_screen: true\n"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(HandoffError, match="EDITORIAL-SCREEN"):
+        validate_release_preconditions(paper_id, root=tmp_path)
+    settings_file.write_text(original_settings, encoding="utf-8")
 
     class FakeManageClient:
         base_url = "https://manage.example"

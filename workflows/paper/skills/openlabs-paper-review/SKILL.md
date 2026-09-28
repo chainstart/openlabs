@@ -5,6 +5,13 @@ description: Run OpenLabs' configured fresh-context paper gate for AI, computer-
 
 # OpenLabs paper review
 
+Every scored full review must apply the independent readability assessment in
+`references/rubrics.md` and record a located reconstruction of the contribution and argument.
+Substantial exposition repair is a major-revision issue even without new scientific work.
+For an editorial delta, apply the same criteria to affected passages and their dependencies
+within the routed scope; escalate if meaning or scope cannot be established. The author-side
+procedure is `../openlabs-paper-readability/SKILL.md`; its private verdict is not full-review input.
+
 ## Select scope before launching a scored referee
 
 An explicitly authorized `editorial_closeout_preparation` can produce the

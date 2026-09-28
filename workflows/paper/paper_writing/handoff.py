@@ -1382,6 +1382,18 @@ def validate_release_preconditions(
         raise HandoffError(
             "Manuscript or PDF changed after the quality review; rerun quality-gate"
         )
+    if venue_type == "journal" and bool(configured_gate.get("require_target_editorial_screen", False)):
+        from paper_writing.editorial_screen import editorial_screen_blockers
+
+        editorial_blockers, editorial_digest = editorial_screen_blockers(
+            paper_id, metadata, repo_root, current_snapshot
+        )
+        if editorial_blockers:
+            raise HandoffError(editorial_blockers[0])
+        if editorial_digest != release.get("editorial_screen_sha256"):
+            raise HandoffError(
+                "Target-specific editorial screen is unbound to the quality gate; rerun quality-gate"
+            )
 
     origin_commit = _git_head(repo_root)
     if not origin_commit:

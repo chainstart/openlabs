@@ -605,6 +605,7 @@ def validate_release_minor_closeout(paper_id: str, metadata: Mapping[str, Any], 
 
 def apply_minor_closeout(paper_id: str, *, certificate: str, root: str | Path) -> dict[str, Any]:
     """Apply a checked author-side closeout without editing reviews or counting a round."""
+    from paper_writing.editorial_screen import require_editorial_screen
     from paper_writing.registry import load_paper_metadata, write_paper_metadata
     from paper_writing.revision_policy import EXCEPTION_FIELD
     root = Path(root).resolve()
@@ -613,6 +614,11 @@ def apply_minor_closeout(paper_id: str, *, certificate: str, root: str | Path) -
     cert = checked["certificate"]
     original = _json(_bound(cert["source"]["raw"], root))
     target = cert["target"]
+    from paper_writing.registry import load_registry_settings
+    editorial_digest = require_editorial_screen(
+        paper_id, metadata, root, target["manuscript_snapshot_sha256"],
+        load_registry_settings(root).get("quality_gate", {}),
+    )
     release = {"status": "ready", "target_score": 5.0, "score": original["scores"]["overall"],
                "venue_type": "journal", "decision_standard": "cas_zone_1_journal",
                "decision": original["recommendations"]["cas_zone_1_journal"]["decision"], "minimum_decision": "minor_revision",
@@ -627,6 +633,8 @@ def apply_minor_closeout(paper_id: str, *, certificate: str, root: str | Path) -
                "source_quality_gate": _json(_bound(cert["source"]["applied"], root))["quality_gate"]}
     if checked["revision_exception"] is not None:
         release[EXCEPTION_FIELD] = checked["revision_exception"]
+    if editorial_digest is not None:
+        release["editorial_screen_sha256"] = editorial_digest
     # ara_llm_self_review deliberately remains bound to its ORIGINAL snapshot.
     metadata["writing_release"] = release
     metadata["status_updated_at"] = datetime.now(UTC).isoformat(timespec="seconds")

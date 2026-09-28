@@ -31,10 +31,37 @@ Use the appropriate vocabulary for each view:
   `major_revision`, `reject_and_resubmit`, `reject`.
 
 Use `minor_revision` only when the contribution is already scientifically sound and the remaining
-work needs no new central proof, experiment, dataset, analysis, formalization, or claim. Use
-`major_revision` for substantial but same-cycle scientific repair, `reject_and_resubmit` when a
+work is bounded and needs no new central proof, experiment, dataset, analysis, formalization,
+claim, or substantial reconstruction of the exposition. Use
+`major_revision` for substantial but same-cycle scientific or expository repair, `reject_and_resubmit` when a
 fundamentally new review cycle is needed, and `reject` when the present contribution or scope is not
 viable.
+
+## Mandatory independent readability assessment: all domains
+
+Before scoring clarity, reconstruct from the manuscript the question, principal result and
+scope, precise difference from the closest literature, and main steps supporting the result.
+Record this reconstruction with section/theorem locations in `section_feedback`, using its
+existing schema. State any part that cannot be recovered. Do not substitute a generic
+"well written" judgment, an AI detector, keyword counts, or the author's explanation.
+
+Check whether the abstract introduces its objects before method labels; whether the
+introduction makes a supported comparison under matching hypotheses and quantifiers;
+whether definitions precede use; whether paragraph transitions and the argument roadmap
+actually follow the proof or experiment; and whether the conclusion stays within that scope.
+For mathematics check uniformity versus existence, prescribed versus unrestricted objects,
+asymptotic qualifiers, symbol overload, and unexplained lemma dependencies. For empirical
+papers check the connection between question, comparison, measured result and inference.
+
+Locate each material failure and give a concrete repair condition. Separate missing science
+from missing exposition and optional style preferences. Require `text_ready: false` with
+located `required_changes` and `unresolved_blockers` when the central contribution or
+argument needs substantial rewriting to be understood. Such a journal manuscript cannot
+receive `accept` or `minor_revision` merely because no new proof or experiment is requested.
+Poor exposition alone does not establish mathematical invalidity; evaluate soundness
+separately, including uncertainty caused by an argument that cannot be assessed. Polished
+language cannot compensate for inadequate significance or novelty. Do not penalize standard
+technical terms, meaningful contrasts, legitimate qualifications or truthful AI disclosure.
 
 ## AI, computer science, and software engineering: `cs_top_tier`
 
@@ -231,6 +258,15 @@ adequate comparison with verified prior work, scope-appropriate evidence or comp
 manuscript that can be made publishable within a normal journal revision cycle. A narrow result can
 be viable when its importance within the stated scope is established. Extensive engineering,
 length, or computation alone does not establish significance.
+
+This generic view is an internal scientific assessment, not a prediction that an editor will send
+the paper to referees. In particular, `accept` or `minor_revision` in this view cannot clear a
+specific journal's editorial screen. A separate target-specific screen must compare the actual
+contribution with close literature and recent articles in the chosen journal, review prior editorial
+decisions, and say what new scientific work is still needed. Correctness, length, a polished abstract,
+or a lower-ranked transfer target is not evidence that an earlier concern about importance or reach
+has been resolved. State a narrow contribution's scientific value with evidence; when that case is
+not established, choose `major_revision`, `reject_and_resubmit`, or `reject` as appropriate.
 
 Use the five-point journal decisions as follows:
 

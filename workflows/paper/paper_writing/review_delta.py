@@ -457,6 +457,7 @@ def deterministic_checks(paper_id, root):
 
 
 def apply_delta(paper_id, *, receipt, root):
+    from paper_writing.editorial_screen import require_editorial_screen
     from paper_writing.registry import load_paper_metadata, write_paper_metadata
     from paper_writing.revision_policy import EXCEPTION_FIELD, revision_round_policy
     root = Path(root).resolve()
@@ -471,6 +472,11 @@ def apply_delta(paper_id, *, receipt, root):
     packet, result = checked["packet"], checked["result"]
     passed = result["verdict"] == "resolved"
     gate, _ = settings(root)
+    editorial_digest = None
+    if passed:
+        editorial_digest = require_editorial_screen(
+            paper_id, metadata, root, packet["fingerprints"]["manuscript_snapshot_sha256"], gate
+        )
     maximum, exception = revision_round_policy(paper_id, metadata, gate, root=root)
     state = {"baseline": state["baseline"], "history": state["history"] + [item]}
     release = {"status": "ready" if passed else "blocked" if packet["rounds"]["total"] >= maximum else "revision_required",
@@ -485,6 +491,8 @@ def apply_delta(paper_id, *, receipt, root):
     support_sha = metadata.get("support", {}).get("publication", {}).get("package_sha256")
     if support_sha:
         release["support_package_sha256"] = support_sha
+    if editorial_digest is not None:
+        release["editorial_screen_sha256"] = editorial_digest
     if exception:
         release[EXCEPTION_FIELD] = exception
     if not passed:

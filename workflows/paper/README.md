@@ -107,7 +107,9 @@ conservative; the original `ara_llm_self_review` retains its original snapshot.
 This is opt-in for exact paper IDs, source/target versions and original raw-review
 SHA-256 values. It requires a valid native review with `scientific_ready: true`,
 overall score at least 5 and simulated `cas_zone_1_journal` decision
-`minor_revision` or `accept`. Scientific, evidence, ethics and unclassified
+`minor_revision` or `accept`. For journal papers these conditions now also require a
+target-specific editorial screen bound to the current manuscript and selected journal;
+see [EDITORIAL_SCREEN.md](docs/EDITORIAL_SCREEN.md). Scientific, evidence, ethics and unclassified
 blockers cannot be waived. Only verbatim-authorized, explicitly self-qualified
 four-leading-journal suitability findings can be set aside for the CAS decision;
 they remain in the raw review and in the closeout's nonblocking findings.

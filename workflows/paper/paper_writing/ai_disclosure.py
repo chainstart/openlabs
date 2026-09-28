@@ -13,7 +13,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Mapping
 
-GPT_ID = re.compile(r"\bgpt[- ]?\d+(?:\.\d+)*(?:-[a-z0-9]+)*\b", re.I)
+GPT_ID = re.compile(
+    r"\bgpt[- ]?\d+(?:\.\d+)*(?:-[a-z0-9]+| (?:astra|sol|luna|terra))*\b",
+    re.I,
+)
 MODEL_RECORD_EFFECTIVE_DATE = date(2026, 9, 6)
 
 
@@ -37,7 +40,7 @@ def model_usage_for_record(metadata: Mapping[str, Any]) -> Any:
 
 
 def normalized_model(value: str) -> str:
-    return re.sub(r"^gpt[- ]?(?=\d)", "gpt-", value.strip().lower())
+    return re.sub(r"^gpt[- ]?(?=\d)", "gpt-", value.strip().lower()).replace(" ", "-")
 
 
 def model_disclosure_issues(

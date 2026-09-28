@@ -16,6 +16,7 @@ from paper_writing.identifiers import (
     validate_new_paper_id,
     work_id_from_paper_id,
 )
+from paper_writing.editorial_screen import editorial_screen_blockers
 from paper_writing.inventory import build_inventory
 from paper_writing.manuscript_style import (
     audit_manuscript_style,
@@ -536,6 +537,12 @@ def record_quality_gate(
         )
     fingerprints = _review_workspace_fingerprints(paper_id, payload, repo_root)
     snapshot_sha256 = str(fingerprints["manuscript_snapshot_sha256"])
+    editorial_screen_sha256: str | None = None
+    if venue_type == "journal" and bool(gate.get("require_target_editorial_screen", False)):
+        editorial_blockers, editorial_screen_sha256 = editorial_screen_blockers(
+            paper_id, payload, repo_root, snapshot_sha256
+        )
+        blockers.extend(item for item in editorial_blockers if item not in blockers)
     if bool(gate.get("require_validated_independent_review", True)):
         review_blockers = _validated_review_blockers(
             paper_id=paper_id,
@@ -592,6 +599,8 @@ def record_quality_gate(
         release_record["support_sources_sha256"] = fingerprints[
             "support_sources_sha256"
         ]
+    if editorial_screen_sha256 is not None and not editorial_blockers:
+        release_record["editorial_screen_sha256"] = editorial_screen_sha256
     if blockers:
         release_record["unresolved_review_blockers"] = blockers
     support = payload.get("support")

@@ -25,6 +25,15 @@ def test_previous_version_remains_valid_when_actually_recorded(tmp_path):
     assert not model_disclosure_issues("OpenAI GPT-5.6 through Codex.", usage(tmp_path, "gpt-5.6"), root=tmp_path)
 
 
+def test_spaced_model_names_match_exact_runtime_suffixes(tmp_path):
+    assert not model_disclosure_issues(
+        "OpenAI GPT-6 Astra through Codex.", usage(tmp_path), root=tmp_path
+    )
+    assert not model_disclosure_issues(
+        "OpenAI GPT-6 Sol through Codex.", usage(tmp_path, "gpt-6-sol"), root=tmp_path
+    )
+
+
 def test_do_not_substitute_old_template_model(tmp_path):
     errors = model_disclosure_issues("OpenAI GPT-5.6 through Codex.", usage(tmp_path), root=tmp_path)
     assert {code for code, _ in errors} >= {"MODEL-MISMATCH", "MODEL-UNREGISTERED"}

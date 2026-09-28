@@ -6,6 +6,16 @@ up, average around, or bypass it inside a profile. Change the threshold policy o
 human authorization and synchronized repository policy, settings, runtime, skill, documentation,
 and test updates.
 
+The 2026-09-28 user instruction adds a separate **target-specific editorial screen** for journal
+papers after repeated editor rejections despite positive generic CAS simulations. A generic
+`cas_zone_1_journal` accept/minor decision and score 5/10 are necessary but no longer sufficient
+for `writing_release.ready`. The screen is bound to the exact manuscript/PDF snapshot and selected
+journal, and the handoff rechecks it. See `docs/EDITORIAL_SCREEN.md`. Existing ready records that
+lack this screen are historical judgments, not current submission clearance; do not rewrite their
+review scores or invent a favorable screen. Scientific work requested by the screen must be
+completed and independently reassessed before clearance. A journal transfer alone cannot close a
+repeated concern about novelty, importance, evidence, or readership.
+
 Before ranking or recommending targets, exclude every title and alias in
 `registry/settings.yaml#journal_target_policy.excluded_journals`. EPJC / The European Physical
 Journal C / Eur. Phys. J. C is excluded by the user's 2026-09-12 operational instruction.
@@ -110,6 +120,23 @@ Model provenance does not attest that authors inspected or executed code. All ex
 purpose, human-verification, accountability, single-final-declaration and publication
 requirements remain in force. If the human checks have not occurred, disclose honestly
 and retain the blocker rather than writing an untrue completion statement.
+
+## Scientific readability before review
+
+Apply `skills/openlabs-paper-readability/SKILL.md` as a mandatory shared writing overlay
+for every domain, within the existing profile roles. Diagnose contribution, structure and
+argument before sentence polishing, then verify that edits preserve scientific meaning.
+Retain a private version-bound revision record. Do not feed the author's readability verdict
+or private checklist to a fresh full reviewer.
+
+The configured referee must independently reconstruct the problem, principal result,
+scope, literature difference and argument from the manuscript, with locations, as specified
+in `openlabs-paper-review/references/rubrics.md`. Substantial exposition problems belong in
+`required_changes` and `unresolved_blockers`, with `text_ready: false`; a need for structural
+rewriting cannot qualify as journal `minor_revision` just because it needs no new experiments
+or theorems. This uses the existing readiness fields, panel and round budget. Keep the CAS
+Zone 1 gate and numeric threshold unchanged. A mechanical `style-check` pass does not assess
+readability, logic, novelty, or whether prose was AI-generated.
 
 ## Produce a review record
 

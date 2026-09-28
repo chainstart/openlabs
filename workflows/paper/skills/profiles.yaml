@@ -73,6 +73,7 @@ quality_gate:
   manuscript_style_check: required
   manuscript_style_command: python -m paper_writing style-check --paper-id <paper_id>
   require_validated_independent_review: true
+  require_target_editorial_screen: true
   require_ai_use_declaration: true
   ai_model_disclosure_source: declarations.ai_use.model_usage
   new_model_usage_provenance: hash_bound_runtime_json
