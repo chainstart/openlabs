@@ -42,6 +42,9 @@ def section(source: str, kind: str) -> tuple[str, str]:
     # Bibliography inclusion commands produce no declaration prose. Remove only
     # the command, so any actual text following it still participates in binding.
     tail = re.sub(r"\\nocite\s*\{[^{}]*\}", "", tail)
+    # A locally sized bibliography may start its group before bibliographystyle.
+    # Strip only trailing layout tokens; prose after a token stays hash-bound.
+    tail = re.sub(r"(?:\s*\\(?:begingroup|small|footnotesize)\b)+\s*$", "", tail)
     return h.group(0), tail.strip()
 
 

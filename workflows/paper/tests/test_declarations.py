@@ -5,6 +5,16 @@ import pytest
 from paper_writing.declarations import check_record, normalized, render_contributions, section
 
 
+def test_bibliography_size_commands_are_not_declaration_prose():
+    source = (r"\section*{AI-use disclosure}" + "\nActual disclosure.\n"
+              + r"\begingroup" + "\n" + r"\small" + "\n"
+              + r"\bibliographystyle{plainnat}\bibliography{references}\endgroup")
+    assert section(source, "ai_use")[1] == "Actual disclosure."
+    with_extra_prose = source.replace(r"\bibliographystyle", "Additional disclosure.\n"
+                                     + r"\bibliographystyle")
+    assert "Additional disclosure." in section(with_extra_prose, "ai_use")[1]
+
+
 def bound(heading, text, **extra):
     return dict(heading_latex=heading, text_latex=text,
                 text_sha256=hashlib.sha256(normalized(text).encode()).hexdigest(), **extra)
