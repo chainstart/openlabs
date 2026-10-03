@@ -9,9 +9,9 @@ CPU_PERCENT=75
 SLICE=openlabs-workers.slice
 GUARD_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 gpu_options=()
-while [[ ${1-} == --gpu-memory-mib || ${1-} == --gpu-device ]]; do
+while [[ ${1-} == --task-type || ${1-} == --gpu-memory-mib || ${1-} == --gpu-device ]]; do
   if (( $# < 2 )); then
-    printf 'GPU option requires a value.\n' >&2
+    printf 'Resource option requires a value.\n' >&2
     exit 64
   fi
   gpu_options+=("$1" "$2")
@@ -23,7 +23,7 @@ if [[ ${1-} == -- ]]; then
 fi
 
 if (( $# == 0 )); then
-  printf 'Usage: %s [--gpu-memory-mib N] [--gpu-device N] -- <command> [args...]\n' "${0##*/}" >&2
+  printf 'Usage: %s [--task-type auto|cpu|gpu] [--gpu-memory-mib N] [--gpu-device N] -- <command> [args...]\n' "${0##*/}" >&2
   exit 64
 fi
 

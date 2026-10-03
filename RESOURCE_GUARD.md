@@ -48,8 +48,8 @@ continuation actions. It does not inject messages into an active Codex TUI.
 ```bash
 bin/openlabs-codex
 bin/openlabs-resource-guard -- uv run pytest -q
-bin/openlabs-resource-guard -- python path/to/heavy_search.py
-bin/openlabs-resource-guard --gpu-memory-mib 8192 --gpu-device 0 -- python train.py
+bin/openlabs-resource-guard --task-type cpu -- python path/to/heavy_search.py
+bin/openlabs-resource-guard --task-type gpu --gpu-memory-mib 8192 --gpu-device 0 -- python train.py
 ```
 
 Nested calls reuse the current cgroup, so scripts may invoke the wrapper safely.
@@ -66,6 +66,30 @@ systemctl --user status openlabs-workers.slice
 ```
 
 Do not raise these limits without reviewing both WSL and Windows host budgets.
+
+## Task classification
+
+All types retain the aggregate CPU, memory, swap and task limits above.
+
+| Task type | Examples | GPU constraints |
+| --- | --- | --- |
+| `cpu` | Mathematical solvers, exact arithmetic, CPU simulations, tests, builds, factory controllers | No GPU telemetry, admission or allocator changes; external VRAM pressure does not stop the task |
+| `gpu` | CUDA inference/training and GPU simulations | Explicit budget, exclusive device reservation, allocator cap, VRAM and temperature monitoring |
+| `auto` (default) | Existing wrapper calls | GPU if `--gpu-memory-mib` is supplied, CPU otherwise |
+
+Classification is declared, not inferred from filenames or executable names.
+`gpu` requires a budget; `cpu` rejects GPU options. Existing budget arguments
+continue to select GPU protection without requiring a new type argument.
+CPU commands retain the caller's CUDA visibility and allocator settings; the
+guard does not inject GPU settings for them. A CPU declaration does not authorize
+undeclared CUDA work. A controller running CPU and GPU phases should launch each
+GPU phase through its own budgeted guard invocation. Factory controllers and the
+math wrapper explicitly select CPU protection.
+
+An existing GPU supervisor still owns its entire descendant workload, including
+CPU children. A nested CPU invocation cannot escape that outer watchdog. Launch
+independent CPU research outside the GPU job when it should survive external GPU
+pressure. New CPU invocations also work without NVIDIA hardware or telemetry.
 
 ## GPU admission and supervision
 
@@ -86,7 +110,7 @@ frameworks/older versions need their own allocator cap before allocation.
 sequentially, preventing queued full-precision GPU copies from consuming the
 budget before conversion. GPU inference remains enabled.
 
-The stdlib supervisor `orchestrator/src/openlabs/gpu_guard.py` checks GPU memory
+For GPU tasks, the stdlib supervisor `orchestrator/src/openlabs/gpu_guard.py` checks GPU memory
 and temperature every 0.5 s (each telemetry call has a 2 s timeout). Excess global
 usage, job-attributed global growth above the reservation, 85 C, inventory change,
 or telemetry failure stops the owned process tree: SIGINT, then SIGTERM, then
@@ -95,9 +119,9 @@ releases the lock. It does not kill unrelated processes or alter driver clocks,
 power settings, compute modes, or display configuration. WSL lacks reliable
 per-process VRAM telemetry, so external GPU pressure may also stop our job.
 
-Ordinary wrapper commands and factory workers run through the same monitor and
-receive a conservative PyTorch allocator cap. They do not reserve a GPU merely
-to execute CPU work. Explicit GPU reservations remain mandatory: advisory locks
+Only the reserved device is monitored; pressure or temperature on a different
+GPU does not terminate the job. CPU tasks do not run this monitor. Explicit
+GPU reservations remain mandatory: advisory locks
 cannot prevent uncooperative/unmarked code from using CUDA. Nested calls reuse
 an actual ancestor supervisor; an inherited cgroup alone does not bypass GPU
 protection. Nested explicit reservations must match the outer budget/device.
@@ -119,7 +143,7 @@ return 128 plus signal number. Preserve interrupted outputs before restarting.
 
 The user reserves 16 GiB for physics. Mathematics receives the remainder of the
 existing 34 GiB aggregate research ceiling: **18 GiB shared hard limit, 16 GiB
-soft throttle, no swap, 256 tasks**. The observed WSL physical memory is about
+soft throttle, no swap, 512 tasks**. The observed WSL physical memory is about
 39.2 GiB, leaving about 5.2 GiB outside the aggregate ceiling for other WSL work.
 This is a cap, not preallocated RAM or a guarantee that unrelated workloads cannot
 consume the remaining system memory. Physics limits and running jobs are not changed.
@@ -137,3 +161,10 @@ math slice, and refuses to launch if the installed math limits have drifted.
 Nested ordinary guard calls preserve the inherited math cap. The installer only
 installs the math child slice; it neither changes physics nor starts researchers,
 factory workers, timers or campaigns.
+
+On 2026-10-02 the user authorized increasing independent research processes
+while retaining aggregate CPU and memory protection. The mathematical child
+task ceiling now matches the existing 512-task parent ceiling, allowing helper
+threads for eight independent Codex contexts. The global task ceiling, CPU
+quota and all RAM/swap ceilings remain unchanged. Threads count toward this
+task ceiling as well as processes; it is not the number of research directions.

@@ -136,10 +136,129 @@ def test_stale_inherited_metadata_does_not_bypass_monitor(fake_gpu):
     telemetry, env = fake_gpu
     env["OPENLABS_GPU_SUPERVISOR_PID"] = "999999999"
     telemetry.write_text("0, GPU-test, 12227, 12000, 40\n")
-    process = launch(env, "raise AssertionError('must not execute')")
+    process = launch(env, "raise AssertionError('must not execute')", "--gpu-memory-mib", "4096")
     _, stderr = process.communicate(timeout=5)
     assert process.returncode == 75
     assert "ceiling" in stderr
+
+
+@pytest.mark.parametrize("task_options", [(), ("--task-type", "cpu")])
+@pytest.mark.parametrize("telemetry_value", ["0, GPU-test, 12227, 12000, 90\n", "N/A\n"])
+def test_cpu_task_runs_without_gpu_admission_or_allocator_changes(fake_gpu, task_options, telemetry_value):
+    telemetry, env = fake_gpu
+    telemetry.write_text(telemetry_value)
+    env["CUDA_VISIBLE_DEVICES"] = "0"
+    env["OPENLABS_GPU_SUPERVISOR_PID"] = "999999999"
+    env["OPENLABS_GPU_BUDGET_MIB"] = "4096"
+    env["PYTORCH_ALLOC_CONF"] = "max_split_size_mb:128"
+    code = "import os,json; print(json.dumps(dict(os.environ)))"
+    process = launch(env, code, *task_options)
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, stderr
+    child = json.loads(stdout)
+    assert child["OPENLABS_TASK_TYPE"] == "cpu"
+    assert child["CUDA_VISIBLE_DEVICES"] == "0"
+    assert child["PYTORCH_ALLOC_CONF"] == "max_split_size_mb:128"
+    assert not any(key.startswith("OPENLABS_GPU_") for key in child)
+
+
+def test_cpu_task_does_not_require_nvidia_tools(monkeypatch):
+    monkeypatch.setattr(guard, "inherited_supervisor", lambda: False)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("CPU tasks must not inspect GPUs")
+    monkeypatch.setattr(guard.shutil, "which", forbidden)
+    monkeypatch.setattr(guard, "snapshot", forbidden)
+    calls = []
+    monkeypatch.setattr(guard, "supervise", lambda *args: calls.append(args) or 0)
+    assert guard.main(["--task-type", "cpu", "--", "cpu-command"]) == 0
+    assert calls[0][0] == ["cpu-command"]
+
+
+def test_cpu_supervisor_survives_gpu_pressure_and_cleans_own_tree(fake_gpu, tmp_path):
+    telemetry, env = fake_gpu
+    marker = tmp_path / "cpu-tree.json"
+    code = (
+        "import os, subprocess, sys, time, json; from pathlib import Path; "
+        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'], start_new_session=True); "
+        f"Path({str(marker)!r}).write_text(json.dumps([os.getpid(),p.pid])); time.sleep(30)"
+    )
+    process = launch(env, code, "--task-type", "cpu")
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        wait_file(marker)
+        telemetry.write_text("0, GPU-test, 12227, 12000, 90\n")
+        time.sleep(0.7)
+        assert process.poll() is None
+        process.send_signal(signal.SIGTERM)
+        _, stderr = process.communicate(timeout=10)
+        assert process.returncode == 143, stderr
+        assert all(not Path(f"/proc/{pid}").exists() for pid in json.loads(marker.read_text()))
+        assert unrelated.poll() is None
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.communicate(timeout=10)
+        unrelated.terminate()
+        unrelated.wait(timeout=5)
+
+
+@pytest.mark.parametrize("options", [
+    ("--task-type", "cpu", "--gpu-memory-mib", "4096"),
+    ("--task-type", "cpu", "--gpu-device", "0"),
+    ("--task-type", "gpu"),
+    ("--gpu-device", "0"),
+    ("--task-type", "unknown"),
+])
+def test_invalid_task_classification_cannot_launch(fake_gpu, options):
+    _, env = fake_gpu
+    process = launch(env, "raise AssertionError('must not execute')", *options)
+    _, stderr = process.communicate(timeout=5)
+    assert process.returncode == 2, stderr
+
+
+def test_gpu_monitor_ignores_other_device_pressure(fake_gpu):
+    telemetry, env = fake_gpu
+    telemetry.write_text("0, GPU-test, 12227, 543, 40\n1, GPU-other, 12227, 12000, 90\n")
+    process = launch(env, "import os; print(os.environ['OPENLABS_TASK_TYPE'])",
+                     "--task-type", "gpu", "--gpu-memory-mib", "4096")
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, stderr
+    assert stdout.strip() == "gpu"
+
+
+def test_gpu_monitor_queries_only_reserved_device_when_other_telemetry_fails(fake_gpu, tmp_path):
+    _, env = fake_gpu
+    query_log = tmp_path / "queries"
+    binary = tmp_path / "nvidia-smi"
+    binary.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" >> '{query_log}'\n"
+        "case \" $* \" in\n"
+        "  *' --id=0 '*) printf '0, GPU-test, 12227, 543, 40\\n';;\n"
+        "  *) printf '0, GPU-test, 12227, 543, 40\\n1, GPU-other, N/A, N/A, N/A\\n';;\n"
+        "esac\n"
+    )
+    process = launch(env, "print('selected device survived')", "--task-type", "gpu",
+                     "--gpu-memory-mib", "4096", "--gpu-device", "0")
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == 0, stderr
+    assert stdout.strip() == "selected device survived"
+    assert query_log.read_text().splitlines()
+    assert all("--id=0" in query for query in query_log.read_text().splitlines())
+
+
+def test_selected_snapshot_skips_unrelated_unavailable_row(monkeypatch):
+    calls = []
+    def telemetry(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0,
+            "0, GPU-other, N/A, N/A, N/A\n1, GPU-selected, 12227, 543, 40\n", "")
+    monkeypatch.setattr(guard.subprocess, "run", telemetry)
+    assert guard.snapshot(1) == [guard.GPU(1, "GPU-selected", 12227, 543, 40)]
+    assert "--id=1" in calls[0]
+    with pytest.raises(guard.GuardError, match="telemetry unavailable"):
+        guard.snapshot()
+    assert not any(arg.startswith("--id=") for arg in calls[1])
 
 
 def test_telemetry_timeout_is_bounded_and_fails_closed(monkeypatch):

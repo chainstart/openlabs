@@ -34,9 +34,13 @@ resource-intensive and use the guard.
   guarded job is running elsewhere.
 - The aggregate limit is 75% of visible logical CPUs, 30 GiB memory soft, 34
   GiB memory hard, 4 GiB swap and 512 tasks.
-- Keep GPU available. Every model inference/training or other CUDA workload
+- Classify resources by task: use `--task-type cpu` for CPU-only solvers,
+  exact arithmetic, tests, builds and orchestration. These tasks do not query
+  GPU telemetry, receive GPU allocator caps or stop for external VRAM pressure.
+  Existing commands without GPU options default to CPU resource protection.
+- Keep GPU available. Every GPU model inference/training or other CUDA workload
   must explicitly reserve its GPU with
-  `bin/openlabs-resource-guard --gpu-memory-mib 8192 --gpu-device 0 -- <command>`
+  `bin/openlabs-resource-guard --task-type gpu --gpu-memory-mib 8192 --gpu-device 0 -- <command>`
   (choose a smaller budget when sufficient). Only one declared GPU job may run
   on each device at a time; CPU research can continue in parallel. Call this
   wrapper even inside an inherited worker cgroup to acquire the GPU reservation.
@@ -47,9 +51,12 @@ resource-intensive and use the guard.
   parallel GPU children inside one lease, or bypass the supervisor. For another
   framework, configure its allocator budget explicitly before model allocation.
   Global sampling is a backstop, not a kernel-level VRAM or utilization quota.
-- Ordinary guarded commands and factory workers also receive GPU monitoring
-  and a PyTorch cap without hiding CUDA. This does not replace explicit GPU
-  admission for GPU workloads. Never solve GPU pressure by disabling CUDA or
+- Factory controllers are CPU tasks; their GPU computation children must
+  explicitly acquire a GPU reservation. `--task-type auto` chooses GPU when
+  a GPU budget is supplied and CPU otherwise; it does not detect program behavior.
+  A CPU label is not permission to execute undeclared CUDA workloads. CPU children
+  inside an existing GPU reservation still inherit its outer watchdog.
+  Never solve GPU pressure by disabling CUDA or
   increasing ceilings; reduce batch/context/model memory, offload, or queue work.
 - If the guard, systemd user manager or cgroup v2 controllers are unavailable,
   fail closed: do not start the command unbounded. Repair or install the guard

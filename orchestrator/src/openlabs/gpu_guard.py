@@ -1,7 +1,7 @@
 """Cooperative NVIDIA GPU admission and fail-closed workload supervision.
 
-CUDA remains available. GPU workloads must declare a reservation; ordinary
-commands still receive allocator limits and telemetry supervision as a backstop.
+CPU workloads run without GPU telemetry or allocator changes. GPU workloads
+must declare a reservation and receive allocator limits and GPU supervision.
 This is not a driver/kernel VRAM quota. In particular, non-PyTorch allocations
 can exceed a budget between samples. No device-wide settings are modified.
 """
@@ -47,7 +47,7 @@ class GPU:
         return min(math.floor(self.total * MAX_USED_FRACTION), self.total - MIN_FREE_MIB)
 
 
-def snapshot() -> list[GPU]:
+def snapshot(device: int | None = None) -> list[GPU]:
     try:
         # A single NVML query can stall while another process initializes CUDA.
         # Retry only timeouts; every successful sample still passes the full
@@ -55,9 +55,12 @@ def snapshot() -> list[GPU]:
         # the workload as before.
         for attempt in range(3):
             try:
+                command = ["nvidia-smi", "--query-gpu=index,uuid,memory.total,memory.used,temperature.gpu",
+                           "--format=csv,noheader,nounits"]
+                if device is not None:
+                    command.append(f"--id={device}")
                 result = subprocess.run(
-                    ["nvidia-smi", "--query-gpu=index,uuid,memory.total,memory.used,temperature.gpu",
-                     "--format=csv,noheader,nounits"],
+                    command,
                     capture_output=True, text=True, timeout=TELEMETRY_TIMEOUT, check=True,
                 )
                 break
@@ -68,6 +71,10 @@ def snapshot() -> list[GPU]:
         rows = []
         for line in result.stdout.splitlines():
             index, uuid, total, used, temperature = [part.strip() for part in line.split(",")]
+            # The targeted NVIDIA query isolates unavailable telemetry on other
+            # devices. Also tolerate adapters/test tools returning extra rows.
+            if device is not None and int(index) != device:
+                continue
             gpu = GPU(int(index), uuid, int(total), int(used), int(temperature))
             if gpu.total <= 0 or not 0 <= gpu.used <= gpu.total or not gpu.uuid.startswith("GPU-"):
                 raise ValueError("invalid GPU telemetry")
@@ -190,63 +197,12 @@ def stop_children(process: subprocess.Popen) -> None:
             time.sleep(0.05)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gpu-memory-mib", type=int)
-    parser.add_argument("--gpu-device", type=int, default=0)
-    parser.add_argument("command", nargs=argparse.REMAINDER)
-    args = parser.parse_args(argv)
-    command = args.command
-    if command[:1] == ["--"]:
-        command = command[1:]
-    if not command:
-        parser.error("a command is required")
-    if inherited_supervisor():
-        inherited_budget = int(os.environ.get("OPENLABS_GPU_BUDGET_MIB", "0"))
-        if args.gpu_memory_mib is None:
-            os.execvpe(command[0], command, os.environ)
-        if inherited_budget:
-            if args.gpu_memory_mib != inherited_budget or args.gpu_device != int(os.environ["OPENLABS_GPU_DEVICE"]):
-                raise GuardError("nested GPU invocation must reuse the same reservation")
-            # Retain the stronger outer reservation and its watchdog.
-            os.execvpe(command[0], command, os.environ)
-    if shutil.which("nvidia-smi") is None:
-        if args.gpu_memory_mib is not None or Path("/dev/dxg").exists() or Path("/dev/nvidiactl").exists():
-            raise GuardError("GPU present/requested but nvidia-smi is unavailable")
-        os.execvpe(command[0], command, os.environ)
-    rows = snapshot()
-    check_limits(rows)
-    baseline = None
-    lease = None
-    budget = args.gpu_memory_mib if args.gpu_memory_mib is not None else DEFAULT_BUDGET_MIB
-    env = dict(os.environ)
-    # Discard stale reservation metadata from a different ancestor/service.
-    for key in ("OPENLABS_GPU_BUDGET_MIB", "OPENLABS_GPU_DEVICE"):
-        env.pop(key, None)
-    if args.gpu_memory_mib is not None:
-        matches = [gpu for gpu in rows if gpu.index == args.gpu_device]
-        if len(matches) != 1:
-            raise GuardError("requested GPU index is unavailable")
-        baseline = matches[0]
-        runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
-        lease = reserve(baseline, budget, runtime / "openlabs-gpu-guard")
-        # Check again under the lock; another workload may have just finished.
-        rows = snapshot()
-        check_limits(rows)
-        baseline = next(gpu for gpu in rows if gpu.uuid == baseline.uuid)
-        if baseline.used + budget > baseline.ceiling:
-            raise GuardError("GPU headroom changed during admission")
-        env["CUDA_VISIBLE_DEVICES"] = baseline.uuid
-        env["OPENLABS_GPU_BUDGET_MIB"] = str(budget)
-        env["OPENLABS_GPU_DEVICE"] = str(args.gpu_device)
-    env = allocator_environment(env, [baseline] if baseline else rows, budget)
-    env["OPENLABS_GPU_SUPERVISOR_PID"] = str(os.getpid())
-    print(f"OpenLabs GPU guard: reservation={args.gpu_memory_mib or 'monitor'} MiB; "
-          f"max VRAM=75%, reserve>=2048 MiB; allocator fraction={env['OPENLABS_GPU_ALLOCATOR_FRACTION']}",
-          file=sys.stderr, flush=True)
+def supervise(command: list[str], env: dict[str, str], rows: list[GPU] | None = None,
+              baseline: GPU | None = None, budget: int = 0, device: int = 0) -> int:
+    """Own and clean up the task tree; sample GPUs only for a GPU task."""
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
-        raise GuardError("cannot establish GPU supervisor as child subreaper")
+        raise GuardError("cannot establish resource supervisor as child subreaper")
     interrupted = []
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, lambda number, frame: interrupted.append(number))
@@ -259,21 +215,99 @@ def main(argv: list[str] | None = None) -> int:
     process = None
     try:
         process = subprocess.Popen(command, env=env, start_new_session=True, preexec_fn=child_setup)
-        expected = {(gpu.uuid, gpu.total) for gpu in rows}
+        expected = {(gpu.uuid, gpu.total) for gpu in rows} if rows else None
         while process.poll() is None:
             if interrupted:
                 return 128 + interrupted[0]
-            current = snapshot()
-            if {(gpu.uuid, gpu.total) for gpu in current} != expected:
-                raise GuardError("GPU inventory changed during execution")
-            check_limits(current, baseline, budget)
+            if rows is not None:
+                current = [gpu for gpu in snapshot(device) if gpu.index == device]
+                if {(gpu.uuid, gpu.total) for gpu in current} != expected:
+                    raise GuardError("GPU inventory changed during execution")
+                check_limits(current, baseline, budget)
             time.sleep(POLL_SECONDS)
         return process.returncode if process.returncode >= 0 else 128 - process.returncode
     finally:
         if process is not None:
             stop_children(process)
-        if lease is not None:
-            lease.close()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--task-type", choices=("auto", "cpu", "gpu"), default="auto")
+    parser.add_argument("--gpu-memory-mib", type=int)
+    parser.add_argument("--gpu-device", type=int)
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv)
+    command = args.command
+    if command[:1] == ["--"]:
+        command = command[1:]
+    if not command:
+        parser.error("a command is required")
+    if args.task_type == "cpu" and (args.gpu_memory_mib is not None or args.gpu_device is not None):
+        parser.error("CPU tasks cannot request GPU resources")
+    if (args.task_type == "gpu" or args.gpu_device is not None) and args.gpu_memory_mib is None:
+        parser.error("GPU tasks require --gpu-memory-mib")
+    task_type = "gpu" if args.gpu_memory_mib is not None else "cpu"
+    args.gpu_device = 0 if args.gpu_device is None else args.gpu_device
+    if inherited_supervisor():
+        inherited_budget = int(os.environ.get("OPENLABS_GPU_BUDGET_MIB", "0"))
+        if args.gpu_memory_mib is None:
+            os.execvpe(command[0], command, os.environ)
+        if inherited_budget:
+            if args.gpu_memory_mib != inherited_budget or args.gpu_device != int(os.environ["OPENLABS_GPU_DEVICE"]):
+                raise GuardError("nested GPU invocation must reuse the same reservation")
+            # Retain the stronger outer reservation and its watchdog.
+            os.execvpe(command[0], command, os.environ)
+    if task_type == "cpu":
+        # Aggregate CPU/RAM/pids protection is provided by the caller's cgroup.
+        # External GPU pressure and missing NVIDIA tools are irrelevant here.
+        env = dict(os.environ)
+        for key in tuple(env):
+            if key.startswith("OPENLABS_GPU_"):
+                env.pop(key)
+        env["OPENLABS_TASK_TYPE"] = "cpu"
+        print("OpenLabs resource guard: task-type=cpu; GPU admission/monitoring not required",
+              file=sys.stderr, flush=True)
+        return supervise(command, env)
+    if shutil.which("nvidia-smi") is None:
+        raise GuardError("GPU requested but nvidia-smi is unavailable")
+    rows = snapshot(args.gpu_device)
+    matches = [gpu for gpu in rows if gpu.index == args.gpu_device]
+    if len(matches) != 1:
+        raise GuardError("requested GPU index is unavailable")
+    rows = matches
+    check_limits(rows)
+    baseline = rows[0]
+    budget = args.gpu_memory_mib
+    env = dict(os.environ)
+    env["OPENLABS_TASK_TYPE"] = "gpu"
+    # Discard stale reservation metadata from a different ancestor/service.
+    for key in ("OPENLABS_GPU_BUDGET_MIB", "OPENLABS_GPU_DEVICE"):
+        env.pop(key, None)
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+    lease = reserve(baseline, budget, runtime / "openlabs-gpu-guard")
+    try:
+        # Check again under the lock; another workload may have just finished.
+        rows = [gpu for gpu in snapshot(args.gpu_device) if gpu.index == args.gpu_device]
+        check_limits(rows, baseline, budget)
+        baseline = rows[0]
+        if baseline.used + budget > baseline.ceiling:
+            raise GuardError("GPU headroom changed during admission")
+    except BaseException:
+        lease.close()
+        raise
+    env["CUDA_VISIBLE_DEVICES"] = baseline.uuid
+    env["OPENLABS_GPU_BUDGET_MIB"] = str(budget)
+    env["OPENLABS_GPU_DEVICE"] = str(args.gpu_device)
+    env = allocator_environment(env, [baseline], budget)
+    env["OPENLABS_GPU_SUPERVISOR_PID"] = str(os.getpid())
+    print(f"OpenLabs GPU guard: task-type=gpu; reservation={budget} MiB; "
+          f"max VRAM=75%, reserve>=2048 MiB; allocator fraction={env['OPENLABS_GPU_ALLOCATOR_FRACTION']}",
+          file=sys.stderr, flush=True)
+    try:
+        return supervise(command, env, rows, baseline, budget, args.gpu_device)
+    finally:
+        lease.close()
 
 
 if __name__ == "__main__":

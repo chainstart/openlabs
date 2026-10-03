@@ -9,5 +9,5 @@ MemoryHigh=16G
 MemoryMax=18G
 MemorySwapMax=0
 TasksAccounting=yes
-TasksMax=256
+TasksMax=512
 CPUAccounting=yes
