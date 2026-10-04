@@ -4,6 +4,7 @@ import zipfile
 from pathlib import Path
 
 import yaml
+import pytest
 
 from paper_writing.operations import record_quality_gate
 from paper_writing.registry import load_paper_metadata
@@ -75,6 +76,8 @@ def _workspace(
     nested_identity_stale: bool = False,
     nested_checksum_overclaim: bool = False,
     nested_checksum_qualified_claim: bool = False,
+    creator_names: tuple[str, ...] = ("Ada Lovelace",),
+    include_citation: bool = False,
 ) -> None:
     _write_settings(root)
     manuscript = root / "papers" / PAPER_ID / "manuscript"
@@ -111,6 +114,14 @@ def _workspace(
         encoding="utf-8",
     )
     release_sources = [claim_map, source]
+    if include_citation:
+        citation = public_source / "CITATION.cff"
+        citation.write_text(yaml.safe_dump({
+            "cff-version": "1.2.0", "message": "Cite this Zenodo supporting-material version.",
+            "title": title, "version": archived_version, "doi": doi,
+            "authors": [{"given-names": name.rsplit(" ", 1)[0], "family-names": name.rsplit(" ", 1)[1]} for name in creator_names],
+        }))
+        release_sources.append(citation)
     if nested_identity_stale:
         nested = public_source / "calculation-support-v0.9.0.zip"
         with zipfile.ZipFile(nested, "w") as payload:
@@ -271,7 +282,7 @@ The supporting-material record \\citep{supportRecord} contains the exact certifi
     )
     (manuscript / "references.bib").write_text(
         """@misc{supportRecord,
-  author = {Ada Lovelace},
+  author = {""" + " and ".join(creator_names) + """},
   title = {"""
         + ("A Stale Title" if stale_title else title)
         + """},
@@ -291,7 +302,7 @@ The supporting-material record \\citep{supportRecord} contains the exact certifi
         "domain": "math",
         "subdomain": "graph",
         "title": "A Support Citation Audit",
-        "authors": [{"name": "Ada Lovelace"}],
+        "authors": [{"name": name} for name in creator_names],
         "version": "1.0.0",
         "venue_type": "journal",
         "manuscript_dir": f"papers/{PAPER_ID}/manuscript",
@@ -310,7 +321,7 @@ The supporting-material record \\citep{supportRecord} contains the exact certifi
                     "reserved_version_doi": doi,
                     "version": "1.0.0",
                     "title": title,
-                    "creators": [{"name": "Lovelace, Ada"}],
+                    "creators": [{"name": name.rsplit(" ", 1)[1] + ", " + name.rsplit(" ", 1)[0]} for name in creator_names],
                     "license": "cc-by-4.0",
                 },
             }
@@ -346,6 +357,42 @@ def test_support_audit_accepts_current_neutral_citation(tmp_path: Path) -> None:
     assert result["valid"] is True
     assert result["bibliography_key"] == "supportRecord"
     assert result["current_version_doi"] == "10.5281/zenodo.12345678"
+
+
+@pytest.mark.parametrize("case, passes", [
+    ("published_permutation", True),
+    ("draft_permutation", False),
+    ("published_changed_member", False),
+    ("published_changed_record_order", False),
+    ("published_missing_record_creators", False),
+])
+def test_support_archive_keeps_published_creator_order(
+    tmp_path: Path, case: str, passes: bool,
+) -> None:
+    _workspace(tmp_path, creator_names=("Ada Lovelace", "Charles Babbage"), include_citation=True)
+    path = tmp_path / "registry/papers" / f"{PAPER_ID}.yaml"
+    record = yaml.safe_load(path.read_text())
+    publication = record["support"]["publication"]
+    archive = tmp_path / publication["package_files"][0]
+    original_archive = archive.read_bytes()
+    record["authors"].reverse()
+    if case != "draft_permutation":
+        publication["status"] = "published"
+        publication["version_doi"] = publication["zenodo"]["reserved_version_doi"]
+    if case == "published_changed_member":
+        record["authors"][0]["name"] = "Grace Hopper"
+    elif case == "published_changed_record_order":
+        publication["zenodo"]["creators"].reverse()
+    elif case == "published_missing_record_creators":
+        publication["zenodo"].pop("creators")
+    path.write_text(yaml.safe_dump(record, sort_keys=False))
+
+    result = audit_manuscript_support(PAPER_ID, root=tmp_path)
+
+    assert result["valid"] is passes, result["errors"]
+    codes = {item["code"] for item in result["errors"]}
+    assert ("SUPPORT-ARCHIVE-IDENTITY-CREATORS" in codes) is (not passes)
+    assert archive.read_bytes() == original_archive
 
 
 def test_support_audit_accepts_configured_default_license(tmp_path: Path) -> None:

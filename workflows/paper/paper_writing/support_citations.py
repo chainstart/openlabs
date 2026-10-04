@@ -574,6 +574,28 @@ def _registry_creators(metadata: Mapping[str, Any]) -> list[str]:
     return [str(item.get("name") or "").strip() for item in authors if isinstance(item, Mapping) and str(item.get("name") or "").strip()]
 
 
+def _archive_creators(
+    metadata: Mapping[str, Any], expected: Mapping[str, Any], status: str,
+) -> list[str]:
+    """Keep an immutable published record's order across manuscript byline swaps.
+
+    This exception is only a permutation of the same named people. Drafts,
+    missing record metadata and changed membership retain the registry check.
+    The archive must still match the published record's exact creator order,
+    and its DOI, version, title and byte hashes are checked independently.
+    """
+    current = _registry_creators(metadata)
+    rows = expected.get("creators")
+    if status != "published" or not isinstance(rows, list) or not rows:
+        return current
+    if any(not isinstance(row, Mapping) or not str(row.get("name") or "").strip() for row in rows):
+        return current
+    published = [str(row["name"]).strip() for row in rows]
+    if sorted(_person_key(name) for name in published) == sorted(_person_key(name) for name in current):
+        return published
+    return current
+
+
 def _current_identity(metadata: Mapping[str, Any]) -> tuple[str, str, str]:
     publication = metadata.get("support")
     publication = publication.get("publication") if isinstance(publication, Mapping) else {}
@@ -879,7 +901,7 @@ def _archive_identity_checks(
                     if [_person_key(value) for value in cff_creators] != [
                         _person_key(value) for value in expected_creators
                     ]:
-                        add("SUPPORT-ARCHIVE-IDENTITY-CREATORS", "CITATION.cff creators do not match the paper registry", f"{source}!{name}")
+                        add("SUPPORT-ARCHIVE-IDENTITY-CREATORS", "CITATION.cff creators do not match the expected support-record authors", f"{source}!{name}")
             elif basename == "ZENODO_MANIFEST.json":
                 try:
                     manifest = json.loads(payload.read(name).decode("utf-8"))
@@ -1375,7 +1397,7 @@ def audit_manuscript_support(paper_id: str, *, root: str | Path) -> dict[str, An
                             paper_title=paper_title,
                             doi=doi,
                             version=version,
-                            expected_creators=_registry_creators(metadata),
+                            expected_creators=_archive_creators(metadata, expected, status),
                             root=repo_root,
                         )
                     )
