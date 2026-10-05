@@ -79,6 +79,23 @@ def _scan_zip(
                 continue
             for label, pattern in PATTERNS:
                 for match in pattern.finditer(text):
+                    # A domain-code disclaimer about read/event classification
+                    # carries no prior manuscript score or readiness judgment.
+                    # Exempt only this complete negative assertion; other gate
+                    # mentions and every evaluative pattern remain screened.
+                    line_start = text.rfind("\n", 0, match.start()) + 1
+                    line_end = text.find("\n", match.end())
+                    line = text[line_start:line_end if line_end >= 0 else len(text)]
+                    if (
+                        label == "quality_gate"
+                        and match.group(0).casefold() == "quality gate"
+                        and re.match(
+                            r"quality gate or event classification is inferred\.\s*$",
+                            text[match.start():line_end if line_end >= 0 else len(text)],
+                        )
+                        and text[max(line_start, match.start() - 3):match.start()] == "No "
+                    ):
+                        continue
                     findings.append(
                         {
                             "code": "REVIEW-INPUT-EVALUATION-PROJECTION",

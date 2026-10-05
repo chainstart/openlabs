@@ -251,6 +251,28 @@ For `quant`, set `reviewer_role` to `quant_finance`, set `rubric_id` to
 }
 ```
 
+For `biology`, set `reviewer_role` to `biology`, set `rubric_id` to
+`openlabs.paper-writing.biology-leading-journals.v1`, and use:
+
+```json
+{
+  "leading_life_sciences_journals": {
+    "decision": "major_revision",
+    "confidence": "medium",
+    "rationale": "biological/computational contribution, validation and readership explanation"
+  },
+  "cas_zone_1_journal": {
+    "decision": "minor_revision",
+    "confidence": "medium",
+    "rationale": "independent generic CAS Zone 1 scientific explanation"
+  }
+}
+```
+
+Biology records must not contain conference or other domain-specific high-standard views.
+Use the existing categories for new analysis, experiments, data, baselines, method clarification
+and submission compliance; a new required scientific analysis is never `text_only`.
+
 For `physics`, set `reviewer_role` to `physics`, set `rubric_id` to
 `openlabs.paper-writing.physics-explicit-highest-tier-venues.v1`, read
 `physics-highest-tier-venues.md`, and use:

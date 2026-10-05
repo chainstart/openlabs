@@ -30,6 +30,8 @@ from paper_writing.registry import (
     write_paper_metadata,
 )
 from paper_writing.review import (
+    BIOLOGY_REVIEWER_ROLE,
+    LEADING_LIFE_SCIENCES_JOURNALS_VIEW,
     CAS_ZONE_1_JOURNAL_VIEW,
     CS_TOP_TIER_REVIEWER_ROLE,
     FOUR_TOP_MATH_JOURNALS_VIEW,
@@ -719,6 +721,9 @@ def apply_review_record(
     elif expected_role == QUANT_FINANCE_REVIEWER_ROLE:
         high_standard_view = LEADING_QUANT_FINANCE_JOURNALS_VIEW
         high_standard = recommendations[LEADING_QUANT_FINANCE_JOURNALS_VIEW]
+    elif expected_role == BIOLOGY_REVIEWER_ROLE:
+        high_standard_view = LEADING_LIFE_SCIENCES_JOURNALS_VIEW
+        high_standard = recommendations[LEADING_LIFE_SCIENCES_JOURNALS_VIEW]
     else:
         high_standard_view = FOUR_TOP_MATH_JOURNALS_VIEW
         high_standard = recommendations[FOUR_TOP_MATH_JOURNALS_VIEW]

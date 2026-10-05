@@ -19,6 +19,7 @@ def test_profiles_are_explicit_bounded_and_pinned() -> None:
     assert policy["invocation"] == "explicit"
     assert policy["maximum_active_components"] == 3
     assert set(profiles["profiles"]) == {
+        "biology",
         "ai_ml",
         "mathematics",
         "materials",
@@ -148,6 +149,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert profiles["quality_gate"]["score_range"] == [1, 10]
     assert profiles["quality_gate"]["require_dual_simulated_decisions"] is True
     assert profiles["quality_gate"]["score_standard"] == {
+        "biology": "leading_life_sciences_journals",
         "ai": "top_conference",
         "cs": "top_conference",
         "se": "top_conference",
@@ -157,6 +159,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "quant": "leading_quant_finance_journals",
     }
     assert profiles["quality_gate"]["recommendation_views"] == {
+        "biology": ["leading_life_sciences_journals", "cas_zone_1_journal"],
         "ai": ["top_conference", "cas_zone_1_journal"],
         "cs": ["top_conference", "cas_zone_1_journal"],
         "se": ["top_conference", "cas_zone_1_journal"],
@@ -168,6 +171,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert profiles["quality_gate"]["gate_decision_standard"] == "cas_zone_1_journal"
     assert profiles["quality_gate"]["cas_zone_1_scope"] == "major_category"
     assert profiles["quality_gate"]["reviewer_roles"] == {
+        "biology": "biology",
         "ai": "cs_top_tier",
         "cs": "cs_top_tier",
         "se": "cs_top_tier",
@@ -177,6 +181,7 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
         "quant": "quant_finance",
     }
     assert profiles["quality_gate"]["reviewer_rubric_ids"] == {
+        "biology": "openlabs.paper-writing.biology-leading-journals.v1",
         "ai": "ara.revision-agent.cs-top-tier.v1",
         "cs": "ara.revision-agent.cs-top-tier.v1",
         "se": "ara.revision-agent.cs-top-tier.v1",

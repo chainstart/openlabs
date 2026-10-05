@@ -20,6 +20,7 @@ MATHEMATICS_REVIEWER_ROLE = "math"
 MATERIALS_REVIEWER_ROLE = "materials"
 PHYSICS_REVIEWER_ROLE = "physics"
 QUANT_FINANCE_REVIEWER_ROLE = "quant_finance"
+BIOLOGY_REVIEWER_ROLE = "biology"
 
 INDIVIDUAL_REVIEW_SCHEMA_VERSION = "ara.paper_writing.review.v2"
 LEGACY_REVIEW_SCHEMA_VERSION = "ara.paper_writing.review.v3"
@@ -50,6 +51,7 @@ PHYSICS_LEADING_JOURNALS_RUBRIC_ID = (
 QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID = (
     "openlabs.paper-writing.quant-finance-leading-journals.v1"
 )
+BIOLOGY_LEADING_JOURNALS_RUBRIC_ID = "openlabs.paper-writing.biology-leading-journals.v1"
 RECOMMENDATION_SCHEMA_VERSION = "ara.review_recommendations.v2"
 
 TOP_CONFERENCE_VIEW = "top_conference"
@@ -57,6 +59,7 @@ FOUR_TOP_MATH_JOURNALS_VIEW = "four_top_math_journals"
 LEADING_MATERIALS_JOURNALS_VIEW = "leading_materials_journals"
 LEADING_PHYSICS_JOURNALS_VIEW = "leading_physics_journals"
 LEADING_QUANT_FINANCE_JOURNALS_VIEW = "leading_quant_finance_journals"
+LEADING_LIFE_SCIENCES_JOURNALS_VIEW = "leading_life_sciences_journals"
 CAS_ZONE_1_JOURNAL_VIEW = "cas_zone_1_journal"
 CAS_ZONE_1_SCOPE = "major_category"
 CAS_ZONE_1_BASIS_MODES = ("generic_standard", "verified_target")
@@ -123,6 +126,7 @@ RUBRIC_IDS_BY_ROLE = {
     MATERIALS_REVIEWER_ROLE: MATERIALS_LEADING_JOURNALS_RUBRIC_ID,
     PHYSICS_REVIEWER_ROLE: PHYSICS_LEADING_JOURNALS_RUBRIC_ID,
     QUANT_FINANCE_REVIEWER_ROLE: QUANT_FINANCE_LEADING_JOURNALS_RUBRIC_ID,
+    BIOLOGY_REVIEWER_ROLE: BIOLOGY_LEADING_JOURNALS_RUBRIC_ID,
 }
 
 # Match ARA RevisionAgent ordering: most favorable to least favorable.
@@ -165,6 +169,7 @@ _PHYSICS_DOMAINS = {
     "cosmology",
 }
 _QUANT_FINANCE_DOMAINS = {"finance", "quant", "quant_finance", "quantitative_finance"}
+_BIOLOGY_DOMAINS = {"biology", "bioinformatics", "computational_biology"}
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 _REVIEW_SAFE_REGISTRY_FIELDS = (
@@ -221,6 +226,8 @@ def reviewer_role_for_domain(domain: Any) -> str:
         return PHYSICS_REVIEWER_ROLE
     if token in _QUANT_FINANCE_DOMAINS:
         return QUANT_FINANCE_REVIEWER_ROLE
+    if token in _BIOLOGY_DOMAINS:
+        return BIOLOGY_REVIEWER_ROLE
     raise ValueError(f"No paper-review rubric is configured for domain: {domain!r}")
 
 
@@ -692,6 +699,13 @@ def validate_review_record(
 
     recommendation_role = expected_role if expected_role in RUBRIC_IDS_BY_ROLE else reviewer_role
     recommendations = _mapping(review.get("recommendations"))
+    if (
+        recommendation_role != BIOLOGY_REVIEWER_ROLE
+        and LEADING_LIFE_SCIENCES_JOURNALS_VIEW in recommendations
+    ):
+        errors.append(
+            f"recommendations.{LEADING_LIFE_SCIENCES_JOURNALS_VIEW} is only valid for biology reviews"
+        )
     cas_zone_1 = _mapping(recommendations.get(CAS_ZONE_1_JOURNAL_VIEW))
     _validate_recommendation_entry(
         cas_zone_1,
@@ -808,6 +822,27 @@ def validate_review_record(
                 errors.append(
                     f"recommendations.{forbidden} is forbidden for quant-finance reviews; "
                     "use leading_quant_finance_journals"
+                )
+    elif recommendation_role == BIOLOGY_REVIEWER_ROLE:
+        leading_biology = _mapping(recommendations.get(LEADING_LIFE_SCIENCES_JOURNALS_VIEW))
+        _validate_recommendation_entry(
+            leading_biology,
+            path=f"recommendations.{LEADING_LIFE_SCIENCES_JOURNALS_VIEW}",
+            decisions=JOURNAL_DECISIONS,
+            errors=errors,
+        )
+        for forbidden in (
+            TOP_CONFERENCE_VIEW,
+            FOUR_TOP_MATH_JOURNALS_VIEW,
+            LEADING_MATERIALS_JOURNALS_VIEW,
+            LEADING_PHYSICS_JOURNALS_VIEW,
+            LEADING_QUANT_FINANCE_JOURNALS_VIEW,
+            "conference",
+        ):
+            if forbidden in recommendations:
+                errors.append(
+                    f"recommendations.{forbidden} is forbidden for biology reviews; "
+                    "use leading_life_sciences_journals"
                 )
     for key in ("model", "reasoning_effort", "reviewed_at_utc"):
         if not isinstance(metadata.get(key), str) or not str(metadata.get(key)).strip():
@@ -1437,6 +1472,24 @@ def validate_review_panel_files(
                     f"{decision_aggregation} {expected}"
                 )
 
+    elif role == BIOLOGY_REVIEWER_ROLE:
+        values = [
+            _mapping(
+                _mapping(review.get("recommendations")).get(LEADING_LIFE_SCIENCES_JOURNALS_VIEW)
+            ).get("decision")
+            for review in reviewer_payloads
+        ]
+        if all(value in JOURNAL_DECISIONS for value in values):
+            expected = _aggregate_decision(values, JOURNAL_DECISIONS, decision_aggregation)
+            actual = _mapping(final_recommendations.get(LEADING_LIFE_SCIENCES_JOURNALS_VIEW)).get(
+                "decision"
+            )
+            if actual != expected:
+                errors.append(
+                    f"recommendations.{LEADING_LIFE_SCIENCES_JOURNALS_VIEW}.decision must equal "
+                    f"{decision_aggregation} {expected}"
+                )
+
     cas_values = [
         _mapping(_mapping(review.get("recommendations")).get(CAS_ZONE_1_JOURNAL_VIEW)).get(
             "decision"
@@ -1474,6 +1527,9 @@ def review_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
     elif reviewer_role == QUANT_FINANCE_REVIEWER_ROLE:
         high_standard_view = LEADING_QUANT_FINANCE_JOURNALS_VIEW
         high_standard = _mapping(recommendations.get(LEADING_QUANT_FINANCE_JOURNALS_VIEW))
+    elif reviewer_role == BIOLOGY_REVIEWER_ROLE:
+        high_standard_view = LEADING_LIFE_SCIENCES_JOURNALS_VIEW
+        high_standard = _mapping(recommendations.get(LEADING_LIFE_SCIENCES_JOURNALS_VIEW))
     else:
         high_standard_view = TOP_CONFERENCE_VIEW
         high_standard = _mapping(

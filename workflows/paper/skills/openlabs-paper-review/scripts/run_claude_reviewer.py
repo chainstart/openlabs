@@ -28,6 +28,8 @@ if str(WORKFLOW_ROOT) not in sys.path:
 from paper_writing.handoff import manuscript_snapshot_sha256, sha256_file
 from paper_writing.registry import load_paper_metadata, load_registry_settings, repository_root
 from paper_writing.review import (
+    BIOLOGY_REVIEWER_ROLE,
+    LEADING_LIFE_SCIENCES_JOURNALS_VIEW,
     CAS_ZONE_1_JOURNAL_VIEW,
     CONFERENCE_DECISIONS,
     FOUR_TOP_MATH_JOURNALS_VIEW,
@@ -193,6 +195,11 @@ def _judgment_schema(role: str) -> dict[str, Any]:
     elif role == QUANT_FINANCE_REVIEWER_ROLE:
         recommendation_properties = {
             LEADING_QUANT_FINANCE_JOURNALS_VIEW: recommendation,
+            CAS_ZONE_1_JOURNAL_VIEW: recommendation,
+        }
+    elif role == BIOLOGY_REVIEWER_ROLE:
+        recommendation_properties = {
+            LEADING_LIFE_SCIENCES_JOURNALS_VIEW: recommendation,
             CAS_ZONE_1_JOURNAL_VIEW: recommendation,
         }
     else:

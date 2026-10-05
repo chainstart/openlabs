@@ -56,3 +56,22 @@ def test_review_input_hygiene_allows_deterministic_replay_status(tmp_path: Path)
 
     assert result.returncode == 0
     assert "Review input hygiene: valid" in result.stdout
+
+
+def test_event_filter_disclaimer_does_not_hide_a_prior_review(tmp_path: Path) -> None:
+    archive = tmp_path / "domain.zip"
+    disclaimer = "frozen fingerprints. No quality gate or event classification is inferred.\n"
+    _zip(archive, {"source.py": disclaimer})
+    clean = subprocess.run(
+        [sys.executable, str(SCRIPT), "--archive", str(archive), "--json"],
+        capture_output=True, text=True, check=False,
+    )
+    assert clean.returncode == 0
+    _zip(archive, {"source.py": disclaimer + 'writing_release = "ready"\noverall = 7\n'})
+    contaminated = subprocess.run(
+        [sys.executable, str(SCRIPT), "--archive", str(archive), "--json"],
+        capture_output=True, text=True, check=False,
+    )
+    assert contaminated.returncode == 1
+    assert "writing_release" in contaminated.stdout
+    assert "review_score" in contaminated.stdout

@@ -4,6 +4,14 @@ selection_policy:
   maximum_active_components: 3
   roles: [primary_writing, domain, review_or_citation]
 profiles:
+  biology:
+    entry_skill: openlabs-biology-paper
+    entry_path: skills/openlabs-biology-paper
+    domains: [biology]
+    components:
+      primary_writing: scientific-writing
+      domain: statistical-analysis
+      review_or_citation: peer-review
   ai_ml:
     entry_skill: openlabs-ai-paper
     entry_path: skills/openlabs-ai-paper
@@ -104,6 +112,7 @@ quality_gate:
   score_range: [1, 10]
   require_dual_simulated_decisions: true
   score_standard:
+    biology: leading_life_sciences_journals
     ai: top_conference
     cs: top_conference
     se: top_conference
@@ -119,6 +128,7 @@ quality_gate:
       - nature_physics
     criteria_source: skills/openlabs-paper-review/references/physics-highest-tier-venues.md
   recommendation_views:
+    biology: [leading_life_sciences_journals, cas_zone_1_journal]
     ai: [top_conference, cas_zone_1_journal]
     cs: [top_conference, cas_zone_1_journal]
     se: [top_conference, cas_zone_1_journal]
@@ -129,6 +139,7 @@ quality_gate:
   gate_decision_standard: cas_zone_1_journal
   cas_zone_1_scope: major_category
   reviewer_roles:
+    biology: biology
     ai: cs_top_tier
     cs: cs_top_tier
     se: cs_top_tier
@@ -137,6 +148,7 @@ quality_gate:
     physics: physics
     quant: quant_finance
   reviewer_rubric_ids:
+    biology: openlabs.paper-writing.biology-leading-journals.v1
     ai: ara.revision-agent.cs-top-tier.v1
     cs: ara.revision-agent.cs-top-tier.v1
     se: ara.revision-agent.cs-top-tier.v1

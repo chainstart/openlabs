@@ -1,0 +1,6 @@
+interface:
+  display_name: OpenLabs biology paper
+  short_description: Evidence-bound biology and bioinformatics manuscript workflow
+  default_prompt: Use $openlabs-biology-paper for this registered biology manuscript.
+policy:
+  allow_implicit_invocation: false

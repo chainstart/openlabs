@@ -1,6 +1,6 @@
 ---
 name: openlabs-paper-review
-description: Run OpenLabs' configured fresh-context paper gate for AI, computer-science, software-engineering, mathematics, materials-science, physics, or quantitative-finance manuscripts. Uses one independent Codex reviewer by default and adds a blind Packy Claude reviewer only when the registry explicitly enables the two-reviewer contract.
+description: Run OpenLabs' configured fresh-context paper gate for AI, computer-science, software-engineering, mathematics, materials-science, physics, quantitative-finance, or biology manuscripts. Uses one independent Codex reviewer by default and adds a blind Packy Claude reviewer only when the registry explicitly enables the two-reviewer contract.
 ---
 
 # OpenLabs paper review
@@ -205,6 +205,9 @@ physics, also read `references/physics-highest-tier-venues.md` completely:
   `cas_zone_1_journal` recommendation;
 - `quant`: `quant_finance`, with `leading_quant_finance_journals` and
   `cas_zone_1_journal` recommendations;
+- `biology`: `biology`, with `leading_life_sciences_journals` and
+  `cas_zone_1_journal` recommendations; apply the explicit biology/bioinformatics
+  rubric and preserve biological versus computational claim boundaries;
 - any other domain: stop; do not silently substitute a rubric.
 
 Use `cas_zone_1_basis.mode: generic_standard` unless a named target's current major-category

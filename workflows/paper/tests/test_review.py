@@ -11,6 +11,9 @@ from paper_writing.handoff import manuscript_snapshot_sha256, sha256_file
 from paper_writing.operations import apply_review_record
 from paper_writing.registry import load_paper_metadata
 from paper_writing.review import (
+    BIOLOGY_REVIEWER_ROLE,
+    BIOLOGY_LEADING_JOURNALS_RUBRIC_ID,
+    LEADING_LIFE_SCIENCES_JOURNALS_VIEW,
     CAS_ZONE_1_JOURNAL_VIEW,
     CS_TOP_TIER_REVIEWER_ROLE,
     CS_TOP_TIER_RUBRIC_ID,
@@ -340,6 +343,19 @@ def _review(*, paper_id: str = "20260804-ai-llm-review-test", role: str = "cs_to
                 "rationale": "The study is promising but not yet ready.",
             },
         }
+    elif role == BIOLOGY_REVIEWER_ROLE:
+        recommendations = {
+            LEADING_LIFE_SCIENCES_JOURNALS_VIEW: {
+                "decision": "major_revision",
+                "confidence": "high",
+                "rationale": "The biological method needs stronger validation.",
+            },
+            CAS_ZONE_1_JOURNAL_VIEW: {
+                "decision": "major_revision",
+                "confidence": "high",
+                "rationale": "The scoped contribution remains promising but incomplete.",
+            },
+        }
     else:
         recommendations = {
             TOP_CONFERENCE_VIEW: {
@@ -516,6 +532,11 @@ def test_domain_routing_matches_openlabs_roles() -> None:
         assert reviewer_role_for_domain(domain) == PHYSICS_REVIEWER_ROLE
     for domain in ("quant", "finance", "quantitative-finance"):
         assert reviewer_role_for_domain(domain) == QUANT_FINANCE_REVIEWER_ROLE
+    for domain in ("biology", "bioinformatics", "computational-biology"):
+        assert reviewer_role_for_domain(domain) == BIOLOGY_REVIEWER_ROLE
+    with pytest.raises(ValueError, match="No paper-review rubric"):
+        reviewer_role_for_domain("medicine")
+    assert rubric_id_for_role(BIOLOGY_REVIEWER_ROLE) == BIOLOGY_LEADING_JOURNALS_RUBRIC_ID
     assert rubric_id_for_role(CS_TOP_TIER_REVIEWER_ROLE) == CS_TOP_TIER_RUBRIC_ID
     assert rubric_id_for_role(MATHEMATICS_REVIEWER_ROLE) == MATH_FOUR_JOURNALS_RUBRIC_ID
     assert rubric_id_for_role(MATERIALS_REVIEWER_ROLE) == MATERIALS_LEADING_JOURNALS_RUBRIC_ID
@@ -618,6 +639,19 @@ def test_quant_finance_review_requires_its_domain_view() -> None:
         error.startswith(f"recommendations.{LEADING_QUANT_FINANCE_JOURNALS_VIEW}.decision")
         for error in errors
     )
+
+
+def test_biology_review_requires_its_view_and_rejects_borrowed_rubrics() -> None:
+    review = _review(role=BIOLOGY_REVIEWER_ROLE)
+    assert validate_review_record(review, expected_role=BIOLOGY_REVIEWER_ROLE) == []
+    borrowed = deepcopy(review)
+    borrowed["recommendations"][TOP_CONFERENCE_VIEW] = _review()["recommendations"][TOP_CONFERENCE_VIEW]
+    assert any("forbidden for biology" in e for e in validate_review_record(borrowed))
+    foreign = _review()
+    foreign["recommendations"][LEADING_LIFE_SCIENCES_JOURNALS_VIEW] = review["recommendations"][LEADING_LIFE_SCIENCES_JOURNALS_VIEW]
+    assert any("only valid for biology" in e for e in validate_review_record(foreign))
+    del review["recommendations"][LEADING_LIFE_SCIENCES_JOURNALS_VIEW]
+    assert any(LEADING_LIFE_SCIENCES_JOURNALS_VIEW in e for e in validate_review_record(review))
 
 
 def test_physics_review_requires_its_domain_view() -> None:
@@ -1387,15 +1421,22 @@ subdomain: llm
     ]
 
 
-def test_skill_aggregator_supports_quant_finance(tmp_path: Path) -> None:
-    paper_id = "20260821-quant-finance-aggregate-test"
+@pytest.mark.parametrize(
+    "domain,subdomain,role,view",
+    [
+        ("quant", "finance", QUANT_FINANCE_REVIEWER_ROLE, LEADING_QUANT_FINANCE_JOURNALS_VIEW),
+        ("biology", "genetics", BIOLOGY_REVIEWER_ROLE, LEADING_LIFE_SCIENCES_JOURNALS_VIEW),
+    ],
+)
+def test_skill_aggregator_supports_specialist_journal_domains(tmp_path: Path, domain, subdomain, role, view) -> None:
+    paper_id = f"20260821-{domain}-{subdomain}-aggregate-test"
     registry = tmp_path / "registry" / "papers"
     registry.mkdir(parents=True)
     (registry / f"{paper_id}.yaml").write_text(
         f"""paper_id: {paper_id}
 created_at: 2026-08-21
-domain: quant
-subdomain: finance
+domain: {domain}
+subdomain: {subdomain}
 """,
         encoding="utf-8",
     )
@@ -1403,7 +1444,7 @@ subdomain: finance
     panel_path = _write_panel(
         tmp_path,
         paper_id=paper_id,
-        role=QUANT_FINANCE_REVIEWER_ROLE,
+        role=role,
         snapshot="b" * 64,
         main_tex_sha256="a" * 64,
         ready=True,
@@ -1429,13 +1470,20 @@ subdomain: finance
     assert result.returncode == 0, result.stderr
     panel = json.loads(panel_path.read_text(encoding="utf-8"))
     assert (
-        panel["recommendations"][LEADING_QUANT_FINANCE_JOURNALS_VIEW]["decision"]
+        panel["recommendations"][view]["decision"]
         == "major_revision"
     )
 
 
-def test_apply_review_registers_skill_judgment_and_uses_cas_gate(tmp_path: Path) -> None:
-    paper_id = "20260804-ai-llm-review-test"
+@pytest.mark.parametrize(
+    "domain,subdomain,role,view",
+    [
+        ("ai", "llm", CS_TOP_TIER_REVIEWER_ROLE, TOP_CONFERENCE_VIEW),
+        ("biology", "genetics", BIOLOGY_REVIEWER_ROLE, LEADING_LIFE_SCIENCES_JOURNALS_VIEW),
+    ],
+)
+def test_apply_review_registers_skill_judgment_and_uses_cas_gate(tmp_path: Path, domain, subdomain, role, view) -> None:
+    paper_id = f"20260804-{domain}-{subdomain}-review-test"
     manuscript = tmp_path / "papers" / paper_id / "manuscript"
     manuscript.mkdir(parents=True)
     main_tex = manuscript / "main.tex"
@@ -1463,8 +1511,8 @@ quality_gate:
         f"""paper_id: {paper_id}
 title: Review application fixture
 created_at: 2026-08-04
-domain: ai
-subdomain: llm
+domain: {domain}
+subdomain: {subdomain}
 version: 1.0.0
 manuscript_dir: papers/{paper_id}/manuscript
 latest_source: papers/{paper_id}/manuscript/main.tex
@@ -1503,7 +1551,7 @@ target_journal_tier: 3
     review_path = _write_panel(
         tmp_path,
         paper_id=paper_id,
-        role=CS_TOP_TIER_REVIEWER_ROLE,
+        role=role,
         snapshot=snapshot,
         main_tex_sha256=sha256_file(main_tex),
         ready=True,
@@ -1521,7 +1569,7 @@ target_journal_tier: 3
     assert result["quality_gate"]["passed"] is True
     assert result["quality_gate"]["revision_rounds"] == 2
     assert metadata["ara_llm_self_review"]["score"] == 6
-    assert metadata["ara_llm_self_review"]["high_standard_view"] == TOP_CONFERENCE_VIEW
+    assert metadata["ara_llm_self_review"]["high_standard_view"] == view
     assert metadata["ara_llm_self_review"]["cas_zone_1_decision"] == "minor_revision"
     assert metadata["ara_llm_self_review"]["review_panel"]["panel_size"] == 2
     assert metadata["ara_llm_self_review"]["source"] == (f"reviews/fresh/{paper_id}/review.json")

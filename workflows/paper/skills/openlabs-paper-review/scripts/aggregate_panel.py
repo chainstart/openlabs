@@ -24,6 +24,8 @@ if str(WORKFLOW_ROOT) not in sys.path:
 
 from paper_writing.registry import load_paper_metadata, load_registry_settings, repository_root
 from paper_writing.review import (
+    BIOLOGY_REVIEWER_ROLE,
+    LEADING_LIFE_SCIENCES_JOURNALS_VIEW,
     CAS_ZONE_1_JOURNAL_VIEW,
     CONFERENCE_DECISIONS,
     FOUR_TOP_MATH_JOURNALS_VIEW,
@@ -381,6 +383,17 @@ def main(argv: list[str] | None = None) -> int:
         ]
         final_recommendations = {
             LEADING_QUANT_FINANCE_JOURNALS_VIEW: _aggregate_recommendation(
+                high_entries,
+                order=JOURNAL_DECISIONS,
+                single_reviewer=single_reviewer,
+            )
+        }
+    elif expected_role == BIOLOGY_REVIEWER_ROLE:
+        high_entries = [
+            entry[LEADING_LIFE_SCIENCES_JOURNALS_VIEW] for entry in recommendations
+        ]
+        final_recommendations = {
+            LEADING_LIFE_SCIENCES_JOURNALS_VIEW: _aggregate_recommendation(
                 high_entries,
                 order=JOURNAL_DECISIONS,
                 single_reviewer=single_reviewer,
