@@ -45,7 +45,9 @@ AI_WORKFLOW_MARKER = re.compile(
     re.IGNORECASE,
 )
 CODE_CUE = re.compile(
-    r"\b(?:Python3?|GAP|SageMath|Mathematica|computer-assisted|source code|"
+    # GAP is the software acronym; ordinary "gap" and labels such as eq:gap
+    # are mathematical prose, not evidence of computational code.
+    r"\b(?:Python3?|(?-i:GAP)|SageMath|Mathematica|computer-assisted|source code|"
     r"scripts?|verifiers?|checkers?)\b",
     re.IGNORECASE,
 )

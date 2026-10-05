@@ -48,6 +48,21 @@ def test_style_check_accepts_neutral_body_and_complete_code_disclosure(
     }
 
 
+def test_mathematical_gap_does_not_require_code_validation(tmp_path: Path) -> None:
+    main = _write(tmp_path, r"The density gap is positive. \begin{equation}\label{eq:gap}1>0\end{equation}")
+    result = audit_tex_tree(main)
+    assert result["valid"] is True
+    assert result["ai_declaration"]["code_assistance_relevant"] is False
+
+
+def test_gap_software_still_requires_code_validation(tmp_path: Path) -> None:
+    disclosure = CODE_DECLARATION.replace("inspected AI-assisted code,\nand independently executed and validated the stated checks", "checked the mathematical argument")
+    main = _write(tmp_path, "We used GAP to verify the group computations.", disclosure)
+    result = audit_tex_tree(main)
+    assert result["ai_declaration"]["code_assistance_relevant"] is True
+    assert "STYLE-AI-DISCLOSURE-CODE-VALIDATION" in {e["code"] for e in result["errors"]}
+
+
 def test_style_check_rejects_internal_workflow_and_ai_narration_in_body(
     tmp_path: Path,
 ) -> None:
