@@ -260,6 +260,9 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     if fresh_bbl.is_file():
         # A stale committed .bbl would reach referees and the journal source package.
         shutil.copyfile(fresh_bbl, manuscript / "main.bbl")
+    supplement = metadata.get("latest_supplementary_pdf")
+    if supplement:  # a registered supplementary document is built separately and is part of the package
+        used.add((root / str(supplement)).with_suffix(".tex").relative_to(manuscript).as_posix())
     unused = unused_source_files(manuscript, used)
     if unused:
         blockers.append("Source files not read by the build would enter the journal package: " + ", ".join(unused[:12]))
