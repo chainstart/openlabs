@@ -11,6 +11,186 @@ FIELD = 'targeted_review_closeout'
 SCHEMA = 'openlabs.targeted_review_closeout.v1'
 
 
+def _complete_snapshot_replay(complete, clean, pdf, expected, names):
+    """Replay archived bytes, never overlay a historical document with today’s PDF."""
+    m._require(set(complete) == set(names) and 'main.pdf' not in complete,
+               'complete snapshot source membership differs')
+    m._require(set(clean) <= set(complete)
+               and all(complete[n] == value for n, value in clean.items()),
+               'clean source archive differs from complete snapshot')
+    m._require(m._snapshot(complete, pdf) == expected,
+               'complete source/PDF snapshot does not reconstruct')
+    return complete
+
+
+def _pdf_text(value):
+    """Independently extract actual PDF bytes, rather than trust a receipt boolean."""
+    import subprocess
+    m._require(value.startswith(b'%PDF-') and len(value) <= 16 * 1024 * 1024,
+               'invalid or oversized derived PDF')
+    result = subprocess.run(['pdftotext', '-layout', '-', '-'], input=value,
+                            capture_output=True, timeout=30, check=True)
+    m._require(len(result.stdout) <= 8 * 1024 * 1024, 'oversized derived PDF text')
+    return result.stdout.decode('utf-8')
+
+
+def _clean_build_inputs(sources):
+    from paper_writing.handoff import CLEAN_SOURCE_SUFFIXES
+    return {n: v for n, v in sources.items()
+            if Path(n).suffix in CLEAN_SOURCE_SUFFIXES and Path(n).suffix != '.bbl'
+            and not (Path(n).parent == Path('.') and Path(n).suffix == '.pdf')}
+
+
+def _recorded_document_inputs(recorder, inputs, source):
+    """Read the actual TeX recorder; changed figures or included TeX stay forbidden."""
+    from pathlib import PurePosixPath
+    lines = recorder.decode('utf-8').splitlines()
+    roots = [line[4:] for line in lines if line.startswith('PWD ')]
+    m._require(len(roots) == 1 and PurePosixPath(roots[0]).is_absolute(),
+               'missing or ambiguous clean-build recorder directory')
+    root = PurePosixPath(roots[0])
+    system = ('/etc/texmf', '/usr/share/texmf', '/usr/share/texlive',
+              '/var/lib/texmf', '/usr/share/fonts')
+    generated = {str(Path(source).with_suffix(s)) for s in ('.aux', '.out', '.toc', '.bbl')}
+    used = set()
+    for line in lines:
+        if not line.startswith('INPUT '):
+            continue
+        path = PurePosixPath(line[6:])
+        m._require('..' not in path.parts and '\\' not in str(path),
+                   'unsafe clean-build recorder input')
+        if path.is_absolute():
+            if path.is_relative_to(root):
+                path = path.relative_to(root)
+            else:
+                m._require(any(path.is_relative_to(p) for p in system),
+                           'unbound external clean-build input')
+                continue
+        name = str(path)
+        m._require('..' not in path.parts and '\\' not in name
+                   and (name in inputs or name in generated),
+                   'unbound local clean-build input: ' + name)
+        if name in inputs:
+            used.add(name)
+    m._require(source in used and str(Path(source).with_suffix('.bbl')) in
+               {str(PurePosixPath(line[6:])).removeprefix(str(root) + '/')
+                for line in lines if line.startswith('INPUT ')},
+               'recorder omitted the document or generated bibliography')
+    return str(root), used
+
+
+def _derived_document_delta(before, after, authorization, assessment, packet):
+    """One explicitly reviewed bibliography-date rebuild; never a PDF allowlist.
+
+    This applies only before the independent addendum. The final editorial delta
+    still uses minor_closeout._deltas, so every ancillary PDF then stays frozen.
+    """
+    import hashlib
+    import re
+    packet = Path(packet)
+    updates = authorization.get('derived_document_updates', [])
+    m._require(isinstance(updates, list) and len(updates) == 1,
+               'exactly one authorized derived document update required')
+    update = updates[0]
+    m._keys(update, {'path', 'source', 'before_sha256', 'after_sha256', 'source_sha256',
+                     'input_changes', 'date_correction', 'evidence_sha256'}, 'derived document update')
+    name = update['path'].removeprefix('manuscript/')
+    source = update['source'].removeprefix('manuscript/')
+    m._require(update['path'] == 'manuscript/' + name and Path(name).name == name
+               and name != 'main.pdf' and Path(name).suffix == '.pdf'
+               and update['source'] == 'manuscript/' + source
+               and source == str(Path(name).with_suffix('.tex'))
+               and name in before and name in after and source in before and source in after,
+               'derived update must name an existing root PDF and matching TeX')
+    sha = lambda value: hashlib.sha256(value).hexdigest()
+    row = {'path': update['path'], 'before_sha256': sha(before[name]), 'after_sha256': sha(after[name])}
+    m._require(all(update[k] == v for k, v in row.items()) and before[name] != after[name]
+               and before[source] == after[source] and sha(before[source]) == update['source_sha256'],
+               'derived PDF or unchanged TeX binding differs')
+    correction = update['date_correction']
+    m._keys(correction, {'before', 'after'}, 'bibliography date correction')
+    # This compatibility repair has one concrete documentary purpose. A new
+    # correction needs its own reviewed implementation, not an arbitrary string.
+    m._require(correction == {'before': 'October 2022', 'after': '29 September 2022'},
+               'unsupported bibliography date correction')
+    changed = update['input_changes']
+    bbl = str(Path(source).with_suffix('.bbl'))
+    m._require(isinstance(changed, list) and len(changed) == 2
+               and [r['path'] for r in changed] == sorted(r['path'] for r in changed)
+               and len({r['path'] for r in changed}) == 2,
+               'derived input change inventory is not exact')
+    changed_names = {r['path'].removeprefix('manuscript/') for r in changed}
+    bibs = [n for n in changed_names if Path(n).suffix == '.bib' and Path(n).name == n]
+    m._require(len(bibs) == 1 and changed_names == {bibs[0], bbl},
+               'derived inputs must be one shared bibliography and its generated bbl')
+    for change in changed:
+        m._keys(change, {'path', 'before_sha256', 'after_sha256'}, 'derived input change')
+        n = change['path'].removeprefix('manuscript/')
+        m._require(change['path'] == 'manuscript/' + n and n in before and n in after
+                   and sha(before[n]) == change['before_sha256'] and sha(after[n]) == change['after_sha256'],
+                   'derived input hash differs')
+        # BibTeX wraps the longer date across a line; its exact generated bytes
+        # are also checked against all three actual builds below.
+        normalize = (lambda v: re.sub(rb'\s+', b'', v)) if n == bbl else (lambda v: v)
+        old, new = normalize(before[n]), normalize(after[n])
+        old_date, new_date = (normalize(correction[k].encode()) for k in ('before', 'after'))
+        m._require(old.count(old_date) == 1 and old.replace(old_date, new_date) == new,
+                   'derived input contains more than the exact bibliography date correction')
+    proof_path = m._bound({'path': 'derived-document-proof.json',
+                           'sha256': update['evidence_sha256']}, packet)
+    proof = m._json(proof_path)
+    m._keys(proof, {'schema_version', 'complete_snapshots', 'builds'}, 'derived build proof')
+    m._require(proof['schema_version'] == 'openlabs.derived_document_date_build.v1',
+               'unsupported derived build proof schema')
+    complete = proof['complete_snapshots']
+    m._keys(complete, {'baseline', 'reviewed'}, 'reviewed complete snapshots')
+    for stage, sources in [('baseline', before), ('reviewed', after)]:
+        m._require(m._archive(m._bound(complete[stage], packet)) == sources,
+                   'referee did not receive the complete ' + stage + ' sources')
+    builds = proof['builds']
+    m._require(isinstance(builds, list) and [b.get('stage') for b in builds] ==
+               ['baseline', 'reviewed', 'standalone'], 'missing or duplicate clean builds')
+    texts, directories, dependencies = [], [], []
+    for build in builds:
+        m._keys(build, {'stage', 'input_archive', 'pdf', 'text', 'recorder', 'log',
+                        'bibliography_log', 'bbl'}, 'derived clean build')
+        files = {key: m._bound(value, packet) for key, value in build.items() if key != 'stage'}
+        sources = before if build['stage'] == 'baseline' else after
+        inputs = m._archive(files['input_archive'])
+        m._require(inputs == _clean_build_inputs(sources), 'clean build input archive differs')
+        m._require(files['bbl'].read_bytes() == sources[bbl], 'clean build bibliography differs')
+        directory, used = _recorded_document_inputs(files['recorder'].read_bytes(), inputs, source)
+        directories.append(directory)
+        dependencies.append(used | {bibs[0]})
+        biblog = files['bibliography_log'].read_text()
+        m._require(re.findall(r'^Database file #\d+: (.+)$', biblog, re.MULTILINE) == bibs,
+                   'clean build did not use the bound shared bibliography')
+        log = files['log'].read_text()
+        m._require('Output written on ' + name + ' (' in log and not re.search(r'^!', log, re.MULTILINE)
+                   and 'undefined' not in log.lower(), 'derived clean build failed or has unresolved references')
+        actual = _pdf_text(files['pdf'].read_bytes())
+        m._require(actual == files['text'].read_text(), 'clean-build PDF text evidence differs')
+        m._require(actual == _pdf_text(sources[name]), 'clean-build PDF differs from its canonical document')
+        texts.append(actual)
+    m._require(len(set(directories)) == 3 and dependencies[0] == dependencies[1] == dependencies[2],
+               'clean builds are not distinct or document dependencies differ')
+    m._require(all(before[n] == after[n] for n in dependencies[0] - changed_names),
+               'derived document scientific source or figure changed')
+    compact = lambda value: re.sub(r'\s+', '', value)
+    old_date, new_date = map(compact, (correction['before'], correction['after']))
+    m._require(compact(texts[0]).count(old_date) == 1
+               and compact(texts[0]).replace(old_date, new_date) == compact(texts[1])
+               and texts[1] == texts[2], 'derived PDF contains more than the exact date correction')
+    # Machine evidence can be preflighted with an empty assessment. It must
+    # still stop here: no author-generated readiness judgment is substituted.
+    inspected = assessment.get('derived_document_updates_reviewed', [])
+    m._require(len(inspected) == 1 and inspected[0].get('update') == update
+               and inspected[0].get('evidence_sha256') == m._sha(proof_path)
+               and inspected[0].get('ready') is True and m._text(inspected[0].get('reason')),
+               'independent derived-document assessment missing or blocking')
+    return row
+
+
 def _support_digests(path, version):
     """Bounded-memory comparison of complete payloads, including large archives.
 
@@ -313,11 +493,22 @@ def validate(paper_id, certificate, metadata, root):
     m._require(set(intermediate) == set(final_zip)
                and all(sources.get(n) == v for n, v in final_zip.items()),
                'journal source archive membership or bytes differ')
+    derived = bool(auth.get('derived_document_updates'))
+    full_keys = {'baseline_snapshot_sources', 'reviewed_snapshot_sources'}
+    m._require(derived == bool(full_keys & set(cert['artifact_bindings']))
+               and (not derived or full_keys <= set(cert['artifact_bindings'])),
+               'complete snapshot archives require exact derived-document opt-in')
     extras = [{'path': n, 'sha256': m._members({n: v})[n], 'in_review_packet': False}
               for n, v in sources.items() if n not in final_zip]
-    reviewed = {**intermediate, **{r['path']: sources[r['path']] for r in extras}}
-    m._require(m._snapshot(reviewed, bound(bindings['reviewed_pdf']).read_bytes())
-               == snapshot['canonical_snapshot'], 'reviewed full snapshot does not reconstruct')
+    if derived:
+        reviewed = _complete_snapshot_replay(
+            m._archive(bound(cert['artifact_bindings']['reviewed_snapshot_sources'], True)),
+            intermediate, bound(bindings['reviewed_pdf']).read_bytes(),
+            snapshot['canonical_snapshot'], sources)
+    else:
+        reviewed = {**intermediate, **{r['path']: sources[r['path']] for r in extras}}
+        m._require(m._snapshot(reviewed, bound(bindings['reviewed_pdf']).read_bytes())
+                   == snapshot['canonical_snapshot'], 'reviewed full snapshot does not reconstruct')
     final_delta = m._deltas(reviewed, sources, 'manuscript')
     m._require(final_delta == cert['final_editorial_delta'], 'unreviewed final delta')
     m._require(all(row['path'] in auth['final_editorial_files'] for row in final_delta)
@@ -328,15 +519,28 @@ def validate(paper_id, certificate, metadata, root):
     # represented as independently reviewed packet content.
     original_zip = m._archive(bound(cert['artifact_bindings']['baseline_source_archive'], True))
     original_pdf = bound(cert['artifact_bindings']['baseline_pdf'], True).read_bytes()
-    old_complete = {**original_zip, **{row['path']: sources[row['path']] for row in extras}}
-    m._require(m._snapshot(old_complete, original_pdf) == applied['manuscript_snapshot_sha256'],
-               'full-review snapshot does not reconstruct')
+    if derived:
+        old_complete = _complete_snapshot_replay(
+            m._archive(bound(cert['artifact_bindings']['baseline_snapshot_sources'], True)),
+            original_zip, original_pdf, applied['manuscript_snapshot_sha256'], sources)
+    else:
+        old_complete = {**original_zip, **{row['path']: sources[row['path']] for row in extras}}
+        m._require(m._snapshot(old_complete, original_pdf) == applied['manuscript_snapshot_sha256'],
+                   'full-review snapshot does not reconstruct')
     import json
     delta = json.loads((packet / 'delta.json').read_text())
     template_provenance = (m._json(bound(bindings['template_provenance']))
                            if 'template_provenance' in bindings else {})
-    m._require(_cumulative_manuscript_delta(old_complete, reviewed, auth,
-                                           template_provenance, addendum) ==
+    derived_row = _derived_document_delta(old_complete, reviewed, auth, addendum, packet) if derived else None
+    fixed_outputs = {derived_row['path'].removeprefix('manuscript/')} if derived else set()
+    cumulative = _cumulative_manuscript_delta(
+        {n: v for n, v in old_complete.items() if n not in fixed_outputs},
+        {n: v for n, v in reviewed.items() if n not in fixed_outputs}, auth,
+        template_provenance, addendum)
+    if derived_row:
+        cumulative.append(derived_row)
+        cumulative.sort(key=lambda row: row['path'])
+    m._require(cumulative ==
                [r for r in delta if r['path'].startswith('manuscript/')],
                'targeted packet omitted an intermediate manuscript change')
     # The supporting archive may change only metadata or the exact documentary
