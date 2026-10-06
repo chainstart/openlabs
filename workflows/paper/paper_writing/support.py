@@ -349,13 +349,17 @@ def _artifact_uri_path(root: Path, uri: Any, digest: str) -> Path:
     artifact_root = root.parent / "openlabs-artifacts"
     if not path.is_absolute() or "\0" in str(path):
         raise SupportPackageError("Artifact URI must contain an absolute local path")
-    path = _safe_local_path(path, artifact_root)
-    relative = path.relative_to(artifact_root).parts
-    if len(relative) != 4 or relative[:3] != ("paper-support", "sha256", digest):
-        raise SupportPackageError("Artifact URI must name sibling paper-support/sha256/<SHA-256>/<filename>")
     if path.as_uri() != uri:
         raise SupportPackageError("Artifact URI is not canonical")
-    return path
+    # The content-addressed tail is machine independent; a URI recorded on another
+    # workstation names the same artifact under this workstation's sibling store.
+    parts = path.parts
+    if "openlabs-artifacts" not in parts:
+        raise SupportPackageError("Artifact URI must name sibling paper-support/sha256/<SHA-256>/<filename>")
+    relative = parts[len(parts) - 1 - parts[::-1].index("openlabs-artifacts") + 1:]
+    if len(relative) != 4 or tuple(relative[:3]) != ("paper-support", "sha256", digest):
+        raise SupportPackageError("Artifact URI must name sibling paper-support/sha256/<SHA-256>/<filename>")
+    return _safe_local_path(artifact_root.joinpath(*relative), artifact_root)
 
 
 def _verify_artifact_binding(root: Path, cache: Path, binding: Mapping[str, Any]) -> None:

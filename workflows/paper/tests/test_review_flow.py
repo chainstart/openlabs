@@ -144,3 +144,18 @@ def test_unified_release_validation(tmp_path):
     assert flow.validate_unified_release("p", meta | {"target_journal": "K"}, tmp_path, "a" * 64)
     legacy = {"target_journal": "J", "writing_release": {"status": "ready"}}
     assert flow.validate_unified_release("p", legacy, tmp_path, "a" * 64)
+
+
+def test_artifact_uri_recorded_on_another_workstation_resolves_locally(tmp_path):
+    from paper_writing.support import SupportPackageError, _artifact_uri_path
+
+    root = tmp_path / "openlabs-data"
+    root.mkdir()
+    (tmp_path / "openlabs-artifacts").mkdir()
+    digest = "a" * 64
+    uri = f"file:///home/other/work/openlabs-artifacts/paper-support/sha256/{digest}/pkg.zip"
+    assert _artifact_uri_path(root, uri, digest) == tmp_path / "openlabs-artifacts/paper-support/sha256" / digest / "pkg.zip"
+    with pytest.raises(SupportPackageError):
+        _artifact_uri_path(root, f"file:///home/other/openlabs-artifacts/elsewhere/{digest}/pkg.zip", digest)
+    with pytest.raises(SupportPackageError):
+        _artifact_uri_path(root, f"file:///home/other/openlabs-artifacts/paper-support/sha256/{'b' * 64}/pkg.zip", digest)
