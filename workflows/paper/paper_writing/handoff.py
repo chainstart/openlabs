@@ -1180,8 +1180,18 @@ support payloads apply at every release, in addition to the reviewed snapshot.
         if (empty_index in files and not empty_index.is_symlink()
                 and empty_index.is_file() and empty_index.stat().st_size == 0):
             allowed.add(empty_index.relative_to(root).as_posix())
+        # P006's frozen review snapshot contains this exact legacy pagination
+        # adjunct. Its current source-only archive independently builds without
+        # it. Preserve that historical snapshot; do not allow general LPG files.
+        legacy_lpg = root / metadata["manuscript_dir"] / "main.lpg"
+        if (paper_id == "20260608mathgraph0006"
+                and metadata["manuscript_dir"] == f"papers/{paper_id}/manuscript"
+                and legacy_lpg in files and not legacy_lpg.is_symlink()
+                and legacy_lpg.is_file()
+                and legacy_lpg.read_bytes() == b"\\def \\@myextralastpage {15}\n\\endinput \n"):
+            allowed.add(legacy_lpg.relative_to(root).as_posix())
         if not set(bindings) <= allowed:
-            raise HandoffError("Only canonical manuscript PDF/bibliography build products and an empty root main.idx may use artifact storage")
+            raise HandoffError("Only canonical manuscript PDF/bibliography build products, an empty root main.idx, and P006's exact legacy root main.lpg may use artifact storage")
         for name, binding in bindings.items():
             # Never use this mechanism to stop freezing an already tracked file.
             if _git_output(root, ["ls-files", "--cached", "--", name]).strip():

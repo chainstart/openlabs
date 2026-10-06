@@ -13,10 +13,8 @@ def git(root, *args):
     subprocess.run(['git', *args], cwd=root, check=True, capture_output=True)
 
 
-@pytest.fixture
-def setup(tmp_path):
+def make_setup(tmp_path, pid):
     root = tmp_path / 'openlabs-data'; root.mkdir()
-    pid = '20260908-math-graph-artifact-test'
     manuscript = root / 'papers' / pid / 'manuscript'; manuscript.mkdir(parents=True)
     pdf = manuscript / 'main.pdf'; pdf.write_bytes(b'%PDF exact test bytes')
     source = manuscript / 'main.tex'; source.write_text('scientific source')
@@ -29,6 +27,45 @@ def setup(tmp_path):
     git(root, 'add', '.gitignore', str(source.relative_to(root)), str(manifest.relative_to(root)))
     git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'Freeze manifest')
     return root, pid, meta, manifest, pdf, source
+
+
+@pytest.fixture
+def setup(tmp_path):
+    return make_setup(tmp_path, '20260908-math-graph-artifact-test')
+
+
+@pytest.mark.parametrize('pid,name,content,accepted', [
+    ('20260608mathgraph0006', 'main.lpg', b'\\def \\@myextralastpage {15}\n\\endinput \n', True),
+    ('20260908-math-graph-artifact-test', 'main.lpg', b'\\def \\@myextralastpage {15}\n\\endinput \n', False),
+    ('20260608mathgraph0006', 'nested/main.lpg', b'\\def \\@myextralastpage {15}\n\\endinput \n', False),
+    ('20260608mathgraph0006', 'other.lpg', b'\\def \\@myextralastpage {15}\n\\endinput \n', False),
+    ('20260608mathgraph0006', 'main.lpg', b'\\def \\@myextralastpage {16}\n\\endinput \n', False),
+    ('20260608mathgraph0006', 'main.lpg', b'', False),
+])
+def test_exact_p006_legacy_pagination_only(tmp_path, pid, name, content, accepted):
+    root, pid, meta, manifest, pdf, source = make_setup(tmp_path, pid)
+    marker = pdf.parent / name
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_bytes(content)
+    with (root / '.gitignore').open('a') as f:
+        f.write('*.lpg\n')
+    write_support_artifact_manifest(root, [pdf, marker], manifest)
+    meta['submission_package']['artifact_manifest']['sha256'] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    git(root, 'add', '.gitignore', str(manifest.relative_to(root)))
+    git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'Bind legacy adjunct')
+    files = [pdf, source, marker]
+    if not accepted:
+        with pytest.raises(HandoffError, match='Only canonical'):
+            _release_artifact_bindings(pid, meta, root, files)
+        return
+    assert str(marker.relative_to(root)) in _release_artifact_bindings(pid, meta, root, files)[1]
+    git(root, 'add', '-f', str(marker.relative_to(root)))
+    with pytest.raises(HandoffError, match='Tracked manuscript'):
+        _release_artifact_bindings(pid, meta, root, files)
+    git(root, 'reset', '--', str(marker.relative_to(root)))
+    marker.write_bytes(content.replace(b'{15}', b'{16}'))
+    with pytest.raises(HandoffError, match='Only canonical'):
+        _release_artifact_bindings(pid, meta, root, files)
 
 
 def test_exact_ignored_artifact_passes_and_original_is_required(setup):
