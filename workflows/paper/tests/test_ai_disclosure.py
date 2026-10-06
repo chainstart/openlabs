@@ -44,6 +44,27 @@ def test_cannot_drop_runtime_model_suffix(tmp_path):
     assert "MODEL-MISMATCH" in {code for code, _ in errors}
 
 
+def test_recorded_claude_code_use_is_accepted_alongside_codex(tmp_path):
+    entries = usage(tmp_path)
+    raw = json.dumps({"runtime": {"model": "claude-opus-5-5"}}).encode()
+    (tmp_path / "claude.json").write_bytes(raw)
+    entries.append({"provider": "anthropic", "tool": "Claude Code", "model": "claude-opus-5-5",
+                    "purpose": "Manuscript revision",
+                    "evidence": {"path": "claude.json", "sha256": hashlib.sha256(raw).hexdigest(),
+                                 "json_pointer": "/runtime/model"}})
+    text = "OpenAI Codex with gpt-6-astra; Anthropic Claude Code with claude-opus-5-5."
+    assert not model_disclosure_issues(text, entries, root=tmp_path)
+    errors = model_disclosure_issues("OpenAI Codex with gpt-6-astra.", entries, root=tmp_path)
+    assert "MODEL-MISMATCH" in {code for code, _ in errors}
+
+
+def test_unlisted_provider_is_rejected(tmp_path):
+    entries = usage(tmp_path)
+    entries[0]["provider"] = "other"
+    errors = model_disclosure_issues("OpenAI Codex used gpt-6-astra.", entries, root=tmp_path)
+    assert "MODEL-RECORD-INVALID" in {code for code, _ in errors}
+
+
 def test_missing_new_usage_is_a_blocker():
     assert model_disclosure_issues("OpenAI Codex.", [])[0][0] == "MODEL-UNRECORDED"
 

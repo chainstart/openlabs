@@ -96,10 +96,10 @@ inspection or rewrite a historical review hash.
 
 ## Disclose the model actually used
 
-New AI-use declarations identify OpenAI Codex and the exact model identifiers supported by
-the work's runtime records, not a globally preferred version. Register each use under
-`declarations.ai_use.model_usage` with `provider: openai-codex`, `tool: Codex`, `model`, its
-actual purpose, and `evidence: {path, sha256, json_pointer}`. The evidence path is relative
+New AI-use declarations identify each tool actually used (OpenAI Codex or Anthropic Claude Code)
+and the exact model identifiers supported by the work's runtime records, not a globally preferred
+version. Register each use under `declarations.ai_use.model_usage` with `provider: openai-codex`,
+`tool: Codex` or `provider: anthropic`, `tool: Claude Code`, `model`, its actual purpose, and `evidence: {path, sha256, json_pointer}`. The evidence path is relative
 to the data root and points to a bounded JSON runtime record; the JSON pointer selects
 the model identifier. Keep this provenance in private metadata, not scientific prose.
 

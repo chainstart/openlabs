@@ -18,6 +18,7 @@ GPT_ID = re.compile(
     re.I,
 )
 MODEL_RECORD_EFFECTIVE_DATE = date(2026, 9, 6)
+RECORDED_TOOLS = {("openai-codex", "Codex"), ("anthropic", "Claude Code")}
 
 
 def model_usage_for_record(metadata: Mapping[str, Any]) -> Any:
@@ -69,8 +70,8 @@ def model_disclosure_issues(
         normalized_text = GPT_ID.sub(lambda m: normalized_model(m.group()), text.lower())
         if not re.search(r"(?<![\w.-])" + re.escape(model) + r"(?![\w-]|\.\w)", normalized_text):
             issues.append(("MODEL-MISMATCH", f"the declaration must disclose the registered model {model}"))
-        if entry.get("provider") != "openai-codex" or entry.get("tool") != "Codex":
-            issues.append(("MODEL-RECORD-INVALID", "record the actual Codex provider and tool consistently"))
+        if (entry.get("provider"), entry.get("tool")) not in RECORDED_TOOLS:
+            issues.append(("MODEL-RECORD-INVALID", "record the actual provider and tool consistently"))
         if not isinstance(entry.get("purpose"), str) or not entry["purpose"].strip():
             issues.append(("MODEL-RECORD-INVALID", "record the actual purpose of each model use"))
         evidence = entry.get("evidence")
