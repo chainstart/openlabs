@@ -1266,6 +1266,36 @@ def test_panel_validator_accepts_one_shared_bounded_lean_receipt(tmp_path: Path)
         == []
     )
 
+    # The guard's full-build mode records its actual preparatory clean, and
+    # optionally hydrates the pinned cache after cleaning. Preserve that chain.
+    core_commands = list(receipt["commands"])
+    def check_chain():
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        panel["review_metadata"]["review_panel"]["shared_objective_audits"][0]["sha256"] = sha256_file(receipt_path)
+        return validate_review_panel_files(panel, review_path=review_path,
+            repo_root=tmp_path, expected_role=MATHEMATICS_REVIEWER_ROLE,
+            expected_paper_id=paper_id)
+    receipt["build_mode"] = "full"
+    receipt["commands"] = [{"command": ["lake", "clean"], "return_code": 0}] + core_commands
+    assert check_chain() == []
+    receipt["commands"][0]["return_code"] = 1
+    assert check_chain()
+    receipt["commands"][0]["return_code"] = 0
+    receipt["commands"] = core_commands
+    assert check_chain()  # A claimed full build cannot omit cleaning.
+    receipt["mathlib_cache_hydration"] = True
+    receipt["commands"] = [{"command": ["lake", "clean"], "return_code": 0},
+                           {"command": ["lake", "exe", "cache", "get"], "return_code": 0}] + core_commands
+    assert check_chain() == []
+    receipt["commands"][:2] = reversed(receipt["commands"][:2])
+    assert check_chain()  # Cache must not precede a clean that removes it.
+    receipt["build_mode"] = "unknown"
+    assert check_chain()
+    receipt.pop("build_mode")
+    receipt.pop("mathlib_cache_hydration")
+    receipt["commands"] = core_commands
+    assert check_chain() == []
+
     receipt["execution_count"] = 2
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
     panel["review_metadata"]["review_panel"]["shared_objective_audits"][0]["sha256"] = sha256_file(

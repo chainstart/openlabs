@@ -1268,12 +1268,21 @@ def validate_review_panel_files(
                     errors.append(f"{prefix} available memory did not preserve the host headroom")
             audit_file = receipt.get("audit_file")
             commands = execution_receipt.get("commands")
-            expected_commands = (
+            expected_commands = [
                 ["lake", "build", "--quiet"],
                 ["lake", "env", "lean", audit_file],
-            )
-            if not isinstance(commands, list) or len(commands) != 2:
-                errors.append(f"{prefix} must contain exactly two sequential commands")
+            ]
+            build_mode = execution_receipt.get("build_mode", "incremental")
+            hydration = execution_receipt.get("mathlib_cache_hydration", False)
+            if build_mode not in {"incremental", "full"} or type(hydration) is not bool:
+                errors.append(f"{prefix} has an invalid build mode or cache-hydration marker")
+            if build_mode == "full":
+                expected_commands.insert(0, ["lake", "clean"])
+            if hydration is True:
+                expected_commands.insert(1 if build_mode == "full" else 0,
+                                         ["lake", "exe", "cache", "get"])
+            if not isinstance(commands, list) or len(commands) != len(expected_commands):
+                errors.append(f"{prefix} must contain the exact sequential command chain for its build mode")
             else:
                 for command_index, (command, expected_command) in enumerate(
                     zip(commands, expected_commands, strict=True), start=1
