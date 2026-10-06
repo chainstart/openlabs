@@ -100,6 +100,243 @@ def test_only_exact_claim_map_yaml_is_documentary():
     assert t._documentary_support_path('support/CLAIMS.yaml')
     assert not t._documentary_support_path('support/config.yaml')
     assert not t._documentary_support_path('support/check.py')
+    assert not t._documentary_support_path('support/proofs.tex')
+
+
+def tex_prose_fixture(tmp_path, *, old_paragraph=None, new_paragraph=None, context='',
+                      heading=r'\section{Packing}\label{sec:packing}'):
+    import difflib, hashlib, zipfile
+    old_paragraph = old_paragraph or 'The rooted construction repeats a one vertex cost at separated centers.'
+    new_paragraph = new_paragraph or ('The rooted construction deletes one path neighbor at an endpoint center\n'
+                                      'and two at an internal center.')
+    body = ('\\begin{document}\n' + context + heading + '\n' + old_paragraph + '\n\n'
+            '\\begin{theorem}\nThe cost is $c_i=1$ at an endpoint and $c_i=2$ internally.\n'
+            '\\end{theorem}\n\\begin{proof}\nDelete the stated neighbors.\n\\end{proof}\n'
+            '\\end{document}\n')
+    old_main = ('\\documentclass{article}\n' + body).encode()
+    old_support = ('\\documentclass[11pt]{article}\n' + body).encode()
+    new_main = old_main.replace(old_paragraph.encode(), new_paragraph.encode())
+    new_support = old_support.replace(old_paragraph.encode(), new_paragraph.encode())
+    support_name = 'support/evidence/public-support-v2.1.0/proofs.tex'
+    main_name = 'manuscript/main.tex'
+    digest = lambda value: hashlib.sha256(value).hexdigest()
+    entry = {'path': support_name, 'before_sha256': digest(old_support), 'after_sha256': digest(new_support),
+             'manuscript_path': main_name, 'manuscript_before_sha256': digest(old_main),
+             'manuscript_after_sha256': digest(new_main), 'before_paragraph': old_paragraph,
+             'after_paragraph': new_paragraph}
+    assessment = {key: value for key, value in entry.items() if key not in {'before_paragraph', 'after_paragraph'}}
+    assessment.update(both_diffs_reviewed=True, scientific_content_unchanged=True,
+                      reason='Both preview paragraphs now state the endpoint and internal costs already in the unchanged theorem.')
+    delta = []
+    for area, name, old, new in [('manuscript', main_name, old_main, new_main),
+                                ('support', support_name, old_support, new_support)]:
+        for prefix, value in [('before/', old), ('', new)]:
+            path = tmp_path / (prefix + name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(value)
+        diff = ''.join(difflib.unified_diff(old.decode().splitlines(True), new.decode().splitlines(True),
+                       fromfile='before/' + name, tofile=name, n=12)).encode()
+        (tmp_path / (area + '-tex-prose.diff')).write_bytes(diff)
+        assessment[area + '_diff_sha256'] = digest(diff)
+        delta.append({'path': name, 'before_sha256': digest(old), 'after_sha256': digest(new)})
+    archives = []
+    for name, value in [('old.zip', old_support), ('new.zip', new_support)]:
+        path = tmp_path / name
+        with zipfile.ZipFile(path, 'w') as archive:
+            archive.writestr('p-support-v2.1.0/' + support_name[8:], value)
+            archive.writestr('p-support-v2.1.0/evidence/public-support-v2.1.0/code.py', b'unchanged science')
+            archive.writestr('p-support-v2.1.0/evidence/public-support-v2.1.0/README.md', b'unchanged documentation')
+        archives.append(path)
+    before = {'main.tex': old_main, 'references.tex': b'unchanged bibliography'}
+    reviewed = {**before, 'main.tex': new_main}
+    return dict(authorization={'support_tex_prose_only_changes': [entry]},
+                assessment={'support_tex_prose_only_reviewed': [assessment]}, packet=tmp_path,
+                before=before, reviewed=reviewed, final=dict(reviewed), delta=delta,
+                old_archive=archives[0], new_archive=archives[1], old_version='2.1.0', new_version='2.1.0',
+                old_inventory=t._support_digests(archives[0], '2.1.0'),
+                new_inventory=t._support_digests(archives[1], '2.1.0'))
+
+
+def test_exact_mirrored_tex_prose_requires_actual_archives_and_independent_diffs(tmp_path):
+    bundle = tex_prose_fixture(tmp_path)
+    assert t._validated_support_tex_prose_changes(**bundle) == {
+        'evidence/public-support-v{version}/proofs.tex': bundle['delta'][1]}
+    # The opt-in does not turn TeX into general supporting documentation.
+    assert not t._documentary_support_path('evidence/public-support-v2.1.0/proofs.tex')
+
+
+@pytest.mark.parametrize('mutation', [
+    'no_authorization', 'no_assessment', 'duplicate_authorization', 'duplicate_assessment',
+    'negative_assessment', 'uninspected_diff', 'no_reason', 'wrong_support_hash', 'wrong_main_hash',
+    'assessment_hash', 'missing_source', 'packet_tamper', 'missing_diff', 'invented_diff',
+    'wrong_diff_hash', 'extra_delta', 'omitted_delta', 'support_path_traversal',
+    'wrong_manuscript_path', 'postreview_main', 'postreview_other_file', 'template_change',
+    'main_baseline_tamper', 'support_archive_tamper', 'duplicate_archive_member',
+    'archive_suffix_impostor', 'paragraph_mirror',
+])
+def test_mirrored_tex_prose_fails_closed_on_binding_and_review_tampering(tmp_path, mutation):
+    import zipfile
+    bundle = tex_prose_fixture(tmp_path)
+    auth = bundle['authorization']['support_tex_prose_only_changes']
+    inspected = bundle['assessment']['support_tex_prose_only_reviewed']
+    support = auth[0]['path']
+    if mutation == 'no_authorization': bundle['authorization'].clear()
+    if mutation == 'no_assessment': bundle['assessment'].clear()
+    if mutation == 'duplicate_authorization': auth.append(dict(auth[0]))
+    if mutation == 'duplicate_assessment': inspected.append(dict(inspected[0]))
+    if mutation == 'negative_assessment': inspected[0]['scientific_content_unchanged'] = False
+    if mutation == 'uninspected_diff': inspected[0]['both_diffs_reviewed'] = False
+    if mutation == 'no_reason': inspected[0]['reason'] = ''
+    if mutation in {'wrong_support_hash', 'wrong_main_hash'}:
+        field = 'before_sha256' if mutation == 'wrong_support_hash' else 'manuscript_before_sha256'
+        auth[0][field] = inspected[0][field] = '0' * 64
+    if mutation == 'assessment_hash': inspected[0]['after_sha256'] = '0' * 64
+    if mutation == 'missing_source': (tmp_path / ('before/' + support)).unlink()
+    if mutation == 'packet_tamper': (tmp_path / support).write_text('packet differs from actual support ZIP')
+    if mutation == 'missing_diff': (tmp_path / 'support-tex-prose.diff').unlink()
+    if mutation == 'invented_diff': (tmp_path / 'manuscript-tex-prose.diff').write_text('approved')
+    if mutation == 'wrong_diff_hash': inspected[0]['support_diff_sha256'] = '0' * 64
+    if mutation == 'extra_delta': bundle['delta'].append({'path': 'support/README.md'})
+    if mutation == 'omitted_delta': bundle['delta'].pop()
+    if mutation == 'support_path_traversal': auth[0]['path'] = inspected[0]['path'] = 'support/../proofs.tex'
+    if mutation == 'wrong_manuscript_path': auth[0]['manuscript_path'] = inspected[0]['manuscript_path'] = 'manuscript/other.tex'
+    if mutation == 'postreview_main': bundle['final']['main.tex'] += b'after review'
+    if mutation == 'postreview_other_file': bundle['final']['references.tex'] += b'after review'
+    if mutation == 'template_change':
+        bundle['reviewed']['template.cls'] = bundle['final']['template.cls'] = b'new class'
+    if mutation == 'main_baseline_tamper': bundle['before']['main.tex'] += b'baseline changed'
+    if mutation in {'support_archive_tamper', 'duplicate_archive_member', 'archive_suffix_impostor'}:
+        path = bundle['new_archive']
+        value = (tmp_path / support).read_bytes()
+        with zipfile.ZipFile(path, 'w') as archive:
+            name = 'p-support-v2.1.0/' + support[8:]
+            if mutation == 'archive_suffix_impostor': name = 'p-support-v2.1.0/impostor/' + support[8:]
+            archive.writestr(name, value + (b'tampered' if mutation == 'support_archive_tamper' else b''))
+            if mutation == 'duplicate_archive_member':
+                archive.writestr('other-support-v2.1.0/' + support[8:], value)
+    if mutation == 'paragraph_mirror': auth[0]['after_paragraph'] += ' Different wording.'
+    with pytest.raises(ValueError):
+        t._validated_support_tex_prose_changes(**bundle)
+
+
+@pytest.mark.parametrize('paragraph', [
+    'The cost is $2$.', r'The cost is \(2\).', r'The cost is \two.',
+    'The cost is {two}.', 'The cost is two% hidden', 'The cost is ^^32.',
+    'The cost is two & more.', 'The cost is two\tmore.', 'The cost is two\n\nMore prose.',
+    'The cost is two\x00.', 'The cost is twó.',
+])
+def test_tex_prose_cannot_introduce_math_commands_or_control_syntax(tmp_path, paragraph):
+    bundle = tex_prose_fixture(tmp_path, new_paragraph=paragraph)
+    with pytest.raises(ValueError):
+        t._validated_support_tex_prose_changes(**bundle)
+
+
+@pytest.mark.parametrize('context', [
+    '\\begin{proof}\n', '\\begin{customtheorem}\n', '\\begin{remark}\n',
+    '\\begin{frontmatter}\n', '\\begin {proof}\n', '\\begin % hidden\n {proof}\n',
+    '\\begin{proof}\n% \\end{proof}\n', r'\begin{proof}' + '\n' + r'\\% \end{proof}' + '\n',
+    '{\n', '\\somecommand{\n', '$\n', '$$\n', '\\[\n', '\\(\n',
+    '\\begingroup\n', '\\bgroup\n', '\\everypar{macro}\n',
+    '\\catcode`X=0\n', '\\csname begin\\endcsname{proof}\n',
+    '\\verb|dynamic syntax|\n', '\\scantokens{dynamic}\n', '^^5cbegin{proof}\n',
+    '\\proof\n', '\\capture\n', '\\long\\def\\capture#1\\STOP{#1}\n\\capture\n',
+    '\\end{document}\n\\begin{document}\n', '\\endinput\n', '\\stop\n',
+    '\\begin{verbatim}\n\\end{verbatim}\n', '\\begin{lstlisting}\n\\end{lstlisting}\n',
+    '\r', '\x00',
+])
+def test_mirrored_plain_paragraph_cannot_hide_inside_scientific_or_dynamic_tex(tmp_path, context):
+    bundle = tex_prose_fixture(tmp_path, context=context)
+    with pytest.raises(ValueError):
+        t._validated_support_tex_prose_changes(**bundle)
+
+
+def test_tex_context_handles_real_comments_and_escaped_percent():
+    assert t._tex_document_body('\\begin{document}\n% \\begin{proof}\n')
+    assert t._tex_document_body('\\begin{document}\n\\% ordinary percent\n')
+    assert not t._tex_document_body('\\begin{document}\n\\begin{proof}\n\\\\% \\end{proof}\n')
+    assert not t._tex_document_body('\\long\\def\\capture#1\\STOP{#1}\n\\begin{document}\n\\capture\n')
+    assert not t._tex_document_body('\\newcommand{\\section}{capture}\n\\begin{document}\n')
+    assert not t._tex_document_body('\\let\\section\\proof\n\\begin{document}\n')
+
+
+@pytest.mark.parametrize('mutation', ['extra_hunk', 'protected_theorem', 'label', 'duplicate_paragraph', 'partial_paragraph'])
+def test_exact_prose_replacement_rejects_other_source_edits_even_if_reviewer_approves(tmp_path, mutation):
+    import difflib, hashlib
+    bundle = tex_prose_fixture(tmp_path)
+    old, new = bundle['before']['main.tex'], bundle['reviewed']['main.tex']
+    if mutation == 'extra_hunk': new += b'Unrelated prose.\n'
+    if mutation == 'protected_theorem': new = new.replace(b'$c_i=2$', b'$c_i=3$')
+    if mutation == 'label': new = new.replace(b'sec:packing', b'sec:other')
+    if mutation == 'duplicate_paragraph':
+        paragraph = bundle['authorization']['support_tex_prose_only_changes'][0]['before_paragraph'].encode()
+        old += paragraph
+    if mutation == 'partial_paragraph': old = old.replace(b'The rooted', b'Additional text. The rooted')
+    bundle['before']['main.tex'], bundle['reviewed']['main.tex'], bundle['final']['main.tex'] = old, new, new
+    for prefix, value in [('before/', old), ('', new)]:
+        (tmp_path / (prefix + 'manuscript/main.tex')).write_bytes(value)
+    digest = lambda value: hashlib.sha256(value).hexdigest()
+    entry = bundle['authorization']['support_tex_prose_only_changes'][0]
+    inspected = bundle['assessment']['support_tex_prose_only_reviewed'][0]
+    entry['manuscript_before_sha256'] = inspected['manuscript_before_sha256'] = digest(old)
+    entry['manuscript_after_sha256'] = inspected['manuscript_after_sha256'] = digest(new)
+    bundle['delta'][0].update(before_sha256=digest(old), after_sha256=digest(new))
+    diff = ''.join(difflib.unified_diff(old.decode().splitlines(True), new.decode().splitlines(True),
+                  fromfile='before/manuscript/main.tex', tofile='manuscript/main.tex', n=12)).encode()
+    (tmp_path / 'manuscript-tex-prose.diff').write_bytes(diff)
+    inspected['manuscript_diff_sha256'] = digest(diff)
+    with pytest.raises(ValueError):
+        t._validated_support_tex_prose_changes(**bundle)
+
+
+@pytest.mark.parametrize('mutation', ['proof', 'math', 'label', 'extra_hunk', 'different_wrapping'])
+def test_support_tex_cannot_hide_other_changes_behind_approved_full_hashes(tmp_path, mutation):
+    import difflib, hashlib, zipfile
+    bundle = tex_prose_fixture(tmp_path)
+    entry = bundle['authorization']['support_tex_prose_only_changes'][0]
+    inspected = bundle['assessment']['support_tex_prose_only_reviewed'][0]
+    name = entry['path']
+    old = (tmp_path / ('before/' + name)).read_bytes()
+    new = (tmp_path / name).read_bytes()
+    if mutation == 'proof': new = new.replace(b'Delete the stated neighbors.', b'Use an unstated assumption.')
+    if mutation == 'math': new = new.replace(b'$c_i=2$', b'$c_i=3$')
+    if mutation == 'label': new = new.replace(b'sec:packing', b'sec:other')
+    if mutation == 'extra_hunk': new += b'Unrelated supporting claim.\n'
+    if mutation == 'different_wrapping': new = new.replace(b'center\nand two', b'center and\ntwo')
+    archive_path = bundle['new_archive']
+    with zipfile.ZipFile(archive_path) as archive:
+        members = {item.filename: archive.read(item) for item in archive.infolist()}
+    members['p-support-v2.1.0/' + name[8:]] = new
+    with zipfile.ZipFile(archive_path, 'w') as archive:
+        for member, value in members.items(): archive.writestr(member, value)
+    bundle['new_inventory'] = t._support_digests(archive_path, '2.1.0')
+    (tmp_path / name).write_bytes(new)
+    digest = lambda value: hashlib.sha256(value).hexdigest()
+    entry['after_sha256'] = inspected['after_sha256'] = bundle['delta'][1]['after_sha256'] = digest(new)
+    diff = ''.join(difflib.unified_diff(old.decode().splitlines(True), new.decode().splitlines(True),
+                  fromfile='before/' + name, tofile=name, n=12)).encode()
+    (tmp_path / 'support-tex-prose.diff').write_bytes(diff)
+    inspected['support_diff_sha256'] = digest(diff)
+    with pytest.raises(ValueError):
+        t._validated_support_tex_prose_changes(**bundle)
+
+
+@pytest.mark.parametrize('mutation', ['science', 'documentation', 'added', 'removed'])
+def test_complete_support_inventory_stays_fixed_during_tex_prose_closeout(tmp_path, mutation):
+    import zipfile
+    bundle = tex_prose_fixture(tmp_path)
+    path = bundle['new_archive']
+    with zipfile.ZipFile(path) as archive:
+        members = {item.filename: archive.read(item) for item in archive.infolist()}
+    base = 'p-support-v2.1.0/evidence/public-support-v2.1.0/'
+    if mutation == 'science': members[base + 'code.py'] += b'changed science'
+    if mutation == 'documentation': members[base + 'README.md'] += b'unreviewed statement'
+    if mutation == 'added': members[base + 'extra.tex'] = b'new proof'
+    if mutation == 'removed': del members[base + 'code.py']
+    with zipfile.ZipFile(path, 'w') as archive:
+        for name, value in members.items(): archive.writestr(name, value)
+    bundle['new_inventory'] = t._support_digests(path, '2.1.0')
+    with pytest.raises(ValueError, match='other supporting inputs'):
+        t._validated_support_tex_prose_changes(**bundle)
 
 
 def repackaging_fixture(tmp_path):

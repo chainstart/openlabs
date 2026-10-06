@@ -231,6 +231,244 @@ def _documentary_support_path(name):
     return Path(name).suffix in {'.md', '.svg'} or Path(name).name == 'CLAIMS.yaml'
 
 
+def _tex_document_body(prefix):
+    """Conservative lexical tripwire, not a TeX interpreter or semantic proof."""
+    import re
+    if '^^' in prefix or any(ord(char) < 32 and char not in '\n\t' for char in prefix):
+        return False
+    forbidden = {'catcode', 'csname', 'endcsname', 'scantokens', 'detokenize',
+                 'verb', 'Verb', 'lstinline', 'inputminted', 'lstinputlisting',
+                 'begingroup', 'endgroup', 'bgroup', 'egroup', 'everypar',
+                 'everymath', 'everydisplay', 'obeylines', 'obeyspaces',
+                 'expandafter', 'noexpand', 'futurelet', 'if', 'ifx', 'ifnum',
+                 'ifdim', 'ifcat', 'ifcase', 'ifdefined', 'ifcsname', 'ifodd',
+                 'iftrue', 'iffalse', 'else', 'fi', 'endinput', 'stop', 'enddocument'}
+    definitions = {'def', 'gdef', 'edef', 'xdef', 'let', 'newcommand', 'renewcommand',
+                   'providecommand', 'newenvironment', 'renewenvironment', 'global',
+                   'long', 'outer', 'makeatletter', 'makeatother'}
+    body_commands = {'begin', 'end', 'section', 'subsection', 'subsubsection', 'label',
+                     'Cref', 'cref', 'ref', 'eqref', 'cite', 'citep', 'citet', 'emph',
+                     'textbf', 'textit', 'texttt', 'footnote', 'url', 'href', 'maketitle',
+                     'par', 'noindent', 'smallskip', 'medskip', 'bigskip',
+                     '\\', '~', "'", '"', '^', '`', '=', '.', '%', '#', '&', '_', '{', '}', '$', '[', '('}
+    opaque_environments = {'verbatim', 'Verbatim', 'lstlisting', 'minted', 'comment',
+                           'filecontents', 'filecontents*', 'luacode', 'luacode*'}
+    preamble_commands = {'documentclass', 'usepackage', 'hypersetup', 'makeatletter',
+                         'makeatother', 'let', 'newtheorem', 'setlength', 'newcommand',
+                         'journal', 'theoremstyle', 'title', 'author', 'date', 'begin'}
+    environments, math = [], []
+    document_seen = False
+    depth = 0
+    index = 0
+    while index < len(prefix):
+        char = prefix[index]
+        if char == '%':
+            end = prefix.find('\n', index)
+            index = len(prefix) if end < 0 else end + 1
+            continue
+        if char == '\\':
+            command = re.match(r'\\([A-Za-z@]+|[^\n])', prefix[index:])
+            if command is None:
+                return False
+            name = command[1]
+            index += len(command[0])
+            if name in forbidden:
+                return False
+            if not document_seen:
+                if not depth and not math and name not in preamble_commands:
+                    return False
+                if name == 'let':
+                    # Existing elsarticle title-style alias; no structural aliasing.
+                    alias = re.match(r'\s*\\ps@pprintTitle\s*\\ps@plain\b', prefix[index:])
+                    if alias is None:
+                        return False
+                    index += len(alias[0])
+                elif name == 'newcommand':
+                    target = re.match(r'\s*\{\\([A-Za-z@]+)\}', prefix[index:])
+                    if target is None or target[1] in body_commands | forbidden | definitions:
+                        return False
+            if document_seen and (name in definitions or (environments == ['document']
+                    and not depth and not math and name not in body_commands)):
+                return False
+            if name in {'begin', 'end'}:
+                # TeX permits comments and whitespace between the command and argument.
+                while index < len(prefix) and (prefix[index].isspace() or prefix[index] == '%'):
+                    if prefix[index] == '%':
+                        end = prefix.find('\n', index)
+                        index = len(prefix) if end < 0 else end + 1
+                    else:
+                        index += 1
+                argument = re.match(r'\{([A-Za-z][A-Za-z0-9*:_-]*)\}', prefix[index:])
+                if argument is None or depth:
+                    return False
+                environment = argument[1]
+                index += len(argument[0])
+                if environment in opaque_environments:
+                    return False
+                if environment == 'document':
+                    if name != 'begin' or document_seen:
+                        return False
+                    document_seen = True
+                if name == 'begin':
+                    environments.append(environment)
+                elif not environments or environments.pop() != environment:
+                    return False
+            elif name in {'(', '['}:
+                if math:
+                    return False
+                math.append(name)
+            elif name in {')', ']'}:
+                if not math or math.pop() != {')': '(', ']': '['}[name]:
+                    return False
+            continue
+        if char in '{}':
+            depth += 1 if char == '{' else -1
+            if depth < 0:
+                return False
+        elif char == '$':
+            delimiter = '$$' if prefix.startswith('$$', index) else '$'
+            index += len(delimiter) - 1
+            if math:
+                if math.pop() != delimiter:
+                    return False
+            else:
+                math.append(delimiter)
+        index += 1
+    return environments == ['document'] and depth == 0 and not math
+
+
+def _plain_tex_paragraph(source, paragraph):
+    """One complete plain paragraph immediately after a simple section heading.
+
+    Restricting this opt-in avoids treating an arbitrary TeX hunk as prose. All
+    other source bytes must separately remain identical; the independent
+    addendum still judges whether the correction preserves scientific meaning.
+    """
+    import re
+    m._require(isinstance(paragraph, str) and 0 < len(paragraph) <= 4096
+               and paragraph.strip() == paragraph
+               and all(char == '\n' or 32 <= ord(char) <= 126 for char in paragraph)
+               and not any(char in paragraph for char in '\\{}$&#_^%~')
+               and not re.search(r'\n[ \t]*\n', paragraph), 'not a plain TeX prose paragraph')
+    text = source.decode('utf-8')
+    m._require(text.count(paragraph) == 1, 'TeX prose paragraph is missing or ambiguous')
+    start = text.index(paragraph)
+    end = start + len(paragraph)
+    m._require(start > 0 and text[start - 1] == '\n' and text[end:end + 2] == '\n\n',
+               'TeX prose edit is not a complete paragraph')
+    heading = text[:start - 1].rsplit('\n', 1)[-1]
+    m._require(re.fullmatch(r'\\(?:section|subsection|subsubsection)\{[^{}\\\n]+\}'
+                           r'(?:\\label\{[A-Za-z0-9:._-]+\})?', heading) is not None,
+               'TeX prose paragraph must directly follow a simple section heading')
+    m._require(_tex_document_body(text[:start]), 'TeX prose paragraph has unsupported context')
+    return heading
+
+
+def _support_tex_member(path, version, normalized_name):
+    """Read the one exact normalized member, never a suffix-matching packet copy."""
+    import zipfile
+    from pathlib import PurePosixPath
+    with zipfile.ZipFile(path) as archive:
+        members = archive.infolist()
+        m._require(len(members) <= 10000, 'too many support members')
+        selected = []
+        for item in members:
+            name = PurePosixPath(item.filename)
+            m._require(not name.is_absolute() and '..' not in name.parts
+                       and '\\' not in item.filename
+                       and (item.external_attr >> 16) & 0o170000 != 0o120000,
+                       'unsafe support TeX archive member')
+            if not item.is_dir() and next(iter(m._support_members({item.filename: b''}, version))) == normalized_name:
+                selected.append(item)
+        m._require(len(selected) == 1 and selected[0].file_size <= 2 * 1024 * 1024,
+                   'missing, ambiguous or oversized support TeX member')
+        return archive.read(selected[0])
+
+
+def _validated_support_tex_prose_changes(authorization, assessment, packet, before, reviewed,
+                                         final, delta, old_archive, new_archive,
+                                         old_version, new_version, old_inventory, new_inventory):
+    """Exact mirrored prose opt-in, within the outer paper/version-bound addendum.
+
+    Packet contract: complete before/<path> and <path> files for both sources;
+    manuscript-tex-prose.diff and support-tex-prose.diff are UTF-8 unified diffs
+    with 12 context lines, fromfile='before/'+path, tofile=path. The independent
+    assessment binds their hashes and explains why both diffs preserve science.
+    """
+    import difflib
+    import hashlib
+    from pathlib import PurePosixPath
+    from paper_writing.review_delta import scope_reasons
+    changes = authorization.get('support_tex_prose_only_changes', [])
+    inspected = assessment.get('support_tex_prose_only_reviewed', [])
+    if not changes and not inspected:
+        return {}
+    m._require(isinstance(changes, list) and len(changes) == 1
+               and isinstance(inspected, list) and len(inspected) == 1,
+               'one authorized and independently inspected TeX prose change required')
+    entry, judgment = changes[0], inspected[0]
+    identities = {'path', 'before_sha256', 'after_sha256', 'manuscript_path',
+                  'manuscript_before_sha256', 'manuscript_after_sha256'}
+    m._keys(entry, identities | {'before_paragraph', 'after_paragraph'}, 'TeX prose authorization')
+    m._keys(judgment, identities | {'manuscript_diff_sha256', 'support_diff_sha256',
+                                  'both_diffs_reviewed', 'scientific_content_unchanged', 'reason'},
+            'independent TeX prose assessment')
+    m._require(all(judgment[key] == entry[key] for key in identities)
+               and judgment['both_diffs_reviewed'] is True
+               and judgment['scientific_content_unchanged'] is True and m._text(judgment['reason']),
+               'independent TeX prose assessment missing or blocking')
+    support_name = entry['path']
+    manuscript_name = entry['manuscript_path']
+    m._require(isinstance(support_name, str) and support_name.startswith('support/')
+               and PurePosixPath(support_name).name == 'proofs.tex' and '\\' not in support_name
+               and '..' not in PurePosixPath(support_name).parts
+               and PurePosixPath(support_name).as_posix() == support_name
+               and manuscript_name == 'manuscript/main.tex', 'invalid mirrored TeX prose paths')
+    normalized = next(iter(m._support_members(
+        {f'archive-support-v{new_version}/' + support_name[8:]: b''}, new_version)))
+    controls = {'ZENODO_MANIFEST.json', 'SHA256SUMS', 'ARA_SUPPORT_README.md'}
+    m._require(set(old_inventory) == set(new_inventory)
+               and all(old_inventory[name] == new_inventory[name]
+                       for name in old_inventory if name != normalized and name not in controls),
+               'TeX prose route cannot change other supporting inputs')
+    support = (_support_tex_member(old_archive, old_version, normalized),
+               _support_tex_member(new_archive, new_version, normalized))
+    m._require(set(before) == set(reviewed) and reviewed == final and 'main.tex' in before
+               and all(before[name] == reviewed[name] for name in before if name != 'main.tex'),
+               'TeX prose route cannot mix other manuscript or postreview changes')
+    manuscript = (before['main.tex'], reviewed['main.tex'])
+    digest = lambda value: hashlib.sha256(value).hexdigest()
+    expected_delta = [
+        {'path': manuscript_name, 'before_sha256': digest(manuscript[0]), 'after_sha256': digest(manuscript[1])},
+        {'path': support_name, 'before_sha256': digest(support[0]), 'after_sha256': digest(support[1])},
+    ]
+    m._require(delta == expected_delta, 'TeX prose route requires exactly the two actual source deltas')
+    headings = []
+    for area, name, values, prefix in (('manuscript', manuscript_name, manuscript, 'manuscript_'),
+                                      ('support', support_name, support, '')):
+        m._require([digest(value) for value in values] ==
+                   [entry[prefix + 'before_sha256'], entry[prefix + 'after_sha256']],
+                   'full TeX source hashes differ')
+        for side, value, paragraph in zip(('before/', ''), values,
+                                          (entry['before_paragraph'], entry['after_paragraph'])):
+            headings.append(_plain_tex_paragraph(value, paragraph))
+            path = Path(packet) / (side + name)
+            m._require(path.is_file() and not any(p.is_symlink() for p in [path, *path.parents])
+                       and path.read_bytes() == value, 'reviewer did not receive complete actual TeX sources')
+        old_text, new_text = entry['before_paragraph'].encode(), entry['after_paragraph'].encode()
+        m._require(old_text != new_text and values[0].replace(old_text, new_text, 1) == values[1]
+                   and not scope_reasons({'main.tex': values[0]}, {'main.tex': values[1]}),
+                   'TeX prose delta changes bytes outside the authorized paragraph or native scope')
+        actual_diff = ''.join(difflib.unified_diff(values[0].decode().splitlines(True),
+            values[1].decode().splitlines(True), fromfile='before/' + name, tofile=name, n=12)).encode()
+        path = Path(packet) / (area + '-tex-prose.diff')
+        m._require(path.is_file() and not path.is_symlink() and path.read_bytes() == actual_diff
+                   and judgment[area + '_diff_sha256'] == digest(actual_diff),
+                   'independent reviewer did not inspect the actual TeX diff')
+    m._require(len(set(headings)) == 1, 'manuscript and support prose section contexts differ')
+    return {normalized: expected_delta[1]}
+
+
 def _authorized_module_docstring_delta(row, authorization, assessment, packet):
     """Exact opt-in documentation edit, not permission to change executable AST.
 
@@ -558,6 +796,9 @@ def validate(paper_id, certificate, metadata, root):
     old_support = _support_digests(old_support_path, old_version)
     new_support = _support_digests(support_path, support['paper_version'])
     documented = [r for r in delta if r['path'].startswith('support/')]
+    tex_prose = _validated_support_tex_prose_changes(auth, addendum, packet, old_complete,
+        reviewed, sources, delta, old_support_path, support_path, old_version, support['paper_version'],
+        old_support, new_support)
     if 'support_repackaging_authorization' in bindings:
         repack_auth = m._json(bound(bindings['support_repackaging_authorization']))
         m._require(repack_auth.get('paper_id') == paper_id
@@ -577,7 +818,7 @@ def validate(paper_id, certificate, metadata, root):
                 continue
             if Path(name).name in m._SUPPORT_METADATA:
                 continue
-            matching = [r for r in documented if name == r['path'][8:]
+            matching = [r for r in documented if tex_prose.get(name) == r or name == r['path'][8:]
                         or name.endswith('/' + r['path'][8:])]
             m._require(len(matching) == 1, 'unreviewed supporting science/code change: ' + name)
             row = matching[0]
@@ -585,7 +826,8 @@ def validate(paper_id, certificate, metadata, root):
                               and _integrity_rebinding_from_archives(name, old_support_path,
                                   support_path, old_version, support['paper_version']))
             docstring_only = _authorized_module_docstring_delta(row, auth, addendum, packet)
-            m._require((_documentary_support_path(name) or integrity_only or docstring_only)
+            m._require((_documentary_support_path(name) or integrity_only or docstring_only
+                        or tex_prose.get(name) == row)
                        and row['before_sha256'] == before
                        and row['after_sha256'] == after, 'support delta differs')
             used.append(row)
