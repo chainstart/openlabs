@@ -101,3 +101,21 @@ def test_explicit_unrecorded_model_blocks_declaration():
     metadata, tex = sample()
     metadata["declarations"]["ai_use"]["model_usage"] = []
     assert not check_record(metadata, tex)["valid"]
+@pytest.mark.parametrize('name', ['references', 'references.tex'])
+def test_final_reference_include_is_not_declaration_prose(name):
+    from paper_writing.declarations import section
+    source = '\\section*{Generative AI declaration}\nExact disclosure.\n\\input{' + name + '}\n\\end{document}'
+    assert section(source, 'ai_use')[1] == 'Exact disclosure.'
+
+
+def test_reference_include_followed_by_prose_remains_bound():
+    from paper_writing.declarations import section
+    source = '\\section*{Generative AI declaration}\nExact disclosure.\n\\input{references.tex}\nAdditional disclosure.\n\\end{document}'
+    assert 'Additional disclosure.' in section(source, 'ai_use')[1]
+    assert '\\input{references.tex}' in section(source, 'ai_use')[1]
+
+
+def test_arbitrary_final_include_remains_bound():
+    from paper_writing.declarations import section
+    source = '\\section*{Generative AI declaration}\nExact disclosure.\n\\input{disclosure.tex}\n\\end{document}'
+    assert '\\input{disclosure.tex}' in section(source, 'ai_use')[1]
