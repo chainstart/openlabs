@@ -74,3 +74,34 @@ def test_already_tracked_pdf_remains_git_frozen(setup):
     git(root, 'add', '-f', str(pdf.relative_to(root)))
     with pytest.raises(HandoffError, match='Tracked manuscript'):
         _release_artifact_bindings(pid, meta, root, [pdf, source])
+
+
+@pytest.mark.parametrize('name,content,accepted', [
+    ('main.idx', b'', True),
+    ('main.idx', b'\\indexentry{scientific content}{1}', False),
+    ('other.idx', b'', False),
+    ('main.aux', b'', False),
+    ('nested/main.idx', b'', False),
+])
+def test_only_empty_root_index_marker_can_be_bound(setup, name, content, accepted):
+    root, pid, meta, manifest, pdf, source = setup
+    marker = pdf.parent / name
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_bytes(content)
+    with (root / '.gitignore').open('a') as f:
+        f.write('*.idx\n*.aux\n')
+    write_support_artifact_manifest(root, [pdf, marker], manifest)
+    meta['submission_package']['artifact_manifest']['sha256'] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    git(root, 'add', '.gitignore', str(manifest.relative_to(root)))
+    git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'Bind exact marker')
+    files = [pdf, source, marker]
+    if not accepted:
+        with pytest.raises(HandoffError, match='Only canonical'):
+            _release_artifact_bindings(pid, meta, root, files)
+        return
+    assert _release_artifact_bindings(pid, meta, root, files) == (manifest, {
+        str(pdf.relative_to(root)), str(marker.relative_to(root))})
+    # Mutation after binding cannot turn the empty marker into hidden content.
+    marker.write_bytes(b'x')
+    with pytest.raises(HandoffError, match='Only canonical'):
+        _release_artifact_bindings(pid, meta, root, files)
