@@ -471,6 +471,8 @@ def record_quality_gate(
     repo_root = Path(root).resolve()
     if venue_type not in {"conference", "journal"}:
         raise ValueError("venue_type must be conference or journal")
+    from paper_writing.review_flow import require_legacy_review_allowed
+    require_legacy_review_allowed(repo_root, "The legacy quality-gate recorder")
     if not 0 <= score <= 10:
         raise ValueError("score must be between 0 and 10")
     if type(revision_rounds) is not int or revision_rounds < 0:
@@ -820,6 +822,8 @@ def reuse_review_for_metadata_only_revision(
     """
 
     repo_root = Path(root).resolve()
+    from paper_writing.review_flow import require_legacy_review_allowed
+    require_legacy_review_allowed(repo_root, "Legacy metadata-only review reuse")
     payload = load_paper_metadata(paper_id, repo_root)
     release = payload.get("writing_release")
     release = release if isinstance(release, Mapping) else {}

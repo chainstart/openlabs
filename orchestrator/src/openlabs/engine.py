@@ -2219,13 +2219,11 @@ def ingest_results(
                         "task_type": "paper_review",
                         "objective": (
                             "Resolve the paper ID from the writer's registered artifacts and run "
-                            "`paper-writing review route --paper-id <id>` before launching a scored reviewer. "
-                            "Follow its validated route: metadata_reuse is terminal; delta uses the "
-                            "fresh editorial delta runner, validates/applies its receipt without new scores; "
-                            "full uses the configured independent full panel; blocked stops without "
-                            "another reviewer launch. Never select scope from "
-                            "the writer's text_only assertion. Do not edit the manuscript. If it fails, return exactly "
-                            "one structured text_revision or evidence_remediation action."
+                            "`paper-writing review unified-run --paper-id <id>` (add --response for a re-review). "
+                            "It runs the preflight, the target-journal editor screen, two blind referees and the "
+                            "conservative decision; do not reproduce its stages or edit the manuscript. Return "
+                            "paper_candidate=true only for outcome ready; otherwise return exactly one structured "
+                            "text_revision or evidence_remediation action, or none for retarget_required/blocked."
                         ),
                         "skill": "openlabs-paper-review",
                         "routing_reason": "paper_review_scope_selection",

@@ -1,5 +1,12 @@
 # OpenLabs local LLM quality gate
 
+> **Superseded for review (2026-10-06).** With `quality_gate.review_process: unified_v1`, the only
+> route to `writing_release.ready` is `review unified-run` (see `openlabs-paper-review` and
+> `docs/UNIFIED_REVIEW_DESIGN.zh.md`). The minimum score, CAS Zone 1 decision standard, separate
+> editorial screen, delta routes and closeouts described below no longer gate new work; the
+> sections on journal targets, AI-use disclosure, readability, style-check and support-check still
+> apply and are enforced by the unified preflight.
+
 This overlay is mandatory for every paper profile. `registry/settings.yaml#quality_gate` is the
 single source of thresholds. The current minimum LLM self-review score is **5.0/10**. Never round
 up, average around, or bypass it inside a profile. Change the threshold policy only with explicit

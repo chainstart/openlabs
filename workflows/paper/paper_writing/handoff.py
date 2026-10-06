@@ -492,10 +492,21 @@ def _release_snapshot(metadata: Mapping[str, Any]) -> dict[str, Any]:
             "manuscript_snapshot_sha256",
             "manuscript_version",
             "support_package_sha256",
+            "review_process",
+            "target_journal",
+            "editor_decision",
+            "rounds_for_target",
+            "max_rounds_per_target",
+            "decision_record",
+            "decision_record_sha256",
         )
         if release.get(field) is not None
     }
-    snapshot["quality_gate_schema"] = "ara.paper_writing.quality_gate.v2"
+    snapshot["quality_gate_schema"] = (
+        "openlabs.review.decision.v1"
+        if release.get("review_process") == "unified_v1"
+        else "ara.paper_writing.quality_gate.v2"
+    )
     review = metadata.get("ara_llm_self_review")
     if isinstance(review, Mapping) and review.get("source"):
         snapshot["review_record"] = str(review["source"])
@@ -1253,100 +1264,104 @@ def validate_release_preconditions(
                     f"{first.get('code') or 'SUPPORT-CHECK'}: "
                     f"{first.get('message') or 'unknown support-material error'}"
                 )
-    minimum_score = float(configured_gate.get("minimum_score", 5.0))
-    raw_score = release.get("score")
-    raw_target_score = release.get("target_score")
-    if (
-        isinstance(raw_score, bool)
-        or not isinstance(raw_score, (int, float))
-        or isinstance(raw_target_score, bool)
-        or not isinstance(raw_target_score, (int, float))
-    ):
-        raise HandoffError("Writing quality gate score metadata is incomplete")
-    try:
-        score = float(raw_score)
-        target_score = float(raw_target_score)
-    except (TypeError, ValueError) as exc:
-        raise HandoffError("Writing quality gate score metadata is incomplete") from exc
-    if (
-        not math.isfinite(score)
-        or not math.isfinite(target_score)
-        or target_score < minimum_score
-        or target_score > 10
-        or score < target_score
-        or score > 10
-    ):
-        raise HandoffError(
-            f"Writing quality gate requires at least {minimum_score:g}/10; got {score:g}"
-        )
-
+    unified_review = configured_gate.get("review_process") == "unified_v1"
+    revision_exception = None
     venue_type = str(release.get("venue_type") or "")
-    configured_standard_value = configured_gate.get("decision_standard")
-    configured_standard = str(configured_standard_value or venue_type)
-    if configured_standard_value is not None:
-        release_standard = str(release.get("decision_standard") or "")
-        if release_standard != configured_standard:
+    if not unified_review:
+        minimum_score = float(configured_gate.get("minimum_score", 5.0))
+        raw_score = release.get("score")
+        raw_target_score = release.get("target_score")
+        if (
+            isinstance(raw_score, bool)
+            or not isinstance(raw_score, (int, float))
+            or isinstance(raw_target_score, bool)
+            or not isinstance(raw_target_score, (int, float))
+        ):
+            raise HandoffError("Writing quality gate score metadata is incomplete")
+        try:
+            score = float(raw_score)
+            target_score = float(raw_target_score)
+        except (TypeError, ValueError) as exc:
+            raise HandoffError("Writing quality gate score metadata is incomplete") from exc
+        if (
+            not math.isfinite(score)
+            or not math.isfinite(target_score)
+            or target_score < minimum_score
+            or target_score > 10
+            or score < target_score
+            or score > 10
+        ):
             raise HandoffError(
-                "Writing quality gate uses a stale decision standard; rerun quality-gate"
+                f"Writing quality gate requires at least {minimum_score:g}/10; got {score:g}"
             )
-    else:
-        release_standard = str(release.get("decision_standard") or venue_type)
-    decision = str(release.get("decision") or "")
-    try:
-        decisions = (
-            decisions_for_standard(release_standard, venue_type=venue_type)
-            if venue_type in {"conference", "journal"}
-            else ()
-        )
-    except ValueError:
-        decisions = ()
-    if configured_standard == CAS_ZONE_1_JOURNAL_VIEW:
-        configured_minimum = str(
-            configured_gate.get("cas_zone_1_minimum_decision", "minor_revision")
-        )
-    else:
-        configured_minimum = str(
-            configured_gate.get(
-                "conference_minimum_decision"
-                if configured_standard == "conference"
-                else "journal_minimum_decision",
-                "weak_accept"
-                if configured_standard == "conference"
-                else "minor_revision",
+
+        venue_type = str(release.get("venue_type") or "")
+        configured_standard_value = configured_gate.get("decision_standard")
+        configured_standard = str(configured_standard_value or venue_type)
+        if configured_standard_value is not None:
+            release_standard = str(release.get("decision_standard") or "")
+            if release_standard != configured_standard:
+                raise HandoffError(
+                    "Writing quality gate uses a stale decision standard; rerun quality-gate"
+                )
+        else:
+            release_standard = str(release.get("decision_standard") or venue_type)
+        decision = str(release.get("decision") or "")
+        try:
+            decisions = (
+                decisions_for_standard(release_standard, venue_type=venue_type)
+                if venue_type in {"conference", "journal"}
+                else ()
             )
-        )
-    if (
-        not decisions
-        or release_standard != configured_standard
-        or decision not in decisions
-        or configured_minimum not in decisions
-        or not decision_meets_standard_threshold(
-            decision,
-            configured_minimum,
-            release_standard,
-            venue_type=venue_type,
-        )
-    ):
-        raise HandoffError(
-            "Writing quality-gate decision does not meet the configured review threshold"
-        )
-    if not str(release.get("reviewed_at") or "").strip():
-        raise HandoffError("Writing quality gate is missing reviewed_at")
-    gated_version = str(release.get("manuscript_version") or "")
-    if not gated_version:
-        raise HandoffError(
-            "Quality gate is not bound to a paper version; rerun quality-gate"
-        )
-    if gated_version != str(metadata.get("version") or "1.0.0"):
-        raise HandoffError(
-            "Paper version changed after the quality review; rerun quality-gate"
-        )
-    try:
-        revision_exception = validate_release_revision_policy(
-            paper_id, metadata, configured_gate, root=repo_root
-        )
-    except (ValueError, OSError) as exc:
-        raise HandoffError(f"Writing quality-gate revision policy is invalid: {exc}") from exc
+        except ValueError:
+            decisions = ()
+        if configured_standard == CAS_ZONE_1_JOURNAL_VIEW:
+            configured_minimum = str(
+                configured_gate.get("cas_zone_1_minimum_decision", "minor_revision")
+            )
+        else:
+            configured_minimum = str(
+                configured_gate.get(
+                    "conference_minimum_decision"
+                    if configured_standard == "conference"
+                    else "journal_minimum_decision",
+                    "weak_accept"
+                    if configured_standard == "conference"
+                    else "minor_revision",
+                )
+            )
+        if (
+            not decisions
+            or release_standard != configured_standard
+            or decision not in decisions
+            or configured_minimum not in decisions
+            or not decision_meets_standard_threshold(
+                decision,
+                configured_minimum,
+                release_standard,
+                venue_type=venue_type,
+            )
+        ):
+            raise HandoffError(
+                "Writing quality-gate decision does not meet the configured review threshold"
+            )
+        if not str(release.get("reviewed_at") or "").strip():
+            raise HandoffError("Writing quality gate is missing reviewed_at")
+        gated_version = str(release.get("manuscript_version") or "")
+        if not gated_version:
+            raise HandoffError(
+                "Quality gate is not bound to a paper version; rerun quality-gate"
+            )
+        if gated_version != str(metadata.get("version") or "1.0.0"):
+            raise HandoffError(
+                "Paper version changed after the quality review; rerun quality-gate"
+            )
+        try:
+            revision_exception = validate_release_revision_policy(
+                paper_id, metadata, configured_gate, root=repo_root
+            )
+        except (ValueError, OSError) as exc:
+            raise HandoffError(f"Writing quality-gate revision policy is invalid: {exc}") from exc
     gated_support_sha256 = str(release.get("support_package_sha256") or "")
     current_support_sha256 = str(publication.get("package_sha256") or "")
     if require_support_binding and support_mode != "not_required":
@@ -1382,7 +1397,13 @@ def validate_release_preconditions(
         raise HandoffError(
             "Manuscript or PDF changed after the quality review; rerun quality-gate"
         )
-    if venue_type == "journal" and bool(configured_gate.get("require_target_editorial_screen", False)):
+    if unified_review:
+        from paper_writing.review_flow import validate_unified_release
+
+        unified_problems = validate_unified_release(paper_id, metadata, repo_root, current_snapshot)
+        if unified_problems:
+            raise HandoffError(unified_problems[0])
+    elif venue_type == "journal" and bool(configured_gate.get("require_target_editorial_screen", False)):
         from paper_writing.editorial_screen import editorial_screen_blockers
 
         editorial_blockers, editorial_digest = editorial_screen_blockers(
