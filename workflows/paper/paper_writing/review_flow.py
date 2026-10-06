@@ -199,9 +199,9 @@ def front_matter(expanded: str) -> dict[str, str]:
 
 
 def bibliography_text(manuscript: Path) -> str:
-    bbl = sorted(manuscript.glob("*.bbl"))
-    if bbl:
-        return bbl[0].read_text(errors="replace")
+    bbl = manuscript / "main.bbl"
+    if bbl.is_file():
+        return bbl.read_text(errors="replace")
     return "\n".join(p.read_text(errors="replace") for p in sorted(manuscript.glob("*.bib")))
 
 
@@ -256,6 +256,10 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     pdf, used = _build(manuscript, workdir)
     canonical = root / str(metadata.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf")
     shutil.copyfile(pdf, canonical)
+    fresh_bbl = pdf.with_suffix(".bbl")
+    if fresh_bbl.is_file():
+        # A stale committed .bbl would reach referees and the journal source package.
+        shutil.copyfile(fresh_bbl, manuscript / "main.bbl")
     unused = unused_source_files(manuscript, used)
     if unused:
         blockers.append("Source files not read by the build would enter the journal package: " + ", ".join(unused[:12]))
