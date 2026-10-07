@@ -209,7 +209,7 @@ def _build(manuscript: Path, workdir: Path) -> tuple[Path, set[str]]:
     copy = workdir / "build"
     shutil.copytree(manuscript, copy)
     proc = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
-                          cwd=copy, capture_output=True, text=True, timeout=1800)
+                          cwd=copy, capture_output=True, text=True, errors="replace", timeout=1800)
     (workdir / "build.log").write_text(proc.stdout[-20000:] + proc.stderr[-5000:])
     if proc.returncode != 0 or not (copy / "main.pdf").is_file():
         raise ValueError(f"LaTeX build failed; see {workdir / 'build.log'}")
