@@ -1403,6 +1403,10 @@ def validate_release_preconditions(
         unified_problems = validate_unified_release(paper_id, metadata, repo_root, current_snapshot)
         if unified_problems:
             raise HandoffError(unified_problems[0])
+        # Scores are informational under the unified review; report what was recorded.
+        score, target_score = release.get("score"), None
+        release_standard = str(release.get("review_process") or "unified_v1")
+        decision = str(release.get("decision") or "")
     elif venue_type == "journal" and bool(configured_gate.get("require_target_editorial_screen", False)):
         from paper_writing.editorial_screen import editorial_screen_blockers
 

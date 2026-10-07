@@ -837,7 +837,7 @@ def test_manage_client_does_not_resign_other_upload_failures(tmp_path: Path) -> 
     assert registrations == 1
 
 
-def test_release_requires_current_gate_and_git_frozen_snapshot(tmp_path: Path) -> None:
+def test_release_requires_current_gate_and_git_frozen_snapshot(tmp_path: Path, monkeypatch) -> None:
     paper_id = "20260721aillm0001"
     manuscript = tmp_path / "papers" / paper_id / "manuscript"
     manuscript.mkdir(parents=True)
@@ -928,6 +928,20 @@ writing_release:
         encoding="utf-8",
     )
     with pytest.raises(HandoffError, match="EDITORIAL-SCREEN"):
+        validate_release_preconditions(paper_id, root=tmp_path)
+    settings_file.write_text(original_settings, encoding="utf-8")
+    # Under the unified review the decision record, not a score, gates release.
+    from paper_writing import review_flow
+
+    settings_file.write_text(
+        original_settings.replace("quality_gate:\n", "quality_gate:\n  review_process: unified_v1\n"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(review_flow, "validate_unified_release", lambda *args: [])
+    unified = validate_release_preconditions(paper_id, root=tmp_path)
+    assert unified["decision_standard"] == "unified_v1" and unified["decision"] == "minor_revision"
+    monkeypatch.setattr(review_flow, "validate_unified_release", lambda *args: ["decision record changed"])
+    with pytest.raises(HandoffError, match="decision record changed"):
         validate_release_preconditions(paper_id, root=tmp_path)
     settings_file.write_text(original_settings, encoding="utf-8")
 
