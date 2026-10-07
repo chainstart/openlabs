@@ -38,13 +38,15 @@ def section(source: str, kind: str) -> tuple[str, str]:
     h = headings[i]
     end = headings[i + 1].start() if i + 1 < len(headings) else len(source)
     tail = source[h.end():end]
-    tail = re.split(r"\\(?:bibliograph\w*|end\{document\}|sloppy\b|hbadness\b)", tail, maxsplit=1)[0]
+    tail = re.split(r"\\(?:bibliograph\w*|end\{document\}|sloppy\b|hbadness\b|appendix\b)", tail, maxsplit=1)[0]
     # Bibliography inclusion commands produce no declaration prose. Remove only
     # the command, so any actual text following it still participates in binding.
     tail = re.sub(r"\\nocite\s*\{[^{}]*\}", "", tail)
     # A final explicit references include is bibliography, not inline prose.
     # Do not remove arbitrary inputs or an include followed by declaration text.
     tail = re.sub(r"\s*\\input\s*\{references(?:\.tex)?\}\s*$", "", tail)
+    # A final appendix include starts the appendices, which are not declaration prose.
+    tail = re.sub(r"\s*\\input\s*\{appendi(?:x|ces)\w*(?:\.tex)?\}\s*$", "", tail)
     # A locally sized bibliography may start its group before bibliographystyle.
     # Strip only trailing layout tokens; prose after a token stays hash-bound.
     tail = re.sub(r"(?:\s*\\(?:begingroup|small|footnotesize)\b)+\s*$", "", tail)

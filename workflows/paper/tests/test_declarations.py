@@ -119,3 +119,12 @@ def test_arbitrary_final_include_remains_bound():
     from paper_writing.declarations import section
     source = '\\section*{Generative AI declaration}\nExact disclosure.\n\\input{disclosure.tex}\n\\end{document}'
     assert '\\input{disclosure.tex}' in section(source, 'ai_use')[1]
+
+
+
+def test_ai_section_stops_before_appendices():
+    from paper_writing.declarations import section
+
+    for tail in ("\\input{appendices.tex}\n", "\\appendix\n\\section{Proofs}\nText.\n"):
+        source = "\\section*{Generative AI declaration}\nThe authors used X.\n\n" + tail
+        assert section(source, "ai_use")[1].strip() == "The authors used X."
