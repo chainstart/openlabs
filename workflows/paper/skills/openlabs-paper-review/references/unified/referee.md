@@ -21,6 +21,9 @@ Check, in this order:
    tool and model actually used. Do not ask to remove or shorten that list; judge only that the
    declaration is factual and free of preparation chronology.
 5. Evidence. Do the stated computations and supporting materials match what the text claims?
+   A supporting-material Version DOI may be reserved on an unpublished Zenodo draft: the
+   authors' pipeline publishes it after this review passes and before submission. Check that
+   the described files match the text; do not require the DOI to resolve yet.
 
 Recommend in the journal's vocabulary: `accept`, `minor_revision`, `major_revision`, `reject`.
 `minor_revision` means only local text changes are needed and no new argument, computation or
