@@ -159,3 +159,13 @@ def test_artifact_uri_recorded_on_another_workstation_resolves_locally(tmp_path)
         _artifact_uri_path(root, f"file:///home/other/openlabs-artifacts/elsewhere/{digest}/pkg.zip", digest)
     with pytest.raises(SupportPackageError):
         _artifact_uri_path(root, f"file:///home/other/openlabs-artifacts/paper-support/sha256/{'b' * 64}/pkg.zip", digest)
+
+
+def test_unified_release_snapshot_reports_manage_minimum():
+    from paper_writing.handoff import _release_snapshot
+
+    snapshot = _release_snapshot({"writing_release": {"status": "ready", "review_process": "unified_v1", "score": 7}})
+    assert snapshot["target_score"] == 5.0 and snapshot["score"] == 7 and snapshot["score_role"] == "informational"
+    assert snapshot["quality_gate_schema"] == "openlabs.review.decision.v1"
+    legacy = _release_snapshot({"writing_release": {"status": "ready", "score": 6, "target_score": 6.0}})
+    assert legacy["target_score"] == 6.0 and "score_role" not in legacy

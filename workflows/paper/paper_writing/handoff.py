@@ -467,6 +467,9 @@ def _support_projection(metadata: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+MANAGE_MINIMUM_SCORE = 5.0
+
+
 def _release_snapshot(metadata: Mapping[str, Any]) -> dict[str, Any]:
     release = metadata.get("writing_release")
     release = release if isinstance(release, Mapping) else {}
@@ -507,6 +510,11 @@ def _release_snapshot(metadata: Mapping[str, Any]) -> dict[str, Any]:
         if release.get("review_process") == "unified_v1"
         else "ara.paper_writing.quality_gate.v2"
     )
+    if release.get("review_process") == "unified_v1":
+        # The unified review has no score threshold; Manage still checks the
+        # informational score against its own minimum, so report that minimum.
+        snapshot.setdefault("target_score", MANAGE_MINIMUM_SCORE)
+        snapshot["score_role"] = release.get("score_role", "informational")
     review = metadata.get("ara_llm_self_review")
     if isinstance(review, Mapping) and review.get("source"):
         snapshot["review_record"] = str(review["source"])
