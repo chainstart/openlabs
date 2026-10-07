@@ -17,6 +17,9 @@ Check, in this order:
    summaries, lists of results without connection, and any narration of the authors' internal
    process (scripts, verification history, versions, review rounds) in the scientific text.
    Such narration is a required change.
+   The AI-use declaration is governed by the authors' disclosure policy: it must name every
+   tool and model actually used. Do not ask to remove or shorten that list; judge only that the
+   declaration is factual and free of preparation chronology.
 5. Evidence. Do the stated computations and supporting materials match what the text claims?
 
 Recommend in the journal's vocabulary: `accept`, `minor_revision`, `major_revision`, `reject`.

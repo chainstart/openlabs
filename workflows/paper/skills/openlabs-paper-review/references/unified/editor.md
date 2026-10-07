@@ -20,6 +20,9 @@ journal would decline the paper.
    introduction an argument or a list? Is the text padded with disclaimers ("we do not claim",
    "this is not a new result"), internal process narration (scripts, versions, verification
    history, review rounds), or defensive hedging? These are presentation failures.
+   The AI-use declaration is governed by the authors' disclosure policy: it must name every
+   tool and model actually used. Do not ask to remove or shorten that list; judge only that the
+   declaration is factual and free of preparation chronology.
 5. Read every prior editorial decision in the packet. For each, say whether the current
    manuscript actually answers the concern. Moving to another journal, rewording, or adding a
    paragraph does not answer a concern about significance or readership; only a stronger result
