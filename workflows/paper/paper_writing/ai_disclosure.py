@@ -69,8 +69,9 @@ def model_disclosure_issues(
         normalized_text = GPT_ID.sub(lambda m: normalized_model(m.group()), text.lower())
         if not re.search(r"(?<![\w.-])" + re.escape(model) + r"(?![\w-]|\.\w)", normalized_text):
             issues.append(("MODEL-MISMATCH", f"the declaration must disclose the registered model {model}"))
-        if entry.get("provider") != "openai-codex" or entry.get("tool") != "Codex":
-            issues.append(("MODEL-RECORD-INVALID", "record the actual Codex provider and tool consistently"))
+        provider_tool = (entry.get("provider"), entry.get("tool"))
+        if provider_tool not in (("openai-codex", "Codex"), ("anthropic", "Claude Code")):
+            issues.append(("MODEL-RECORD-INVALID", "record a supported provider and its actual tool consistently"))
         if not isinstance(entry.get("purpose"), str) or not entry["purpose"].strip():
             issues.append(("MODEL-RECORD-INVALID", "record the actual purpose of each model use"))
         evidence = entry.get("evidence")

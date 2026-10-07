@@ -25,6 +25,41 @@ def test_previous_version_remains_valid_when_actually_recorded(tmp_path):
     assert not model_disclosure_issues("OpenAI GPT-5.6 through Codex.", usage(tmp_path, "gpt-5.6"), root=tmp_path)
 
 
+def test_claude_history_requires_exact_model_and_hash_bound_runtime(tmp_path):
+    records = usage(tmp_path, "claude-opus-5-5")
+    records[0].update(provider="anthropic", tool="Claude Code")
+    text = "Anthropic's Claude Code used claude-opus-5-5."
+    assert not model_disclosure_issues(text, records, root=tmp_path)
+    records[0]["evidence"]["sha256"] = "0" * 64
+    assert "MODEL-EVIDENCE-MISMATCH" in {
+        code for code, _ in model_disclosure_issues(text, records, root=tmp_path)
+    }
+
+
+@pytest.mark.parametrize("provider,tool", [
+    ("anthropic", "Codex"), ("openai-codex", "Claude Code"),
+    ("unknown", "Claude Code"), ("anthropic", "unknown"),
+])
+def test_provider_tool_mismatch_still_fails_closed(tmp_path, provider, tool):
+    records = usage(tmp_path, "claude-opus-5-5")
+    records[0].update(provider=provider, tool=tool)
+    assert "MODEL-RECORD-INVALID" in {
+        code for code, _ in model_disclosure_issues(
+            "Claude Code used claude-opus-5-5", records, root=tmp_path
+        )
+    }
+
+
+def test_claude_suffix_cannot_be_omitted(tmp_path):
+    records = usage(tmp_path, "claude-opus-5-5")
+    records[0].update(provider="anthropic", tool="Claude Code")
+    assert "MODEL-MISMATCH" in {
+        code for code, _ in model_disclosure_issues(
+            "Claude Code used claude-opus-5", records, root=tmp_path
+        )
+    }
+
+
 def test_spaced_model_names_match_exact_runtime_suffixes(tmp_path):
     assert not model_disclosure_issues(
         "OpenAI GPT-6 Astra through Codex.", usage(tmp_path), root=tmp_path
