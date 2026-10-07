@@ -230,6 +230,8 @@ def unused_source_files(manuscript: Path, used: set[str]) -> list[str]:
         rel = path.relative_to(manuscript)
         if not path.is_file() or path.suffix.lower() not in CLEAN_SOURCE_SUFFIXES or rel.as_posix() == "main.tex":
             continue
+        if rel.as_posix() == "references.bib":
+            continue  # canonical bibliography record read by support-check, even with an inline bibliography
         if rel.parts[0].lower() in {"supplement", "supplementary", "supplements", "support-materials", "build"}:
             continue
         if rel.as_posix() not in used and rel.with_suffix("").as_posix() not in used:

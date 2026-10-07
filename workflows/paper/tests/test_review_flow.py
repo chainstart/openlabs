@@ -129,6 +129,7 @@ def test_unused_source_files_are_reported(tmp_path):
     for name in ("main.tex", "used.tex", "old.tex", "notes.md", "references.bib"):
         (tmp_path / name).write_text("x")
     assert flow.unused_source_files(tmp_path, {"used.tex", "references.bib"}) == ["old.tex"]
+    assert flow.unused_source_files(tmp_path, {"used.tex"}) == ["old.tex"]
 
 
 def test_unified_release_validation(tmp_path):
