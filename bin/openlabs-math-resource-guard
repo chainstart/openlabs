@@ -11,12 +11,12 @@ if (( $# == 0 )); then
 fi
 
 # Always retain the repository-wide guard as the outer resource boundary.
-if ! rg -q '(^|/)openlabs-workers\.slice(/|$)' /proc/self/cgroup; then
+if ! /usr/bin/grep -Eq '(^|/)openlabs-workers\.slice(/|$)' /proc/self/cgroup; then
   exec "$ROOT/bin/openlabs-resource-guard" --task-type cpu -- "$0" -- "$@"
 fi
 
 # Children and ordinary nested OpenLabs guard calls inherit the same math cap.
-if rg -q '(^|/)openlabs-workers-math\.slice(/|$)' /proc/self/cgroup; then
+if /usr/bin/grep -Eq '(^|/)openlabs-workers-math\.slice(/|$)' /proc/self/cgroup; then
   exec "$ROOT/bin/openlabs-resource-guard" --task-type cpu -- "$@"
 fi
 

@@ -29,7 +29,7 @@ fi
 
 # A guarded Codex session passes this cgroup to all tools it starts. Reuse the
 # shared guard instead of nesting another transient scope.
-if rg -q '(^|/)openlabs-workers\.slice(/|$)' /proc/self/cgroup 2>/dev/null; then
+if /usr/bin/grep -Eq '(^|/)openlabs-workers\.slice(/|$)' /proc/self/cgroup 2>/dev/null; then
   exec /usr/bin/python3 "$GUARD_ROOT/orchestrator/src/openlabs/gpu_guard.py" "${gpu_options[@]}" -- "$@"
 fi
 
@@ -39,9 +39,9 @@ if ! command -v systemd-run >/dev/null 2>&1 || ! command -v systemctl >/dev/null
 fi
 
 if [[ ! -r /sys/fs/cgroup/cgroup.controllers ]] || \
-   ! rg -qw memory /sys/fs/cgroup/cgroup.controllers || \
-   ! rg -qw cpu /sys/fs/cgroup/cgroup.controllers || \
-   ! rg -qw pids /sys/fs/cgroup/cgroup.controllers; then
+   ! /usr/bin/grep -qw memory /sys/fs/cgroup/cgroup.controllers || \
+   ! /usr/bin/grep -qw cpu /sys/fs/cgroup/cgroup.controllers || \
+   ! /usr/bin/grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
   printf 'OpenLabs guard requires cgroup v2 cpu, memory and pids controllers.\n' >&2
   exit 69
 fi
