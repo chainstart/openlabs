@@ -1,0 +1,4 @@
+interface:
+  display_name: "722数学发现"
+  short_description: "Explore mathematical mechanisms with durable failure memory"
+  default_prompt: "Use $722 to investigate this precise mathematical target within the stated budget, preserving failed routes and independently reconstructing candidate results."

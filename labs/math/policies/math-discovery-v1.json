@@ -1,0 +1,218 @@
+{
+  "schema_version": "openlabs.math_research_policy.v1",
+  "policy_id": "math-discovery-v1",
+  "description": "Optional bounded mathematical mechanism discovery with durable failure memory and fresh reconstruction. No Pro compute equivalence or automatic original-problem closure.",
+  "initial_stage": "intake",
+  "observation_types": {
+    "statement_checked": {
+      "description": "Source, exact scope, prior frontier and falsifiable boundary tests checked.",
+      "evidence_required": true
+    },
+    "progress_established": {
+      "description": "Evidence of a new mechanism, proved fact, refuted route or eliminated loss.",
+      "evidence_required": true
+    },
+    "candidate_ready": {
+      "description": "Frozen mathematical candidate and complete ordinary-language argument.",
+      "evidence_required": true
+    },
+    "reconstruction_passed": {
+      "description": "Fresh reviewer independently reconstructed the candidate at declared scope.",
+      "evidence_required": true
+    },
+    "reconstruction_failed": {
+      "description": "Fresh review found a mathematical defect.",
+      "evidence_required": true
+    },
+    "route_exhausted": {
+      "description": "Preserved negative evidence and remaining gap justify freezing this allocation.",
+      "evidence_required": true
+    }
+  },
+  "portfolio": {
+    "max_concurrent_tasks_by_stage": {
+      "intake": 1,
+      "representation_exploration": 1,
+      "mechanism_search": 1,
+      "independent_reconstruction": 1
+    }
+  },
+  "stages": {
+    "intake": {
+      "description": "Freeze exact target and frontier.",
+      "task": {
+        "objective": "Use the 722 skill ($722). Verify statement.json against sources, quantifiers, prior results and boundary cases. Append an evidence-backed checkpoint before committing. Do not replace the target silently.",
+        "agent_role": "researcher",
+        "session_mode": "resume",
+        "handoff_kind": "role_handoff",
+        "runner": "frontier",
+        "wall_seconds": 1800,
+        "resources": {
+          "cpu_threads": 4,
+          "memory_mib": 8192,
+          "scratch_mib": 8192
+        }
+      },
+      "budget": {
+        "max_tasks": 1,
+        "max_agent_seconds": 1800,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "representation_exploration",
+          "requires": {
+            "all": [
+              {
+                "kind": "statement_checked"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "representation_exploration": {
+      "description": "Explore alternate mathematical representations before demanding a proved bridge.",
+      "task": {
+        "objective": "Use the 722 skill ($722). Read statement and all checkpoints. Explore genuinely different representations, identify information loss, bottleneck lemmas and cheap falsification tests. A bridge need not already be proved. Append a checkpoint preserving failures and measured usage.",
+        "agent_role": "researcher",
+        "session_mode": "resume",
+        "handoff_kind": "role_handoff",
+        "runner": "frontier",
+        "wall_seconds": 7200,
+        "resources": {
+          "cpu_threads": 4,
+          "memory_mib": 8192,
+          "scratch_mib": 8192
+        }
+      },
+      "budget": {
+        "max_tasks": 2,
+        "max_agent_seconds": 14400,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "mechanism_search",
+          "requires": {
+            "all": [
+              {
+                "kind": "progress_established"
+              }
+            ]
+          }
+        },
+        {
+          "to": "route_frozen",
+          "requires": {
+            "all": [
+              {
+                "kind": "route_exhausted"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "mechanism_search": {
+      "description": "Develop and attack an evidence-backed mechanism.",
+      "task": {
+        "objective": "Use the 722 skill ($722). Read failed routes before further work. Test the central lemma adversarially, measure all parameter losses and distinguish experiments from proof. Freeze the candidate with all dependencies and append a checkpoint. No paper drafting or Lean tasks.",
+        "agent_role": "researcher",
+        "session_mode": "resume",
+        "handoff_kind": "role_handoff",
+        "runner": "frontier",
+        "wall_seconds": 14400,
+        "resources": {
+          "cpu_threads": 4,
+          "memory_mib": 8192,
+          "scratch_mib": 8192
+        }
+      },
+      "budget": {
+        "max_tasks": 3,
+        "max_agent_seconds": 43200,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "independent_reconstruction",
+          "requires": {
+            "all": [
+              {
+                "kind": "candidate_ready"
+              }
+            ]
+          }
+        },
+        {
+          "to": "route_frozen",
+          "requires": {
+            "all": [
+              {
+                "kind": "route_exhausted"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "independent_reconstruction": {
+      "description": "Reconstruct the frozen candidate in a fresh reviewer session.",
+      "task": {
+        "objective": "Use the 722 skill ($722). Independently reconstruct the candidate at the frozen target scope from its evidence. Check quantifiers, prior art, boundary cases and every unproved bridge. Record exact defects or reconstruction with a checkpoint. Passing is not a source-problem closure certificate.",
+        "agent_role": "reviewer",
+        "session_mode": "fresh",
+        "handoff_kind": "independent_replication",
+        "runner": "frontier",
+        "wall_seconds": 7200,
+        "resources": {
+          "cpu_threads": 4,
+          "memory_mib": 8192,
+          "scratch_mib": 8192
+        }
+      },
+      "budget": {
+        "max_tasks": 2,
+        "max_agent_seconds": 14400,
+        "on_exhaustion": "defer"
+      },
+      "transitions": [
+        {
+          "to": "reconstructed_result",
+          "requires": {
+            "all": [
+              {
+                "kind": "reconstruction_passed",
+                "actor_role": "reviewer"
+              }
+            ]
+          }
+        },
+        {
+          "to": "route_frozen",
+          "requires": {
+            "all": [
+              {
+                "kind": "reconstruction_failed",
+                "actor_role": "reviewer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "reconstructed_result": {
+      "description": "Independently reconstructed candidate at stated scope; separate authoritative closure review remains required.",
+      "terminal": true,
+      "completion": "completed",
+      "transitions": []
+    },
+    "route_frozen": {
+      "description": "Preserved failed route; further allocation requires an explicit new workstream.",
+      "terminal": true,
+      "completion": "paused",
+      "transitions": []
+    }
+  }
+}

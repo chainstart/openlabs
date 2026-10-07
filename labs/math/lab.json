@@ -4,7 +4,10 @@
   "domain": "math",
   "name": "OpenLabs Mathematics Lab",
   "runner": {
-    "command": ["{python}", "../../packages/research-core/lab_runner.py"]
+    "command": [
+      "{python}",
+      "../../packages/research-core/lab_runner.py"
+    ]
   },
   "worker_resources": {
     "cpu_burst_fraction_of_host": 0.75
@@ -37,6 +40,10 @@
     {
       "skill_id": "openlabs-paper-review",
       "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"
+    },
+    {
+      "skill_id": "722",
+      "path": "skills/722/SKILL.md"
     }
   ],
   "protocols": [
@@ -124,6 +131,41 @@
           "command": [
             "{python}",
             "protocols/research_state_machine.py",
+            "decide",
+            "--project",
+            "{project_config}",
+            "--workstream",
+            "{workstream_state}"
+          ],
+          "timeout_seconds": 30
+        }
+      }
+    },
+    {
+      "protocol_id": "math-discovery",
+      "primary_skill": "722",
+      "runtime_skills": [
+        "722",
+        "math-research-state-machine"
+      ],
+      "validator": {
+        "command": [
+          "{python}",
+          "protocols/discovery_math_protocol.py",
+          "validate",
+          "--project",
+          "{project_config}",
+          "--workstream",
+          "{workstream_state}",
+          "--mode",
+          "{validation_mode}"
+        ]
+      },
+      "hooks": {
+        "continuation": {
+          "command": [
+            "{python}",
+            "protocols/discovery_math_protocol.py",
             "decide",
             "--project",
             "{project_config}",
