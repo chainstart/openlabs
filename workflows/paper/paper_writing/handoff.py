@@ -511,7 +511,9 @@ def _release_snapshot(metadata: Mapping[str, Any]) -> dict[str, Any]:
         # Manage gates unified packages on the decision record; the score is informational.
         snapshot["score_role"] = release.get("score_role", "informational")
     review = metadata.get("ara_llm_self_review")
-    if isinstance(review, Mapping) and review.get("source"):
+    if release.get("review_process") == "unified_v1":
+        pass  # decision_record is the review record; older self-reviews do not describe this gate
+    elif isinstance(review, Mapping) and review.get("source"):
         snapshot["review_record"] = str(review["source"])
     elif metadata.get("review_file"):
         snapshot["review_record"] = str(metadata["review_file"])

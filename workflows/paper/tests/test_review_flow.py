@@ -168,6 +168,9 @@ def test_unified_release_snapshot_marks_score_informational():
     snapshot = _release_snapshot({"writing_release": {"status": "ready", "review_process": "unified_v1", "score": 7}})
     assert "target_score" not in snapshot and snapshot["score"] == 7 and snapshot["score_role"] == "informational"
     assert snapshot["review_process"] == "unified_v1"
+    legacy_record = {"writing_release": {"status": "ready", "review_process": "unified_v1"},
+                     "ara_llm_self_review": {"source": "reviews/old/review.json"}}
+    assert "review_record" not in _release_snapshot(legacy_record)
     assert snapshot["quality_gate_schema"] == "openlabs.review.decision.v1"
     legacy = _release_snapshot({"writing_release": {"status": "ready", "score": 6, "target_score": 6.0}})
     assert legacy["target_score"] == 6.0 and "score_role" not in legacy
