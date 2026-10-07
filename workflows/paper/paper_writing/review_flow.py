@@ -345,7 +345,9 @@ def support_description(metadata: Mapping[str, Any], root: Path) -> str:
     for rel in files:
         if Path(rel).name in {"README.md", "CLAIMS.yaml", "REPRODUCE.md"}:
             texts.append(f"### {Path(rel).name}\n{(root / rel).read_text(errors='replace')}")
-    listing = "\n".join(f"- {Path(f).name}" for f in files)
+    # Paths relative to the package root, so directories such as verification/ stay visible.
+    base = os.path.commonpath([str(Path(f).parent) for f in files]) if files else ""
+    listing = "\n".join(f"- {os.path.relpath(f, base) if base else f}" for f in files)
     return "\n\n".join(texts) + f"\n\nFiles in the supporting materials:\n{listing}"
 
 

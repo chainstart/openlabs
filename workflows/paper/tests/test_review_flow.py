@@ -180,3 +180,14 @@ def test_standalone_documents_count_as_used(tmp_path):
     used = flow.standalone_document_files(tmp_path)
     assert used == {"supplementary.tex", "tables/t1.tex"}
     assert flow.unused_source_files(tmp_path, used) == ["draft.tex"]
+
+
+def test_support_inventory_keeps_directories(tmp_path):
+    pkg = tmp_path / "papers/p/support/v1"
+    (pkg / "verification").mkdir(parents=True)
+    (pkg / "README.md").write_text("readme")
+    (pkg / "verification" / "check.py").write_text("x")
+    meta = {"support": {"publication": {"source_files": ["papers/p/support/v1/README.md",
+                                                          "papers/p/support/v1/verification/check.py"]}}}
+    text = flow.support_description(meta, tmp_path)
+    assert "- verification/check.py" in text and "- README.md" in text
