@@ -119,7 +119,7 @@ def review_config(root: str | Path) -> dict[str, Any]:
     gate = settings.get("quality_gate") or {}
     review = settings.get("review") or {}
     return {"process": gate.get("review_process"), "roles": review.get("roles") or {},
-            "max_rounds_per_target": int(review.get("max_rounds_per_target", 3)),
+            "max_rounds_per_target": int(review.get("max_rounds_per_target", 10)),
             "timeout_seconds": int(review.get("timeout_seconds", 3600))}
 
 

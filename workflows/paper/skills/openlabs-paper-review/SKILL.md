@@ -47,7 +47,7 @@ yourself, and do not edit the manuscript, evidence or registry while it runs.
 
 `ready` requires `send_to_review`, a merged `accept` or `minor_revision`, no scientific blocker,
 no unresolved previous item, and only `text` changes remaining. Scores are recorded for
-calibration only. At most `review.max_rounds_per_target` rounds (3) per target journal; after
+calibration only. At most `review.max_rounds_per_target` rounds (10) per target journal; after
 that the paper is `blocked` and the user decides (retarget, more research, or stop).
 
 Records: `reviews/unified/<paper_id>/<run_id>/` (`decision.json`, per-role prompts, outputs and
