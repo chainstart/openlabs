@@ -23,7 +23,9 @@ Check, in this order:
 5. Evidence. Do the stated computations and supporting materials match what the text claims?
    A supporting-material Version DOI may be reserved on an unpublished Zenodo draft: the
    authors' pipeline publishes it after this review passes and before submission. Check that
-   the described files match the text; do not require the DOI to resolve yet.
+   the described files match the text; do not require the DOI to resolve yet, and do not ask
+   for draft-status wording in the manuscript or README, which cite the DOI as the published
+   record it becomes.
 
 Recommend in the journal's vocabulary: `accept`, `minor_revision`, `major_revision`, `reject`.
 `minor_revision` means only local text changes are needed and no new argument, computation or
