@@ -1182,6 +1182,23 @@ def _launch_worker(
         sys.executable, str(Path(__file__).with_name("gpu_guard.py")), "--task-type", "cpu", "--",
         sys.executable, "-m", "openlabs", "_worker", str(job_path),
     ]
+    worker_slice = "openlabs-workers.slice"
+    if str(task.get("domain") or "") == "math":
+        worker_slice = "openlabs-workers-math.slice"
+        checked = subprocess.run(
+            ["systemctl", "--user", "show", worker_slice,
+             "--property=LoadState", "--property=MemoryHigh",
+             "--property=MemoryMax", "--property=MemorySwapMax"],
+            capture_output=True, text=True, check=False,
+        )
+        properties = dict(
+            line.split("=", 1) for line in checked.stdout.splitlines() if "=" in line
+        )
+        expected = {"LoadState": "loaded", "MemoryHigh": str(16 * 1024**3),
+                    "MemoryMax": str(18 * 1024**3), "MemorySwapMax": "0"}
+        if checked.returncode != 0 or any(properties.get(k) != v for k, v in expected.items()):
+            raise RuntimeError("Math worker requires the approved shared 16/18 GiB, no-swap slice")
+        command = [str(paths.code / "bin" / "openlabs-math-resource-guard"), "--", *command]
     if os.environ.get("INVOCATION_ID") or _user_systemd_available():
         systemd_run = shutil.which("systemd-run")
         if systemd_run is None:
@@ -1199,7 +1216,7 @@ def _launch_worker(
             "--collect",
             "--service-type=exec",
             f"--unit={unit}",
-            "--slice=openlabs-workers.slice",
+            f"--slice={worker_slice}",
             "--property=PartOf=openlabs-workers.target",
             "--property=KillMode=control-group",
             "--property=OOMPolicy=stop",

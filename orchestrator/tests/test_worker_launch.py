@@ -1,9 +1,44 @@
 from __future__ import annotations
 
 import subprocess
+import pytest
 
 from openlabs.config import WorkspacePaths
 from openlabs.engine import _launch_worker, _worker_unit_name
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_math_worker_requires_and_inherits_shared_math_reservation(tmp_path, monkeypatch, approved):
+    paths = WorkspacePaths(workspace=tmp_path, code=tmp_path / "openlabs",
+        data=tmp_path / "data", artifacts=tmp_path / "artifacts",
+        database=tmp_path / "database", database_file=tmp_path / "database/factory.sqlite")
+    task = {"task_id": "math:node", "current_attempt_id": "attempt-1", "domain": "math",
+            "cpu_threads": 2, "memory_mib": 4096, "scratch_mib": 4096}
+    calls = []
+    monkeypatch.setenv("INVOCATION_ID", "tick")
+    monkeypatch.setattr("openlabs.engine.shutil.which", lambda name: "/usr/bin/systemd-run")
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if "--property=LoadState" in command:
+            maximum = 18 * 1024**3 if approved else 34 * 1024**3
+            output = f"LoadState=loaded\nMemoryHigh={16 * 1024**3}\nMemoryMax={maximum}\nMemorySwapMax=0\n"
+        elif command[0] == "systemctl":
+            output = "1234\n"
+        else:
+            output = ""
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+    monkeypatch.setattr("openlabs.engine.subprocess.run", fake_run)
+    arguments = dict(task=task, paths=paths, job_path=tmp_path / "job.json",
+                     log_path=tmp_path / "log", environment={})
+    if not approved:
+        with pytest.raises(RuntimeError, match="approved shared"):
+            _launch_worker(**arguments)
+        assert len(calls) == 1
+    else:
+        assert _launch_worker(**arguments) == 1234
+        launch = calls[1]
+        assert "--slice=openlabs-workers-math.slice" in launch
+        assert str(paths.code / "bin/openlabs-math-resource-guard") in launch
 
 
 def test_systemd_tick_launches_burst_capable_worker_in_transient_service(
