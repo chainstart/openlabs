@@ -5,8 +5,9 @@ import os
 import shlex
 import subprocess
 from pathlib import Path
+import pytest
 
-from openlabs.agent_runtime import configure_codex_runtime, runtime_context
+from openlabs.agent_runtime import _skill_name, configure_codex_runtime, runtime_context
 from openlabs.codex_hook import (
     _append_hook_receipt,
     _session_context,
@@ -22,6 +23,19 @@ def _skill(path, name: str) -> None:
         f"---\nname: {name}\ndescription: Test Skill.\n---\n\n# Test\n",
         encoding="utf-8",
     )
+
+
+@pytest.mark.parametrize("name", ['"722"', "'722'", '"ordinary-skill"'])
+def test_quoted_skill_name_is_a_safe_identifier(tmp_path, name):
+    _skill(tmp_path / "skill", name)
+    assert _skill_name(tmp_path / "skill") == name[1:-1]
+
+
+@pytest.mark.parametrize("name", ['"../722"', '"722', "'722\"", '"722;command"'])
+def test_quoted_skill_name_preserves_path_safety(tmp_path, name):
+    _skill(tmp_path / "skill", name)
+    with pytest.raises(ValueError, match="Unsafe Skill name"):
+        _skill_name(tmp_path / "skill")
 
 
 def test_attempt_runtime_exposes_skills_and_checks_result_before_stop(tmp_path) -> None:

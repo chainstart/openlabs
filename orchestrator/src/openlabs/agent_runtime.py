@@ -36,6 +36,9 @@ def _skill_name(skill_dir: Path) -> str:
     if match is None:
         raise ValueError(f"Skill frontmatter has no name: {skill_file}")
     name = match.group(1).strip()
+    # Numeric Skill names need quoting in YAML to remain strings.
+    if len(name) >= 2 and name[0] == name[-1] and name[0] in {"'", '"'}:
+        name = name[1:-1]
     if not re.fullmatch(r"[a-z0-9-]+", name):
         raise ValueError(f"Unsafe Skill name {name!r}: {skill_file}")
     return name
