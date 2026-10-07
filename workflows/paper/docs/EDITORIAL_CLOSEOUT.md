@@ -1,3 +1,6 @@
+> Historical: since 2026-10-06, with `review_process: unified_v1`, this path is disabled for new
+> work; `review unified-run` is the only route to ready. Kept for reading historical records.
+
 # Editorial bridge after a legacy closeout
 
 This opt-in path was authorized on 2026-09-11 for three journal retargets.

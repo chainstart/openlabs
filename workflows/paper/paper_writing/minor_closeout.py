@@ -605,6 +605,8 @@ def validate_release_minor_closeout(paper_id: str, metadata: Mapping[str, Any], 
 
 def apply_minor_closeout(paper_id: str, *, certificate: str, root: str | Path) -> dict[str, Any]:
     """Apply a checked author-side closeout without editing reviews or counting a round."""
+    from paper_writing.review_flow import require_legacy_review_allowed
+    require_legacy_review_allowed(root, "Minor/targeted/editorial closeout")
     from paper_writing.editorial_screen import require_editorial_screen
     from paper_writing.registry import load_paper_metadata, write_paper_metadata
     from paper_writing.revision_policy import EXCEPTION_FIELD

@@ -147,6 +147,20 @@ def build_parser() -> argparse.ArgumentParser:
     review_reuse.add_argument("--paper-id", required=True)
     review_reuse.add_argument("--root", default=str(default_repo_root()))
 
+    unified = review_commands.add_parser(
+        "unified-run",
+        help="Run the unified editor-and-referee review (the only path to ready).",
+    )
+    unified.add_argument("--paper-id", required=True)
+    unified.add_argument("--response", help="Authors' response letter for a re-review round.")
+    unified.add_argument("--no-apply", action="store_true", help="Record the decision without updating the registry.")
+    unified.add_argument("--root", default=str(default_repo_root()))
+    calibration = review_commands.add_parser(
+        "calibration",
+        help="Compare unified editor decisions with real journal outcomes (read-only).",
+    )
+    calibration.add_argument("--root", default=str(default_repo_root()))
+
     for command in ("route", "prepare-delta", "validate-delta", "apply-delta"):
         delta = review_commands.add_parser(command, help="Route or validate cumulative editorial re-review.")
         delta.add_argument("--paper-id", required=True)
@@ -436,6 +450,24 @@ def main(argv: list[str] | None = None) -> int:
             root=args.root,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "review" and args.review_command == "unified-run":
+        from paper_writing.review_flow import run_review
+
+        result = run_review(args.paper_id, root=args.root, response_letter=args.response,
+                            apply=not args.no_apply)
+        summary = {key: result.get(key) for key in ("paper_id", "run_dir", "target_journal", "stage_reached",
+                                                    "round_for_target", "decision_sha256")}
+        summary["outcome"] = result["merged"]["outcome"]
+        summary["next_action"] = result["merged"].get("next_action")
+        summary["editor_decision"] = (result.get("editor_screen") or {}).get("decision")
+        summary["recommendation"] = result["merged"].get("recommendation")
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "review" and args.review_command == "calibration":
+        from paper_writing.review_flow import calibration as review_calibration
+
+        print(json.dumps(review_calibration(args.root), ensure_ascii=False, indent=2))
         return 0
     if args.command == "review" and args.review_command == "reuse-metadata":
         result = reuse_review_for_metadata_only_revision(

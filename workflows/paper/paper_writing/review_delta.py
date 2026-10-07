@@ -457,6 +457,8 @@ def deterministic_checks(paper_id, root):
 
 
 def apply_delta(paper_id, *, receipt, root):
+    from paper_writing.review_flow import require_legacy_review_allowed
+    require_legacy_review_allowed(root, "Legacy editorial delta application")
     from paper_writing.editorial_screen import require_editorial_screen
     from paper_writing.registry import load_paper_metadata, write_paper_metadata
     from paper_writing.revision_policy import EXCEPTION_FIELD, revision_round_policy
@@ -506,6 +508,14 @@ def apply_delta(paper_id, *, receipt, root):
 
 def route_review(paper_id, *, root):
     """One routing entry point shared by CLI and reviewer-task instructions."""
+    from paper_writing.review_flow import unified_enabled
+    try:
+        unified = unified_enabled(root)
+    except FileNotFoundError:
+        unified = False
+    if unified:
+        return {"paper_id": paper_id, "route": "unified",
+                "next_command": f"paper-writing review unified-run --paper-id {paper_id}"}
     from paper_writing.operations import reuse_review_for_metadata_only_revision
     from paper_writing.registry import load_paper_metadata
     from paper_writing.revision_policy import ReviewBudgetExceeded
