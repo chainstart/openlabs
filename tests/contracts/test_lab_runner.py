@@ -36,6 +36,25 @@ def test_agent_process_group_is_terminated_and_reaped() -> None:
     assert process.poll() is not None
 
 
+def test_discovery_does_not_require_formalization_runtime(tmp_path):
+    runner = _load_runner()
+    manifest = {
+        "runtime_setup": [{"setup_id": "lean", "command": ["missing-lean-toolchain"]}],
+        "protocols": [{"protocol_id": "discovery", "runtime_setup_ids": []}],
+    }
+    task = {"lab_manifest": str(tmp_path / "lab.json"),
+            "project": {"protocol_id": "discovery"}}
+    result = runner._lab_runtime_setup(task, manifest, workspace=tmp_path, agent_workspace=tmp_path)
+    assert result["setups"] == []
+    task["project"]["protocol_id"] = "formalization"
+    with pytest.raises(FileNotFoundError):
+        runner._lab_runtime_setup(task, manifest, workspace=tmp_path, agent_workspace=tmp_path)
+    manifest["protocols"][0]["runtime_setup_ids"] = ["unknown-toolchain"]
+    task["project"]["protocol_id"] = "discovery"
+    with pytest.raises(ValueError, match="registered setups"):
+        runner._lab_runtime_setup(task, manifest, workspace=tmp_path, agent_workspace=tmp_path)
+
+
 def test_lab_runtime_setup_runs_before_the_agent_and_returns_typed_context(tmp_path) -> None:
     runner = _load_runner()
     lab_root = tmp_path / "openlabs" / "labs" / "math"

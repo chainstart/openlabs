@@ -104,6 +104,8 @@ def _parser() -> argparse.ArgumentParser:
     enqueue.add_argument("--task-type", default="research")
     enqueue.add_argument("--objective", required=True)
     enqueue.add_argument("--priority", type=int, default=0)
+    enqueue.add_argument("--routing-reason", default="manual",
+                         help="Administrator scheduling provenance, including a bound protocol stage")
     enqueue.add_argument("--skill")
     enqueue.add_argument(
         "--agent-role",
@@ -323,6 +325,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_path=str(Path(args.output).expanduser().resolve()) if args.output else None,
             priority=args.priority,
             skill_path=args.skill,
+            routing_reason=args.routing_reason,
             runner=args.runner,
             max_attempts=settings.max_attempts,
             agent_role=args.agent_role or _agent_role(args.task_type),

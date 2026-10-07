@@ -144,6 +144,7 @@
     {
       "protocol_id": "math-discovery",
       "primary_skill": "722",
+      "runtime_setup_ids": [],
       "runtime_skills": [
         "722",
         "math-research-state-machine"

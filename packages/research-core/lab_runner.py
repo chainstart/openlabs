@@ -259,6 +259,18 @@ def _lab_runtime_setup(
     configured = manifest.get("runtime_setup", [])
     if not isinstance(configured, list):
         raise TypeError("lab runtime_setup must be an array")
+    project = task.get("project")
+    protocol_id = project.get("protocol_id") if isinstance(project, Mapping) else None
+    for protocol in manifest.get("protocols", []):
+        if protocol.get("protocol_id") != protocol_id or "runtime_setup_ids" not in protocol:
+            continue
+        selected = protocol["runtime_setup_ids"]
+        known = {item.get("setup_id") for item in configured if isinstance(item, Mapping)}
+        if (not isinstance(selected, list) or any(not isinstance(x, str) for x in selected)
+                or len(set(selected)) != len(selected) or set(selected) - known):
+            raise ValueError("protocol runtime_setup_ids must select unique registered setups")
+        configured = [item for item in configured if item.get("setup_id") in selected]
+        break
     manifest_path = Path(str(task["lab_manifest"])).expanduser().resolve()
     lab_root = manifest_path.parent
     attempt_root = str(
