@@ -170,3 +170,13 @@ def test_unified_release_snapshot_reports_manage_minimum():
     assert snapshot["quality_gate_schema"] == "openlabs.review.decision.v1"
     legacy = _release_snapshot({"writing_release": {"status": "ready", "score": 6, "target_score": 6.0}})
     assert legacy["target_score"] == 6.0 and "score_role" not in legacy
+
+
+def test_standalone_documents_count_as_used(tmp_path):
+    (tmp_path / "tables").mkdir()
+    (tmp_path / "tables" / "t1.tex").write_text("x")
+    (tmp_path / "supplementary.tex").write_text("\\documentclass{article}\n\\input{tables/t1}\n")
+    (tmp_path / "draft.tex").write_text("\\section{Old}")
+    used = flow.standalone_document_files(tmp_path)
+    assert used == {"supplementary.tex", "tables/t1.tex"}
+    assert flow.unused_source_files(tmp_path, used) == ["draft.tex"]

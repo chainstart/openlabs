@@ -224,6 +224,15 @@ def _build(manuscript: Path, workdir: Path) -> tuple[Path, set[str]]:
     return copy / "main.pdf", used
 
 
+def standalone_document_files(manuscript: Path) -> set[str]:
+    """Files read by other top-level documents (supplement, title page) built separately from main.tex."""
+    seen: set[Path] = set()
+    for path in sorted(manuscript.glob("*.tex")):
+        if path.name != "main.tex" and re.search(r"^\s*\\documentclass", path.read_text(errors="replace"), re.M):
+            expand_tex(path, manuscript, seen)
+    return {item.relative_to(manuscript).as_posix() for item in seen}
+
+
 def unused_source_files(manuscript: Path, used: set[str]) -> list[str]:
     unused = []
     for path in sorted(manuscript.rglob("*")):
@@ -265,6 +274,7 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     supplement = metadata.get("latest_supplementary_pdf")
     if supplement:  # a registered supplementary document is built separately and is part of the package
         used.add((root / str(supplement)).with_suffix(".tex").relative_to(manuscript).as_posix())
+    used |= standalone_document_files(manuscript)
     unused = unused_source_files(manuscript, used)
     if unused:
         blockers.append("Source files not read by the build would enter the journal package: " + ", ".join(unused[:12]))
