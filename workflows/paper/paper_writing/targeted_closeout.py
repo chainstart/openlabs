@@ -11,6 +11,186 @@ FIELD = 'targeted_review_closeout'
 SCHEMA = 'openlabs.targeted_review_closeout.v1'
 
 
+def _complete_snapshot_replay(complete, clean, pdf, expected, names):
+    """Replay archived bytes, never overlay a historical document with today’s PDF."""
+    m._require(set(complete) == set(names) and 'main.pdf' not in complete,
+               'complete snapshot source membership differs')
+    m._require(set(clean) <= set(complete)
+               and all(complete[n] == value for n, value in clean.items()),
+               'clean source archive differs from complete snapshot')
+    m._require(m._snapshot(complete, pdf) == expected,
+               'complete source/PDF snapshot does not reconstruct')
+    return complete
+
+
+def _pdf_text(value):
+    """Independently extract actual PDF bytes, rather than trust a receipt boolean."""
+    import subprocess
+    m._require(value.startswith(b'%PDF-') and len(value) <= 16 * 1024 * 1024,
+               'invalid or oversized derived PDF')
+    result = subprocess.run(['pdftotext', '-layout', '-', '-'], input=value,
+                            capture_output=True, timeout=30, check=True)
+    m._require(len(result.stdout) <= 8 * 1024 * 1024, 'oversized derived PDF text')
+    return result.stdout.decode('utf-8')
+
+
+def _clean_build_inputs(sources):
+    from paper_writing.handoff import CLEAN_SOURCE_SUFFIXES
+    return {n: v for n, v in sources.items()
+            if Path(n).suffix in CLEAN_SOURCE_SUFFIXES and Path(n).suffix != '.bbl'
+            and not (Path(n).parent == Path('.') and Path(n).suffix == '.pdf')}
+
+
+def _recorded_document_inputs(recorder, inputs, source):
+    """Read the actual TeX recorder; changed figures or included TeX stay forbidden."""
+    from pathlib import PurePosixPath
+    lines = recorder.decode('utf-8').splitlines()
+    roots = [line[4:] for line in lines if line.startswith('PWD ')]
+    m._require(len(roots) == 1 and PurePosixPath(roots[0]).is_absolute(),
+               'missing or ambiguous clean-build recorder directory')
+    root = PurePosixPath(roots[0])
+    system = ('/etc/texmf', '/usr/share/texmf', '/usr/share/texlive',
+              '/var/lib/texmf', '/usr/share/fonts')
+    generated = {str(Path(source).with_suffix(s)) for s in ('.aux', '.out', '.toc', '.bbl')}
+    used = set()
+    for line in lines:
+        if not line.startswith('INPUT '):
+            continue
+        path = PurePosixPath(line[6:])
+        m._require('..' not in path.parts and '\\' not in str(path),
+                   'unsafe clean-build recorder input')
+        if path.is_absolute():
+            if path.is_relative_to(root):
+                path = path.relative_to(root)
+            else:
+                m._require(any(path.is_relative_to(p) for p in system),
+                           'unbound external clean-build input')
+                continue
+        name = str(path)
+        m._require('..' not in path.parts and '\\' not in name
+                   and (name in inputs or name in generated),
+                   'unbound local clean-build input: ' + name)
+        if name in inputs:
+            used.add(name)
+    m._require(source in used and str(Path(source).with_suffix('.bbl')) in
+               {str(PurePosixPath(line[6:])).removeprefix(str(root) + '/')
+                for line in lines if line.startswith('INPUT ')},
+               'recorder omitted the document or generated bibliography')
+    return str(root), used
+
+
+def _derived_document_delta(before, after, authorization, assessment, packet):
+    """One explicitly reviewed bibliography-date rebuild; never a PDF allowlist.
+
+    This applies only before the independent addendum. The final editorial delta
+    still uses minor_closeout._deltas, so every ancillary PDF then stays frozen.
+    """
+    import hashlib
+    import re
+    packet = Path(packet)
+    updates = authorization.get('derived_document_updates', [])
+    m._require(isinstance(updates, list) and len(updates) == 1,
+               'exactly one authorized derived document update required')
+    update = updates[0]
+    m._keys(update, {'path', 'source', 'before_sha256', 'after_sha256', 'source_sha256',
+                     'input_changes', 'date_correction', 'evidence_sha256'}, 'derived document update')
+    name = update['path'].removeprefix('manuscript/')
+    source = update['source'].removeprefix('manuscript/')
+    m._require(update['path'] == 'manuscript/' + name and Path(name).name == name
+               and name != 'main.pdf' and Path(name).suffix == '.pdf'
+               and update['source'] == 'manuscript/' + source
+               and source == str(Path(name).with_suffix('.tex'))
+               and name in before and name in after and source in before and source in after,
+               'derived update must name an existing root PDF and matching TeX')
+    sha = lambda value: hashlib.sha256(value).hexdigest()
+    row = {'path': update['path'], 'before_sha256': sha(before[name]), 'after_sha256': sha(after[name])}
+    m._require(all(update[k] == v for k, v in row.items()) and before[name] != after[name]
+               and before[source] == after[source] and sha(before[source]) == update['source_sha256'],
+               'derived PDF or unchanged TeX binding differs')
+    correction = update['date_correction']
+    m._keys(correction, {'before', 'after'}, 'bibliography date correction')
+    # This compatibility repair has one concrete documentary purpose. A new
+    # correction needs its own reviewed implementation, not an arbitrary string.
+    m._require(correction == {'before': 'October 2022', 'after': '29 September 2022'},
+               'unsupported bibliography date correction')
+    changed = update['input_changes']
+    bbl = str(Path(source).with_suffix('.bbl'))
+    m._require(isinstance(changed, list) and len(changed) == 2
+               and [r['path'] for r in changed] == sorted(r['path'] for r in changed)
+               and len({r['path'] for r in changed}) == 2,
+               'derived input change inventory is not exact')
+    changed_names = {r['path'].removeprefix('manuscript/') for r in changed}
+    bibs = [n for n in changed_names if Path(n).suffix == '.bib' and Path(n).name == n]
+    m._require(len(bibs) == 1 and changed_names == {bibs[0], bbl},
+               'derived inputs must be one shared bibliography and its generated bbl')
+    for change in changed:
+        m._keys(change, {'path', 'before_sha256', 'after_sha256'}, 'derived input change')
+        n = change['path'].removeprefix('manuscript/')
+        m._require(change['path'] == 'manuscript/' + n and n in before and n in after
+                   and sha(before[n]) == change['before_sha256'] and sha(after[n]) == change['after_sha256'],
+                   'derived input hash differs')
+        # BibTeX wraps the longer date across a line; its exact generated bytes
+        # are also checked against all three actual builds below.
+        normalize = (lambda v: re.sub(rb'\s+', b'', v)) if n == bbl else (lambda v: v)
+        old, new = normalize(before[n]), normalize(after[n])
+        old_date, new_date = (normalize(correction[k].encode()) for k in ('before', 'after'))
+        m._require(old.count(old_date) == 1 and old.replace(old_date, new_date) == new,
+                   'derived input contains more than the exact bibliography date correction')
+    proof_path = m._bound({'path': 'derived-document-proof.json',
+                           'sha256': update['evidence_sha256']}, packet)
+    proof = m._json(proof_path)
+    m._keys(proof, {'schema_version', 'complete_snapshots', 'builds'}, 'derived build proof')
+    m._require(proof['schema_version'] == 'openlabs.derived_document_date_build.v1',
+               'unsupported derived build proof schema')
+    complete = proof['complete_snapshots']
+    m._keys(complete, {'baseline', 'reviewed'}, 'reviewed complete snapshots')
+    for stage, sources in [('baseline', before), ('reviewed', after)]:
+        m._require(m._archive(m._bound(complete[stage], packet)) == sources,
+                   'referee did not receive the complete ' + stage + ' sources')
+    builds = proof['builds']
+    m._require(isinstance(builds, list) and [b.get('stage') for b in builds] ==
+               ['baseline', 'reviewed', 'standalone'], 'missing or duplicate clean builds')
+    texts, directories, dependencies = [], [], []
+    for build in builds:
+        m._keys(build, {'stage', 'input_archive', 'pdf', 'text', 'recorder', 'log',
+                        'bibliography_log', 'bbl'}, 'derived clean build')
+        files = {key: m._bound(value, packet) for key, value in build.items() if key != 'stage'}
+        sources = before if build['stage'] == 'baseline' else after
+        inputs = m._archive(files['input_archive'])
+        m._require(inputs == _clean_build_inputs(sources), 'clean build input archive differs')
+        m._require(files['bbl'].read_bytes() == sources[bbl], 'clean build bibliography differs')
+        directory, used = _recorded_document_inputs(files['recorder'].read_bytes(), inputs, source)
+        directories.append(directory)
+        dependencies.append(used | {bibs[0]})
+        biblog = files['bibliography_log'].read_text()
+        m._require(re.findall(r'^Database file #\d+: (.+)$', biblog, re.MULTILINE) == bibs,
+                   'clean build did not use the bound shared bibliography')
+        log = files['log'].read_text()
+        m._require('Output written on ' + name + ' (' in log and not re.search(r'^!', log, re.MULTILINE)
+                   and 'undefined' not in log.lower(), 'derived clean build failed or has unresolved references')
+        actual = _pdf_text(files['pdf'].read_bytes())
+        m._require(actual == files['text'].read_text(), 'clean-build PDF text evidence differs')
+        m._require(actual == _pdf_text(sources[name]), 'clean-build PDF differs from its canonical document')
+        texts.append(actual)
+    m._require(len(set(directories)) == 3 and dependencies[0] == dependencies[1] == dependencies[2],
+               'clean builds are not distinct or document dependencies differ')
+    m._require(all(before[n] == after[n] for n in dependencies[0] - changed_names),
+               'derived document scientific source or figure changed')
+    compact = lambda value: re.sub(r'\s+', '', value)
+    old_date, new_date = map(compact, (correction['before'], correction['after']))
+    m._require(compact(texts[0]).count(old_date) == 1
+               and compact(texts[0]).replace(old_date, new_date) == compact(texts[1])
+               and texts[1] == texts[2], 'derived PDF contains more than the exact date correction')
+    # Machine evidence can be preflighted with an empty assessment. It must
+    # still stop here: no author-generated readiness judgment is substituted.
+    inspected = assessment.get('derived_document_updates_reviewed', [])
+    m._require(len(inspected) == 1 and inspected[0].get('update') == update
+               and inspected[0].get('evidence_sha256') == m._sha(proof_path)
+               and inspected[0].get('ready') is True and m._text(inspected[0].get('reason')),
+               'independent derived-document assessment missing or blocking')
+    return row
+
+
 def _support_digests(path, version):
     """Bounded-memory comparison of complete payloads, including large archives.
 
@@ -49,6 +229,244 @@ def _documentary_support_path(name):
     # CLAIMS.yaml is declarative claim-to-evidence mapping, not executable code.
     # It is accepted only through the exact independently reviewed delta below.
     return Path(name).suffix in {'.md', '.svg'} or Path(name).name == 'CLAIMS.yaml'
+
+
+def _tex_document_body(prefix):
+    """Conservative lexical tripwire, not a TeX interpreter or semantic proof."""
+    import re
+    if '^^' in prefix or any(ord(char) < 32 and char not in '\n\t' for char in prefix):
+        return False
+    forbidden = {'catcode', 'csname', 'endcsname', 'scantokens', 'detokenize',
+                 'verb', 'Verb', 'lstinline', 'inputminted', 'lstinputlisting',
+                 'begingroup', 'endgroup', 'bgroup', 'egroup', 'everypar',
+                 'everymath', 'everydisplay', 'obeylines', 'obeyspaces',
+                 'expandafter', 'noexpand', 'futurelet', 'if', 'ifx', 'ifnum',
+                 'ifdim', 'ifcat', 'ifcase', 'ifdefined', 'ifcsname', 'ifodd',
+                 'iftrue', 'iffalse', 'else', 'fi', 'endinput', 'stop', 'enddocument'}
+    definitions = {'def', 'gdef', 'edef', 'xdef', 'let', 'newcommand', 'renewcommand',
+                   'providecommand', 'newenvironment', 'renewenvironment', 'global',
+                   'long', 'outer', 'makeatletter', 'makeatother'}
+    body_commands = {'begin', 'end', 'section', 'subsection', 'subsubsection', 'label',
+                     'Cref', 'cref', 'ref', 'eqref', 'cite', 'citep', 'citet', 'emph',
+                     'textbf', 'textit', 'texttt', 'footnote', 'url', 'href', 'maketitle',
+                     'par', 'noindent', 'smallskip', 'medskip', 'bigskip',
+                     '\\', '~', "'", '"', '^', '`', '=', '.', '%', '#', '&', '_', '{', '}', '$', '[', '('}
+    opaque_environments = {'verbatim', 'Verbatim', 'lstlisting', 'minted', 'comment',
+                           'filecontents', 'filecontents*', 'luacode', 'luacode*'}
+    preamble_commands = {'documentclass', 'usepackage', 'hypersetup', 'makeatletter',
+                         'makeatother', 'let', 'newtheorem', 'setlength', 'newcommand',
+                         'journal', 'theoremstyle', 'title', 'author', 'date', 'begin'}
+    environments, math = [], []
+    document_seen = False
+    depth = 0
+    index = 0
+    while index < len(prefix):
+        char = prefix[index]
+        if char == '%':
+            end = prefix.find('\n', index)
+            index = len(prefix) if end < 0 else end + 1
+            continue
+        if char == '\\':
+            command = re.match(r'\\([A-Za-z@]+|[^\n])', prefix[index:])
+            if command is None:
+                return False
+            name = command[1]
+            index += len(command[0])
+            if name in forbidden:
+                return False
+            if not document_seen:
+                if not depth and not math and name not in preamble_commands:
+                    return False
+                if name == 'let':
+                    # Existing elsarticle title-style alias; no structural aliasing.
+                    alias = re.match(r'\s*\\ps@pprintTitle\s*\\ps@plain\b', prefix[index:])
+                    if alias is None:
+                        return False
+                    index += len(alias[0])
+                elif name == 'newcommand':
+                    target = re.match(r'\s*\{\\([A-Za-z@]+)\}', prefix[index:])
+                    if target is None or target[1] in body_commands | forbidden | definitions:
+                        return False
+            if document_seen and (name in definitions or (environments == ['document']
+                    and not depth and not math and name not in body_commands)):
+                return False
+            if name in {'begin', 'end'}:
+                # TeX permits comments and whitespace between the command and argument.
+                while index < len(prefix) and (prefix[index].isspace() or prefix[index] == '%'):
+                    if prefix[index] == '%':
+                        end = prefix.find('\n', index)
+                        index = len(prefix) if end < 0 else end + 1
+                    else:
+                        index += 1
+                argument = re.match(r'\{([A-Za-z][A-Za-z0-9*:_-]*)\}', prefix[index:])
+                if argument is None or depth:
+                    return False
+                environment = argument[1]
+                index += len(argument[0])
+                if environment in opaque_environments:
+                    return False
+                if environment == 'document':
+                    if name != 'begin' or document_seen:
+                        return False
+                    document_seen = True
+                if name == 'begin':
+                    environments.append(environment)
+                elif not environments or environments.pop() != environment:
+                    return False
+            elif name in {'(', '['}:
+                if math:
+                    return False
+                math.append(name)
+            elif name in {')', ']'}:
+                if not math or math.pop() != {')': '(', ']': '['}[name]:
+                    return False
+            continue
+        if char in '{}':
+            depth += 1 if char == '{' else -1
+            if depth < 0:
+                return False
+        elif char == '$':
+            delimiter = '$$' if prefix.startswith('$$', index) else '$'
+            index += len(delimiter) - 1
+            if math:
+                if math.pop() != delimiter:
+                    return False
+            else:
+                math.append(delimiter)
+        index += 1
+    return environments == ['document'] and depth == 0 and not math
+
+
+def _plain_tex_paragraph(source, paragraph):
+    """One complete plain paragraph immediately after a simple section heading.
+
+    Restricting this opt-in avoids treating an arbitrary TeX hunk as prose. All
+    other source bytes must separately remain identical; the independent
+    addendum still judges whether the correction preserves scientific meaning.
+    """
+    import re
+    m._require(isinstance(paragraph, str) and 0 < len(paragraph) <= 4096
+               and paragraph.strip() == paragraph
+               and all(char == '\n' or 32 <= ord(char) <= 126 for char in paragraph)
+               and not any(char in paragraph for char in '\\{}$&#_^%~')
+               and not re.search(r'\n[ \t]*\n', paragraph), 'not a plain TeX prose paragraph')
+    text = source.decode('utf-8')
+    m._require(text.count(paragraph) == 1, 'TeX prose paragraph is missing or ambiguous')
+    start = text.index(paragraph)
+    end = start + len(paragraph)
+    m._require(start > 0 and text[start - 1] == '\n' and text[end:end + 2] == '\n\n',
+               'TeX prose edit is not a complete paragraph')
+    heading = text[:start - 1].rsplit('\n', 1)[-1]
+    m._require(re.fullmatch(r'\\(?:section|subsection|subsubsection)\{[^{}\\\n]+\}'
+                           r'(?:\\label\{[A-Za-z0-9:._-]+\})?', heading) is not None,
+               'TeX prose paragraph must directly follow a simple section heading')
+    m._require(_tex_document_body(text[:start]), 'TeX prose paragraph has unsupported context')
+    return heading
+
+
+def _support_tex_member(path, version, normalized_name):
+    """Read the one exact normalized member, never a suffix-matching packet copy."""
+    import zipfile
+    from pathlib import PurePosixPath
+    with zipfile.ZipFile(path) as archive:
+        members = archive.infolist()
+        m._require(len(members) <= 10000, 'too many support members')
+        selected = []
+        for item in members:
+            name = PurePosixPath(item.filename)
+            m._require(not name.is_absolute() and '..' not in name.parts
+                       and '\\' not in item.filename
+                       and (item.external_attr >> 16) & 0o170000 != 0o120000,
+                       'unsafe support TeX archive member')
+            if not item.is_dir() and next(iter(m._support_members({item.filename: b''}, version))) == normalized_name:
+                selected.append(item)
+        m._require(len(selected) == 1 and selected[0].file_size <= 2 * 1024 * 1024,
+                   'missing, ambiguous or oversized support TeX member')
+        return archive.read(selected[0])
+
+
+def _validated_support_tex_prose_changes(authorization, assessment, packet, before, reviewed,
+                                         final, delta, old_archive, new_archive,
+                                         old_version, new_version, old_inventory, new_inventory):
+    """Exact mirrored prose opt-in, within the outer paper/version-bound addendum.
+
+    Packet contract: complete before/<path> and <path> files for both sources;
+    manuscript-tex-prose.diff and support-tex-prose.diff are UTF-8 unified diffs
+    with 12 context lines, fromfile='before/'+path, tofile=path. The independent
+    assessment binds their hashes and explains why both diffs preserve science.
+    """
+    import difflib
+    import hashlib
+    from pathlib import PurePosixPath
+    from paper_writing.review_delta import scope_reasons
+    changes = authorization.get('support_tex_prose_only_changes', [])
+    inspected = assessment.get('support_tex_prose_only_reviewed', [])
+    if not changes and not inspected:
+        return {}
+    m._require(isinstance(changes, list) and len(changes) == 1
+               and isinstance(inspected, list) and len(inspected) == 1,
+               'one authorized and independently inspected TeX prose change required')
+    entry, judgment = changes[0], inspected[0]
+    identities = {'path', 'before_sha256', 'after_sha256', 'manuscript_path',
+                  'manuscript_before_sha256', 'manuscript_after_sha256'}
+    m._keys(entry, identities | {'before_paragraph', 'after_paragraph'}, 'TeX prose authorization')
+    m._keys(judgment, identities | {'manuscript_diff_sha256', 'support_diff_sha256',
+                                  'both_diffs_reviewed', 'scientific_content_unchanged', 'reason'},
+            'independent TeX prose assessment')
+    m._require(all(judgment[key] == entry[key] for key in identities)
+               and judgment['both_diffs_reviewed'] is True
+               and judgment['scientific_content_unchanged'] is True and m._text(judgment['reason']),
+               'independent TeX prose assessment missing or blocking')
+    support_name = entry['path']
+    manuscript_name = entry['manuscript_path']
+    m._require(isinstance(support_name, str) and support_name.startswith('support/')
+               and PurePosixPath(support_name).name == 'proofs.tex' and '\\' not in support_name
+               and '..' not in PurePosixPath(support_name).parts
+               and PurePosixPath(support_name).as_posix() == support_name
+               and manuscript_name == 'manuscript/main.tex', 'invalid mirrored TeX prose paths')
+    normalized = next(iter(m._support_members(
+        {f'archive-support-v{new_version}/' + support_name[8:]: b''}, new_version)))
+    controls = {'ZENODO_MANIFEST.json', 'SHA256SUMS', 'ARA_SUPPORT_README.md'}
+    m._require(set(old_inventory) == set(new_inventory)
+               and all(old_inventory[name] == new_inventory[name]
+                       for name in old_inventory if name != normalized and name not in controls),
+               'TeX prose route cannot change other supporting inputs')
+    support = (_support_tex_member(old_archive, old_version, normalized),
+               _support_tex_member(new_archive, new_version, normalized))
+    m._require(set(before) == set(reviewed) and reviewed == final and 'main.tex' in before
+               and all(before[name] == reviewed[name] for name in before if name != 'main.tex'),
+               'TeX prose route cannot mix other manuscript or postreview changes')
+    manuscript = (before['main.tex'], reviewed['main.tex'])
+    digest = lambda value: hashlib.sha256(value).hexdigest()
+    expected_delta = [
+        {'path': manuscript_name, 'before_sha256': digest(manuscript[0]), 'after_sha256': digest(manuscript[1])},
+        {'path': support_name, 'before_sha256': digest(support[0]), 'after_sha256': digest(support[1])},
+    ]
+    m._require(delta == expected_delta, 'TeX prose route requires exactly the two actual source deltas')
+    headings = []
+    for area, name, values, prefix in (('manuscript', manuscript_name, manuscript, 'manuscript_'),
+                                      ('support', support_name, support, '')):
+        m._require([digest(value) for value in values] ==
+                   [entry[prefix + 'before_sha256'], entry[prefix + 'after_sha256']],
+                   'full TeX source hashes differ')
+        for side, value, paragraph in zip(('before/', ''), values,
+                                          (entry['before_paragraph'], entry['after_paragraph'])):
+            headings.append(_plain_tex_paragraph(value, paragraph))
+            path = Path(packet) / (side + name)
+            m._require(path.is_file() and not any(p.is_symlink() for p in [path, *path.parents])
+                       and path.read_bytes() == value, 'reviewer did not receive complete actual TeX sources')
+        old_text, new_text = entry['before_paragraph'].encode(), entry['after_paragraph'].encode()
+        m._require(old_text != new_text and values[0].replace(old_text, new_text, 1) == values[1]
+                   and not scope_reasons({'main.tex': values[0]}, {'main.tex': values[1]}),
+                   'TeX prose delta changes bytes outside the authorized paragraph or native scope')
+        actual_diff = ''.join(difflib.unified_diff(values[0].decode().splitlines(True),
+            values[1].decode().splitlines(True), fromfile='before/' + name, tofile=name, n=12)).encode()
+        path = Path(packet) / (area + '-tex-prose.diff')
+        m._require(path.is_file() and not path.is_symlink() and path.read_bytes() == actual_diff
+                   and judgment[area + '_diff_sha256'] == digest(actual_diff),
+                   'independent reviewer did not inspect the actual TeX diff')
+    m._require(len(set(headings)) == 1, 'manuscript and support prose section contexts differ')
+    return {normalized: expected_delta[1]}
 
 
 def _authorized_module_docstring_delta(row, authorization, assessment, packet):
@@ -313,11 +731,22 @@ def validate(paper_id, certificate, metadata, root):
     m._require(set(intermediate) == set(final_zip)
                and all(sources.get(n) == v for n, v in final_zip.items()),
                'journal source archive membership or bytes differ')
+    derived = bool(auth.get('derived_document_updates'))
+    full_keys = {'baseline_snapshot_sources', 'reviewed_snapshot_sources'}
+    m._require(derived == bool(full_keys & set(cert['artifact_bindings']))
+               and (not derived or full_keys <= set(cert['artifact_bindings'])),
+               'complete snapshot archives require exact derived-document opt-in')
     extras = [{'path': n, 'sha256': m._members({n: v})[n], 'in_review_packet': False}
               for n, v in sources.items() if n not in final_zip]
-    reviewed = {**intermediate, **{r['path']: sources[r['path']] for r in extras}}
-    m._require(m._snapshot(reviewed, bound(bindings['reviewed_pdf']).read_bytes())
-               == snapshot['canonical_snapshot'], 'reviewed full snapshot does not reconstruct')
+    if derived:
+        reviewed = _complete_snapshot_replay(
+            m._archive(bound(cert['artifact_bindings']['reviewed_snapshot_sources'], True)),
+            intermediate, bound(bindings['reviewed_pdf']).read_bytes(),
+            snapshot['canonical_snapshot'], sources)
+    else:
+        reviewed = {**intermediate, **{r['path']: sources[r['path']] for r in extras}}
+        m._require(m._snapshot(reviewed, bound(bindings['reviewed_pdf']).read_bytes())
+                   == snapshot['canonical_snapshot'], 'reviewed full snapshot does not reconstruct')
     final_delta = m._deltas(reviewed, sources, 'manuscript')
     m._require(final_delta == cert['final_editorial_delta'], 'unreviewed final delta')
     m._require(all(row['path'] in auth['final_editorial_files'] for row in final_delta)
@@ -328,15 +757,28 @@ def validate(paper_id, certificate, metadata, root):
     # represented as independently reviewed packet content.
     original_zip = m._archive(bound(cert['artifact_bindings']['baseline_source_archive'], True))
     original_pdf = bound(cert['artifact_bindings']['baseline_pdf'], True).read_bytes()
-    old_complete = {**original_zip, **{row['path']: sources[row['path']] for row in extras}}
-    m._require(m._snapshot(old_complete, original_pdf) == applied['manuscript_snapshot_sha256'],
-               'full-review snapshot does not reconstruct')
+    if derived:
+        old_complete = _complete_snapshot_replay(
+            m._archive(bound(cert['artifact_bindings']['baseline_snapshot_sources'], True)),
+            original_zip, original_pdf, applied['manuscript_snapshot_sha256'], sources)
+    else:
+        old_complete = {**original_zip, **{row['path']: sources[row['path']] for row in extras}}
+        m._require(m._snapshot(old_complete, original_pdf) == applied['manuscript_snapshot_sha256'],
+                   'full-review snapshot does not reconstruct')
     import json
     delta = json.loads((packet / 'delta.json').read_text())
     template_provenance = (m._json(bound(bindings['template_provenance']))
                            if 'template_provenance' in bindings else {})
-    m._require(_cumulative_manuscript_delta(old_complete, reviewed, auth,
-                                           template_provenance, addendum) ==
+    derived_row = _derived_document_delta(old_complete, reviewed, auth, addendum, packet) if derived else None
+    fixed_outputs = {derived_row['path'].removeprefix('manuscript/')} if derived else set()
+    cumulative = _cumulative_manuscript_delta(
+        {n: v for n, v in old_complete.items() if n not in fixed_outputs},
+        {n: v for n, v in reviewed.items() if n not in fixed_outputs}, auth,
+        template_provenance, addendum)
+    if derived_row:
+        cumulative.append(derived_row)
+        cumulative.sort(key=lambda row: row['path'])
+    m._require(cumulative ==
                [r for r in delta if r['path'].startswith('manuscript/')],
                'targeted packet omitted an intermediate manuscript change')
     # The supporting archive may change only metadata or the exact documentary
@@ -354,6 +796,9 @@ def validate(paper_id, certificate, metadata, root):
     old_support = _support_digests(old_support_path, old_version)
     new_support = _support_digests(support_path, support['paper_version'])
     documented = [r for r in delta if r['path'].startswith('support/')]
+    tex_prose = _validated_support_tex_prose_changes(auth, addendum, packet, old_complete,
+        reviewed, sources, delta, old_support_path, support_path, old_version, support['paper_version'],
+        old_support, new_support)
     if 'support_repackaging_authorization' in bindings:
         repack_auth = m._json(bound(bindings['support_repackaging_authorization']))
         m._require(repack_auth.get('paper_id') == paper_id
@@ -373,7 +818,7 @@ def validate(paper_id, certificate, metadata, root):
                 continue
             if Path(name).name in m._SUPPORT_METADATA:
                 continue
-            matching = [r for r in documented if name == r['path'][8:]
+            matching = [r for r in documented if tex_prose.get(name) == r or name == r['path'][8:]
                         or name.endswith('/' + r['path'][8:])]
             m._require(len(matching) == 1, 'unreviewed supporting science/code change: ' + name)
             row = matching[0]
@@ -381,7 +826,8 @@ def validate(paper_id, certificate, metadata, root):
                               and _integrity_rebinding_from_archives(name, old_support_path,
                                   support_path, old_version, support['paper_version']))
             docstring_only = _authorized_module_docstring_delta(row, auth, addendum, packet)
-            m._require((_documentary_support_path(name) or integrity_only or docstring_only)
+            m._require((_documentary_support_path(name) or integrity_only or docstring_only
+                        or tex_prose.get(name) == row)
                        and row['before_sha256'] == before
                        and row['after_sha256'] == after, 'support delta differs')
             used.append(row)
