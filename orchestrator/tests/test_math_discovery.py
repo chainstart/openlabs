@@ -145,3 +145,47 @@ def test_exact_target_and_invalid_usage_fail_before_writing(trial, tmp_path):
     entry["usage"]["agent_seconds"] = float("nan")
     with pytest.raises(ValueError):
         discovery.checkpoint(ledger, entry)
+
+
+@pytest.mark.parametrize("mismatch", [None, "candidate", "manifest", "task", "frozen_input"])
+def test_review_gate_rejects_pass_on_another_candidate(tmp_path, mismatch):
+    manifest = tmp_path / "manifest.json"
+    discovery.write(manifest, {"candidate_id": "new-full-tail"})
+    digest = discovery.evidence_hash(tmp_path, "manifest.json")
+    project = {"discovery_review_targets": {"new_review": {
+        "candidate_id": "new-full-tail", "manifest_path": "manifest.json",
+        "manifest_sha256": digest, "outcomes": {"new_pass": "passed"}}}}
+    report = {"schema_version": "openlabs.math_discovery_review.v1",
+              "candidate_id": "new-full-tail", "manifest_sha256": digest,
+              "task_id": "review-task", "verdict": "passed", "source_problem_resolved": False}
+    if mismatch == "candidate":
+        report["candidate_id"] = "old-A-C"
+    elif mismatch == "manifest":
+        report["manifest_sha256"] = "0" * 64
+    elif mismatch == "task":
+        report["task_id"] = "old-review-task"
+    elif mismatch == "frozen_input":
+        discovery.write(manifest, {"candidate_id": "old-A-C"})
+    discovery.write(tmp_path / "verdict.json", report)
+    state = {"observations": [{"stage": "new_review", "kind": "new_pass",
+             "actor_role": "reviewer", "source_task_id": "review-task",
+             "evidence": ["verdict.json"]}]}
+    errors = protocol.review_target_errors(project, state, tmp_path)
+    assert bool(errors) == (mismatch is not None)
+
+
+def test_dynamic_review_requires_current_creator_manifest(tmp_path):
+    project = {"discovery_review_targets": {"review": {
+        "from_observation_kind": "new_candidate", "outcomes": {"new_pass": "passed"}}}}
+    state = {"stage": "research", "observations": []}
+    assert protocol.review_target_errors(project, state, tmp_path) == []
+    state["stage"] = "review"
+    assert protocol.review_target_errors(project, state, tmp_path)
+    discovery.write(tmp_path / "review-input-manifest.json", {
+        "candidate_id": "current", "creator_task_id": "creator-task"})
+    state["observations"] = [{"kind": "new_candidate", "source_task_id": "creator-task",
+                              "evidence": ["review-input-manifest.json"]}]
+    assert protocol.review_target_errors(project, state, tmp_path) == []
+    discovery.write(tmp_path / "review-input-manifest.json", {
+        "candidate_id": "old", "creator_task_id": "old-task"})
+    assert protocol.review_target_errors(project, state, tmp_path)
