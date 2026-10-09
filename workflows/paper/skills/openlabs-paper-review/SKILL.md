@@ -49,6 +49,8 @@ yourself, and do not edit the manuscript, evidence or registry while it runs.
 no unresolved previous item, and only `text` changes remaining. Scores are recorded for
 calibration only. At most `review.max_rounds_per_target` rounds (10) per target journal; after
 that the paper is `blocked` and the user decides (retarget, more research, or stop).
+The user's 2026-10-10 instruction sets the active limit to 15 rounds per target in
+`registry/settings.yaml`; the configured limit takes precedence over the older 10-round default.
 
 Records: `reviews/unified/<paper_id>/<run_id>/` (`decision.json`, per-role prompts, outputs and
 receipts with the runtime-reported model). The registry `writing_release` binds the decision

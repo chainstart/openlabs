@@ -105,6 +105,13 @@ def model_disclosure_issues(
         except (OSError, ValueError, KeyError, IndexError, TypeError):
             # Do not expose record contents or exception strings (possibly private).
             issues.append(("MODEL-EVIDENCE-MISMATCH", "runtime model evidence is missing, changed, unsafe, or inconsistent"))
-    if mentioned - expected:
+    # An explicitly labelled generation family is descriptive, not an exact
+    # runtime identifier. It can accompany a separately disclosed, evidenced
+    # variant of that same family; every exact variant remains mandatory above.
+    families = {normalized_model(m.group(1)) for m in re.finditer(
+        r'\b(gpt[- ]?\d+(?:\.\d+)*)\s+family\b', text, re.I)}
+    supported_families = {family for family in families
+                          if any(model.startswith(family + '-') for model in expected)}
+    if mentioned - expected - supported_families:
         issues.append(("MODEL-UNREGISTERED", "the declaration names a GPT model absent from the model-usage records"))
     return issues

@@ -392,6 +392,20 @@ def prior_decisions(paper_id: str, metadata: Mapping[str, Any], root: Path | Non
                 if isinstance(text, str) and text.strip():
                     row.update(letter_text=text, letter_available=True, letter_source=str(source),
                                source_sha256=_sha256(raw), letter_sha256=_sha256(text.encode()))
+        # A source comparison is evidence only when tied to the actual external
+        # submission, rather than an arbitrarily chosen earlier local draft.
+        submitted = next((s for s in metadata.get('journal_submitted_versions', [])
+                          if s.get('journal') == row['journal']
+                          and str(s.get('manuscript_number')) == row['manuscript_number']), {})
+        if root and submitted and submitted.get('authenticated_submission_binding') is True:
+            old_path = (root / str(submitted.get('path') or '')).resolve()
+            if (not old_path.is_relative_to(root.resolve()) or not old_path.is_file()
+                    or old_path.stat().st_size > 4_000_000):
+                raise ValueError('Submitted manuscript comparison source unavailable or unsafe')
+            old_raw = old_path.read_bytes()
+            if not submitted.get('sha256') or submitted['sha256'] != _sha256(old_raw):
+                raise ValueError('Submitted manuscript comparison source changed')
+            row['submitted_manuscript'] = {**submitted, 'text': old_raw.decode(errors='replace')}
     return sorted(rows.values(), key=lambda r: r["date"])
 
 
@@ -431,6 +445,11 @@ def rejection_context_blockers(record: Mapping[str, Any], metadata: Mapping[str,
             path = root / str(d.get('letter_source') or '')
             if not path.is_file() or _sha256(path.read_bytes()) != d.get('source_sha256'):
                 blockers.append(f"The screened original letter is missing or changed: {d['decision_id']}")
+        submitted = d.get('submitted_manuscript') or {}
+        if submitted:
+            path = root / str(submitted.get('path') or '')
+            if not path.is_file() or _sha256(path.read_bytes()) != submitted.get('sha256'):
+                blockers.append(f"The screened submitted manuscript is missing or changed: {d['decision_id']}")
     return blockers
 
 
@@ -453,6 +472,7 @@ def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> st
             f"## Title\n{parts['title']}\n\n## Abstract\n{parts['abstract']}\n\n"
             f"## Introduction\n{parts['introduction']}\n\n## Statements of the main results\n{parts['main_statements']}\n\n"
             f"## Methods and information budgets\n{parts['methods']}\n\n"
+            f"## Complete current manuscript (all LaTeX inputs expanded)\n{pre['expanded']}\n\n"
             f"## Reference list\n{pre['bibliography']}\n")
 
 

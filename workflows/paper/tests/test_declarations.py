@@ -15,6 +15,13 @@ def test_bibliography_size_commands_are_not_declaration_prose():
     assert "Additional disclosure." in section(with_extra_prose, "ai_use")[1]
 
 
+def test_inline_thebibliography_is_not_part_of_ai_disclosure():
+    source = (r'\section*{AI-use disclosure}' + '\nActual disclosure.\n'
+              + r'\begin{thebibliography}{9}' + '\n'
+              + r'\bibitem{prior}Prior research.\end{thebibliography}\end{document}')
+    assert section(source, 'ai_use')[1] == 'Actual disclosure.'
+
+
 def bound(heading, text, **extra):
     return dict(heading_latex=heading, text_latex=text,
                 text_sha256=hashlib.sha256(normalized(text).encode()).hexdigest(), **extra)
@@ -101,6 +108,25 @@ def test_explicit_unrecorded_model_blocks_declaration():
     metadata, tex = sample()
     metadata["declarations"]["ai_use"]["model_usage"] = []
     assert not check_record(metadata, tex)["valid"]
+
+
+def test_explicit_family_description_requires_disclosed_evidenced_variant(tmp_path):
+    import json
+    from paper_writing.ai_disclosure import model_disclosure_issues
+    runtime=tmp_path/'runtime.json'
+    runtime.write_text(json.dumps({'model':'gpt-5.6-sol'}))
+    usage=[{'provider':'openai-codex','tool':'Codex','model':'gpt-5.6-sol',
+            'purpose':'Historical internal review only','evidence':{
+                'path':'runtime.json','sha256':hashlib.sha256(runtime.read_bytes()).hexdigest(),
+                'json_pointer':'/model'}}]
+    text='Earlier author assistance used the GPT-5.6 family (exact variant unverified). An internal review used gpt-5.6-sol.'
+    assert not model_disclosure_issues(text,usage,root=tmp_path)
+    assert any(k=='MODEL-UNREGISTERED' for k,_ in model_disclosure_issues(
+        text.replace('GPT-5.6 family','GPT-5.6'),usage,root=tmp_path))
+    assert any(k=='MODEL-MISMATCH' for k,_ in model_disclosure_issues(
+        'GPT-5.6 family only.',usage,root=tmp_path))
+    assert any(k=='MODEL-UNREGISTERED' for k,_ in model_disclosure_issues(
+        text+' GPT-6 family also.',usage,root=tmp_path))
 @pytest.mark.parametrize('name', ['references', 'references.tex'])
 def test_final_reference_include_is_not_declaration_prose(name):
     from paper_writing.declarations import section

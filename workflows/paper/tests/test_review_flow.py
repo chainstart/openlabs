@@ -136,6 +136,40 @@ def test_expand_and_front_matter(tmp_path):
     assert "Every X is Y." in parts["main_statements"]
 
 
+def test_editor_receives_complete_disclosure_and_actual_submitted_source(tmp_path, monkeypatch):
+    monkeypatch.delenv('ARA_PAPER_MANAGE_API_URL', raising=False)
+    old = tmp_path / 'submitted.tex'
+    old.write_text('Old actual submitted theorem.\n')
+    binding = {'journal':'J', 'manuscript_number':'123', 'path':'submitted.tex',
+               'sha256':hashlib.sha256(old.read_bytes()).hexdigest(),
+               'authenticated_submission_binding':True, 'package_id':'submitted-package'}
+    metadata = {'journal_rejections':[{'journal':'J','manuscript_number':'123'}],
+                'journal_submitted_versions':[binding]}
+    decisions = flow.prior_decisions('p', metadata, tmp_path)
+    expanded = (r'\title{Current}\begin{abstract}Abstract.\end{abstract}'
+                '\n' + r'\section{Introduction}Intro.\section{Proof}Proof.'
+                '\n' + r'\section{AI use}Current truthful disclosure.')
+    packet = flow.editor_packet({'expanded':expanded,'metadata':metadata,'bibliography':''}, decisions)
+    assert 'Current truthful disclosure.' in packet
+    assert 'Old actual submitted theorem.' in packet
+    assert 'submitted-package' in packet
+    record = {'prior_decisions':decisions}
+    assert not flow.rejection_context_blockers(record, metadata, tmp_path)
+    old.write_text('Changed historical source.\n')
+    assert any('submitted manuscript' in b for b in flow.rejection_context_blockers(record, metadata, tmp_path))
+    with pytest.raises(ValueError, match='comparison source changed'):
+        flow.prior_decisions('p', metadata, tmp_path)
+
+
+def test_unbound_old_local_draft_is_not_submission_evidence(tmp_path, monkeypatch):
+    monkeypatch.delenv('ARA_PAPER_MANAGE_API_URL', raising=False)
+    metadata = {'journal_rejections':[{'journal':'J','manuscript_number':'123'}],
+                'journal_submitted_versions':[{'journal':'J','manuscript_number':'123',
+                                               'path':'arbitrary.tex',
+                                               'authenticated_submission_binding':False}]}
+    assert 'submitted_manuscript' not in flow.prior_decisions('p', metadata, tmp_path)[0]
+
+
 def test_inline_bibliography_takes_priority_over_unused_stale_bbl(tmp_path):
     (tmp_path / 'main.tex').write_text('\\begin{thebibliography}{9}\n\\bibitem{math}Actual mathematical predecessor.\\end{thebibliography}')
     (tmp_path / 'main.bbl').write_text('Stale support-only bibliography')

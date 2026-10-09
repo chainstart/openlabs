@@ -38,7 +38,7 @@ def section(source: str, kind: str) -> tuple[str, str]:
     h = headings[i]
     end = headings[i + 1].start() if i + 1 < len(headings) else len(source)
     tail = source[h.end():end]
-    tail = re.split(r"\\(?:bibliograph\w*|end\{document\}|sloppy\b|hbadness\b|appendix\b)", tail, maxsplit=1)[0]
+    tail = re.split(r"\\(?:bibliograph\w*|begin\{thebibliography\}|end\{document\}|sloppy\b|hbadness\b|appendix\b)", tail, maxsplit=1)[0]
     # Bibliography inclusion commands produce no declaration prose. Remove only
     # the command, so any actual text following it still participates in binding.
     tail = re.sub(r"\\nocite\s*\{[^{}]*\}", "", tail)
