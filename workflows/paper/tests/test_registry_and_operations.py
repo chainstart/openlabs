@@ -334,6 +334,19 @@ def test_journal_target_policy_requires_evidence_backed_editorial_fit(
     with pytest.raises(ValueError, match="same_target_history.status"):
         load_registry(tmp_path, include_local_repositories=False)
 
+    # A sourced refusal belongs in the catalogue even while it blocks release.
+    metadata["target_journal_fit"]["same_target_history"]["status"] = "rejected"
+    metadata["writing_release"] = {"status": "revision_required"}
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    assert load_registry(tmp_path, include_local_repositories=False)["papers"]
+    from paper_writing.registry import _validate_journal_target_fit
+    with pytest.raises(ValueError, match="same_target_history.status"):
+        _validate_journal_target_fit(metadata, paper_id=paper_id)
+    metadata["writing_release"]["status"] = "ready"
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    with pytest.raises(ValueError, match="same_target_history.status"):
+        load_registry(tmp_path, include_local_repositories=False)
+
 
 def test_journal_target_policy_grandfathers_truthful_pre_policy_metadata(
     tmp_path: Path,
@@ -833,6 +846,19 @@ def test_rejection_stage_requires_dated_evidence(change):
     record = {"journal": "Journal", "manuscript_number": "J-1", "rejected_at": "2026-09-18", "source": "audit/receipt.json", **change}
     with pytest.raises(ValueError, match="journal_rejections"):
         _allowed_target_tiers({"journal_rejections": [record], "target_journal_checked_at": "2026-09-19"}, policy={"allowed_tiers_after_rejections": {1: [1, 2, 3], 2: [1, 2, 3, 4]}}, paper_id="test")
+
+
+def test_later_same_target_refusal_is_preserved_without_relaxing_old_target():
+    from paper_writing.registry import _allowed_target_tiers
+    policy = {"allowed_tiers": [1, 2], "allowed_tiers_after_rejections": {1: [1, 2, 3], 2: [1, 2, 3, 4]}}
+    paper = {"target_journal": "Journal", "target_journal_checked_at": "2026-09-19",
+             "target_journal_fit": {"same_target_history": {"status": "rejected"}},
+             "journal_rejections": [{"journal": "Journal", "manuscript_number": "J-1",
+                  "rejected_at": "2026-09-20", "source": "audit/receipt.json"}]}
+    assert _allowed_target_tiers(paper, policy=policy, paper_id="test") == {1, 2}
+    paper["journal_rejections"][0]["journal"] = "Other Journal"
+    with pytest.raises(ValueError, match="must precede"):
+        _allowed_target_tiers(paper, policy=policy, paper_id="test")
 
 
 @pytest.mark.parametrize("count,tier,passes", [(0, 2, True), (0, 3, False), (1, 3, True), (1, 4, False), (2, 4, True)])

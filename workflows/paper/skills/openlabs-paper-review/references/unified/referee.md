@@ -36,6 +36,12 @@ is needed). Anything that makes a main claim unsupported goes in `scientific_blo
 If the packet contains the authors' response to an earlier round, check each previous item
 against the current text and the response; an item answered only by adding a disclaimer is not
 resolved.
+Track only the exact mandatory strings in the packet's "Items to check" list in
+`previous_items`, once each, without paraphrasing the item string. Optional suggestions
+in the previous letter are not mandatory items. If that list is empty (or there is no
+previous round), return `previous_items: []`. You may identify a new substantive issue
+in required_changes or scientific_blockers, but do not promote a past optional suggestion
+into an unresolved mandatory item merely because the author did not implement it.
 
 Scores are integers from 1 to 10 relative to the journal named in the packet; when between two
 integers choose the lower. Return only the JSON object required by the schema.

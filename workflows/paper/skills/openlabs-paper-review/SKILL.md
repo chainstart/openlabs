@@ -1,6 +1,6 @@
 ---
 name: openlabs-paper-review
-description: Run OpenLabs' unified journal review for a manuscript in the data repository - a deterministic preflight, an editor screen at the named target journal (to catch desk rejections), two blind referees on different models, and a conservative editor decision. This is the only route to writing_release ready. Use for every paper_review task and every request to review, re-review or gate a manuscript.
+description: Run OpenLabs' unified journal review for a manuscript in the data repository - a deterministic preflight, an editor screen at the named target journal (to catch desk rejections), a configured blind referee panel, and a conservative editor decision. This is the only route to writing_release ready. Use for every paper_review task and every request to review, re-review or gate a manuscript.
 ---
 
 # OpenLabs unified paper review
@@ -8,7 +8,7 @@ description: Run OpenLabs' unified journal review for a manuscript in the data r
 The review simulates the target journal: first its handling editor, then its referees. Its job is
 to catch, before submission, what the journal would catch - above all a desk rejection. The
 process is configured in `registry/settings.yaml` (`quality_gate.review_process: unified_v1` and
-the `review` block with the three role models) and implemented in
+the `review` block with the active role models and referee_roles) and implemented in
 `workflows/paper/paper_writing/review_flow.py`. Design and rationale:
 `workflows/paper/docs/UNIFIED_REVIEW_DESIGN.zh.md`.
 
@@ -31,14 +31,14 @@ yourself, and do not edit the manuscript, evidence or registry while it runs.
 1. **Preflight** (no model): clean build; no source file in `manuscript/` that the build does
    not read; `style-check`; `support-check`; a verified target journal with an approved fit
    record. Any failure stops the run with `preflight_failed`.
-2. **Editor screen** - a fresh, tool-less process (`review.roles.editor`) reads only the title,
+2. **Editor screen** - a fresh read-only Codex process (`review.roles.editor`) receives the title,
    abstract, introduction, main statements and reference list, plus the target journal's
    official page and recent related articles, and every prior editorial decision on the paper.
    It restates the contribution in two sentences, names the closest prior work, gives the
    strongest desk-reject reason, says whether each previous rejection is actually answered, and
    decides `send_to_review`, `revise_before_submission` or `desk_reject`.
-3. **Referees** - only after `send_to_review`. Two fresh, tool-less processes on different
-   models (`referee_a`, `referee_b`) review the complete expanded source, bibliography and
+3. **Referees** - only after `send_to_review`. The configured active referees in fresh processes (normally two different models;
+   temporarily only Codex `referee_b` under the 2026-10-09 user instruction) review the complete expanded source, bibliography and
    supporting-material description, blind to each other, and recommend in the journal's
    vocabulary with typed required changes (`text`, `claim_narrowing`, `evidence`).
 4. **Decision** - deterministic merge: the more cautious recommendation wins; blockers are the
@@ -78,8 +78,8 @@ output without editing the manuscript:
 - `next_action: retarget_required` or `blocked` -> no automatic action; report to the user.
 - `preflight_failed` -> one `text_revision` action listing the preflight blockers.
 
-Report the editor decision and its strongest desk-reject reason, both referee recommendations
-and models, the merged decision, and the run directory.
+Report the editor decision and its strongest desk-reject reason, the active referee recommendations
+and actual models, the merged decision, and the run directory.
 
 ## Legacy paths
 
@@ -88,3 +88,15 @@ closeouts and the separate editorial screen are disabled for new work while
 `review_process: unified_v1` is configured (they raise an error). Their historical records stay
 readable and unchanged. The previous instructions are kept at
 `references/legacy-SKILL-before-20261006.md` for reading old records only.
+
+## Temporary configuration and rejection clearance (2026-10-09)
+
+The editor must use a fresh Codex process. Claude referee A is temporarily inactive;
+`review.referee_roles: [referee_b]` and the recorded user authorization select one Codex
+referee. This lacks the normal second-model cross-check and must be reported honestly.
+For every distinct historical rejection, supply a verbatim letter with its source and
+SHA-256 (registry `journal_rejection_letters`). An internal summary is not a letter.
+The editor must identify each decision ID and judge it `resolved` or `compatible` with
+located evidence before refereeing can start. Missing, omitted, unresolved or contradictory
+letters stop advancement. The decision binds the active review policy as well as the
+manuscript; old gates cannot be reused after a policy change.

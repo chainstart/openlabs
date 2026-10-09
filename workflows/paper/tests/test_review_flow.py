@@ -125,6 +125,13 @@ def test_expand_and_front_matter(tmp_path):
     assert "Every X is Y." in parts["main_statements"]
 
 
+def test_inline_bibliography_takes_priority_over_unused_stale_bbl(tmp_path):
+    (tmp_path / 'main.tex').write_text('\\begin{thebibliography}{9}\n\\bibitem{math}Actual mathematical predecessor.\\end{thebibliography}')
+    (tmp_path / 'main.bbl').write_text('Stale support-only bibliography')
+    text = flow.bibliography_text(tmp_path)
+    assert 'Actual mathematical predecessor' in text and 'Stale' not in text
+
+
 def test_unused_source_files_are_reported(tmp_path):
     for name in ("main.tex", "used.tex", "old.tex", "notes.md", "references.bib"):
         (tmp_path / name).write_text("x")
@@ -132,9 +139,14 @@ def test_unused_source_files_are_reported(tmp_path):
     assert flow.unused_source_files(tmp_path, {"used.tex"}) == ["old.tex"]
 
 
-def test_unified_release_validation(tmp_path):
+def test_unified_release_validation(tmp_path, monkeypatch):
+    config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
+              'rejection_clearance_required': True}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
     record = {"merged": {"outcome": "ready"}, "editor_screen": {"decision": "send_to_review"},
-              "fingerprints": {"manuscript_snapshot_sha256": "a" * 64}, "target_journal": "J"}
+              "fingerprints": {"manuscript_snapshot_sha256": "a" * 64}, "target_journal": "J",
+              'review_policy_sha256': flow.review_policy_sha256(config),
+              'referee_reports': {'referee_b': referee()}, 'prior_decisions': []}
     path = tmp_path / "decision.json"
     path.write_text(json.dumps(record))
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -145,6 +157,96 @@ def test_unified_release_validation(tmp_path):
     assert flow.validate_unified_release("p", meta | {"target_journal": "K"}, tmp_path, "a" * 64)
     legacy = {"target_journal": "J", "writing_release": {"status": "ready"}}
     assert flow.validate_unified_release("p", legacy, tmp_path, "a" * 64)
+
+
+def test_original_rejection_letter_is_loaded_and_hash_bound(tmp_path, monkeypatch):
+    monkeypatch.delenv('ARA_PAPER_MANAGE_API_URL', raising=False)
+    path = tmp_path / 'letter.json'
+    path.write_text(json.dumps({'body': 'Results are borderline for our readers.'}))
+    meta = {'journal_rejections': [{'journal': 'J', 'manuscript_number': '123',
+                                   'source': 'letter.json', 'rejected_at': '2026-10-01'}]}
+    rows = flow.prior_decisions('p', meta, tmp_path)
+    assert rows[0]['letter_text'] == 'Results are borderline for our readers.'
+    assert rows[0]['source_sha256'] == hashlib.sha256(path.read_bytes()).hexdigest()
+    report = {'decision_id': rows[0]['decision_id'], 'journal': 'J', 'judgment': 'compatible',
+              'answered': False, 'evidence': 'The result is still borderline for J; target K publishes this class, Section 1.'}
+    ed = editor() | {'prior_rejections_addressed': [report]}
+    assert flow.rejection_clearance_blockers(ed, rows) == []
+    report['judgment'] = 'unresolved'
+    assert flow.merge(ed, {}, flow.rejection_clearance_blockers(ed, rows))['outcome'] == 'rejection_history_blocked'
+    assert flow.rejection_clearance_blockers(editor(), rows)
+    path.unlink()
+    assert flow.rejection_clearance_blockers(ed, flow.prior_decisions('p', meta, tmp_path))
+
+
+def test_single_referee_requires_authorization_and_retains_blockers(monkeypatch):
+    settings = {'review': {'referee_roles': ['referee_b']}}
+    monkeypatch.setattr(flow, 'load_registry_settings', lambda root: settings)
+    with pytest.raises(ValueError, match='authorization'):
+        flow.review_config('x')
+    settings['review']['single_referee_authorization'] = {'actor': 'user', 'quote': 'one referee temporarily'}
+    assert flow.review_config('x')['referee_roles'] == ['referee_b']
+    assert flow.merge(editor(), {'referee_b': referee('accept')})['outcome'] == 'ready'
+    assert flow.merge(editor(), {'referee_b': referee('accept', blockers=['proof gap'])})['outcome'] != 'ready'
+    with pytest.raises(ValueError, match='panel'):
+        flow.merge(editor(), {})
+
+
+def test_optional_previous_suggestions_cannot_become_unresolved_mandatory_items():
+    schema = flow.referee_schema_for_previous({'items': [], 'letter': 'Optional: shorten a transition.'})
+    sub = schema['properties']['previous_items']
+    _validate_against_schema([], sub)
+    with pytest.raises(LaunchError, match='count'):
+        _validate_against_schema([{'item': 'Optional transition', 'resolved': False, 'evidence': 'unchanged'}], sub)
+    sub = flow.referee_schema_for_previous({'items': ['Fix Lemma 2 proof gap']})['properties']['previous_items']
+    with pytest.raises(LaunchError):
+        _validate_against_schema([], sub)
+    _validate_against_schema([{'item': 'Fix Lemma 2 proof gap', 'resolved': False, 'evidence': 'still absent'}], sub)
+
+
+def test_new_refusal_or_changed_letter_invalidates_clearance(tmp_path):
+    row = {'journal': 'J', 'manuscript_number': '1'}
+    identity = hashlib.sha256(json.dumps(['J', '1'], ensure_ascii=False).encode()).hexdigest()[:20]
+    path = tmp_path / 'original.json'; path.write_text('original letter')
+    bound = {'decision_id': identity, 'letter_available': True, 'letter_source': 'original.json',
+             'source_sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    record = {'prior_decisions': [bound]}
+    metadata = {'journal_rejections': [row]}
+    assert flow.rejection_context_blockers(record, metadata, tmp_path) == []
+    metadata['journal_rejections'].append({'journal': 'K', 'manuscript_number': '2'})
+    assert flow.rejection_context_blockers(record, metadata, tmp_path)
+    metadata['journal_rejections'].pop(); path.write_text('different letter')
+    assert flow.rejection_context_blockers(record, metadata, tmp_path)
+
+
+@pytest.mark.parametrize('clear', [True, False])
+def test_run_starts_only_active_referee_after_rejection_clearance(tmp_path, monkeypatch, clear):
+    config = {'process': flow.PROCESS, 'roles': {'editor': {'provider': 'openai-codex'},
+              'referee_a': {'provider': 'anthropic'}, 'referee_b': {'provider': 'openai-codex'}},
+              'referee_roles': ['referee_b'], 'rejection_clearance_required': True,
+              'timeout_seconds': 1, 'max_rounds_per_target': 10}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    pre = {'metadata': {'version': '1.0', 'target_journal': 'J'}, 'target': 'J', 'blockers': [],
+           'fingerprints': {}, 'expanded': 'x', 'bibliography': ''}
+    monkeypatch.setattr(flow, 'preflight', lambda *args: pre)
+    decisions = [{'decision_id': 'd', 'journal': 'J', 'manuscript_number': '1',
+                  'letter_available': True}]
+    monkeypatch.setattr(flow, 'prior_decisions', lambda *args: decisions)
+    calls = []
+    def role(**kw):
+        name = kw['role_name']; calls.append(name)
+        if name == 'editor':
+            return editor() | {'prior_rejections_addressed': [{'decision_id': 'd', 'journal': 'J',
+                'answered': clear, 'judgment': 'resolved' if clear else 'unresolved', 'evidence': 'Section 2'}]}, {}
+        if name == 'decision_letter':
+            return {'letter': 'fixed decision'}, {}
+        return referee('accept'), {}
+    monkeypatch.setattr(flow, 'run_role', role)
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert ('referee_b' in calls) == clear
+    assert 'referee_a' not in calls
+    assert record['single_referee_panel'] is True
+    assert record['merged']['outcome'] == ('ready' if clear else 'rejection_history_blocked')
 
 
 def test_artifact_uri_recorded_on_another_workstation_resolves_locally(tmp_path):

@@ -202,6 +202,7 @@ def load_registry(
                     paper,
                     paper_id=paper_id,
                     policy=global_settings.get("journal_target_policy"),
+                    allow_blocked_history=True,
                 )
         _validate_research_outcomes(paper, paper_id=paper_id)
         workspace = str(paper.pop("workspace", f"papers/{paper_id}")).strip("/")
@@ -283,6 +284,7 @@ def _validate_journal_target_policy(
     *,
     paper_id: str,
     policy: Any,
+    allow_blocked_history: bool = False,
 ) -> None:
     """Validate the evidence-backed target required after a journal basic draft."""
 
@@ -384,13 +386,14 @@ def _validate_journal_target_policy(
     if policy.get("require_evidence_backed_fit") and (
         not _iso_date(fit_effective_from) or checked_at >= fit_effective_from
     ):
-        _validate_journal_target_fit(paper, paper_id=paper_id)
+        _validate_journal_target_fit(paper, paper_id=paper_id, allow_blocked_history=allow_blocked_history)
 
 
 def _validate_journal_target_fit(
     paper: Mapping[str, Any],
     *,
     paper_id: str,
+    allow_blocked_history: bool = False,
 ) -> None:
     """Validate an accountable editorial-fit decision for a selected journal."""
 
@@ -457,7 +460,9 @@ def _validate_journal_target_fit(
             f"target_journal_fit.same_target_history must be an object for {paper_id}"
         )
     history_status = history.get("status")
-    if history_status not in JOURNAL_HISTORY_CLEAR_STATUSES:
+    retained_blocked_refusal = (allow_blocked_history and history_status == "rejected"
+                               and (paper.get("writing_release") or {}).get("status") in {"blocked", "revision_required", "desk_rejected"})
+    if history_status not in JOURNAL_HISTORY_CLEAR_STATUSES and not retained_blocked_refusal:
         raise ValueError(
             f"target_journal_fit.same_target_history.status must be one of "
             f"{sorted(JOURNAL_HISTORY_CLEAR_STATUSES)} for {paper_id}"
@@ -509,8 +514,17 @@ def _allowed_target_tiers(
                 calendar_date.fromisoformat(checked)
             except ValueError:
                 raise ValueError(f"journal_rejections requires valid calendar dates for {paper_id}") from None
-            if not _iso_date(date) or not _iso_date(checked) or date > checked:
+            later_same_target_rejection = (
+                date > checked
+                and record["journal"].strip().casefold() == str(paper.get("target_journal", "")).strip().casefold()
+                and ((paper.get("target_journal_fit") or {}).get("same_target_history") or {}).get("status") == "rejected"
+            )
+            if not _iso_date(date) or not _iso_date(checked) or (date > checked and not later_same_target_rejection):
                 raise ValueError(f"journal_rejections must precede target verification for {paper_id}")
+            # Keep a newly received refusal without pretending the old target was
+            # reverified. It cannot relax the policy of that earlier selection.
+            if later_same_target_rejection:
+                continue
             # Multiple letters/events about one manuscript are one rejection.
             attempts.add((record["journal"].strip().casefold(), record["manuscript_number"].strip().casefold()))
         if attempts:

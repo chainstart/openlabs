@@ -1,7 +1,7 @@
 """Unified editor-and-referee review: the only path to ``writing_release.status: ready``.
 
 Stages: deterministic preflight -> editor screen at the named target journal ->
-two blind referees on different models -> deterministic merge plus an editor's
+configured blind referee panel -> deterministic merge plus an editor's
 decision letter. Revisions re-enter the same stages with the authors' response
 letter and the cumulative source diff. Models judge; this module only prepares
 inputs, runs isolated processes, validates records, merges conservatively and
@@ -55,8 +55,11 @@ EDITOR_SCHEMA: dict[str, Any] = {
         "readership_for_journal": _TEXT,
         "presentation_problems": _TEXT_LIST,
         "prior_rejections_addressed": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False, "required": ["journal", "concern", "answered", "evidence"],
-            "properties": {"journal": _TEXT, "concern": _TEXT, "answered": {"type": "boolean"}, "evidence": _TEXT}}},
+            "type": "object", "additionalProperties": False,
+            "required": ["decision_id", "journal", "concern", "answered", "judgment", "evidence"],
+            "properties": {"decision_id": _TEXT, "journal": _TEXT, "concern": _TEXT,
+                           "answered": {"type": "boolean"}, "evidence": _TEXT,
+                           "judgment": {"type": "string", "enum": ["resolved", "compatible", "unresolved", "unverifiable"]}}}},
         "strongest_desk_reject_reason": _TEXT,
         "desk_reject_category": {"type": "string", "enum": list(DESK_CATEGORIES)},
         "decision": {"type": "string", "enum": list(EDITOR_DECISIONS)},
@@ -118,9 +121,22 @@ def review_config(root: str | Path) -> dict[str, Any]:
     settings = load_registry_settings(root)
     gate = settings.get("quality_gate") or {}
     review = settings.get("review") or {}
+    panel = review.get("referee_roles", ["referee_a", "referee_b"])
+    if not isinstance(panel, list) or len(panel) not in {1, 2} or len(set(panel)) != len(panel):
+        raise ValueError("review.referee_roles must select one or two distinct referees")
+    if any(name not in {"referee_a", "referee_b"} for name in panel):
+        raise ValueError("Unknown referee role")
+    if len(panel) == 1 and not review.get("single_referee_authorization"):
+        raise ValueError("A single referee requires an explicit recorded user authorization")
     return {"process": gate.get("review_process"), "roles": review.get("roles") or {},
+            "referee_roles": panel, "rejection_clearance_required": True,
             "max_rounds_per_target": int(review.get("max_rounds_per_target", 10)),
             "timeout_seconds": int(review.get("timeout_seconds", 3600))}
+
+
+def review_policy_sha256(config: Mapping[str, Any]) -> str:
+    policy = {k: config[k] for k in ("process", "roles", "referee_roles", "rejection_clearance_required")}
+    return _sha256(json.dumps(policy, sort_keys=True).encode())
 
 
 def unified_enabled(root: str | Path) -> bool:
@@ -199,6 +215,10 @@ def front_matter(expanded: str) -> dict[str, str]:
 
 
 def bibliography_text(manuscript: Path) -> str:
+    expanded = expand_tex(manuscript / 'main.tex', manuscript)
+    inline = re.findall(r'\\begin\{thebibliography\}.*?\\end\{thebibliography\}', expanded, re.S)
+    if inline:
+        return '\n\n'.join(inline)
     bbl = manuscript / "main.bbl"
     if bbl.is_file():
         return bbl.read_text(errors="replace")
@@ -207,7 +227,9 @@ def bibliography_text(manuscript: Path) -> str:
 
 def _build(manuscript: Path, workdir: Path) -> tuple[Path, set[str]]:
     copy = workdir / "build"
-    shutil.copytree(manuscript, copy)
+    shutil.copytree(manuscript, copy, ignore=shutil.ignore_patterns(
+        '*.aux', '*.blg', '*.fdb_latexmk', '*.fls', '*.log', '*.out',
+        '*.synctex.gz', '*.toc', '*.spl', '__pycache__'))
     proc = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
                           cwd=copy, capture_output=True, text=True, timeout=1800)
     (workdir / "build.log").write_text(proc.stdout[-20000:] + proc.stderr[-5000:])
@@ -289,12 +311,14 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- packets
 
-def prior_decisions(paper_id: str, metadata: Mapping[str, Any]) -> list[dict[str, str]]:
+def prior_decisions(paper_id: str, metadata: Mapping[str, Any], root: Path | None = None) -> list[dict[str, Any]]:
     """Editorial decisions on this paper: registry rejections, enriched from the management site when available."""
     rows = {(r.get("journal"), r.get("manuscript_number")): {
         "journal": str(r.get("journal")), "manuscript_number": str(r.get("manuscript_number")),
-        "date": str(r.get("rejected_at")), "editor_letter_summary": "", "summary_kind": "not available"}
-        for r in metadata.get("journal_rejections") or [] if isinstance(r, Mapping)}
+        "date": str(r.get("rejected_at")), "editor_letter_summary": str(r.get("reason_summary") or ""),
+        "source": r.get("source"), "summary_kind": "internal paraphrase; not the original letter"}
+        for field in ("journal_rejections", "prior_conference_rejections", "prior_unidentified_journal_rejections")
+        for r in metadata.get(field) or [] if isinstance(r, Mapping)}
     url, key = os.environ.get("ARA_PAPER_MANAGE_API_URL"), os.environ.get("ARA_PAPER_MANAGE_API_KEY")
     if url and key:
         try:
@@ -315,7 +339,75 @@ def prior_decisions(paper_id: str, metadata: Mapping[str, Any]) -> list[dict[str
                 row["summary_kind"] = "internal paraphrase of the decision letter" if summary else "not available"
         except Exception:  # noqa: BLE001 - the site is optional context, the registry is authoritative
             pass
+    bindings = metadata.get("journal_rejection_letters") or []
+    for row in rows.values():
+        row["decision_id"] = _sha256(json.dumps([row['journal'], row['manuscript_number']], ensure_ascii=False).encode())[:20]
+        row["letter_text"] = ""
+        row["letter_available"] = False
+        binding = next((b for b in bindings if b.get("journal") == row["journal"]
+                        and str(b.get("manuscript_number")) == row["manuscript_number"]), {})
+        source = binding.get("path") or row.get("source")
+        if root and source:
+            path = (root / str(source)).resolve()
+            # Decision letters may be in the sibling private mailbox-maintenance store.
+            allowed = path.is_relative_to(root.resolve()) or path.is_relative_to(root.parent / "maintenance")
+            if allowed and path.is_file() and path.stat().st_size <= 2_000_000:
+                raw = path.read_bytes()
+                if binding.get("sha256") and binding["sha256"] != _sha256(raw):
+                    raise ValueError(f"Rejection letter changed: {source}")
+                text = ""
+                if path.suffix == ".json":
+                    obj = json.loads(raw)
+                    obj = obj if isinstance(obj, dict) else {}
+                    text = obj.get("body") or obj.get("letter_text") or ""
+                    if not text:
+                        text = "\n".join(p.get("text", "") for p in obj.get("parts", [])
+                                         if p.get("content_type") == "text/plain")
+                elif binding.get("kind") == "verbatim_decision_letter":
+                    text = raw.decode(errors="replace")
+                if isinstance(text, str) and text.strip():
+                    row.update(letter_text=text, letter_available=True, letter_source=str(source),
+                               source_sha256=_sha256(raw), letter_sha256=_sha256(text.encode()))
     return sorted(rows.values(), key=lambda r: r["date"])
+
+
+def rejection_clearance_blockers(editor: Mapping[str, Any], decisions: list[dict[str, Any]]) -> list[str]:
+    """No send-to-review may silently omit or contradict a sourced previous rejection."""
+    reports = editor.get("prior_rejections_addressed") or []
+    blockers = []
+    expected = {d["decision_id"] for d in decisions}
+    if len(reports) != len(decisions) or {r.get("decision_id") for r in reports} != expected:
+        blockers.append("The editor did not address each distinct prior rejection exactly once")
+    for d in decisions:
+        r = next((r for r in reports if r.get("decision_id") == d["decision_id"]), {})
+        if not d.get("letter_available"):
+            blockers.append(f"Original rejection letter unavailable: {d['journal']} {d['manuscript_number']}")
+        if r.get("journal") != d["journal"] or not str(r.get("evidence") or "").strip():
+            blockers.append(f"Missing located rejection-response evidence: {d['decision_id']}")
+        if r.get("judgment") not in {"resolved", "compatible"}:
+            blockers.append(f"Previous rejection not overcome or compatible: {d['decision_id']}")
+        if r.get("judgment") == "resolved" and r.get("answered") is not True:
+            blockers.append(f"Contradictory rejection assessment: {d['decision_id']}")
+    return blockers
+
+
+def rejection_context_blockers(record: Mapping[str, Any], metadata: Mapping[str, Any], root: Path) -> list[str]:
+    """A later historical refusal or changed letter invalidates an earlier clearance."""
+    bound = record.get('prior_decisions', [])
+    ids = {d['decision_id'] for d in bound}
+    blockers = []
+    for key in ('journal_rejections', 'prior_conference_rejections', 'prior_unidentified_journal_rejections'):
+        for r in metadata.get(key, []):
+            identity = _sha256(json.dumps([str(r['journal']), str(r.get('manuscript_number'))],
+                                         ensure_ascii=False).encode())[:20]
+            if identity not in ids:
+                blockers.append('Rejection history changed after the independent editorial screen')
+    for d in bound:
+        if d.get('letter_available'):
+            path = root / str(d.get('letter_source') or '')
+            if not path.is_file() or _sha256(path.read_bytes()) != d.get('source_sha256'):
+                blockers.append(f"The screened original letter is missing or changed: {d['decision_id']}")
+    return blockers
 
 
 def _target_block(metadata: Mapping[str, Any]) -> str:
@@ -324,14 +416,14 @@ def _target_block(metadata: Mapping[str, Any]) -> str:
     return (f"Journal: {metadata.get('target_journal')}\n"
             f"Official journal page: {metadata.get('target_journal_source')}\n"
             f"CAS 2025 major-category zone: {metadata.get('target_journal_tier')}\n"
-            f"Recent topically related articles in this journal:\n{recent}")
+            f"Recent topically related articles in this journal:\n{recent}\n"
+            f"Recorded target fit evidence (author-supplied; assess critically):\n"
+            f"{json.dumps(fit, ensure_ascii=False, indent=2)}")
 
 
-def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, str]]) -> str:
+def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> str:
     parts = front_matter(pre["expanded"])
-    letters = "\n".join(
-        f"- {d['journal']} ({d['manuscript_number']}, {d['date']}): "
-        f"{d['editor_letter_summary'] or '[no text available]'} [{d['summary_kind']}]" for d in decisions) or "- none"
+    letters = json.dumps(decisions, ensure_ascii=False, indent=2) if decisions else "No prior rejections recorded."
     return (f"## Target journal\n{_target_block(pre['metadata'])}\n\n"
             f"## Prior editorial decisions on this paper\n{letters}\n\n"
             f"## Title\n{parts['title']}\n\n## Abstract\n{parts['abstract']}\n\n"
@@ -352,9 +444,13 @@ def support_description(metadata: Mapping[str, Any], root: Path) -> str:
 
 
 def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, Any] | None) -> str:
+    metadata = pre['metadata']
+    mapping = root / str(metadata.get('evidence_dir') or f"papers/{metadata.get('paper_id')}/evidence") / 'claim_evidence_map.md'
+    evidence = mapping.read_text(errors='replace') if mapping.is_file() else '[No canonical claim-evidence map available]'
     text = (f"## Target journal\n{_target_block(pre['metadata'])}\n\n"
             f"## Manuscript (LaTeX, all inputs expanded)\n{pre['expanded']}\n\n"
             f"## Bibliography\n{pre['bibliography']}\n\n"
+            f"## Claim-evidence map\n{evidence}\n\n"
             f"## Supporting materials\n{support_description(pre['metadata'], root)}\n")
     if previous:
         text += (f"\n## Previous round\nDecision letter:\n{previous['letter']}\n\n"
@@ -366,8 +462,13 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
 
 # --------------------------------------------------------------------------- merge
 
-def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
+          history_blockers: list[str] | None = None) -> dict[str, Any]:
     """Conservative deterministic merge. It can only make the outcome stricter."""
+    if history_blockers:
+        return {"outcome": "rejection_history_blocked", "recommendation": None,
+                "scientific_blockers": history_blockers, "required_changes": [],
+                "next_action": "evidence_remediation"}
     if editor["decision"] != "send_to_review":
         category = editor["desk_reject_category"]
         if editor["decision"] == "revise_before_submission" or category == "presentation":
@@ -378,6 +479,8 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]]) 
             action = "evidence_remediation"
         return {"outcome": editor["decision"], "recommendation": None, "scientific_blockers": [],
                 "required_changes": [], "next_action": action}
+    if not referees:
+        raise ValueError("A send-to-review decision requires the configured referee panel")
     rec = max((r["recommendation"] for r in referees.values()), key=RECOMMENDATIONS.index)
     blockers = sorted({b for r in referees.values() for b in r["scientific_blockers"]})
     changes = [dict(c, referee=name) for name, r in referees.items() for c in r["required_changes"]]
@@ -427,6 +530,21 @@ def _previous_round(root: Path, paper_id: str, target: str, expanded: str, respo
     return {"letter": last.get("letter", ""), "items": items, "response": response, "diff": diff[:400000]}
 
 
+def referee_schema_for_previous(previous: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Only the previous decision's mandatory items belong in resolution tracking.
+
+    Optional suggestions remain visible in the letter, but cannot turn into blockers
+    merely because a referee lists them as unimplemented previous items.
+    """
+    schema = json.loads(json.dumps(REFEREE_SCHEMA))
+    items = list(previous['items']) if previous else []
+    array = schema['properties']['previous_items']
+    array['minItems'] = array['maxItems'] = len(items)
+    if items:
+        array['items']['properties']['item']['enum'] = items
+    return schema
+
+
 def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path | None = None,
                apply: bool = True) -> dict[str, Any]:
     root = Path(root).resolve()
@@ -434,15 +552,23 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     if config["process"] != PROCESS:
         raise ValueError(f"quality_gate.review_process must be {PROCESS}")
     roles = config["roles"]
-    if set(ROLES) - set(roles):
-        raise ValueError(f"settings review.roles must define {ROLES}")
-    if roles["referee_a"].get("model") == roles["referee_b"].get("model"):
+    panel = config["referee_roles"]
+    if {"editor", *panel} - set(roles):
+        raise ValueError("settings review.roles must define editor and every active referee")
+    if roles["editor"].get("provider") != "openai-codex":
+        raise ValueError("The editorial screen must use an independent Codex process")
+    if len(panel) == 2 and roles[panel[0]].get("model") == roles[panel[1]].get("model"):
         raise ValueError("The two referees must use different models")
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run = runs_dir(root, paper_id) / run_id
     run.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix="unified-build-") as tmp:
-        pre = preflight(paper_id, root, Path(tmp))
+        try:
+            pre = preflight(paper_id, root, Path(tmp))
+        finally:
+            log = Path(tmp) / 'build.log'
+            if log.is_file():
+                shutil.copyfile(log, run / 'preflight-build.log')
     metadata, target = pre["metadata"], pre["target"]
     (run / "manuscript-expanded.tex").write_text(pre["expanded"])
     record: dict[str, Any] = {"schema_version": "openlabs.review.decision.v1", "process": PROCESS,
@@ -450,6 +576,8 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                               "target_journal_tier": metadata.get("target_journal_tier"),
                               "manuscript_version": str(metadata.get("version") or ""),
                               "fingerprints": pre["fingerprints"], "started_at": _now()}
+    record |= {"review_policy_sha256": review_policy_sha256(config), "active_referee_roles": panel,
+               "single_referee_panel": len(panel) == 1}
     if pre["blockers"]:
         record |= {"stage_reached": "preflight", "merged": {"outcome": "preflight_failed",
                    "preflight_blockers": pre["blockers"], "next_action": "text_revision"}}
@@ -464,7 +592,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     if response:
         (run / "response-letter.md").write_text(response)
 
-    decisions = prior_decisions(paper_id, metadata)
+    decisions = prior_decisions(paper_id, metadata, root)
     _json_dump(run / "prior-decisions.json", decisions)
     editor, editor_receipt = run_role(role_name="editor", role=roles["editor"],
                                       system_prompt=(PROMPTS / "editor.md").read_text(),
@@ -472,17 +600,22 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                                       workdir=run / "editor", timeout=config["timeout_seconds"])
     referees: dict[str, Any] = {}
     receipts = {"editor": editor_receipt}
-    if editor["decision"] == "send_to_review":
+    history_blockers = rejection_clearance_blockers(editor, decisions)
+    if editor["decision"] == "send_to_review" and not history_blockers:
         packet = referee_packet(pre, root, previous)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        schema = referee_schema_for_previous(previous)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(panel)) as pool:
             futures = {name: pool.submit(run_role, role_name=name, role=roles[name],
                                          system_prompt=(PROMPTS / "referee.md").read_text(), user_prompt=packet,
-                                         schema=REFEREE_SCHEMA, workdir=run / name,
+                                         schema=schema, workdir=run / name,
                                          timeout=config["timeout_seconds"])
-                       for name in ("referee_a", "referee_b")}
+                       for name in panel}
             for name, future in futures.items():
                 referees[name], receipts[name] = future.result()
-    merged = merge(editor, referees)
+                expected = set(previous['items']) if previous else set()
+                if {i['item'] for i in referees[name]['previous_items']} != expected:
+                    raise ValueError('Referee omitted or introduced a previous mandatory item')
+    merged = merge(editor, referees, history_blockers)
     letter_packet = json.dumps({"fixed_decision": merged, "editor_screen": editor, "referee_reports": referees},
                                indent=2, ensure_ascii=False)
     letter, letter_receipt = run_role(role_name="decision_letter", role=roles["editor"],
@@ -492,7 +625,9 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     receipts["decision_letter"] = letter_receipt
     record |= {"stage_reached": "decision", "round_for_target": len(rounds) + 1, "editor_screen": editor,
                "referee_reports": referees, "merged": merged, "letter": letter["letter"], "receipts": receipts,
-               "same_provider_panel": roles["referee_a"]["provider"] == roles["referee_b"]["provider"],
+               "prior_decisions": decisions, "editorial_history_blockers": history_blockers,
+               "previous_required_items": list(previous['items']) if previous else [],
+               "same_provider_panel": len({roles[n]["provider"] for n in panel}) == 1,
                "finished_at": _now()}
     digest = _json_dump(run / "decision.json", record)
     if apply:
@@ -506,7 +641,19 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     record = json.loads(decision_path.read_text())
     if _sha256(decision_path.read_bytes()) != digest:
         raise ValueError("Decision record changed after it was written")
+    config = review_config(root)
+    if record.get("review_policy_sha256") != review_policy_sha256(config):
+        raise ValueError("Review policy changed; rerun the review")
+    if record['merged']['outcome'] == 'ready':
+        panel = config['referee_roles']
+        if set(record.get('referee_reports', {})) != set(panel):
+            raise ValueError("Ready decision is missing an active referee")
+        blockers = rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []))
+        if merge(record['editor_screen'], record['referee_reports'], blockers)['outcome'] != 'ready':
+            raise ValueError("Ready decision contradicts the editor, rejection letters, or referees")
     metadata = load_paper_metadata(paper_id, root)
+    if rejection_context_blockers(record, metadata, root):
+        raise ValueError('Rejection history or original letter changed during the review; rerun')
     fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
     if fingerprints != record["fingerprints"]:
         raise ValueError("Manuscript, registry or support sources changed during the review; rerun")
@@ -547,6 +694,14 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
     if not path.is_file() or _sha256(path.read_bytes()) != release.get("decision_record_sha256"):
         return ["The unified decision record is missing or changed"]
     record = json.loads(path.read_text())
+    config = review_config(root)
+    if record.get("review_policy_sha256") != review_policy_sha256(config):
+        problems.append("Review policy changed after this decision; a fresh review is required")
+    if set(record.get('referee_reports', {})) != set(config['referee_roles']):
+        problems.append("The decision does not contain the configured referee panel")
+    if rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', [])):
+        problems.append("The original rejection letters were not cleared by the independent editor")
+    problems.extend(rejection_context_blockers(record, metadata, root))
     if record.get("merged", {}).get("outcome") != "ready" or record["editor_screen"]["decision"] != "send_to_review":
         problems.append("The unified decision is not a ready decision")
     if record["fingerprints"]["manuscript_snapshot_sha256"] != snapshot:

@@ -27,6 +27,15 @@ journal would decline the paper.
    manuscript actually answers the concern. Moving to another journal, rewording, or adding a
    paragraph does not answer a concern about significance or readership; only a stronger result
    or a convincing case for why this journal's readers need it does.
+   Return exactly one item per decision_id. Use the original letter_text, not an internal
+   paraphrase, as the evidence for what the editor actually said. Cite current manuscript
+   locations and quote the relevant concern briefly. Judge `resolved` only for an actual
+   evidenced repair or stronger contribution; set answered=true. `compatible` means the
+   historical judgment remains valid at that journal, but a concrete comparison with the
+   present target's scope, readership and contribution standard supports sending this draft
+   to review without contradicting it. A new journal name alone is insufficient. Use
+   `unresolved` for a still-applicable obstacle and `unverifiable` for a missing original
+   letter. You cannot send the paper to review with either of those judgments.
 6. Give the single strongest reason an editor at this journal would decline without review,
    even if you would send it out.
 7. Decide: `send_to_review` only if you would really send it to referees today;

@@ -1,4 +1,4 @@
-"""Run one review role in a fresh, isolated, tool-less model process.
+"""Run one review role in a fresh process with an empty working directory.
 
 The launcher is provider-neutral. It records the model the runtime actually
 reports, never the requested name alone, and binds prompt, schema and output
@@ -74,6 +74,8 @@ def _validate_against_schema(value: Any, schema: Mapping[str, Any], path: str = 
     elif kind == "array":
         if not isinstance(value, list):
             raise LaunchError(f"{path}: expected array")
+        if len(value) < schema.get('minItems', 0) or len(value) > schema.get('maxItems', float('inf')):
+            raise LaunchError(f"{path}: wrong item count")
         for index, item in enumerate(value):
             _validate_against_schema(item, schema.get("items", {}), f"{path}[{index}]")
     elif kind == "string":
@@ -158,7 +160,11 @@ def run_role(
         "started_at": started,
         "elapsed_seconds": round(time.monotonic() - clock, 1),
         "independent_context": True,
-        "tools_enabled": False,
+        # Claude explicitly receives --tools "". Codex uses its read-only runtime;
+        # that sandbox does not disable tools, even when none are requested.
+        "tools_enabled": runtime == 'codex',
+        "tools_requested": False,
+        "sandbox_mode": 'read-only' if runtime == 'codex' else 'tools-disabled',
         "author_conversation_supplied": False,
         "prior_scores_supplied": False,
         "system_prompt_sha256": _sha256(system_prompt.encode()),
