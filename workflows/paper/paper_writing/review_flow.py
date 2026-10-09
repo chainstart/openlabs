@@ -255,7 +255,7 @@ def _build(manuscript: Path, workdir: Path) -> tuple[Path, set[str]]:
         '*.aux', '*.blg', '*.fdb_latexmk', '*.fls', '*.log', '*.out',
         '*.synctex.gz', '*.toc', '*.spl', '__pycache__'))
     proc = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
-                          cwd=copy, capture_output=True, text=True, timeout=1800)
+                          cwd=copy, capture_output=True, text=True, errors="replace", timeout=1800)
     (workdir / "build.log").write_text(proc.stdout[-20000:] + proc.stderr[-5000:])
     if proc.returncode != 0 or not (copy / "main.pdf").is_file():
         raise ValueError(f"LaTeX build failed; see {workdir / 'build.log'}")
@@ -546,8 +546,12 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
             action = "retarget_required"
         else:
             action = "evidence_remediation"
+        required = ([{"type": "text", "change": item,
+                      "location": "Editor screen: manuscript presentation", "referee": "editor"}
+                     for item in editor.get("presentation_problems", [])]
+                    if editor["decision"] == "revise_before_submission" else [])
         return {"outcome": editor["decision"], "recommendation": None, "scientific_blockers": [],
-                "required_changes": [], "next_action": action}
+                "required_changes": required, "next_action": action}
     if not referees:
         raise ValueError("A send-to-review decision requires the configured referee panel")
     rec = max((r["recommendation"] for r in referees.values()), key=RECOMMENDATIONS.index)
@@ -597,6 +601,12 @@ def _previous_round(root: Path, paper_id: str, target: str, expanded: str, respo
     diff = "".join(difflib.unified_diff(old.splitlines(True), expanded.splitlines(True), "previous", "current", n=2))
     items = list(last["merged"].get("scientific_blockers", [])) + [
         f"[{c['type']}] {c['change']} ({c['location']})" for c in last["merged"].get("required_changes", [])]
+    # Older editor-only revision decisions did not serialize these mandatory
+    # presentation requests into merged.required_changes. Recover only an
+    # explicit revision request, never optional suggestions after a desk reject.
+    if not items and last.get("editor_screen", {}).get("decision") == "revise_before_submission":
+        items = [f"[text] {item} (Editor screen: manuscript presentation)"
+                 for item in last["editor_screen"].get("presentation_problems", [])]
     return {"letter": last.get("letter", ""), "items": items, "response": response, "diff": diff[:400000]}
 
 

@@ -37,6 +37,28 @@ def test_more_cautious_referee_prevails():
     assert merged["recommendation"] == "major_revision" and merged["outcome"] == "revision_required"
 
 
+def test_editor_revision_requests_remain_mandatory_but_desk_suggestions_do_not():
+    screen = editor("revise_before_submission", "presentation") | {"presentation_problems": ["Define the main object before the theorem."]}
+    changes = flow.merge(screen, {})["required_changes"]
+    assert changes[0]["type"] == "text" and changes[0]["referee"] == "editor"
+    rejected = screen | {"decision": "desk_reject", "desk_reject_category": "significance"}
+    assert flow.merge(rejected, {})["required_changes"] == []
+
+
+def test_previous_editor_revision_recovers_legacy_missing_mandatory_items(tmp_path):
+    run = tmp_path / "reviews/unified/example/20260101T000000Z"
+    run.mkdir(parents=True)
+    (run / "manuscript-expanded.tex").write_text("old text")
+    record = {"stage_reached": "decision", "target_journal": "Journal", "merged": {"required_changes": []},
+              "editor_screen": {"decision": "revise_before_submission", "presentation_problems": ["Define X."]}}
+    (run / "decision.json").write_text(json.dumps(record))
+    previous = flow._previous_round(tmp_path, "example", "Journal", "new text", "X is now defined.")
+    assert previous["items"] == ["[text] Define X. (Editor screen: manuscript presentation)"]
+    record["editor_screen"]["decision"] = "desk_reject"
+    (run / "decision.json").write_text(json.dumps(record))
+    assert flow._previous_round(tmp_path, "example", "Journal", "new text", "response")["items"] == []
+
+
 def test_ready_only_with_text_changes_and_no_blockers():
     ready = flow.merge(editor(), {"referee_a": referee("accept"),
                                   "referee_b": referee("minor_revision", changes=[("typo", "text")])})
