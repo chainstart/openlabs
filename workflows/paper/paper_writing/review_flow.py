@@ -89,8 +89,8 @@ REFEREE_SCHEMA: dict[str, Any] = {
             "properties": {"change": _TEXT, "type": {"type": "string", "enum": list(CHANGE_TYPES)}, "location": _TEXT}}},
         "optional_suggestions": _TEXT_LIST,
         "previous_items": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False, "required": ["item", "resolved", "evidence"],
-            "properties": {"item": _TEXT, "resolved": {"type": "boolean"}, "evidence": _TEXT}}},
+            "type": "object", "additionalProperties": False, "required": ["id", "item", "resolved", "evidence"],
+            "properties": {"id": _TEXT, "item": _TEXT, "resolved": {"type": "boolean"}, "evidence": _TEXT}}},
         "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
     },
 }
@@ -358,7 +358,8 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
             f"## Supporting materials\n{support_description(pre['metadata'], root)}\n")
     if previous:
         text += (f"\n## Previous round\nDecision letter:\n{previous['letter']}\n\n"
-                 f"Items to check:\n" + "\n".join(f"- {i}" for i in previous["items"]) +
+                 f"Items to check (report each in previous_items by its id; nothing else):\n"
+                 + "\n".join(f"- [P{n}] {i}" for n, i in enumerate(previous["items"], 1)) +
                  f"\n\nAuthors' response:\n{previous['response']}\n\n"
                  f"Source changes since the previous round (unified diff):\n{previous['diff']}\n")
     return text
@@ -366,8 +367,13 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
 
 # --------------------------------------------------------------------------- merge
 
-def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    """Conservative deterministic merge. It can only make the outcome stricter."""
+def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
+          previous_ids: set[str] | None = None) -> dict[str, Any]:
+    """Conservative deterministic merge. It can only make the outcome stricter.
+
+    Only the previous round's numbered items (required changes and blockers) can block; a
+    referee's comments on earlier optional suggestions are recorded but do not block.
+    """
     if editor["decision"] != "send_to_review":
         category = editor["desk_reject_category"]
         if editor["decision"] == "revise_before_submission" or category == "presentation":
@@ -382,7 +388,8 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]]) 
     blockers = sorted({b for r in referees.values() for b in r["scientific_blockers"]})
     changes = [dict(c, referee=name) for name, r in referees.items() for c in r["required_changes"]]
     unresolved_previous = [dict(p, referee=name) for name, r in referees.items()
-                           for p in r["previous_items"] if not p["resolved"]]
+                           for p in r["previous_items"] if not p["resolved"]
+                           and (previous_ids is None or str(p.get("id", "")).strip("[] ") in previous_ids)]
     types = {c["type"] for c in changes}
     ready = (rec in {"accept", "minor_revision"} and not blockers and types <= {"text"}
              and not unresolved_previous)
@@ -482,7 +489,8 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                        for name in ("referee_a", "referee_b")}
             for name, future in futures.items():
                 referees[name], receipts[name] = future.result()
-    merged = merge(editor, referees)
+    previous_ids = {f"P{n}" for n in range(1, len(previous["items"]) + 1)} if previous else None
+    merged = merge(editor, referees, previous_ids)
     letter_packet = json.dumps({"fixed_decision": merged, "editor_screen": editor, "referee_reports": referees},
                                indent=2, ensure_ascii=False)
     letter, letter_receipt = run_role(role_name="decision_letter", role=roles["editor"],

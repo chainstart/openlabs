@@ -33,9 +33,11 @@ claim is required. Every item in `required_changes` must say what to change and 
 be typed: `text` (wording, organization, citation presentation), `claim_narrowing` (a claim must
 be weakened or restated), or `evidence` (a new proof step, computation, experiment or comparison
 is needed). Anything that makes a main claim unsupported goes in `scientific_blockers`.
-If the packet contains the authors' response to an earlier round, check each previous item
-against the current text and the response; an item answered only by adding a disclaimer is not
-resolved.
+If the packet contains the authors' response to an earlier round, check each numbered previous
+item (P1, P2, ...) against the current text and the response, and report exactly those items in
+`previous_items` with their ids; an item answered only by adding a disclaimer is not resolved.
+Earlier optional suggestions are not previous items: if one still matters, raise it again as a
+new required change or optional suggestion.
 
 Scores are integers from 1 to 10 relative to the journal named in the packet; when between two
 integers choose the lower. Return only the JSON object required by the schema.

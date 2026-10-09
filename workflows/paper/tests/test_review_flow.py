@@ -56,6 +56,17 @@ def test_unresolved_previous_item_blocks_ready():
     assert merged["outcome"] == "revision_required"
 
 
+def test_only_numbered_previous_items_block_ready():
+    optional = {"id": "running title", "item": "optional title", "resolved": False, "evidence": "unchanged"}
+    numbered = {"id": "P1", "item": "fix intro", "resolved": False, "evidence": "unchanged"}
+    ok = flow.merge(editor(), {"referee_a": referee("accept", previous=[optional]),
+                               "referee_b": referee("accept")}, {"P1"})
+    assert ok["outcome"] == "ready"
+    blocked = flow.merge(editor(), {"referee_a": referee("accept", previous=[numbered]),
+                                    "referee_b": referee("accept")}, {"P1"})
+    assert blocked["outcome"] == "revision_required"
+
+
 def test_legacy_paths_refuse_when_unified(monkeypatch):
     monkeypatch.setattr(flow, "unified_enabled", lambda root: True)
     with pytest.raises(ValueError, match="disabled"):
