@@ -113,7 +113,7 @@ def run_role(
     (workdir / "prompt.txt").write_text(prompt)
     (workdir / "system.txt").write_text(system_prompt)
     out_path = workdir / "output.json"
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("ARA_", "ZENODO_"))}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("ARA_", "ZENODO_", "SDJU_", "IMAP_", "SMTP_"))}
 
     if runtime == "claude":
         command = [_executable("claude"), "-p", "--setting-sources", "project", "--strict-mcp-config",

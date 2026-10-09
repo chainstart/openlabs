@@ -470,8 +470,16 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
 # --------------------------------------------------------------------------- merge
 
 def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
-          history_blockers: list[str] | None = None) -> dict[str, Any]:
+          history_blockers: list[str] | None = None, *,
+          previous_ids: set[str] | None = None) -> dict[str, Any]:
     """Conservative deterministic merge. It can only make the outcome stricter."""
+    # Compatibility with the earlier numbered-item API; the current pipeline
+    # supplies rejection blockers as a list and constrains exact mandatory items
+    # in the referee schema before merging.
+    if isinstance(history_blockers, set):
+        if previous_ids is not None:
+            raise ValueError("Previous item IDs supplied twice")
+        previous_ids, history_blockers = history_blockers, None
     if history_blockers:
         return {"outcome": "rejection_history_blocked", "recommendation": None,
                 "scientific_blockers": history_blockers, "required_changes": [],
@@ -492,7 +500,8 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
     blockers = sorted({b for r in referees.values() for b in r["scientific_blockers"]})
     changes = [dict(c, referee=name) for name, r in referees.items() for c in r["required_changes"]]
     unresolved_previous = [dict(p, referee=name) for name, r in referees.items()
-                           for p in r["previous_items"] if not p["resolved"]]
+                           for p in r["previous_items"] if not p["resolved"]
+                           and (previous_ids is None or str(p.get("id", "")).strip("[] ") in previous_ids)]
     types = {c["type"] for c in changes}
     ready = (rec in {"accept", "minor_revision"} and not blockers and types <= {"text"}
              and not unresolved_previous)
