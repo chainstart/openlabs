@@ -167,14 +167,17 @@ def expand_tex(path: Path, base: Path, seen: set[Path] | None = None) -> str:
     out = []
     for line in path.read_text(errors="replace").splitlines():
         code = re.split(r"(?<!\\)%", line, maxsplit=1)[0]
-        match = _INPUT.search(code)
-        if match:
-            target = base / match.group(1).strip()
-            out.append(code[:match.start()])
-            out.append(f"% ---- begin {target.relative_to(base)} ----")
-            out.append(expand_tex(target, base, seen))
-            out.append(f"% ---- end {target.relative_to(base)} ----")
-            out.append(code[match.end():])
+        cursor = 0
+        matches = list(_INPUT.finditer(code))
+        if matches:
+            for match in matches:
+                target = base / match.group(1).strip()
+                out.append(code[cursor:match.start()])
+                out.append(f"% ---- begin {target.relative_to(base)} ----")
+                out.append(expand_tex(target, base, seen))
+                out.append(f"% ---- end {target.relative_to(base)} ----")
+                cursor = match.end()
+            out.append(code[cursor:])
         else:
             out.append(line)
     return "\n".join(out)
@@ -193,6 +196,14 @@ def _balanced(text: str, start: int) -> str:
 
 
 def front_matter(expanded: str) -> dict[str, str]:
+    # Generated scalar results are often zero-argument LaTeX macros. Resolve
+    # only literal numbers, never arbitrary commands or executable TeX.
+    numeric = dict(re.findall(
+        r"\\(?:newcommand|renewcommand|providecommand)\s*\{\\([A-Za-z]+)\}"
+        r"\s*\{([-+0-9.,]+)\}", expanded))
+    if numeric:
+        expanded = re.sub(r"\\([A-Za-z]+)\b",
+                          lambda m: numeric.get(m.group(1), m.group(0)), expanded)
     title = ""
     match = re.search(r"\\title(?:\[[^\]]*\])?\s*\{", expanded)
     if match:
@@ -210,8 +221,21 @@ def front_matter(expanded: str) -> dict[str, str]:
     statements = []
     for m in re.finditer(r"\\begin\{(theorem|proposition|corollary|conjecture)\}(.*?)\\end\{\1\}", expanded, re.S):
         statements.append(f"[{m.group(1)}] {m.group(2).strip()}")
+    # Empirical papers express their main findings in sections, not theorem
+    # environments. Supply those findings and their information budgets.
+    section_matches = list(re.finditer(r"\\section\*?\{([^}]+)\}", expanded))
+    methods = []
+    for i, match in enumerate(section_matches):
+        end = section_matches[i + 1].start() if i + 1 < len(section_matches) else len(expanded)
+        body = expanded[match.start():end]
+        heading = match.group(1).lower()
+        if re.search(r"\b(results?|findings?|experiments?|empirical|numerical)\b", heading):
+            statements.append(body)
+        if re.search(r"\b(methods?|materials?|experimental setup)\b", heading):
+            methods.append(body)
     return {"title": title.strip(), "abstract": abstract.strip(), "introduction": intro.strip(),
-            "main_statements": "\n\n".join(statements[:30])}
+            "main_statements": "\n\n".join(statements[:30]),
+            "methods": "\n\n".join(methods)}
 
 
 def bibliography_text(manuscript: Path) -> str:
@@ -428,6 +452,7 @@ def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> st
             f"## Prior editorial decisions on this paper\n{letters}\n\n"
             f"## Title\n{parts['title']}\n\n## Abstract\n{parts['abstract']}\n\n"
             f"## Introduction\n{parts['introduction']}\n\n## Statements of the main results\n{parts['main_statements']}\n\n"
+            f"## Methods and information budgets\n{parts['methods']}\n\n"
             f"## Reference list\n{pre['bibliography']}\n")
 
 

@@ -143,6 +143,33 @@ def test_inline_bibliography_takes_priority_over_unused_stale_bbl(tmp_path):
     assert 'Actual mathematical predecessor' in text and 'Stale' not in text
 
 
+def test_empirical_editor_receives_results_numbers_and_budgets(tmp_path):
+    (tmp_path / 'numbers.tex').write_text(r'\newcommand{\Cov}{0.9026}')
+    (tmp_path / 'results.tex').write_text(
+        r'\section{Results} Coverage \Cov.\subsection{Costs} 300 target labels.')
+    (tmp_path / 'main.tex').write_text(
+        r'\input{numbers}\title{Benchmark}\begin{abstract}Coverage \Cov.\end{abstract}'
+        '\n' + r'\section{Introduction} Question.\section{Methods} Labels revealed only in target calibration.'
+        '\n' + r'\input{results}\section{Discussion} Limits.')
+    parts = flow.front_matter(flow.expand_tex(tmp_path / 'main.tex', tmp_path))
+    assert parts['title'] == 'Benchmark'
+    assert parts['abstract'] == 'Coverage 0.9026.'
+    assert 'Coverage 0.9026.' in parts['main_statements']
+    assert '300 target labels' in parts['main_statements']
+    assert 'Limits.' not in parts['main_statements']
+    assert 'Labels revealed only in target calibration' in parts['methods']
+
+
+def test_expand_handles_multiple_inputs_without_expanding_comments(tmp_path):
+    (tmp_path / 'a.tex').write_text('FIRST')
+    (tmp_path / 'b.tex').write_text('SECOND')
+    (tmp_path / 'c.tex').write_text('COMMENTED')
+    (tmp_path / 'main.tex').write_text(r'prefix\input{a}between\input{b}suffix % \input{c}')
+    expanded = flow.expand_tex(tmp_path / 'main.tex', tmp_path)
+    assert all(s in expanded for s in ('prefix', 'FIRST', 'between', 'SECOND', 'suffix'))
+    assert 'COMMENTED' not in expanded
+
+
 def test_unused_source_files_are_reported(tmp_path):
     for name in ("main.tex", "used.tex", "old.tex", "notes.md", "references.bib"):
         (tmp_path / name).write_text("x")
