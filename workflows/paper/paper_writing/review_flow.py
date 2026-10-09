@@ -465,7 +465,10 @@ def support_description(metadata: Mapping[str, Any], root: Path) -> str:
     # Paths relative to the package root, so directories such as verification/ stay visible.
     base = os.path.commonpath([str(Path(f).parent) for f in files]) if files else ""
     listing = "\n".join(f"- {os.path.relpath(f, base) if base else f}" for f in files)
-    return "\n\n".join(texts) + f"\n\nFiles in the supporting materials:\n{listing}"
+    locations = "\n".join(f"- {(root / f).resolve()}" for f in files)
+    return ("\n\n".join(texts) + f"\n\nFiles in the supporting materials:\n{listing}"
+            + "\n\nRegistered material locations (read-only inspection is permitted):\n"
+            + locations + "\nInspect only these scientific materials; private preparation notes are not review inputs.")
 
 
 def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, Any] | None,
@@ -478,6 +481,12 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
             f"## Bibliography\n{pre['bibliography']}\n\n"
             f"## Claim-evidence map\n{evidence}\n\n"
             f"## Supporting materials\n{support_description(pre['metadata'], root)}\n")
+    manuscript = root / str(metadata.get('manuscript_dir') or f"papers/{metadata.get('paper_id')}/manuscript")
+    supplement = metadata.get('latest_supplementary_pdf')
+    supplement_path = (root / str(supplement)).with_suffix('.tex') if supplement else manuscript / 'supplementary.tex'
+    if supplement_path.is_file():
+        text += ("\n## Supplementary material (LaTeX, all inputs expanded)\n"
+                 + expand_tex(supplement_path, manuscript) + "\n")
     if decisions:
         text += ("\n## Original historical refusal context\n"
                  "These are the original sourced letters, independent of this round's editor verdict. "

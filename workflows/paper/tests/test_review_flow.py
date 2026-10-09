@@ -170,6 +170,24 @@ def test_expand_handles_multiple_inputs_without_expanding_comments(tmp_path):
     assert 'COMMENTED' not in expanded
 
 
+def test_referee_receives_supplement_and_inspectable_scientific_paths(tmp_path, monkeypatch):
+    manuscript = tmp_path / 'paper'
+    manuscript.mkdir()
+    (manuscript / 'supplementary.tex').write_text(r'\section{Sensitivity}\input{table}')
+    (manuscript / 'table.tex').write_text('Independent control objective gap: 0.000001.')
+    code = tmp_path / 'public-support' / 'solver.py'
+    code.parent.mkdir()
+    code.write_text('scientific implementation')
+    meta = {'paper_id': 'p', 'manuscript_dir': 'paper',
+            'support': {'publication': {'source_files': ['public-support/solver.py']}}}
+    monkeypatch.setattr(flow, '_target_block', lambda metadata: 'Journal')
+    packet = flow.referee_packet({'metadata': meta, 'expanded': 'Main paper', 'bibliography': 'Refs'},
+                                 tmp_path, None)
+    assert 'Independent control objective gap: 0.000001.' in packet
+    assert str(code.resolve()) in packet
+    assert 'private preparation notes are not review inputs' in packet
+
+
 def test_unused_source_files_are_reported(tmp_path):
     for name in ("main.tex", "used.tex", "old.tex", "notes.md", "references.bib"):
         (tmp_path / name).write_text("x")
