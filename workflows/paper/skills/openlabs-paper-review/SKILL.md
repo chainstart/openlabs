@@ -91,7 +91,9 @@ readable and unchanged. The previous instructions are kept at
 
 ## Temporary configuration and rejection clearance (2026-10-09)
 
-The editor must use a fresh Codex process. Claude referee A is temporarily inactive;
+The editor must use a fresh Codex process. Original letters are also supplied to the
+active referee, without the current editor verdict, so newly recovered evidence can
+resolve an earlier missing-letter request. Claude referee A is temporarily inactive;
 `review.referee_roles: [referee_b]` and the recorded user authorization select one Codex
 referee. This lacks the normal second-model cross-check and must be reported honestly.
 For every distinct historical rejection, supply a verbatim letter with its source and

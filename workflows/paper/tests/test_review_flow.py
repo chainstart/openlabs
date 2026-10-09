@@ -297,3 +297,12 @@ def test_support_inventory_keeps_directories(tmp_path):
                                                           "papers/p/support/v1/verification/check.py"]}}}
     text = flow.support_description(meta, tmp_path)
     assert "- verification/check.py" in text and "- README.md" in text
+
+
+def test_referee_receives_original_refusal_without_current_editor_verdict(tmp_path):
+    pre = {'metadata': {'paper_id':'p', 'target_journal':'Journal'},
+           'expanded':'Current manuscript', 'bibliography':'Current bibliography'}
+    decisions = [{'decision_id':'D-1', 'letter_available':True, 'letter_text':'Original concern'}]
+    packet = flow.referee_packet(pre, tmp_path, None, decisions)
+    assert 'Original concern' in packet and 'D-1' in packet
+    assert 'Current manuscript' in packet and 'send_to_review' not in packet

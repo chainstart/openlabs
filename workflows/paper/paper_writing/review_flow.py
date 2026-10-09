@@ -443,7 +443,8 @@ def support_description(metadata: Mapping[str, Any], root: Path) -> str:
     return "\n\n".join(texts) + f"\n\nFiles in the supporting materials:\n{listing}"
 
 
-def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, Any] | None) -> str:
+def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, Any] | None,
+                   decisions: list[dict[str, Any]] | None = None) -> str:
     metadata = pre['metadata']
     mapping = root / str(metadata.get('evidence_dir') or f"papers/{metadata.get('paper_id')}/evidence") / 'claim_evidence_map.md'
     evidence = mapping.read_text(errors='replace') if mapping.is_file() else '[No canonical claim-evidence map available]'
@@ -452,6 +453,12 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
             f"## Bibliography\n{pre['bibliography']}\n\n"
             f"## Claim-evidence map\n{evidence}\n\n"
             f"## Supporting materials\n{support_description(pre['metadata'], root)}\n")
+    if decisions:
+        text += ("\n## Original historical refusal context\n"
+                 "These are the original sourced letters, independent of this round's editor verdict. "
+                 "Check previous requests against these current documents; do not assume an old "
+                 "missing-letter diagnosis still holds when the original is now supplied.\n"
+                 + json.dumps(decisions, ensure_ascii=False, indent=2) + "\n")
     if previous:
         text += (f"\n## Previous round\nDecision letter:\n{previous['letter']}\n\n"
                  f"Items to check:\n" + "\n".join(f"- {i}" for i in previous["items"]) +
@@ -602,7 +609,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     receipts = {"editor": editor_receipt}
     history_blockers = rejection_clearance_blockers(editor, decisions)
     if editor["decision"] == "send_to_review" and not history_blockers:
-        packet = referee_packet(pre, root, previous)
+        packet = referee_packet(pre, root, previous, decisions)
         schema = referee_schema_for_previous(previous)
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(panel)) as pool:
             futures = {name: pool.submit(run_role, role_name=name, role=roles[name],
