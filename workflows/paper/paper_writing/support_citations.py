@@ -60,6 +60,7 @@ BIB_ENTRY_START = re.compile(r"@\w+\s*\{\s*([^,\s]+)\s*,", re.IGNORECASE)
 BIB_FIELD_START = re.compile(r"(?m)^\s*([A-Za-z][A-Za-z0-9_-]*)\s*=\s*")
 SUPPORT_MENTION = re.compile(
     r"(?:support(?:ing)?[- ]materials?|support(?:ing)?[- ]material\s+source|"
+    r"support(?:ing)?\s+(?:source\s+)?collection\b|"
     r"support\s+archive|reproducibility\s+archive|Zenodo\s+(?:record|archive)|"
     r"cited\s+Zenodo\s+archive|reader-facing\s+support\s+source|"
     r"支撑材料|支持材料|Zenodo\s*版本记录|Zenodo\s*归档)",

@@ -33,6 +33,25 @@ def test_explicit_material_version_keeps_draft_checks_strict(tmp_path: Path) -> 
     assert any(item["code"] == "SUPPORT-DRAFT-VERSION" for item in result["errors"])
 
 
+@pytest.mark.parametrize("phrase", ["supporting collection", "support source collection"])
+def test_cited_support_collection_is_a_material_mention(tmp_path: Path, phrase: str) -> None:
+    _workspace(tmp_path)
+    main = tmp_path / "papers" / PAPER_ID / "manuscript/main.tex"
+    main.write_text(main.read_text().replace("supporting materials", phrase))
+    assert audit_manuscript_support(PAPER_ID, root=tmp_path)["valid"]
+    main.write_text(main.read_text().replace(r"\citep{supportRecord}", ""))
+    errors = audit_manuscript_support(PAPER_ID, root=tmp_path)["errors"]
+    assert any(item["code"] == "SUPPORT-CITATION-MISSING" for item in errors)
+
+
+def test_collection_without_support_identity_stays_blocked(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    main = tmp_path / "papers" / PAPER_ID / "manuscript/main.tex"
+    main.write_text(r"\documentclass{article}\begin{document}An accompanying collection.\end{document}")
+    errors = audit_manuscript_support(PAPER_ID, root=tmp_path)["errors"]
+    assert any(item["code"] == "SUPPORT-MANUSCRIPT-CITATION-REQUIRED" for item in errors)
+
+
 def _write_settings(root: Path) -> None:
     (root / "registry" / "papers").mkdir(parents=True)
     (root / "registry" / "settings.yaml").write_text(
