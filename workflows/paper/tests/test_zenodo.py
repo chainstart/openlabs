@@ -73,6 +73,97 @@ def test_delete_file_uses_deposition_file_endpoint() -> None:
     }
 
 
+def test_get_deposition_requests_fresh_authenticated_state_only_on_get() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.headers["authorization"] == "Bearer test-token"
+        assert request.headers["cache-control"] == "no-cache, no-store"
+        assert request.headers["pragma"] == "no-cache"
+        return httpx.Response(200, json={"id": 42, "submitted": False, "files": []})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        client = ZenodoClient("sandbox", "test-token", client=http_client)
+        assert client.get_deposition(42)["id"] == 42
+        assert client.headers == {"Authorization": "Bearer test-token"}
+
+
+def test_upload_delayed_visibility_rereads_once_without_reupload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package = tmp_path / "support.zip"
+    package.write_bytes(b"exact content")
+    item = {"filename": package.name, "filesize": package.stat().st_size,
+            "checksum": "md5:" + md5_file(package)}
+    methods = []
+    pauses = []
+    monkeypatch.setattr(zenodo.time, "sleep", pauses.append)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        methods.append(request.method)
+        if request.method == "PUT":
+            assert "cache-control" not in request.headers
+            assert "pragma" not in request.headers
+            return httpx.Response(504, text="timeout")
+        assert request.headers["cache-control"] == "no-cache, no-store"
+        assert request.headers["pragma"] == "no-cache"
+        assert request.headers["authorization"] == "Bearer test-token"
+        assert request.url.path == "/api/deposit/depositions/42"
+        return httpx.Response(200, json={"id": 42, "submitted": False,
+            "files": [] if methods.count("GET") == 1 else [item]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        result = ZenodoClient("sandbox", "test-token", client=http_client).upload_file(
+            {"id": 42, "links": {"bucket": "https://sandbox.zenodo.org/api/files/bucket"}}, package,
+        )
+    assert result["verified_upload_readback"]["sha256"] == zenodo.sha256_file(package)
+    assert methods == ["PUT", "GET", "GET"]
+    assert pauses == [0.5]
+
+
+@pytest.mark.parametrize("problem", [
+    "wrong_id", "published", "unknown_submission", "missing_inventory",
+    "malformed_entry", "malformed_name", "wrong_size", "wrong_checksum",
+    "malformed_checksum", "duplicate_file", "still_missing", "inexact_name",
+])
+def test_upload_fresh_reread_remains_bounded_and_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str,
+) -> None:
+    package = tmp_path / "support.zip"
+    package.write_bytes(b"exact content")
+    item = {"filename": package.name, "filesize": package.stat().st_size,
+            "checksum": "md5:" + md5_file(package)}
+    second = {"id": 42, "submitted": False, "files": [item]}
+    if problem == "wrong_id": second["id"] = 43
+    elif problem == "published": second["submitted"] = True
+    elif problem == "unknown_submission": second.pop("submitted")
+    elif problem == "missing_inventory": second.pop("files")
+    elif problem == "malformed_entry": second["files"] = [None]
+    elif problem == "malformed_name": item["filename"] = 123
+    elif problem == "wrong_size": item["filesize"] += 1
+    elif problem == "wrong_checksum": item["checksum"] = "md5:" + "0" * 32
+    elif problem == "malformed_checksum": item["checksum"] = "not-a-checksum"
+    elif problem == "duplicate_file": second["files"].append(dict(item))
+    elif problem == "still_missing": second["files"] = []
+    elif problem == "inexact_name": item["filename"] = " " + package.name + " "
+    methods = []
+    pauses = []
+    monkeypatch.setattr(zenodo.time, "sleep", pauses.append)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        methods.append(request.method)
+        if request.method == "PUT": return httpx.Response(504, text="timeout")
+        return httpx.Response(200, json={"id": 42, "submitted": False, "files": []}
+                              if methods.count("GET") == 1 else second)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        with pytest.raises(zenodo.ZenodoError):
+            ZenodoClient("sandbox", "test-token", client=http_client).upload_file(
+                {"id": 42, "links": {"bucket": "https://sandbox.zenodo.org/api/files/bucket"}}, package,
+            )
+    assert methods == ["PUT", "GET", "GET"]
+    assert pauses == [0.5]
+
+
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
 def test_upload_transient_failure_requires_exact_persisted_file(tmp_path: Path, status: int) -> None:
     package = tmp_path / "support.zip.sha256"
@@ -102,8 +193,11 @@ def test_upload_transient_failure_requires_exact_persisted_file(tmp_path: Path, 
 
 
 @pytest.mark.parametrize("problem", ["wrong_id", "published", "unknown_submission", "missing_file",
-                                    "wrong_size", "wrong_checksum", "duplicate_file"])
-def test_upload_readback_cannot_recover_unverified_content(tmp_path: Path, problem: str) -> None:
+                                    "wrong_size", "wrong_checksum", "duplicate_file",
+                                    "missing_inventory", "malformed_entry", "malformed_name"])
+def test_upload_readback_cannot_recover_unverified_content(
+    tmp_path: Path, problem: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     package = tmp_path / "support.zip"
     package.write_bytes(b"exact content")
     item = {"filename": package.name, "filesize": package.stat().st_size,
@@ -116,8 +210,15 @@ def test_upload_readback_cannot_recover_unverified_content(tmp_path: Path, probl
     elif problem == "wrong_size": item["filesize"] += 1
     elif problem == "wrong_checksum": item["checksum"] = "md5:" + "0" * 32
     elif problem == "duplicate_file": draft["files"].append(dict(item))
+    elif problem == "missing_inventory": draft.pop("files")
+    elif problem == "malformed_entry": draft["files"] = [None]
+    elif problem == "malformed_name": item["filename"] = 123
+    methods = []
+    pauses = []
+    monkeypatch.setattr(zenodo.time, "sleep", pauses.append)
 
     def respond(request: httpx.Request) -> httpx.Response:
+        methods.append(request.method)
         if request.method == "PUT": return httpx.Response(504, text="timeout")
         return httpx.Response(200, json=draft)
 
@@ -126,6 +227,8 @@ def test_upload_readback_cannot_recover_unverified_content(tmp_path: Path, probl
         with pytest.raises(zenodo.ZenodoError):
             client.upload_file({"id": 42, "links": {
                 "bucket": "https://sandbox.zenodo.org/api/files/verified-bucket"}}, package)
+    assert methods == (["PUT", "GET", "GET"] if problem == "missing_file" else ["PUT", "GET"])
+    assert pauses == ([0.5] if problem == "missing_file" else [])
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 404])
