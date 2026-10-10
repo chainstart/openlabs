@@ -868,6 +868,66 @@ def _archive_identity_checks(
             _issue(code, f"{source}: {message}", path=archive, root=root)
         )
 
+    def check_source_identities(
+        payload: zipfile.ZipFile, name: str, names: set[str], source: str
+    ) -> None:
+        location = f"{source}!{name}"
+        try:
+            identities = json.loads(payload.read(name).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            add("SUPPORT-ARCHIVE-SOURCE-IDENTITY-INVALID", f"cannot parse source identities: {exc}", location)
+            return
+        if not isinstance(identities, Mapping):
+            add("SUPPORT-ARCHIVE-SOURCE-IDENTITY-INVALID", "source identities must be an object", location)
+            return
+
+        # These inventories are relative to this identity file, including when
+        # the source package is nested under a generated archive root. Older
+        # schemas without either inventory remain valid; neither inventory is
+        # required to cover every member (in particular its own identity file).
+        parent = Path(name).parent.as_posix()
+        prefix = "" if parent == "." else f"{parent}/"
+        seen: dict[str, str] = {}
+        for field in ("files", "scientific_sources"):
+            if field not in identities:
+                continue
+            inventory = identities[field]
+            if isinstance(inventory, Mapping):
+                entries = list(inventory.items())
+            elif isinstance(inventory, list):
+                entries = []
+                for item in inventory:
+                    if not isinstance(item, Mapping):
+                        add("SUPPORT-ARCHIVE-SOURCE-IDENTITY-INVALID", f"{field} entry must contain path and sha256", location)
+                        continue
+                    entries.append((item.get("path"), item.get("sha256")))
+            else:
+                add("SUPPORT-ARCHIVE-SOURCE-IDENTITY-INVALID", f"{field} must be a path-to-digest object or a path/sha256 list", location)
+                continue
+            for relative, digest in entries:
+                if (
+                    not isinstance(relative, str)
+                    or not relative
+                    or relative.startswith("/")
+                    or "\\" in relative
+                    or re.match(r"^[A-Za-z]:", relative)
+                    or any(part in {"", ".", ".."} for part in relative.split("/"))
+                ):
+                    add("SUPPORT-ARCHIVE-SOURCE-IDENTITY-PATH", f"{field} has an unsafe relative path: {relative!r}", location)
+                    continue
+                if not isinstance(digest, str) or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None:
+                    add("SUPPORT-ARCHIVE-SOURCE-IDENTITY-INVALID", f"{field} has a malformed SHA-256 for {relative!r}", location)
+                    continue
+                digest = digest.lower()
+                if relative in seen and seen[relative] != digest:
+                    add("SUPPORT-ARCHIVE-SOURCE-IDENTITY-CONFLICT", f"inventories disagree for {relative!r}", location)
+                seen[relative] = digest
+                member = f"{prefix}{relative}"
+                if member not in names or member.endswith("/"):
+                    add("SUPPORT-ARCHIVE-SOURCE-IDENTITY-MISSING", f"{field} references missing package member {relative!r}", location)
+                elif hashlib.sha256(payload.read(member)).hexdigest() != digest:
+                    add("SUPPORT-ARCHIVE-SOURCE-IDENTITY-HASH", f"{field} SHA-256 does not match package bytes for {relative!r}", location)
+
     def check_zip(payload: zipfile.ZipFile, source: str, depth: int) -> None:
         names = set(payload.namelist())
         identity_directories: set[str] = set()
@@ -875,7 +935,9 @@ def _archive_identity_checks(
             if name.endswith("/"):
                 continue
             basename = Path(name).name
-            if basename == "CITATION.cff":
+            if basename == "SOURCE_IDENTITIES.json":
+                check_source_identities(payload, name, names, source)
+            elif basename == "CITATION.cff":
                 try:
                     cff = yaml.safe_load(payload.read(name).decode("utf-8"))
                 except (UnicodeDecodeError, yaml.YAMLError) as exc:

@@ -1,5 +1,7 @@
 import hashlib
 import json
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -395,6 +397,125 @@ def test_support_audit_accepts_current_neutral_citation(tmp_path: Path) -> None:
     assert result["valid"] is True
     assert result["bibliography_key"] == "supportRecord"
     assert result["current_version_doi"] == "10.5281/zenodo.12345678"
+
+
+def _source_identity_workspace(
+    root: Path, *, stale_readme: bool = False, files_as_list: bool = False,
+    scientific_subset: bool = False, invalid_entry: tuple[object, object] | None = None,
+    invalid_field: object = None, nested: bool = False, legacy: bool = False,
+) -> Path:
+    """Prepare a real registered ZIP, not a mocked identity-check call."""
+    _workspace(root)
+    record_path = root / "registry" / "papers" / f"{PAPER_ID}.yaml"
+    record = yaml.safe_load(record_path.read_text())
+    publication = record["support"]["publication"]
+    source_root = root / "papers" / PAPER_ID / "evidence" / "public-support-v1.0.0"
+    readme = source_root / "README.md"
+    readme.write_text("# A Support Citation Audit\n\nVersion 1.0.0, DOI 10.5281/zenodo.12345678.\n")
+    replay = source_root / "replay.py"
+    # The same source-verification operation as the weighted archive runner.
+    replay.write_text(
+        "import hashlib,json\nfrom pathlib import Path\n"
+        "root=Path(__file__).resolve().parent\n"
+        "identities=json.loads((root/'SOURCE_IDENTITIES.json').read_text())\n"
+        "for x in identities['scientific_sources']:\n"
+        " actual=hashlib.sha256((root/x['path']).read_bytes()).hexdigest()\n"
+        " if actual!=x['sha256']:raise SystemExit('Source mismatch: '+x['path'])\n"
+    )
+    files = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (readme, replay)}
+    scientific = [{"path": path, "sha256": digest} for path, digest in files.items()
+                  if not scientific_subset or path == "README.md"]
+    if stale_readme:
+        scientific[0]["sha256"] = hashlib.sha256(b"README before identity repair\n").hexdigest()
+    if invalid_entry is not None:
+        scientific.append({"path": invalid_entry[0], "sha256": invalid_entry[1]})
+    identities = {"version": "1.0.0", "self_excluded": True,
+                  "files": [{"path": p, "sha256": h} for p, h in files.items()]
+                  if files_as_list else files, "scientific_sources": scientific}
+    if invalid_field is not None:
+        identities["scientific_sources"] = invalid_field
+    if legacy:
+        identities = {"verification_sources": [], "portability": "relative source layout"}
+    identity = source_root / "SOURCE_IDENTITIES.json"
+    identity.write_text(json.dumps(identities))
+    sources = [root / p for p in publication["source_files"]]
+    if nested:
+        inner = source_root / "calculation.zip"
+        with zipfile.ZipFile(inner, "w") as payload:
+            for p in (readme, replay, identity):
+                payload.write(p, f"calculation/{p.name}")
+        sources.append(inner)
+    else:
+        sources.extend((readme, replay, identity))
+    publication["source_files"] = [str(p.relative_to(root)) for p in sources]
+    prepared = build_support_archive(
+        record, sources, repo_root=root,
+        output=root / publication["package_files"][0],
+        reserved_doi="10.5281/zenodo.12345678", origin_commit="a" * 40,
+        license_id="cc-by-4.0",
+    )
+    publication["package_sha256"] = prepared["archive_sha256"]
+    publication["package_size"] = prepared["archive_size"]
+    record_path.write_text(yaml.safe_dump(record, sort_keys=False))
+    return replay
+
+
+def test_support_audit_rejects_stale_duplicate_readme_used_by_runner(tmp_path: Path) -> None:
+    replay = _source_identity_workspace(tmp_path, stale_readme=True)
+    checked = subprocess.run([sys.executable, str(replay)], capture_output=True, text=True)
+    assert checked.returncode != 0
+    assert "Source mismatch: README.md" in checked.stderr
+    result = audit_manuscript_support(PAPER_ID, root=tmp_path)
+    assert result["valid"] is False
+    codes = {issue["code"] for issue in result["errors"]}
+    assert "SUPPORT-ARCHIVE-SOURCE-IDENTITY-CONFLICT" in codes
+    assert "SUPPORT-ARCHIVE-SOURCE-IDENTITY-HASH" in codes
+
+
+@pytest.mark.parametrize("files_as_list, scientific_subset, nested", [
+    (False, False, False), (True, False, False), (False, True, False),
+    (True, True, True),
+])
+def test_support_audit_accepts_consistent_source_identity_maps(
+    tmp_path: Path, files_as_list: bool, scientific_subset: bool, nested: bool,
+) -> None:
+    replay = _source_identity_workspace(
+        tmp_path, files_as_list=files_as_list, scientific_subset=scientific_subset, nested=nested,
+    )
+    checked = subprocess.run([sys.executable, str(replay)], capture_output=True, text=True)
+    assert checked.returncode == 0
+    assert audit_manuscript_support(PAPER_ID, root=tmp_path)["valid"] is True
+
+
+@pytest.mark.parametrize("path, digest, code", [
+    ("missing.py", "a" * 64, "MISSING"),
+    ("../README.md", "a" * 64, "PATH"),
+    ("/README.md", "a" * 64, "PATH"),
+    ("C:\\README.md", "a" * 64, "PATH"),
+    ("sub/../../README.md", "a" * 64, "PATH"),
+    ("README.md", "not-a-sha256", "INVALID"),
+    ("README.md", None, "INVALID"),
+    (None, "a" * 64, "PATH"),
+])
+def test_support_audit_rejects_invalid_source_identity_entries(
+    tmp_path: Path, path: object, digest: object, code: str,
+) -> None:
+    _source_identity_workspace(tmp_path, invalid_entry=(path, digest))
+    result = audit_manuscript_support(PAPER_ID, root=tmp_path)
+    assert result["valid"] is False
+    assert f"SUPPORT-ARCHIVE-SOURCE-IDENTITY-{code}" in {i["code"] for i in result["errors"]}
+
+
+def test_support_audit_rejects_malformed_source_identity_inventory(tmp_path: Path) -> None:
+    _source_identity_workspace(tmp_path, invalid_field="not an inventory")
+    result = audit_manuscript_support(PAPER_ID, root=tmp_path)
+    assert result["valid"] is False
+    assert "SUPPORT-ARCHIVE-SOURCE-IDENTITY-INVALID" in {i["code"] for i in result["errors"]}
+
+
+def test_support_audit_retains_legacy_source_identity_schema(tmp_path: Path) -> None:
+    _source_identity_workspace(tmp_path, legacy=True)
+    assert audit_manuscript_support(PAPER_ID, root=tmp_path)["valid"] is True
 
 
 @pytest.mark.parametrize("case, passes", [
