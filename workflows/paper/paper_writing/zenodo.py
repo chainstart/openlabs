@@ -353,6 +353,10 @@ class ZenodoClient:
             f"{self.api_url}/deposit/depositions/{deposition_id}/files/{encoded_file_id}",
             headers=self.headers,
         )
+        if response.status_code in {500, 502, 503, 504}:
+            return self._delete_file_via_draft_endpoint(
+                deposition_id, file_id, legacy_status=response.status_code
+            )
         if not response.is_success:
             try:
                 payload: Any = response.json()
@@ -363,6 +367,56 @@ class ZenodoClient:
                 f"HTTP {response.status_code}: {payload}"
             )
         return {"deleted": True, "deposition_id": deposition_id, "file_id": str(file_id)}
+
+    def _delete_file_via_draft_endpoint(
+        self, deposition_id: int | str, file_id: int | str, *, legacy_status: int
+    ) -> dict[str, Any]:
+        """Recover a failed legacy delete using the authenticated draft API.
+
+        InvenioRDM documents DELETE /api/records/{id}/draft/files/{filename}.
+        Resolve the filename from fresh server evidence, never a caller URL.
+        Authorization failures do not enter this recovery path.
+        """
+        record_id = str(deposition_id)
+        if not record_id.isdigit() or int(record_id) <= 0:
+            raise ZenodoError("Draft file recovery requires a numeric deposition ID")
+        draft = self._json(
+            self.client.get(f"{self.api_url}/records/{record_id}/draft", headers=self.headers),
+            "read unpublished draft for file recovery",
+        )
+        if str(draft.get("id")) != record_id:
+            raise ZenodoError("Draft file recovery returned a different deposition")
+        unpublished = draft.get("submitted") is False or (
+            draft.get("is_published") is False
+            and isinstance(draft.get("versions"), Mapping)
+            and draft["versions"].get("is_latest_draft") is True
+        )
+        if not unpublished or draft.get("submitted") is True or draft.get("is_published") is True:
+            raise ZenodoError("Draft file recovery requires verified unpublished state")
+        files = draft.get("files", [])
+        if isinstance(files, Mapping):
+            files = files.get("entries", [])
+        if isinstance(files, Mapping):
+            files = list(files.values())
+        matches = [item for item in files if isinstance(item, Mapping)
+                   and str(item.get("id") or item.get("version_id")) == str(file_id)] if isinstance(files, list) else []
+        if len(matches) != 1:
+            raise ZenodoError("Draft file recovery could not uniquely identify the requested file")
+        filename = matches[0].get("filename") or matches[0].get("key")
+        if (not isinstance(filename, str) or not filename or filename in {".", ".."}
+                or any(char in filename for char in ("/", "\\", "\0"))):
+            raise ZenodoError("Draft file recovery returned an unsafe filename")
+        recovered = self.client.delete(
+            f"{self.api_url}/records/{record_id}/draft/files/{quote(filename, safe='')}",
+            headers=self.headers,
+        )
+        if not recovered.is_success:
+            raise ZenodoError(
+                f"Draft-only file recovery failed: HTTP {recovered.status_code}; "
+                f"legacy delete returned HTTP {legacy_status}"
+            )
+        return {"deleted": True, "deposition_id": deposition_id, "file_id": str(file_id),
+                "filename": filename, "api": "record_draft_files", "legacy_status": legacy_status}
 
     def publish(self, deposition_id: int | str) -> dict[str, Any]:
         return self._json(

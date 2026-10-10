@@ -118,6 +118,55 @@ def test_transient_metadata_timeout_recovers_only_after_identity_readback() -> N
     assert result == draft
 
 
+def test_gateway_delete_recovers_only_the_identified_unpublished_file() -> None:
+    calls = []
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.raw_path))
+        assert request.headers["authorization"] == "Bearer test-token"
+        if len(calls) == 1:
+            return httpx.Response(504)
+        if len(calls) == 2:
+            return httpx.Response(200, json={"id": 42, "submitted": False,
+                "files": [{"id": "file-id", "key": "support file.zip"}]})
+        assert calls[-1] == ("DELETE", b"/api/records/42/draft/files/support%20file.zip")
+        return httpx.Response(204)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        result = ZenodoClient("sandbox", "test-token", client=http_client).delete_file(42, "file-id")
+    assert result["api"] == "record_draft_files"
+    assert result["legacy_status"] == 504
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+def test_file_delete_does_not_recover_authorization_or_missing_resource(status: int) -> None:
+    calls = []
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(status, json={"message": "denied"})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(zenodo.ZenodoError, match=f"HTTP {status}"):
+            ZenodoClient("sandbox", "test-token", client=http_client).delete_file(42, "file-id")
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("draft,reason", [
+    ({"id": 43, "submitted": False, "files": []}, "different deposition"),
+    ({"id": 42, "submitted": True, "files": []}, "unpublished state"),
+    ({"id": 42, "files": []}, "unpublished state"),
+    ({"id": 42, "submitted": False, "files": [{"id": "other", "key": "safe.zip"}]}, "uniquely identify"),
+    ({"id": 42, "submitted": False, "files": [{"id": "file-id", "key": "../unsafe.zip"}]}, "unsafe filename"),
+])
+def test_draft_delete_recovery_rejects_unbound_or_unsafe_evidence(draft: dict, reason: str) -> None:
+    calls = []
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(504) if len(calls) == 1 else httpx.Response(200, json=draft)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(zenodo.ZenodoError, match=reason):
+            ZenodoClient("sandbox", "test-token", client=http_client).delete_file(42, "file-id")
+    assert len(calls) == 2
+
+
 def test_metadata_readback_does_not_hide_nontransient_errors() -> None:
     draft = {
         "id": 42,
