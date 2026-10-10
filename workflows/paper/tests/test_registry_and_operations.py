@@ -298,6 +298,27 @@ def test_journal_target_policy_requires_evidence_backed_editorial_fit(
     with pytest.raises(ValueError, match="target_journal_fit"):
         load_registry(tmp_path, include_local_repositories=False)
 
+    # Pending evidence must remain representable without supplying approval.
+    metadata["target_journal_fit_assessment_pending"] = {
+        "status": "not_approved",
+        "assessment": {"journal": "A Graph Journal", "checked_at": "2026-09-03"},
+        "preserved_path": "papers/fit/evidence/pending.json",
+        "sha256": "a" * 64,
+        "reason": "Current editorial criteria and accountable fit approval are missing.",
+    }
+    metadata["writing_release"] = {"status": "revision_required"}
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    assert load_registry(tmp_path, include_local_repositories=False)["papers"]
+    from paper_writing.registry import _validate_journal_target_fit
+    with pytest.raises(ValueError, match="target_journal_fit"):
+        _validate_journal_target_fit(metadata, paper_id=paper_id)
+    metadata["writing_release"]["status"] = "ready"
+    write_paper_metadata(paper_id, metadata, tmp_path)
+    with pytest.raises(ValueError, match="target_journal_fit"):
+        load_registry(tmp_path, include_local_repositories=False)
+    metadata["writing_release"]["status"] = "revision_required"
+    metadata.pop("target_journal_fit_assessment_pending")
+
     metadata["target_journal_fit"] = {
         "status": "approved",
         "checked_at": "2026-09-03",

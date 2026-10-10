@@ -92,6 +92,23 @@ def test_style_check_rejects_unconfirmed_submission_language(tmp_path: Path) -> 
     assert "STYLE-UNCONFIRMED-SUBMISSION-TEXT" in codes
 
 
+def test_cited_models_in_wrapped_prior_work_are_scientific_subjects(tmp_path: Path) -> None:
+    main = _write(tmp_path, r"""
+Hu et al. study rank sensitivity in LoRA, including GPT-3 on WikiSQL
+and GPT-2 after 26,000 training steps \citep{hu2021lora}.
+""")
+    assert "STYLE-AI-WORKFLOW-IN-BODY" not in {
+        e["code"] for e in audit_tex_tree(main)["errors"]}
+
+
+def test_citation_does_not_hide_author_preparation_narration(tmp_path: Path) -> None:
+    main = _write(tmp_path, r"""
+We used GPT-5 to draft the classification manuscript \citep{hu2021lora}.
+""")
+    assert "STYLE-AI-WORKFLOW-IN-BODY" in {
+        e["code"] for e in audit_tex_tree(main)["errors"]}
+
+
 def test_style_check_rejects_todo_even_in_tex_comment(tmp_path: Path) -> None:
     main = _write(tmp_path, "% TODO(AUTHOR): add the final author list.\nThe result holds.")
 

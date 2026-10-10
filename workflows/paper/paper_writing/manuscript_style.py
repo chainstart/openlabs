@@ -44,6 +44,35 @@ AI_WORKFLOW_MARKER = re.compile(
     r"|\b(?:generative[- ]AI|AI-assisted)\b",
     re.IGNORECASE,
 )
+AI_PREPARATION_CUE = re.compile(
+    r"\b(?:OpenAI|ChatGPT|Codex|generative[- ]AI|AI-assisted|"
+    r"draft(?:ed|ing)?|edit(?:ed|ing)?|writ(?:e|es|ing|ten)|"
+    r"manuscript preparation|source-code development)\b", re.IGNORECASE,
+)
+MODEL_RESEARCH_CUE = re.compile(
+    r"\b(?:training|rank|benchmark|classification|finetuning|fine-tuning|"
+    r"WikiSQL|MultiNLI|inference|evaluation|optimization)\b", re.IGNORECASE,
+)
+
+
+def _cited_model_subject_lines(lines: list[str]) -> set[int]:
+    """Allow cited scientific model subjects, never preparation narration.
+
+    TeX wraps one cited sentence over multiple lines. Check its complete
+    paragraph so the model name and its citation need not be on one line.
+    """
+    allowed: set[int] = set()
+    start = 0
+    for end in range(len(lines) + 1):
+        if end < len(lines) and lines[end].strip():
+            continue
+        paragraph = " ".join(_strip_tex_comment(s) for s in lines[start:end])
+        if (re.search(r"\\cite\w*\*?(?:\[[^]]*\])*\{", paragraph)
+                and MODEL_RESEARCH_CUE.search(paragraph)
+                and not AI_PREPARATION_CUE.search(paragraph)):
+            allowed.update(range(start, end))
+        start = end + 1
+    return allowed
 CODE_CUE = re.compile(
     # GAP is the software acronym; ordinary "gap" and labels such as eq:gap
     # are mathematical prose, not evidence of computational code.
@@ -333,7 +362,9 @@ def audit_tex_tree(
     declaration_parts: list[str] = []
     for path in files:
         declaration_range = declaration_ranges.get(path, range(0, 0))
-        for index, raw in enumerate(path.read_text(encoding="utf-8").splitlines()):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        cited_model_lines = _cited_model_subject_lines(lines)
+        for index, raw in enumerate(lines):
             if UNRESOLVED_SOURCE_MARKER.search(raw):
                 issues.append(
                     _issue(
@@ -362,7 +393,7 @@ def audit_tex_tree(
             scan_text = _mask_literal_paths(visible)
             if "AI Agent Lab" in scan_text:
                 scan_text = scan_text.replace("AI Agent Lab", "registered affiliation")
-            if AI_WORKFLOW_MARKER.search(scan_text):
+            if AI_WORKFLOW_MARKER.search(scan_text) and index not in cited_model_lines:
                 issues.append(
                     _issue(
                         "STYLE-AI-WORKFLOW-IN-BODY",

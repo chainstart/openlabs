@@ -399,6 +399,26 @@ def _validate_journal_target_fit(
 
     fit = paper.get("target_journal_fit")
     if not isinstance(fit, Mapping):
+        # A sourced pending assessment is a catalogue fact, not approval.
+        # Keep it loadable while blocked, as with a retained target refusal;
+        # strict target validation and the unified preflight still reject it.
+        pending = paper.get("target_journal_fit_assessment_pending")
+        assessment = pending.get("assessment") if isinstance(pending, Mapping) else None
+        release = paper.get("writing_release") or {}
+        if (
+            allow_blocked_history
+            and isinstance(release, Mapping) and release.get("status") != "ready"
+            and isinstance(pending, Mapping) and pending.get("status") == "not_approved"
+            and isinstance(assessment, Mapping)
+            and assessment.get("journal") == paper.get("target_journal")
+            and _iso_date(str(assessment.get("checked_at") or ""))
+            and isinstance(pending.get("reason"), str) and pending["reason"].strip()
+            and isinstance(pending.get("preserved_path"), str) and pending["preserved_path"].strip()
+            and isinstance(pending.get("sha256"), str)
+            and len(pending["sha256"]) == 64
+            and all(c in "0123456789abcdef" for c in pending["sha256"])
+        ):
+            return
         raise ValueError(f"target_journal_fit must be an object for {paper_id}")
     if fit.get("status") != "approved":
         raise ValueError(f"target_journal_fit.status must be approved for {paper_id}")
