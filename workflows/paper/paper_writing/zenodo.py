@@ -393,13 +393,20 @@ class ZenodoClient:
         )
         if not unpublished or draft.get("submitted") is True or draft.get("is_published") is True:
             raise ZenodoError("Draft file recovery requires verified unpublished state")
-        files = draft.get("files", [])
+        files = draft.get("files")
         if isinstance(files, Mapping):
-            files = files.get("entries", [])
+            files = files.get("entries")
         if isinstance(files, Mapping):
             files = list(files.values())
         matches = [item for item in files if isinstance(item, Mapping)
                    and str(item.get("id") or item.get("version_id")) == str(file_id)] if isinstance(files, list) else []
+        if (isinstance(files, list) and not matches
+                and all(isinstance(item, Mapping) and (item.get("id") or item.get("version_id")) for item in files)):
+            # A gateway failure can arrive after the delete was accepted.
+            # A complete fresh inventory proves absence; do not delete a
+            # replacement file or retry against a different identifier.
+            return {"deleted": True, "deposition_id": deposition_id, "file_id": str(file_id),
+                    "already_absent": True, "api": "record_draft_files", "legacy_status": legacy_status}
         if len(matches) != 1:
             raise ZenodoError("Draft file recovery could not uniquely identify the requested file")
         filename = matches[0].get("filename") or matches[0].get("key")

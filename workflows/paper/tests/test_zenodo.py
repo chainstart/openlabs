@@ -153,7 +153,8 @@ def test_file_delete_does_not_recover_authorization_or_missing_resource(status: 
     ({"id": 43, "submitted": False, "files": []}, "different deposition"),
     ({"id": 42, "submitted": True, "files": []}, "unpublished state"),
     ({"id": 42, "files": []}, "unpublished state"),
-    ({"id": 42, "submitted": False, "files": [{"id": "other", "key": "safe.zip"}]}, "uniquely identify"),
+    ({"id": 42, "submitted": False, "files": {"enabled": True}}, "uniquely identify"),
+    ({"id": 42, "submitted": False, "files": [{"id": "file-id", "key": "a.zip"}, {"id": "file-id", "key": "b.zip"}]}, "uniquely identify"),
     ({"id": 42, "submitted": False, "files": [{"id": "file-id", "key": "../unsafe.zip"}]}, "unsafe filename"),
 ])
 def test_draft_delete_recovery_rejects_unbound_or_unsafe_evidence(draft: dict, reason: str) -> None:
@@ -164,6 +165,19 @@ def test_draft_delete_recovery_rejects_unbound_or_unsafe_evidence(draft: dict, r
     with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
         with pytest.raises(zenodo.ZenodoError, match=reason):
             ZenodoClient("sandbox", "test-token", client=http_client).delete_file(42, "file-id")
+    assert len(calls) == 2
+
+
+def test_gateway_delete_readback_proves_absence_without_deleting_a_replacement() -> None:
+    calls = []
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(504) if len(calls) == 1 else httpx.Response(200, json={
+            "id": 42, "submitted": False,
+            "files": [{"id": "replacement-id", "key": "support.zip"}]})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        result = ZenodoClient("sandbox", "test-token", client=http_client).delete_file(42, "file-id")
+    assert result["already_absent"] is True
     assert len(calls) == 2
 
 
