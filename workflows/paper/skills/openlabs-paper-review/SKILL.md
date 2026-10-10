@@ -82,6 +82,10 @@ output without editing the manuscript:
 
 Report the editor decision and its strongest desk-reject reason, the active referee recommendations
 and actual models, the merged decision, and the run directory.
+Label all of these as **internal simulated self-review**, including `send_to_review` and
+`minor_revision`. They are not an actual journal submission, external editor decision or
+external referee report. Keep actual journal correspondence and submission events separate;
+never imply external review from an internal role's journal-style vocabulary.
 
 ## Legacy paths
 
