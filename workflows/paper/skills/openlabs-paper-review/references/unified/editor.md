@@ -25,6 +25,12 @@ journal would decline the paper.
    The AI-use declaration is governed by the authors' disclosure policy: it must name every
    tool and model actually used. Do not ask to remove or shorten that list; judge only that the
    declaration is factual and free of preparation chronology.
+   In `presentation_problems`, list only concrete, actionable defects present in this
+   current manuscript. Positive observations belong in the contribution or rationale
+   fields, not in a list that becomes mandatory revision requests. Do not repeat a
+   repaired defect from an earlier version without identifying what still fails in
+   the supplied current text. Preserve necessary hypotheses, negative results,
+   provenance limitations and truthful disclosure when proposing consolidation.
 5. Read every prior editorial decision in the packet. For each, say whether the current
    manuscript actually answers the concern. Moving to another journal, rewording, or adding a
    paragraph does not answer a concern about significance or readership; only a stronger result
