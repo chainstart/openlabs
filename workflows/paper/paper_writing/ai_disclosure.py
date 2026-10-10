@@ -44,11 +44,86 @@ def normalized_model(value: str) -> str:
     return re.sub(r"^gpt[- ]?(?=\d)", "gpt-", value.strip().lower()).replace(" ", "-")
 
 
+def configured_attempts_for_record(metadata: Mapping[str, Any]) -> Any:
+    declarations = metadata.get("declarations")
+    ai = declarations.get("ai_use") if isinstance(declarations, Mapping) else None
+    return ai.get("configured_attempts") if isinstance(ai, Mapping) else None
+
+
+def _configured_models(text: str, attempts: Any, root: Path | None) -> tuple[set[str], list[tuple[str, str]]]:
+    """Verify failed configurations separately; they never count as runtime use."""
+    if attempts is None:
+        return set(), []
+    accepted: set[str] = set()
+    issues: list[tuple[str, str]] = []
+    if not isinstance(attempts, list):
+        return accepted, [("CONFIGURATION-INVALID", "configured attempts must be structured records")]
+    normalized_text = GPT_ID.sub(lambda m: normalized_model(m.group()), text.lower())
+    for entry in attempts:
+        try:
+            if not isinstance(entry, Mapping) or root is None:
+                raise ValueError()
+            model = entry.get("configured_model")
+            if (not isinstance(model, str)
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", model)
+                    or (entry.get("provider"), entry.get("tool")) not in RECORDED_TOOLS
+                    or "actual_runtime_model" not in entry
+                    or entry["actual_runtime_model"] is not None
+                    or entry.get("completed_contribution") != "unverified"):
+                raise ValueError()
+            model = normalized_model(model)
+            evidence = entry.get("evidence")
+            if not isinstance(evidence, Mapping):
+                raise ValueError()
+            source, checksum, pointer = (evidence.get(k) for k in ("path", "sha256", "json_pointer"))
+            if (not isinstance(source, str) or not source or Path(source).is_absolute()
+                    or not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-f]{64}", checksum)
+                    or not isinstance(pointer, str) or not pointer.startswith("/")):
+                raise ValueError()
+            path = (root / source).resolve()
+            if not path.is_relative_to(root.resolve()) or path.stat().st_size > 4 * 1024 * 1024:
+                raise ValueError()
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != checksum:
+                raise ValueError()
+            value = json.loads(raw)
+            parent = None
+            for token in pointer[1:].split("/"):
+                token = token.replace("~1", "/").replace("~0", "~")
+                parent = value
+                value = value[int(token)] if isinstance(value, list) else value[token]
+            if not isinstance(value, str) or normalized_model(value) != model or not isinstance(parent, Mapping):
+                raise ValueError()
+            if (parent.get("state", parent.get("status")) not in {
+                    "timeout", "timed_out_revision_attempt", "failed", "cancelled",
+                    "configuration_only_not_confirmed_use"}
+                    or parent.get("actual_runtime_model") is not None
+                    or parent.get("completed_contribution", "unverified") != "unverified"):
+                raise ValueError()
+            # Every occurrence must qualify the name as configuration with
+            # unknown runtime, rather than assert that the configured model ran.
+            sentences = re.split(r"[.!?](?=\s|$)", normalized_text)
+            occurrences = [s for s in sentences if re.search(
+                r"(?<![\w.-])" + re.escape(model) + r"(?![\w-]|\.\w)", s)]
+            if not occurrences or any(not (
+                    re.search(r"\bconfigured\b", s)
+                    and re.search(r"\bruntime\b", s)
+                    and re.search(r"\b(?:unknown|unverified|unconfirmed)\b|not (?:established|confirmed)", s)
+            ) for s in occurrences):
+                issues.append(("CONFIGURATION-DISCLOSURE", "disclose each configured model only as an unconfirmed runtime attempt"))
+                continue
+            accepted.add(model)
+        except (OSError, ValueError, KeyError, IndexError, TypeError):
+            issues.append(("CONFIGURATION-EVIDENCE", "configuration evidence is missing, changed, unsafe, or does not establish an unconfirmed failed attempt"))
+    return accepted, issues
+
+
 def model_disclosure_issues(
-    text: str, model_usage: Any = None, *, root: Path | None = None
+    text: str, model_usage: Any = None, *, root: Path | None = None,
+    configured_attempts: Any = None,
 ) -> list[tuple[str, str]]:
     """None denotes legacy metadata; an explicit empty list is unresolved."""
-    issues: list[tuple[str, str]] = []
+    configured, issues = _configured_models(text, configured_attempts, root)
     mentioned = {normalized_model(m.group()) for m in GPT_ID.finditer(text)}
     if model_usage is None:
         if not mentioned:
@@ -112,6 +187,6 @@ def model_disclosure_issues(
         r'\b(gpt[- ]?\d+(?:\.\d+)*)\s+family\b', text, re.I)}
     supported_families = {family for family in families
                           if any(model.startswith(family + '-') for model in expected)}
-    if mentioned - expected - supported_families:
+    if mentioned - expected - supported_families - configured:
         issues.append(("MODEL-UNREGISTERED", "the declaration names a GPT model absent from the model-usage records"))
     return issues

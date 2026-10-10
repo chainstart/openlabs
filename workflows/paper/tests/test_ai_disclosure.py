@@ -137,3 +137,93 @@ AI-generated output was not treated as mathematical proof.
 """)
     result = audit_tex_tree(main, root=tmp_path, model_usage=usage(tmp_path))
     assert "STYLE-AI-DISCLOSURE-TOOL" in {item["code"] for item in result["errors"]}
+
+
+def configured_attempt(tmp_path):
+    raw = json.dumps([{"configured_model": "gpt-5.3-codex-spark",
+                       "actual_runtime_model": None,
+                       "completed_contribution": "unverified",
+                       "status": "timed_out_revision_attempt"}]).encode()
+    (tmp_path / "configuration.json").write_bytes(raw)
+    return [{"provider": "openai-codex", "tool": "Codex",
+             "configured_model": "gpt-5.3-codex-spark",
+             "actual_runtime_model": None, "completed_contribution": "unverified",
+             "evidence": {"path": "configuration.json",
+                          "sha256": hashlib.sha256(raw).hexdigest(),
+                          "json_pointer": "/0/configured_model"}}]
+
+
+CONFIGURED_DISCLOSURE = (
+    "OpenAI Codex used gpt-6-astra. Historical records name configured "
+    "gpt-5.3-codex-spark; its runtime identity and contribution are unverified."
+)
+
+
+def test_hash_bound_failed_configuration_is_not_asserted_runtime_use(tmp_path):
+    entries = usage(tmp_path)
+    attempts = configured_attempt(tmp_path)
+    assert not model_disclosure_issues(
+        CONFIGURED_DISCLOSURE, entries, root=tmp_path, configured_attempts=attempts)
+    assert entries[0]["model"] == "gpt-6-astra" and len(entries) == 1
+
+
+@pytest.mark.parametrize("failure", ["hash", "pointer", "escape", "runtime", "completed", "source_runtime"])
+def test_configuration_provenance_fails_closed(tmp_path, failure):
+    entries = usage(tmp_path)
+    attempts = configured_attempt(tmp_path)
+    evidence = attempts[0]["evidence"]
+    if failure == "hash":
+        evidence["sha256"] = "0" * 64
+    elif failure == "pointer":
+        evidence["json_pointer"] = "/0/absent"
+    elif failure == "escape":
+        evidence["path"] = "../outside.json"
+    elif failure == "runtime":
+        attempts[0]["actual_runtime_model"] = "gpt-5.3-codex-spark"
+    elif failure == "completed":
+        attempts[0]["completed_contribution"] = "confirmed"
+    else:
+        path = tmp_path / "configuration.json"
+        record = json.loads(path.read_text())
+        record[0]["actual_runtime_model"] = "gpt-5.3-codex-spark"
+        path.write_text(json.dumps(record))
+        evidence["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    codes = {c for c, _ in model_disclosure_issues(
+        CONFIGURED_DISCLOSURE, entries, root=tmp_path, configured_attempts=attempts)}
+    assert codes >= {"CONFIGURATION-EVIDENCE", "MODEL-UNREGISTERED"}
+
+
+def test_configuration_cannot_replace_missing_actual_runtime_records(tmp_path):
+    issues = model_disclosure_issues(
+        CONFIGURED_DISCLOSURE, [], root=tmp_path, configured_attempts=configured_attempt(tmp_path))
+    assert "MODEL-UNRECORDED" in {c for c, _ in issues}
+
+
+@pytest.mark.parametrize("text", [
+    "OpenAI Codex used gpt-6-astra and gpt-5.3-codex-spark.",
+    CONFIGURED_DISCLOSURE + " We also used gpt-5.3-codex-spark for drafting.",
+    "OpenAI Codex used gpt-6-astra. Historical configured gpt-5.3-codex-spark ran successfully.",
+])
+def test_configuration_record_does_not_support_an_actual_use_claim(tmp_path, text):
+    codes = {c for c, _ in model_disclosure_issues(
+        text, usage(tmp_path), root=tmp_path, configured_attempts=configured_attempt(tmp_path))}
+    assert codes >= {"CONFIGURATION-DISCLOSURE", "MODEL-UNREGISTERED"}
+
+
+def test_configuration_acceptance_does_not_waive_human_inspection(tmp_path):
+    main = tmp_path / "main.tex"
+    main.write_text(r"""\documentclass{article}
+\begin{document}
+Python code checks finite examples.
+\section*{Generative AI declaration}
+""" + CONFIGURED_DISCLOSURE + r"""
+Codex assisted manuscript drafting, editing, technical preparation and code development.
+The authors take full responsibility for the article and associated materials.
+AI-generated output was not treated as mathematical proof.
+\end{document}
+""")
+    result = audit_tex_tree(main, root=tmp_path, model_usage=usage(tmp_path),
+                            configured_attempts=configured_attempt(tmp_path))
+    codes = {item["code"] for item in result["errors"]}
+    assert "STYLE-AI-DISCLOSURE-CODE-VALIDATION" in codes
+    assert "STYLE-AI-DISCLOSURE-MODEL-UNREGISTERED" not in codes

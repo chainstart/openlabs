@@ -9,7 +9,7 @@ import re
 from typing import Any, Mapping
 
 from paper_writing.registry import load_paper_metadata
-from paper_writing.ai_disclosure import model_disclosure_issues, model_usage_for_record
+from paper_writing.ai_disclosure import configured_attempts_for_record, model_disclosure_issues, model_usage_for_record
 
 HEADING = re.compile(r"\\(?:section|subsection|paragraph)\*?\{([^}\n]*)\}")
 AI = re.compile(r"\bAI\b|\bgenerative\b|artificial intelligence", re.I)
@@ -114,7 +114,8 @@ def check_record(metadata: Mapping[str, Any], source: str, *, root: Path | None 
                 errors.append(f"author_contributions: {exc}")
         if kind == "ai_use" and model_usage_for_record(metadata) is not None:
             errors.extend("ai_use: " + message for _, message in
-                          model_disclosure_issues(text, model_usage_for_record(metadata), root=root))
+                          model_disclosure_issues(text, model_usage_for_record(metadata), root=root,
+                              configured_attempts=configured_attempts_for_record(metadata)))
         if kind == "ai_use" and re.search(r"human\s+authors", text, re.I):
             errors.append("ai_use: rejected wording remains in this extracted template")
         digest = hashlib.sha256(normalized(expected_text).encode()).hexdigest()
