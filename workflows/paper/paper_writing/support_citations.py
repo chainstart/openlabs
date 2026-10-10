@@ -1503,8 +1503,12 @@ def audit_manuscript_support(paper_id: str, *, root: str | Path) -> dict[str, An
                     )
         if not has_support_context:
             continue
+        # File basenames can contain words such as ``all-new-cells`` and
+        # directories can be versioned. They are retrieval identifiers, not
+        # prose describing release history. Keep all archive/path checks above.
+        process_text = PATH_PATTERN.sub("[file path]", paragraph.text)
         for label, pattern in PROCESS_PATTERNS:
-            if pattern.search(paragraph.text):
+            if pattern.search(process_text):
                 issues.append(_issue("SUPPORT-PROCESS-NARRATIVE", f"reader-facing prose contains internal Zenodo/version process narrative ({label})", path=paragraph.path, line=paragraph.line, root=repo_root))
         if status == "draft" and DRAFT_PUBLIC_CLAIM.search(paragraph.text):
             issues.append(_issue("SUPPORT-DRAFT-PUBLIC-CLAIM", "an unpublished draft is described as publicly accessible", path=paragraph.path, line=paragraph.line, root=repo_root))

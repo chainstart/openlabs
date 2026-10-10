@@ -706,6 +706,32 @@ def test_historical_experiment_archive_is_not_release_history(tmp_path: Path) ->
     assert "SUPPORT-PROCESS-NARRATIVE" not in {item["code"] for item in result["errors"]}
 
 
+def test_local_table_filename_is_not_release_history(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    main = tmp_path / "papers" / PAPER_ID / "manuscript" / "main.tex"
+    text = main.read_text()
+    main.write_text(text.replace(
+        "The archive contains the exact certificate and replay instructions.",
+        r"The per-cell evidence tables \path{all-new-cells.csv} and "
+        r"\path{all-head-only-cells.csv} are separately retained in "
+        r"\path{support-materials/controlled-and-head-only-v1.0.3/}.",
+    ))
+    codes = {item["code"] for item in audit_manuscript_support(PAPER_ID, root=tmp_path)["errors"]}
+    assert "SUPPORT-PROCESS-NARRATIVE" not in codes
+    assert "SUPPORT-ARCHIVE-PATH-MISSING" in codes
+
+
+def test_real_release_history_around_path_remains_blocked(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    main = tmp_path / "papers" / PAPER_ID / "manuscript" / "main.tex"
+    main.write_text(main.read_text().replace(
+        "The archive contains the exact certificate and replay instructions.",
+        r"The previous support version was replaced by \path{certificate.json}.",
+    ))
+    codes = {item["code"] for item in audit_manuscript_support(PAPER_ID, root=tmp_path)["errors"]}
+    assert "SUPPORT-PROCESS-NARRATIVE" in codes
+
+
 @pytest.mark.parametrize("narration", [
     "The previous archive was replaced by this deposited record.",
     "The earlier published archive was superseded by this record.",
