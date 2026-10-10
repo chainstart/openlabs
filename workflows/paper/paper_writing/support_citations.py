@@ -81,6 +81,9 @@ ARCHIVE_FILENAME = re.compile(
 )
 SEMANTIC_VERSION = re.compile(r"(?<![0-9A-Za-z])v?(\d+\.\d+\.\d+)(?![0-9A-Za-z])")
 PUBLIC_SUPPORT_DIRECTORY = re.compile(r"^public-support-v(\d+\.\d+\.\d+)$", re.IGNORECASE)
+SOURCE_PACKAGE_DIRECTORY = re.compile(
+    r"^(?:public-support|code-first)-v(\d+\.\d+\.\d+)$", re.IGNORECASE
+)
 RECORD_VERSION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"\bZenodo(?:\s+(?:record|archive))?\s+(?:version\s+)?v?(\d+\.\d+\.\d+)",
@@ -660,7 +663,12 @@ def _receipt_checks(
 def _registered_source_checks(
     publication: Mapping[str, Any], *, version: str, root: Path
 ) -> list[dict[str, Any]]:
-    """Reject a current release assembled from a differently labelled public source tree."""
+    """Check the outer source package, retaining nested component provenance.
+
+    A current code-first package can contain historical scientific components.
+    Their directory labels do not replace the identity of the outer package;
+    the exact archive, receipt and citations are checked separately.
+    """
 
     if not version:
         return []
@@ -673,8 +681,10 @@ def _registered_source_checks(
             continue
         path = root / value
         for part in Path(value).parts:
-            match = PUBLIC_SUPPORT_DIRECTORY.fullmatch(part)
-            if match and match.group(1) != version.lstrip("v"):
+            match = SOURCE_PACKAGE_DIRECTORY.fullmatch(part)
+            if not match:
+                continue
+            if match.group(1) != version.lstrip("v"):
                 issues.append(
                     _issue(
                         "SUPPORT-SOURCE-VERSION",
@@ -683,7 +693,7 @@ def _registered_source_checks(
                         root=root,
                     )
                 )
-                break
+            break
     return issues
 
 

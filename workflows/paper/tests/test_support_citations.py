@@ -11,11 +11,30 @@ from paper_writing.registry import load_paper_metadata
 from paper_writing.support import build_support_archive
 from paper_writing.support_citations import (
     _archive_filename_is_registered,
+    _registered_source_checks,
     audit_manuscript_support,
 )
 
 
 PAPER_ID = "20260806-math-graph-support-citation-audit"
+
+
+@pytest.mark.parametrize("outer", ["code-first-v1.0.0", "public-support-v1.0.0"])
+def test_current_source_package_retains_legacy_component_version(tmp_path: Path, outer: str) -> None:
+    publication = {"source_files": [
+        f"papers/{PAPER_ID}/{outer}/legacy/public-support-v0.9.0/code/verify.py"
+    ]}
+    assert not _registered_source_checks(publication, version="1.0.0", root=tmp_path)
+
+
+@pytest.mark.parametrize("outer", ["code-first-v0.9.0", "public-support-v0.9.0"])
+def test_stale_outer_source_package_stays_blocked(tmp_path: Path, outer: str) -> None:
+    publication = {"source_files": [
+        f"papers/{PAPER_ID}/{outer}/legacy/public-support-v1.0.0/code/verify.py"
+    ]}
+    issues = _registered_source_checks(publication, version="1.0.0", root=tmp_path)
+    assert [item["code"] for item in issues] == ["SUPPORT-SOURCE-VERSION"]
+    assert outer in issues[0]["message"]
 
 
 def test_explicit_material_version_keeps_draft_checks_strict(tmp_path: Path) -> None:
