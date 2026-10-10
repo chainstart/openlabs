@@ -676,7 +676,8 @@ def prepare_zenodo_release(
         with ZenodoClient(environment, token) as client:
             if resume_id is not None:
                 draft = client.get_deposition(resume_id)
-                _require_unpublished_draft(draft)
+                _validated_draft_inventory(draft, resume_id)
+                expected_active_id = _deposition_id(draft)
                 draft = _update_metadata_with_transient_readback(
                     client,
                     draft,
@@ -685,7 +686,8 @@ def prepare_zenodo_release(
                 )
             elif current_status == "published" and registered_deposition is not None:
                 draft = client.new_version(registered_deposition)
-                _require_unpublished_draft(draft)
+                expected_active_id = _deposition_id(draft)
+                _validated_draft_inventory(draft, expected_active_id)
                 draft = _update_metadata_with_transient_readback(
                     client,
                     draft,
@@ -694,7 +696,11 @@ def prepare_zenodo_release(
                 )
             else:
                 draft = client.create_draft(metadata)
-            active_draft_id = _deposition_id(draft)
+                expected_active_id = _deposition_id(draft)
+            active_draft_id = expected_active_id
+            if str(_deposition_id(draft)) != str(expected_active_id):
+                raise ZenodoError("Zenodo metadata update returned a different draft id")
+            _validated_draft_inventory(draft, active_draft_id)
             reserved_doi = _reserved_version_doi(draft)
             if not reserved_doi:
                 raise ZenodoError("Zenodo draft did not return a reserved Version DOI")
@@ -711,14 +717,43 @@ def prepare_zenodo_release(
             from paper_writing.support_upload_policy import validate_upload_packages
             validate_upload_packages([package["archive"], package["checksum"]], repo_root=root,
                                      settings=load_config(config_path or root / "registry" / "settings.yaml"))
-            removed = [
-                client.delete_file(active_draft_id, item["id"])
-                for item in draft.get("files", [])
-                if isinstance(item, Mapping) and item.get("id") is not None
-            ]
             upload_paths = [package["archive"], package["checksum"]]
-            uploads = [client.upload_file(draft, path) for path in upload_paths]
+            # A previous PUT can succeed despite a gateway timeout. Classify a
+            # fresh inventory against the newly built bytes before mutating any
+            # files, so resuming never deletes an already correct partial upload.
+            draft = client.get_deposition(active_draft_id)
+            inventory = _validated_draft_inventory(draft, active_draft_id)
+            _verify_draft_identity(
+                record,
+                {"zenodo": {"reserved_version_doi": reserved_doi}},
+                draft,
+                expected_metadata=metadata,
+            )
+            local = {Path(path).name: Path(path) for path in upload_paths}
+            if len(local) != len(upload_paths):
+                raise ZenodoError("Local Zenodo upload filenames must be unique")
+            reused: list[dict[str, Any]] = []
+            stale: list[Mapping[str, Any]] = []
+            for name, item in inventory.items():
+                path = local.get(name)
+                algorithm, remote_digest = _remote_checksum(item["checksum"])
+                if (
+                    path is not None
+                    and int(item.get("filesize", item.get("size"))) == path.stat().st_size
+                ):
+                    local_digest = sha256_file(path) if algorithm == "sha256" else md5_file(path)
+                    if remote_digest == local_digest:
+                        reused.extend(verify_deposition_files({"files": [item]}, [path]))
+                        continue
+                stale.append(item)
+            removed = [client.delete_file(active_draft_id, item["id"]) for item in stale]
+            reused_names = {item["name"] for item in reused}
+            uploads = [
+                client.upload_file(draft, path)
+                for path in upload_paths if Path(path).name not in reused_names
+            ]
             refreshed = client.get_deposition(active_draft_id)
+            _validated_draft_inventory(refreshed, active_draft_id)
             remote_files = verify_deposition_files(refreshed, upload_paths)
             verified_metadata = _verify_draft_identity(
                 record,
@@ -765,6 +800,7 @@ def prepare_zenodo_release(
             "source_files": package["source_files"],
         },
         "remote_files": remote_files,
+        "reused_remote_files": reused,
     }
     _write_json(receipt_path, receipt)
 
@@ -855,6 +891,7 @@ def prepare_zenodo_release(
         "receipt": _relative_path(receipt_path, root),
         "removed_draft_files": len(removed),
         "uploaded_files": len(uploads),
+        "reused_files": len(reused),
         "review_reuse": review_reuse,
         "next_action": (
             "Commit the registry, manuscript, PDF and support package, then release the "
@@ -1114,6 +1151,56 @@ def verify_prepared_zenodo_draft(
         "remote_files": remote_files,
         "remote_state_changed": False,
     }
+
+
+def _validated_draft_inventory(
+    deposition: Mapping[str, Any],
+    expected_id: int | str,
+) -> dict[str, Mapping[str, Any]]:
+    """Require an identifiable, unambiguous draft inventory before mutations."""
+
+    if str(_deposition_id(deposition)) != str(expected_id):
+        raise ZenodoError("Zenodo read-back returned a different draft id")
+    if deposition.get("submitted") is not False:
+        raise ZenodoError("Zenodo read-back did not confirm an unpublished draft")
+    items = deposition.get("files")
+    if not isinstance(items, list):
+        raise ZenodoError("Zenodo deposition did not return a file list")
+    inventory: dict[str, Mapping[str, Any]] = {}
+    file_ids: set[str] = set()
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise ZenodoError("Zenodo draft file inventory contains a malformed entry")
+        name = item.get("filename") or item.get("key")
+        if (
+            not isinstance(name, str) or not name or name != name.strip()
+            or name in {".", ".."} or "/" in name or "\\" in name
+        ):
+            raise ZenodoError("Zenodo draft file inventory contains a malformed filename")
+        if item.get("filename") and item.get("key") and item["filename"] != item["key"]:
+            raise ZenodoError("Zenodo draft file inventory contains inconsistent filenames")
+        if name in inventory:
+            raise ZenodoError(f"Zenodo deposition contains duplicate filename: {name}")
+        file_id = item.get("id")
+        if (
+            isinstance(file_id, bool) or not isinstance(file_id, (str, int))
+            or not str(file_id).strip()
+        ):
+            raise ZenodoError(f"Zenodo file {name} is missing an identifiable file id")
+        if str(file_id) in file_ids:
+            raise ZenodoError("Zenodo draft file inventory contains duplicate file ids")
+        size = item.get("filesize", item.get("size"))
+        if (
+            isinstance(size, bool) or not isinstance(size, (str, int))
+            or re.fullmatch(r"[0-9]+", str(size)) is None
+        ):
+            raise ZenodoError(f"Zenodo file {name} has a malformed byte size")
+        if "filesize" in item and "size" in item and str(item["filesize"]) != str(item["size"]):
+            raise ZenodoError(f"Zenodo file {name} has inconsistent byte sizes")
+        _remote_checksum(item.get("checksum"))
+        inventory[name] = item
+        file_ids.add(str(file_id))
+    return inventory
 
 
 def verify_deposition_files(

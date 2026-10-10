@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 import subprocess
 import zipfile
 from pathlib import Path
@@ -1313,3 +1314,318 @@ support:
     assert publication["release_binding"]["score"] == 7.0
     receipt = json.loads((tmp_path / released["receipt"]).read_text(encoding="utf-8"))
     assert receipt["package_sha256"] == publication["package_sha256"]
+
+
+@pytest.fixture
+def canonical_resume_fixture(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
+    """Rebuild real Git-frozen sources after a previous partial draft upload."""
+
+    paper_id = "20260802mathgraph0001"
+    registry = tmp_path / "registry" / "papers"
+    sources = tmp_path / "papers" / paper_id / "evidence" / "release"
+    registry.mkdir(parents=True)
+    sources.mkdir(parents=True)
+    (sources / "REPLAY.md").write_text("Replay this certificate.\n", encoding="utf-8")
+    (sources / "certificate.json").write_text('{"ok": true}\n', encoding="utf-8")
+    (tmp_path / "registry" / "settings.yaml").write_text(
+        "schema_version: ara.paper_writing.registry.v1\ndefaults: {}\n",
+        encoding="utf-8",
+    )
+    record_path = registry / f"{paper_id}.yaml"
+    record_path.write_text(
+        f"""paper_id: {paper_id}
+display_id: 20260802-math-graph-test-resume
+domain: math
+subdomain: graph
+title: Test resumable release
+created_at: '2026-08-02'
+version: 0.1.2
+authors:
+  - name: Ada Lovelace
+support:
+  publication:
+    mode: zenodo_only
+    status: planned
+    source_files:
+      - papers/{paper_id}/evidence/release
+""",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "registry", "papers"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=ARA Test", "-c", "user.email=test@example.invalid",
+         "commit", "-qm", "freeze support sources"],
+        cwd=tmp_path, check=True,
+    )
+    record = zenodo.find_paper_record(paper_id, repo_root=tmp_path)
+    origin_commit = zenodo.git_head(tmp_path)
+    previous_package = build_support_archive(
+        record, resolve_support_sources(record, repo_root=tmp_path),
+        repo_root=tmp_path, reserved_doi="10.5281/zenodo.123",
+        origin_commit=origin_commit, license_id="cc-by-4.0",
+    )
+    paths = [Path(previous_package["archive"]), Path(previous_package["checksum"])]
+
+    def remote_item(path: Path) -> dict[str, Any]:
+        return {"id": path.name, "filename": path.name, "filesize": path.stat().st_size,
+                "checksum": f"md5:{md5_file(path)}"}
+
+    remote: dict[str, Any] = {
+        "id": 123, "submitted": False, "files": [],
+        "metadata": {"prereserve_doi": {"doi": "10.5281/zenodo.123"}},
+    }
+    calls: list[tuple[str, Any]] = []
+    state: dict[str, Any] = {
+        "read_count": 0, "post_build_corruption": None, "final_corruption": None,
+    }
+
+    class ResumeClient:
+        def __init__(self, environment: str, token: str) -> None:
+            assert (environment, token) == ("production", "test-token")
+
+        def __enter__(self) -> "ResumeClient":
+            return self
+
+        def __exit__(self, *_: Any) -> None:
+            return None
+
+        def get_deposition(self, deposition_id: int | str) -> dict[str, Any]:
+            assert str(deposition_id) == "123"
+            calls.append(("GET", deposition_id))
+            state["read_count"] += 1
+            result = deepcopy(remote)
+            if state["read_count"] == 2 and state["post_build_corruption"]:
+                state["post_build_corruption"](result)
+            if state["read_count"] == 3 and state["final_corruption"]:
+                state["final_corruption"](result)
+            return result
+
+        def update_metadata(self, deposition_id: int | str, metadata: dict[str, Any]) -> dict[str, Any]:
+            calls.append(("METADATA", deposition_id))
+            remote["metadata"].update(metadata)
+            remote["metadata"]["prereserve_doi"] = {"doi": "10.5281/zenodo.123"}
+            return deepcopy(remote)
+
+        def delete_file(self, deposition_id: int | str, file_id: int | str) -> dict[str, Any]:
+            calls.append(("DELETE", file_id))
+            remote["files"] = [item for item in remote["files"] if item["id"] != file_id]
+            return {"deleted": True}
+
+        def upload_file(self, draft: dict[str, Any], path: str | Path) -> dict[str, Any]:
+            assert draft["id"] == 123 and draft["submitted"] is False
+            item = remote_item(Path(path))
+            calls.append(("PUT", item["filename"]))
+            remote["files"].append(item)
+            return item
+
+    monkeypatch.setattr(zenodo, "ZenodoClient", ResumeClient)
+    return {"paper_id": paper_id, "root": tmp_path, "remote": remote, "calls": calls,
+            "paths": paths, "item": remote_item, "previous_package": previous_package,
+            "state": state, "record_path": record_path, "client_class": ResumeClient}
+
+
+@pytest.mark.parametrize("existing", ["empty", "zip", "both", "stale_size", "stale_digest", "unexpected"])
+def test_canonical_prepare_resumes_only_missing_or_stale_files(
+    canonical_resume_fixture: dict[str, Any], existing: str,
+) -> None:
+    case = canonical_resume_fixture
+    archive, checksum = case["paths"]
+    remote = case["remote"]
+    item = case["item"]
+    if existing != "empty":
+        remote["files"] = [item(archive)]
+    if existing == "both":
+        remote["files"].append(item(checksum))
+    elif existing == "stale_size":
+        remote["files"][0]["filesize"] += 1
+    elif existing == "stale_digest":
+        remote["files"][0]["checksum"] = "md5:" + "0" * 32
+    elif existing == "unexpected":
+        unexpected = item(checksum)
+        unexpected.update(id="old-source-id", filename="old.zip")
+        remote["files"].append(unexpected)
+    prepared = prepare_zenodo_release(
+        case["paper_id"], environment="production", token="test-token",
+        repo_root=case["root"], deposition_id=123, license_id="cc-by-4.0",
+    )
+    # This is a genuinely rebuilt canonical package, not a canned mocked ZIP.
+    assert prepared["archive_sha256"] == case["previous_package"]["archive_sha256"]
+    put_names = [name for method, name in case["calls"] if method == "PUT"]
+    deleted = [name for method, name in case["calls"] if method == "DELETE"]
+    expected_puts = (
+        [] if existing == "both" else [checksum.name] if existing in {"zip", "unexpected"}
+        else [archive.name, checksum.name]
+    )
+    expected_deleted = (
+        [archive.name] if existing in {"stale_size", "stale_digest"}
+        else ["old-source-id"] if existing == "unexpected" else []
+    )
+    assert put_names == expected_puts
+    assert deleted == expected_deleted
+    assert prepared["uploaded_files"] == len(expected_puts)
+    assert prepared["removed_draft_files"] == len(expected_deleted)
+    assert prepared["reused_files"] == 2 - len(expected_puts)
+    receipt = json.loads((case["root"] / prepared["receipt"]).read_text())
+    assert len(receipt["reused_remote_files"]) == prepared["reused_files"]
+    assert len(receipt["remote_files"]) == 2
+    assert receipt["package"]["sha256"] == prepared["archive_sha256"]
+    assert receipt["submitted_metadata_sha256"] == receipt["verified_remote_metadata_sha256"]
+    # The unchanged verifier still checks both files and the true registry binding.
+    verified = verify_prepared_zenodo_draft(
+        case["paper_id"], environment="production", token="test-token", repo_root=case["root"],
+    )
+    assert len(verified["remote_files"]) == 2
+
+
+@pytest.mark.parametrize("phase", ["initial", "post_build"])
+@pytest.mark.parametrize("problem", [
+    "wrong_id", "published", "unknown_submission", "missing_inventory", "malformed_entry",
+    "missing_name", "inexact_name", "inconsistent_names", "duplicate_name", "duplicate_id",
+    "missing_id", "bad_size", "inconsistent_size", "bad_digest",
+])
+def test_canonical_prepare_rejects_unsafe_inventory_before_file_mutations(
+    canonical_resume_fixture: dict[str, Any], phase: str, problem: str,
+) -> None:
+    case = canonical_resume_fixture
+    case["remote"]["files"] = [case["item"](case["paths"][0])]
+    original_record = case["record_path"].read_bytes()
+
+    def corrupt(draft: dict[str, Any]) -> None:
+        entry = draft["files"][0]
+        if problem == "wrong_id":
+            draft["id"] = 999
+        elif problem == "published":
+            draft["submitted"] = True
+        elif problem == "unknown_submission":
+            draft.pop("submitted")
+        elif problem == "missing_inventory":
+            draft.pop("files")
+        elif problem == "malformed_entry":
+            draft["files"].append(None)
+        elif problem == "missing_name":
+            entry.pop("filename")
+        elif problem == "inexact_name":
+            entry["filename"] += " "
+        elif problem == "inconsistent_names":
+            entry["key"] = "different.zip"
+        elif problem == "duplicate_name":
+            draft["files"].append({**entry, "id": "different-id"})
+        elif problem == "duplicate_id":
+            draft["files"].append({**entry, "filename": "different.zip"})
+        elif problem == "missing_id":
+            entry.pop("id")
+        elif problem == "bad_size":
+            entry["filesize"] = -1
+        elif problem == "inconsistent_size":
+            entry["size"] = entry["filesize"] + 1
+        elif problem == "bad_digest":
+            entry["checksum"] = "md5:invalid"
+        else:
+            raise AssertionError(problem)
+
+    if phase == "initial":
+        corrupt(case["remote"])
+    else:
+        case["state"]["post_build_corruption"] = corrupt
+    with pytest.raises(zenodo.ZenodoError):
+        prepare_zenodo_release(
+            case["paper_id"], environment="production", token="test-token",
+            repo_root=case["root"], deposition_id=123, license_id="cc-by-4.0",
+        )
+    assert not any(method in {"DELETE", "PUT"} for method, _ in case["calls"])
+    if phase == "initial":
+        assert not any(method == "METADATA" for method, _ in case["calls"])
+        assert case["state"]["read_count"] == 1
+    else:
+        assert case["state"]["read_count"] == 2
+        assert [method for method, _ in case["calls"]] == ["GET", "METADATA", "GET"]
+    assert case["record_path"].read_bytes() == original_record
+    assert not (case["paths"][0].parent / "draft.json").exists()
+
+
+@pytest.mark.parametrize("problem", ["metadata", "missing_file", "wrong_id", "digest"])
+def test_canonical_reuse_still_requires_final_identity_and_both_file_checks(
+    canonical_resume_fixture: dict[str, Any], problem: str,
+) -> None:
+    case = canonical_resume_fixture
+    case["remote"]["files"] = [case["item"](path) for path in case["paths"]]
+    original_record = case["record_path"].read_bytes()
+
+    def corrupt(draft: dict[str, Any]) -> None:
+        if problem == "metadata":
+            draft["metadata"]["title"] = "A different release"
+        elif problem == "missing_file":
+            draft["files"].pop()
+        elif problem == "wrong_id":
+            draft["id"] = 999
+        else:
+            draft["files"][0]["checksum"] = "md5:" + "0" * 32
+
+    case["state"]["final_corruption"] = corrupt
+    with pytest.raises(zenodo.ZenodoError):
+        prepare_zenodo_release(
+            case["paper_id"], environment="production", token="test-token",
+            repo_root=case["root"], deposition_id=123, license_id="cc-by-4.0",
+        )
+    assert case["state"]["read_count"] == 3
+    assert not any(method in {"DELETE", "PUT"} for method, _ in case["calls"])
+    assert case["record_path"].read_bytes() == original_record
+    assert not (case["paths"][0].parent / "draft.json").exists()
+
+
+def test_canonical_prepare_checks_updated_metadata_before_file_mutations(
+    canonical_resume_fixture: dict[str, Any],
+) -> None:
+    case = canonical_resume_fixture
+    case["remote"]["files"] = [case["item"](case["paths"][0])]
+
+    def corrupt(draft: dict[str, Any]) -> None:
+        draft["metadata"]["title"] = "A different release"
+
+    case["state"]["post_build_corruption"] = corrupt
+    with pytest.raises(zenodo.ZenodoError, match="title does not match"):
+        prepare_zenodo_release(
+            case["paper_id"], environment="production", token="test-token",
+            repo_root=case["root"], deposition_id=123, license_id="cc-by-4.0",
+        )
+    assert case["state"]["read_count"] == 2
+    assert not any(method in {"DELETE", "PUT"} for method, _ in case["calls"])
+    assert not (case["paths"][0].parent / "draft.json").exists()
+
+
+def test_canonical_new_version_rejects_metadata_response_from_another_draft(
+    canonical_resume_fixture: dict[str, Any], monkeypatch: Any,
+) -> None:
+    case = canonical_resume_fixture
+    record = load_paper_metadata(case["paper_id"], case["root"])
+    record["support"]["publication"].update({
+        "status": "published",
+        "zenodo": {"environment": "production", "deposition_id": 42, "version": "0.1.1"},
+    })
+    zenodo.write_paper_metadata(case["paper_id"], record, case["root"])
+    original_record = case["record_path"].read_bytes()
+    client_class = case["client_class"]
+    original_update = client_class.update_metadata
+
+    def new_version(self: Any, deposition_id: int | str) -> dict[str, Any]:
+        assert deposition_id == 42
+        case["calls"].append(("NEW_VERSION", deposition_id))
+        return deepcopy(case["remote"])
+
+    def wrong_update(self: Any, deposition_id: int | str, metadata: dict[str, Any]) -> dict[str, Any]:
+        assert deposition_id == 123
+        response = original_update(self, deposition_id, metadata)
+        response["id"] = 999
+        return response
+
+    monkeypatch.setattr(client_class, "new_version", new_version, raising=False)
+    monkeypatch.setattr(client_class, "update_metadata", wrong_update)
+    with pytest.raises(zenodo.ZenodoError, match="metadata update returned a different draft id"):
+        prepare_zenodo_release(
+            case["paper_id"], environment="production", token="test-token",
+            repo_root=case["root"], license_id="cc-by-4.0",
+        )
+    assert case["calls"] == [("NEW_VERSION", 42), ("METADATA", 123)]
+    assert case["record_path"].read_bytes() == original_record
+    assert not (case["paths"][0].parent / "draft.json").exists()
