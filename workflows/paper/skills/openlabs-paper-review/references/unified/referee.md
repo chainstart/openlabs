@@ -11,7 +11,11 @@ Check, in this order:
    a missing justification, and a point you could not check.
 2. Novelty and context. Is the relation to prior work stated accurately, without overstating or
    understating? Is anything important missing?
-3. Significance for this journal's readership, at the level of the journal's recent articles.
+3. Significance for this journal's readership, only to the extent required by its
+   authenticated publication criteria. If the target explicitly excludes perceived
+   importance, significance or impact from assessment, evaluate scientific validity
+   and technical soundness instead. Do not reject a valid niche, negative or replication
+   study merely for one of those excluded reasons.
 4. Presentation. Is there one clear main result and an argument that leads to it? Penalize
    padding: disclaimers added instead of fixing a claim ("we do not claim ..."), repeated
    summaries, lists of results without connection, and any narration of the authors' internal

@@ -9,6 +9,11 @@ Use the standard of THIS journal: its scope, its readership, and the level of th
 articles listed in the packet. Do not use the standard of the very top journals, and do not
 use a generic standard. A paper that is correct but of interest only to a handful of
 specialists, or that reads as a routine extension, is declined by most journals at the desk.
+Apply the target's authenticated publication criteria before any such generalization.
+If the journal explicitly assesses technical soundness rather than perceived importance,
+significance or impact, do not invent an importance threshold. Niche scope, negative
+results and justified replications are not rejection reasons at a journal that explicitly
+permits them; assess the actual methodological, evidential and presentation requirements.
 
 Be concrete and honest. Your job is to catch, before submission, the reasons an editor at this
 journal would decline the paper.
