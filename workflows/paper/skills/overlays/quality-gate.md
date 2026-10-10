@@ -136,6 +136,16 @@ argument before sentence polishing, then verify that edits preserve scientific m
 Retain a private version-bound revision record. Do not feed the author's readability verdict
 or private checklist to a fresh full reviewer.
 
+The final manuscript must use neutral, objective, impersonal scientific prose. Repeated
+revision must not leave internal dialogue, revision negotiations, self-review responses,
+or predictions about reader interest and editorial acceptance in the abstract or scientific
+body. Describe the actual result and evidence; keep what changed in this revision and which
+review item it answers in private revision records or response letters. Apply the final-voice
+check in the shared readability skill to the entire current manuscript before freezing it,
+while preserving necessary scientific methods, reproducibility information and truthful
+disclosures. Both independent editorial screening and refereeing must require repair of
+located violations; a keyword scan alone cannot establish this condition.
+
 The configured referee must independently reconstruct the problem, principal result,
 scope, literature difference and argument from the manuscript, with locations, as specified
 in `openlabs-paper-review/references/rubrics.md`. Substantial exposition problems belong in

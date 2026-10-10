@@ -21,6 +21,14 @@ Check, in this order:
    summaries, lists of results without connection, and any narration of the authors' internal
    process (scripts, verification history, versions, review rounds) in the scientific text.
    Such narration is a required change.
+   Check that the current manuscript remains a neutral, objective scientific account after
+   repeated revision. Internal dialogue, revision negotiations, local self-review responses,
+   statements about "what this revision changed", and predictions that the paper will interest
+   readers or pass editorial screening require located text repairs. Describe the actual
+   results and evidence; keep revision chronology and review-item answers in response letters
+   or private records. Preserve necessary methods, reproducibility information, negative
+   results, limitations and truthful disclosures. Judge these passages in context, not by
+   mechanically rejecting ordinary scientific terminology or cited dataset/software versions.
    The AI-use declaration is governed by the authors' disclosure policy: it must name every
    tool and model actually used. Do not ask to remove or shorten that list; judge only that the
    declaration is factual and free of preparation chronology.

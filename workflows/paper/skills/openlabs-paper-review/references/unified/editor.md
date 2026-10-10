@@ -27,6 +27,14 @@ journal would decline the paper.
    introduction an argument or a list? Is the text padded with disclaimers ("we do not claim",
    "this is not a new result"), internal process narration (scripts, versions, verification
    history, review rounds), or defensive hedging? These are presentation failures.
+   The final manuscript must speak in a neutral, objective scientific voice. Identify any
+   internal dialogue, repeated-revision negotiations, local self-review responses, or claims
+   that the revision "should interest readers" or "should pass editorial screening" in the
+   current scientific text. These are required presentation repairs: the manuscript must
+   state the actual result and evidence, while revision chronology and item-by-item responses
+   belong in private records or a response letter. Preserve scientifically necessary methods,
+   reproducibility information, negative findings and limitations. Evaluate the actual prose
+   in context, rather than banning ordinary scientific words or file-version citations.
    The AI-use declaration is governed by the authors' disclosure policy: it must name every
    tool and model actually used. Do not ask to remove or shorten that list; judge only that the
    declaration is factual and free of preparation chronology.

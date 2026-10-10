@@ -51,6 +51,27 @@ For empirical work, the narrative must connect the research question to the meth
 comparison, measured result and scope of inference. More datasets or implementation detail
 cannot replace that connection or justify unsupported generality.
 
+## Final manuscript voice after repeated revision
+
+Write the final manuscript in a neutral, objective, impersonal scientific voice. Present
+the problem, results, evidence and limitations as a coherent account for a reader who has
+never seen the drafting or review history. Do not expose the author's internal dialogue,
+abandoned drafting plans, repeated revision negotiations or responses to a local self-review.
+In particular, exclude claims such as "this should interest readers", "this should pass
+editorial screening", "this revision adds ...", or "this satisfies the self-review requirement".
+State the demonstrated scientific difference and its consequences instead of predicting
+reader interest or editorial acceptance. Do not replace these claims with inflated importance
+language.
+
+Keep revision chronology, item-by-item review responses, author checklists and editorial
+strategy in private records or response letters, outside the scientific manuscript. Retain
+scientifically necessary methods, reproducibility information, limitations, negative findings,
+citations and truthful AI/author disclosures; removing process narration must not hide evidence
+or uncertainty. Before freezing each revised manuscript, reread its abstract, introduction,
+body, discussion and conclusion for this boundary, including text inherited from earlier rounds.
+Record located defects and repairs in the private revision record. Independent reviewers must
+check the current manuscript itself and require repair when this narration remains.
+
 Save a private revision record with the manuscript version/hash, located issues, structural
 changes, before/after passages where useful, fidelity checks and remaining gaps. Keep it
 outside the public paper and fresh full-review packet. Follow the repository review router
