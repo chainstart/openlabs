@@ -146,7 +146,10 @@ PROCESS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "version-history",
         re.compile(
             r"\b(?:earlier|previous|old|new|superseded|historical)\b.{0,100}"
-            r"\b(?:support|archive|record|version|release|bundle)\b|"
+            r"\b(?:support|version|release|bundle)\b|"
+            r"\b(?:earlier|previous|old|new|superseded|historical)\s+"
+            r"(?:Zenodo\s+)?(?:archive|record)\b(?=.{0,120}\b"
+            r"(?:Zenodo|DOI|version|release|replaced?|supersedes?|superseded|deposited|published)\b)|"
             r"\bversion\s+v?\d+(?:\.\d+){1,2}\s+(?:additionally\s+)?"
             r"(?:adds?|added|replaces?|supersedes?|retains?)\b|"
             r"\bsuperseded\s+version[- ]?\d+\b|"

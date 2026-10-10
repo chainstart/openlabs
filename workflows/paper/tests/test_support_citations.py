@@ -672,6 +672,33 @@ def test_support_audit_rejects_release_narrative_inside_exact_archive(tmp_path: 
     assert "SUPPORT-ARCHIVE-DRAFT-PUBLIC-CLAIM" in codes
 
 
+def test_historical_experiment_archive_is_not_release_history(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    main = tmp_path / "papers" / PAPER_ID / "manuscript" / "main.tex"
+    text = main.read_text(encoding="utf-8")
+    main.write_text(text.replace(
+        "The archive contains the exact certificate and replay instructions.",
+        "The historical archive provides a distinct comparison. Its 19 retained "
+        "predictors used calibration labels for refitting.\n\n"
+        "\\appendix\n\\section{Historical archive and diagnostic corrections}\n"
+        "The retained predictors are conditional on calibration-label reuse.",
+    ), encoding="utf-8")
+    result = audit_manuscript_support(PAPER_ID, root=tmp_path)
+    assert "SUPPORT-PROCESS-NARRATIVE" not in {item["code"] for item in result["errors"]}
+
+
+def test_previous_archive_replacement_remains_release_history(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    main = tmp_path / "papers" / PAPER_ID / "manuscript" / "main.tex"
+    text = main.read_text(encoding="utf-8")
+    main.write_text(text.replace(
+        "The archive contains the exact certificate and replay instructions.",
+        "The previous archive was replaced by this deposited record.",
+    ), encoding="utf-8")
+    result = audit_manuscript_support(PAPER_ID, root=tmp_path)
+    assert "SUPPORT-PROCESS-NARRATIVE" in {item["code"] for item in result["errors"]}
+
+
 def test_support_audit_rejects_stale_public_support_path_in_manuscript(tmp_path: Path) -> None:
     _workspace(tmp_path)
     main = tmp_path / "papers" / PAPER_ID / "manuscript" / "main.tex"
