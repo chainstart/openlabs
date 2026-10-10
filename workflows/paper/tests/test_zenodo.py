@@ -73,6 +73,79 @@ def test_delete_file_uses_deposition_file_endpoint() -> None:
     }
 
 
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_upload_transient_failure_requires_exact_persisted_file(tmp_path: Path, status: int) -> None:
+    package = tmp_path / "support.zip.sha256"
+    package.write_bytes(b"exact transferred content\n")
+    remote_file = {"id": "file-1", "filename": package.name,
+                   "filesize": package.stat().st_size, "checksum": "md5:" + md5_file(package)}
+    calls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        assert request.headers["authorization"] == "Bearer test-token"
+        if request.method == "PUT":
+            assert request.read() == package.read_bytes()
+            return httpx.Response(status, text="gateway failure")
+        assert request.method == "GET"
+        return httpx.Response(200, json={"id": 42, "submitted": False,
+                                        "files": [remote_file, {"filename": "other.zip"}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        client = ZenodoClient("sandbox", "test-token", client=http_client)
+        result = client.upload_file({"id": 42, "links": {
+            "bucket": "https://sandbox.zenodo.org/api/files/verified-bucket"}}, package)
+    assert result["recovered_http_status"] == status
+    assert result["verified_upload_readback"]["sha256"] == zenodo.sha256_file(package)
+    assert calls == [("PUT", "/api/files/verified-bucket/support.zip.sha256"),
+                     ("GET", "/api/deposit/depositions/42")]
+
+
+@pytest.mark.parametrize("problem", ["wrong_id", "published", "unknown_submission", "missing_file",
+                                    "wrong_size", "wrong_checksum", "duplicate_file"])
+def test_upload_readback_cannot_recover_unverified_content(tmp_path: Path, problem: str) -> None:
+    package = tmp_path / "support.zip"
+    package.write_bytes(b"exact content")
+    item = {"filename": package.name, "filesize": package.stat().st_size,
+            "checksum": "md5:" + md5_file(package)}
+    draft = {"id": 42, "submitted": False, "files": [item]}
+    if problem == "wrong_id": draft["id"] = 43
+    elif problem == "published": draft["submitted"] = True
+    elif problem == "unknown_submission": draft.pop("submitted")
+    elif problem == "missing_file": draft["files"] = []
+    elif problem == "wrong_size": item["filesize"] += 1
+    elif problem == "wrong_checksum": item["checksum"] = "md5:" + "0" * 32
+    elif problem == "duplicate_file": draft["files"].append(dict(item))
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.method == "PUT": return httpx.Response(504, text="timeout")
+        return httpx.Response(200, json=draft)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        client = ZenodoClient("sandbox", "test-token", client=http_client)
+        with pytest.raises(zenodo.ZenodoError):
+            client.upload_file({"id": 42, "links": {
+                "bucket": "https://sandbox.zenodo.org/api/files/verified-bucket"}}, package)
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+def test_upload_permanent_failures_are_not_recovered(tmp_path: Path, status: int) -> None:
+    package = tmp_path / "support.zip"
+    package.write_bytes(b"content")
+    calls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(status, text="request rejected")
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        client = ZenodoClient("sandbox", "test-token", client=http_client)
+        with pytest.raises(zenodo.ZenodoError):
+            client.upload_file({"id": 42, "links": {
+                "bucket": "https://sandbox.zenodo.org/api/files/verified-bucket"}}, package)
+    assert calls == ["PUT"]
+
+
 def test_transient_metadata_timeout_recovers_only_after_identity_readback() -> None:
     metadata = {
         "title": "Current support",

@@ -344,7 +344,30 @@ class ZenodoClient:
                 content=handle,
                 headers=self.headers,
             )
-        return self._json(response, f"upload {upload_path.name}")
+        try:
+            return self._json(response, f"upload {upload_path.name}")
+        except ZenodoError:
+            if response.status_code not in {500, 502, 503, 504}:
+                raise
+            # A gateway failure can follow a completed bucket PUT. A fresh
+            # authenticated inventory must prove this exact file persisted;
+            # neither the failed response nor an upload attempt is a receipt.
+            refreshed = self.get_deposition(_deposition_id(draft))
+            if str(_deposition_id(refreshed)) != str(_deposition_id(draft)):
+                raise ZenodoError("Upload read-back returned a different deposition")
+            if refreshed.get("submitted") is not False:
+                raise ZenodoError("Upload read-back did not confirm an unpublished draft")
+            files = refreshed.get("files")
+            if not isinstance(files, list):
+                raise ZenodoError("Upload read-back did not return a file inventory")
+            matched = [item for item in files if isinstance(item, Mapping)
+                       and str(item.get("filename") or item.get("key") or "").strip()
+                       == upload_path.name]
+            if len(matched) != 1:
+                raise ZenodoError("Upload read-back did not uniquely identify the uploaded file")
+            verified = verify_deposition_files({"files": matched}, [upload_path])
+            return {**matched[0], "verified_upload_readback": verified[0],
+                    "recovered_http_status": response.status_code}
 
     def delete_file(self, deposition_id: int | str, file_id: int | str) -> dict[str, Any]:
         """Delete one file from an unpublished deposition draft."""
