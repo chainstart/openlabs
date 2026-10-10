@@ -687,13 +687,17 @@ def test_historical_experiment_archive_is_not_release_history(tmp_path: Path) ->
     assert "SUPPORT-PROCESS-NARRATIVE" not in {item["code"] for item in result["errors"]}
 
 
-def test_previous_archive_replacement_remains_release_history(tmp_path: Path) -> None:
+@pytest.mark.parametrize("narration", [
+    "The previous archive was replaced by this deposited record.",
+    "The earlier published archive was superseded by this record.",
+])
+def test_previous_archive_replacement_remains_release_history(tmp_path: Path, narration: str) -> None:
     _workspace(tmp_path)
     main = tmp_path / "papers" / PAPER_ID / "manuscript" / "main.tex"
     text = main.read_text(encoding="utf-8")
     main.write_text(text.replace(
         "The archive contains the exact certificate and replay instructions.",
-        "The previous archive was replaced by this deposited record.",
+        narration,
     ), encoding="utf-8")
     result = audit_manuscript_support(PAPER_ID, root=tmp_path)
     assert "SUPPORT-PROCESS-NARRATIVE" in {item["code"] for item in result["errors"]}
