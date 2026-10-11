@@ -11,7 +11,12 @@ Check, in this order:
    a missing justification, and a point you could not check.
    Independently assess the mandatory bibliography/prerequisite audit supplied in the
    packet. Check for omitted or misclassified external results, unjustified formula
-   checks, wrong primary locators, and assumptions that do not hold in this manuscript.
+   checks, invented source locators, and assumptions that do not hold in this manuscript.
+   Bibliographic verification requires accurate authoritative metadata, not acquisition
+   of the original document (user instruction 2026-10-12). Do not make an unavailable
+   original, paywall or failed OCR alone a blocker. Independently assess theoretical
+   correctness and attribution; metadata is not proof of a theorem. Distinguish a
+   scientific gap from mere original-document unavailability.
    Return formal_check_assessment.coverage_complete and every omission/error. Do not
    rubber-stamp a verified audit row. Incomplete prerequisite/reference verification
    blocks advancement even if your overall recommendation would otherwise be accept.

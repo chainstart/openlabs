@@ -81,6 +81,8 @@ def _validate_against_schema(value: Any, schema: Mapping[str, Any], path: str = 
     elif kind == "string":
         if not isinstance(value, str):
             raise LaunchError(f"{path}: expected string")
+        if len(value) < schema.get("minLength", 0) or len(value) > schema.get("maxLength", float("inf")):
+            raise LaunchError(f"{path}: wrong string length")
     elif kind == "integer":
         if type(value) is not int:
             raise LaunchError(f"{path}: expected integer")

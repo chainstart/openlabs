@@ -58,6 +58,7 @@ def simulated_output(packet):
             prerequisites = []
             if unit["citations"]:
                 prerequisites = [{"statement": "Nonnegativity of real squares", "status": "verified",
+                    "kind": "external",
                     "reference_keys": ["s"], "original_locator": "Theorem 2", "original_assumptions": "x is real",
                     "original_conclusion": "x squared is nonnegative", "manuscript_instantiation": "real x",
                     "condition_check": "real domain explicitly given", "formula_check": "Same square and inequality", "evidence": proof}]
@@ -366,5 +367,192 @@ def test_formula_cannot_use_metadata_as_proof(tmp_path, monkeypatch):
     source = next(s for s in result["sources"] if s["kind"] == "bibliographic_metadata")
     formula = next(f for p in result["report"]["passages"] for f in p["formulas"])
     formula["evidence"] = [{"source_id": source["id"], "locator": "JSON metadata", "quote": source["text"]}]
-    with pytest.raises(ValueError, match="original primary text"):
-        formal.report_blockers(result["report"], result["inventory"], result["sources"])
+    assert any("Evidence type" in b for b in formal.report_blockers(result["report"], result["inventory"], result["sources"]))
+
+
+def test_implicit_dependency_routing_preserves_actual_text():
+    docs = [{"id": "main", "text": "The named concentration bound applies here."}]
+    inv = formal.inventory(docs, r"\bibitem{s}Smith. Exact positivity.")
+    source = {"id": "S1", "kind": "primary_text", "reference_keys": ["s"],
+              "url": "https://publisher.example/original", "text": PRIMARY,
+              "passage_patterns": ["concentration bound"]}
+    packet = json.loads(formal.batch_packet("passages", inv["passages"], docs, inv, [source]))
+    assert packet["retrieved_sources"] == [source]
+    source.pop("passage_patterns")
+    packet = json.loads(formal.batch_packet("passages", inv["passages"], docs, inv, [source]))
+    assert packet["retrieved_sources"] == []
+    assert packet["available_source_catalog"][0]["id"] == "S1"
+    assert "text" not in packet["available_source_catalog"][0]
+
+
+def test_located_internal_reconstruction_without_invented_reference(tmp_path, monkeypatch):
+    _, _, result = run_fixture(tmp_path, monkeypatch)
+    unit = next(p for p in result["report"]["passages"] if p["prerequisites"])
+    row = unit["prerequisites"][0]
+    row.update(kind="internal_derivation", reference_keys=[], evidence=[],
+               original_locator=unit["passage_id"], formula_check="Multiply the real scalar x by itself; positive and negative signs both give nonnegative product.")
+    assert formal.report_blockers(result["report"], result["inventory"], result["sources"]) == []
+    row["kind"] = "external"
+    assert any("valid cited source" in b for b in formal.report_blockers(result["report"], result["inventory"], result["sources"]))
+
+
+def test_collect_all_evidence_and_scientific_blockers(tmp_path, monkeypatch):
+    _, _, result = run_fixture(tmp_path, monkeypatch)
+    result["report"]["references"][0]["evidence"][0]["quote"] = "Invented exact evidence quote."
+    unit = next(p for p in result["report"]["passages"] if p["formulas"])
+    unit["formulas"][0]["status"] = "error"
+    unit["prerequisites"][0]["status"] = "gap"
+    blockers = formal.report_blockers(result["report"], result["inventory"], result["sources"])
+    assert any("absent from source" in b for b in blockers)
+    assert any(b.endswith(": error") for b in blockers)
+    assert any(b.endswith(": gap") for b in blockers)
+
+
+def test_nested_ids_checked_per_batch(tmp_path, monkeypatch):
+    _, _, result = run_fixture(tmp_path, monkeypatch)
+    batch = result["inventory"]["passages"]
+    output = {"references": [], "passages": copy.deepcopy(result["report"]["passages"])}
+    unit = next(p for p in output["passages"] if p["formulas"])
+    unit["formulas"][0]["formula_id"] += "invented"
+    with pytest.raises(ValueError, match="Formulas"):
+        formal.batch_coverage(output, "passages", batch)
+
+
+def test_local_code_is_bound_and_not_external_theorem_evidence(tmp_path, monkeypatch):
+    metadata = fixture_workspace(tmp_path)
+    code = tmp_path / "papers/p/evidence/replay.py"
+    code.parent.mkdir()
+    code.write_text("# Actual scientific code establishes implementation only.\nassert 2 * 2 == 4\n")
+    metadata["formal_check"]["local_evidence"] = [{"path": code.relative_to(tmp_path).as_posix(),
+        "sha256": formal.sha(code.read_bytes()), "kind": "manuscript_code", "passage_patterns": ["For real"]}]
+    mock_http(monkeypatch)
+    run = tmp_path / "reviews/run"; run.mkdir(parents=True)
+    binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, simulated_runner)
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
+    result = json.loads((tmp_path / binding["path"]).read_text())
+    local = next(s for s in result["sources"] if s["kind"] == "manuscript_code")
+    unit = next(p for p in result["report"]["passages"] if p["prerequisites"])
+    unit["prerequisites"][0]["evidence"] = [{"source_id": local["id"], "locator": "line 1", "quote": "Actual scientific code establishes implementation only."}]
+    assert any("original primary text" in b for b in formal.report_blockers(result["report"], result["inventory"], result["sources"]))
+    code.write_text("# Changed after review.\nassert 2 * 2 == 4\n")
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE)
+
+
+@pytest.mark.parametrize("fault", ["wrong_hash", "no_match", "secret", "outside_paper"])
+def test_unsafe_or_stale_local_records_refuse(tmp_path, fault):
+    metadata = fixture_workspace(tmp_path)
+    path = tmp_path / "papers/p/evidence/record.json"
+    path.parent.mkdir()
+    path.write_text('Scientific actual scope record.' if fault != "secret" else 'Authorization: Bearer PRIVATE')
+    item = {"path": path.relative_to(tmp_path).as_posix(), "sha256": formal.sha(path.read_bytes()),
+            "kind": "execution_record", "passage_patterns": ["For real"]}
+    if fault == "wrong_hash": item["sha256"] = "0" * 64
+    if fault == "no_match": item["passage_patterns"] = ["Absent manuscript selector"]
+    if fault == "outside_paper": item["path"] = "registry/settings.yaml"
+    metadata["formal_check"]["local_evidence"] = [item]
+    docs, bib = formal.current_inputs(metadata, tmp_path)
+    directory = tmp_path / "evidence"; directory.mkdir()
+    with pytest.raises(ValueError):
+        formal._local_records(formal.source_plan(metadata), formal.inventory(docs, bib), tmp_path, directory)
+
+
+def test_bad_actual_nested_ids_are_retained_and_never_rewritten(tmp_path, monkeypatch):
+    metadata = fixture_workspace(tmp_path)
+    mock_http(monkeypatch)
+    run = tmp_path / "review"; run.mkdir()
+    def bad(**kwargs):
+        output, receipt = simulated_runner(**kwargs)
+        if kwargs["role_name"].startswith("formal_passages"):
+            unit = next(p for p in output["passages"] if p["formulas"])
+            unit["formulas"][0]["formula_id"] += "invented"
+            path = kwargs["workdir"] / "output.json"
+            path.write_text(json.dumps(output))
+            receipt["output_sha256"] = formal.sha(path.read_bytes())
+            (kwargs["workdir"] / "receipt.json").write_text(json.dumps(receipt))
+        return output, receipt
+    binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, bad)
+    assert binding["valid"] is False
+    assert any("coverage protocol failure" in b for b in binding["blockers"])
+    result = json.loads((tmp_path / binding["path"]).read_text())
+    assert any(f["formula_id"].endswith("invented") for p in result["report"]["passages"] for f in p["formulas"])
+    assert len(result["receipts"]) == 2
+
+
+def test_ocr_requires_original_pdf_and_explicit_bounded_pages(tmp_path):
+    with pytest.raises(ValueError, match="actual PDF"):
+        formal._text_document(b"Not a PDF original.", "text/plain", tmp_path, "scan", method="ocr")
+    with pytest.raises(ValueError, match="explicit range"):
+        formal._text_document(b"%PDF- actual bytes", "application/pdf", tmp_path, "scan", method="ocr")
+
+
+def test_short_quote_schema_is_enforced_before_acceptance():
+    with pytest.raises(LaunchError, match="string length"):
+        formal._validate_against_schema([{"source_id": "S1", "locator": "page 1", "quote": "Define"}], formal.EVIDENCE)
+
+
+@pytest.mark.parametrize("endpoint", ["https://publisher.example/original.pdf", "https://publisher.example/original"])
+def test_http_200_challenge_is_not_primary_text(tmp_path, endpoint):
+    metadata = fixture_workspace(tmp_path)
+    metadata["formal_check"]["sources"][0]["url"] = endpoint
+    docs, bib = formal.current_inputs(metadata, tmp_path)
+    def handler(request):
+        if request.url.host == "publisher.example":
+            return httpx.Response(200, text='<html><title>Client Challenge</title>Enable JavaScript</html>',
+                                  headers={"Content-Type": "text/html"})
+        return transport(request)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        sources, errors = formal.collect_sources(formal.inventory(docs,bib), metadata,tmp_path,tmp_path/'evidence',client)
+    assert errors == [] and all(s["kind"] != "primary_text" for s in sources)
+    assert "Declared primary source unavailable" in (tmp_path / "evidence/retrieval-failures.json").read_text()
+
+
+def test_metadata_suffices_without_original_document(tmp_path, monkeypatch):
+    metadata = fixture_workspace(tmp_path)
+    mock_http(monkeypatch, lambda request: transport(request) if request.url.host == "api.crossref.org" else httpx.Response(403))
+    run = tmp_path / "review"; run.mkdir()
+    def metadata_runner(**kwargs):
+        packet = json.loads(kwargs["user_prompt"])
+        output = simulated_output(packet)
+        if packet["scope"] == "references":
+            source = next(s for s in packet["retrieved_sources"] if s["kind"] == "bibliographic_metadata")
+            for row in output["references"]:
+                row["evidence"] = [{"source_id": source["id"], "locator": "message.title", "quote": "Exact positivity"}]
+        return output, {}
+    binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, metadata_runner)
+    assert binding["valid"] is True
+    result = json.loads((tmp_path / binding["path"]).read_text())
+    assert all(s["kind"] == "bibliographic_metadata" for s in result["sources"])
+    assert "Declared primary source unavailable" in (run / "formal-check/evidence/retrieval-failures.json").read_text()
+
+
+@pytest.mark.parametrize("suffix", ["\n", "\n   ", "\t", ""])
+def test_trailing_single_newline_does_not_omit_final_formulas_or_citations(suffix):
+    text = "Opening.\n\n" + r"\begin{table}Final $z=1$ \cite{s}.\end{table} AI declaration." + suffix
+    inv = formal.inventory([{"id": "main", "text": text}], r"\bibitem{s}Smith. Work.")
+    assert len(inv["passages"]) == 2
+    assert inv["passages"][-1]["text"].endswith("AI declaration.")
+    assert len(inv["passages"][-1]["formulas"]) == len(inv["passages"][-1]["citations"]) == 1
+
+
+def test_arbitrary_internal_proof_locator_and_author_facts_for_external_citation_refuse(tmp_path, monkeypatch):
+    _, _, result = run_fixture(tmp_path, monkeypatch)
+    unit = next(p for p in result["report"]["passages"] if p["prerequisites"])
+    row = unit["prerequisites"][0]
+    row.update(kind="internal_derivation", reference_keys=[], evidence=[], original_locator="No such proof anywhere")
+    assert any("actual manuscript passage" in b for b in formal.report_blockers(result["report"], result["inventory"], result["sources"]))
+    row["original_locator"] = unit["passage_id"]
+    source = next(s for s in result["sources"] if s["kind"] == "primary_text")
+    source["kind"] = "author_attestation"
+    assert any("Evidence type" in b for b in formal.report_blockers(result["report"], result["inventory"], result["sources"]))
+
+
+@pytest.mark.parametrize("query", ["X-Amz-Signature=dummy", "X-Amz-Credential=dummy", "X-Goog-Signature=dummy", "sig=dummy"])
+def test_signed_urls_excluded_from_local_model_records(tmp_path, query):
+    metadata = fixture_workspace(tmp_path)
+    path = tmp_path / "papers/p/evidence/record.txt"; path.parent.mkdir()
+    path.write_text("https://storage.example/item?" + query)
+    plan = {"local_evidence": [{"path": path.relative_to(tmp_path).as_posix(), "sha256": formal.sha(path.read_bytes()),
+        "kind": "research_record", "passage_patterns": ["For real"]}]}
+    docs, bib = formal.current_inputs(metadata, tmp_path)
+    with pytest.raises(ValueError, match="private service"):
+        formal._local_records(plan, formal.inventory(docs, bib), tmp_path, tmp_path)

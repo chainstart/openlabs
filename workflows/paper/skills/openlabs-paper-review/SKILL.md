@@ -38,7 +38,7 @@ yourself, and do not edit the manuscript, evidence or registry while it runs.
    strongest desk-reject reason, says whether each previous rejection is actually answered, and
    decides `send_to_review`, `revise_before_submission` or `desk_reject`.
 3. **Reference/prerequisite verification** - after editor and rejection-history clearance,
-   fresh Codex batches verify the complete source coverage and primary evidence described below.
+   fresh Codex batches verify complete coverage, authoritative bibliographic data and mathematical correctness as described below.
    An incomplete or failed verification stops advancement with `formal_check_blocked`.
 4. **Referees** - only after `send_to_review` and passing mandatory verification. The configured active referees in fresh processes (normally two different models;
    temporarily only Codex `referee_b` under the 2026-10-09 user instruction) review the complete expanded source, bibliography and
@@ -54,13 +54,17 @@ model. This is a verification stage, not an additional journal referee or a retu
 Claude. Read [references/formal-checks.md](references/formal-checks.md) when preparing
 sources or resolving a failure. Code checks exact coverage of every printed reference,
 every citation occurrence, every detected formula and all main/supplement source
-passages; independent verifiers check primary evidence and theorem applications.
+passages; independent verifiers check authoritative bibliographic data and theorem applications.
 Errors, gaps, unchecked items, omitted/duplicate/invented IDs, unsupported quotations,
-or failed retrievals without another authoritative source block advancement. Referees
+or unresolved bibliographic identity block advancement. Under the user's 2026-10-12
+instruction, acquiring original documents is not required: correct authoritative
+metadata suffices for references, and paywalls or failed full-text/OCR retrievals
+alone do not block. Mathematical statements, hypotheses, derivations and appropriate
+attribution remain independently checked. Referees
 must also assess omitted/misclassified prerequisites. The rule cannot be disabled by
 paper metadata. A standalone `formal-check` does not set `writing_release: ready`.
 
-The decision and release bind the complete formal report, primary-source bytes,
+The decision and release bind the complete formal report, retrieved evidence bytes,
 role outputs/receipts and source plan. Changed/missing evidence, a changed verifier
 policy or an old decision lacking this stage requires a fresh unified review.
 Historical decisions and website submission events remain unchanged. This provides
