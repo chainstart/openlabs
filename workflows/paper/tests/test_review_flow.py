@@ -192,6 +192,179 @@ def test_unbound_old_local_draft_is_not_submission_evidence(tmp_path, monkeypatc
     assert 'submitted_manuscript' not in flow.prior_decisions('p', metadata, tmp_path)[0]
 
 
+def _historical_report_metadata(tmp_path, monkeypatch):
+    monkeypatch.delenv('ARA_PAPER_MANAGE_API_URL', raising=False)
+    report = tmp_path / 'reports' / 'expert-1.txt'
+    report.parent.mkdir()
+    report.write_text('Expert 1: the earlier proof omits a joined-gadget distance bound.\n')
+    document = {'journal': 'J', 'manuscript_number': '123', 'path': 'reports/expert-1.txt',
+                'sha256': hashlib.sha256(report.read_bytes()).hexdigest(),
+                'source_kind': 'authenticated_journal_expert_report', 'stage': 'pre_final',
+                'provenance': {'authenticated': True, 'source': 'authenticated artifact download',
+                               'artifact_id': 'actual-report-artifact'}}
+    metadata = {'journal_rejections': [{'journal': 'J', 'manuscript_number': '123'}],
+                'journal_prior_review_documents': [document]}
+    return metadata, report
+
+
+def test_exact_pre_final_reports_reach_both_roles_without_replacing_final_letter(tmp_path, monkeypatch):
+    metadata, report = _historical_report_metadata(tmp_path, monkeypatch)
+    decisions = flow.prior_decisions('p', metadata, tmp_path)
+    supplied = decisions[0]['prior_review_documents'][0]
+    assert supplied['text'] == report.read_text()
+    assert supplied['sha256'] == hashlib.sha256(report.read_bytes()).hexdigest()
+    assert supplied['provenance'] == metadata['journal_prior_review_documents'][0]['provenance']
+    pre = {'metadata': metadata, 'expanded': r'\title{Current}\section{Introduction}Proof.',
+           'bibliography': ''}
+    for packet in (flow.editor_packet(pre, decisions), flow.referee_packet(pre, tmp_path, None, decisions)):
+        assert 'the earlier proof omits a joined-gadget distance bound.' in packet
+        assert 'actual-report-artifact' in packet and supplied['sha256'] in packet
+        assert 'pre_final' in packet and 'not the final' in packet.replace('not final', 'not the final')
+    assert decisions[0]['letter_available'] is False
+    addressed = {'decision_id': decisions[0]['decision_id'], 'journal': 'J',
+                 'judgment': 'resolved', 'answered': True, 'evidence': 'Current proof, Section 2'}
+    assert any('Original rejection letter unavailable' in b for b in
+               flow.rejection_clearance_blockers(editor() | {'prior_rejections_addressed': [addressed]}, decisions))
+
+
+def test_official_run_supplies_authenticated_report_to_editor_and_active_referee(tmp_path, monkeypatch):
+    metadata, report = _historical_report_metadata(tmp_path, monkeypatch)
+    letter = tmp_path / 'letter.txt'
+    letter.write_text('Final editor: the earlier expert concerns remained unresolved.\n')
+    metadata['journal_rejection_letters'] = [{'journal': 'J', 'manuscript_number': '123',
+        'path': 'letter.txt', 'kind': 'verbatim_decision_letter',
+        'sha256': hashlib.sha256(letter.read_bytes()).hexdigest()}]
+    metadata.update(version='1.0', target_journal='J')
+    config = {'process': flow.PROCESS, 'roles': {'editor': {'provider': 'openai-codex'},
+              'referee_b': {'provider': 'openai-codex'}}, 'referee_roles': ['referee_b'],
+              'timeout_seconds': 1, 'max_rounds_per_target': 15, 'rejection_clearance_required': True}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    monkeypatch.setattr(flow, 'preflight', lambda *args: {
+        'metadata': metadata, 'target': 'J', 'blockers': [], 'fingerprints': {},
+        'expanded': r'\title{Current}\section{Introduction}The joined-gadget proof.', 'bibliography': ''})
+    identity = flow.prior_decisions('p', metadata, tmp_path)[0]['decision_id']
+    prompts = {}
+    def role(**kwargs):
+        name = kwargs['role_name']; prompts[name] = kwargs['user_prompt']
+        if name == 'editor':
+            return editor() | {'prior_rejections_addressed': [{'decision_id': identity, 'journal': 'J',
+                'answered': True, 'judgment': 'resolved', 'evidence': 'Current joined-gadget proof'}]}, {}
+        if name == 'decision_letter':
+            return {'letter': 'Internal simulated decision'}, {}
+        return referee('accept'), {}
+    monkeypatch.setattr(flow, 'run_role', role)
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    for name in ('editor', 'referee_b'):
+        assert report.read_text().strip() in prompts[name]
+        assert 'actual-report-artifact' in prompts[name]
+        assert hashlib.sha256(report.read_bytes()).hexdigest() in prompts[name]
+    assert record['prior_decisions'][0]['prior_review_documents'][0]['stage'] == 'pre_final'
+    assert record['merged']['outcome'] == 'ready'
+
+
+def test_historical_reports_require_matching_digest(tmp_path, monkeypatch):
+    metadata, report = _historical_report_metadata(tmp_path, monkeypatch)
+    report.write_text('A different actual report.\n')
+    with pytest.raises(ValueError, match='report source changed'):
+        flow.prior_decisions('p', metadata, tmp_path)
+
+
+@pytest.mark.parametrize('unsafe', ['absolute', 'traversal', 'file_symlink', 'directory_symlink',
+                                  'missing', 'oversized', 'bad_digest', 'invalid_utf8', 'empty'])
+def test_historical_report_sources_fail_closed(tmp_path, monkeypatch, unsafe):
+    metadata, report = _historical_report_metadata(tmp_path, monkeypatch)
+    document = metadata['journal_prior_review_documents'][0]
+    if unsafe == 'absolute':
+        document['path'] = str(report)
+    elif unsafe == 'traversal':
+        document['path'] = 'reports/../reports/expert-1.txt'
+    elif unsafe == 'file_symlink':
+        (report.parent / 'linked.txt').symlink_to(report)
+        document['path'] = 'reports/linked.txt'
+    elif unsafe == 'directory_symlink':
+        (tmp_path / 'linked').symlink_to(report.parent, target_is_directory=True)
+        document['path'] = 'linked/expert-1.txt'
+    elif unsafe == 'missing':
+        report.unlink()
+    elif unsafe == 'oversized':
+        report.write_bytes(b'x' * 2_000_001)
+        document['sha256'] = hashlib.sha256(report.read_bytes()).hexdigest()
+    elif unsafe == 'bad_digest':
+        document['sha256'] = 'invalid'
+    elif unsafe == 'invalid_utf8':
+        report.write_bytes(b'\xff')
+        document['sha256'] = hashlib.sha256(report.read_bytes()).hexdigest()
+    else:
+        report.write_text(' \n')
+        document['sha256'] = hashlib.sha256(report.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match='Historical expert report'):
+        flow.prior_decisions('p', metadata, tmp_path)
+
+
+@pytest.mark.parametrize('change', ['final_stage', 'summary_kind', 'unauthenticated', 'missing_provenance',
+                                  'unmatched_journal', 'unmatched_number', 'duplicate',
+                                  'inline_text', 'wrong_size'])
+def test_historical_reports_require_authentic_pre_final_attempt_binding(tmp_path, monkeypatch, change):
+    metadata, _ = _historical_report_metadata(tmp_path, monkeypatch)
+    document = metadata['journal_prior_review_documents'][0]
+    if change == 'final_stage':
+        document['stage'] = 'final_refusal'
+    elif change == 'summary_kind':
+        document['source_kind'] = 'internal_summary'
+    elif change == 'unauthenticated':
+        document['provenance']['authenticated'] = False
+    elif change == 'missing_provenance':
+        document.pop('provenance')
+    elif change == 'unmatched_journal':
+        document['journal'] = 'Other'
+    elif change == 'unmatched_number':
+        document['manuscript_number'] = 'Other'
+    elif change == 'inline_text':
+        document['text'] = 'Author-supplied paraphrase, not file contents'
+    elif change == 'wrong_size':
+        document['bytes'] = 1
+    else:
+        metadata['journal_prior_review_documents'].append(dict(document))
+    with pytest.raises(ValueError):
+        flow.prior_decisions('p', metadata, tmp_path)
+
+
+@pytest.mark.parametrize('change', ['bytes', 'hash_and_bytes', 'provenance', 'remove', 'add', 'symlink'])
+def test_post_review_historical_report_mutation_invalidates_context(tmp_path, monkeypatch, change):
+    metadata, report = _historical_report_metadata(tmp_path, monkeypatch)
+    record = {'prior_decisions': flow.prior_decisions('p', metadata, tmp_path)}
+    assert flow.rejection_context_blockers(record, metadata, tmp_path) == []
+    document = metadata['journal_prior_review_documents'][0]
+    if change in {'bytes', 'hash_and_bytes'}:
+        report.write_text('New report text.\n')
+        if change == 'hash_and_bytes':
+            document['sha256'] = hashlib.sha256(report.read_bytes()).hexdigest()
+    elif change == 'provenance':
+        document['provenance']['artifact_id'] = 'different-authenticated-artifact'
+    elif change == 'remove':
+        metadata.pop('journal_prior_review_documents')
+    elif change == 'add':
+        extra = report.parent / 'expert-2.txt'
+        extra.write_text('Newly recovered second report.\n')
+        metadata['journal_prior_review_documents'].append(document | {
+            'path': 'reports/expert-2.txt', 'sha256': hashlib.sha256(extra.read_bytes()).hexdigest()})
+    else:
+        real = report.parent / 'real.txt'
+        report.rename(real)
+        report.symlink_to(real)
+    assert flow.rejection_context_blockers(record, metadata, tmp_path)
+
+
+def test_absent_historical_reports_preserve_legacy_context_and_new_reports_invalidate_it(tmp_path, monkeypatch):
+    metadata, _ = _historical_report_metadata(tmp_path, monkeypatch)
+    legacy_metadata = {'journal_rejections': metadata['journal_rejections']}
+    decisions = flow.prior_decisions('p', legacy_metadata, tmp_path)
+    assert 'prior_review_documents' not in decisions[0]
+    record = {'prior_decisions': decisions}
+    assert flow.rejection_context_blockers(record, legacy_metadata, tmp_path) == []
+    assert flow.rejection_context_blockers(record, metadata, tmp_path)
+
+
 def test_inline_bibliography_takes_priority_over_unused_stale_bbl(tmp_path):
     (tmp_path / 'main.tex').write_text('\\begin{thebibliography}{9}\n\\bibitem{math}Actual mathematical predecessor.\\end{thebibliography}')
     (tmp_path / 'main.bbl').write_text('Stale support-only bibliography')

@@ -10,6 +10,7 @@ binds the result to the exact manuscript snapshot.
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import difflib
 import hashlib
 import json
@@ -335,6 +336,77 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- packets
 
+def _prior_review_documents(metadata: Mapping[str, Any], root: Path | None,
+                            decisions: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Load authenticated pre-final reports, never as substitutes for refusal letters."""
+    documents = metadata.get('journal_prior_review_documents', [])
+    if not isinstance(documents, list):
+        raise ValueError('Historical expert report bindings must be a list')
+    if documents and root is None:
+        raise ValueError('Historical expert reports require a data root')
+    allowed = {(d.get('journal'), d.get('manuscript_number')) for d in decisions}
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    seen: set[tuple[str, str, str]] = set()
+    base = root.resolve() if root is not None else None
+    for document in documents:
+        if not isinstance(document, Mapping):
+            raise ValueError('Malformed historical expert report binding')
+        if 'text' in document or 'text_sha256' in document:
+            raise ValueError('Historical expert report text must come from the bound file')
+        journal, number = document.get('journal'), document.get('manuscript_number')
+        if (not isinstance(journal, str) or not journal.strip()
+                or not isinstance(number, str) or not number.strip() or (journal, number) not in allowed):
+            raise ValueError('Historical expert report does not match a recorded journal decision')
+        provenance = document.get('provenance')
+        if (document.get('source_kind') != 'authenticated_journal_expert_report'
+                or document.get('stage') != 'pre_final'
+                or not isinstance(provenance, Mapping) or provenance.get('authenticated') is not True
+                or not isinstance(provenance.get('source'), str) or not provenance['source'].strip()):
+            raise ValueError('Historical expert report requires authenticated pre-final provenance')
+        source, digest = document.get('path'), document.get('sha256')
+        if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+            raise ValueError('Historical expert report requires a SHA256 binding')
+        if not isinstance(source, str) or not source or '\\' in source:
+            raise ValueError('Historical expert report path is unsafe')
+        relative = Path(source)
+        if (relative.is_absolute() or '..' in relative.parts or relative.as_posix() != source
+                or base is None):
+            raise ValueError('Historical expert report path is unsafe')
+        path = base / relative
+        component = base
+        for part in relative.parts:
+            component /= part
+            if component.is_symlink():
+                raise ValueError('Historical expert report path is unsafe: symlink')
+        if not path.resolve().is_relative_to(base) or not path.is_file():
+            raise ValueError('Historical expert report source is missing or unsafe')
+        if path.stat().st_size > 2_000_000:
+            raise ValueError('Historical expert report exceeds the size limit')
+        with path.open('rb') as stream:
+            raw = stream.read(2_000_001)
+        if len(raw) > 2_000_000:
+            raise ValueError('Historical expert report exceeds the size limit')
+        if _sha256(raw) != digest:
+            raise ValueError('Historical expert report source changed')
+        if 'bytes' in document and (type(document['bytes']) is not int or document['bytes'] != len(raw)):
+            raise ValueError('Historical expert report size binding does not match')
+        try:
+            text = raw.decode('utf-8')
+        except UnicodeDecodeError as exc:
+            raise ValueError('Historical expert report must be UTF-8 text') from exc
+        if not text.strip():
+            raise ValueError('Historical expert report text is empty')
+        identity = (journal, number, source)
+        if identity in seen:
+            raise ValueError('Duplicate historical expert report binding')
+        seen.add(identity)
+        grouped.setdefault((journal, number), []).append({
+            **copy.deepcopy(document), 'text': text, 'text_sha256': _sha256(text.encode()), 'bytes': len(raw)})
+    for group in grouped.values():
+        group.sort(key=lambda document: document['path'])
+    return grouped
+
+
 def prior_decisions(paper_id: str, metadata: Mapping[str, Any], root: Path | None = None) -> list[dict[str, Any]]:
     """Editorial decisions on this paper: registry rejections, enriched from the management site when available."""
     rows = {(r.get("journal"), r.get("manuscript_number")): {
@@ -406,6 +478,11 @@ def prior_decisions(paper_id: str, metadata: Mapping[str, Any], root: Path | Non
             if not submitted.get('sha256') or submitted['sha256'] != _sha256(old_raw):
                 raise ValueError('Submitted manuscript comparison source changed')
             row['submitted_manuscript'] = {**submitted, 'text': old_raw.decode(errors='replace')}
+    documents = _prior_review_documents(metadata, root, list(rows.values()))
+    for row in rows.values():
+        reports = documents.get((row['journal'], row['manuscript_number']))
+        if reports:
+            row['prior_review_documents'] = reports
     return sorted(rows.values(), key=lambda r: r["date"])
 
 
@@ -450,6 +527,15 @@ def rejection_context_blockers(record: Mapping[str, Any], metadata: Mapping[str,
             path = root / str(submitted.get('path') or '')
             if not path.is_file() or _sha256(path.read_bytes()) != submitted.get('sha256'):
                 blockers.append(f"The screened submitted manuscript is missing or changed: {d['decision_id']}")
+    try:
+        current_documents = _prior_review_documents(metadata, root, bound)
+    except (ValueError, OSError) as exc:
+        blockers.append(f'The screened historical expert report context is invalid: {exc}')
+    else:
+        for d in bound:
+            current = current_documents.get((d.get('journal'), d.get('manuscript_number')), [])
+            if d.get('prior_review_documents', []) != current:
+                blockers.append('Historical expert reports or their authenticated bindings changed after review')
     return blockers
 
 
@@ -468,7 +554,10 @@ def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> st
     parts = front_matter(pre["expanded"])
     letters = json.dumps(decisions, ensure_ascii=False, indent=2) if decisions else "No prior rejections recorded."
     return (f"## Target journal\n{_target_block(pre['metadata'])}\n\n"
-            f"## Prior editorial decisions on this paper\n{letters}\n\n"
+            f"## Prior editorial decisions on this paper\n"
+            "Any prior_review_documents are authenticated pre-final expert reports, not the final "
+            "refusal letter. Read their complete texts as historical context; they cannot replace "
+            f"a missing final letter.\n{letters}\n\n"
             f"## Title\n{parts['title']}\n\n## Abstract\n{parts['abstract']}\n\n"
             f"## Introduction\n{parts['introduction']}\n\n## Statements of the main results\n{parts['main_statements']}\n\n"
             f"## Methods and information budgets\n{parts['methods']}\n\n"
@@ -510,6 +599,9 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
     if decisions:
         text += ("\n## Original historical refusal context\n"
                  "These are the original sourced letters, independent of this round's editor verdict. "
+                 "Any prior_review_documents are authenticated pre-final expert reports, not final "
+                 "refusal letters; read their complete texts without treating them as a replacement "
+                 "for a missing final letter. "
                  "Check previous requests against these current documents; do not assume an old "
                  "missing-letter diagnosis still holds when the original is now supplied.\n"
                  + json.dumps(decisions, ensure_ascii=False, indent=2) + "\n")
