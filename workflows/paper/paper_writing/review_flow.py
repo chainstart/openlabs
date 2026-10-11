@@ -196,11 +196,68 @@ def rejection_history_policy(metadata: Mapping[str, Any], root: Path,
     return copy.deepcopy(dict(policy))
 
 
-def review_policy_sha256(config: Mapping[str, Any], history_policy: Mapping[str, Any] | None = None) -> str:
+def review_round_limit_override(metadata: Mapping[str, Any], root: Path,
+                                paper_id: str, target: str | None = None) -> dict[str, Any] | None:
+    """Accept only an exact, authenticated user grant for this paper and target."""
+    policy = metadata.get("review_round_limit_override")
+    if policy is None:
+        return None
+    target = target if target is not None else metadata.get("target_journal")
+    if (not isinstance(policy, Mapping) or policy.get("paper_id") != paper_id
+            or not isinstance(target, str) or not target.strip()
+            or policy.get("target_journal") != target
+            or type(policy.get("max_rounds_per_target")) is not int
+            or policy["max_rounds_per_target"] < 1):
+        raise ValueError("Invalid paper/target-scoped review round limit override")
+    auth = policy.get("authorization")
+    if (not isinstance(auth, Mapping) or not isinstance(auth.get("summary"), str)
+            or not auth["summary"].strip()):
+        raise ValueError("Review round limit override requires explicit user authorization")
+    source, digest = auth.get("path"), auth.get("sha256")
+    if (not isinstance(source, str) or not source or "\\" in source
+            or Path(source).is_absolute() or ".." in Path(source).parts
+            or Path(source).as_posix() != source
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+        raise ValueError("Unsafe or unbound review round limit authorization")
+    base = root.resolve()
+    path, component = base / source, base
+    for part in Path(source).parts:
+        component /= part
+        if component.is_symlink():
+            raise ValueError("Unsafe review round limit authorization: symlink")
+    if not path.is_file() or path.stat().st_size > 2_000_000 or _sha256(path.read_bytes()) != digest:
+        raise ValueError("Review round limit authorization missing or changed")
+    receipt = json.loads(path.read_text())
+    if (not isinstance(receipt, Mapping) or receipt.get("schema") != "openlabs.actual_author_instruction.v1"
+            or receipt.get("source") != "actual user message in this session"
+            or not isinstance(receipt.get("user_text"), str) or not receipt["user_text"].strip()):
+        raise ValueError("Review round limit requires an actual user instruction receipt")
+    pointer, grant = auth.get("json_pointer"), receipt
+    if not isinstance(pointer, str) or not pointer.startswith("/"):
+        raise ValueError("Review round limit authorization requires a JSON pointer")
+    try:
+        for token in pointer[1:].split("/"):
+            token = token.replace("~1", "/").replace("~0", "~")
+            grant = grant[int(token)] if isinstance(grant, list) else grant[token]
+    except (KeyError, IndexError, ValueError, TypeError) as exc:
+        raise ValueError("Review round limit authorization pointer does not resolve") from exc
+    if (not isinstance(grant, Mapping) or grant.get("paper_id") != paper_id
+            or grant.get("target_journal") != target
+            or type(grant.get("max_rounds_per_target")) is not int
+            or grant["max_rounds_per_target"] != policy["max_rounds_per_target"]
+            or grant.get("authorization") != auth["summary"]):
+        raise ValueError("User authorization does not cover this paper, target and round limit")
+    return copy.deepcopy(dict(policy))
+
+
+def review_policy_sha256(config: Mapping[str, Any], history_policy: Mapping[str, Any] | None = None,
+                         round_limit_override: Mapping[str, Any] | None = None) -> str:
     policy = {k: config[k] for k in ("process", "roles", "referee_roles", "rejection_clearance_required")}
     # Preserve existing strict-paper fingerprints exactly; only opted-in papers change.
     if history_policy is not None:
         policy["missing_rejection_letter_policy"] = history_policy
+    if round_limit_override is not None:
+        policy["review_round_limit_override"] = round_limit_override
     return _sha256(json.dumps(policy, sort_keys=True).encode())
 
 
@@ -989,6 +1046,9 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                 shutil.copyfile(log, run / 'preflight-build.log')
     metadata, target = pre["metadata"], pre["target"]
     history_policy = rejection_history_policy(metadata, root, paper_id)
+    round_limit = review_round_limit_override(metadata, root, paper_id, target)
+    if round_limit is not None:
+        config = dict(config, max_rounds_per_target=round_limit["max_rounds_per_target"])
     pre = dict(pre, history_policy=history_policy)
     (run / "manuscript-expanded.tex").write_text(pre["expanded"])
     record: dict[str, Any] = {"schema_version": "openlabs.review.decision.v1", "process": PROCESS,
@@ -996,10 +1056,12 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                               "target_journal_tier": metadata.get("target_journal_tier"),
                               "manuscript_version": str(metadata.get("version") or ""),
                               "fingerprints": pre["fingerprints"], "started_at": _now()}
-    record |= {"review_policy_sha256": review_policy_sha256(config, history_policy), "active_referee_roles": panel,
+    record |= {"review_policy_sha256": review_policy_sha256(config, history_policy, round_limit), "active_referee_roles": panel,
                "single_referee_panel": len(panel) == 1}
     if history_policy is not None:
         record['missing_rejection_letter_policy'] = history_policy
+    if round_limit is not None:
+        record['review_round_limit_override'] = round_limit
     if pre["blockers"]:
         record |= {"stage_reached": "preflight", "merged": {"outcome": "preflight_failed",
                    "preflight_blockers": pre["blockers"], "next_action": "text_revision"}}
@@ -1066,7 +1128,8 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     metadata = load_paper_metadata(paper_id, root)
     history_policy = rejection_history_policy(metadata, root, paper_id)
     config = review_config(root)
-    if record.get("review_policy_sha256") != review_policy_sha256(config, history_policy):
+    round_limit = review_round_limit_override(metadata, root, paper_id)
+    if record.get("review_policy_sha256") != review_policy_sha256(config, history_policy, round_limit):
         raise ValueError("Review policy changed; rerun the review")
     if record['merged']['outcome'] == 'ready':
         panel = config['referee_roles']
@@ -1081,7 +1144,7 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     if fingerprints != record["fingerprints"]:
         raise ValueError("Manuscript, registry or support sources changed during the review; rerun")
     merged = record["merged"]
-    max_rounds = review_config(root)["max_rounds_per_target"]
+    max_rounds = round_limit["max_rounds_per_target"] if round_limit is not None else config["max_rounds_per_target"]
     status = ("ready" if merged["outcome"] == "ready" else
               "blocked" if record.get("round_for_target", 0) >= max_rounds or merged["next_action"] == "retarget_required"
               else "revision_required")
@@ -1122,8 +1185,14 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
         history_policy = rejection_history_policy(metadata, root, paper_id)
     except (ValueError, OSError) as exc:
         return [f'Paper-scoped rejection policy is invalid: {exc}']
-    if record.get("review_policy_sha256") != review_policy_sha256(config, history_policy):
+    try:
+        round_limit = review_round_limit_override(metadata, root, paper_id)
+    except (ValueError, OSError) as exc:
+        return [f'Paper/target-scoped review round limit is invalid: {exc}']
+    if record.get("review_policy_sha256") != review_policy_sha256(config, history_policy, round_limit):
         problems.append("Review policy changed after this decision; a fresh review is required")
+    if round_limit is not None and release.get("max_rounds_per_target") != round_limit["max_rounds_per_target"]:
+        problems.append("The release does not report the authorized paper/target round limit")
     if set(record.get('referee_reports', {})) != set(config['referee_roles']):
         problems.append("The decision does not contain the configured referee panel")
     if rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy):
