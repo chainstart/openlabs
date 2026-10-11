@@ -709,12 +709,21 @@ def _reader_facing_archive_members(payload: zipfile.ZipFile) -> list[str]:
     selected: list[str] = []
     for name in payload.namelist():
         parts = Path(name).parts
+        package_positions = [
+            index for index, part in enumerate(parts[:-1])
+            if SOURCE_PACKAGE_DIRECTORY.fullmatch(part)
+        ]
+        # A retained component has its own identity, not the outer record's.
+        # All its text still undergoes the evaluative-projection scan, and its
+        # bytes remain covered by the archive manifest and source identities.
+        if len(package_positions) > 1:
+            continue
         if len(parts) >= 3 and parts[-2:] == ("evidence", "claim_evidence_map.md"):
             selected.append(name)
             continue
         if not parts or parts[-1] != "README.md":
             continue
-        if any(PUBLIC_SUPPORT_DIRECTORY.fullmatch(part) for part in parts[:-1]):
+        if package_positions and package_positions[0] == len(parts) - 2:
             selected.append(name)
     return sorted(set(selected))
 
@@ -755,7 +764,7 @@ def _archive_reader_checks(
                 )
         for member in _reader_facing_archive_members(payload):
             for part in Path(member).parts:
-                directory_match = PUBLIC_SUPPORT_DIRECTORY.fullmatch(part)
+                directory_match = SOURCE_PACKAGE_DIRECTORY.fullmatch(part)
                 if directory_match and directory_match.group(1) != version.lstrip("v"):
                     issues.append(
                         _issue(
@@ -765,6 +774,7 @@ def _archive_reader_checks(
                             root=root,
                         )
                     )
+                if directory_match:
                     break
             try:
                 text = payload.read(member).decode("utf-8")

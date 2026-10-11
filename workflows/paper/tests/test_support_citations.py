@@ -13,12 +13,58 @@ from paper_writing.registry import load_paper_metadata
 from paper_writing.support import build_support_archive
 from paper_writing.support_citations import (
     _archive_filename_is_registered,
+    _archive_reader_checks,
     _registered_source_checks,
     audit_manuscript_support,
 )
 
 
 PAPER_ID = "20260806-math-graph-support-citation-audit"
+
+
+@pytest.mark.parametrize("outer", ["code-first-v1.0.0", "public-support-v1.0.0"])
+def test_archive_reader_keeps_nested_component_identity(tmp_path: Path, outer: str) -> None:
+    archive = tmp_path / "support.zip"
+    with zipfile.ZipFile(archive, "w") as payload:
+        payload.writestr(f"{outer}/README.md", "Support record version 1.0.0.\n")
+        payload.writestr(
+            f"{outer}/historical/evidence/public-support-v0.9.0/README.md",
+            "Support record version 0.9.0.\n",
+        )
+        payload.writestr(
+            f"{outer}/historical/public-support-v0.9.0/evidence/claim_evidence_map.md",
+            "Support record version 0.9.0.\n",
+        )
+    assert not _archive_reader_checks(
+        archive, status="draft", doi="10.5281/zenodo.12345678", version="1.0.0", root=tmp_path,
+    )
+
+
+@pytest.mark.parametrize("outer", ["code-first-v0.9.0", "public-support-v0.9.0"])
+def test_archive_reader_still_blocks_stale_outer_record(tmp_path: Path, outer: str) -> None:
+    archive = tmp_path / "support.zip"
+    with zipfile.ZipFile(archive, "w") as payload:
+        payload.writestr(f"{outer}/README.md", "Support record version 0.9.0.\n")
+        payload.writestr(f"{outer}/historical/public-support-v1.0.0/README.md", "Version 1.0.0.\n")
+    issues = _archive_reader_checks(
+        archive, status="draft", doi="10.5281/zenodo.12345678", version="1.0.0", root=tmp_path,
+    )
+    assert "SUPPORT-ARCHIVE-SOURCE-VERSION" in {item["code"] for item in issues}
+
+
+def test_nested_component_still_undergoes_evaluation_scan(tmp_path: Path) -> None:
+    archive = tmp_path / "support.zip"
+    with zipfile.ZipFile(archive, "w") as payload:
+        payload.writestr("public-support-v1.0.0/README.md", "Version 1.0.0.\n")
+        payload.writestr(
+            "public-support-v1.0.0/historical/public-support-v0.9.0/certificate.json",
+            '{"qa_status": "PASS_INTERNAL"}\n',
+        )
+    issues = _archive_reader_checks(
+        archive, status="draft", doi="10.5281/zenodo.12345678", version="1.0.0", root=tmp_path,
+    )
+    assert issues
+    assert {item["code"] for item in issues} == {"SUPPORT-ARCHIVE-EVALUATION-PROJECTION"}
 
 
 @pytest.mark.parametrize("outer", ["code-first-v1.0.0", "public-support-v1.0.0"])
