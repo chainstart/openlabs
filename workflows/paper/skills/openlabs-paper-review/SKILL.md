@@ -1,6 +1,6 @@
 ---
 name: openlabs-paper-review
-description: Run OpenLabs' unified journal review for a manuscript in the data repository - a deterministic preflight, an editor screen at the named target journal (to catch desk rejections), a configured blind referee panel, and a conservative editor decision. This is the only route to writing_release ready. Use for every paper_review task and every request to review, re-review or gate a manuscript.
+description: Run OpenLabs' unified journal review for a manuscript in the data repository - deterministic preflight, a target-journal editor screen, mandatory evidence-bound reference and prerequisite verification, the configured blind referee panel, and a conservative decision. This is the only route to writing_release ready. Use for every paper_review task and every request to review, re-review or gate a manuscript.
 ---
 
 # OpenLabs unified paper review
@@ -37,13 +37,36 @@ yourself, and do not edit the manuscript, evidence or registry while it runs.
    It restates the contribution in two sentences, names the closest prior work, gives the
    strongest desk-reject reason, says whether each previous rejection is actually answered, and
    decides `send_to_review`, `revise_before_submission` or `desk_reject`.
-3. **Referees** - only after `send_to_review`. The configured active referees in fresh processes (normally two different models;
+3. **Reference/prerequisite verification** - after editor and rejection-history clearance,
+   fresh Codex batches verify the complete source coverage and primary evidence described below.
+   An incomplete or failed verification stops advancement with `formal_check_blocked`.
+4. **Referees** - only after `send_to_review` and passing mandatory verification. The configured active referees in fresh processes (normally two different models;
    temporarily only Codex `referee_b` under the 2026-10-09 user instruction) review the complete expanded source, bibliography and
    supporting-material description, blind to each other, and recommend in the journal's
    vocabulary with typed required changes (`text`, `claim_narrowing`, `evidence`).
-4. **Decision** - deterministic merge: the more cautious recommendation wins; blockers are the
+5. **Decision** - deterministic merge: the more cautious recommendation wins; blockers are the
    union; an unresolved item from the previous round blocks. The editor model then writes the
    decision letter without changing the decision.
+
+After editor clearance and before the ordinary referees, **mandatory reference and
+prerequisite verification** runs in fresh Codex processes using the configured editor
+model. This is a verification stage, not an additional journal referee or a return of
+Claude. Read [references/formal-checks.md](references/formal-checks.md) when preparing
+sources or resolving a failure. Code checks exact coverage of every printed reference,
+every citation occurrence, every detected formula and all main/supplement source
+passages; independent verifiers check primary evidence and theorem applications.
+Errors, gaps, unchecked items, omitted/duplicate/invented IDs, unsupported quotations,
+or failed retrievals without another authoritative source block advancement. Referees
+must also assess omitted/misclassified prerequisites. The rule cannot be disabled by
+paper metadata. A standalone `formal-check` does not set `writing_release: ready`.
+
+The decision and release bind the complete formal report, primary-source bytes,
+role outputs/receipts and source plan. Changed/missing evidence, a changed verifier
+policy or an old decision lacking this stage requires a fresh unified review.
+Historical decisions and website submission events remain unchanged. This provides
+evidence-backed coverage, not a universal mathematical correctness certificate or
+an automatic Lean proof of all prose; any machine proof claim needs an actual checked
+certificate with a statement/assumption correspondence.
 
 `ready` requires `send_to_review`, a merged `accept` or `minor_revision`, no scientific blocker,
 no unresolved previous item, and only `text` changes remaining. Scores are recorded for
@@ -57,8 +80,9 @@ The global limit remains 15. The Biology paper
 `review_round_limit_override`. Its exact paper ID, target and integer limit must match a
 SHA256-bound actual user instruction receipt (`authorization.path`, `sha256`, `json_pointer`
 and exact `summary`). Missing, changed or mismatched authorization stops the review and
-release validation. Papers without an override retain their existing policy digest and
-configured limit. At the effective limit the user still decides how to proceed; this override
+release validation. Papers without an override retain their configured round limit; the
+mandatory formal-check upgrade changes every paper's review policy digest. At the effective
+limit the user still decides how to proceed; this override
 adds no referee role and changes no editorial or referee decision standard.
 
 Records: `reviews/unified/<paper_id>/<run_id>/` (`decision.json`, per-role prompts, outputs and

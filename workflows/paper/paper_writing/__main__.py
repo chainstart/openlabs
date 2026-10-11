@@ -61,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
     style_check.add_argument("--root", default=str(default_repo_root()))
     style_check.add_argument("--json", action="store_true")
 
+    formal_check = subparsers.add_parser("formal-check", help="Inspect or run mandatory reference/prerequisite verification without changing a paper gate.")
+    formal_check.add_argument("--paper-id", required=True)
+    formal_check.add_argument("--root", default=str(default_repo_root()))
+    formal_check.add_argument("--inventory", action="store_true", help="Print deterministic coverage and primary-source plan; no network/model.")
+
     bundle = subparsers.add_parser("bundle", help="Validate one result bundle.")
     bundle.add_argument("path")
     bundle.add_argument("--json", action="store_true")
@@ -374,6 +379,31 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"ERROR: {message}")
             for message in result["warnings"]:
                 print(f"WARNING: {message}")
+        return 0 if result["valid"] else 1
+    if args.command == "formal-check":
+        from datetime import UTC, datetime
+        from paper_writing import formal_checks
+        from paper_writing.registry import load_paper_metadata
+        from paper_writing.review_flow import review_config
+        from paper_writing.review_launcher import run_role
+        root = Path(args.root).resolve()
+        metadata = load_paper_metadata(args.paper_id, root)
+        documents, bibliography = formal_checks.current_inputs(metadata, root)
+        if args.inventory:
+            print(json.dumps({"inventory": formal_checks.inventory(documents, bibliography),
+                              "source_plan": formal_checks.source_plan(metadata)}, ensure_ascii=False, indent=2))
+            return 0
+        config = review_config(root)
+        role = config["roles"]["editor"]
+        if role.get("provider") != "openai-codex":
+            raise ValueError("Formal verification requires an independent Codex process")
+        run = root / "reviews/formal-check" / args.paper_id / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        run.mkdir(parents=True, exist_ok=False)
+        result = formal_checks.run_checks({"metadata": metadata}, root, run, role, config["timeout_seconds"], run_role)
+        if result["valid"]:
+            errors = formal_checks.validate_binding(result, metadata, root, role)
+            result = dict(result, valid=not errors, blockers=errors)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["valid"] else 1
     if args.command == "support-check":
         result = audit_manuscript_support(args.paper_id, root=args.root)

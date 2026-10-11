@@ -38,12 +38,16 @@ def screen():
 def report(ready=True):
     return {"recommendation": "accept" if ready else "major_revision",
             "scientific_blockers": [] if ready else ["Unproved claim"], "required_changes": [],
-            "previous_items": [], "scores": {"overall": 6}}
+            "previous_items": [], "scores": {"overall": 6},
+            "formal_check_assessment": {"coverage_complete": True, "omissions_or_errors": []}}
 
 
 @pytest.mark.parametrize("used,override,allowed", [(14, False, True), (15, False, False),
                                                    (15, True, True), (19, True, True), (20, True, False)])
 def test_official_run_enforces_effective_paper_target_cap(tmp_path, monkeypatch, used, override, allowed):
+    monkeypatch.setattr(flow.formal_checks, 'run_checks', lambda *args: {'valid': True, 'blockers': []})
+    monkeypatch.setattr(flow.formal_checks, 'validate_binding', lambda *args: [])
+    monkeypatch.setattr(flow.formal_checks, 'packet', lambda *args: 'Formal audit fixture')
     meta = authorized_metadata(tmp_path)
     if not override:
         meta.pop("review_round_limit_override")
@@ -103,12 +107,14 @@ def test_override_fails_closed(tmp_path, mutation):
         flow.review_round_limit_override(meta, tmp_path, paper, target)
 
 
-def test_other_paper_without_override_has_exact_old_policy_digest(tmp_path):
+def test_formal_upgrade_changes_legacy_policy_but_cap_still_only_changes_opted_in_paper(tmp_path):
     conf = config()
     old_policy = {k: conf[k] for k in ("process", "roles", "referee_roles", "rejection_clearance_required")}
     expected = hashlib.sha256(json.dumps(old_policy, sort_keys=True).encode()).hexdigest()
     assert flow.review_round_limit_override({"target_journal": "K"}, tmp_path, "other") is None
-    assert flow.review_policy_sha256(conf) == expected
+    assert flow.review_policy_sha256(conf) != expected
+    new_policy = dict(old_policy, formal_check=flow.formal_checks.policy())
+    assert flow.review_policy_sha256(conf) == hashlib.sha256(json.dumps(new_policy, sort_keys=True).encode()).hexdigest()
     policy = flow.review_round_limit_override(authorized_metadata(tmp_path), tmp_path, BIO)
     assert flow.review_policy_sha256(conf, None, policy) != expected
     changed = copy.deepcopy(policy); changed["max_rounds_per_target"] = 21
@@ -128,6 +134,7 @@ def test_override_does_not_change_existing_workspace_fingerprint_components(tmp_
 @pytest.mark.parametrize("ready,round_number,status", [(False, 16, "revision_required"),
                                                        (False, 20, "blocked"), (True, 16, "ready")])
 def test_apply_and_release_revalidate_cap_and_authenticated_policy(tmp_path, monkeypatch, ready, round_number, status):
+    monkeypatch.setattr(flow.formal_checks, 'validate_binding', lambda *args: [])
     meta = authorized_metadata(tmp_path)
     monkeypatch.setattr(flow, "review_config", lambda root: config())
     monkeypatch.setattr(flow, "load_paper_metadata", lambda *args: meta)

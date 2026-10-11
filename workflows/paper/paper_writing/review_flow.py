@@ -1,7 +1,8 @@
 """Unified editor-and-referee review: the only path to ``writing_release.status: ready``.
 
 Stages: deterministic preflight -> editor screen at the named target journal ->
-configured blind referee panel -> deterministic merge plus an editor's
+mandatory reference/prerequisite verification -> configured blind referee panel
+-> deterministic merge plus an editor's
 decision letter. Revisions re-enter the same stages with the authors' response
 letter and the cumulative source diff. Models judge; this module only prepares
 inputs, runs isolated processes, validates records, merges conservatively and
@@ -25,6 +26,7 @@ from typing import Any, Mapping
 
 from paper_writing.registry import load_paper_metadata, load_registry, load_registry_settings, write_paper_metadata
 from paper_writing.review_launcher import LaunchError, run_role
+from paper_writing import formal_checks
 
 PROCESS = "unified_v1"
 RECOMMENDATIONS = ("accept", "minor_revision", "major_revision", "reject")
@@ -72,7 +74,7 @@ REFEREE_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "required": ["summary", "correctness_findings", "novelty_and_context", "significance", "presentation",
                  "evidence_consistency", "scores", "recommendation", "scientific_blockers", "required_changes",
-                 "optional_suggestions", "previous_items", "confidence"],
+                 "optional_suggestions", "previous_items", "confidence", "formal_check_assessment"],
     "properties": {
         "summary": _TEXT,
         "correctness_findings": {"type": "array", "items": {
@@ -96,6 +98,8 @@ REFEREE_SCHEMA: dict[str, Any] = {
             "type": "object", "additionalProperties": False, "required": ["item", "resolved", "evidence"],
             "properties": {"item": _TEXT, "resolved": {"type": "boolean"}, "evidence": _TEXT}}},
         "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        "formal_check_assessment": formal_checks.object_schema({
+            "coverage_complete": {"type": "boolean"}, "omissions_or_errors": _TEXT_LIST}),
     },
 }
 LETTER_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": False,
@@ -253,7 +257,7 @@ def review_round_limit_override(metadata: Mapping[str, Any], root: Path,
 def review_policy_sha256(config: Mapping[str, Any], history_policy: Mapping[str, Any] | None = None,
                          round_limit_override: Mapping[str, Any] | None = None) -> str:
     policy = {k: config[k] for k in ("process", "roles", "referee_roles", "rejection_clearance_required")}
-    # Preserve existing strict-paper fingerprints exactly; only opted-in papers change.
+    policy["formal_check"] = formal_checks.policy()
     if history_policy is not None:
         policy["missing_rejection_letter_policy"] = history_policy
     if round_limit_override is not None:
@@ -456,9 +460,16 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
         claim_maps = []
     fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
     expanded = expand_tex(manuscript / "main.tex", manuscript)
+    try:
+        documents, bibliography = formal_checks.current_inputs(metadata, root)
+        formal_inventory = formal_checks.inventory(documents, bibliography)
+        formal_checks.source_plan(metadata)
+    except (ValueError, OSError) as exc:
+        blockers.append(f"Formal-check inventory: {exc}")
+        formal_inventory = None
     return {"blockers": blockers, "fingerprints": fingerprints, "expanded": expanded,
             "bibliography": bibliography_text(manuscript), "metadata": metadata, "target": target,
-            "support_claim_evidence_maps": claim_maps}
+            "support_claim_evidence_maps": claim_maps, "formal_inventory": formal_inventory}
 
 
 # --------------------------------------------------------------------------- packets
@@ -744,7 +755,8 @@ def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> st
             f"## Reference list\n{pre['bibliography']}\n"
             + ("\n## Current selected supporting-material claim-evidence maps\n"
                + _claim_map_text(pre['support_claim_evidence_maps']) + "\n"
-               if pre.get('support_claim_evidence_maps') else ""))
+               if pre.get('support_claim_evidence_maps') else "")
+            + str(pre.get('formal_check_packet') or ""))
 
 
 def _history_policy_packet(pre: Mapping[str, Any]) -> str:
@@ -903,6 +915,7 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
                  f"\n\nAuthors' response:\n{previous['response']}\n\n"
                  f"Source changes since the previous round (unified diff):\n{previous['diff']}\n")
     text += _history_policy_packet(pre)
+    text += str(pre.get('formal_check_packet') or "")
     return text
 
 
@@ -910,7 +923,7 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
 
 def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
           history_blockers: list[str] | None = None, *,
-          previous_ids: set[str] | None = None) -> dict[str, Any]:
+          previous_ids: set[str] | None = None, formal_blockers: list[str] | None = None) -> dict[str, Any]:
     """Conservative deterministic merge. It can only make the outcome stricter."""
     # Compatibility with the earlier numbered-item API; the current pipeline
     # supplies rejection blockers as a list and constrains exact mandatory items
@@ -923,6 +936,10 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
         return {"outcome": "rejection_history_blocked", "recommendation": None,
                 "scientific_blockers": history_blockers, "required_changes": [],
                 "next_action": "evidence_remediation"}
+    if formal_blockers:
+        return {"outcome": "formal_check_blocked", "recommendation": None,
+                "scientific_blockers": formal_blockers, "required_changes": [],
+                "unresolved_previous_items": [], "next_action": "evidence_remediation"}
     if editor["decision"] != "send_to_review":
         category = editor["desk_reject_category"]
         if editor["decision"] == "revise_before_submission" or category == "presentation":
@@ -941,6 +958,12 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
         raise ValueError("A send-to-review decision requires the configured referee panel")
     rec = max((r["recommendation"] for r in referees.values()), key=RECOMMENDATIONS.index)
     blockers = sorted({b for r in referees.values() for b in r["scientific_blockers"]})
+    for name, report in referees.items():
+        assessment = report.get("formal_check_assessment")
+        if assessment is not None:
+            if assessment.get("coverage_complete") is not True:
+                blockers.append(f"{name}: bibliography/prerequisite coverage remains incomplete")
+            blockers.extend(f"{name}: formal check: {item}" for item in assessment.get("omissions_or_errors", []))
     changes = [dict(c, referee=name) for name, r in referees.items() for c in r["required_changes"]]
     unresolved_previous = [dict(p, referee=name) for name, r in referees.items()
                            for p in r["previous_items"] if not p["resolved"]
@@ -1085,7 +1108,20 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     referees: dict[str, Any] = {}
     receipts = {"editor": editor_receipt}
     history_blockers = rejection_clearance_blockers(editor, decisions, history_policy)
+    formal_blockers: list[str] = []
     if editor["decision"] == "send_to_review" and not history_blockers:
+        try:
+            formal = formal_checks.run_checks(pre, root, run, roles["editor"], config["timeout_seconds"], run_role)
+            formal_blockers = formal["blockers"]
+            if not formal_blockers:
+                formal_blockers = formal_checks.validate_binding(formal, metadata, root, roles["editor"])
+        except (ValueError, OSError, LaunchError) as exc:
+            formal = {"valid": False, "schema": formal_checks.VERSION}
+            formal_blockers = [f"Mandatory formal-check stage failed: {exc}"]
+        record["formal_check"] = formal
+        if not formal_blockers:
+            pre = dict(pre, formal_check_packet=formal_checks.packet(formal, root))
+    if editor["decision"] == "send_to_review" and not history_blockers and not formal_blockers:
         packet = referee_packet(pre, root, previous, decisions)
         schema = referee_schema_for_previous(previous)
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(panel)) as pool:
@@ -1099,8 +1135,10 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                 expected = set(previous['items']) if previous else set()
                 if {i['item'] for i in referees[name]['previous_items']} != expected:
                     raise ValueError('Referee omitted or introduced a previous mandatory item')
-    merged = merge(editor, referees, history_blockers)
-    letter_packet = json.dumps({"fixed_decision": merged, "editor_screen": editor, "referee_reports": referees},
+    merged = merge(editor, referees, history_blockers, formal_blockers=formal_blockers)
+    letter_packet = json.dumps({"fixed_decision": merged, "editor_screen": editor, "referee_reports": referees,
+                               "formal_check": record.get("formal_check"),
+                               "formal_check_report": pre.get("formal_check_packet")},
                                indent=2, ensure_ascii=False)
     letter, letter_receipt = run_role(role_name="decision_letter", role=roles["editor"],
                                       system_prompt=(PROMPTS / "decision.md").read_text(), user_prompt=letter_packet,
@@ -1135,6 +1173,11 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
         panel = config['referee_roles']
         if set(record.get('referee_reports', {})) != set(panel):
             raise ValueError("Ready decision is missing an active referee")
+        formal_errors = formal_checks.validate_binding(record.get("formal_check"), metadata, root, config["roles"].get("editor"))
+        if formal_errors:
+            raise ValueError("; ".join(formal_errors))
+        if any("formal_check_assessment" not in r for r in record["referee_reports"].values()):
+            raise ValueError("Ready decision lacks independent referee formal-check assessment")
         blockers = rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy)
         if merge(record['editor_screen'], record['referee_reports'], blockers)['outcome'] != 'ready':
             raise ValueError("Ready decision contradicts the editor, rejection letters, or referees")
@@ -1160,6 +1203,8 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
         "decision_record": decision_path.relative_to(root).as_posix(), "decision_record_sha256": digest,
         **{k: v for k, v in fingerprints.items() if v is not None},
     }
+    if record.get("formal_check", {}).get("valid") is True:
+        release["formal_check"] = record["formal_check"]
     if re.fullmatch(r"[0-9a-f]{64}", str(publication.get("package_sha256") or "")):
         release["support_package_sha256"] = publication["package_sha256"]
     if merged.get("scientific_blockers"):
@@ -1191,6 +1236,18 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
         return [f'Paper/target-scoped review round limit is invalid: {exc}']
     if record.get("review_policy_sha256") != review_policy_sha256(config, history_policy, round_limit):
         problems.append("Review policy changed after this decision; a fresh review is required")
+    problems.extend(formal_checks.validate_binding(record.get("formal_check"), metadata, root, config["roles"].get("editor")))
+    if release.get("formal_check") != record.get("formal_check"):
+        problems.append("The release is not bound to the actual mandatory formal check")
+    if any("formal_check_assessment" not in r for r in record.get("referee_reports", {}).values()):
+        problems.append("The active referee did not assess formal-check completeness")
+    if record.get("referee_reports"):
+        try:
+            history = rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy)
+            if merge(record['editor_screen'], record['referee_reports'], history)['outcome'] != "ready":
+                problems.append("The merged gate contradicts the actual referee or formal-check assessment")
+        except (KeyError, TypeError, ValueError):
+            problems.append("The actual referee reports are incomplete or malformed")
     if round_limit is not None and release.get("max_rounds_per_target") != round_limit["max_rounds_per_target"]:
         problems.append("The release does not report the authorized paper/target round limit")
     if set(record.get('referee_reports', {})) != set(config['referee_roles']):

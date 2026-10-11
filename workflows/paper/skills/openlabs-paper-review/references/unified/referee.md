@@ -9,6 +9,12 @@ Check, in this order:
    boundary and degenerate cases, dependence of constants, and whether every step is justified.
    Record concrete gaps with their location. Do not repair them. Distinguish an actual error,
    a missing justification, and a point you could not check.
+   Independently assess the mandatory bibliography/prerequisite audit supplied in the
+   packet. Check for omitted or misclassified external results, unjustified formula
+   checks, wrong primary locators, and assumptions that do not hold in this manuscript.
+   Return formal_check_assessment.coverage_complete and every omission/error. Do not
+   rubber-stamp a verified audit row. Incomplete prerequisite/reference verification
+   blocks advancement even if your overall recommendation would otherwise be accept.
 2. Novelty and context. Is the relation to prior work stated accurately, without overstating or
    understating? Is anything important missing?
 3. Significance for this journal's readership, only to the extent required by its

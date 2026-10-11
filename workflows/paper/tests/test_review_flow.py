@@ -17,7 +17,16 @@ def editor(decision="send_to_review", category="none"):
 def referee(rec="minor_revision", blockers=(), changes=(), previous=()):
     return {"recommendation": rec, "scientific_blockers": list(blockers),
             "required_changes": [{"change": c, "type": t, "location": "S1"} for c, t in changes],
-            "previous_items": list(previous), "scores": {"overall": 6}}
+            "previous_items": list(previous), "scores": {"overall": 6},
+            "formal_check_assessment": {"coverage_complete": True, "omissions_or_errors": []}}
+
+
+def mock_formal_stage(monkeypatch):
+    # These existing tests isolate rejection/round/panel behavior. The real
+    # evidence stage and its integration failures are exercised separately.
+    monkeypatch.setattr(flow.formal_checks, 'run_checks', lambda *args: {'valid': True, 'blockers': []})
+    monkeypatch.setattr(flow.formal_checks, 'validate_binding', lambda *args: [])
+    monkeypatch.setattr(flow.formal_checks, 'packet', lambda *args: 'Formal audit fixture')
 
 
 @pytest.mark.parametrize("decision,category,action", [
@@ -229,6 +238,7 @@ def test_exact_pre_final_reports_reach_both_roles_without_replacing_final_letter
 
 
 def test_official_run_supplies_authenticated_report_to_editor_and_active_referee(tmp_path, monkeypatch):
+    mock_formal_stage(monkeypatch)
     metadata, report = _historical_report_metadata(tmp_path, monkeypatch)
     letter = tmp_path / 'letter.txt'
     letter.write_text('Final editor: the earlier expert concerns remained unresolved.\n')
@@ -426,6 +436,7 @@ def test_unused_source_files_are_reported(tmp_path):
 
 
 def test_unified_release_validation(tmp_path, monkeypatch):
+    mock_formal_stage(monkeypatch)
     config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
               'rejection_clearance_required': True}
     monkeypatch.setattr(flow, 'review_config', lambda root: config)
@@ -507,6 +518,7 @@ def test_new_refusal_or_changed_letter_invalidates_clearance(tmp_path):
 
 @pytest.mark.parametrize('clear', [True, False])
 def test_run_starts_only_active_referee_after_rejection_clearance(tmp_path, monkeypatch, clear):
+    mock_formal_stage(monkeypatch)
     config = {'process': flow.PROCESS, 'roles': {'editor': {'provider': 'openai-codex'},
               'referee_a': {'provider': 'anthropic'}, 'referee_b': {'provider': 'openai-codex'}},
               'referee_roles': ['referee_b'], 'rejection_clearance_required': True,

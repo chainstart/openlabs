@@ -9,6 +9,13 @@ from paper_writing import review_flow as flow
 from paper_writing.review_launcher import _validate_against_schema
 
 
+def mock_formal_stage(monkeypatch):
+    # Isolate rejection-history tests; actual formal coverage has its own suite.
+    monkeypatch.setattr(flow.formal_checks, 'run_checks', lambda *a: {'valid': True, 'blockers': []})
+    monkeypatch.setattr(flow.formal_checks, 'validate_binding', lambda *a: [])
+    monkeypatch.setattr(flow.formal_checks, 'packet', lambda *a: 'Isolated formal fixture')
+
+
 def setup_policy(tmp_path, monkeypatch, missing=True):
     monkeypatch.delenv('ARA_PAPER_MANAGE_API_URL', raising=False)
     decisions = [{'journal': 'J', 'manuscript_number': '1', 'rejected_at': '2026-01-01'}]
@@ -120,12 +127,13 @@ def test_empty_missing_scope_is_valid_but_cannot_waive_a_new_missing_decision(tm
                                             flow.prior_decisions('p', meta, tmp_path), policy)
 
 
-def test_strict_paper_fingerprint_unchanged_and_scoped_policy_hash_bound(tmp_path, monkeypatch):
+def test_mandatory_formal_policy_and_scoped_history_are_hash_bound(tmp_path, monkeypatch):
     meta, _ = setup_policy(tmp_path, monkeypatch)
     config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
               'rejection_clearance_required': True}
     expected = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
-    assert flow.review_policy_sha256(config) == expected
+    assert flow.review_policy_sha256(config) != expected
+    assert flow.review_policy_sha256(config) == hashlib.sha256(json.dumps(dict(config, formal_check=flow.formal_checks.policy()), sort_keys=True).encode()).hexdigest()
     assert flow.rejection_history_policy({}, tmp_path, 'other') is None
     policy = flow.rejection_history_policy(meta, tmp_path)
     assert flow.review_policy_sha256(config, policy) != expected
@@ -145,6 +153,7 @@ def test_original_recovered_after_unknown_screen_requires_fresh_assessment(tmp_p
 
 
 def test_ready_release_rechecks_exact_scoped_policy_and_authorization(tmp_path, monkeypatch):
+    mock_formal_stage(monkeypatch)
     meta, identity = setup_policy(tmp_path, monkeypatch)
     meta['target_journal'] = 'K'
     config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
@@ -153,7 +162,7 @@ def test_ready_release_rechecks_exact_scoped_policy_and_authorization(tmp_path, 
     policy = flow.rejection_history_policy(meta, tmp_path)
     record = {'paper_id': 'p', 'merged': {'outcome': 'ready'}, 'target_journal': 'K',
         'editor_screen': {'decision': 'send_to_review', 'prior_rejections_addressed': [addressed(identity)]},
-        'referee_reports': {'referee_b': {}}, 'prior_decisions': flow.prior_decisions('p', meta, tmp_path),
+        'referee_reports': {'referee_b': {'recommendation': 'accept', 'scientific_blockers': [], 'required_changes': [], 'previous_items': [], 'formal_check_assessment': {'coverage_complete': True, 'omissions_or_errors': []}}}, 'prior_decisions': flow.prior_decisions('p', meta, tmp_path),
         'fingerprints': {'manuscript_snapshot_sha256': 'a' * 64},
         'missing_rejection_letter_policy': policy, 'review_policy_sha256': flow.review_policy_sha256(config, policy)}
     p = tmp_path / 'decision.json'; p.write_text(json.dumps(record))
@@ -193,6 +202,7 @@ def test_apply_never_reuses_strict_decision_for_new_scoped_policy(tmp_path, monk
 def test_apply_current_scoped_ready_preserves_unknown_letter_and_binding(tmp_path, monkeypatch):
     from paper_writing import operations
 
+    mock_formal_stage(monkeypatch)
     meta, identity = setup_policy(tmp_path, monkeypatch)
     config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
               'rejection_clearance_required': True, 'max_rounds_per_target': 15}
@@ -205,7 +215,7 @@ def test_apply_current_scoped_ready_preserves_unknown_letter_and_binding(tmp_pat
     policy = flow.rejection_history_policy(meta, tmp_path)
     editor = {'decision': 'send_to_review', 'prior_rejections_addressed': [addressed(identity)]}
     referee = {'recommendation': 'minor_revision', 'scientific_blockers': [], 'required_changes': [],
-               'previous_items': [], 'scores': {'overall': 6}}
+               'previous_items': [], 'scores': {'overall': 6}, 'formal_check_assessment': {'coverage_complete': True, 'omissions_or_errors': []}}
     record = {'paper_id': 'p', 'target_journal': 'K', 'manuscript_version': '1.0',
               'finished_at': '2026-01-01T00:00:00Z', 'round_for_target': 1,
               'review_policy_sha256': flow.review_policy_sha256(config, policy),
@@ -224,6 +234,7 @@ def test_apply_current_scoped_ready_preserves_unknown_letter_and_binding(tmp_pat
 @pytest.mark.parametrize('old_science_resolved', [True, False])
 def test_both_fresh_roles_receive_complete_available_letters_policy_and_previous_items(tmp_path, monkeypatch,
                                                                                       old_science_resolved):
+    mock_formal_stage(monkeypatch)
     meta, identity = setup_policy(tmp_path, monkeypatch)
     meta.update(version='1.0', target_journal='K')
     (tmp_path / 'present.json').write_text(json.dumps({'body': 'Authentic original: contribution too narrow.'}))
@@ -267,7 +278,7 @@ def test_both_fresh_roles_receive_complete_available_letters_policy_and_previous
                     {'item': science, 'resolved': old_science_resolved, 'evidence': 'Independent current proof assessment.'}]
         _validate_against_schema(previous, kw['schema']['properties']['previous_items'])
         return {'recommendation': 'minor_revision', 'scientific_blockers': [], 'required_changes': [],
-                'previous_items': previous, 'scores': {'overall': 6}}, {}
+                'previous_items': previous, 'scores': {'overall': 6}, 'formal_check_assessment': {'coverage_complete': True, 'omissions_or_errors': []}}, {}
     monkeypatch.setattr(flow, 'run_role', role)
     result = flow.run_review('p', root=tmp_path, response_letter=response, apply=False)
     assert calls == ['editor', 'referee_b', 'decision_letter']
