@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import stat
+import zipfile
 
 import pytest
 
@@ -591,3 +592,115 @@ def test_referee_receives_original_refusal_without_current_editor_verdict(tmp_pa
     packet = flow.referee_packet(pre, tmp_path, None, decisions)
     assert 'Original concern' in packet and 'D-1' in packet
     assert 'Current manuscript' in packet and 'send_to_review' not in packet
+
+
+def _current_claim_map_package(tmp_path):
+    from paper_writing.support import SUPPORT_ARCHIVE_SCHEMA_VERSION
+
+    source = 'papers/p/support-materials/code-first-v2/CLAIM-EVIDENCE.md'
+    path = tmp_path / source
+    path.parent.mkdir(parents=True)
+    text = 'Current selected evidence: exact complete producer chain.\n'
+    path.write_text(text)
+    member = 'p-support-v2/support-materials/code-first-v2/CLAIM-EVIDENCE.md'
+    manifest = {'schema_version': SUPPORT_ARCHIVE_SCHEMA_VERSION, 'paper_id': 'p', 'paper_version': '2',
+                'files': [{'archive_path': member, 'size': len(path.read_bytes()),
+                           'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}]}
+    payload = {member: path.read_bytes(),
+               'p-support-v2/ZENODO_MANIFEST.json': json.dumps(manifest).encode()}
+    sums = '\n'.join(f'{hashlib.sha256(value).hexdigest()}  {name}' for name, value in payload.items()) + '\n'
+    archive = tmp_path / 'current-support.zip'
+    with zipfile.ZipFile(archive, 'w') as package:
+        for name, content in payload.items():
+            package.writestr(name, content)
+        package.writestr('p-support-v2/SHA256SUMS', sums)
+    metadata = {'paper_id': 'p', 'support': {'publication': {'source_files': [source],
+                'package_files': ['current-support.zip'],
+                'package_sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}}}
+    canonical = tmp_path / 'papers/p/evidence/claim_evidence_map.md'
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text('Stale canonical evidence: missing the current producer.\n')
+    return metadata, path, archive, canonical
+
+
+def test_role_packets_embed_current_selected_map_not_stale_canonical(tmp_path):
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    maps = flow.selected_claim_evidence_maps(metadata, tmp_path)
+    pre = {'metadata': metadata, 'expanded': 'Current manuscript', 'bibliography': 'Refs',
+           'support_claim_evidence_maps': maps}
+    newer = tmp_path / 'papers/p/support-materials/code-first-v999/CLAIM-EVIDENCE.md'
+    newer.parent.mkdir(parents=True)
+    newer.write_text('Unregistered evidence must never be selected.\n')
+    for packet in (flow.editor_packet(pre, []), flow.referee_packet(pre, tmp_path, None)):
+        assert path.read_text() in packet
+        assert canonical.read_text() not in packet and newer.read_text() not in packet
+        assert maps[0]['source'] in packet and maps[0]['archive_member'] in packet
+        assert hashlib.sha256(path.read_bytes()).hexdigest() in packet
+        assert hashlib.sha256(archive.read_bytes()).hexdigest() in packet
+    # Direct callers also use the same registered selection instead of canonical.
+    del pre['support_claim_evidence_maps']
+    assert path.read_text() in flow.referee_packet(pre, tmp_path, None)
+
+
+def test_no_selected_claim_map_preserves_canonical_packet_bytes(tmp_path):
+    canonical = tmp_path / 'papers/p/evidence/claim_evidence_map.md'
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text('Canonical legacy evidence.\n')
+    pre = {'metadata': {'paper_id': 'p'}, 'expanded': 'Main', 'bibliography': 'Refs'}
+    legacy = flow.referee_packet(pre, tmp_path, None)
+    assert '## Claim-evidence map\nCanonical legacy evidence.\n' in legacy
+    pre['support_claim_evidence_maps'] = []
+    assert flow.referee_packet(pre, tmp_path, None) == legacy
+    editor = flow.editor_packet(pre, [])
+    del pre['support_claim_evidence_maps']
+    assert flow.editor_packet(pre, []) == editor
+
+
+@pytest.mark.parametrize('problem', ['missing', 'changed', 'archive_hash', 'corrupt_archive',
+                                    'traversal', 'symlink', 'duplicate'])
+def test_declared_selected_map_fails_closed_instead_of_falling_back(tmp_path, problem):
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    publication = metadata['support']['publication']
+    if problem == 'missing':
+        path.unlink()
+    elif problem == 'changed':
+        path.write_text('Current source changed after archive preparation.\n')
+    elif problem == 'archive_hash':
+        publication['package_sha256'] = '0' * 64
+    elif problem == 'corrupt_archive':
+        archive.write_bytes(b'not a support ZIP')
+        publication['package_sha256'] = hashlib.sha256(archive.read_bytes()).hexdigest()
+    elif problem == 'traversal':
+        publication['source_files'] = ['../outside/CLAIM-EVIDENCE.md']
+    elif problem == 'symlink':
+        path.unlink()
+        path.symlink_to(canonical)
+    elif problem == 'duplicate':
+        publication['source_files'] *= 2
+    pre = {'metadata': metadata, 'expanded': 'Main', 'bibliography': 'Refs'}
+    with pytest.raises(ValueError):
+        flow.referee_packet(pre, tmp_path, None)
+
+
+def test_preflight_records_selected_map_failure_before_roles(tmp_path, monkeypatch):
+    from paper_writing import manuscript_style, operations, support_citations
+
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    metadata.update(target_journal='J', target_journal_fit={'status': 'approved'})
+    manuscript = tmp_path / 'papers/p/manuscript'
+    manuscript.mkdir()
+    (manuscript / 'main.tex').write_text('Main')
+    pdf = tmp_path / 'built.pdf'
+    pdf.write_bytes(b'fixture PDF')
+    path.write_text('Actual declared source no longer matches the verified archive.\n')
+    monkeypatch.setattr(flow, 'load_registry', lambda *args, **kwargs: None)
+    monkeypatch.setattr(flow, 'load_paper_metadata', lambda *args, **kwargs: metadata)
+    monkeypatch.setattr(flow, '_build', lambda *args, **kwargs: (pdf, {'main.tex'}))
+    monkeypatch.setattr(manuscript_style, 'audit_manuscript_style', lambda *args, **kwargs: {})
+    monkeypatch.setattr(manuscript_style, 'manuscript_style_blockers', lambda *args: [])
+    monkeypatch.setattr(support_citations, 'audit_manuscript_support', lambda *args, **kwargs: {})
+    monkeypatch.setattr(support_citations, 'support_audit_blockers', lambda *args: [])
+    monkeypatch.setattr(operations, '_review_workspace_fingerprints', lambda *args: {})
+    pre = flow.preflight('p', tmp_path, tmp_path / 'build')
+    assert any('Selected support claim-evidence map' in b and 'bytes differ' in b for b in pre['blockers'])
+    assert pre['support_claim_evidence_maps'] == []

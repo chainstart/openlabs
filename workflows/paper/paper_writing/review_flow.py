@@ -392,10 +392,16 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     style = audit_manuscript_style(paper_id, root=root, require_ai_declaration=True)
     blockers.extend(manuscript_style_blockers(style))
     blockers.extend(support_audit_blockers(audit_manuscript_support(paper_id, root=root)))
+    try:
+        claim_maps = selected_claim_evidence_maps(metadata, root)
+    except ValueError as exc:
+        blockers.append(f"Selected support claim-evidence map: {exc}")
+        claim_maps = []
     fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
     expanded = expand_tex(manuscript / "main.tex", manuscript)
     return {"blockers": blockers, "fingerprints": fingerprints, "expanded": expanded,
-            "bibliography": bibliography_text(manuscript), "metadata": metadata, "target": target}
+            "bibliography": bibliography_text(manuscript), "metadata": metadata, "target": target,
+            "support_claim_evidence_maps": claim_maps}
 
 
 # --------------------------------------------------------------------------- packets
@@ -678,7 +684,10 @@ def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> st
             f"## Introduction\n{parts['introduction']}\n\n## Statements of the main results\n{parts['main_statements']}\n\n"
             f"## Methods and information budgets\n{parts['methods']}\n\n"
             f"## Complete current manuscript (all LaTeX inputs expanded)\n{pre['expanded']}\n\n"
-            f"## Reference list\n{pre['bibliography']}\n")
+            f"## Reference list\n{pre['bibliography']}\n"
+            + ("\n## Current selected supporting-material claim-evidence maps\n"
+               + _claim_map_text(pre['support_claim_evidence_maps']) + "\n"
+               if pre.get('support_claim_evidence_maps') else ""))
 
 
 def _history_policy_packet(pre: Mapping[str, Any]) -> str:
@@ -714,6 +723,77 @@ def editor_schema_for_policy(history_policy: Mapping[str, Any] | None) -> dict[s
     return schema
 
 
+def selected_claim_evidence_maps(metadata: Mapping[str, Any], root: Path) -> list[dict[str, Any]]:
+    """Use only explicitly selected sources bound to the current verified archive."""
+    from paper_writing.support import SupportPackageError, _archive_relative_path, verify_support_archive
+
+    publication = ((metadata.get('support') or {}).get('publication') or {})
+    files = publication.get('source_files') or []
+    names = {'claim-evidence.md', 'claim-evidence-map.md', 'claim_evidence_map.md'}
+    selected = [value for value in files if isinstance(value, str) and Path(value).name.casefold() in names]
+    if not selected:
+        return []
+    if len(selected) != len(set(selected)):
+        raise ValueError('Duplicate selected claim-evidence map')
+    base = root.resolve()
+
+    def safe_file(value: str) -> Path:
+        relative = Path(value)
+        if (not value or '\\' in value or relative.is_absolute() or '..' in relative.parts
+                or relative.as_posix() != value):
+            raise ValueError('Unsafe registered claim-map source or archive path')
+        path = base
+        for component in relative.parts:
+            path /= component
+            if path.is_symlink():
+                raise ValueError('Registered claim-map source or archive is a symlink')
+        if not path.is_file():
+            raise ValueError(f'Registered claim-map source or archive is missing: {value}')
+        return path
+
+    paths = [(value, safe_file(value)) for value in selected]
+    packages = [*(publication.get('package_files') or []), *(publication.get('verification_files') or [])]
+    archives = [value for value in packages if isinstance(value, str) and Path(value).suffix.casefold() == '.zip']
+    if len(archives) != 1:
+        raise ValueError('Selected claim map requires the one registered current support ZIP')
+    archive = safe_file(archives[0])
+    expected = publication.get('package_sha256')
+    if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected):
+        raise ValueError('Selected claim map requires the current support ZIP SHA256 binding')
+    try:
+        verified = verify_support_archive(archive)
+    except SupportPackageError as exc:
+        raise ValueError(f'Current support archive verification failed: {exc}') from exc
+    if verified['archive_sha256'] != expected:
+        raise ValueError('Current support archive SHA256 changed')
+    if verified['paper_id'] != metadata.get('paper_id'):
+        raise ValueError('Current support archive belongs to another paper')
+    result = []
+    for value, path in paths:
+        member_relative = _archive_relative_path(path, base, str(metadata['paper_id']))
+        entries = [entry for entry in verified['files']
+                   if str(entry.get('archive_path') or '').endswith('/' + member_relative)]
+        if len(entries) != 1:
+            raise ValueError(f'Selected claim map lacks a unique current archive binding: {value}')
+        entry = entries[0]
+        if path.stat().st_size > 2_000_000:
+            raise ValueError('Selected claim-evidence map exceeds the text input size limit')
+        content = path.read_bytes()
+        if entry['size'] != len(content) or entry['sha256'] != _sha256(content):
+            raise ValueError(f'Selected claim map bytes differ from the current support ZIP: {value}')
+        result.append({'source': value, 'sha256': entry['sha256'],
+                       'archive': archives[0], 'archive_sha256': expected,
+                       'archive_member': entry['archive_path'], 'text': content.decode('utf-8', errors='replace')})
+    return result
+
+
+def _claim_map_text(maps: list[dict[str, Any]]) -> str:
+    return '\n\n'.join('### Current registered supporting-material source\n'
+                       + json.dumps({key: value for key, value in item.items() if key != 'text'},
+                                    ensure_ascii=False, indent=2)
+                       + '\n\n' + item['text'] for item in maps)
+
+
 def support_description(metadata: Mapping[str, Any], root: Path) -> str:
     files = ((metadata.get("support") or {}).get("publication") or {}).get("source_files") or []
     texts = []
@@ -732,8 +812,14 @@ def support_description(metadata: Mapping[str, Any], root: Path) -> str:
 def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, Any] | None,
                    decisions: list[dict[str, Any]] | None = None) -> str:
     metadata = pre['metadata']
-    mapping = root / str(metadata.get('evidence_dir') or f"papers/{metadata.get('paper_id')}/evidence") / 'claim_evidence_map.md'
-    evidence = mapping.read_text(errors='replace') if mapping.is_file() else '[No canonical claim-evidence map available]'
+    maps = pre.get('support_claim_evidence_maps')
+    if maps is None:
+        maps = selected_claim_evidence_maps(metadata, root)
+    if maps:
+        evidence = _claim_map_text(maps)
+    else:
+        mapping = root / str(metadata.get('evidence_dir') or f"papers/{metadata.get('paper_id')}/evidence") / 'claim_evidence_map.md'
+        evidence = mapping.read_text(errors='replace') if mapping.is_file() else '[No canonical claim-evidence map available]'
     text = (f"## Target journal\n{_target_block(pre['metadata'])}\n\n"
             f"## Manuscript (LaTeX, all inputs expanded)\n{pre['expanded']}\n\n"
             f"## Bibliography\n{pre['bibliography']}\n\n"
