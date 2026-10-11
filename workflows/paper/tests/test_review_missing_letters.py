@@ -275,3 +275,36 @@ def test_both_fresh_roles_receive_complete_available_letters_policy_and_previous
     assert result['previous_required_items'] == [missing, science]
     assert json.loads((old / 'decision.json').read_text())['merged']['scientific_blockers'] == [missing, science]
     assert result['missing_rejection_letter_policy'] == flow.rejection_history_policy(meta, tmp_path)
+
+
+def test_scoped_next_round_keeps_exact_unresolved_prerequisites_for_fresh_assessment(tmp_path, monkeypatch):
+    old = tmp_path / 'old'; old.mkdir()
+    (old / 'manuscript-expanded.tex').write_text('Old source')
+    missing = 'Previous rejection not overcome or compatible: ' + 'a' * 20
+    proof = '[evidence] Missing uniform proof (Theorem 2)'
+    record = {'_path': old / 'decision.json', 'stage_reached': 'decision', 'letter': 'Actual previous letter',
+              'merged': {'scientific_blockers': [], 'required_changes': [],
+                         'unresolved_previous_items': [{'item': missing, 'resolved': False},
+                                                       {'item': proof, 'resolved': False}]}}
+    monkeypatch.setattr(flow, 'completed_rounds', lambda *args: [record])
+    # Default callers retain their existing packet shape and fingerprint.
+    assert flow._previous_round(tmp_path, 'p', 'J', 'Current source', 'Response')['items'] == []
+    previous = flow._previous_round(tmp_path, 'p', 'J', 'Current source', 'Response', {'mode': 'available_originals_only'})
+    assert previous['items'] == [missing, proof]
+    schema = flow.referee_schema_for_previous(previous)
+    assert schema['properties']['previous_items']['items']['properties']['item']['enum'] == [missing, proof]
+    assert record['merged']['unresolved_previous_items'][0]['resolved'] is False
+
+
+def test_scoped_resolution_distinguishes_unknown_letter_from_superseded_requirement():
+    packet = flow._history_policy_packet({'history_policy': {'mode': 'available_originals_only'}})
+    assert 'prior requirement' in packet and 'overcome or compatible' in packet
+    assert 'historical assessment remains not_assessable and answered=false' in packet
+    assert 'Do not remove combined scientific or available-letter concerns' in packet
+    editor = {'decision': 'send_to_review'}
+    report = {'recommendation': 'minor_revision', 'scientific_blockers': [], 'required_changes': [],
+              'previous_items': [{'item': 'Unknown original prerequisite', 'resolved': False,
+                                  'evidence': 'Independent referee has not closed the prerequisite.'}]}
+    assert flow.merge(editor, {'referee_b': report})['outcome'] == 'revision_required'
+    report['previous_items'][0].update(resolved=True, evidence='Independent referee finds the prerequisite no longer applicable; original remains unknown.')
+    assert flow.merge(editor, {'referee_b': report})['unresolved_previous_items'] == []

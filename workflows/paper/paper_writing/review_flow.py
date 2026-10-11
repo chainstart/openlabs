@@ -698,6 +698,12 @@ def _history_policy_packet(pre: Mapping[str, Any]) -> str:
             "determine whether an item concerns only an authorized missing original: it may be "
             "marked resolved as no longer required under this instruction, with the policy as evidence, "
             "without claiming the original arrived or its substantive concerns were answered. "
+            "This includes both a request for the unavailable original and a prior requirement "
+            "to establish that that same unknown original rejection was overcome or compatible. "
+            "For such an item, previous_items.resolved means the old prerequisite is no longer "
+            "applicable, not that the historical rejection itself has been substantively resolved. "
+            "The historical assessment remains not_assessable and answered=false. Independently "
+            "assess the current paper and explicitly explain any remaining substantive concern. "
             "Do not remove combined scientific or available-letter concerns on that basis.\n\n")
 
 
@@ -826,7 +832,8 @@ def completed_rounds(root: Path, paper_id: str, target: str) -> list[dict[str, A
     return rows
 
 
-def _previous_round(root: Path, paper_id: str, target: str, expanded: str, response: str | None):
+def _previous_round(root: Path, paper_id: str, target: str, expanded: str, response: str | None,
+                    history_policy: Mapping[str, Any] | None = None):
     rounds = [r for r in completed_rounds(root, paper_id, target) if r.get("stage_reached") == "decision"]
     if not rounds:
         return None
@@ -843,6 +850,15 @@ def _previous_round(root: Path, paper_id: str, target: str, expanded: str, respo
     if not items and last.get("editor_screen", {}).get("decision") == "revise_before_submission":
         items = [f"[text] {item} (Editor screen: manuscript presentation)"
                  for item in last["editor_screen"].get("presentation_problems", [])]
+    # The opted-in four-paper continuation must not silently forget requests
+    # that the last referee explicitly left unresolved. Only a fresh referee
+    # can close them, including prerequisites superseded by the scoped policy.
+    if history_policy is not None:
+        for item in last['merged'].get('unresolved_previous_items', []):
+            if not isinstance(item, Mapping) or not isinstance(item.get('item'), str) or not item['item'].strip():
+                raise ValueError('Previous unresolved mandatory item is malformed')
+            if item['item'] not in items:
+                items.append(item['item'])
     return {"letter": last.get("letter", ""), "items": items, "response": response, "diff": diff[:400000]}
 
 
@@ -908,7 +924,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
         raise ValueError(f"{paper_id} has used all {config['max_rounds_per_target']} review rounds for {target}; "
                          "a user decision (retarget, more research, or stop) is required")
     response = Path(response_letter).read_text() if response_letter else None
-    previous = _previous_round(root, paper_id, target, pre["expanded"], response)
+    previous = _previous_round(root, paper_id, target, pre["expanded"], response, history_policy)
     if response:
         (run / "response-letter.md").write_text(response)
 

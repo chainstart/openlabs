@@ -41,6 +41,11 @@ missing_rejection_letter_policy:
 这指请求的政策关闭，不能伪造历史科学异议已经被回答。包含科学/已有原信异议的
 混合项不得自动关闭。历史模型决定和分数不修改。
 
+这四篇的下一轮待核对列表还逐字继承上一轮 `unresolved_previous_items`，
+不能因它不在新 `required_changes` 中就静默遗漏。缺信派生的“该历史拒稿必须
+已克服或相容”要求也由新审稿人明确判断是否不再适用；`resolved` 仅关闭旧前提，
+历史拒信仍为 `not_assessable`、`answered: false`。合并器不代替审稿人关闭任何项。
+
 政策及授权 SHA 纳入当前逐篇 `review_policy_sha256`；登记、变更或撤销授权均要求
 新评审。其他没有启用该字段的论文仍使用完全相同的旧默认 fingerprint。新原信恢复
 或证据改变也使旧 `not_assessable` 结论失效。应用决定和交付时都会重查。
