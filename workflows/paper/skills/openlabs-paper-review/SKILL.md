@@ -51,6 +51,15 @@ calibration only. At most `review.max_rounds_per_target` rounds (10) per target 
 that the paper is `blocked` and the user decides (retarget, more research, or stop).
 The user's 2026-10-10 instruction sets the active limit to 15 rounds per target in
 `registry/settings.yaml`; the configured limit takes precedence over the older 10-round default.
+The global limit remains 15. The Biology paper
+`20261005-biology-genetics-reference-orientation-depth` alone has a user-authorized limit of
+20 for `Computational Biology and Chemistry`, registered in the top-level paper field
+`review_round_limit_override`. Its exact paper ID, target and integer limit must match a
+SHA256-bound actual user instruction receipt (`authorization.path`, `sha256`, `json_pointer`
+and exact `summary`). Missing, changed or mismatched authorization stops the review and
+release validation. Papers without an override retain their existing policy digest and
+configured limit. At the effective limit the user still decides how to proceed; this override
+adds no referee role and changes no editorial or referee decision standard.
 
 Records: `reviews/unified/<paper_id>/<run_id>/` (`decision.json`, per-role prompts, outputs and
 receipts with the runtime-reported model). The registry `writing_release` binds the decision
