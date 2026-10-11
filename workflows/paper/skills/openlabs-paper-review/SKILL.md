@@ -108,3 +108,22 @@ The editor must identify each decision ID and judge it `resolved` or `compatible
 located evidence before refereeing can start. Missing, omitted, unresolved or contradictory
 letters stop advancement. The decision binds the active review policy as well as the
 manuscript; old gates cannot be reused after a policy change.
+
+### Scoped user instruction (2026-10-11)
+
+The user explicitly authorized standard editor/referee evaluation without making missing
+original rejection letters alone blocking for four identified papers. A paper can enable
+`missing_rejection_letter_policy.mode: available_originals_only` only with its exact paper ID,
+missing decision IDs and a hash-bound actual-user receipt whose JSON pointer explicitly
+authorizes that paper and decision scope. Every other paper keeps the strict default.
+For listed originals that are genuinely unavailable, the fresh editor records
+`not_assessable`, `answered: false`, and the unknown-source boundary; it must not invent a
+letter or call it resolved/compatible. All available authentic letters and expert reports
+reach both editor and active referee, with the scoped instruction. Actual unaddressed
+objections, scientific gaps, invalid bindings and changed file hashes remain blocking.
+Fresh referees can independently close an earlier request solely for the authorized
+missing original as no longer required; old review records are never rewritten. Do not
+ask for authorization again when the valid actual-user receipt already supplies it.
+This policy is included in the opted-in paper's current review binding only; strict-paper
+fingerprints remain unchanged. It does not waive target, manuscript, support, author,
+scientific or other release requirements and does not authorize journal submission.

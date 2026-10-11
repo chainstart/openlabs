@@ -48,6 +48,15 @@ is needed). Anything that makes a main claim unsupported goes in `scientific_blo
 If the packet contains the authors' response to an earlier round, check each previous item
 against the current text and the response; an item answered only by adding a disclaimer is not
 resolved.
+If the packet contains a validated paper-scoped `available_originals_only` user
+instruction, absence of its listed original letters is a knowledge limitation, not
+by itself a scientific blocker or mandatory evidence request. Read every available
+original letter and authenticated report. Assess the paper normally at its target.
+For previous items solely requesting an authorized missing original, independently
+decide whether the changed policy makes the request no longer applicable; record that
+reason in previous_items without claiming recovery or substantive resolution. Combined
+proof/evidence concerns, actual unresolved original-letter objections and all ordinary
+scientific requirements still need an evidenced response.
 Track only the exact mandatory strings in the packet's "Items to check" list in
 `previous_items`, once each, without paraphrasing the item string. Optional suggestions
 in the previous letter are not mandatory items. If that list is empty (or there is no

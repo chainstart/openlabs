@@ -135,8 +135,72 @@ def review_config(root: str | Path) -> dict[str, Any]:
             "timeout_seconds": int(review.get("timeout_seconds", 3600))}
 
 
-def review_policy_sha256(config: Mapping[str, Any]) -> str:
+def rejection_history_policy(metadata: Mapping[str, Any], root: Path,
+                             paper_id: str | None = None) -> dict[str, Any] | None:
+    """Validate a paper-scoped user instruction; missing originals remain unknown."""
+    policy = metadata.get("missing_rejection_letter_policy")
+    if policy is None:
+        return None
+    identity = paper_id or metadata.get("paper_id")
+    if (not isinstance(policy, Mapping) or policy.get("mode") != "available_originals_only"
+            or not identity or policy.get("paper_id") != identity):
+        raise ValueError("Invalid paper-scoped missing rejection letter policy")
+    ids = policy.get("missing_decision_ids")
+    if (not isinstance(ids, list)
+            or any(not isinstance(i, str) or not re.fullmatch(r"[0-9a-f]{20}", i) for i in ids)
+            or len(set(ids)) != len(ids)):
+        raise ValueError("Missing-letter policy requires distinct exact decision IDs")
+    auth = policy.get("authorization")
+    if (not isinstance(auth, Mapping) or not isinstance(auth.get("summary"), str)
+            or not auth["summary"].strip()):
+        raise ValueError("Missing-letter policy requires explicit user authorization")
+    source = auth.get("path")
+    digest = auth.get("sha256")
+    if (not isinstance(source, str) or not source or "\\" in source
+            or Path(source).is_absolute() or ".." in Path(source).parts
+            or Path(source).as_posix() != source
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+        raise ValueError("Unsafe or unbound missing-letter authorization")
+    base = root.resolve()
+    path = base / source
+    component = base
+    for part in Path(source).parts:
+        component /= part
+        if component.is_symlink():
+            raise ValueError("Unsafe missing-letter authorization: symlink")
+    if not path.is_file() or path.stat().st_size > 2_000_000 or _sha256(path.read_bytes()) != digest:
+        raise ValueError("Missing-letter authorization missing or changed")
+    receipt = json.loads(path.read_text())
+    if (not isinstance(receipt, Mapping) or receipt.get("schema") != "openlabs.actual_author_instruction.v1"
+            or receipt.get("source") != "actual user message in this session"
+            or not str(receipt.get("user_text") or "").strip()):
+        raise ValueError("Missing-letter policy requires an actual user instruction receipt")
+    grant = receipt
+    pointer = auth.get("json_pointer")
+    if not isinstance(pointer, str) or not pointer.startswith("/"):
+        raise ValueError("Missing-letter authorization requires a JSON pointer")
+    try:
+        for token in pointer[1:].split("/"):
+            token = token.replace("~1", "/").replace("~0", "~")
+            grant = grant[int(token)] if isinstance(grant, list) else grant[token]
+    except (KeyError, IndexError, ValueError, TypeError) as exc:
+        raise ValueError("Missing-letter authorization pointer does not resolve") from exc
+    if (not isinstance(grant, Mapping) or grant.get("mode") != "available_originals_only"
+            or not isinstance(grant.get("paper_ids"), list) or identity not in grant["paper_ids"]
+            or auth["summary"] != grant.get("authorization")):
+        raise ValueError("User authorization does not cover this paper or missing original letters")
+    scopes = grant.get("decision_scope")
+    scope = [s for s in scopes if isinstance(s, Mapping) and s.get("paper_id") == identity] if isinstance(scopes, list) else []
+    if len(scope) != 1 or scope[0].get("missing_decision_ids") != ids:
+        raise ValueError("Missing-letter decision scope differs from the actual user receipt")
+    return copy.deepcopy(dict(policy))
+
+
+def review_policy_sha256(config: Mapping[str, Any], history_policy: Mapping[str, Any] | None = None) -> str:
     policy = {k: config[k] for k in ("process", "roles", "referee_roles", "rejection_clearance_required")}
+    # Preserve existing strict-paper fingerprints exactly; only opted-in papers change.
+    if history_policy is not None:
+        policy["missing_rejection_letter_policy"] = history_policy
     return _sha256(json.dumps(policy, sort_keys=True).encode())
 
 
@@ -436,6 +500,25 @@ def prior_decisions(paper_id: str, metadata: Mapping[str, Any], root: Path | Non
         except Exception:  # noqa: BLE001 - the site is optional context, the registry is authoritative
             pass
     bindings = metadata.get("journal_rejection_letters") or []
+    if not isinstance(bindings, list):
+        raise ValueError("Original rejection letter bindings must be a list")
+    seen_bindings = set()
+    for binding in bindings:
+        if not isinstance(binding, Mapping):
+            raise ValueError("Malformed original rejection letter binding")
+        key = (binding.get("journal"), str(binding.get("manuscript_number")))
+        if key not in {(r['journal'], r['manuscript_number']) for r in rows.values()} or key in seen_bindings:
+            raise ValueError("Original rejection letter binding does not match one distinct decision")
+        seen_bindings.add(key)
+        source, digest = binding.get("path"), binding.get("sha256")
+        if not root or not isinstance(source, str) or not source or not re.fullmatch(r"[0-9a-f]{64}", str(digest or "")):
+            raise ValueError("Original rejection letter requires a file and SHA256 binding")
+        path = root / source
+        allowed = path.resolve().is_relative_to(root.resolve()) or path.resolve().is_relative_to(root.parent / "maintenance")
+        if not allowed or any(p.is_symlink() for p in (path, *path.parents)) or not path.is_file() or path.stat().st_size > 2_000_000:
+            raise ValueError("Bound original rejection letter is missing or unsafe")
+        if _sha256(path.read_bytes()) != digest:
+            raise ValueError(f"Rejection letter changed: {source}")
     for row in rows.values():
         row["decision_id"] = _sha256(json.dumps([row['journal'], row['manuscript_number']], ensure_ascii=False).encode())[:20]
         row["letter_text"] = ""
@@ -464,6 +547,8 @@ def prior_decisions(paper_id: str, metadata: Mapping[str, Any], root: Path | Non
                 if isinstance(text, str) and text.strip():
                     row.update(letter_text=text, letter_available=True, letter_source=str(source),
                                source_sha256=_sha256(raw), letter_sha256=_sha256(text.encode()))
+        if binding and not row["letter_available"]:
+            raise ValueError("Bound original rejection letter has no readable verbatim text")
         # A source comparison is evidence only when tied to the actual external
         # submission, rather than an arbitrarily chosen earlier local draft.
         submitted = next((s for s in metadata.get('journal_submitted_versions', [])
@@ -486,15 +571,24 @@ def prior_decisions(paper_id: str, metadata: Mapping[str, Any], root: Path | Non
     return sorted(rows.values(), key=lambda r: r["date"])
 
 
-def rejection_clearance_blockers(editor: Mapping[str, Any], decisions: list[dict[str, Any]]) -> list[str]:
+def rejection_clearance_blockers(editor: Mapping[str, Any], decisions: list[dict[str, Any]],
+                                 history_policy: Mapping[str, Any] | None = None) -> list[str]:
     """No send-to-review may silently omit or contradict a sourced previous rejection."""
     reports = editor.get("prior_rejections_addressed") or []
     blockers = []
     expected = {d["decision_id"] for d in decisions}
+    permitted_missing = set(history_policy["missing_decision_ids"]) if history_policy else set()
+    if not permitted_missing <= expected:
+        blockers.append("Missing-letter authorization lists an unrecorded decision")
     if len(reports) != len(decisions) or {r.get("decision_id") for r in reports} != expected:
         blockers.append("The editor did not address each distinct prior rejection exactly once")
     for d in decisions:
         r = next((r for r in reports if r.get("decision_id") == d["decision_id"]), {})
+        if not d.get("letter_available") and d['decision_id'] in permitted_missing:
+            if (r.get("judgment") != "not_assessable" or r.get("answered") is not False
+                    or r.get("journal") != d["journal"] or not str(r.get("evidence") or "").strip()):
+                blockers.append(f"Missing original must remain explicitly not assessable: {d['decision_id']}")
+            continue
         if not d.get("letter_available"):
             blockers.append(f"Original rejection letter unavailable: {d['journal']} {d['manuscript_number']}")
         if r.get("journal") != d["journal"] or not str(r.get("evidence") or "").strip():
@@ -511,6 +605,12 @@ def rejection_context_blockers(record: Mapping[str, Any], metadata: Mapping[str,
     bound = record.get('prior_decisions', [])
     ids = {d['decision_id'] for d in bound}
     blockers = []
+    try:
+        current_policy = rejection_history_policy(metadata, root, record.get('paper_id'))
+        if current_policy != record.get('missing_rejection_letter_policy'):
+            blockers.append('Paper-scoped rejection policy changed after review')
+    except (ValueError, OSError) as exc:
+        blockers.append(f'Paper-scoped rejection policy is invalid: {exc}')
     for key in ('journal_rejections', 'prior_conference_rejections', 'prior_unidentified_journal_rejections'):
         for r in metadata.get(key, []):
             identity = _sha256(json.dumps([str(r['journal']), str(r.get('manuscript_number'))],
@@ -527,6 +627,22 @@ def rejection_context_blockers(record: Mapping[str, Any], metadata: Mapping[str,
             path = root / str(submitted.get('path') or '')
             if not path.is_file() or _sha256(path.read_bytes()) != submitted.get('sha256'):
                 blockers.append(f"The screened submitted manuscript is missing or changed: {d['decision_id']}")
+    # For opted-in papers a missing original becoming available, or a newly corrupt
+    # registered binding, must trigger a fresh assessment rather than keep a waiver.
+    if metadata.get('missing_rejection_letter_policy') is not None:
+        try:
+            current = prior_decisions(str(record.get('paper_id') or metadata.get('paper_id')), metadata, root)
+        except (ValueError, OSError) as exc:
+            blockers.append(f'The current rejection letter context is invalid: {exc}')
+        else:
+            if {x['decision_id'] for x in current} != ids:
+                blockers.append('Current rejection decision scope changed after review')
+            for d in bound:
+                now = next((x for x in current if x['decision_id'] == d['decision_id']), {})
+                for field in ('letter_available', 'source_sha256', 'letter_sha256'):
+                    if now.get(field) != d.get(field):
+                        blockers.append(f'Original rejection letter context changed: {d["decision_id"]}')
+                        break
     try:
         current_documents = _prior_review_documents(metadata, root, bound)
     except (ValueError, OSError) as exc:
@@ -557,12 +673,39 @@ def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> st
             f"## Prior editorial decisions on this paper\n"
             "Any prior_review_documents are authenticated pre-final expert reports, not the final "
             "refusal letter. Read their complete texts as historical context; they cannot replace "
-            f"a missing final letter.\n{letters}\n\n"
+            f"a missing final letter.\n{letters}\n\n{_history_policy_packet(pre)}"
             f"## Title\n{parts['title']}\n\n## Abstract\n{parts['abstract']}\n\n"
             f"## Introduction\n{parts['introduction']}\n\n## Statements of the main results\n{parts['main_statements']}\n\n"
             f"## Methods and information budgets\n{parts['methods']}\n\n"
             f"## Complete current manuscript (all LaTeX inputs expanded)\n{pre['expanded']}\n\n"
             f"## Reference list\n{pre['bibliography']}\n")
+
+
+def _history_policy_packet(pre: Mapping[str, Any]) -> str:
+    policy = pre.get('history_policy')
+    if not policy:
+        return ""
+    return ("## Explicit paper-scoped user instruction on missing originals\n"
+            + json.dumps(policy, ensure_ascii=False, indent=2)
+            + "\nMissing original decision IDs listed here are unknown, not resolved or compatible. "
+            "For each actually missing listed original, the editor must report not_assessable, "
+            "answered=false and explain the unavailable source. Its absence alone must not cause "
+            "desk rejection, an evidence demand or prevention of refereeing. Apply the target's "
+            "ordinary contribution, novelty, correctness and readership standards independently. "
+            "Read all available original letters and authenticated expert reports completely; "
+            "real unaddressed concerns, contradictory assessments and scientific gaps still block. "
+            "An internal summary is not an original letter. When checking previous mandatory items, "
+            "determine whether an item concerns only an authorized missing original: it may be "
+            "marked resolved as no longer required under this instruction, with the policy as evidence, "
+            "without claiming the original arrived or its substantive concerns were answered. "
+            "Do not remove combined scientific or available-letter concerns on that basis.\n\n")
+
+
+def editor_schema_for_policy(history_policy: Mapping[str, Any] | None) -> dict[str, Any]:
+    schema = copy.deepcopy(EDITOR_SCHEMA)
+    if history_policy:
+        schema['properties']['prior_rejections_addressed']['items']['properties']['judgment']['enum'].append('not_assessable')
+    return schema
 
 
 def support_description(metadata: Mapping[str, Any], root: Path) -> str:
@@ -610,6 +753,7 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
                  f"Items to check:\n" + "\n".join(f"- {i}" for i in previous["items"]) +
                  f"\n\nAuthors' response:\n{previous['response']}\n\n"
                  f"Source changes since the previous round (unified diff):\n{previous['diff']}\n")
+    text += _history_policy_packet(pre)
     return text
 
 
@@ -742,14 +886,18 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
             if log.is_file():
                 shutil.copyfile(log, run / 'preflight-build.log')
     metadata, target = pre["metadata"], pre["target"]
+    history_policy = rejection_history_policy(metadata, root, paper_id)
+    pre = dict(pre, history_policy=history_policy)
     (run / "manuscript-expanded.tex").write_text(pre["expanded"])
     record: dict[str, Any] = {"schema_version": "openlabs.review.decision.v1", "process": PROCESS,
                               "paper_id": paper_id, "run_id": run_id, "target_journal": target,
                               "target_journal_tier": metadata.get("target_journal_tier"),
                               "manuscript_version": str(metadata.get("version") or ""),
                               "fingerprints": pre["fingerprints"], "started_at": _now()}
-    record |= {"review_policy_sha256": review_policy_sha256(config), "active_referee_roles": panel,
+    record |= {"review_policy_sha256": review_policy_sha256(config, history_policy), "active_referee_roles": panel,
                "single_referee_panel": len(panel) == 1}
+    if history_policy is not None:
+        record['missing_rejection_letter_policy'] = history_policy
     if pre["blockers"]:
         record |= {"stage_reached": "preflight", "merged": {"outcome": "preflight_failed",
                    "preflight_blockers": pre["blockers"], "next_action": "text_revision"}}
@@ -768,11 +916,11 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     _json_dump(run / "prior-decisions.json", decisions)
     editor, editor_receipt = run_role(role_name="editor", role=roles["editor"],
                                       system_prompt=(PROMPTS / "editor.md").read_text(),
-                                      user_prompt=editor_packet(pre, decisions), schema=EDITOR_SCHEMA,
+                                      user_prompt=editor_packet(pre, decisions), schema=editor_schema_for_policy(history_policy),
                                       workdir=run / "editor", timeout=config["timeout_seconds"])
     referees: dict[str, Any] = {}
     receipts = {"editor": editor_receipt}
-    history_blockers = rejection_clearance_blockers(editor, decisions)
+    history_blockers = rejection_clearance_blockers(editor, decisions, history_policy)
     if editor["decision"] == "send_to_review" and not history_blockers:
         packet = referee_packet(pre, root, previous, decisions)
         schema = referee_schema_for_previous(previous)
@@ -813,17 +961,18 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     record = json.loads(decision_path.read_text())
     if _sha256(decision_path.read_bytes()) != digest:
         raise ValueError("Decision record changed after it was written")
+    metadata = load_paper_metadata(paper_id, root)
+    history_policy = rejection_history_policy(metadata, root, paper_id)
     config = review_config(root)
-    if record.get("review_policy_sha256") != review_policy_sha256(config):
+    if record.get("review_policy_sha256") != review_policy_sha256(config, history_policy):
         raise ValueError("Review policy changed; rerun the review")
     if record['merged']['outcome'] == 'ready':
         panel = config['referee_roles']
         if set(record.get('referee_reports', {})) != set(panel):
             raise ValueError("Ready decision is missing an active referee")
-        blockers = rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []))
+        blockers = rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy)
         if merge(record['editor_screen'], record['referee_reports'], blockers)['outcome'] != 'ready':
             raise ValueError("Ready decision contradicts the editor, rejection letters, or referees")
-    metadata = load_paper_metadata(paper_id, root)
     if rejection_context_blockers(record, metadata, root):
         raise ValueError('Rejection history or original letter changed during the review; rerun')
     fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
@@ -867,11 +1016,15 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
         return ["The unified decision record is missing or changed"]
     record = json.loads(path.read_text())
     config = review_config(root)
-    if record.get("review_policy_sha256") != review_policy_sha256(config):
+    try:
+        history_policy = rejection_history_policy(metadata, root, paper_id)
+    except (ValueError, OSError) as exc:
+        return [f'Paper-scoped rejection policy is invalid: {exc}']
+    if record.get("review_policy_sha256") != review_policy_sha256(config, history_policy):
         problems.append("Review policy changed after this decision; a fresh review is required")
     if set(record.get('referee_reports', {})) != set(config['referee_roles']):
         problems.append("The decision does not contain the configured referee panel")
-    if rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', [])):
+    if rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy):
         problems.append("The original rejection letters were not cleared by the independent editor")
     problems.extend(rejection_context_blockers(record, metadata, root))
     if record.get("merged", {}).get("outcome") != "ready" or record["editor_screen"]["decision"] != "send_to_review":

@@ -62,7 +62,14 @@ journal would decline the paper.
    present target's scope, readership and contribution standard supports sending this draft
    to review without contradicting it. A new journal name alone is insufficient. Use
    `unresolved` for a still-applicable obstacle and `unverifiable` for a missing original
-   letter. You cannot send the paper to review with either of those judgments.
+   letter. You cannot send the paper to review with either of those judgments under the
+   default strict policy. If the packet contains a validated explicit paper-scoped user
+   instruction `available_originals_only`, use `not_assessable`, answered=false for its
+   listed actually missing originals, with the unknown-source limitation as evidence.
+   Missing originals alone then do not prevent normal journal evaluation or refereeing.
+   This does not mean their concerns were resolved or compatible. All available original
+   letters, authenticated expert reports, substantive concerns and scientific standards
+   remain binding; do not use the instruction to excuse an actual unaddressed rejection.
 6. Give the single strongest reason an editor at this journal would decline without review,
    even if you would send it out.
 7. Decide: `send_to_review` only if you would really send it to referees today;
