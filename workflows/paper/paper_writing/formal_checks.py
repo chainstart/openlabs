@@ -429,7 +429,10 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
             raw_receipt = json.loads(body)
             # Do not forward authenticated edit/upload links into model inputs.
             text = json.dumps({k: raw_receipt[k] for k in
-                ("id", "metadata", "doi", "submitted", "state") if k in raw_receipt}, ensure_ascii=False, indent=2)
+                ("id", "metadata", "doi", "submitted", "state", "schema_version", "paper_id",
+                 "paper_version", "environment", "deposition_id", "reserved_version_doi",
+                 "prepared_at", "submitted_metadata", "verified_remote_metadata")
+                if k in raw_receipt}, ensure_ascii=False, indent=2)
             path.write_text(text)
             sources.append({"id": sid, "kind": "current_support_draft", "reference_keys": [key],
                 "url": str((publication.get("zenodo") or {}).get("metadata_source") or ""),

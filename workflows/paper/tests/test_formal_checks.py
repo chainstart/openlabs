@@ -525,6 +525,27 @@ def test_metadata_suffices_without_original_document(tmp_path, monkeypatch):
     assert "Declared primary source unavailable" in (run / "formal-check/evidence/retrieval-failures.json").read_text()
 
 
+def test_actual_v2_support_receipt_preserves_bibliographic_data_without_private_links(tmp_path, monkeypatch):
+    from paper_writing import support_citations
+    metadata = fixture_workspace(tmp_path); metadata.pop("formal_check")
+    receipt = tmp_path / "papers/p/production/draft.json"; receipt.parent.mkdir()
+    receipt.write_text(json.dumps({"schema_version": "ara.paper_writing.zenodo_draft.v2", "paper_id": "p",
+        "paper_version": "1.0", "deposition_id": 1234, "reserved_version_doi": "10.5281/zenodo.1234",
+        "submitted_metadata": {"title": "Exact current scientific support", "version": "1.0", "creators": [{"name": "Smith"}]},
+        "verified_remote_metadata": {"title": "Exact current scientific support", "version": "1.0"},
+        "upload_url": "https://storage.example/private?sig=dummy", "links": {"edit": "DUMMY_PRIVATE_EDIT"}}))
+    metadata["support"] = {"publication": {"status": "draft", "bibliography_key": "s", "draft_receipt": receipt.relative_to(tmp_path).as_posix()}}
+    monkeypatch.setattr(support_citations, "audit_manuscript_support", lambda *args, **kwargs: {"valid": True})
+    docs, bib = formal.current_inputs(metadata, tmp_path)
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(503))) as client:
+        sources, errors = formal.collect_sources(formal.inventory(docs, bib), metadata, tmp_path, tmp_path / "evidence", client)
+    assert errors == []
+    source = next(s for s in sources if s["kind"] == "current_support_draft")
+    assert "Exact current scientific support" in source["text"] and "10.5281/zenodo.1234" in source["text"]
+    assert "DUMMY_PRIVATE_EDIT" not in source["text"] and "sig=dummy" not in source["text"]
+    assert source["body_sha256"] == formal.sha(receipt.read_bytes())
+
+
 @pytest.mark.parametrize("suffix", ["\n", "\n   ", "\t", ""])
 def test_trailing_single_newline_does_not_omit_final_formulas_or_citations(suffix):
     text = "Opening.\n\n" + r"\begin{table}Final $z=1$ \cite{s}.\end{table} AI declaration." + suffix

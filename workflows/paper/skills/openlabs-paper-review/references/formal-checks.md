@@ -19,8 +19,8 @@ unextractable scan alone does not block. Failed attempts remain in the private
 retrieval log; they are never relabeled successful. The legacy report field
 `primary_source_check` means authoritative work identity, not mandatory full text.
 
-DOI and arXiv metadata are fetched automatically; full PDFs are not automatically
-downloaded. Official URLs printed in references and explicit source declarations
+DOI and arXiv metadata are fetched automatically; identifier API links do not
+automatically trigger PDF downloads. Official URLs printed in references and explicit source declarations
 can supply catalogs or optional substantive evidence. For example:
 
 ```yaml
