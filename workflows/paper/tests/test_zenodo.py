@@ -108,6 +108,27 @@ def test_draft_read_retries_gateway_errors_with_fresh_urls(monkeypatch) -> None:
     assert pauses == [2, 2]
 
 
+@pytest.mark.parametrize("recover", [True, False])
+def test_draft_read_protocol_disconnect_is_bounded_and_read_only(monkeypatch, recover) -> None:
+    urls, pauses = [], []
+    monkeypatch.setattr(zenodo.time, "sleep", pauses.append)
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        urls.append(str(request.url))
+        if recover and len(urls) == 3:
+            return httpx.Response(200, json={"id": 42, "submitted": False, "files": []})
+        raise httpx.RemoteProtocolError("server disconnected", request=request)
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        client = ZenodoClient("sandbox", "test-token", client=http_client)
+        if recover:
+            assert client.get_deposition(42)["id"] == 42
+        else:
+            with pytest.raises(httpx.RemoteProtocolError):
+                client.get_deposition(42)
+    assert len(set(urls)) == 3
+    assert pauses == [2, 2]
+
+
 @pytest.mark.parametrize("status", [401, 403, 404])
 def test_draft_read_does_not_retry_authorization_or_missing_resource(status) -> None:
     calls = []

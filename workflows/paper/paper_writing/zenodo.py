@@ -322,11 +322,19 @@ class ZenodoClient:
         # Some gateways cache failed authenticated GETs despite no-cache headers.
         # A unique URL makes each identity/file inventory check a fresh read.
         for attempt in range(3):
-            response = self.client.get(
-                url,
-                headers={**self.headers, "Cache-Control": "no-cache, no-store", "Pragma": "no-cache"},
-                params={"cache_bust": str(time.time_ns())},
-            )
+            try:
+                response = self.client.get(
+                    url,
+                    headers={**self.headers, "Cache-Control": "no-cache, no-store", "Pragma": "no-cache"},
+                    params={"cache_bust": str(time.time_ns())},
+                )
+            except httpx.RemoteProtocolError:
+                # A disconnected read supplies no identity evidence. Retry only
+                # this pure GET; mutations are never repeated here.
+                if attempt == 2:
+                    raise
+                time.sleep(2)
+                continue
             if response.status_code not in {502, 503, 504} or attempt == 2:
                 return self._json(response, operation)
             time.sleep(2)
