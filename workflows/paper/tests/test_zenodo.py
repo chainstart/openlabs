@@ -346,6 +346,29 @@ def test_gateway_delete_recovers_only_the_identified_unpublished_file() -> None:
     assert len(calls) == 3
 
 
+def test_gateway_delete_recovery_uses_fresh_retryable_draft_reads(monkeypatch) -> None:
+    requests, pauses = [], []
+    monkeypatch.setattr(zenodo.time, "sleep", pauses.append)
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) <= 2:
+            return httpx.Response(504)
+        if len(requests) == 3:
+            return httpx.Response(200, json={"id": 42, "submitted": False,
+                "files": [{"id": "file-id", "key": "support.zip"}]})
+        assert request.method == "DELETE"
+        assert request.url.path == "/api/records/42/draft/files/support.zip"
+        return httpx.Response(204)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        result = ZenodoClient("sandbox", "test-token", client=http_client).delete_file(42, "file-id")
+    assert result["api"] == "record_draft_files"
+    assert pauses == [2]
+    reads = requests[1:3]
+    assert all(r.method == "GET" and r.url.path == "/api/records/42/draft" for r in reads)
+    assert all(r.headers["cache-control"] == "no-cache, no-store" for r in reads)
+    assert reads[0].url != reads[1].url
+
+
 @pytest.mark.parametrize("status", [401, 403, 404])
 def test_file_delete_does_not_recover_authorization_or_missing_resource(status: int) -> None:
     calls = []

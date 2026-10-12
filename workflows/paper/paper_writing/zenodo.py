@@ -313,16 +313,22 @@ class ZenodoClient:
         )
 
     def get_deposition(self, deposition_id: int | str) -> dict[str, Any]:
+        return self._read_json_fresh(
+            f"{self.api_url}/deposit/depositions/{deposition_id}",
+            "read Zenodo deposition",
+        )
+
+    def _read_json_fresh(self, url: str, operation: str) -> dict[str, Any]:
         # Some gateways cache failed authenticated GETs despite no-cache headers.
         # A unique URL makes each identity/file inventory check a fresh read.
         for attempt in range(3):
             response = self.client.get(
-                f"{self.api_url}/deposit/depositions/{deposition_id}",
+                url,
                 headers={**self.headers, "Cache-Control": "no-cache, no-store", "Pragma": "no-cache"},
                 params={"cache_bust": str(time.time_ns())},
             )
             if response.status_code not in {502, 503, 504} or attempt == 2:
-                return self._json(response, "read Zenodo deposition")
+                return self._json(response, operation)
             time.sleep(2)
         raise AssertionError("unreachable")
 
@@ -422,8 +428,8 @@ class ZenodoClient:
         record_id = str(deposition_id)
         if not record_id.isdigit() or int(record_id) <= 0:
             raise ZenodoError("Draft file recovery requires a numeric deposition ID")
-        draft = self._json(
-            self.client.get(f"{self.api_url}/records/{record_id}/draft", headers=self.headers),
+        draft = self._read_json_fresh(
+            f"{self.api_url}/records/{record_id}/draft",
             "read unpublished draft for file recovery",
         )
         if str(draft.get("id")) != record_id:
