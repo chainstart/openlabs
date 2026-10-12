@@ -315,14 +315,16 @@ class ZenodoClient:
     def get_deposition(self, deposition_id: int | str) -> dict[str, Any]:
         # Some gateways cache failed authenticated GETs despite no-cache headers.
         # A unique URL makes each identity/file inventory check a fresh read.
-        return self._json(
-            self.client.get(
+        for attempt in range(3):
+            response = self.client.get(
                 f"{self.api_url}/deposit/depositions/{deposition_id}",
                 headers={**self.headers, "Cache-Control": "no-cache, no-store", "Pragma": "no-cache"},
                 params={"cache_bust": str(time.time_ns())},
-            ),
-            "read Zenodo deposition",
-        )
+            )
+            if response.status_code not in {502, 503, 504} or attempt == 2:
+                return self._json(response, "read Zenodo deposition")
+            time.sleep(2)
+        raise AssertionError("unreachable")
 
     def update_metadata(self, deposition_id: int | str, metadata: Mapping[str, Any]) -> dict[str, Any]:
         return self._json(

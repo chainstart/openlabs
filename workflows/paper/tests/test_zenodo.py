@@ -94,6 +94,32 @@ def test_get_deposition_requests_fresh_authenticated_state_only_on_get() -> None
         assert client.headers == {"Authorization": "Bearer test-token"}
 
 
+def test_draft_read_retries_gateway_errors_with_fresh_urls(monkeypatch) -> None:
+    urls, pauses = [], []
+    monkeypatch.setattr(zenodo.time, "sleep", pauses.append)
+    def respond(request: httpx.Request) -> httpx.Response:
+        urls.append(str(request.url))
+        if len(urls) < 3:
+            return httpx.Response(504)
+        return httpx.Response(200, json={"id": 42, "submitted": False, "files": []})
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        assert ZenodoClient("sandbox", "test-token", client=http_client).get_deposition(42)["id"] == 42
+    assert len(set(urls)) == 3
+    assert pauses == [2, 2]
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+def test_draft_read_does_not_retry_authorization_or_missing_resource(status) -> None:
+    calls = []
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(status, json={"message": "denied"})
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        with pytest.raises(zenodo.ZenodoError):
+            ZenodoClient("sandbox", "test-token", client=http_client).get_deposition(42)
+    assert len(calls) == 1
+
+
 def test_upload_delayed_visibility_rereads_once_without_reupload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
