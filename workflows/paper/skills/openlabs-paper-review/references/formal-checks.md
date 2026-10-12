@@ -1,150 +1,66 @@
-# Mandatory bibliography and mathematical checks
+# Bibliography and core mathematics gate
 
-The target-journal editor remains the first model screen. After editorial and
-rejection-history clearance, fresh independent Codex batches check every printed
-reference, citation use, detected formula and main/supplement source passage.
-The configured ordinary referee then independently assesses correctness and gaps.
+Current scope follows the user's 2026-10-12 instruction: ensure reference data
+are correct and core formulas/theorems are correct. Scientific journal review
+comes first. No ordinary prose or full empirical-record replay is required here.
 
-## Bibliographic accuracy
+## References
 
-Under the user's 2026-10-12 instruction, reference verification requires real,
-accurate bibliographic data, **not acquisition of original documents**. Check
-authors, exact title, year/online-versus-print date, journal/book name, volume,
-issue, page range/article number and DOI/arXiv/ISBN/version against authoritative
-Crossref, DataCite, arXiv, publisher or catalog records. Check available correction
-and version notices without claiming a comprehensive retraction search.
-No DOI alone is not a defect. Wrong identities or genuinely unresolved metadata
-remain blocking. A failed full-text download, paywall, unavailable chapter or
-unextractable scan alone does not block. Failed attempts remain in the private
-retrieval log; they are never relabeled successful. The legacy report field
-`primary_source_check` means authoritative work identity, not mandatory full text.
+Check every entry actually printed in main and supplementary bibliographies:
+authors, title, dates, journal/book, volume/issue, pages/article number, DOI/arXiv/
+ISBN and version. Crossref, DataCite, arXiv and authoritative publisher/library
+catalogs suffice. Correct online/print date distinctions and legitimately absent
+DOIs are allowed. No original PDF, full text, OCR or proof quotation is required.
+Wrong work identities and genuinely unresolved metadata block; available version
+and correction notices are checked without claiming a universal retraction search.
+Real metadata-source IDs and locations bind the checks. `quote` may be empty;
+any supplied quotation must be genuine.
 
-For this paper's bound `current_support_draft`, check the reserved DOI, creators,
-title, year and version against its authenticated draft receipt, and report its
-actual prepared/draft state in `publication_status_check`. A missing public DOI
-resolver entry while prepared is not a bibliographic defect. A reserved DOI does
-not itself assert prior publication. Do not report a draft as published. Public
-release and readback remain mandatory after review clearance and before delivery.
-This scoped rule does not establish unrelated external references.
+An own `current_support_draft` reference is checked against its authenticated
+prepared receipt, accurately reporting draft state. A reserved DOI need not
+resolve before the authorized post-review publication. Other works have no such
+exception. Actual publication/readback is enforced separately before handoff.
 
-DOI and arXiv metadata are fetched automatically; identifier API links do not
-automatically trigger PDF downloads. Official URLs printed in references and explicit source declarations
-can supply catalogs or optional substantive evidence. For example:
+## Core mathematics
 
-```yaml
-formal_check:
-  sources:
-    - reference_keys: [smith2020]
-      url: https://publisher.example/book/official-record
-      kind: publisher_catalog
-  local_evidence:
-    - path: papers/PID/evidence/current-replay.json
-      sha256: ACTUAL_COMPLETE_SHA256
-      kind: execution_record
-      passage_patterns: ["finite enumeration"]
-```
+`verification_inventory` deterministically selects named theorem/lemma/proposition/
+corollary/definition/proof environments (including custom newtheorem names),
+displayed mathematics and inline relations/derivations, from both main and
+supplementary sources. The complete document remains available as context.
+Preamble, ordinary prose and isolated inline variable names are excluded.
+The selected and excluded scope, full-source hashes and actual batch receipts
+remain recorded; author metadata cannot disable verification or shrink the scope.
 
-## Mathematical correctness and citation correspondence
+Independently reconstruct the statements and essential proof steps: hypotheses,
+quantifiers, signs, constants, boundary cases and applications of external results.
+Definitions and explicit conjectures are checked as such, not falsely treated as
+proved results. For empirical formulas check the mathematics, not every data row.
+Only `external` and `internal_derivation` mathematical prerequisites belong here.
+External results require valid reference keys and an identifiable statement with
+actual assumption/application checks. Direct reconstruction suffices; precise
+original theorem/page numbers and original documents are optional. Never invent a
+locator or use metadata as proof. Internal proofs use actual passage IDs/excerpts.
+Real errors and unresolved necessary proof steps block. Ordinary wording preferences
+and an unavailable exact source locator alone are not mathematical gaps.
 
-Independently check every definition, formula, theorem and application: notation,
-signs, constants, dimensions, quantifiers, limits, hypotheses, boundary cases and
-actual derivation. Distinguish identities, approximations and conditional results.
-Check that each citation appropriately attributes the manuscript's actual claim.
-Correct metadata is not proof of theoretical or empirical correctness. An actual
-error, unjustified inference or uncheckable scientific claim remains blocking;
-missing original-document access alone does not.
+## Division of responsibilities
 
-Prerequisite kinds are `external`, `internal_derivation`, `empirical_evidence`
-and `artifact_preparation`.
-For external results, state the identifiable result, its hypotheses/conclusion,
-the manuscript instantiation, and concrete condition/formula checks. Valid cited
-reference keys are required; original-page quotes and original-document downloads
-are optional. Do not invent a page/theorem number or claim to have read unavailable
-text. If substantive source quotes are used, they must come from actual primary
-text rather than metadata. For internal derivations, independently reconstruct the
-actual proof; `original_locator` must be an actual inventory passage ID or a literal
-current manuscript proof excerpt of at least 12 non-padding characters, allowing
-only whitespace folding in comparison. No external keys or
-evidence are used. Do not misclassify an unproved borrowed result as internal.
+The scientific referee handles novelty, contribution, journal readership, actual
+refusal reasons, complete argument, empirical credibility and reproduction scope.
+Preflight/release handles PDF/ZIP/source/member/version/hash integrity and declared
+author facts. Old all-evidence source plans remain preserved as historical evidence;
+this narrow verifier does not replay local records or require their old selectors.
+Optional full-text declarations are used only as bibliography aids when authority
+metadata cannot identify a work. Standard identifier references do not trigger
+original-document retrieval merely because old routing lists contain it.
 
-Local evidence must be explicitly selected, SHA-256 bound, nonempty UTF-8, and
-under this exact paper's directory. Selectors are literal current TeX substrings.
-`manuscript_code` proves implementation, not execution; `execution_record` supports
-only actual run scope; `research_record` is retained evidence, not a new independent
-execution; `author_attestation` establishes only confirmed author facts. These
-cannot prove an external theorem or bibliographic identity. Exclude credentials,
-signed/edit/upload URLs and private correspondence. Release rechecks original
-and model-visible bytes. Own empirical prerequisites need actual local evidence.
-For a verified empirical prerequisite, its evidence array must be nonempty and
-identify bound catalog sources of these four local kinds. Reading a file outside
-the catalog is not a source binding. An absent necessary record is an actual gap.
-Reference and optional citation evidence instead use authoritative primary text,
-publisher catalogs, bibliographic metadata or the bound current support draft;
-when supplied, they cover every claimed reference key. Formula evidence may use
-primary text, code, execution or research records. External-theorem evidence is
-optional for direct reconstruction; any supplied quotation must be primary text
-and bind its cited keys. Internal derivations use located current manuscript proof,
-with no external keys or evidence. The role prompt documents these existing
-validator constraints; changing the prompt still requires fresh unified review.
+## Integrity and failure
 
-## Coverage, provenance and release
-
-Included files and each document's generated BBL/inline bibliography are covered.
-Conflicting duplicate keys, missing/recursive/dynamic includes or unrendered
-bibliographies block review. Supported math includes inline/display math, standard
-equation environments and `ensuremath`. Multiple-argument citation commands stop
-inventory; use separate ordinary citations. Final paragraphs with trailing whitespace
-are included. Nested formula/citation IDs must match exactly in each batch.
-
-Optional primary URLs can declare inclusive PDF `pages: [first, last]` and
-`passage_patterns` for routing. Optional `extraction_method: ocr` requires explicit
-ranges of at most 30 PDF pages and available tools; it retains original PDF, images
-and fallible transcription. OCR availability is not a gate requirement. Source type
-and identifiers are checked after redirects; HTTP 200 challenge pages are rejected.
-Any quote used must match a retained substring after whitespace folding only,
-with at least 12 non-padding characters,
-with actual source ID and locator. The catalog lists out-of-batch records; unseen
-text is not quoted evidence. Case, symbols, punctuation and hyphenation are not
-normalized; original bytes and all evidence hashes remain unchanged. Packets are
-bounded, never silently truncated. Each configured local selector and evidence
-hash is checked before any model call; unmatched or unbound routes fail as
-source-routing issues, never as automatic scientific verification.
-
-Configured main/supplement PDFs and registered source/support ZIPs receive
-deterministic presence, format, archive-integrity and hash checks. A pure file-
-availability prerequisite uses `artifact_preparation` and its exact inventory
-ID, empty external keys/evidence, and concrete inventory rationale. This cannot
-establish reproducibility or a scientific result. Missing artifacts still block
-preparation/delivery. Final journal ZIP generation remains an official handoff
-step when not yet registered; do not require that post-gate product before review.
-
-An authenticated current support draft verifies this paper's prepared supporting
-package identity only. Publication/readback remains required separately by the
-existing delivery policy. Keep keys and authenticated upload/edit links private.
-
-Inspect deterministic coverage without network or models:
-
-```bash
-bin/openlabs-resource-guard --task-type cpu -- env PYTHONPATH=workflows/paper \
-  python -m paper_writing formal-check --paper-id PID --root DATA_ROOT --inventory
-```
-
-Without `--inventory`, a standalone audit writes private records and exits nonzero
-on incomplete verification; it cannot set the manuscript gate. The sole route to
-`writing_release: ready` is fresh unified review. Any formal failure stops before
-the referee. New runs containing only protocol/service, routing or preparation
-failures do not consume a scientific round, but cannot pass. A mixed run with an
-actual scientific error/gap/unchecked item does consume a round. Old decisions
-retain their historical counts and contents. The complete raw coverage, negative
-entries and flat blocker list are preserved; author-facing typed root causes
-suppress only a parent's aggregation of its nested failures, never distinct
-checks merely sharing the same status. Never construct model outputs,
-receipts or passing records. Actual invalid outputs and negative findings remain
-retained; no repaired IDs or substituted passing retries. Revisions happen outside
-review and receive a fresh run and response letter.
-
-Keep third-party texts and model dialogue private. Apply/handoff rechecks coverage,
-policy, source plan, source bytes, actual prompts, outputs and runtime receipts.
-Changed policy or accepted inputs require fresh review; historical decisions and
-website submission events are preserved. This is not a mechanical proof of all
-mathematics. Lean/symbolic certificates add only the scope actually checked.
+Each batch is a fresh independent configured Codex verifier, currently up to 16
+items. Every selected reference/formula/statement ID is covered exactly once.
+Actual outputs, sources and prompts remain hash-bound and are revalidated before
+release. Technical output/ID/coverage failures fail closed but do not masquerade
+as scientific findings or consume a scientific round. Real negative judgments
+are never erased. There is no standalone route that turns `formal-check` into ready.
+A changed policy requires a genuine new unified decision. These checks are not a
+machine proof of the entire manuscript.

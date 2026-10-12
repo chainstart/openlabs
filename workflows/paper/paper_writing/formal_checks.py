@@ -1,4 +1,4 @@
-"""Mandatory, evidence-bound bibliography and prerequisite verification.
+"""Mandatory bibliographic accuracy and core mathematical verification.
 
 Coverage and evidence integrity are checked by code. Scientific judgments are
 made in fresh verifier processes and checked again by the ordinary referee.
@@ -22,11 +22,11 @@ import httpx
 
 from paper_writing.review_launcher import LaunchError, _validate_against_schema
 
-VERSION = "openlabs.formal_check.v1"
+VERSION = "openlabs.formal_check.v2"
 PROMPT = Path(__file__).resolve().parents[1] / "skills/openlabs-paper-review/references/unified/formal.md"
 MAX_DOWNLOAD = 20_000_000
 MAX_PACKET = 600_000
-BATCH_SIZE = 8
+BATCH_SIZE = 16
 STATUSES = ["verified", "error", "gap", "unchecked"]
 TEXT = {"type": "string"}
 
@@ -56,7 +56,7 @@ def array(item: dict[str, Any]) -> dict[str, Any]:
 
 
 EVIDENCE = array(object_schema({"source_id": TEXT, "locator": TEXT,
-    "quote": {"type": "string", "minLength": 12}}))
+    "quote": TEXT}))
 STATUS = {"type": "string", "enum": STATUSES}
 REFERENCE_SCHEMA = object_schema({"key": TEXT, "status": STATUS,
     "authors_check": TEXT, "title_check": TEXT, "year_check": TEXT,
@@ -67,7 +67,7 @@ FORMULA_SCHEMA = object_schema({"formula_id": TEXT, "status": STATUS,
 CITATION_SCHEMA = object_schema({"citation_id": TEXT, "key": TEXT, "status": STATUS,
     "manuscript_claim": TEXT, "support_check": TEXT, "evidence": EVIDENCE})
 PREREQUISITE_SCHEMA = object_schema({"statement": TEXT, "status": STATUS,
-    "kind": {"type": "string", "enum": ["external", "internal_derivation", "empirical_evidence", "artifact_preparation"]},
+    "kind": {"type": "string", "enum": ["external", "internal_derivation"]},
     "reference_keys": array(TEXT), "original_locator": TEXT, "original_assumptions": TEXT,
     "original_conclusion": TEXT, "manuscript_instantiation": TEXT,
     "condition_check": TEXT, "formula_check": TEXT, "evidence": EVIDENCE})
@@ -164,6 +164,74 @@ def inventory(documents: list[dict[str, str]], bibliography: str) -> dict[str, A
         raise ValueError("The manuscript has no auditable source passages")
     return {"references": references, "passages": passages,
             "documents_sha256": digest(documents), "bibliography_sha256": sha(bibliography.encode())}
+
+
+def verification_inventory(documents: list[dict[str, str]], bibliography: str) -> dict[str, Any]:
+    """All printed references, but only mathematical statements and derivations.
+
+    Selection is deterministic, never an author-controlled exemption. Entire
+    theorem/definition/proof environments and displayed mathematics are retained;
+    isolated inline variable names, preamble and ordinary prose are not tasks.
+    Full documents remain available to the scientific referee and verifier.
+    """
+    full = inventory(documents, bibliography)
+    selected = []
+    relation = re.compile(r"[=<>/^]|\\(?:leq?|geq?|neq|equiv|sim|approx|rightarrow|to|mapsto|coloneqq|sum|prod|int|[dt]?frac|binom|sqrt|lim|Theta|Omega)\b")
+    def display(text: str) -> bool:
+        return text.startswith(('$$', r'\[', r'\begin{'))
+    for document in documents:
+        text = _strip_comments(document['text'])
+        text = re.sub(r"\\begin\{thebibliography\}.*?\\end\{thebibliography\}", "", text, flags=re.S)
+        envs = {'theorem', 'lemma', 'proposition', 'corollary', 'definition', 'proof', 'conjecture'}
+        envs.update(re.findall(r"\\newtheorem\*?\s*\{([^}]+)\}", text))
+        spans, stack = [], []
+        for token in re.finditer(r"\\(begin|end)\{([^}]+)\}", text):
+            name = token.group(2).rstrip('*')
+            if name not in envs:
+                continue
+            if token.group(1) == 'begin':
+                stack.append((name, token.start()))
+            else:
+                for i in range(len(stack)-1, -1, -1):
+                    if stack[i][0] == name:
+                        _, start = stack.pop(i); spans.append((start, token.end())); break
+        # An unmatched theorem/proof is still included, not silently skipped.
+        spans.extend((start, len(text)) for _, start in stack)
+        begin = re.search(r"\\begin\{document\}", text)
+        body_start = begin.end() if begin else 0
+        end = re.search(r"\\end\{document\}", text)
+        body_end = end.start() if end else len(text)
+        cursor = 0
+        for passage in (p for p in full['passages'] if p['document'] == document['id']):
+            start = text.find(passage['text'], cursor)
+            if start < 0:
+                raise ValueError('Cannot locate a mathematical scope candidate')
+            stop = start + len(passage['text']); cursor = stop
+            if stop <= body_start or start >= body_end:
+                continue
+            in_statement = any(a < stop and start < b for a, b in spans)
+            formulas = [f for f in passage['formulas'] if display(f['text']) or relation.search(f['text'])]
+            if in_statement or formulas:
+                selected.append(dict(passage, formulas=formulas))
+    return dict(full, passages=selected, scope={
+        'name': 'all_references_and_core_mathematics',
+        'full_passage_count': len(full['passages']),
+        'core_passage_count': len(selected),
+        'full_formula_count': sum(len(p['formulas']) for p in full['passages']),
+        'core_formula_count': sum(len(p['formulas']) for p in selected),
+        'excluded_passage_ids': [p['id'] for p in full['passages'] if p['id'] not in {q['id'] for q in selected}],
+        'ordinary_prose_empirical_and_author_facts_reviewed_by': 'scientific_referee',
+    })
+
+
+def verification_source_metadata(metadata: Mapping[str, Any], inv: Mapping[str, Any]) -> dict[str, Any]:
+    """Bibliographic catalogs, not the previous all-evidence replay campaign."""
+    refs = {r['key']: r['text'] for r in inv['references']}
+    plan = source_plan(metadata)
+    sources = [s for s in plan.get('sources', []) if s['kind'] == 'publisher_catalog' or any(
+        not re.search(r'10\.\d{4,9}/|arxiv', refs.get(key, ''), re.I) for key in s['reference_keys'])]
+    sources = [{k: v for k, v in s.items() if k != 'passage_patterns'} for s in sources]
+    return dict(metadata, formal_check={'sources': sources, 'local_evidence': []})
 
 
 def current_inputs(metadata: Mapping[str, Any], root: Path) -> tuple[list[dict[str, str]], str]:
@@ -614,10 +682,10 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
         represented = set()
         for item in items:
             source = source_by_id.get(item["source_id"])
-            if source is None or not item["locator"].strip() or len(_whitespace(item["quote"])) < 12:
-                add("Evidence has an unknown source, empty locator or insufficient quotation")
+            if source is None or not item["locator"].strip():
+                add("Evidence has an unknown source or empty locator")
                 continue
-            if _whitespace(item["quote"]) not in _whitespace(source["text"]):
+            if item['quote'] and _whitespace(item["quote"]) not in _whitespace(source["text"]):
                 add(f"Quoted evidence is absent from source {item['source_id']} at {item['locator']}")
             if primary and source["kind"] != "primary_text":
                 add("A prerequisite requires original primary text, not metadata or an abstract")
@@ -683,16 +751,6 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
                     if locator not in inv_passages and not (len(_whitespace(locator)) >= 12 and any(
                             _whitespace(locator) in _whitespace(p["text"]) for p in inv["passages"])):
                         add("Internal derivation locator is not an actual manuscript passage ID or literal proof excerpt")
-                elif item['kind'] == 'artifact_preparation':
-                    bound = {r['id']: r for r in (artifacts or {}).get('records', [])}
-                    if keys or item['evidence'] or item['original_locator'] not in bound:
-                        add('Artifact preparation lacks a deterministic configured inventory binding', 'preparation')
-                    elif bound[item['original_locator']]['status'] != 'present':
-                        add('Configured artifact is missing or invalid', 'preparation')
-                else:
-                    if keys:
-                        add("Own empirical evidence cannot establish an external reference")
-                    evidence(item["evidence"], set(), kinds={"manuscript_code", "execution_record", "author_attestation", "research_record"})
     return blockers
 
 
@@ -752,20 +810,18 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
         raise ValueError("Formal verification requires an independent Codex role")
     metadata = pre["metadata"]
     documents, bibliography = current_inputs(metadata, root)
-    inv = inventory(documents, bibliography)
+    inv = verification_inventory(documents, bibliography)
     directory = run / "formal-check"
     directory.mkdir()
     findings = []
-    routes = local_route_preflight(metadata, inv, root)
-    artifacts = artifact_inventory(metadata, root)
+    source_metadata = verification_source_metadata(metadata, inv)
+    routes = local_route_preflight(source_metadata, inventory(documents, bibliography), root)
+    # PDF/ZIP identity is enforced by preflight/release, not a mathematical premise.
+    artifacts = {}
     with httpx.Client(timeout=httpx.Timeout(30, connect=15), follow_redirects=True) as client:
-        sources, errors = ([], routes) if routes else collect_sources(inv, metadata, root, directory / "evidence", client)
+        sources, errors = ([], routes) if routes else collect_sources(inv, source_metadata, root, directory / "evidence", client)
     for message in errors:
         findings.append({'category': 'source_routing', 'root': '', 'location': '', 'message': message,
-                         'aggregate': False, 'reason': message, 'status': None})
-    for message in artifacts['blockers']:
-        errors.append(message)
-        findings.append({'category': 'preparation', 'root': '', 'location': '', 'message': message,
                          'aggregate': False, 'reason': message, 'status': None})
     report = {"references": [], "passages": []}
     receipts = []
@@ -859,11 +915,11 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
         if result["source_plan_sha256"] != digest(source_plan(metadata)):
             raise ValueError("Registered primary-source plan changed")
         documents, bibliography = current_inputs(metadata, root)
-        if result["inventory"] != inventory(documents, bibliography):
+        if result["inventory"] != verification_inventory(documents, bibliography):
             raise ValueError("Formal-check coverage does not match current manuscript and bibliography")
-        if result.get('artifact_inventory') != artifact_inventory(metadata, root):
-            raise ValueError('Configured preparation artifact inventory changed')
-        if local_route_preflight(metadata, result['inventory'], root):
+        if result.get('artifact_inventory') != {}:
+            raise ValueError('Preparation artifacts are outside the mathematical scope')
+        if local_route_preflight(verification_source_metadata(metadata, result['inventory']), inventory(documents, bibliography), root):
             raise ValueError('Current local source routing is invalid')
         for source in result["sources"]:
             for field in ("body", "text"):

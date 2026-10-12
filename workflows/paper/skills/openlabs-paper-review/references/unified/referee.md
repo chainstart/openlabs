@@ -9,17 +9,18 @@ Check, in this order:
    boundary and degenerate cases, dependence of constants, and whether every step is justified.
    Record concrete gaps with their location. Do not repair them. Distinguish an actual error,
    a missing justification, and a point you could not check.
-   Independently assess the mandatory bibliography/prerequisite audit supplied in the
-   packet. Check for omitted or misclassified external results, unjustified formula
-   checks, invented source locators, and assumptions that do not hold in this manuscript.
-   Bibliographic verification requires accurate authoritative metadata, not acquisition
-   of the original document (user instruction 2026-10-12). Do not make an unavailable
-   original, paywall or failed OCR alone a blocker. Independently assess theoretical
-   correctness and attribution; metadata is not proof of a theorem. Distinguish a
-   scientific gap from mere original-document unavailability.
-   Return formal_check_assessment.coverage_complete and every omission/error. Do not
-   rubber-stamp a verified audit row. Incomplete prerequisite/reference verification
-   blocks advancement even if your overall recommendation would otherwise be accept.
+   This scientific review precedes the separate bibliography/core-mathematics
+   verification. Prioritize the main contribution, complete argument, experimental
+   credibility and the actual previous rejection reasons. Do not wait for a
+   formal report or claim one has already passed. The later verifier checks all
+   bibliographic entries and core formulas/theorems against the current document.
+   In formal_check_assessment, coverage_complete means your scientific report
+   covers the main mathematical statements, essential dependencies and their
+   application; list substantive omissions/errors you actually find. It does not
+   certify the later independent metadata audit. Missing original PDFs, paywalls,
+   exact page/theorem-number locators, formatting or ID transcription alone are
+   not scientific blockers. Real misattribution and unsupported main claims are.
+
 2. Novelty and context. Is the relation to prior work stated accurately, without overstating or
    understating? Is anything important missing?
 3. Significance for this journal's readership, only to the extent required by its
@@ -59,6 +60,12 @@ is needed). Anything that makes a main claim unsupported goes in `scientific_blo
 If the packet contains the authors' response to an earlier round, check each previous item
 against the current text and the response; an item answered only by adding a disclaimer is not
 resolved.
+When an earlier item solely imposed the superseded all-prose formal audit (literal
+quotes, exact original page numbers, audit-output IDs or exhaustive replay-record
+inspection), explain whether the current bibliography/core-mathematics scope makes
+that request inapplicable. Do not claim new evidence was acquired or erase the old
+finding. Real proof gaps, empirical reliability concerns and historical journal
+objections still receive your scientific judgment and an evidenced response.
 If the packet contains a validated paper-scoped `available_originals_only` user
 instruction, absence of its listed original letters is a knowledge limitation, not
 by itself a scientific blocker or mandatory evidence request. Read every available

@@ -22,7 +22,7 @@ def test_whitespace_quote_equivalence_still_binds_raw_source(tmp_path, monkeypat
         q['quote']=wrong
         assert any('Quoted evidence is absent' in x for x in f.report_blockers(d['report'],d['inventory'],d['sources']))
     q['quote']='1234567890'+' '*1000
-    assert any('insufficient quotation' in x for x in f.report_blockers(d['report'],d['inventory'],d['sources']))
+    assert any('Quoted evidence is absent' in x for x in f.report_blockers(d['report'],d['inventory'],d['sources']))
 
 
 def test_compact_packet_preserves_all_fields_source_text_and_bound_prompt(tmp_path,monkeypatch):
@@ -93,17 +93,16 @@ def test_historical_zip_presence_does_not_establish_current_source_identity(tmp_
     assert f.artifact_inventory(m,tmp_path)['blockers']
 
 
-def test_artifact_claim_requires_actual_configured_binding(tmp_path,monkeypatch):
+def test_artifact_claim_is_not_a_core_mathematical_prerequisite(tmp_path,monkeypatch):
     m,_,d=run_fixture(tmp_path,monkeypatch)
     p=next(p for p in d['report']['passages'] if p['prerequisites'])
     t=p['prerequisites'][0];t.update(kind='artifact_preparation',reference_keys=[],evidence=[],original_locator='main_pdf')
     artifacts=f.artifact_inventory(m,tmp_path)
-    assert f.report_blockers(d['report'],d['inventory'],d['sources'],artifacts=artifacts)==[]
-    t['original_locator']='all experimental results reproduced'
-    assert f.report_blockers(d['report'],d['inventory'],d['sources'],artifacts=artifacts)
+    with pytest.raises(LaunchError):
+        f.report_blockers(d['report'],d['inventory'],d['sources'],artifacts=artifacts)
 
 
-def test_routing_fails_before_any_model_for_missing_selector_or_binding(tmp_path,monkeypatch):
+def test_empirical_routes_do_not_block_core_math_check(tmp_path,monkeypatch):
     m=fixture_workspace(tmp_path);p=tmp_path/'papers/p/evidence.json';p.write_text('{"observations":1}')
     m['formal_check']['local_evidence']=[{'path':str(p.relative_to(tmp_path)),'sha256':f.sha(p.read_bytes()),
         'kind':'execution_record','passage_patterns':['No actual paragraph','For real']}]
@@ -114,10 +113,9 @@ def test_routing_fails_before_any_model_for_missing_selector_or_binding(tmp_path
     p.write_text('changed actual evidence')
     assert any('hash' in x for x in f.local_route_preflight(m,inv,tmp_path))
     run=tmp_path/'run';run.mkdir();mock_http(monkeypatch)
-    def forbidden(**kwargs):raise AssertionError('Do not spend a model call on broken declared routing')
-    binding=f.run_checks({'metadata':m},tmp_path,run,ROLE,1,forbidden)
-    assert binding['valid'] is False
-    assert binding['issue_summary']['by_category']['source_routing']
+    binding=f.run_checks({'metadata':m},tmp_path,run,ROLE,1,simulated_runner)
+    assert binding['valid'] is True
+    assert binding['issue_summary']['by_category']['source_routing']==[]
     assert binding['issue_summary']['by_category']['scientific']==[]
 
 
@@ -186,11 +184,13 @@ def test_official_pipeline_counts_mixed_but_not_pure_technical(tmp_path,monkeypa
         calls.append(kw['role_name'])
         if kw['role_name']=='editor':return {'decision':'send_to_review','desk_reject_category':'none'},{}
         if kw['role_name']=='decision_letter':return {'letter':'actual fixture decision'},{}
-        raise AssertionError('A blocked formal check must never start the referee')
+        if kw['role_name']=='referee_b':return {'recommendation':'accept','scientific_blockers':[],
+            'required_changes':[],'previous_items':[], 'formal_check_assessment':{'coverage_complete':True,'omissions_or_errors':[]}},{}
+        raise AssertionError('Unknown role')
     monkeypatch.setattr(flow,'run_role',role)
     record=flow.run_review('p',root=tmp_path,apply=False)
     assert record['stage_reached']=='decision' and record['merged']['outcome']=='formal_check_blocked'
     assert record['consumes_scientific_round'] is scientific
     assert record['round_for_target']==int(scientific)
-    assert calls==['editor','decision_letter']
+    assert calls==['editor','referee_b','decision_letter']
     assert len(flow.scientific_rounds(tmp_path,'p','J'))==int(scientific)

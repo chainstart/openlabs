@@ -53,7 +53,9 @@ def simulated_output(packet):
         for ref in packet["items"]:
             row = {k: "Checked against the exact original identity" for k in formal.REFERENCE_SCHEMA["properties"]
                    if k not in {"key", "status", "evidence"}}
-            result["references"].append(dict(row, key=ref["key"], status="verified", evidence=proof))
+            identity = proof or [{"source_id": s["id"], "locator": "message.title", "quote": "Exact positivity"}
+                                 for s in packet["retrieved_sources"] if ref['key'] in s['reference_keys']]
+            result["references"].append(dict(row, key=ref["key"], status="verified", evidence=identity))
     else:
         for unit in packet["items"]:
             prerequisites = []
@@ -94,6 +96,12 @@ def simulated_runner(**kwargs):
 
 def run_fixture(root, monkeypatch):
     metadata = fixture_workspace(root)
+    # Exercise optional primary evidence for a work printed without an ID,
+    # alongside its explicitly registered authoritative metadata record.
+    bib = root / metadata['manuscript_dir'] / 'main.bbl'
+    bib.write_text(bib.read_text().replace(' DOI:10.1234/example.', ''))
+    metadata['formal_check']['sources'].append({'reference_keys': ['s'],
+        'url': 'https://api.crossref.org/works/10.1234%2Fexample', 'kind': 'publisher_catalog'})
     mock_http(monkeypatch)
     run = root / "reviews/p/run"
     run.mkdir(parents=True)
@@ -230,7 +238,7 @@ def test_missing_formal_check_blocks_even_current_policy_legacy_accept(tmp_path,
     assert any("Missing passing mandatory formal check" in p for p in flow.validate_unified_release("p", metadata, tmp_path, "a" * 64))
 
 
-def test_editor_remains_first_and_failed_formal_stage_skips_ordinary_referee(tmp_path, monkeypatch):
+def test_editor_and_scientific_referee_precede_failed_core_stage(tmp_path, monkeypatch):
     config = {"process": flow.PROCESS, "roles": {"editor": ROLE, "referee_b": ROLE}, "referee_roles": ["referee_b"],
         "rejection_clearance_required": True, "max_rounds_per_target": 15, "timeout_seconds": 1}
     monkeypatch.setattr(flow, "review_config", lambda *args: config)
@@ -244,13 +252,16 @@ def test_editor_remains_first_and_failed_formal_stage_skips_ordinary_referee(tmp
     def role(**kwargs):
         calls.append(kwargs["role_name"])
         if kwargs["role_name"] == "editor": return {"decision": "send_to_review", "desk_reject_category": "none"}, {}
+        if kwargs['role_name'] == 'referee_b':
+            return {'recommendation': 'accept', 'scientific_blockers': [], 'required_changes': [],
+                    'previous_items': [], 'formal_check_assessment': {'coverage_complete': True, 'omissions_or_errors': []}}, {}
         assert kwargs["role_name"] == "decision_letter"
         return {"letter": "Theorem conditions must be verified"}, {}
     monkeypatch.setattr(flow, "run_role", role)
     result = flow.run_review("p", root=tmp_path, apply=False)
-    assert calls == ["editor", "formal", "decision_letter"]
+    assert calls == ["editor", "referee_b", "formal", "decision_letter"]
     assert result["merged"]["outcome"] == "formal_check_blocked" and result["round_for_target"] == 1
-    assert result["referee_reports"] == {}
+    assert result['referee_reports']['referee_b']['recommendation'] == 'accept'
 
 
 @pytest.mark.parametrize("value", [{"enabled": False}, {"sources": "skip"}, {"sources": [
@@ -419,7 +430,7 @@ def test_nested_ids_checked_per_batch(tmp_path, monkeypatch):
         formal.batch_coverage(output, "passages", batch)
 
 
-def test_local_code_is_bound_and_not_external_theorem_evidence(tmp_path, monkeypatch):
+def test_local_replay_is_outside_core_formal_scope(tmp_path, monkeypatch):
     metadata = fixture_workspace(tmp_path)
     code = tmp_path / "papers/p/evidence/replay.py"
     code.parent.mkdir()
@@ -431,12 +442,9 @@ def test_local_code_is_bound_and_not_external_theorem_evidence(tmp_path, monkeyp
     binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, simulated_runner)
     assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
     result = json.loads((tmp_path / binding["path"]).read_text())
-    local = next(s for s in result["sources"] if s["kind"] == "manuscript_code")
-    unit = next(p for p in result["report"]["passages"] if p["prerequisites"])
-    unit["prerequisites"][0]["evidence"] = [{"source_id": local["id"], "locator": "line 1", "quote": "Actual scientific code establishes implementation only."}]
-    assert any("original primary text" in b for b in formal.report_blockers(result["report"], result["inventory"], result["sources"]))
+    assert not any(s['kind'] == 'manuscript_code' for s in result['sources'])
     code.write_text("# Changed after review.\nassert 2 * 2 == 4\n")
-    assert formal.validate_binding(binding, metadata, tmp_path, ROLE)
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
 
 
 @pytest.mark.parametrize("fault", ["wrong_hash", "no_match", "secret", "outside_paper"])
@@ -486,9 +494,10 @@ def test_ocr_requires_original_pdf_and_explicit_bounded_pages(tmp_path):
         formal._text_document(b"%PDF- actual bytes", "application/pdf", tmp_path, "scan", method="ocr")
 
 
-def test_short_quote_schema_is_enforced_before_acceptance():
-    with pytest.raises(LaunchError, match="string length"):
-        formal._validate_against_schema([{"source_id": "S1", "locator": "page 1", "quote": "Define"}], formal.EVIDENCE)
+def test_quotation_is_optional_but_source_identity_is_required():
+    formal._validate_against_schema([{"source_id": "S1", "locator": "metadata record", "quote": ""}], formal.EVIDENCE)
+    with pytest.raises(LaunchError):
+        formal._validate_against_schema([{"locator": "metadata record", "quote": ""}], formal.EVIDENCE)
 
 
 @pytest.mark.parametrize("endpoint", ["https://publisher.example/original.pdf", "https://publisher.example/original"])
@@ -523,7 +532,7 @@ def test_metadata_suffices_without_original_document(tmp_path, monkeypatch):
     assert binding["valid"] is True
     result = json.loads((tmp_path / binding["path"]).read_text())
     assert all(s["kind"] == "bibliographic_metadata" for s in result["sources"])
-    assert "Declared primary source unavailable" in (run / "formal-check/evidence/retrieval-failures.json").read_text()
+    assert json.loads((run / "formal-check/evidence/retrieval-failures.json").read_text()) == []
 
 
 def test_actual_v2_support_receipt_preserves_bibliographic_data_without_private_links(tmp_path, monkeypatch):

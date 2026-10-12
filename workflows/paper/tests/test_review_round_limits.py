@@ -114,6 +114,7 @@ def test_formal_upgrade_changes_legacy_policy_but_cap_still_only_changes_opted_i
     assert flow.review_round_limit_override({"target_journal": "K"}, tmp_path, "other") is None
     assert flow.review_policy_sha256(conf) != expected
     new_policy = dict(old_policy, formal_check=flow.formal_checks.policy())
+    new_policy['stage_order'] = 'editor_scientific_referee_core_verification_decision'
     assert flow.review_policy_sha256(conf) == hashlib.sha256(json.dumps(new_policy, sort_keys=True).encode()).hexdigest()
     policy = flow.review_round_limit_override(authorized_metadata(tmp_path), tmp_path, BIO)
     assert flow.review_policy_sha256(conf, None, policy) != expected

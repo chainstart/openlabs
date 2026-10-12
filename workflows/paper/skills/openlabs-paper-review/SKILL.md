@@ -1,90 +1,59 @@
 ---
 name: openlabs-paper-review
-description: Run OpenLabs' unified journal review for a manuscript in the data repository - deterministic preflight, a target-journal editor screen, mandatory evidence-bound reference and prerequisite verification, the configured blind referee panel, and a conservative decision. This is the only route to writing_release ready. Use for every paper_review task and every request to review, re-review or gate a manuscript.
+description: "Run the sole OpenLabs journal self-review: deterministic preflight, independent target-editor screen with actual rejection history, configured scientific referee, bibliography and core-mathematics verification, then a bound decision."
 ---
 
 # OpenLabs unified paper review
 
-The review simulates the target journal: first its handling editor, then its referees. Its job is
-to catch, before submission, what the journal would catch - above all a desk rejection. The
-process is configured in `registry/settings.yaml` (`quality_gate.review_process: unified_v1` and
-the `review` block with the active role models and referee_roles) and implemented in
-`workflows/paper/paper_writing/review_flow.py`. Design and rationale:
-`workflows/paper/docs/UNIFIED_REVIEW_DESIGN.zh.md`.
-
-## Run it
-
-Under the repository resource guard, from the code repository:
+Use `review unified-run` under the resource guard; this is the only route to
+`writing_release: ready`. Models and the active referee panel come from
+`registry/settings.yaml`. Claude remains disabled under the actual user instruction;
+only the configured Codex referee B runs. A gate never authorizes journal submission.
 
 ```bash
-bin/openlabs-resource-guard -- env PYTHONPATH=workflows/paper python3 -m paper_writing \
-  review unified-run --paper-id <paper_id> --root <data-root>
+bin/openlabs-resource-guard --task-type cpu -- env PYTHONPATH=workflows/paper python -m paper_writing \
+  review unified-run --paper-id PID --root DATA_ROOT --response RESPONSE.md
 ```
 
-For a re-review after the authors revised the paper, add `--response <response-letter.md>`.
-The response letter answers every item of the previous decision letter with what was changed and
-where. Without it a re-review is refused.
+Omit `--response` only for a first review. Do not manually construct decisions or
+edit manuscript/registry/evidence during review. Preserve actual outputs and model
+receipts, including failures. Revised prose remains neutral scientific writing;
+keep internal review negotiation and claims about editor approval outside the paper.
 
-The command does everything; do not reproduce its stages by hand, do not write review records
-yourself, and do not edit the manuscript, evidence or registry while it runs.
+## Current sequence (user instruction, 2026-10-12)
 
-1. **Preflight** (no model): clean build; no source file in `manuscript/` that the build does
-   not read; `style-check`; `support-check`; a verified target journal with an approved fit
-   record. Any failure stops the run with `preflight_failed`.
-2. **Editor screen** - a fresh read-only Codex process (`review.roles.editor`) receives the title,
-   abstract, introduction, main statements and reference list, plus the target journal's
-   official page and recent related articles, and every prior editorial decision on the paper.
-   It restates the contribution in two sentences, names the closest prior work, gives the
-   strongest desk-reject reason, says whether each previous rejection is actually answered, and
-   decides `send_to_review`, `revise_before_submission` or `desk_reject`.
-3. **Reference/prerequisite verification** - after editor and rejection-history clearance,
-   fresh Codex batches verify complete coverage, authoritative bibliographic data and mathematical correctness as described below.
-   An incomplete or failed verification stops advancement with `formal_check_blocked`.
-   Raw coverage and negative entries are preserved. Author-facing root causes
-   distinguish scientific findings, protocol/service errors, source routing and
-   deterministic artifact preparation; a parent/nested duplicate is one cause.
-4. **Referees** - only after `send_to_review` and passing mandatory verification. The configured active referees in fresh processes (normally two different models;
-   temporarily only Codex `referee_b` under the 2026-10-09 user instruction) review the complete expanded source, bibliography and
-   supporting-material description, blind to each other, and recommend in the journal's
-   vocabulary with typed required changes (`text`, `claim_narrowing`, `evidence`).
-5. **Decision** - deterministic merge: the more cautious recommendation wins; blockers are the
-   union; an unresolved item from the previous round blocks. The editor model then writes the
-   decision letter without changing the decision.
+1. Deterministic preflight: clean build, source/style/declarations, support package,
+   verified journal scope/ranking/fees/format. File integrity is preparation work.
+2. Independent target-journal editor: contribution, closest prior work, readership,
+   strongest desk-reject reason and actual available historical refusal letters.
+3. Independent scientific referee: complete manuscript and supplementary arguments,
+   novelty, significance for the target, correctness, experimental credibility,
+   actual previous objections and required changes. Do not defer this judgment
+   until a paragraph/quote audit passes.
+4. If the scientific decision can advance, independent **bibliography and core
+   mathematics** verification. Every printed reference is checked against authoritative
+   database/catalog metadata; no original document is required. Mathematical scope
+   covers named statements/proofs, displayed formulas and inline derivations,
+   excluding isolated variable names and ordinary prose. The complete source remains
+   context. Real formula/theorem errors, missing essential proof steps and unknown
+   reference identities block the gate. Read [formal-checks.md](references/formal-checks.md).
+5. Conservative merge and editor decision letter. A scientific rejection skips
+   unnecessary verification calls. A reference/core-mathematics failure cannot set ready.
 
-After editor clearance and before the ordinary referees, **mandatory reference and
-prerequisite verification** runs in fresh Codex processes using the configured editor
-model. This is a verification stage, not an additional journal referee or a return of
-Claude. Read [references/formal-checks.md](references/formal-checks.md) when preparing
-sources or resolving a failure. Code checks exact coverage of every printed reference,
-every citation occurrence, every detected formula and all main/supplement source
-passages; independent verifiers check authoritative bibliographic data and theorem applications.
-Errors, gaps, unchecked items, omitted/duplicate/invented IDs, unsupported quotations,
-or unresolved bibliographic identity block advancement. Under the user's 2026-10-12
-instruction, acquiring original documents is not required: correct authoritative
-metadata suffices for references, and paywalls or failed full-text/OCR retrievals
-alone do not block. Mathematical statements, hypotheses, derivations and appropriate
-attribution remain independently checked. Referees
-must also assess omitted/misclassified prerequisites. The rule cannot be disabled by
-paper metadata. A standalone `formal-check` does not set `writing_release: ready`.
+Formal verification does **not** audit every empirical row, historical execution,
+protocol timestamp, author agreement, funding/conflict statement, human inspection,
+classifier implementation or archive member. The ordinary scientific referee and
+preflight/release checks handle those responsibilities. Citation quotes, original
+PDFs, OCR and precise original theorem/page numbers are not compulsory substitutes
+for checking the actual mathematics. Bibliographic evidence uses real source IDs
+and metadata locations; literal quotation is optional and, if supplied, must be true.
 
-The decision and release bind the complete formal report, retrieved evidence bytes,
-role outputs/receipts and source plan. Changed/missing evidence, a changed verifier
-policy or an old decision lacking this stage requires a fresh unified review.
-Historical decisions and website submission events remain unchanged. This provides
-evidence-backed coverage, not a universal mathematical correctness certificate or
-an automatic Lean proof of all prose; any machine proof claim needs an actual checked
-certificate with a statement/assumption correspondence.
-
-Under the user's 2026-10-12 proportionality instruction, quoted evidence and
-internal proof excerpts allow pure whitespace folding while original evidence
-bytes remain hash-bound; symbols, case and hyphenation remain exact. Configured
-PDF/ZIP presence, format and hashes are deterministic preparation checks, not
-scientific premises. Reproducibility and numerical claims still need actual
-evidence. New decisions with only technical, routing or preparation failures
-block clearance without consuming a scientific round; mixed scientific gaps
-still count. Historical records and their counts are never rewritten. Any policy
-change requires a fresh unified review, preserving editor → complete formal
-checks → active referee order and independent contexts.
+The deterministic scope and full-document hashes are bound with source bytes,
+actual outputs/receipts and the current policy. There is no per-paper disable switch.
+Coverage/JSON/ID errors are technical failures, not mathematical counterexamples;
+pure technical failures do not consume scientific rounds. Old decisions and counts
+are never rewritten. A changed policy requires a fresh unified review, not a fake
+conversion of an old failure into a pass. This is not a Lean machine-proof certificate.
 
 `ready` requires `send_to_review`, a merged `accept` or `minor_revision`, no scientific blocker,
 no unresolved previous item, and only `text` changes remaining. Scores are recorded for

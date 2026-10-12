@@ -258,6 +258,7 @@ def review_policy_sha256(config: Mapping[str, Any], history_policy: Mapping[str,
                          round_limit_override: Mapping[str, Any] | None = None) -> str:
     policy = {k: config[k] for k in ("process", "roles", "referee_roles", "rejection_clearance_required")}
     policy["formal_check"] = formal_checks.policy()
+    policy['stage_order'] = 'editor_scientific_referee_core_verification_decision'
     if history_policy is not None:
         policy["missing_rejection_letter_policy"] = history_policy
     if round_limit_override is not None:
@@ -943,14 +944,18 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
         categories = (formal_summary or {}).get('by_category', {})
         # Legacy callers remain conservatively scientific. New runs retain the
         # complete raw blocker list separately and present distinct root causes.
-        scientific = categories.get('scientific', formal_blockers)
+        scientific = list(categories.get('scientific', formal_blockers))
+        scientific.extend(b for r in referees.values() for b in r['scientific_blockers'])
+        changes = [dict(c, referee=name) for name, r in referees.items() for c in r['required_changes']]
+        unresolved = [dict(p, referee=name) for name, r in referees.items()
+                      for p in r['previous_items'] if not p['resolved']]
         return {"outcome": "formal_check_blocked", "recommendation": None,
-                "scientific_blockers": scientific, "required_changes": [],
+                "scientific_blockers": sorted(set(scientific)), "required_changes": changes,
                 "technical_blockers": categories.get('technical', []),
                 "source_routing_blockers": categories.get('source_routing', []),
                 "preparation_blockers": categories.get('preparation', []),
                 "raw_formal_blockers": formal_blockers,
-                "unresolved_previous_items": [], "next_action": "evidence_remediation"}
+                "unresolved_previous_items": unresolved, "next_action": "evidence_remediation"}
     if editor["decision"] != "send_to_review":
         category = editor["desk_reject_category"]
         if editor["decision"] == "revise_before_submission" or category == "presentation":
@@ -1128,20 +1133,6 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     history_blockers = rejection_clearance_blockers(editor, decisions, history_policy)
     formal_blockers: list[str] = []
     if editor["decision"] == "send_to_review" and not history_blockers:
-        try:
-            formal = formal_checks.run_checks(pre, root, run, roles["editor"], config["timeout_seconds"], run_role)
-            formal_blockers = formal["blockers"]
-            if not formal_blockers:
-                formal_blockers = formal_checks.validate_binding(formal, metadata, root, roles["editor"])
-        except (ValueError, OSError, LaunchError) as exc:
-            formal = {"valid": False, "schema": formal_checks.VERSION}
-            formal_blockers = [f"Mandatory formal-check stage failed: {exc}"]
-            formal['issue_summary'] = {'by_category': {'scientific': [], 'technical': formal_blockers,
-                                                       'source_routing': [], 'preparation': []}}
-        record["formal_check"] = formal
-        if not formal_blockers:
-            pre = dict(pre, formal_check_packet=formal_checks.packet(formal, root))
-    if editor["decision"] == "send_to_review" and not history_blockers and not formal_blockers:
         packet = referee_packet(pre, root, previous, decisions)
         schema = referee_schema_for_previous(previous)
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(panel)) as pool:
@@ -1155,6 +1146,22 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                 expected = set(previous['items']) if previous else set()
                 if {i['item'] for i in referees[name]['previous_items']} != expected:
                     raise ValueError('Referee omitted or introduced a previous mandatory item')
+        # Scientific merit/correctness is evaluated before the narrower check;
+        # an output-format defect must not prevent an overall referee report.
+        scientific_decision = merge(editor, referees, history_blockers)
+        if scientific_decision['outcome'] == 'ready':
+            try:
+                formal = formal_checks.run_checks(pre, root, run, roles['editor'], config['timeout_seconds'], run_role)
+                formal_blockers = formal['blockers']
+                if not formal_blockers:
+                    formal_blockers = formal_checks.validate_binding(formal, metadata, root, roles['editor'])
+            except (ValueError, OSError, LaunchError) as exc:
+                formal = {'valid': False, 'schema': formal_checks.VERSION}
+                formal_blockers = [f'Mandatory core-verification stage failed: {exc}']
+                formal['issue_summary'] = {'by_category': {'scientific': [], 'technical': formal_blockers,
+                                                           'source_routing': [], 'preparation': []}}
+            record['formal_check'] = formal
+            pre = dict(pre, formal_check_packet=formal_checks.packet(formal, root)) if formal.get('path') else pre
     formal_summary = record.get('formal_check', {}).get('issue_summary')
     if formal_blockers and formal_summary and not any(formal_summary.get('by_category', {}).values()):
         formal_summary = {'by_category': {'scientific': [], 'technical': formal_blockers}}
@@ -1206,7 +1213,7 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
         if formal_errors:
             raise ValueError("; ".join(formal_errors))
         if any("formal_check_assessment" not in r for r in record["referee_reports"].values()):
-            raise ValueError("Ready decision lacks independent referee formal-check assessment")
+            raise ValueError("Ready decision lacks independent scientific coverage assessment")
         blockers = rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy)
         if merge(record['editor_screen'], record['referee_reports'], blockers)['outcome'] != 'ready':
             raise ValueError("Ready decision contradicts the editor, rejection letters, or referees")
@@ -1269,7 +1276,7 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
     if release.get("formal_check") != record.get("formal_check"):
         problems.append("The release is not bound to the actual mandatory formal check")
     if any("formal_check_assessment" not in r for r in record.get("referee_reports", {}).values()):
-        problems.append("The active referee did not assess formal-check completeness")
+        problems.append("The active referee did not assess core mathematical coverage")
     if record.get("referee_reports"):
         try:
             history = rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy)
