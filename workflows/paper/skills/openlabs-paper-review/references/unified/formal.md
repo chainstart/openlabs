@@ -58,3 +58,19 @@ in the actual bound source; metadata must not masquerade as proof text. A verifi
 reference requires real bibliographic evidence, not a claim of a lookup. Copy IDs
 from the supplied objects without retyping them. Coverage/JSON/ID defects are
 technical failures, never mathematical counterexamples.
+
+OUTPUT CONTRACT: Return one row for every supplied item, including familiar
+references; do not omit or duplicate rows. The batch schema restricts IDs to the
+actual supplied objects. source_id is a source record's id, never its URL, DOI or
+bibliographic key. A web lookup does not register a new source ID. Mathematical
+reconstruction may use evidence=[]; do not insert an unbound web URL as evidence.
+For a directly reconstructed mathematical prerequisite, use evidence=[] rather
+than bibliographic metadata as proof evidence; metadata only identifies a work.
+For internal_derivation, original_locator must be exactly one manuscript passage
+ID allowed by the schema. Copy it unchanged: no joined IDs, explanatory suffixes
+or descriptions. Explain any additional proof locations and the complete
+reconstruction in formula_check. For external prerequisites, the locator remains
+free text identifying the actual cited statement. Every required check field
+must contain a substantive explanation; for a definition or a boundary case,
+explain its assumptions and meaning rather than leaving a field empty. Preserve
+gap, error or unchecked whenever the mathematics actually warrants that status.

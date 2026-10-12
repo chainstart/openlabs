@@ -54,6 +54,15 @@ def role_runtime(role: Mapping[str, Any]) -> str:
 
 def _validate_against_schema(value: Any, schema: Mapping[str, Any], path: str = "$") -> None:
     """Minimal structural check of the subset of JSON Schema used by review prompts."""
+    if 'anyOf' in schema:
+        for alternative in schema['anyOf']:
+            try:
+                _validate_against_schema(value, alternative, path)
+                break
+            except LaunchError:
+                pass
+        else:
+            raise LaunchError(f"{path}: no allowed schema alternative matches")
     kind = schema.get("type")
     if "enum" in schema and value not in schema["enum"]:
         raise LaunchError(f"{path}: {value!r} not in {schema['enum']}")

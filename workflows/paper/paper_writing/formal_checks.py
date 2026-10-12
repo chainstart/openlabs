@@ -789,6 +789,54 @@ def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[s
         ensure_ascii=False, separators=(',', ':'))
 
 
+def batch_schema(group: str, batch: list[dict[str, Any]], inv: Mapping[str, Any],
+                 sources: list[dict[str, Any]]) -> dict[str, Any]:
+    """Constrain output identities and locations, never scientific judgments."""
+    schema = json.loads(json.dumps(REPORT_SCHEMA))
+    for scope, identifier in (("references", "key"), ("passages", "passage_id")):
+        rows = schema['properties'][scope]
+        rows['minItems'] = rows['maxItems'] = len(batch) if scope == group else 0
+        if scope == group and batch:
+            rows['items']['properties'][identifier]['enum'] = [
+                unit['key' if scope == 'references' else 'id'] for unit in batch]
+    choices = {
+        'source_id': [source['id'] for source in sources],
+        'formula_id': [formula['id'] for unit in batch for formula in unit.get('formulas', [])],
+        'citation_id': [citation['id'] for unit in batch for citation in unit.get('citations', [])],
+    }
+    def constrain(node: dict[str, Any], field: str = '') -> None:
+        if node.get('type') == 'string' and field != 'quote':
+            node['minLength'] = 1
+        properties = node.get('properties', {})
+        for identifier, ids in choices.items():
+            if identifier in properties and ids:
+                properties[identifier]['enum'] = ids
+        for name, child in properties.items():
+            constrain(child, name)
+        if node.get('type') == 'array':
+            child = node['items']
+            fields = child.get('properties', {})
+            if any(identifier in fields and not ids for identifier, ids in choices.items()):
+                node['maxItems'] = 0
+            constrain(child)
+    constrain(schema)
+    prerequisites = schema['properties']['passages']['items']['properties']['prerequisites']
+    external = json.loads(json.dumps(prerequisites['items']))
+    internal = json.loads(json.dumps(prerequisites['items']))
+    external['properties']['kind']['enum'] = ['external']
+    internal['properties']['kind']['enum'] = ['internal_derivation']
+    keys = [reference['key'] for reference in inv['references']]
+    if keys:
+        external['properties']['reference_keys']['items']['enum'] = keys
+    internal['properties']['reference_keys']['maxItems'] = 0
+    internal['properties']['evidence']['maxItems'] = 0
+    ids = [unit['id'] for unit in inv['passages']]
+    if ids:
+        internal['properties']['original_locator']['enum'] = ids
+    prerequisites['items'] = {'anyOf': [external, internal]}
+    return schema
+
+
 def batch_coverage(output: Mapping[str, Any], group: str, batch: list[dict[str, Any]]) -> None:
     """Refuse malformed nested IDs before accepting a provider's batch."""
     _validate_against_schema(output, REPORT_SCHEMA)
@@ -839,7 +887,7 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
                     break
                 try:
                     output, receipt = runner(role_name=f"formal_{group}_{start // BATCH_SIZE + 1}", role=role,
-                        system_prompt=PROMPT.read_text(), user_prompt=packet, schema=REPORT_SCHEMA,
+                        system_prompt=PROMPT.read_text(), user_prompt=packet, schema=batch_schema(group, batch, inv, sources),
                         workdir=directory / f"{group}-{start // BATCH_SIZE + 1}", timeout=timeout)
                 except (LaunchError, ValueError, OSError) as exc:
                     message = f"{group} batch {start // BATCH_SIZE + 1}: actual verifier failed: {exc}"
@@ -939,10 +987,12 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             receipt, workdir, group = item["receipt"], item["workdir"], item["group"]
             if group != expected_group:
                 raise ValueError("Formal role batch order/scope changed")
+            batch = result["inventory"][group][start:start + BATCH_SIZE]
+            schema = batch_schema(group, batch, result['inventory'], result['sources'])
             if (receipt.get("independent_context") is not True or receipt.get("provider") != "openai-codex"
                     or receipt.get("model") != result["role"].get("model")
                     or receipt.get("model") not in receipt.get("runtime_reported_models", [])
-                    or receipt.get("schema_sha256") != sha(json.dumps(REPORT_SCHEMA, sort_keys=True).encode())
+                    or receipt.get("schema_sha256") != sha(json.dumps(schema, sort_keys=True).encode())
                     or receipt.get("system_prompt_sha256") != sha(PROMPT.read_bytes())):
                 raise ValueError("Formal verification lacks matching independent actual-model receipts")
             for filename, expected in (("output.json", receipt["output_sha256"]),
@@ -953,11 +1003,11 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             actual_receipt = json.loads(_safe_file(root, workdir + "/receipt.json").read_text())
             if actual_receipt != receipt:
                 raise ValueError("Formal role receipt changed")
-            batch = result["inventory"][group][start:start + BATCH_SIZE]
             expected_prompt = PROMPT.read_text() + "\n\n" + batch_packet(group, batch, documents, result["inventory"], result["sources"], root=root, artifacts=result['artifact_inventory'])
             if _safe_file(root, workdir + "/prompt.txt").read_text() != expected_prompt:
                 raise ValueError("Formal role did not inspect the exact bound manuscript, batch and source evidence")
             output = json.loads(_safe_file(root, workdir + "/output.json").read_text())
+            _validate_against_schema(output, schema)
             batch_coverage(output, group, batch)
             reconstructed[group].extend(output[group])
         if reconstructed != result["report"]:

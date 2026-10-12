@@ -110,6 +110,69 @@ def run_fixture(root, monkeypatch):
     return metadata, binding, json.loads((root / binding["path"]).read_text())
 
 
+@pytest.mark.parametrize('group', ['references', 'passages'])
+def test_batch_schema_requires_complete_actual_identity_rows(tmp_path, monkeypatch, group):
+    _, _, result = run_fixture(tmp_path, monkeypatch)
+    inv, sources = result['inventory'], result['sources']
+    batch = inv[group]
+    packet = json.loads(formal.batch_packet(group, batch, [], inv, sources))
+    output = simulated_output(packet)
+    schema = formal.batch_schema(group, batch, inv, sources)
+    formal._validate_against_schema(output, schema)
+    omitted = copy.deepcopy(output); omitted[group].pop()
+    with pytest.raises(LaunchError, match='item count'):
+        formal._validate_against_schema(omitted, schema)
+    invented = copy.deepcopy(output)
+    invented[group][0]['key' if group == 'references' else 'passage_id'] = 'invented-id'
+    with pytest.raises(LaunchError, match='not in'):
+        formal._validate_against_schema(invented, schema)
+
+
+def test_schema_alternative_does_not_skip_sibling_constraints():
+    schema = {'type': 'string', 'minLength': 2,
+              'anyOf': [{'type': 'string', 'enum': ['x', 'valid']} ]}
+    formal._validate_against_schema('valid', schema)
+    with pytest.raises(LaunchError, match='string length'):
+        formal._validate_against_schema('x', schema)
+    with pytest.raises(LaunchError, match='alternative'):
+        formal._validate_against_schema('unknown', schema)
+
+
+def test_batch_schema_rejects_url_evidence_and_empty_checks(tmp_path, monkeypatch):
+    _, _, result = run_fixture(tmp_path, monkeypatch)
+    inv, sources = result['inventory'], result['sources']
+    batch = inv['references']
+    output = simulated_output(json.loads(formal.batch_packet('references', batch, [], inv, sources)))
+    schema = formal.batch_schema('references', batch, inv, sources)
+    output['references'][0]['evidence'][0]['quote'] = ''
+    formal._validate_against_schema(output, schema)
+    bad = copy.deepcopy(output)
+    bad['references'][0]['evidence'][0]['source_id'] = sources[0]['url']
+    with pytest.raises(LaunchError, match='not in'):
+        formal._validate_against_schema(bad, schema)
+    output['references'][0]['authors_check'] = ''
+    with pytest.raises(LaunchError, match='string length'):
+        formal._validate_against_schema(output, schema)
+
+
+@pytest.mark.parametrize('status', formal.STATUSES)
+def test_batch_schema_locates_internal_proof_without_biasing_status(tmp_path, monkeypatch, status):
+    _, _, result = run_fixture(tmp_path, monkeypatch)
+    inv, sources = result['inventory'], result['sources']
+    batch = inv['passages']
+    output = simulated_output(json.loads(formal.batch_packet('passages', batch, [], inv, sources)))
+    schema = formal.batch_schema('passages', batch, inv, sources)
+    prerequisite = next(row for passage in output['passages'] for row in passage['prerequisites'])
+    prerequisite.update(kind='internal_derivation', reference_keys=[], evidence=[],
+                        original_locator=batch[0]['id'], status=status)
+    formal._validate_against_schema(output, schema)
+    prerequisite['original_locator'] += ' and its following proof'
+    with pytest.raises(LaunchError, match='alternative'):
+        formal._validate_against_schema(output, schema)
+    prerequisite.update(kind='external', reference_keys=['s'], original_locator='Theorem 2')
+    formal._validate_against_schema(output, schema)
+
+
 def test_covers_comment_free_citations_formulas_and_uncited_passages():
     docs = [{"id": "main", "text": r"% \cite{fake}" + "\n" + r"A $x$ and \[x^2\ge0\] \citep[Thm. 2]{a,b}." +
         "\n\n" + r"An uncited theorem is also checked. \nocite{*}"},
