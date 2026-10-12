@@ -72,7 +72,7 @@ The user's 2026-10-10 instruction sets the active limit to 15 rounds per target 
 `registry/settings.yaml`; the configured limit takes precedence over the older 10-round default.
 The global limit remains 15. The Biology paper
 `20261005-biology-genetics-reference-orientation-depth` alone has a user-authorized limit of
-22 for `Computational Biology and Chemistry` under the current actual user
+30 for `Computational Biology and Chemistry` under the user's 2026-10-13 actual
 instruction, registered in the top-level paper field
 `review_round_limit_override`. Its exact paper ID, target and integer limit must match a
 SHA256-bound actual user instruction receipt (`authorization.path`, `sha256`, `json_pointer`
