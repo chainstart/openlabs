@@ -19,6 +19,14 @@ unextractable scan alone does not block. Failed attempts remain in the private
 retrieval log; they are never relabeled successful. The legacy report field
 `primary_source_check` means authoritative work identity, not mandatory full text.
 
+For this paper's bound `current_support_draft`, check the reserved DOI, creators,
+title, year and version against its authenticated draft receipt, and report its
+actual prepared/draft state in `publication_status_check`. A missing public DOI
+resolver entry while prepared is not a bibliographic defect. A reserved DOI does
+not itself assert prior publication. Do not report a draft as published. Public
+release and readback remain mandatory after review clearance and before delivery.
+This scoped rule does not establish unrelated external references.
+
 DOI and arXiv metadata are fetched automatically; identifier API links do not
 automatically trigger PDF downloads. Official URLs printed in references and explicit source declarations
 can supply catalogs or optional substantive evidence. For example:

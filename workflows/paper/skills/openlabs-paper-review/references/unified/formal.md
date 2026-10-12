@@ -17,8 +17,17 @@ and genuinely unresolved bibliographic data. Check available correction/version
 notices; do not claim universal absence of retractions from lack of a flag.
 The schema's legacy primary_source_check field now means authoritative work
 identity check, not a requirement to acquire full text. A current_support_draft
-record establishes only the prepared identity of this paper's own support;
-publication is checked separately before delivery.
+record establishes only the prepared identity of this paper's own support.
+For this record, publication_status_check must report its actual prepared/draft
+state. A reserved DOI in an accurately identified own-support reference does not
+assert that publication has already occurred. An authenticated current draft
+receipt can establish its exact reserved DOI, creators, title, year and version;
+absence from a public DOI resolver or DataCite index while still prepared is not
+a bibliographic error or gap. Check discrepancies against the actual receipt,
+and never describe a draft as published. Actual public release and readback are
+required separately after review clearance and before delivery; do not require
+publication before the review that authorizes it. This exception applies only
+to the paper's bound current_support_draft, not to unrelated external works.
 
 Passages: account for ALL supplied formula IDs and citation-use IDs exactly once.
 Check definitions, notation, algebra, signs, constants, dimensions, quantifiers,
