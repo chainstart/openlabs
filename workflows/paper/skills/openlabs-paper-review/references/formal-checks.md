@@ -73,6 +73,17 @@ execution; `author_attestation` establishes only confirmed author facts. These
 cannot prove an external theorem or bibliographic identity. Exclude credentials,
 signed/edit/upload URLs and private correspondence. Release rechecks original
 and model-visible bytes. Own empirical prerequisites need actual local evidence.
+For a verified empirical prerequisite, its evidence array must be nonempty and
+identify bound catalog sources of these four local kinds. Reading a file outside
+the catalog is not a source binding. An absent necessary record is an actual gap.
+Reference and optional citation evidence instead use authoritative primary text,
+publisher catalogs, bibliographic metadata or the bound current support draft;
+when supplied, they cover every claimed reference key. Formula evidence may use
+primary text, code, execution or research records. External-theorem evidence is
+optional for direct reconstruction; any supplied quotation must be primary text
+and bind its cited keys. Internal derivations use located current manuscript proof,
+with no external keys or evidence. The role prompt documents these existing
+validator constraints; changing the prompt still requires fresh unified review.
 
 ## Coverage, provenance and release
 
