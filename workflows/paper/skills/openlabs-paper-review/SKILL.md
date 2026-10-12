@@ -59,6 +59,11 @@ pure technical failures do not consume scientific rounds. Old decisions and coun
 are never rewritten. A changed policy requires a fresh unified review, not a fake
 conversion of an old failure into a pass. This is not a Lean machine-proof certificate.
 
+Once an identified authoritative metadata record covers a reference, do not automatically
+download its optional printed full-text links. Preserve those links and actual retrieval failures;
+references without identified metadata still need an official catalog record. Each reference's
+evidence IDs must belong to sources bound to that reference key, with honest gaps still allowed.
+
 `ready` requires `send_to_review`, a merged `accept` or `minor_revision`, no scientific blocker,
 no unresolved previous item, and only `text` changes remaining. Scores are recorded for
 calibration only. At most `review.max_rounds_per_target` rounds (10) per target journal; after

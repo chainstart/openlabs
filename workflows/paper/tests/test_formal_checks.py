@@ -124,7 +124,7 @@ def test_batch_schema_requires_complete_actual_identity_rows(tmp_path, monkeypat
         formal._validate_against_schema(omitted, schema)
     invented = copy.deepcopy(output)
     invented[group][0]['key' if group == 'references' else 'passage_id'] = 'invented-id'
-    with pytest.raises(LaunchError, match='not in'):
+    with pytest.raises(LaunchError, match='not in|alternative'):
         formal._validate_against_schema(invented, schema)
 
 
@@ -148,10 +148,10 @@ def test_batch_schema_rejects_url_evidence_and_empty_checks(tmp_path, monkeypatc
     formal._validate_against_schema(output, schema)
     bad = copy.deepcopy(output)
     bad['references'][0]['evidence'][0]['source_id'] = sources[0]['url']
-    with pytest.raises(LaunchError, match='not in'):
+    with pytest.raises(LaunchError, match='not in|alternative'):
         formal._validate_against_schema(bad, schema)
     output['references'][0]['authors_check'] = ''
-    with pytest.raises(LaunchError, match='string length'):
+    with pytest.raises(LaunchError, match='string length|alternative'):
         formal._validate_against_schema(output, schema)
 
 

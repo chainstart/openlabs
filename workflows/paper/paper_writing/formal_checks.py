@@ -611,12 +611,17 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
         # Official links printed in a bibliography are discovery inputs, not
         # automatically trusted certificates. The verifier still has to check
         # source ownership, exact work identity and substantive support.
+        if any(ref["key"] in source["reference_keys"] and source["kind"] in {
+                "bibliographic_metadata", "publisher_catalog", "current_support_draft"}
+                for source in sources):
+            continue
         for url in list(dict.fromkeys(re.findall(r"https://[^\s{}<>\"]+", ref["text"])))[:3]:
             url = url.rstrip(".,;)")
-            if url.startswith(("https://doi.org/", "https://arxiv.org/abs/")):
+            if (url.startswith(("https://doi.org/", "https://arxiv.org/abs/"))
+                    or urlsplit(url).path.lower().endswith(".pdf")):
                 continue
             try:
-                fetch(url, "primary_text", [ref["key"]])
+                fetch(url, "publisher_catalog", [ref["key"]])
             except (ValueError, httpx.HTTPError, OSError, subprocess.SubprocessError):
                 pass
     # A publisher's catalog/primary text can also establish a work without DOI.
@@ -834,6 +839,23 @@ def batch_schema(group: str, batch: list[dict[str, Any]], inv: Mapping[str, Any]
     if ids:
         internal['properties']['original_locator']['enum'] = ids
     prerequisites['items'] = {'anyOf': [external, internal]}
+    if group == 'references' and batch:
+        # A valid source ID for another work is not evidence for this key.
+        # Keep all statuses and allow empty evidence, including honest gaps.
+        rows = schema['properties']['references']
+        branches = []
+        for unit in batch:
+            branch = json.loads(json.dumps(rows['items']))
+            branch['properties']['key']['enum'] = [unit['key']]
+            evidence = branch['properties']['evidence']
+            ids = [source['id'] for source in sources
+                   if unit['key'] in source['reference_keys']]
+            if ids:
+                evidence['items']['properties']['source_id']['enum'] = ids
+            else:
+                evidence['maxItems'] = 0
+            branches.append(branch)
+        rows['items'] = {'anyOf': branches}
     return schema
 
 
