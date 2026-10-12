@@ -40,6 +40,9 @@ yourself, and do not edit the manuscript, evidence or registry while it runs.
 3. **Reference/prerequisite verification** - after editor and rejection-history clearance,
    fresh Codex batches verify complete coverage, authoritative bibliographic data and mathematical correctness as described below.
    An incomplete or failed verification stops advancement with `formal_check_blocked`.
+   Raw coverage and negative entries are preserved. Author-facing root causes
+   distinguish scientific findings, protocol/service errors, source routing and
+   deterministic artifact preparation; a parent/nested duplicate is one cause.
 4. **Referees** - only after `send_to_review` and passing mandatory verification. The configured active referees in fresh processes (normally two different models;
    temporarily only Codex `referee_b` under the 2026-10-09 user instruction) review the complete expanded source, bibliography and
    supporting-material description, blind to each other, and recommend in the journal's
@@ -72,6 +75,17 @@ evidence-backed coverage, not a universal mathematical correctness certificate o
 an automatic Lean proof of all prose; any machine proof claim needs an actual checked
 certificate with a statement/assumption correspondence.
 
+Under the user's 2026-10-12 proportionality instruction, quoted evidence and
+internal proof excerpts allow pure whitespace folding while original evidence
+bytes remain hash-bound; symbols, case and hyphenation remain exact. Configured
+PDF/ZIP presence, format and hashes are deterministic preparation checks, not
+scientific premises. Reproducibility and numerical claims still need actual
+evidence. New decisions with only technical, routing or preparation failures
+block clearance without consuming a scientific round; mixed scientific gaps
+still count. Historical records and their counts are never rewritten. Any policy
+change requires a fresh unified review, preserving editor → complete formal
+checks → active referee order and independent contexts.
+
 `ready` requires `send_to_review`, a merged `accept` or `minor_revision`, no scientific blocker,
 no unresolved previous item, and only `text` changes remaining. Scores are recorded for
 calibration only. At most `review.max_rounds_per_target` rounds (10) per target journal; after
@@ -80,7 +94,8 @@ The user's 2026-10-10 instruction sets the active limit to 15 rounds per target 
 `registry/settings.yaml`; the configured limit takes precedence over the older 10-round default.
 The global limit remains 15. The Biology paper
 `20261005-biology-genetics-reference-orientation-depth` alone has a user-authorized limit of
-20 for `Computational Biology and Chemistry`, registered in the top-level paper field
+22 for `Computational Biology and Chemistry` under the current actual user
+instruction, registered in the top-level paper field
 `review_round_limit_override`. Its exact paper ID, target and integer limit must match a
 SHA256-bound actual user instruction receipt (`authorization.path`, `sha256`, `json_pointer`
 and exact `summary`). Missing, changed or mismatched authorization stops the review and

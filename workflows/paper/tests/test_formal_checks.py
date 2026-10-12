@@ -17,6 +17,7 @@ PRIMARY = "Smith. Exact positivity. 2020. Theorem 2: for every real x, x squared
 def fixture_workspace(root):
     manuscript = root / "papers/p/manuscript"
     manuscript.mkdir(parents=True)
+    (manuscript / 'main.pdf').write_bytes(b'%PDF-1.4\nfixture artifact inventory\n%%EOF\n')
     (manuscript / "main.tex").write_text(r"\begin{document}" + "\n\n" +
         r"For real $x$, $x^2\ge0$ by \cite{s}." + "\n\n" + r"\end{document}")
     (manuscript / "main.bbl").write_text(r"\begin{thebibliography}{1}\bibitem{s}Smith. Exact positivity. 2020. DOI:10.1234/example.\end{thebibliography}")

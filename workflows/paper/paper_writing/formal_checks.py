@@ -11,6 +11,7 @@ import html
 import json
 import re
 import subprocess
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -66,7 +67,7 @@ FORMULA_SCHEMA = object_schema({"formula_id": TEXT, "status": STATUS,
 CITATION_SCHEMA = object_schema({"citation_id": TEXT, "key": TEXT, "status": STATUS,
     "manuscript_claim": TEXT, "support_check": TEXT, "evidence": EVIDENCE})
 PREREQUISITE_SCHEMA = object_schema({"statement": TEXT, "status": STATUS,
-    "kind": {"type": "string", "enum": ["external", "internal_derivation", "empirical_evidence"]},
+    "kind": {"type": "string", "enum": ["external", "internal_derivation", "empirical_evidence", "artifact_preparation"]},
     "reference_keys": array(TEXT), "original_locator": TEXT, "original_assumptions": TEXT,
     "original_conclusion": TEXT, "manuscript_instantiation": TEXT,
     "condition_check": TEXT, "formula_check": TEXT, "evidence": EVIDENCE})
@@ -301,6 +302,76 @@ def _patterns(item: Mapping[str, Any], *, required: bool = False) -> None:
         raise ValueError("passage_patterns must contain nonempty literal source substrings")
 
 
+def _whitespace(text: str) -> str:
+    """Only whitespace is equivalent: retain case, symbols and hyphenation."""
+    return " ".join(text.split())
+
+
+def local_route_preflight(metadata: Mapping[str, Any], inv: Mapping[str, Any], root: Path) -> list[str]:
+    """Check declared routes before paying for any independent model call."""
+    errors = []
+    plan = source_plan(metadata)
+    keys = {r['key'] for r in inv['references']}
+    for item in plan.get('sources', []) + plan.get('local_evidence', []):
+        label = item.get('path') or item.get('url')
+        if set(item.get('reference_keys', [])) - keys:
+            errors.append(f"Source routing: {label}: absent bibliography key")
+        for pattern in item.get('passage_patterns', []):
+            if not any(pattern in p['text'] for p in inv['passages']):
+                errors.append(f"Source routing: {label}: selector matches no current passage: {pattern}")
+    for item in plan.get('local_evidence', []):
+        try:
+            body = _safe_file(root, item['path']).read_bytes()
+            if sha(body) != item['sha256'] or len(body) > MAX_DOWNLOAD:
+                raise ValueError('hash mismatch or size limit exceeded')
+            text = body.decode('utf-8', errors='strict')
+            if not text.strip() or '\x00' in text:
+                raise ValueError('not nonempty UTF-8 evidence')
+        except (ValueError, OSError) as exc:
+            errors.append(f"Source routing: {item['path']}: {exc}")
+    return errors
+
+
+def artifact_inventory(metadata: Mapping[str, Any], root: Path) -> dict[str, Any]:
+    """Deterministic preparation facts, never evidence of scientific correctness."""
+    paths = [('main_pdf', metadata.get('latest_pdf') or
+              f"papers/{metadata['paper_id']}/manuscript/main.pdf", None)]
+    if metadata.get('latest_supplementary_pdf'):
+        paths.append(('supplement_pdf', metadata['latest_supplementary_pdf'], None))
+    package = metadata.get('submission_package') or {}
+    if package.get('source_archive'):
+        paths.append(('journal_source_archive', package['source_archive'], package.get('source_archive_sha256')))
+    publication = ((metadata.get('support') or {}).get('publication') or {})
+    for rel in publication.get('package_files', []) or []:
+        if str(rel).lower().endswith('.zip'):
+            paths.append(('support_archive', rel, publication.get('package_sha256')))
+    records, errors = [], []
+    for name, rel, expected in paths:
+        record = {'id': name, 'path': str(rel), 'status': 'missing', 'scientific_correctness_established': False}
+        if name == 'journal_source_archive':
+            record.update(registered_package_version=str(package.get('version') or ''),
+                          current_manuscript_version=str(metadata.get('version') or ''),
+                          current_version_identity=(str(package.get('version') or '') ==
+                                                    str(metadata.get('version') or '')),
+                          current_source_correspondence_requires_official_handoff=True)
+        try:
+            p = _safe_file(root, str(rel)); body = p.read_bytes()
+            record.update(status='present', bytes=len(body), sha256=sha(body))
+            if p.suffix.lower() == '.pdf' and not body.startswith(b'%PDF-'):
+                raise ValueError('not an actual PDF')
+            if p.suffix.lower() == '.zip':
+                with zipfile.ZipFile(p) as z:
+                    if z.testzip() is not None: raise ValueError('ZIP member checksum failed')
+            if expected is not None and record['sha256'] != expected:
+                raise ValueError('registered artifact hash mismatch')
+        except (ValueError, OSError, zipfile.BadZipFile) as exc:
+            record.update(status='invalid', error=str(exc))
+            errors.append(f"Artifact preparation: {name}: {exc}")
+        records.append(record)
+    return {'records': records, 'blockers': errors,
+            'unregistered_final_journal_zip_checked_at_handoff': not bool(package.get('source_archive'))}
+
+
 def _local_records(plan: Mapping[str, Any], inv: Mapping[str, Any], root: Path,
                    directory: Path) -> list[dict[str, Any]]:
     records = []
@@ -516,8 +587,10 @@ def _exact(rows: list[dict[str, Any]], field: str, expected: set[str], name: str
         raise ValueError(f"{name}: omitted, duplicated or invented coverage items")
 
 
-def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: list[dict[str, Any]]) -> list[str]:
-    """Check exact coverage and quoted evidence independently of model verdicts."""
+def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: list[dict[str, Any]],
+                    *, findings: list[dict[str, Any]] | None = None,
+                    artifacts: Mapping[str, Any] | None = None) -> list[str]:
+    """Check exact coverage and whitespace-equivalent evidence without changing raw text."""
     _validate_against_schema(report, REPORT_SCHEMA)
     _exact(report["references"], "key", {r["key"] for r in inv["references"]}, "References")
     _exact(report["passages"], "passage_id", {p["id"] for p in inv["passages"]}, "Passages")
@@ -525,43 +598,56 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
     if len(source_by_id) != len(sources):
         raise ValueError("Duplicated evidence source IDs")
     blockers = []
+    context = {'root': '', 'label': ''}
+    def add(message: str, category: str = 'technical', *, aggregate: bool = False,
+            reason: str = '', status: str | None = None) -> None:
+        blockers.append(message)
+        if findings is not None:
+            findings.append({'category': category, 'root': context['root'], 'location': context['label'],
+                             'message': message, 'aggregate': aggregate, 'reason': reason, 'status': status})
 
     def evidence(items: list[dict[str, str]], keys: set[str], *, primary: bool = False,
                  kinds: set[str] | None = None) -> None:
         if not items:
-            blockers.append("Verified external claims require located source evidence")
+            add("Verified external claims require located source evidence")
             return
         represented = set()
         for item in items:
             source = source_by_id.get(item["source_id"])
-            if source is None or not item["locator"].strip() or len(item["quote"].strip()) < 12:
-                blockers.append("Evidence has an unknown source, empty locator or insufficient quotation")
+            if source is None or not item["locator"].strip() or len(_whitespace(item["quote"])) < 12:
+                add("Evidence has an unknown source, empty locator or insufficient quotation")
                 continue
-            if item["quote"] not in source["text"]:
-                blockers.append(f"Quoted evidence is absent from source {item['source_id']} at {item['locator']}")
+            if _whitespace(item["quote"]) not in _whitespace(source["text"]):
+                add(f"Quoted evidence is absent from source {item['source_id']} at {item['locator']}")
             if primary and source["kind"] != "primary_text":
-                blockers.append("A prerequisite requires original primary text, not metadata or an abstract")
+                add("A prerequisite requires original primary text, not metadata or an abstract")
             if kinds is not None and source["kind"] not in kinds:
-                blockers.append("Evidence type cannot establish this claim")
+                add("Evidence type cannot establish this claim")
             represented |= set(source["reference_keys"])
         if not keys <= represented:
-            blockers.append("Evidence does not bind every claimed reference key")
+            add("Evidence does not bind every claimed reference key")
 
     def checked(row: Mapping[str, Any], label: str, fields: tuple[str, ...]) -> bool:
+        context['label'] = label
         if row["status"] != "verified":
-            blockers.append(f"{label}: {row['status']}")
+            category = 'preparation' if row.get('kind') == 'artifact_preparation' else 'scientific'
+            add(f"{label}: {row['status']}", category,
+                aggregate='passage_id' in row, status=row['status'],
+                reason='\n'.join(str(row.get(f, '')) for f in fields))
             return False
         if any(not row[field].strip() for field in fields):
-            blockers.append(f"{label}: a verified item lacks its check rationale")
+            add(f"{label}: a verified item lacks its check rationale")
             return False
         return True
 
     for row in report["references"]:
+        context['root'] = row['key']
         if checked(row, row["key"], ("authors_check", "title_check", "year_check", "venue_identifier_locator_check",
                                     "primary_source_check", "publication_status_check")):
             evidence(row["evidence"], {row["key"]}, kinds={"primary_text", "publisher_catalog", "bibliographic_metadata", "current_support_draft"})
     inv_passages = {p["id"]: p for p in inv["passages"]}
     for row in report["passages"]:
+        context['root'] = row['passage_id']
         unit = inv_passages[row["passage_id"]]
         checked(row, row["passage_id"], ("coverage_rationale",))
         _exact(row["formulas"], "formula_id", {f["id"] for f in unit["formulas"]}, "Formulas")
@@ -583,7 +669,7 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
                 keys = set(item["reference_keys"])
                 if item["kind"] == "external":
                     if not keys or keys - {r["key"] for r in inv["references"]}:
-                        blockers.append("External prerequisite has no valid cited source key")
+                        add("External prerequisite has no valid cited source key")
                     # Check the theoretical statement and application directly.
                     # Original full-text retrieval is not a gate requirement.
                     # If a quotation is supplied, it must still be genuine and
@@ -592,19 +678,44 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
                         evidence(item["evidence"], keys, primary=True)
                 elif item["kind"] == "internal_derivation":
                     if keys or item["evidence"]:
-                        blockers.append("Internal derivation must be reconstructed from located manuscript proof, not external evidence")
+                        add("Internal derivation must be reconstructed from located manuscript proof, not external evidence")
                     locator = item["original_locator"].strip()
-                    if locator not in inv_passages and not (len(locator) >= 12 and any(locator in p["text"] for p in inv["passages"])):
-                        blockers.append("Internal derivation locator is not an actual manuscript passage ID or literal proof excerpt")
+                    if locator not in inv_passages and not (len(_whitespace(locator)) >= 12 and any(
+                            _whitespace(locator) in _whitespace(p["text"]) for p in inv["passages"])):
+                        add("Internal derivation locator is not an actual manuscript passage ID or literal proof excerpt")
+                elif item['kind'] == 'artifact_preparation':
+                    bound = {r['id']: r for r in (artifacts or {}).get('records', [])}
+                    if keys or item['evidence'] or item['original_locator'] not in bound:
+                        add('Artifact preparation lacks a deterministic configured inventory binding', 'preparation')
+                    elif bound[item['original_locator']]['status'] != 'present':
+                        add('Configured artifact is missing or invalid', 'preparation')
                 else:
                     if keys:
-                        blockers.append("Own empirical evidence cannot establish an external reference")
+                        add("Own empirical evidence cannot establish an external reference")
                     evidence(item["evidence"], set(), kinds={"manuscript_code", "execution_record", "author_attestation", "research_record"})
     return blockers
 
 
+def issue_summary(findings: list[dict[str, Any]]) -> dict[str, Any]:
+    """Preserve raw coverage; collapse only a parent's nested failure aggregation."""
+    nested_roots = {f['root'] for f in findings if not f['aggregate'] and f.get('status') is not None}
+    roots = []
+    for finding in findings:
+        if finding['aggregate'] and finding['root'] in nested_roots:
+            continue
+        # Do not merge different checks because they share only gap/error.
+        key = (finding['category'], finding['root'], finding['location'], finding['message'], finding['reason'])
+        if not any(r['_key'] == key for r in roots):
+            roots.append(dict(finding, _key=key))
+    roots = [{k: v for k, v in r.items() if k != '_key'} for r in roots]
+    return {'raw_findings': findings, 'root_causes': roots,
+            'by_category': {k: [r['message'] for r in roots if r['category'] == k]
+                            for k in ['scientific', 'technical', 'source_routing', 'preparation']}}
+
+
 def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[str, str]],
-                 inv: Mapping[str, Any], sources: list[dict[str, Any]], *, root: Path | None = None) -> str:
+                 inv: Mapping[str, Any], sources: list[dict[str, Any]], *, root: Path | None = None,
+                 artifacts: Mapping[str, Any] | None = None) -> str:
     keys = ({r["key"] for r in batch} if group == "references" else
             {c["key"] for p in batch for c in p["citations"]})
     selected = [s for s in sources if set(s["reference_keys"]) & keys
@@ -614,6 +725,7 @@ def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[s
     selected = [s for s in selected if s["url"] not in scoped_urls or s.get("extraction_pages")]
     return json.dumps({"scope": group, "items": batch, "complete_manuscript": documents,
         "evidence_root": str(root.resolve()) if root else None,
+        "deterministic_preparation_inventory": artifacts or {},
         "complete_bibliography": inv["references"], "retrieved_sources": selected,
         "available_source_catalog": [{k: v for k, v in s.items() if k != "text"} for s in sources]}, ensure_ascii=False)
 
@@ -642,8 +754,18 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
     inv = inventory(documents, bibliography)
     directory = run / "formal-check"
     directory.mkdir()
+    findings = []
+    routes = local_route_preflight(metadata, inv, root)
+    artifacts = artifact_inventory(metadata, root)
     with httpx.Client(timeout=httpx.Timeout(30, connect=15), follow_redirects=True) as client:
-        sources, errors = collect_sources(inv, metadata, root, directory / "evidence", client)
+        sources, errors = ([], routes) if routes else collect_sources(inv, metadata, root, directory / "evidence", client)
+    for message in errors:
+        findings.append({'category': 'source_routing', 'root': '', 'location': '', 'message': message,
+                         'aggregate': False, 'reason': message, 'status': None})
+    for message in artifacts['blockers']:
+        errors.append(message)
+        findings.append({'category': 'preparation', 'root': '', 'location': '', 'message': message,
+                         'aggregate': False, 'reason': message, 'status': None})
     report = {"references": [], "passages": []}
     receipts = []
     if not errors:
@@ -652,21 +774,27 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
             units = inv[group]
             for start in range(0, len(units), BATCH_SIZE):
                 batch = units[start:start + BATCH_SIZE]
-                packet = batch_packet(group, batch, documents, inv, sources, root=root)
+                packet = batch_packet(group, batch, documents, inv, sources, root=root, artifacts=artifacts)
                 if len(packet.encode()) > MAX_PACKET:
-                    errors.append("Formal-check packet exceeds the context budget; register precise primary chapter/page sources, never truncate evidence")
+                    message = "Formal-check packet exceeds the context budget; register precise primary chapter/page sources, never truncate evidence"
+                    errors.append(message)
+                    findings.append({'category':'source_routing','root':'','location':'','message':message,'aggregate':False,'reason':message,'status':None})
                     break
                 try:
                     output, receipt = runner(role_name=f"formal_{group}_{start // BATCH_SIZE + 1}", role=role,
                         system_prompt=PROMPT.read_text(), user_prompt=packet, schema=REPORT_SCHEMA,
                         workdir=directory / f"{group}-{start // BATCH_SIZE + 1}", timeout=timeout)
-                except (LaunchError, ValueError) as exc:
-                    errors.append(f"{group} batch {start // BATCH_SIZE + 1}: actual verifier failed: {exc}")
+                except (LaunchError, ValueError, OSError) as exc:
+                    message = f"{group} batch {start // BATCH_SIZE + 1}: actual verifier failed: {exc}"
+                    errors.append(message)
+                    findings.append({'category':'technical','root':'','location':'','message':message,'aggregate':False,'reason':message,'status':None})
                     continue
                 try:
                     batch_coverage(output, group, batch)
-                except (LaunchError, ValueError) as exc:
-                    errors.append(f"{group} batch {start // BATCH_SIZE + 1}: coverage protocol failure: {exc}")
+                except (LaunchError, ValueError, OSError) as exc:
+                    message = f"{group} batch {start // BATCH_SIZE + 1}: coverage protocol failure: {exc}"
+                    errors.append(message)
+                    findings.append({'category':'technical','root':'','location':'','message':message,'aggregate':False,'reason':message,'status':None})
                     # Retain the actual JSON and receipt; never rewrite IDs or
                     # discard a negative role in favor of a passing retry.
                     if not isinstance(output, dict) or not isinstance(output.get(group), list):
@@ -676,18 +804,39 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
                 receipts.append({"receipt": receipt, "group": group,
                     "workdir": workdir.relative_to(root).as_posix()})
     try:
-        errors.extend(report_blockers(report, inv, sources))
+        errors.extend(report_blockers(report, inv, sources, findings=findings, artifacts=artifacts))
     except (ValueError, LaunchError) as exc:
-        errors.append(f"Coverage/evidence verification failed: {exc}")
+        message = f"Coverage/evidence verification failed: {exc}"
+        errors.append(message)
+        findings.append({'category':'technical','root':'','location':'','message':message,'aggregate':False,'reason':message,'status':None})
+        # A malformed batch must not hide actual scientific negatives already
+        # returned elsewhere, or turn a mixed run into a free technical retry.
+        for group in ('references', 'passages'):
+            for row in report[group]:
+                root_id = str(row.get('passage_id', row.get('key', '')))
+                def retain(value, location):
+                    if isinstance(value, dict):
+                        if value.get('status') in {'error','gap','unchecked'}:
+                            if not any(f['root']==root_id and f['location']==location and f.get('status') for f in findings):
+                                findings.append({'category':'scientific','root':root_id,'location':location,
+                                    'message':f"{location}: {value['status']}",'aggregate':location==root_id,
+                                    'reason':json.dumps(value,ensure_ascii=False),'status':value['status']})
+                        for k,v in value.items(): retain(v,location+'/'+k)
+                    elif isinstance(value,list):
+                        for i,v in enumerate(value):retain(v,location+'/'+str(i))
+                retain(row,root_id)
+    summary = issue_summary(findings)
     result = {"schema": VERSION, "paper_id": metadata["paper_id"], "manuscript_version": str(metadata.get("version") or ""),
         "policy": policy(), "role": dict(role), "inventory": inv,
         "source_plan_sha256": digest(source_plan(metadata)), "sources": sources,
         "report": report, "receipts": receipts, "blockers": errors, "valid": not errors,
+        "issue_summary": summary, "artifact_inventory": artifacts,
         "machine_proof_of_whole_manuscript": False, "verified_at": datetime.now(UTC).isoformat()}
     path = directory / "report.json"
     path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     return {"path": path.relative_to(root).as_posix(), "sha256": sha(path.read_bytes()),
-            "valid": result["valid"], "blockers": errors, "schema": VERSION}
+            "valid": result["valid"], "blockers": errors, "schema": VERSION,
+            "issue_summary": summary}
 
 
 def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
@@ -711,6 +860,10 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
         documents, bibliography = current_inputs(metadata, root)
         if result["inventory"] != inventory(documents, bibliography):
             raise ValueError("Formal-check coverage does not match current manuscript and bibliography")
+        if result.get('artifact_inventory') != artifact_inventory(metadata, root):
+            raise ValueError('Configured preparation artifact inventory changed')
+        if local_route_preflight(metadata, result['inventory'], root):
+            raise ValueError('Current local source routing is invalid')
         for source in result["sources"]:
             for field in ("body", "text"):
                 evidence_path = _safe_file(root, source[field + "_path"])
@@ -744,7 +897,7 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             if actual_receipt != receipt:
                 raise ValueError("Formal role receipt changed")
             batch = result["inventory"][group][start:start + BATCH_SIZE]
-            expected_prompt = PROMPT.read_text() + "\n\n" + batch_packet(group, batch, documents, result["inventory"], result["sources"], root=root)
+            expected_prompt = PROMPT.read_text() + "\n\n" + batch_packet(group, batch, documents, result["inventory"], result["sources"], root=root, artifacts=result['artifact_inventory'])
             if _safe_file(root, workdir + "/prompt.txt").read_text() != expected_prompt:
                 raise ValueError("Formal role did not inspect the exact bound manuscript, batch and source evidence")
             output = json.loads(_safe_file(root, workdir + "/output.json").read_text())
@@ -752,7 +905,12 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             reconstructed[group].extend(output[group])
         if reconstructed != result["report"]:
             raise ValueError("Formal report differs from the actual independent outputs")
-        return report_blockers(result["report"], result["inventory"], result["sources"])
+        findings = []
+        blockers = report_blockers(result["report"], result["inventory"], result["sources"],
+                                   findings=findings, artifacts=result['artifact_inventory'])
+        if result.get('issue_summary') != issue_summary(findings):
+            raise ValueError('Formal issue summary differs from actual raw findings')
+        return blockers
     except (ValueError, KeyError, TypeError, OSError, LaunchError) as exc:
         return [f"Mandatory formal check: {exc}"]
 

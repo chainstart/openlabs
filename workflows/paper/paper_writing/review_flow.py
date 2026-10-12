@@ -464,6 +464,8 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
         documents, bibliography = formal_checks.current_inputs(metadata, root)
         formal_inventory = formal_checks.inventory(documents, bibliography)
         formal_checks.source_plan(metadata)
+        blockers.extend(formal_checks.local_route_preflight(metadata, formal_inventory, root))
+        blockers.extend(formal_checks.artifact_inventory(metadata, root)['blockers'])
     except (ValueError, OSError) as exc:
         blockers.append(f"Formal-check inventory: {exc}")
         formal_inventory = None
@@ -923,7 +925,8 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
 
 def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
           history_blockers: list[str] | None = None, *,
-          previous_ids: set[str] | None = None, formal_blockers: list[str] | None = None) -> dict[str, Any]:
+          previous_ids: set[str] | None = None, formal_blockers: list[str] | None = None,
+          formal_summary: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Conservative deterministic merge. It can only make the outcome stricter."""
     # Compatibility with the earlier numbered-item API; the current pipeline
     # supplies rejection blockers as a list and constrains exact mandatory items
@@ -937,8 +940,16 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
                 "scientific_blockers": history_blockers, "required_changes": [],
                 "next_action": "evidence_remediation"}
     if formal_blockers:
+        categories = (formal_summary or {}).get('by_category', {})
+        # Legacy callers remain conservatively scientific. New runs retain the
+        # complete raw blocker list separately and present distinct root causes.
+        scientific = categories.get('scientific', formal_blockers)
         return {"outcome": "formal_check_blocked", "recommendation": None,
-                "scientific_blockers": formal_blockers, "required_changes": [],
+                "scientific_blockers": scientific, "required_changes": [],
+                "technical_blockers": categories.get('technical', []),
+                "source_routing_blockers": categories.get('source_routing', []),
+                "preparation_blockers": categories.get('preparation', []),
+                "raw_formal_blockers": formal_blockers,
                 "unresolved_previous_items": [], "next_action": "evidence_remediation"}
     if editor["decision"] != "send_to_review":
         category = editor["desk_reject_category"]
@@ -998,9 +1009,16 @@ def completed_rounds(root: Path, paper_id: str, target: str) -> list[dict[str, A
     return rows
 
 
+def scientific_rounds(root: Path, paper_id: str, target: str) -> list[dict[str, Any]]:
+    # Old decisions keep their historical count. Only future explicit technical
+    # records are excluded; no retrospective relabeling of prior rounds.
+    return [r for r in completed_rounds(root, paper_id, target)
+            if r.get('stage_reached') == 'decision' and r.get('consumes_scientific_round', True)]
+
+
 def _previous_round(root: Path, paper_id: str, target: str, expanded: str, response: str | None,
                     history_policy: Mapping[str, Any] | None = None):
-    rounds = [r for r in completed_rounds(root, paper_id, target) if r.get("stage_reached") == "decision"]
+    rounds = scientific_rounds(root, paper_id, target)
     if not rounds:
         return None
     last = rounds[-1]
@@ -1090,7 +1108,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                    "preflight_blockers": pre["blockers"], "next_action": "text_revision"}}
         _json_dump(run / "decision.json", record)
         return record | {"run_dir": str(run.relative_to(root))}
-    rounds = [r for r in completed_rounds(root, paper_id, target) if r.get("stage_reached") == "decision"]
+    rounds = scientific_rounds(root, paper_id, target)
     if len(rounds) >= config["max_rounds_per_target"]:
         raise ValueError(f"{paper_id} has used all {config['max_rounds_per_target']} review rounds for {target}; "
                          "a user decision (retarget, more research, or stop) is required")
@@ -1118,6 +1136,8 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
         except (ValueError, OSError, LaunchError) as exc:
             formal = {"valid": False, "schema": formal_checks.VERSION}
             formal_blockers = [f"Mandatory formal-check stage failed: {exc}"]
+            formal['issue_summary'] = {'by_category': {'scientific': [], 'technical': formal_blockers,
+                                                       'source_routing': [], 'preparation': []}}
         record["formal_check"] = formal
         if not formal_blockers:
             pre = dict(pre, formal_check_packet=formal_checks.packet(formal, root))
@@ -1135,7 +1155,13 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                 expected = set(previous['items']) if previous else set()
                 if {i['item'] for i in referees[name]['previous_items']} != expected:
                     raise ValueError('Referee omitted or introduced a previous mandatory item')
-    merged = merge(editor, referees, history_blockers, formal_blockers=formal_blockers)
+    formal_summary = record.get('formal_check', {}).get('issue_summary')
+    if formal_blockers and formal_summary and not any(formal_summary.get('by_category', {}).values()):
+        formal_summary = {'by_category': {'scientific': [], 'technical': formal_blockers}}
+    merged = merge(editor, referees, history_blockers, formal_blockers=formal_blockers,
+                   formal_summary=formal_summary)
+    consumes_round = not (formal_blockers and formal_summary is not None
+                          and not merged['scientific_blockers'] and not history_blockers)
     letter_packet = json.dumps({"fixed_decision": merged, "editor_screen": editor, "referee_reports": referees,
                                "formal_check": record.get("formal_check"),
                                "formal_check_report": pre.get("formal_check_packet")},
@@ -1145,7 +1171,10 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                                       schema=LETTER_SCHEMA, workdir=run / "decision-letter",
                                       timeout=config["timeout_seconds"])
     receipts["decision_letter"] = letter_receipt
-    record |= {"stage_reached": "decision", "round_for_target": len(rounds) + 1, "editor_screen": editor,
+    record |= {"stage_reached": "decision", "round_for_target": len(rounds) + int(consumes_round),
+               "consumes_scientific_round": consumes_round,
+               "round_count_basis": "substantive judgment; pure technical/source-routing/preparation failures excluded",
+               "editor_screen": editor,
                "referee_reports": referees, "merged": merged, "letter": letter["letter"], "receipts": receipts,
                "prior_decisions": decisions, "editorial_history_blockers": history_blockers,
                "previous_required_items": list(previous['items']) if previous else [],

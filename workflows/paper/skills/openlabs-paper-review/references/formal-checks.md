@@ -54,7 +54,8 @@ Correct metadata is not proof of theoretical or empirical correctness. An actual
 error, unjustified inference or uncheckable scientific claim remains blocking;
 missing original-document access alone does not.
 
-Prerequisite kinds are `external`, `internal_derivation`, `empirical_evidence`.
+Prerequisite kinds are `external`, `internal_derivation`, `empirical_evidence`
+and `artifact_preparation`.
 For external results, state the identifiable result, its hypotheses/conclusion,
 the manuscript instantiation, and concrete condition/formula checks. Valid cited
 reference keys are required; original-page quotes and original-document downloads
@@ -62,7 +63,8 @@ are optional. Do not invent a page/theorem number or claim to have read unavaila
 text. If substantive source quotes are used, they must come from actual primary
 text rather than metadata. For internal derivations, independently reconstruct the
 actual proof; `original_locator` must be an actual inventory passage ID or a literal
-current manuscript proof excerpt of at least 12 characters. No external keys or
+current manuscript proof excerpt of at least 12 non-padding characters, allowing
+only whitespace folding in comparison. No external keys or
 evidence are used. Do not misclassify an unproved borrowed result as internal.
 
 Local evidence must be explicitly selected, SHA-256 bound, nonempty UTF-8, and
@@ -99,9 +101,22 @@ Optional primary URLs can declare inclusive PDF `pages: [first, last]` and
 ranges of at most 30 PDF pages and available tools; it retains original PDF, images
 and fallible transcription. OCR availability is not a gate requirement. Source type
 and identifiers are checked after redirects; HTTP 200 challenge pages are rejected.
-Any quote used must be a literal retained substring of at least 12 trimmed characters,
+Any quote used must match a retained substring after whitespace folding only,
+with at least 12 non-padding characters,
 with actual source ID and locator. The catalog lists out-of-batch records; unseen
-text is not quoted evidence. Packets are bounded, never silently truncated.
+text is not quoted evidence. Case, symbols, punctuation and hyphenation are not
+normalized; original bytes and all evidence hashes remain unchanged. Packets are
+bounded, never silently truncated. Each configured local selector and evidence
+hash is checked before any model call; unmatched or unbound routes fail as
+source-routing issues, never as automatic scientific verification.
+
+Configured main/supplement PDFs and registered source/support ZIPs receive
+deterministic presence, format, archive-integrity and hash checks. A pure file-
+availability prerequisite uses `artifact_preparation` and its exact inventory
+ID, empty external keys/evidence, and concrete inventory rationale. This cannot
+establish reproducibility or a scientific result. Missing artifacts still block
+preparation/delivery. Final journal ZIP generation remains an official handoff
+step when not yet registered; do not require that post-gate product before review.
 
 An authenticated current support draft verifies this paper's prepared supporting
 package identity only. Publication/readback remains required separately by the
@@ -116,8 +131,14 @@ bin/openlabs-resource-guard --task-type cpu -- env PYTHONPATH=workflows/paper \
 
 Without `--inventory`, a standalone audit writes private records and exits nonzero
 on incomplete verification; it cannot set the manuscript gate. The sole route to
-`writing_release: ready` is fresh unified review. Formal failure counts as an
-ordinary review round and stops before the referee. Never construct model outputs,
+`writing_release: ready` is fresh unified review. Any formal failure stops before
+the referee. New runs containing only protocol/service, routing or preparation
+failures do not consume a scientific round, but cannot pass. A mixed run with an
+actual scientific error/gap/unchecked item does consume a round. Old decisions
+retain their historical counts and contents. The complete raw coverage, negative
+entries and flat blocker list are preserved; author-facing typed root causes
+suppress only a parent's aggregation of its nested failures, never distinct
+checks merely sharing the same status. Never construct model outputs,
 receipts or passing records. Actual invalid outputs and negative findings remain
 retained; no repaired IDs or substituted passing retries. Revisions happen outside
 review and receive a fresh run and response letter.

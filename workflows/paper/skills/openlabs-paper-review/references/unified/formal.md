@@ -56,7 +56,8 @@ If quoting substantive source evidence, use actual primary_text; catalogs and
 metadata must not masquerade as theorem statements.
 Set kind=internal_derivation only for a result explicitly proved in the complete
 current manuscript. original_locator must be an actual supplied passage ID or
-an exact literal proof excerpt of at least 12 characters from the manuscript.
+an actual proof excerpt of at least 12 non-padding characters from the manuscript;
+pure whitespace differences are allowed by the validator.
 Independently reconstruct its hypotheses, conclusion and reasoning. It has no
 external reference_keys or evidence. Do not relabel an unproved borrowed theorem.
 Set kind=empirical_evidence for own numerical, implementation, protocol or author-
@@ -99,9 +100,34 @@ These source types retain their limited scopes. An author confirmation of code
 inspection/responsibility does not confirm inspection of all historical prose
 or personal execution/validation of every experiment.
 
-Any supplied quote must be a literal substring of the bound source text of at
-least 12 trimmed characters, with its actual source_id and precise field/page/
-section locator. Do not normalize whitespace, PDF hyphenation or spelling.
+File existence, PDF format, archive integrity and registered artifact hashes are
+preparation checks, supplied in deterministic_preparation_inventory. For a pure
+claim that a configured PDF/ZIP is provided, use kind=artifact_preparation with
+original_locator equal to its inventory id, empty reference_keys and evidence,
+and concrete inventory-based rationale. Do not create a scientific empirical
+gap merely because this existence fact is not in an execution_record. Missing
+or invalid configured artifacts block preparation and delivery separately.
+An unregistered final journal ZIP is constructed and verified by official
+handoff after gate clearance; its earlier absence is not a scientific gap.
+These checks never establish reproducibility, numerical agreement or validity:
+claims about results and execution still require real empirical evidence.
+A registered historical journal ZIP may be present without matching the current
+article version. Report its actual inventory identity; never infer that it
+contains current sources or new results. Official handoff checks current source
+correspondence and rebuilds the final package as needed.
+
+Preserve every formula/citation occurrence and negative result. A passage's
+parent status summarizes its nested checks; state the concrete distinct causes
+in those nested checks rather than inventing additional independent defects.
+Missing declared routes and service/protocol failures are infrastructure issues,
+not mathematical counterexamples. Never mark an unknown scientific claim
+verified to compensate for a missing route or unavailable service.
+
+Any supplied quote must match the bound source text after folding whitespace
+only, and contain at least 12 non-padding characters, with its actual source_id
+and precise field/page/section locator. Original bytes and hashes remain bound.
+Case, punctuation, mathematical symbols, PDF hyphenation and spelling must match;
+whitespace equivalence does not authorize dehyphenation or transcription repair.
 The source catalog describes records outside this batch; unseen text is not
 quoted evidence. Optional OCR is fallible; inspect original retained images
 for ambiguous symbols if using that transcription. Do not turn OCR availability
