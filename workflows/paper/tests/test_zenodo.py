@@ -75,15 +75,21 @@ def test_delete_file_uses_deposition_file_endpoint() -> None:
 
 
 def test_get_deposition_requests_fresh_authenticated_state_only_on_get() -> None:
+    read_urls = []
     def respond(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.headers["authorization"] == "Bearer test-token"
         assert request.headers["cache-control"] == "no-cache, no-store"
         assert request.headers["pragma"] == "no-cache"
+        assert request.url.path == "/api/deposit/depositions/42"
+        assert request.url.params["cache_bust"]
+        assert str(request.url) not in read_urls
+        read_urls.append(str(request.url))
         return httpx.Response(200, json={"id": 42, "submitted": False, "files": []})
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
         client = ZenodoClient("sandbox", "test-token", client=http_client)
+        assert client.get_deposition(42)["id"] == 42
         assert client.get_deposition(42)["id"] == 42
         assert client.headers == {"Authorization": "Bearer test-token"}
 

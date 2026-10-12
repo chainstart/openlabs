@@ -313,10 +313,13 @@ class ZenodoClient:
         )
 
     def get_deposition(self, deposition_id: int | str) -> dict[str, Any]:
+        # Some gateways cache failed authenticated GETs despite no-cache headers.
+        # A unique URL makes each identity/file inventory check a fresh read.
         return self._json(
             self.client.get(
                 f"{self.api_url}/deposit/depositions/{deposition_id}",
                 headers={**self.headers, "Cache-Control": "no-cache, no-store", "Pragma": "no-cache"},
+                params={"cache_bust": str(time.time_ns())},
             ),
             "read Zenodo deposition",
         )
