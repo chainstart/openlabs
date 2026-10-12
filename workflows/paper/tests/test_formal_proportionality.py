@@ -25,6 +25,24 @@ def test_whitespace_quote_equivalence_still_binds_raw_source(tmp_path, monkeypat
     assert any('insufficient quotation' in x for x in f.report_blockers(d['report'],d['inventory'],d['sources']))
 
 
+def test_compact_packet_preserves_all_fields_source_text_and_bound_prompt(tmp_path,monkeypatch):
+    m,b,d=run_fixture(tmp_path,monkeypatch)
+    docs,bib=f.current_inputs(m,tmp_path);inv=f.inventory(docs,bib)
+    artifacts=f.artifact_inventory(m,tmp_path)
+    text=f.batch_packet('passages',inv['passages'],docs,inv,d['sources'],root=tmp_path,artifacts=artifacts)
+    packet=json.loads(text)
+    expected={'scope':'passages','items':inv['passages'],'complete_manuscript':docs,
+        'evidence_root':str(tmp_path.resolve()),'deterministic_preparation_inventory':artifacts,
+        'complete_bibliography':inv['references'],'retrieved_sources':d['sources'],
+        'available_source_catalog':[{k:v for k,v in s.items() if k!='text'} for s in d['sources']]}
+    assert packet==expected
+    assert text==json.dumps(expected,ensure_ascii=False,separators=(',',':'))
+    assert len(text.encode())<len(json.dumps(expected,ensure_ascii=False).encode())
+    for source in packet['retrieved_sources']:
+        assert source['text']==next(s['text'] for s in d['sources'] if s['id']==source['id'])
+    assert f.validate_binding(b,m,tmp_path,ROLE)==[]
+
+
 def test_internal_locator_only_whitespace_is_equivalent(tmp_path,monkeypatch):
     _,_,d=run_fixture(tmp_path,monkeypatch)
     p=next(p for p in d['report']['passages'] if p['prerequisites'])

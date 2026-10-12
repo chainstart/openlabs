@@ -727,7 +727,8 @@ def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[s
         "evidence_root": str(root.resolve()) if root else None,
         "deterministic_preparation_inventory": artifacts or {},
         "complete_bibliography": inv["references"], "retrieved_sources": selected,
-        "available_source_catalog": [{k: v for k, v in s.items() if k != "text"} for s in sources]}, ensure_ascii=False)
+        "available_source_catalog": [{k: v for k, v in s.items() if k != "text"} for s in sources]},
+        ensure_ascii=False, separators=(',', ':'))
 
 
 def batch_coverage(output: Mapping[str, Any], group: str, batch: list[dict[str, Any]]) -> None:
