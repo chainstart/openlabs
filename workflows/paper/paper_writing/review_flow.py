@@ -978,8 +978,12 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
         assessment = report.get("formal_check_assessment")
         if assessment is not None:
             if assessment.get("coverage_complete") is not True:
-                blockers.append(f"{name}: bibliography/prerequisite coverage remains incomplete")
-            blockers.extend(f"{name}: formal check: {item}" for item in assessment.get("omissions_or_errors", []))
+                blockers.append(f"{name}: scientific argument coverage remains incomplete")
+            # This pre-verification diagnostic is not the independent formal
+            # report. Actual unsupported scientific claims must be recorded in
+            # scientific_blockers; text requests remain typed required_changes.
+            # Preserve diagnostic observations in the actual referee report,
+            # without automatically upgrading every observation into a defect.
     changes = [dict(c, referee=name) for name, r in referees.items() for c in r["required_changes"]]
     unresolved_previous = [dict(p, referee=name) for name, r in referees.items()
                            for p in r["previous_items"] if not p["resolved"]

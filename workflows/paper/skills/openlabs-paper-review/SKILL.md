@@ -30,6 +30,10 @@ keep internal review negotiation and claims about editor approval outside the pa
    novelty, significance for the target, correctness, experimental credibility,
    actual previous objections and required changes. Do not defer this judgment
    until a paragraph/quote audit passes.
+The referee records actual unsupported main claims in `scientific_blockers` and
+local prose/index repairs as typed changes. Its pre-verification diagnostic is
+preserved; a diagnostic observation is not automatically a scientific defect.
+
 4. If the scientific decision can advance, independent **bibliography and core
    mathematics** verification. Every printed reference is checked against authoritative
    database/catalog metadata; no original document is required. Mathematical scope

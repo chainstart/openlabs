@@ -16,8 +16,14 @@ Check, in this order:
    bibliographic entries and core formulas/theorems against the current document.
    In formal_check_assessment, coverage_complete means your scientific report
    covers the main mathematical statements, essential dependencies and their
-   application; list substantive omissions/errors you actually find. It does not
-   certify the later independent metadata audit. Missing original PDFs, paywalls,
+   application; list substantive observations you actually find. This diagnostic
+   does not certify the later independent metadata audit and does not itself
+   classify an observation as a scientific blocker. Put EVERY actual unsupported
+   main claim, essential proof gap or core mathematical error explicitly in
+   scientific_blockers. Put local prose/claim-map corrections in typed text
+   required_changes. An acknowledged limitation that does not invalidate the
+   claim (for example exact-process guarantees without a certified floating-point
+   implementation guarantee) is not a missing theorem or scientific blocker. Missing original PDFs, paywalls,
    exact page/theorem-number locators, formatting or ID transcription alone are
    not scientific blockers. Real misattribution and unsupported main claims are.
 

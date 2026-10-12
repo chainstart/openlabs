@@ -280,7 +280,7 @@ def test_no_doi_valid_publisher_source(tmp_path, monkeypatch):
 
 def test_referee_can_block_misclassified_prerequisites():
     editor = {"decision": "send_to_review", "desk_reject_category": "none"}
-    referee = {"recommendation": "accept", "scientific_blockers": [], "required_changes": [], "previous_items": [],
+    referee = {"recommendation": "accept", "scientific_blockers": ["Uncited independence assumption"], "required_changes": [], "previous_items": [],
         "formal_check_assessment": {"coverage_complete": False, "omissions_or_errors": ["Uncited independence assumption"]}}
     result = flow.merge(editor, {"referee_b": referee})
     assert result["outcome"] != "ready" and result["next_action"] == "evidence_remediation"
@@ -650,3 +650,28 @@ def test_signed_urls_excluded_from_local_model_records(tmp_path, query):
     docs, bib = formal.current_inputs(metadata, tmp_path)
     with pytest.raises(ValueError, match="private service"):
         formal._local_records(plan, formal.inventory(docs, bib), tmp_path, tmp_path)
+
+
+def test_scientific_diagnostic_does_not_upgrade_text_or_acknowledged_limitations():
+    editor = {"decision": "send_to_review", "desk_reject_category": "none"}
+    report = {"recommendation": "minor_revision", "scientific_blockers": [],
+        "required_changes": [{"change": "Update the historical claim-map identity", "location": "claim map", "type": "text"}],
+        "previous_items": [], "formal_check_assessment": {"coverage_complete": True,
+        "omissions_or_errors": ["Historical map version is stale", "No floating-point certificate; the theorem explicitly concerns the exact process"]}}
+    result = flow.merge(editor, {"referee_b": report})
+    assert result["outcome"] == "ready"
+    assert result["scientific_blockers"] == []
+    assert result["required_changes"][0]["type"] == "text"
+    report["scientific_blockers"] = ["The claimed theorem requires a missing independence assumption"]
+    blocked = flow.merge(editor, {"referee_b": report})
+    assert blocked["outcome"] != "ready"
+    assert blocked["scientific_blockers"] == report["scientific_blockers"]
+
+
+def test_incomplete_scientific_coverage_still_blocks():
+    editor = {"decision": "send_to_review", "desk_reject_category": "none"}
+    report = {"recommendation": "accept", "scientific_blockers": [], "required_changes": [],
+        "previous_items": [], "formal_check_assessment": {"coverage_complete": False, "omissions_or_errors": []}}
+    result = flow.merge(editor, {"referee_b": report})
+    assert result["outcome"] != "ready"
+    assert "scientific argument coverage" in result["scientific_blockers"][0]
