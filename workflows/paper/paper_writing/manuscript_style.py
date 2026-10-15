@@ -73,6 +73,33 @@ def _cited_model_subject_lines(lines: list[str]) -> set[int]:
             allowed.update(range(start, end))
         start = end + 1
     return allowed
+
+
+def _corporate_reference_lines(lines: list[str]) -> set[int]:
+    """Allow OpenAI as a cited corporate author, never preparation narration.
+
+    Inline TeX bibliographies are part of the TeX tree. A corporate author
+    there has the same status as an author field in a separate BibTeX file.
+    Restrict the exception to complete bibliography items without a preparation
+    cue, and continue checking every other manuscript/style rule.
+    """
+    allowed: set[int] = set()
+    start: int | None = None
+    for end in range(len(lines) + 1):
+        line = _strip_tex_comment(lines[end]) if end < len(lines) else ""
+        boundary = end == len(lines) or bool(re.search(
+            r"\\bibitem(?:\[[^]]*\])?\s*\{|\\end\{thebibliography\}", line))
+        if boundary and start is not None:
+            item = " ".join(_strip_tex_comment(s) for s in lines[start:end])
+            prose = re.sub(r"\bOpenAI\b", "corporate author", _mask_literal_paths(item), flags=re.I)
+            if (re.match(r"\\bibitem(?:\[[^]]*\])?\s*\{[^}]+\}\s*OpenAI\s*[,.:]", item)
+                    and not AI_PREPARATION_CUE.search(prose)
+                    and not re.search(r"\b(?:assisted|prompted|generated|ChatGPT|Codex|LLM)\b", item, re.I)):
+                allowed.update(range(start, end))
+            start = None
+        if end < len(lines) and re.search(r"\\bibitem(?:\[[^]]*\])?\s*\{", line):
+            start = end
+    return allowed
 CODE_CUE = re.compile(
     # GAP is the software acronym; ordinary "gap" and labels such as eq:gap
     # are mathematical prose, not evidence of computational code.
@@ -365,6 +392,7 @@ def audit_tex_tree(
         declaration_range = declaration_ranges.get(path, range(0, 0))
         lines = path.read_text(encoding="utf-8").splitlines()
         cited_model_lines = _cited_model_subject_lines(lines)
+        corporate_reference_lines = _corporate_reference_lines(lines)
         for index, raw in enumerate(lines):
             if UNRESOLVED_SOURCE_MARKER.search(raw):
                 issues.append(
@@ -394,7 +422,9 @@ def audit_tex_tree(
             scan_text = _mask_literal_paths(visible)
             if "AI Agent Lab" in scan_text:
                 scan_text = scan_text.replace("AI Agent Lab", "registered affiliation")
-            if AI_WORKFLOW_MARKER.search(scan_text) and index not in cited_model_lines:
+            if (AI_WORKFLOW_MARKER.search(scan_text)
+                    and index not in cited_model_lines
+                    and index not in corporate_reference_lines):
                 issues.append(
                     _issue(
                         "STYLE-AI-WORKFLOW-IN-BODY",

@@ -109,6 +109,32 @@ We used GPT-5 to draft the classification manuscript \citep{hu2021lora}.
         e["code"] for e in audit_tex_tree(main)["errors"]}
 
 
+def test_corporate_author_in_included_bibliography_is_not_tool_narration(tmp_path: Path) -> None:
+    main = _write(tmp_path, r"The result is in \cite{OpenAI332}.")
+    main.write_text(main.read_text().replace(r"\bibliographystyle{plain}", r"\input{references}"))
+    (tmp_path / 'references.tex').write_text(r"""
+\begin{thebibliography}{9}
+\bibitem{OpenAI332}
+OpenAI. Metric Markov cotype two of $\ell_1$.
+\url{https://github.com/openai/math/tree/123/preprints/example}.
+\end{thebibliography}
+""")
+    assert 'STYLE-AI-WORKFLOW-IN-BODY' not in {
+        e['code'] for e in audit_tex_tree(main)['errors']}
+
+
+def test_bibliography_cannot_hide_preparation_narration(tmp_path: Path) -> None:
+    main = _write(tmp_path, r"The result is classical.")
+    main.write_text(main.read_text().replace(r"\bibliographystyle{plain}", r"\input{references}"))
+    (tmp_path / 'references.tex').write_text(r"""
+\begin{thebibliography}{9}
+\bibitem{OpenAI332} OpenAI. Codex assisted with proof development.
+\end{thebibliography}
+""")
+    assert 'STYLE-AI-WORKFLOW-IN-BODY' in {
+        e['code'] for e in audit_tex_tree(main)['errors']}
+
+
 def test_style_check_rejects_todo_even_in_tex_comment(tmp_path: Path) -> None:
     main = _write(tmp_path, "% TODO(AUTHOR): add the final author list.\nThe result holds.")
 
