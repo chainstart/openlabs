@@ -69,6 +69,11 @@ quality_gate:
   target_fit_dimensions: [scope, audience, contribution_scale]
   require_two_recent_article_sources: true
   require_same_target_history_check: true
+  require_team_rejection_history_check_before_recommendation: true
+  team_rejection_history_settings_key: journal_target_policy.team_rejection_history
+  team_rejection_history_ledger: registry/journal-rejections.json
+  team_rejection_history_sync_command: python -m paper_writing journal-history sync
+  team_rejection_history_check_command: python -m paper_writing journal-history check --journal <journal>
   zenodo_public_identifier: display_id
   support_publication_settings_key: support_publication
   support_publication_default_license_key: default_license

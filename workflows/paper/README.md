@@ -1,5 +1,12 @@
 # OpenLabs paper workflow
 
+Before recommending or changing a journal, use `paper-writing journal-history sync` and
+`journal-history check --journal <title>` against the active data repository. Team-wide
+refusals live in `registry/journal-rejections.json` with a single generated CSV table and
+Markdown summary. The shared policy excludes journals at 3 distinct rejected team papers;
+2 means cautious alternative. Settings and exemptions for existing submissions are documented
+in [JOURNAL_HISTORY.md](../../docs/JOURNAL_HISTORY.md).
+
 This is the deterministic half of paper production: registry validation, evidence bundles,
 manuscript inventory, review-record validation, conservative minimum aggregation, quality gates,
 support checks, and immutable package construction. Writing and scientific judgment stay in the

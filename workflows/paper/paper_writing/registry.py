@@ -203,6 +203,7 @@ def load_registry(
                     paper_id=paper_id,
                     policy=global_settings.get("journal_target_policy"),
                     allow_blocked_history=True,
+                    root=repo_root,
                 )
         _validate_research_outcomes(paper, paper_id=paper_id)
         workspace = str(paper.pop("workspace", f"papers/{paper_id}")).strip("/")
@@ -285,11 +286,17 @@ def _validate_journal_target_policy(
     paper_id: str,
     policy: Any,
     allow_blocked_history: bool = False,
+    root: str | Path | None = None,
 ) -> None:
     """Validate the evidence-backed target required after a journal basic draft."""
 
     if not isinstance(policy, Mapping):
         return
+    from paper_writing.journal_history import guard_target
+    guard_target(
+        Path(root or repository_root()).resolve(), dict(paper, paper_id=paper_id),
+        policy=policy, preserve_historical_record=allow_blocked_history,
+    )
     # Explicit operational exclusions also apply to historically ranked targets.
     # Read-only inventory may still use enforce_target_policy=False to retain history.
     def journal_key(value: str) -> str:

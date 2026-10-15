@@ -429,6 +429,8 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
 
     load_registry(root, include_local_repositories=False, paper_ids=[paper_id])  # target-policy validation
     metadata = load_paper_metadata(paper_id, root)
+    from paper_writing.journal_history import guard_target
+    guard_target(root, metadata)  # New reviews cannot reuse an excluded historical target.
     blockers: list[str] = []
     if str(metadata.get("venue_type") or "journal") != "journal":
         blockers.append("The unified review currently supports journal manuscripts only")

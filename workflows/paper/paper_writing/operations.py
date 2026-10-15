@@ -508,6 +508,8 @@ def record_quality_gate(
         )
     minimum_score = float(gate.get("minimum_score", 5.0))
     payload = load_paper_metadata(paper_id, repo_root)
+    from paper_writing.journal_history import guard_target
+    guard_target(repo_root, payload)
     maximum_rounds, revision_exception = revision_round_policy(
         paper_id, payload, gate, root=repo_root
     )

@@ -34,6 +34,38 @@ erase history. For replacement journals explicitly check whether prior arXiv pos
 permission to post a preprint is not a requirement to do so. Do not mark an unverified policy as
 compliant. Historical ranking dates do not waive an explicit current exclusion.
 
+### Query team rejection history before recommending a journal
+
+The user instruction of 2026-10-15 requires a shared team-wide rejection table. Before any
+new shortlist, recommendation or retarget, refresh it with guarded
+`python -m paper_writing journal-history sync --root <paper_root>`, then query **each** candidate
+with `python -m paper_writing journal-history check --root <paper_root> --journal <title>`.
+The canonical ledger is `<paper_root>/registry/journal-rejections.json`; its CSV is the generated
+single detailed table and its Markdown view summarizes journals. Do not maintain a campaign-local
+copy as the decision source. Refresh after registering new decisions as well.
+
+Thresholds live only in `registry/settings.yaml#journal_target_policy.team_rejection_history`:
+by default, 3 distinct rejected team papers at a journal exclude it from new recommendations,
+2 place it among cautious alternatives, and 0–1 require the ordinary scope/contribution checks.
+Normalize journal names and aliases; never merge JCTA/JCTB, Annals/JACO, or European/Electronic
+Journal of Combinatorics. Each team paper counts once per journal, even after repeated letters
+or attempts. Conference rows remain visible but do not contribute to journal exclusions.
+Missing decision reasons stay missing. Closed/withdrawn attempts and internal reviews are not
+rejections. A missing, invalid or stale ledger blocks new selection until refreshed.
+
+Registry target validation, unified-review preflight and handoff enforce the team exclusion.
+Historical rejected records remain readable; an actual ongoing submission in the API-sourced
+ledger can continue its existing revision. This does not authorize a new submission to that
+journal, alter current external statuses or erase historical reviews. An author-side claim of
+scientific improvement cannot override a team exclusion. Keep the separate **per-paper**
+rejection count for CAS transfer-zone eligibility; the team total does not relax that policy.
+
+For rejection handling, follow `docs/JOURNAL_HISTORY.md#handling-a-rejection`: reconcile the
+actual external attempt, diagnose the current scientific/target gap, then save a per-paper plan
+with an action, deliverable and completion condition before retargeting. Keep later ongoing
+submissions in their follow-up queue and use the existing review router; do not interpret an
+old internal ready record as reversal of an external rejection.
+
 For a journal manuscript beyond its basic draft in a domain configured by
 `journal_target_policy`, the registry must identify a verified
 Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections target in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition,

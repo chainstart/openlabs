@@ -36,6 +36,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    history = subparsers.add_parser("journal-history", help="Refresh/query shared team rejection history before journal selection.")
+    history_commands = history.add_subparsers(dest="history_command", required=True)
+    history_sync = history_commands.add_parser("sync", help="Read management-site history and atomically refresh the local ledger and table.")
+    history_sync.add_argument("--root", default=str(default_repo_root()))
+    history_sync.add_argument("--snapshot", help="Import a previously captured full management-site JSON snapshot instead of using the API.")
+    history_check = history_commands.add_parser("check", help="Check a candidate; three distinct rejected papers exclude it by default.")
+    history_check.add_argument("--root", default=str(default_repo_root()))
+    history_check.add_argument("--journal", required=True)
+    history_summary = history_commands.add_parser("summary", help="Show the generated per-journal table.")
+    history_summary.add_argument("--root", default=str(default_repo_root()))
+
     scan = subparsers.add_parser("scan", help="Build the derived inventory snapshot.")
     _common_arguments(scan)
     scan.add_argument("--output", default=str(default_output_path()))
@@ -361,6 +372,30 @@ def _zenodo_release_arguments(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "journal-history":
+        from paper_writing import journal_history
+        root = Path(args.root).resolve()
+        try:
+            if args.history_command == "sync":
+                if args.snapshot:
+                    path = Path(args.snapshot).resolve()
+                    result = journal_history.refresh_history(root, json.loads(path.read_text()), source="management_site_snapshot_import")
+                else:
+                    result = journal_history.sync_from_site(root)
+                print(json.dumps({k: v for k, v in result.items() if k != "journals"}, ensure_ascii=False, indent=2))
+                return 0
+            if args.history_command == "check":
+                result = journal_history.check_journal(root, args.journal)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0 if result["eligible"] else 1
+            config = journal_history._policy(root)
+            path = journal_history._path(root, config)
+            journal_history.load_history(path)
+            print(path.with_suffix(".md").read_text())
+            return 0
+        except (OSError, ValueError, KeyError) as exc:
+            print(json.dumps({"valid": False, "error": str(exc)}, ensure_ascii=False))
+            return 2
     if args.command == "scan":
         payload = build_inventory(args.root, config=load_config(args.config))
         output = write_inventory(payload, args.output)

@@ -1247,6 +1247,8 @@ def validate_release_preconditions(
         )
 
     settings = load_registry(repo_root, include_local_repositories=False, paper_ids=[paper_id])
+    from paper_writing.journal_history import guard_target
+    guard_target(repo_root, metadata)
     configured_gate = settings.get("quality_gate")
     configured_gate = configured_gate if isinstance(configured_gate, Mapping) else {}
     support_policy = publication_policy(settings)

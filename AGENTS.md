@@ -66,6 +66,14 @@ See `RESOURCE_GUARD.md` for installation, monitoring and recovery commands.
 
 # Paper target policy
 
+Before any journal recommendation or retarget, refresh and query the shared team rejection
+ledger using `paper-writing journal-history sync` and `paper-writing journal-history check`.
+The data repository owns `registry/journal-rejections.json` (canonical), `.csv` (detailed table)
+and `.md` (journal summary). Thresholds are in
+`registry/settings.yaml#journal_target_policy.team_rejection_history`: exclude at 3 distinct
+rejected team papers; 2 is a cautious alternative. Apply across all disciplines. Preserve
+ongoing submissions and historical evidence; see `docs/JOURNAL_HISTORY.md`.
+
 For every journal manuscript beyond its basic draft, use the domain-specific target policy in
 `workflows/paper/skills/profiles.yaml` and the active data repository's
 `registry/settings.yaml`.
