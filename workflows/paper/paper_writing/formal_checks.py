@@ -996,7 +996,9 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
                 evidence_path = _safe_file(root, source[field + "_path"])
                 if sha(evidence_path.read_bytes()) != source[field + "_sha256"]:
                     raise ValueError("Retrieved primary evidence changed or is missing")
-            if _safe_file(root, source["text_path"]).read_text() != source["text"]:
+            # Publisher text may contain CRLF/CR. Preserve the same UTF-8
+            # bytes whose SHA was just checked; read_text translates newlines.
+            if _safe_file(root, source["text_path"]).read_bytes().decode("utf-8") != source["text"]:
                 raise ValueError("Reported source text differs from the actual evidence file")
         if not result["receipts"]:
             raise ValueError("Formal verification lacks independent actual-model receipts")

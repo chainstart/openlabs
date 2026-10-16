@@ -199,6 +199,25 @@ def test_valid_full_pipeline_and_revalidation(tmp_path, monkeypatch):
     assert "not a machine proof" in formal.packet(binding, tmp_path)
 
 
+@pytest.mark.parametrize('line_ending', ['\n', '\r\n', '\r'])
+def test_source_text_preserves_exact_line_endings_at_revalidation(tmp_path, monkeypatch, line_ending):
+    # Publisher responses can legitimately contain CRLF or CR. The recorded
+    # text and its exact SHA must agree without universal-newline conversion.
+    monkeypatch.setitem(globals(), 'PRIMARY', PRIMARY + line_ending + 'Publisher footer' + line_ending)
+    metadata, binding, result = run_fixture(tmp_path, monkeypatch)
+    source = next(s for s in result['sources'] if s['kind'] == 'primary_text')
+    path = tmp_path / source['text_path']
+    assert path.read_bytes() == source['text'].encode('utf-8')
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
+
+    # Changing only line endings after review still changes the exact bytes
+    # and must be refused, even though a normal text reader hides the change.
+    replacement = '\r\n' if line_ending == '\n' else '\n'
+    path.write_bytes(source['text'].replace(line_ending, replacement).encode('utf-8'))
+    assert any('evidence changed' in error for error in
+               formal.validate_binding(binding, metadata, tmp_path, ROLE))
+
+
 @pytest.mark.parametrize("mutation", ["missing_reference", "duplicate_passage", "missing_formula", "missing_citation",
     "wrong_cited_key", "invented_source", "invented_quote", "metadata_for_theorem", "unchecked_formula",
     "unchecked_reference", "unchecked_citation", "unchecked_prerequisite", "empty_conditions", "uncited_prerequisite"])
