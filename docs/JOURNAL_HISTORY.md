@@ -65,8 +65,7 @@ team threshold; this exemption does not apply to a different paper or recommenda
 
 This rule adds to existing explicit exclusions, CAS ranking, fee, scope, contribution and
 same-paper history checks. A low team refusal count is not evidence of acceptance probability.
-Per-paper CAS transfer-zone eligibility continues to use that paper's own sourced rejection
-history; the team total never relaxes its zone limit. Changing the global exclusion requires
+User instruction 2026-10-16 supersedes the former rejection-stage selection limits: new recommendations and retargets search directly in 2025 CAS upgraded-edition major-category Zone 4, regardless of rejection count. The canonical setting is `journal_target_policy.new_selection_tiers: [4]`. Historical targets and ongoing submissions/revisions are preserved. Rejection records remain required scientific provenance; team totals never substitute for a paper's own history. Changing the global exclusion requires
 an explicit policy change, not a favorable model review or a new cover letter.
 
 Regression tests: `workflows/paper/tests/test_journal_history.py`.

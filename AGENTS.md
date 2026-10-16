@@ -78,7 +78,7 @@ For every journal manuscript beyond its basic draft, use the domain-specific tar
 `workflows/paper/skills/profiles.yaml` and the active data repository's
 `registry/settings.yaml`.
 
-- Select only a journal verified as Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections in the **2025 edition of the Chinese Academy
+- User instruction 2026-10-16 supersedes the former rejection-stage selection rule: for every new journal recommendation or retarget, search directly and only within verified major-category Zone 4 journals, regardless of prior rejection count. Preserve existing targets and ongoing revisions/submissions unless separately retargeting them. Use the **2025 edition of the Chinese Academy
   of Sciences Journal Ranking Table, upgraded edition, major-category partition**. This 2025 CAS
   major-category table is the repository's fixed journal-classification baseline until a human
   explicitly changes the policy. JCR/WOS/JCI quartiles, CAS subject-category partitions, and

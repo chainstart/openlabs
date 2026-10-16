@@ -68,7 +68,7 @@ old internal ready record as reversal of an external rejection.
 
 For a journal manuscript beyond its basic draft in a domain configured by
 `journal_target_policy`, the registry must identify a verified
-Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections target in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition,
+Zone 4 target for every new recommendation or retarget, regardless of prior rejection count, under the user instruction of 2026-10-16. Preserve historical targets and ongoing revisions/submissions. Classify using the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition,
 using its major-category partition, an official no-mandatory-author-fee publication route, and the
 official formatting source. The record must bind year `2025`, scope `major_category`, the
 major-category name, source, and check date. Never relabel a JCR/WOS/JCI quartile, a CAS
@@ -76,9 +76,7 @@ subject-category result, or a XinRui tier as the CAS major-category zone. The ca
 `manuscript/` must be marked and checked as the venue-specific edition. A side candidate alone is
 a blocker. Public Zenodo ZIP names and enclosing roots must use the registered `display_id`.
 
-The rejection-stage rule was authorized on 2026-09-19. `allowed_tiers` is the first-submission
-baseline; `allowed_tiers_after_rejections` maps one rejection to zones 1–3 and two or more to
-zones 1–4. Before selecting a lower-zone transfer target, reconcile management-site submission
+The rejection-stage selection rule of 2026-09-19 was superseded on 2026-10-16 by direct Zone 4 selection, stored in `journal_target_policy.new_selection_tiers`. Compatibility lists retain historical target validation and authorize Zone 4 at every rejection stage; they do not authorize new Zone 1–3 recommendations. Before selecting a transfer target, reconcile management-site submission
 history with actual decision letters and record distinct external journal rejections in the paper's
 `journal_rejections` list. Each entry requires `journal` (canonical title), `manuscript_number`,
 `rejected_at` (YYYY-MM-DD, no later than target verification), and `source` (auditable local
