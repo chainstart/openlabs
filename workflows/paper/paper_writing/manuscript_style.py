@@ -2,7 +2,7 @@
 
 The checker is intentionally narrow.  It rejects repository-workflow residue and
 AI/tool narration in the scientific body, while allowing a truthful, final AI-use
-declaration and a registered institutional affiliation whose name contains ``AI
+declaration, source-bound publisher-required explanatory-image caption credits, and a registered institutional affiliation whose name contains ``AI
 Agent Lab``.  Repository policy requires the final declaration; the checker does
 not attempt to score prose quality.
 """
@@ -10,6 +10,8 @@ not attempt to score prose quality.
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -366,6 +368,100 @@ def _declaration_ranges(
     return ranges, issues
 
 
+def _artwork_caption_credits(files: list[Path], manuscript: Path, root: Path,
+                            bindings: Any) -> tuple[dict[tuple[Path, int], str], list[dict[str, Any]]]:
+    """Recognize source-bound publisher-required image credits, never body narration.
+
+    One consolidated final declaration remains compulsory. An image credit is
+    allowed only in the actual caption of its exact explanatory artwork, with
+    a hash-bound generation record and explicit unavailable-model disclosure.
+    """
+    credits: dict[tuple[Path, int], str] = {}
+    errors = []
+    if bindings is None:
+        return credits, errors
+    if not isinstance(bindings, list):
+        return credits, [_issue('STYLE-ARTWORK-PROVENANCE', 'Artwork disclosures must be source-bound records', root=root)]
+
+    def safe_file(base: Path, value: Any) -> Path:
+        if not isinstance(value, str) or not value or '\\' in value:
+            raise ValueError('Unsafe artwork provenance path')
+        rel = Path(value)
+        if rel.is_absolute() or '..' in rel.parts or rel.as_posix() != value:
+            raise ValueError('Unsafe artwork provenance path')
+        path = base
+        for component in rel.parts:
+            path /= component
+            if path.is_symlink():
+                raise ValueError('Artwork provenance cannot use symlinks')
+        if not path.is_file() or not path.resolve().is_relative_to(base.resolve()):
+            raise ValueError('Artwork provenance source is missing')
+        return path
+
+    seen = set()
+    for entry in bindings:
+        try:
+            if not isinstance(entry, Mapping):
+                raise ValueError('Malformed artwork disclosure')
+            image = safe_file(manuscript, entry.get('figure'))
+            digest = hashlib.sha256(image.read_bytes()).hexdigest()
+            if digest != entry.get('sha256') or image in seen:
+                raise ValueError('Artwork image hash changed or disclosure is duplicated')
+            seen.add(image)
+            text = entry.get('caption_text')
+            if (not isinstance(text, str) or not text.startswith('Artwork disclosure: ')
+                    or len(text) > 600 or any(c in text for c in '{}\\\n')
+                    or not re.search(r'\b(?:image|artwork|schematic|illustration)\b', text, re.I)
+                    or re.search(r'\b(?:manuscript|referee|reviewer|proof|prompt)\b', text, re.I)
+                    or not str(entry.get('requirement_source') or '').startswith('https://')):
+                raise ValueError('Artwork credit must be plain image provenance tied to a publisher requirement')
+            evidence = entry.get('evidence')
+            if not isinstance(evidence, Mapping):
+                raise ValueError('Artwork credit has no generation evidence')
+            source = safe_file(root, evidence.get('path'))
+            if source.stat().st_size > 2_000_000:
+                raise ValueError('Artwork generation record is too large')
+            raw = source.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != evidence.get('sha256'):
+                raise ValueError('Artwork generation record changed')
+            record = json.loads(raw)
+            if (not isinstance(record, Mapping) or 'model' not in record
+                    or record.get('purpose') != 'explanatory_schematic'
+                    or record.get('figure_sha256') != digest
+                    or not record.get('tool') or record['tool'] not in text):
+                raise ValueError('Artwork credit does not identify its bound explanatory image and tool')
+            if record.get('model'):
+                if record['model'] not in text:
+                    raise ValueError('Artwork credit omits the recorded image model')
+            elif 'not reported' not in text.lower():
+                raise ValueError('Artwork credit must disclose an unreported image model')
+            matches = []
+            for path in files:
+                inside = False
+                graphic = None
+                for index, line in enumerate(path.read_text().splitlines()):
+                    line = _strip_tex_comment(line)
+                    if re.search(r'\\begin\{figure\*?\}', line):
+                        inside, graphic = True, None
+                    match = re.search(r'\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}', line)
+                    if inside and match:
+                        candidate = manuscript / match.group(1)
+                        if not candidate.is_file():
+                            candidate = manuscript / 'figures' / match.group(1)
+                        graphic = candidate.resolve()
+                    if (inside and graphic == image.resolve() and line.lstrip().startswith('\\caption{')
+                            and text in line and line.rstrip().endswith('}') and line.count(text) == 1):
+                        matches.append((path, index))
+                    if re.search(r'\\end\{figure\*?\}', line):
+                        inside = False
+            if len(matches) != 1:
+                raise ValueError('Artwork credit must occur once in the caption of its bound figure')
+            credits[matches[0]] = text
+        except (ValueError, OSError, TypeError) as exc:
+            errors.append(_issue('STYLE-ARTWORK-PROVENANCE', str(exc), root=root))
+    return credits, errors
+
+
 def audit_tex_tree(
     main_tex: str | Path,
     *,
@@ -374,6 +470,7 @@ def audit_tex_tree(
     require_ai_declaration: bool = True,
     model_usage: Any = None,
     configured_attempts: Any = None,
+    artwork_disclosures: Any = None,
 ) -> dict[str, Any]:
     """Check one compiled TeX tree without assigning a prose score."""
 
@@ -385,6 +482,8 @@ def audit_tex_tree(
     issues: list[dict[str, Any]] = []
     declaration_ranges, range_issues = _declaration_ranges(files, root=report_root)
     issues.extend(range_issues)
+    caption_credits, credit_issues = _artwork_caption_credits(files, manuscript_path, report_root, artwork_disclosures)
+    issues.extend(credit_issues)
 
     combined_body: list[str] = []
     declaration_parts: list[str] = []
@@ -420,6 +519,8 @@ def audit_tex_tree(
                     )
                 )
             scan_text = _mask_literal_paths(visible)
+            if (path, index) in caption_credits:
+                scan_text = scan_text.replace(caption_credits[(path, index)], '')
             if "AI Agent Lab" in scan_text:
                 scan_text = scan_text.replace("AI Agent Lab", "registered affiliation")
             if (AI_WORKFLOW_MARKER.search(scan_text)
@@ -664,6 +765,7 @@ def audit_manuscript_style(
         require_ai_declaration=require_ai_declaration,
         model_usage=model_usage_for_record(metadata),
         configured_attempts=configured_attempts_for_record(metadata),
+        artwork_disclosures=metadata.get('artwork_disclosures'),
     )
     version = str(metadata.get("version") or "").strip()
     submission_root = repo_root / f"papers/{paper_id}/journal-submissions"

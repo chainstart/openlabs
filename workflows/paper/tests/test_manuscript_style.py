@@ -1,4 +1,8 @@
 from pathlib import Path
+import hashlib
+import json
+
+import pytest
 
 from paper_writing.manuscript_style import audit_tex_tree
 
@@ -28,6 +32,49 @@ def _write(tmp_path: Path, body: str, declaration: str = CODE_DECLARATION) -> Pa
         encoding="utf-8",
     )
     return path
+
+
+def _artwork_fixture(tmp_path):
+    figure = tmp_path / 'figures/flow.png'
+    figure.parent.mkdir()
+    figure.write_bytes(b'illustration fixture')
+    digest = hashlib.sha256(figure.read_bytes()).hexdigest()
+    source = tmp_path / 'generation.json'
+    source.write_text(json.dumps({'purpose': 'explanatory_schematic', 'figure_sha256': digest,
+                                  'tool': 'OpenAI Codex image service', 'model': None}))
+    credit = 'Artwork disclosure: OpenAI Codex image service produced this explanatory schematic; the image-model version was not reported.'
+    entry = {'figure': 'figures/flow.png', 'sha256': digest, 'caption_text': credit,
+             'requirement_source': 'https://publisher.example/artwork-policy',
+             'evidence': {'path': 'generation.json', 'sha256': hashlib.sha256(source.read_bytes()).hexdigest()}}
+    body = '\\begin{figure}\n\\includegraphics{figures/flow.png}\n\\caption{Study design. ' + credit + '}\n\\end{figure}'
+    return entry, credit, body
+
+
+def test_source_bound_publisher_image_credit_preserves_single_final_declaration(tmp_path):
+    entry, credit, body = _artwork_fixture(tmp_path)
+    main = _write(tmp_path, body)
+    assert not audit_tex_tree(main)['valid']  # No blanket caption exemption.
+    assert audit_tex_tree(main, artwork_disclosures=[entry])['valid']
+    main = _write(tmp_path, body, declaration='')
+    assert not audit_tex_tree(main, artwork_disclosures=[entry])['valid']
+
+
+@pytest.mark.parametrize('fault', ['image_hash', 'evidence_hash', 'body_location', 'extra_narration', 'missing_model_boundary'])
+def test_artwork_credit_cannot_hide_body_narration_or_unbound_images(tmp_path, fault):
+    entry, credit, body = _artwork_fixture(tmp_path)
+    if fault == 'image_hash':
+        (tmp_path / 'figures/flow.png').write_bytes(b'changed artwork')
+    elif fault == 'evidence_hash':
+        (tmp_path / 'generation.json').write_text('{}')
+    elif fault == 'body_location':
+        body = credit + '\nAn ordinary scientific paragraph.'
+    elif fault == 'extra_narration':
+        body = body.replace('Study design.', 'Study design. Codex also wrote the paper.')
+    else:
+        body = body.replace('the image-model version was not reported.', 'a clear image.')
+        entry['caption_text'] = entry['caption_text'].replace('the image-model version was not reported.', 'a clear image.')
+    main = _write(tmp_path, body)
+    assert not audit_tex_tree(main, artwork_disclosures=[entry])['valid']
 
 
 def test_style_check_accepts_neutral_body_and_complete_code_disclosure(

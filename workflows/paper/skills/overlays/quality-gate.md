@@ -194,6 +194,8 @@ declaration, agent/reviewer orchestration, private repository and claim-routing 
 internal source/audit narration (including `audit`, `auditable`, and `auditability`), internal
 audit/campaign filenames or paths, bibliography workflow notes, and preparation chronology that
 does not belong in scientific prose. A registered institutional name is allowed.
+Publisher-required provenance for an explanatory image may additionally appear in its actual caption through `artwork_disclosures`. This is a source-bound image credit, not an exception for preparation narration in scientific prose. The checker verifies the exact image hash, a hash-bound generation record, tool/model identity (or an explicitly unreported image model), and one occurrence in that image's caption. It does not replace the consolidated final declaration; unregistered captions and ordinary body narration remain blocked.
+
 Exactly one final AI-use declaration is required. It must identify the tool and textual purposes;
 manuscripts with computational code must also disclose source-code-development/verification
 assistance and human checking, and manuscripts reporting Codex-assisted Lean work must disclose
