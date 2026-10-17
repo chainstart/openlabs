@@ -472,12 +472,98 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     except (ValueError, OSError) as exc:
         blockers.append(f"Formal-check inventory: {exc}")
         formal_inventory = None
+    try:
+        revision_context = active_revision_context(metadata, root)
+    except ValueError as exc:
+        blockers.append(f"Active journal revision context: {exc}")
+        revision_context = None
     return {"blockers": blockers, "fingerprints": fingerprints, "expanded": expanded,
             "bibliography": bibliography_text(manuscript), "metadata": metadata, "target": target,
-            "support_claim_evidence_maps": claim_maps, "formal_inventory": formal_inventory}
+            "support_claim_evidence_maps": claim_maps, "formal_inventory": formal_inventory,
+            "active_revision_context": revision_context}
 
 
 # --------------------------------------------------------------------------- packets
+
+def active_revision_context(metadata: Mapping[str, Any], root: Path | None) -> dict[str, Any] | None:
+    """Read bound original reports for an ongoing revision, not a prior refusal.
+
+    An invitation supplies context, never a favorable decision or a gate waiver.
+    Keep these records separate from the rejection ledger.
+    """
+    context = metadata.get('journal_revision_context')
+    if context is None:
+        return None
+    if not isinstance(context, Mapping) or root is None:
+        raise ValueError('Active journal revision requires a source-bound context and data root')
+    provenance = context.get('provenance')
+    if (not isinstance(provenance, Mapping) or provenance.get('authenticated') is not True
+            or not isinstance(provenance.get('source'), str) or not provenance['source'].strip()):
+        raise ValueError('Active journal revision requires authenticated journal-source provenance')
+    followup = metadata.get('submission_followup') or {}
+    if (context.get('stage') != 'revision_invited'
+            or context.get('journal') != metadata.get('target_journal')
+            or context.get('journal') != followup.get('journal')
+            or not context.get('manuscript_number')
+            or context.get('manuscript_number') != followup.get('manuscript_number')):
+        raise ValueError('Active journal revision identity or stage does not match the current follow-up')
+    documents = context.get('documents')
+    if not isinstance(documents, list) or not documents:
+        raise ValueError('Active journal revision has no original documents')
+    base = root.resolve()
+    loaded = []
+    kinds = set()
+    for document in documents:
+        if (not isinstance(document, Mapping) or 'text' in document
+                or document.get('kind') not in {'decision_letter', 'reviewer_report', 'submitted_manuscript_text'}):
+            raise ValueError('Active revision documents must be original bound sources, not inline summaries')
+        source, digest = document.get('path'), document.get('sha256')
+        if (not isinstance(source, str) or not source or '\\' in source
+                or not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)):
+            raise ValueError('Active revision document requires a safe path and SHA256')
+        relative = Path(source)
+        if (relative.is_absolute() or '..' in relative.parts or relative.as_posix() != source
+                or 'reviews' in relative.parts):
+            raise ValueError('Active revision document path is unsafe')
+        path = base
+        for part in relative.parts:
+            path /= part
+            if path.is_symlink():
+                raise ValueError('Active revision document path is unsafe: symlink')
+        if not path.is_file() or not path.resolve().is_relative_to(base) or path.stat().st_size > 2_000_000:
+            raise ValueError('Active revision original is missing, unsafe or too large')
+        raw = path.read_bytes()
+        if _sha256(raw) != digest or (document.get('bytes') is not None and document['bytes'] != len(raw)):
+            raise ValueError('Active revision original hash or size changed')
+        try:
+            text = raw.decode('utf-8')
+        except UnicodeDecodeError as exc:
+            raise ValueError('Active revision original must be UTF-8 text') from exc
+        if not text.strip():
+            raise ValueError('Active revision original is empty')
+        kinds.add(document['kind'])
+        loaded.append({'kind': document['kind'], 'path': source, 'sha256': digest, 'text': text})
+    if not {'decision_letter', 'reviewer_report'} <= kinds:
+        raise ValueError('Active revision needs both the actual decision and reviewer report')
+    return {'journal': context['journal'], 'manuscript_number': context['manuscript_number'],
+            'stage': 'revision_invited', 'documents': loaded}
+
+
+def _active_revision_packet(pre: Mapping[str, Any]) -> str:
+    context = pre.get('active_revision_context')
+    if context is None:
+        return ''
+    return ('## Actual ongoing external journal revision\n'
+            'The following are complete source-bound original journal documents, not an author '
+            'summary or an internal review verdict. Evaluate the current manuscript and its response '
+            'to the actual external objections independently under the same journal standards. '
+            'An invitation to revise does not establish acceptance, correctness, novelty or readiness. '
+            'The submitted manuscript, if supplied, is a historical baseline, not current numerical evidence.\n'
+            + json.dumps(context, ensure_ascii=False, indent=2) + '\n\n'
+            + ('## Authors response to the actual external revision\n'
+               'This is an author-supplied response, not independent evidence.\n'
+               + str(pre['author_response']) + '\n\n' if pre.get('author_response') else ''))
+
 
 def _prior_review_documents(metadata: Mapping[str, Any], root: Path | None,
                             decisions: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
@@ -748,7 +834,7 @@ def _target_block(metadata: Mapping[str, Any]) -> str:
 def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> str:
     parts = front_matter(pre["expanded"])
     letters = json.dumps(decisions, ensure_ascii=False, indent=2) if decisions else "No prior rejections recorded."
-    return (f"## Target journal\n{_target_block(pre['metadata'])}\n\n"
+    return (_active_revision_packet(pre) + f"## Target journal\n{_target_block(pre['metadata'])}\n\n"
             f"## Prior editorial decisions on this paper\n"
             "Any prior_review_documents are authenticated pre-final expert reports, not the final "
             "refusal letter. Read their complete texts as historical context; they cannot replace "
@@ -919,6 +1005,7 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
                  f"Items to check:\n" + "\n".join(f"- {i}" for i in previous["items"]) +
                  f"\n\nAuthors' response:\n{previous['response']}\n\n"
                  f"Source changes since the previous round (unified diff):\n{previous['diff']}\n")
+    text += _active_revision_packet(pre)
     text += _history_policy_packet(pre)
     text += str(pre.get('formal_check_packet') or "")
     return text
@@ -1110,6 +1197,8 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                               "fingerprints": pre["fingerprints"], "started_at": _now()}
     record |= {"review_policy_sha256": review_policy_sha256(config, history_policy, round_limit), "active_referee_roles": panel,
                "single_referee_panel": len(panel) == 1}
+    if pre.get('active_revision_context') is not None:
+        record['active_revision_context'] = pre['active_revision_context']
     if history_policy is not None:
         record['missing_rejection_letter_policy'] = history_policy
     if round_limit is not None:
@@ -1124,6 +1213,8 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
         raise ValueError(f"{paper_id} has used all {config['max_rounds_per_target']} review rounds for {target}; "
                          "a user decision (retarget, more research, or stop) is required")
     response = Path(response_letter).read_text() if response_letter else None
+    if response:
+        pre = dict(pre, author_response=response)
     previous = _previous_round(root, paper_id, target, pre["expanded"], response, history_policy)
     if response:
         (run / "response-letter.md").write_text(response)
@@ -1225,6 +1316,8 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
             raise ValueError("Ready decision contradicts the editor, rejection letters, or referees")
     if rejection_context_blockers(record, metadata, root):
         raise ValueError('Rejection history or original letter changed during the review; rerun')
+    if active_revision_context(metadata, root) != record.get('active_revision_context'):
+        raise ValueError('Active journal revision context changed during the review; rerun')
     fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
     if fingerprints != record["fingerprints"]:
         raise ValueError("Manuscript, registry or support sources changed during the review; rerun")
@@ -1297,6 +1390,11 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
     if rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy):
         problems.append("The original rejection letters were not cleared by the independent editor")
     problems.extend(rejection_context_blockers(record, metadata, root))
+    try:
+        if active_revision_context(metadata, root) != record.get('active_revision_context'):
+            problems.append('Active journal revision context differs from the reviewed originals')
+    except ValueError as exc:
+        problems.append(f'Active journal revision context: {exc}')
     if record.get("merged", {}).get("outcome") != "ready" or record["editor_screen"]["decision"] != "send_to_review":
         problems.append("The unified decision is not a ready decision")
     if record["fingerprints"]["manuscript_snapshot_sha256"] != snapshot:

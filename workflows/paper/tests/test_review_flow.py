@@ -14,6 +14,60 @@ def editor(decision="send_to_review", category="none"):
     return {"decision": decision, "desk_reject_category": category}
 
 
+def _active_revision_fixture(tmp_path):
+    docs = []
+    for kind, text in [('decision_letter', 'JBI-26-3391: invitation to revise, not acceptance.'),
+                       ('reviewer_report', 'Reviewer 1: improve the reusable benchmark interface.')]:
+        path = tmp_path / (kind + '.txt')
+        path.write_text(text)
+        docs.append({'kind': kind, 'path': path.name,
+                     'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+    return {'target_journal': 'Journal',
+            'submission_followup': {'journal': 'Journal', 'manuscript_number': 'JBI-26-3391'},
+            'journal_revision_context': {'journal': 'Journal', 'manuscript_number': 'JBI-26-3391',
+                                         'stage': 'revision_invited', 'documents': docs,
+                                         'provenance': {'authenticated': True, 'source': 'original journal export'}}}
+
+
+def test_ongoing_revision_originals_reach_editor_and_referee_without_becoming_rejections(tmp_path):
+    meta = _active_revision_fixture(tmp_path)
+    context = flow.active_revision_context(meta, tmp_path)
+    pre = {'metadata': meta, 'expanded': 'Current manuscript', 'bibliography': 'References',
+           'active_revision_context': context, 'author_response': 'Response: a method interface is supplied.'}
+    for packet in [flow.editor_packet(pre, []), flow.referee_packet(pre, tmp_path, None)]:
+        assert 'JBI-26-3391: invitation to revise, not acceptance.' in packet
+        assert 'Reviewer 1: improve the reusable benchmark interface.' in packet
+        assert 'does not establish acceptance' in packet
+        assert 'Response: a method interface is supplied.' in packet
+    assert flow.prior_decisions('p', meta, tmp_path) == []
+
+
+@pytest.mark.parametrize('fault', ['changed', 'unsafe_path', 'mismatched_identity', 'inline_summary', 'internal_review'])
+def test_ongoing_revision_rejects_unbound_or_wrong_originals(tmp_path, fault):
+    meta = _active_revision_fixture(tmp_path)
+    doc = meta['journal_revision_context']['documents'][0]
+    if fault == 'changed':
+        (tmp_path / doc['path']).write_text('altered invitation')
+    elif fault == 'unsafe_path':
+        doc['path'] = '../elsewhere.txt'
+    elif fault == 'mismatched_identity':
+        meta['journal_revision_context']['manuscript_number'] = 'another-paper'
+    elif fault == 'inline_summary':
+        doc['text'] = 'author summary replacing original'
+    else:
+        doc['path'] = 'reviews/internal-output.txt'
+    with pytest.raises(ValueError):
+        flow.active_revision_context(meta, tmp_path)
+
+
+def test_ongoing_revision_requires_real_reports_and_has_no_default_context(tmp_path):
+    assert flow.active_revision_context({}, tmp_path) is None
+    meta = _active_revision_fixture(tmp_path)
+    meta['journal_revision_context']['documents'].pop()
+    with pytest.raises(ValueError, match='both the actual decision and reviewer report'):
+        flow.active_revision_context(meta, tmp_path)
+
+
 def referee(rec="minor_revision", blockers=(), changes=(), previous=()):
     return {"recommendation": rec, "scientific_blockers": list(blockers),
             "required_changes": [{"change": c, "type": t, "location": "S1"} for c, t in changes],
@@ -695,7 +749,7 @@ def test_declared_selected_map_fails_closed_instead_of_falling_back(tmp_path, pr
 
 
 def test_preflight_records_selected_map_failure_before_roles(tmp_path, monkeypatch):
-    from paper_writing import manuscript_style, operations, support_citations
+    from paper_writing import manuscript_style, operations, support_citations, journal_history
 
     metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
     metadata.update(target_journal='J', target_journal_fit={'status': 'approved'})
@@ -706,6 +760,8 @@ def test_preflight_records_selected_map_failure_before_roles(tmp_path, monkeypat
     pdf.write_bytes(b'fixture PDF')
     path.write_text('Actual declared source no longer matches the verified archive.\n')
     monkeypatch.setattr(flow, 'load_registry', lambda *args, **kwargs: None)
+    # This fixture isolates selected-map integrity, not journal-history policy.
+    monkeypatch.setattr(journal_history, 'guard_target', lambda *args, **kwargs: None)
     monkeypatch.setattr(flow, 'load_paper_metadata', lambda *args, **kwargs: metadata)
     monkeypatch.setattr(flow, '_build', lambda *args, **kwargs: (pdf, {'main.tex'}))
     monkeypatch.setattr(manuscript_style, 'audit_manuscript_style', lambda *args, **kwargs: {})
