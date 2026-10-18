@@ -794,6 +794,27 @@ def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[s
         ensure_ascii=False, separators=(',', ':'))
 
 
+def packet_batches(group: str, documents: list[dict[str, str]], inv: Mapping[str, Any],
+                   sources: list[dict[str, Any]], *, root: Path | None = None,
+                   artifacts: Mapping[str, Any] | None = None) -> list[list[dict[str, Any]]]:
+    """Split oversized batches without dropping context, evidence or scope items.
+
+    A singleton that still exceeds the budget is returned intact so run_checks
+    fails closed with the existing source-routing error. Validation reconstructs
+    the same deterministic partition rather than trusting recorded batch sizes.
+    """
+    def split(batch: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+        packet = batch_packet(group, batch, documents, inv, sources, root=root, artifacts=artifacts)
+        if len(packet.encode()) <= MAX_PACKET or len(batch) == 1:
+            return [batch]
+        middle = len(batch) // 2
+        return split(batch[:middle]) + split(batch[middle:])
+
+    units = inv[group]
+    return [batch for start in range(0, len(units), BATCH_SIZE)
+            for batch in split(units[start:start + BATCH_SIZE])]
+
+
 def batch_schema(group: str, batch: list[dict[str, Any]], inv: Mapping[str, Any],
                  sources: list[dict[str, Any]]) -> dict[str, Any]:
     """Constrain output identities and locations, never scientific judgments."""
@@ -898,9 +919,8 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
     if not errors:
         # Small output batches, full manuscript context, no truncated source.
         for group in ("references", "passages"):
-            units = inv[group]
-            for start in range(0, len(units), BATCH_SIZE):
-                batch = units[start:start + BATCH_SIZE]
+            for batch_number, batch in enumerate(packet_batches(
+                    group, documents, inv, sources, root=root, artifacts=artifacts), 1):
                 packet = batch_packet(group, batch, documents, inv, sources, root=root, artifacts=artifacts)
                 if len(packet.encode()) > MAX_PACKET:
                     message = "Formal-check packet exceeds the context budget; register precise primary chapter/page sources, never truncate evidence"
@@ -908,18 +928,18 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
                     findings.append({'category':'source_routing','root':'','location':'','message':message,'aggregate':False,'reason':message,'status':None})
                     break
                 try:
-                    output, receipt = runner(role_name=f"formal_{group}_{start // BATCH_SIZE + 1}", role=role,
+                    output, receipt = runner(role_name=f"formal_{group}_{batch_number}", role=role,
                         system_prompt=PROMPT.read_text(), user_prompt=packet, schema=batch_schema(group, batch, inv, sources),
-                        workdir=directory / f"{group}-{start // BATCH_SIZE + 1}", timeout=timeout)
+                        workdir=directory / f"{group}-{batch_number}", timeout=timeout)
                 except (LaunchError, ValueError, OSError) as exc:
-                    message = f"{group} batch {start // BATCH_SIZE + 1}: actual verifier failed: {exc}"
+                    message = f"{group} batch {batch_number}: actual verifier failed: {exc}"
                     errors.append(message)
                     findings.append({'category':'technical','root':'','location':'','message':message,'aggregate':False,'reason':message,'status':None})
                     continue
                 try:
                     batch_coverage(output, group, batch)
                 except (LaunchError, ValueError, OSError) as exc:
-                    message = f"{group} batch {start // BATCH_SIZE + 1}: coverage protocol failure: {exc}"
+                    message = f"{group} batch {batch_number}: coverage protocol failure: {exc}"
                     errors.append(message)
                     findings.append({'category':'technical','root':'','location':'','message':message,'aggregate':False,'reason':message,'status':None})
                     # Retain the actual JSON and receipt; never rewrite IDs or
@@ -927,7 +947,7 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
                     if not isinstance(output, dict) or not isinstance(output.get(group), list):
                         continue
                 report[group].extend(output[group])
-                workdir = directory / f"{group}-{start // BATCH_SIZE + 1}"
+                workdir = directory / f"{group}-{batch_number}"
                 receipts.append({"receipt": receipt, "group": group,
                     "workdir": workdir.relative_to(root).as_posix()})
     try:
@@ -1003,15 +1023,15 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
         if not result["receipts"]:
             raise ValueError("Formal verification lacks independent actual-model receipts")
         reconstructed = {"references": [], "passages": []}
-        expected_batches = [(group, start) for group in ("references", "passages")
-                            for start in range(0, len(result["inventory"][group]), BATCH_SIZE)]
+        expected_batches = [(group, batch) for group in ("references", "passages")
+                            for batch in packet_batches(group, documents, result["inventory"],
+                                result["sources"], root=root, artifacts=result['artifact_inventory'])]
         if len(result["receipts"]) != len(expected_batches):
             raise ValueError("Formal role batch coverage is incomplete or duplicated")
-        for item, (expected_group, start) in zip(result["receipts"], expected_batches):
+        for item, (expected_group, batch) in zip(result["receipts"], expected_batches):
             receipt, workdir, group = item["receipt"], item["workdir"], item["group"]
             if group != expected_group:
                 raise ValueError("Formal role batch order/scope changed")
-            batch = result["inventory"][group][start:start + BATCH_SIZE]
             schema = batch_schema(group, batch, result['inventory'], result['sources'])
             if (receipt.get("independent_context") is not True or receipt.get("provider") != "openai-codex"
                     or receipt.get("model") != result["role"].get("model")

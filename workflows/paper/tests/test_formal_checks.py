@@ -479,6 +479,27 @@ def test_implicit_dependency_routing_preserves_actual_text():
     assert "text" not in packet["available_source_catalog"][0]
 
 
+def test_oversized_batches_split_without_losing_scope_or_evidence(monkeypatch):
+    docs = [{"id": "main", "text": "Full manuscript context."}]
+    inv = {"references": [{"key": str(i), "text": "x" * 200} for i in range(8)]}
+    source = {"id": "S1", "kind": "publisher_catalog", "reference_keys": [str(i) for i in range(8)],
+              "url": "https://publisher.example/catalog", "text": "unaltered source" * 30}
+    single = len(formal.batch_packet("references", inv["references"][:1], docs, inv, [source]).encode())
+    monkeypatch.setattr(formal, "MAX_PACKET", single + 250)
+    batches = formal.packet_batches("references", docs, inv, [source])
+    assert len(batches) > 1
+    assert [item for batch in batches for item in batch] == inv["references"]
+    for batch in batches:
+        packet = formal.batch_packet("references", batch, docs, inv, [source])
+        assert len(packet.encode()) <= formal.MAX_PACKET
+        parsed = json.loads(packet)
+        assert parsed["complete_manuscript"] == docs
+        assert parsed["complete_bibliography"] == inv["references"]
+        assert parsed["retrieved_sources"] == [source]
+    monkeypatch.setattr(formal, "MAX_PACKET", single - 1)
+    assert all(len(batch) == 1 for batch in formal.packet_batches("references", docs, inv, [source]))
+
+
 def test_located_internal_reconstruction_without_invented_reference(tmp_path, monkeypatch):
     _, _, result = run_fixture(tmp_path, monkeypatch)
     unit = next(p for p in result["report"]["passages"] if p["prerequisites"])
