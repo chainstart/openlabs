@@ -781,9 +781,13 @@ def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[s
                  artifacts: Mapping[str, Any] | None = None) -> str:
     keys = ({r["key"] for r in batch} if group == "references" else
             {c["key"] for p in batch for c in p["citations"]})
+    # Route bodies by cited keys or explicit implicit-dependency selectors.
+    # Unrelated metadata remains in the complete bibliography/source catalog;
+    # broadcasting its full text to every math batch can overflow even a
+    # singleton. Every reference still receives its full identity evidence.
     selected = [s for s in sources if set(s["reference_keys"]) & keys
-                or (group == "passages" and (s["kind"] == "bibliographic_metadata"
-                    or any(pattern in p["text"] for pattern in s.get("passage_patterns", []) for p in batch)))]
+                or (group == "passages" and any(pattern in p["text"]
+                    for pattern in s.get("passage_patterns", []) for p in batch))]
     scoped_urls = {s["url"] for s in selected if s.get("extraction_pages")}
     selected = [s for s in selected if s["url"] not in scoped_urls or s.get("extraction_pages")]
     return json.dumps({"scope": group, "items": batch, "complete_manuscript": documents,

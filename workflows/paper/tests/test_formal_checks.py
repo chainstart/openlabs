@@ -500,6 +500,26 @@ def test_oversized_batches_split_without_losing_scope_or_evidence(monkeypatch):
     assert all(len(batch) == 1 for batch in formal.packet_batches("references", docs, inv, [source]))
 
 
+def test_unrelated_metadata_body_does_not_overflow_math_but_remains_available():
+    docs = [{"id": "main", "text": "Complete manuscript."}]
+    inv = {"references": [{"key": "a"}, {"key": "b"}]}
+    sources = [{"id": "S1", "kind": "bibliographic_metadata", "reference_keys": ["a"],
+                "text": "Full relevant metadata", "text_path": "evidence/a.text", "url": "https://catalog.example/a"},
+               {"id": "S2", "kind": "bibliographic_metadata", "reference_keys": ["b"],
+                "text": "x" * formal.MAX_PACKET, "text_path": "evidence/b.text", "url": "https://catalog.example/b"}]
+    batch = [{"text": "Apply the named bound.", "citations": [{"key": "a"}]}]
+    text = formal.batch_packet("passages", batch, docs, inv, sources)
+    assert len(text.encode()) < formal.MAX_PACKET
+    packet = json.loads(text)
+    assert packet["items"] == batch and packet["complete_manuscript"] == docs
+    assert packet["complete_bibliography"] == inv["references"]
+    assert packet["retrieved_sources"] == sources[:1]
+    assert packet["available_source_catalog"][1]["text_path"] == "evidence/b.text"
+    assert json.loads(formal.batch_packet("references", [{"key": "b"}], docs, inv, sources))["retrieved_sources"] == sources[1:]
+    sources[1]["passage_patterns"] = ["named bound"]
+    assert json.loads(formal.batch_packet("passages", batch, docs, inv, sources))["retrieved_sources"] == sources
+
+
 def test_located_internal_reconstruction_without_invented_reference(tmp_path, monkeypatch):
     _, _, result = run_fixture(tmp_path, monkeypatch)
     unit = next(p for p in result["report"]["passages"] if p["prerequisites"])
