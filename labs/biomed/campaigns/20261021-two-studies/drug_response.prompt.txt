@@ -1,0 +1,26 @@
+用户授权：现在筛选、并行开展两个纯计算生物医学研究，争取一天内获得值得中科院大类二区论文的成果。你负责药物反应/化学信息学研究线，另一个worker负责功能基因组学，禁止用同一故事换数据凑两篇。截止 UTC 2026-10-22T00:10:00Z（香港10月22日08:10）。不可承诺发表、制造正结果或把负结果自动晋级。
+
+先读根AGENTS.md、labs/biomed/skills/biomed-research-loop/SKILL.md及其README/registry/evidence-contract；读本campaign README/CHECKPOINT/SEARCH_LOG及openlabs-data/AGENTS.md。本轮最新用户明确要求2025中科院升级版大类二区，覆盖较早四区偏好，仅此次研究，不改全局政策。先科学，勿选择期刊、不投稿/付费/公开发布或外发消息，不改其他学科项目。
+
+已完成筛选记录：化学迁移原候选labs/biomed/studies/chem_shift_20261021/，data biomed-chem-shift-20261021为no-go：ChEMBL37 53476 records/10targets，33个40+共同分子pair仅2跨document且生物终点/突变语义有问题。其4target开发pilot近重复测定identityMAE0.006，旧5reservedtargets仍没模型评价但原题缺足够数据。不要直接重新训练或将此包装成新论文。
+
+第一优先读取刚完成的替代研究：
+labs/biomed/studies/drug_support_20261021/（plan、run_pilot、文献/来源、冻结ledger）
+/home/biostar/work/openlabs-data/workspaces/biology/projects/biomed-drug-support-20261021/
+/home/biostar/work/openlabs-artifacts/artifact-stage/biomed/drug-support-20261021/
+这是GDSC1/GDSC2发布拟合值的操作性剂量支持/部分排序研究，已冻结双轴holdout，独立审查要求matchedcoverage rank controls及dose-only基线。源拟合LN_IC50已知，不是未知新药敏感性预测。操作性区间不是统计CI/真实censor界；AUC不同实验dose范围不能直接当共同区间AUC。2025 specification game DOI10.1186/s13321-025-00972-y已研究MAXCONC捷径；2016PMC5239501已有共同剂量AUC；2026CommunChem DOI10.1038/s42004-026-01916-9已有超dose拟合讨论。因此不能把这些已知结论当创新。
+
+你的任务：先评估替代研究的真实结果和最近工作差异，进行不消耗原确认集的可重复证据审计；如有实质可迁移贡献，用新独立数据/新预先方案继续验证，不能刷旧test。若数据/新颖性不足，则在此药物反应/化学信息学领域最多筛6个实质不同候选并实际验证最强一个，保持与功能基因组学worker独立。不要无限寻找显著性；每候选记录直接近邻、精确数据访问、单位与停止原因，不只写建议。可在候选穷尽/证据充分后提前结束，不空转等一天。
+
+专用写入范围：
+- 代码 labs/biomed/studies/drug_response_day1_20261021/
+- 计划/状态 /home/biostar/work/openlabs-data/workspaces/biology/projects/biomed-drug-response-day1-20261021/
+- 大文件/结果 /home/biostar/work/openlabs-artifacts/artifact-stage/biomed/day1-drug-response-20261021/
+- 进度 /home/biostar/work/openlabs-artifacts/artifact-stage/biomed/day1-workers-20261021/drug_response/research_status.json 和 FINAL_REPORT.md。
+上述现有实验目录只读，不能改变冻结方案/测试标志或宣称它们未看标签。不要修改工厂SQLite、共享工具、全局配置，不启动全局factory/timer。source registry必要新官方host仅加唯一条目，在 /tmp/openlabs-biomed-source-registry.lock 上flock后重读并原子写，保留他人条目。403不绕控制，使用官方公开替代入口并记来源。
+
+资源：当前service在openlabs-workers.slice，2CPU、MemoryHigh1536MiB/Max2048MiB、TasksMax96。先验证/proc/self/cgroup，所有runtime/下载/数据处理/测试/安装仍经 /home/biostar/work/openlabs/bin/openlabs-resource-guard --task-type cpu --。线程最多2，HTTP并发最多2，新下载总量<=1GiB，每文件<=128MiB（明确必要可预计划<=256MiB），scratch<=3GiB。复用现有锁定Python/R环境，避免安装大型包。不执行CUDA、不创建额外subagents/嵌套Codex，不把进程移出service。不得关闭CUDA、提升上限或绕护栏。父service到期会停止所有后代，禁止脱管后台任务。
+
+研究标准：公开数据、纯计算，无湿实验/临床/受限数据。先文献与实际数据可行性，再冻结方案；MCP不存在则官方原文+公开API并标有限检索。记录每文件license/release/原始研究重叠，drug IDs多重和同compound别名处理不能靠模糊名称合并。冻结训练/验证/新确认，按真正独立molecule/scaffold/drug/cell/study划分，变换与选择只用训练/验证；测试一次。最多12预设模型配置，所有种子/失败/剔除写账本，重复测量/随机种子不当独立实验。比较最强简单对照、最近方法、公平预算和依赖感知不确定性。允许负结果，未获可靠增益不是无效/等价证明。来源已知信息必须明示，不能把translation说成de novo prediction，相关/解释性图不能说机制/治疗效果。
+
+每实质步骤原子写research_status.json（时间、问题、真实worker/命令状态、证据路径、下一步与停止标准），尽量<=10min更新。最终中文FINAL_REPORT.md要自包含：最强结果或no-go、实际数据规模、原始文献差异、可重现命令、全部试验/输入/代码/锁哈希、独立不确定性/局限及继续条件。paper_candidate默认false；不能自把pilot升论文成果。时间到停并记录最后检查点，不凭空承诺还会研究，也不生成无证据稿件。无可靠结论如实报告。

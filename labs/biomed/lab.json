@@ -1,0 +1,19 @@
+{
+  "schema_version": "openlabs.lab.v1",
+  "lab_id": "biomed",
+  "domain": "biology",
+  "name": "OpenLabs Computational Biomedicine and Cheminformatics Lab",
+  "runner": {"command": ["{python}", "../../packages/research-core/lab_runner.py"]},
+  "skills": [
+    {"skill_id": "biomed-research-loop", "path": "skills/biomed-research-loop/SKILL.md"},
+    {"skill_id": "openlabs-biology-paper", "path": "../../workflows/paper/skills/openlabs-biology-paper/SKILL.md"},
+    {"skill_id": "openlabs-paper-review", "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"}
+  ],
+  "protocols": [{
+    "protocol_id": "biomed-public-data-pilot",
+    "primary_skill": "biomed-research-loop",
+    "runtime_skills": ["biomed-research-loop"],
+    "validator": {"command": ["{python}", "protocols/public_data_pilot.py", "--project", "{project_config}", "--workstream", "{workstream_state}", "--mode", "{validation_mode}"]}
+  }],
+  "capabilities": ["public-data-provenance", "cheminformatics", "bulk-transcriptomics", "cell-line-dependency-analysis", "single-cell-analysis", "grouped-holdout-audit", "reproducible-computational-pilots"]
+}

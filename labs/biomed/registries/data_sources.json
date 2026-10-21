@@ -1,0 +1,361 @@
+{
+  "schema_version": "openlabs.biomed_sources.v1",
+  "checked_at": "2026-10-20",
+  "policy": "Use official downloads/API, pin actual release or accession, inspect file-specific terms and original study overlap. Registry inclusion is not a claim of independent validation or unrestricted reuse.",
+  "sources": [
+    {
+      "source_id": "gdsc",
+      "phase": 1,
+      "access": "public_research_use",
+      "name": "Sanger GDSC fitted drug response release8.5",
+      "data": [
+        "GDSC1/GDSC2 fitted IC50/AUC",
+        "experimental concentration support",
+        "compound annotations"
+      ],
+      "documentation_url": "https://depmap.sanger.ac.uk/documentation/datasets/drug-sensitivity/",
+      "terms_url": "https://www.sanger.ac.uk/terms-of-use/",
+      "reuse_basis": "Official Cell Model Passports footer refers to Sanger terms: research use/publications require source acknowledgement; hosted content defaults CC BY-NC-ND 4.0 unless otherwise stated. Original GDSC resource DOI10.1093/nar/gks1111 states data freely available without restriction. This project performs internal noncommercial analysis with attribution; no raw redistribution or claim of a file-specific unrestricted licence. Preserve dated terms snapshot and dataset citations.",
+      "allowed_hosts": [
+        "cog.sanger.ac.uk",
+        "depmap.sanger.ac.uk",
+        "cellmodelpassports.sanger.ac.uk",
+        "www.sanger.ac.uk"
+      ],
+      "recommended_start": "Release8.5 exact fitted XLSX files, each below30MB; keep stable model IDs, DrugIDs and official compound mappings. Experimental support coarsening is not true censoring or a confidence interval.",
+      "independence_risks": [
+        "GDSC1/GDSC2 share models and compounds; not independent patient cohorts",
+        "Same compound may have multiple DrugIDs",
+        "Released phenotypes use multilevel joint curve fitting",
+        "Point fits beyond dose support are extrapolations"
+      ],
+      "citation_policy": "Cite release8.5 27Oct23, GDSC resource and original screen/curve-fitting papers; acknowledge data supplied by Sanger GDSC group and retain official URLs."
+    },
+    {
+      "source_id": "riniker_overlapping_assays",
+      "phase": 1,
+      "access": "public",
+      "name": "Landrum/Riniker overlapping-assay research data",
+      "data": [
+        "ChEMBL32 max-curation assay tables",
+        "author analysis metadata"
+      ],
+      "documentation_url": "https://github.com/rinikerlab/overlapping_assays",
+      "terms_url": "https://github.com/rinikerlab/overlapping_assays/blob/main/LICENSE",
+      "reuse_basis": "Repository MIT license for code; ChEMBL-derived data retain upstream CC BY-SA 3.0 attribution/share-alike obligations. Pin repository commit and verify each selected payload and endpoint semantics.",
+      "allowed_hosts": [
+        "github.com",
+        "api.github.com",
+        "raw.githubusercontent.com"
+      ],
+      "recommended_start": "Commit-pinned source_data files with catalog and notebook provenance. Audit repeated or mislabeled exports before treating endpoint tables as independent.",
+      "independence_risks": [
+        "Repackaged ChEMBL32 records are not independent of ChEMBL",
+        "IC50/Ki exports may duplicate records; verify actual standard_type",
+        "Repeated molecules and assay/publication overlap"
+      ],
+      "citation_policy": "Cite Landrum and Riniker, DOI 10.1021/acs.jcim.4c00049, source repository commit and ChEMBL32 upstream provenance."
+    },
+    {
+      "source_id": "chembl",
+      "phase": 1,
+      "access": "public",
+      "name": "ChEMBL",
+      "data": [
+        "molecular structures",
+        "assays",
+        "activities",
+        "targets"
+      ],
+      "documentation_url": "https://www.ebi.ac.uk/training/online/courses/chembl-quick-tour/accessing-chembl-data/",
+      "terms_url": "https://chembl.gitbook.io/chembl-interface-documentation/frequently-asked-questions/general-questions",
+      "reuse_basis": "CC BY-SA 3.0; retain attribution, release and applicable share-alike obligations",
+      "api_base": "https://www.ebi.ac.uk/chembl/api/data/",
+      "allowed_hosts": [
+        "www.ebi.ac.uk",
+        "ftp.ebi.ac.uk"
+      ],
+      "recommended_start": "One target or assay family; include assay IDs, type, units, relation/censoring, confidence and publication IDs.",
+      "independence_risks": [
+        "Same publications or assays may also occur in PubChem",
+        "Repeated measurements and chemical analogues"
+      ],
+      "citation_policy": "Cite the database paper and actual release; preserve original assay/publication references."
+    },
+    {
+      "source_id": "pubchem",
+      "phase": 1,
+      "access": "public",
+      "name": "PubChem",
+      "data": [
+        "compounds",
+        "properties",
+        "bioassays"
+      ],
+      "documentation_url": "https://pubchem.ncbi.nlm.nih.gov/docs/programmatic-access",
+      "terms_url": "https://pubchem.ncbi.nlm.nih.gov/docs/usage-policies",
+      "reuse_basis": "Check NCBI policies and original contributor restrictions for the selected fields/assays",
+      "api_base": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/",
+      "allowed_hosts": [
+        "pubchem.ncbi.nlm.nih.gov",
+        "ftp.ncbi.nlm.nih.gov"
+      ],
+      "recommended_start": "CID-based selected structures/properties or a specified BioAssay accession; avoid full database copies.",
+      "independence_risks": [
+        "Contributor records may overlap ChEMBL",
+        "Different substance records can map to one compound"
+      ],
+      "citation_policy": "Record CID/AID, retrieval date, original contributor and applicable PubChem reference."
+    },
+    {
+      "source_id": "geo",
+      "phase": 1,
+      "access": "public",
+      "name": "NCBI GEO",
+      "data": [
+        "processed expression matrices",
+        "sample annotations",
+        "supplementary files"
+      ],
+      "documentation_url": "https://www.ncbi.nlm.nih.gov/geo/info/download.html",
+      "terms_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+      "reuse_basis": "Check accession-specific study reuse conditions and source publication; do not infer ethics exemption",
+      "api_base": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi",
+      "allowed_hosts": [
+        "www.ncbi.nlm.nih.gov",
+        "ftp.ncbi.nlm.nih.gov"
+      ],
+      "recommended_start": "Processed matrix plus GSM/GSE/GPL metadata for a few independent studies; use raw counts for count-based models.",
+      "independence_risks": [
+        "Superseries/subseries reuse samples",
+        "Repeated donors",
+        "Platform and batch confounding"
+      ],
+      "citation_policy": "Cite accession and original study, retaining platform/reference-genome and processing details."
+    },
+    {
+      "source_id": "depmap",
+      "phase": 1,
+      "access": "public",
+      "name": "Broad DepMap",
+      "data": [
+        "cell-line expression",
+        "CRISPR dependencies",
+        "mutations",
+        "PRISM drug screens"
+      ],
+      "documentation_url": "https://depmap.org/portal/data_page/",
+      "terms_url": "https://depmap.org/portal/data_page/",
+      "reuse_basis": "Inspect each selected release/file's license and citation; do not assume all portal datasets share terms",
+      "api_base": "https://api.figshare.com/v2/articles",
+      "allowed_hosts": [
+        "depmap.org",
+        "api.figshare.com",
+        "ndownloader.figshare.com",
+        "figshare.com",
+        "s3-eu-west-1.amazonaws.com"
+      ],
+      "recommended_start": "Select exact official Figshare release and file IDs, using stable ModelID to join matrices; do not scrape portal pages.",
+      "independence_risks": [
+        "Different quarterly releases retain the same cell lines",
+        "Overlapping experiments in other drug-response datasets"
+      ],
+      "citation_policy": "Cite the actual release Figshare DOI and file-specific publications, plus portal/program as requested."
+    },
+    {
+      "source_id": "cellxgene",
+      "phase": 2,
+      "access": "public",
+      "name": "CELLxGENE Census",
+      "data": [
+        "single-cell expression",
+        "donor/study/cell metadata"
+      ],
+      "documentation_url": "https://chanzuckerberg.github.io/cellxgene-census/python-api.html",
+      "terms_url": "https://cellxgene.cziscience.com/docs/03__Download%20Published%20Data",
+      "reuse_basis": "Inspect collection/dataset licenses and citation; preserve donor identities and versioned Census selection",
+      "allowed_hosts": [
+        "cellxgene.cziscience.com",
+        "api.cellxgene.cziscience.com"
+      ],
+      "recommended_start": "Use a pinned Census version and query a tissue/disease subset through its official client; record filtering and dataset IDs.",
+      "independence_risks": [
+        "Duplicate cells/donors across collections",
+        "Many cells from few donors"
+      ],
+      "citation_policy": "Cite Census and original datasets/publications; record census version and is_primary_data filtering."
+    },
+    {
+      "source_id": "gdc",
+      "phase": 2,
+      "access": "open_files_only",
+      "name": "GDC / TCGA",
+      "data": [
+        "harmonized public molecular data"
+      ],
+      "documentation_url": "https://gdc.cancer.gov/access-data/data-access-processes-and-tools",
+      "terms_url": "https://gdc.cancer.gov/access-data/data-access-processes-and-tools",
+      "reuse_basis": "Only files explicitly marked open; dbGaP/eRA-controlled data are outside this lab's initial scope",
+      "allowed_hosts": [
+        "api.gdc.cancer.gov",
+        "gdc.cancer.gov",
+        "portal.gdc.cancer.gov"
+      ],
+      "recommended_start": "Open processed molecular matrices; record case, sample and aliquot IDs and harmonization release.",
+      "independence_risks": [
+        "Multiple aliquots per case",
+        "Repackaged TCGA cohorts are not external validation"
+      ],
+      "citation_policy": "Follow GDC/project citation and publication instructions; record file UUIDs and release."
+    },
+    {
+      "source_id": "opentargets",
+      "phase": 2,
+      "access": "public",
+      "name": "Open Targets",
+      "data": [
+        "target-disease evidence",
+        "target annotations"
+      ],
+      "documentation_url": "https://platform.opentargets.org/downloads/data",
+      "terms_url": "https://platform.opentargets.org/licence",
+      "reuse_basis": "Inspect platform and constituent-source licenses; cite original evidence",
+      "allowed_hosts": [
+        "platform.opentargets.org",
+        "ftp.ebi.ac.uk"
+      ],
+      "recommended_start": "Pinned release and source-specific evidence, not the integrated score as both input and validation.",
+      "independence_risks": [
+        "Integrated evidence may contain the intended validation source",
+        "Known associations can leak labels"
+      ],
+      "citation_policy": "Record release and upstream evidence identifiers."
+    },
+    {
+      "source_id": "projectscore",
+      "phase": 1,
+      "access": "public_research_use",
+      "name": "Sanger Project Score public historical CRISPR matrices",
+      "data": [
+        "independent Broad and Sanger gene-level CRISPRcleanR corrected fold changes"
+      ],
+      "documentation_url": "https://www.sanger.ac.uk/tool/project-score-database/",
+      "terms_url": "https://www.sanger.ac.uk/tool/project-score-database/",
+      "reuse_basis": "Official Project Score research and education licence; no resale or commercial services; no unrestricted redistribution assumed. Historical Broad-derived data retain upstream attribution and applicable source terms.",
+      "allowed_hosts": [
+        "cog.sanger.ac.uk",
+        "api.cellmodelpassports.sanger.ac.uk",
+        "score.depmap.sanger.ac.uk",
+        "raw.githubusercontent.com"
+      ],
+      "recommended_start": "Pin archive filename, last-modified, strong ETag and validated HTTP ranges; retrieve only named processed matrix members, preserve original compressed byte ranges and extracted-member hashes.",
+      "independence_risks": [
+        "Integrated files use both laboratories and must not be independent validation",
+        "Shared cell-line identities are paired replication, not new donors",
+        "Historical releases and current Harmonia integrated dependencies differ"
+      ],
+      "citation_policy": "Cite Behan et al. 2019, original Broad source and Project Score database publication; preserve exact historical filenames and source processing.",
+      "checked_at": "2026-10-21"
+    },
+    {
+      "source_id": "reactome",
+      "phase": 2,
+      "access": "public",
+      "name": "Reactome",
+      "data": [
+        "pathways",
+        "gene-pathway mappings"
+      ],
+      "documentation_url": "https://reactome.org/download-data/",
+      "terms_url": "https://reactome.org/license",
+      "reuse_basis": "Inspect selected release's data/license and attribution requirements",
+      "allowed_hosts": [
+        "reactome.org",
+        "download.reactome.org"
+      ],
+      "recommended_start": "Versioned pathway mappings; define the tested-gene background before enrichment.",
+      "independence_risks": [
+        "Overlapping gene sets",
+        "Pathway knowledge is not independent experimental validation"
+      ],
+      "citation_policy": "Cite Reactome and record release, species, identifier mapping and background genes."
+    },
+    {
+      "source_id": "encode_mpra_agarwal_2025",
+      "phase": 1,
+      "access": "public",
+      "name": "ENCODE Agarwal et al. 2025 paired-orientation lentiMPRA",
+      "documentation_url": "https://www.nature.com/articles/s41586-024-08430-9",
+      "terms_url": "https://www.encodeproject.org/help/citing-encode/",
+      "reuse_basis": "Released ENCODE MPRA processed tables; official ENCODE external-user policy permits download and analysis with accession, producer and Consortium attribution. Article CC BY 4.0. No restricted raw data used.",
+      "allowed_hosts": [
+        "www.encodeproject.org",
+        "encode-public.s3.amazonaws.com"
+      ],
+      "citation_policy": "Agarwal et al. Nature 639:411\u2013420 (2025), DOI10.1038/s41586-024-08430-9; ENCODE Consortium and exact experiment/file accessions.",
+      "independence_risks": [
+        "Cell contexts share synthetic library and upstream study; not independent laboratories",
+        "Biological replicates are cultures, not independent donors",
+        "Shared genomic loci and sequences require grouped validation"
+      ],
+      "checked_at": "2026-10-21"
+    },
+    {
+      "source_id": "day1_solubility_curation_audit",
+      "phase": 1,
+      "access": "public",
+      "name": "Author-deposited solubility curation paired tables and independent OChem candidate",
+      "documentation_url": "https://link.springer.com/article/10.1186/s13321-025-01000-9",
+      "terms_url": "https://raw.githubusercontent.com/nadinulrich/log_Sw_prediction/3da09dc96acde6c5c51d784307559067864ca779/LICENSE",
+      "reuse_basis": "Repository MIT LICENSE; original journal CC BY 4.0; Dataverse etalab 2.0. Preserve original AqSolDB/OChem experiment provenance; public access is not independent data.",
+      "allowed_hosts": [
+        "raw.githubusercontent.com",
+        "entrepot.recherche.data.gouv.fr"
+      ],
+      "independence_risks": [
+        "AqSolDB derivatives share measurements",
+        "OChem is a compilation; exact chemical and original reference overlap must be audited before confirmation"
+      ],
+      "citation_policy": "Ulrich et al. DOI10.1186/s13321-025-01000-9; Llompart et al. DOI10.1038/s41597-024-03105-6; dataset DOI10.57745/CZVZIA; AqSolDB original sources"
+    },
+    {
+      "source_id": "day1_solubility_dataverse_storage",
+      "phase": 1,
+      "access": "public",
+      "name": "Recherche Data Gouv official institutional storage redirect",
+      "documentation_url": "https://entrepot.recherche.data.gouv.fr/dataset.xhtml?persistentId=doi:10.57745/CZVZIA",
+      "terms_url": "https://spdx.org/licenses/etalab-2.0.html",
+      "reuse_basis": "Repository MIT LICENSE; original journal CC BY 4.0; Dataverse etalab 2.0. Preserve original AqSolDB/OChem experiment provenance; public access is not independent data.",
+      "allowed_hosts": [
+        "entrepot.recherche.data.gouv.fr",
+        "prod-univ-strasbourg.opens3r-tls.stockage.inrae.fr"
+      ],
+      "independence_risks": [
+        "AqSolDB derivatives share measurements",
+        "OChem is a compilation; exact chemical and original reference overlap must be audited before confirmation"
+      ],
+      "citation_policy": "Ulrich et al. DOI10.1186/s13321-025-01000-9; Llompart et al. DOI10.1038/s41597-024-03105-6; dataset DOI10.57745/CZVZIA; AqSolDB original sources"
+    },
+    {
+      "source_id": "quasarr_2026_source_data",
+      "phase": 1,
+      "access": "public",
+      "name": "QUASARR-seq 2026 publisher source data",
+      "documentation_url": "https://www.nature.com/articles/s41467-026-68780-y",
+      "terms_url": "https://creativecommons.org/licenses/by/4.0/",
+      "reuse_basis": "Article CC BY 4.0, including supplementary source material unless a credit line indicates otherwise; internal attributed research. Inspect workbook credits. Author code has no explicit repository license; inspect as provenance, do not redistribute.",
+      "allowed_hosts": [
+        "media.springernature.com",
+        "static-content.springer-cdn.com",
+        "www.nature.com"
+      ],
+      "citation_policy": "Paramo et al. Nature Communications 17:2177 (2026), DOI10.1038/s41467-026-68780-y; GSE310760.",
+      "independence_risks": [
+        "ENCSR382BVV is Agarwal old source, not independent",
+        "Minimal promoter variants are contexts of one study",
+        "Variable-length inserts require sequence audit"
+      ],
+      "checked_at": "2026-10-21"
+    }
+  ]
+}

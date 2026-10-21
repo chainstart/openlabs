@@ -300,6 +300,7 @@ def _paper_skill(domain: str) -> str | None:
         "materials": "openlabs-materials-paper",
         "physics": "openlabs-physics-paper",
         "quant": "openlabs-quant-paper",
+        "biology": "openlabs-biology-paper",
     }.get(domain)
 
 
@@ -310,6 +311,7 @@ def _research_skill(domain: str) -> str | None:
         "materials": "materials-research-loop",
         "physics": "physics-research-loop",
         "quant": "quant-backtest-audit",
+        "biology": "biomed-research-loop",
     }.get(domain)
 
 

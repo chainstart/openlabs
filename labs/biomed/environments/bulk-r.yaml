@@ -1,0 +1,13 @@
+name: openlabs-biomed-bulk-r
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.4
+  - bioconductor-geoquery
+  - bioconductor-limma
+  - bioconductor-deseq2
+  - bioconductor-edger
+  - bioconductor-summarizedexperiment
+  - r-jsonlite
+  - r-renv

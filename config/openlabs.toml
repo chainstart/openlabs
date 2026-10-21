@@ -19,7 +19,10 @@ launch_jobs = true
 # logical CPUs visible to OpenLabs.
 max_cpu_fraction_of_host = 0.75
 reserve_cpu_threads = 2
-reserve_memory_mib = 8192
+# This workstation currently exposes about 8 GiB to WSL. Keep 2 GiB for the host;
+# an 8 GiB reservation would reject every task before a worker can start.
+# This is scheduler headroom, not a change to the aggregate cgroup ceilings.
+reserve_memory_mib = 2048
 reserve_scratch_mib = 65536
 default_task_cpu_threads = 2
 default_task_memory_mib = 4096

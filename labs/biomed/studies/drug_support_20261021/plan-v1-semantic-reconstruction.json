@@ -1,0 +1,35 @@
+{
+  "stage": "exploratory_pilot",
+  "frozen_date": "2026-10-21",
+  "question": "How much of fitted-IC50 cross-screen ranking disagreement is actually identifiable within both screens' experimental concentration support, and do continuous translation models improve the identifiable order rather than merely fitting extrapolated points?",
+  "primary_direction": "GDSC1 source to GDSC2 destination, release8.5 27Oct23 fitted files",
+  "estimand": "Retrospective overlapping drug-cell pairs with observed GDSC1 fitted phenotype. Operational rank-support diagnostics and drug-macro destination fitted-phenotype translation, not unmeasured biological IC50 ground truth, clinical efficacy or de novo sensitivity prediction.",
+  "allowed_information": "Source fitted LN_IC50, AUC, RMSE and source/destination experimental MIN_CONC/MAX_CONC are observed. Destination concentration design is allowed; destination fitted LN_IC50/AUC/RMSE are forbidden until the relevant split is evaluated.",
+  "operational_interval": "For a fitted point z and log-dose support [a,b], assign (-infinity,a] if z<a; [z,z] if a<=z<=b; [b,infinity) if z>b. This is a deliberately coarsened support representation conditional on the released monotone fitted model. It is NOT a statistical confidence interval, observed censoring event, or a guaranteed bound for true IC50.",
+  "primary_ranking": "Within each held-out drug, enumerate all available cell pairs. A source order is support-determined only if its operational intervals are disjoint. Report supported fraction and destination-fitted point-order disagreement for supported versus ambiguous source orders. Additionally restrict destination comparisons to destination support-determined pairs. Average rates across drugs, not globally across all pairs.",
+  "order_bounds": "For comparisons with fixed destination-fitted order, source support-determined concordant C, discordant D and ambiguous A produce conservative pairwise outer concordance bounds [C/N,(C+A)/N]. Not claimed sharp over globally coherent rankings or confidence intervals.",
+  "secondary_ml": "Predict destination fitted LN_IC50 using identity, train-only global affine source translation, Ridge(alpha=1) on standardized features, and fixed HistGradientBoostingRegressor(max_iter=80,max_leaf_nodes=15,max_depth=4,min_samples_leaf=50,learning_rate=.05,l2_regularization=1,random_state=20261021). Features source LN_IC50,AUC,RMSE,log source/destination min/max,source support margins. No drug/cell ID features or target-derived summaries. Compare MAE and within-drug ordering separately on destination-supported versus unsupported points. Model complexity is secondary, not an independent replication-risk paper.",
+  "split": "SHA256(seed,axis,canonical ID) partitions drug and cell identities independently 60/20/20; training destination labels only train-drug x train-cell; validation and test diagonal blocks only. Validation descriptive, no model/hyperparameter tuning. Entire untouched test drug identities reserved from any destination-based analysis.",
+  "drug_identity": "Official compound annotations map DrugID to PubChem/compound identity; exact names only if uniquely consistent and corroborated. Multiple DrugIDs per compound excluded unless a deterministic source-design-only canonical representative is established before outcomes; never Cartesian merge by name.",
+  "cell_identity": "Exact SANGER_MODEL_ID intersection; exclude ambiguous or missing IDs, retain COSMIC/name provenance.",
+  "primary_support": "Use each screen's own min/max support; common-intersection support is a prespecified sensitivity analysis when nonempty.",
+  "uncertainty": "1000 drug-cluster bootstrap draws for descriptive macro rates and paired model contrasts; conditional on fixed test cell panel and released fits. Report unique drugs/cells; no pairwise iid p values. Cell bootstrap sensitivity only if adequate support.",
+  "stop_conditions": [
+    "File-specific permitted academic reuse cannot be established",
+    "Compound identity mapping unresolved",
+    "Fewer than 20 matched canonical drugs or 100 matched cells",
+    "Fewer than 10 held-out drugs with >=20 cells: feasibility-only; do not claim robust generalization",
+    "No primary rank comparison with nonzero determined and ambiguous counts: report non-evaluable boundary",
+    "Direct same-estimand prior publication discovered: replan or replication report",
+    "No material new finding beyond established max-dose bias: no paper-ready claim"
+  ],
+  "novelty_boundary": "2025 specification-game paper already establishes max-concentration dummy baseline and biased global metrics; 2026 Communications Chemistry already filters out-of-range IC50. Proposed distinction is source/destination operational partial-order identifiability in paired screens, not a new discovery that extrapolated IC50 exists.",
+  "resource_budget": {
+    "cpu_threads": 2,
+    "memory_mib": 1536,
+    "download_bytes_max": 60000000,
+    "scratch_mib": 1024
+  },
+  "max_trials": 2,
+  "paper_candidate": false
+}

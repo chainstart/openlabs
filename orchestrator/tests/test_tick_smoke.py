@@ -13,7 +13,7 @@ CODE_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = CODE_ROOT / "orchestrator" / "src"
 
 
-@pytest.mark.parametrize("domain", ["math", "ai", "materials", "quant", "physics"])
+@pytest.mark.parametrize("domain", ["math", "ai", "materials", "quant", "physics", "biology"])
 def test_tick_launches_and_ingests_smoke_task(tmp_path, monkeypatch, domain: str) -> None:
     paths = WorkspacePaths(
         workspace=tmp_path,
@@ -39,6 +39,9 @@ def test_tick_launches_and_ingests_smoke_task(tmp_path, monkeypatch, domain: str
         domain=domain,
         task_type="smoke",
         objective="Exercise the complete file contract.",
+        cpu_threads=1,
+        memory_mib=256,
+        scratch_mib=64,
     )
     settings = FactorySettings(
         max_worker_processes=1,
@@ -46,6 +49,11 @@ def test_tick_launches_and_ingests_smoke_task(tmp_path, monkeypatch, domain: str
         heartbeat_seconds=1,
         max_attempts=2,
         launch_jobs=True,
+        # A file-contract smoke runner fits on small developer machines.
+        # Production admission defaults deliberately reserve much more memory.
+        reserve_cpu_threads=0,
+        reserve_memory_mib=512,
+        reserve_scratch_mib=128,
     )
     first = tick(paths, settings)
     assert first.launched == [task_id]

@@ -1,0 +1,23 @@
+用户授权：现在筛选、并行开展两个纯计算生物医学研究，争取一天内获得值得中科院大类二区论文的成果。你是其中功能基因组学研究线的持续研究执行者。当前 UTC 截止时间为 2026-10-22T00:10:00Z（香港 10 月 22 日 08:10）。不可承诺发表、制造正结果或把负结果自动晋级。
+
+先读根 AGENTS.md、labs/biomed/skills/biomed-research-loop/SKILL.md 及它要求的 README/registry/evidence-contract；读本 campaign 的 README.md、CHECKPOINT.md、SEARCH_LOG.md；读 openlabs-data 的 AGENTS.md。本轮最新用户明确要求二区，目标按2025中科院升级版大类二区，覆盖较早四区偏好，仅本轮研究；不改全局政策。不要选择具体期刊，优先解决科学问题；不投稿、付费或公开发布，不外发消息，不触碰其他学科任务。
+
+已执行且不能刷测试集的研究：
+/home/biostar/work/openlabs-data/workspaces/biology/projects/biomed-bio-shift-20261021/
+代码 labs/biomed/studies/bio_shift_20261021/，artifacts 在同级 openlabs-artifacts/artifact-stage/biomed/bio-shift-20261021。
+Broad/Sanger 16,819 genes/127cell 研究已用掉测试集，HGB对最强简单基线无可靠增益。2023WBC和2026arxiv2610.18880高度相关。现有文件通过官方完整2292条CMP metadata仅另有4个分析未用的新cell，不够独立确认。详细continuation-decision.json及literature审计已记录，原项目needs_replan，不能原封不动再运行或改写成正结果。
+
+你的任务：在新的独立数据/问题上择优重规划并实际研究，仍限公开生物/化学/医疗分子数据，无湿实验、患者招募、临床干预/诊断或受限访问数据。优先可验证的功能基因组学/跨研究分子数据问题，避免常见差异基因+机器学习签名、一般batch-correction、泛泛不确定性基准。不要强行留在CRISPR风险预测题。最多筛6个实质不同候选，每个留下最近原始文献、精确数据访问验证、独立单位、可证伪问题与停止理由；只挑最强一个开展完整小规模研究，题目不成立可继续剩余候选而不是为了正结果调参。不是写长建议：要完成数据接入、冻结方案、实际模型/基线、划分和误差/不确定性检查。
+
+专用写入范围：
+- 代码：labs/biomed/studies/functional_genomics_day1_20261021/
+- 小型计划/状态/日志：/home/biostar/work/openlabs-data/workspaces/biology/projects/biomed-functional-genomics-day1-20261021/
+- 大文件/模型/输出：/home/biostar/work/openlabs-artifacts/artifact-stage/biomed/day1-functional-genomics-20261021/
+- 工作者进展：/home/biostar/work/openlabs-artifacts/artifact-stage/biomed/day1-workers-20261021/functional_genomics/research_status.json 和 FINAL_REPORT.md。
+其他项目、原始实验、冻结输入和已报告负结果只读。若创建新论文须遵守PAPER_ID_POLICY，但本次应先交付结果包而非无证据论文。不要修改工厂SQLite、全局配置、共享工具或启用全局factory/timer。新source如必要，只可对source registry加唯一条目，在 /tmp/openlabs-biomed-source-registry.lock 上flock后重新读取并原子写入，保留其他条目，核对官方host和文件条款；不能因403绕访问控制。
+
+资源硬要求：本任务在openlabs-workers.slice单一受限service，2 CPU、MemoryHigh1536MiB/Max2048MiB、TasksMax96。首先验证/proc/self/cgroup。每个runtime、下载、处理、测试、安装、子命令仍使用 /home/biostar/work/openlabs/bin/openlabs-resource-guard --task-type cpu --。所有线程最多2，HTTP并发最多2，新增下载总量最多1GiB、每文件<=128MiB（确有必要时先书面计划<=256MiB），总scratch<=3GiB。只用现有Python/R环境，避免大型新依赖。不要执行CUDA、嵌套Codex或再生成subagents，也不要把进程移出本service。不得关闭CUDA或改变资源上限。没有守护/网络/数据条件则如实停止，不无界重试。
+
+研究标准：先近邻文献核查再冻结问题；MCP检索不可用则用官方原文/公开API并说明有限检索。记录accession/release/条款/原始研究来源，下载链接不等于独立实验。冻结训练/验证/确认边界，按donor/cell/drug/molecule等真正单位划分，所有变换在训练范围学习。新算法必须赢得与最强简单基线和最近方法的公平比较；不要求AI胜出。最多12个预先登记的模型配置（重复种子另列，不能充当独立生物实验），控制多重比较。新确认集只评估一次；看过结果后的方法/阈值/问题更改只能探索，需新验证数据。source proxy不是机制或效力真值；无显著差异不是等价证明。负结果若科学问题新、验证充分也可有价值，不能因为未赢就强制挑显著子群。
+
+每个实质步骤原子更新research_status.json（时间、当前问题、实际运行命令/状态、证据路径、停止条件）；尽量每10分钟更新，禁止只写“running”却无真实任务。可以在充分完成/候选穷尽后提前结束，不能空转耗满一天。若最后无法支持值得写作的研究，明确no-go及尚缺什么，保留全部证据，不凭想象生成论文。最终用中文写简短自包含FINAL_REPORT.md，附可复现命令、完整试验账本、效果与依赖感知区间、最近工作差异、数据/代码/锁哈希、局限、是否值得继续；paper_candidate默认false，只有独立充分科学审查才能提升。计算完成不等于投稿就绪。时间到必须停止并写最后检查点，不留脱管后台任务。

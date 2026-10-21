@@ -1,0 +1,23 @@
+{
+  "recorded_at_utc": "2026-10-21T00:37:50.502336+00:00",
+  "test_outcomes_accessed": false,
+  "note": "Original v1 bytes were not archived before edits. This ledger transparently preserves a semantic reconstruction of the initial prospective tool-written plan, not a falsely timestamped original file. All addenda and final v2 occurred before joined numerical outcome analysis; exact initial tool patch remains in session history.",
+  "versions": [
+    {
+      "path": "plan-v1-semantic-reconstruction.json",
+      "sha256": "ca67a3a1ccf4546dfbe92ef912d3abcfd57c7fa65977e1d57b4a3a08ce470680",
+      "status": "semantic reconstruction; not original bytes"
+    },
+    {
+      "path": "plan-v2-frozen.json",
+      "sha256": "80d88e08823625542ce9ba852acf949880526ea9c31b00cd27903a3cdae8695d",
+      "status": "current frozen pre-evaluation bytes"
+    }
+  ],
+  "amendments": [
+    "independent review added margin/random matched-coverage rank controls",
+    "added dose-only Ridge, four fitted predictor count",
+    "official compound annotation selection and exact-name/synonym exclusion",
+    "explicit drug-name holdout and conditional-cell-panel uncertainty"
+  ]
+}

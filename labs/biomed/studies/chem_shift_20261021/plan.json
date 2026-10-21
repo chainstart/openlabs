@@ -1,0 +1,20 @@
+{
+  "stage": "exploratory_pilot",
+  "research_question": "Does chemically diverse anchor selection improve cross-assay translation on scaffolds absent from anchors under the same paired-label budget?",
+  "estimand": "Same-molecule assay translation. Source-assay activity and molecular structure are available at inference. This is not unseen-molecule structural bioactivity prediction.",
+  "independent_unit": "target; assay pairs within target and repeated seeds are dependent",
+  "development_targets": ["CHEMBL220", "CHEMBL240", "CHEMBL243", "CHEMBL279"],
+  "untouched_targets": ["CHEMBL2039", "CHEMBL247", "CHEMBL3267", "CHEMBL3471", "CHEMBL4822"],
+  "eligibility": "Paired measurements at least 20; at least 6 Murcko scaffolds; at least 5 evaluation molecules and 8 available training anchors. Input eligibility only, no performance selection.",
+  "split": "Within each assay pair, SHA256(seed, scaffold) order assigns approximately one third of scaffolds to evaluation; remaining scaffolds supply anchors. Evaluation scaffold identities remain identical across methods and budgets. Seeds 0 through 4 are sensitivity analyses, not independent experiments.",
+  "anchor_budgets": [4, 8],
+  "anchor_selection": ["uniform random without replacement", "greedy maxmin Morgan Tanimoto distance starting with smallest compound identifier"],
+  "methods": ["identity", "median paired offset", "ridge affine translation alpha=1", "median offset plus Tanimoto kernel ridge of residuals alpha=1"],
+  "primary_outcome": "MAE difference versus identity and versus offset under the same anchor selection and label budget; target-weighted descriptive aggregation only",
+  "no_tuning": true,
+  "max_trials": 1000,
+  "publication_gate": "At least 10 independent eligible targets, endpoint/source provenance resolved, and a separate frozen confirmatory cohort. Otherwise report only feasibility and exploratory outcomes, not a paper-ready result.",
+  "stop_conditions": ["Fewer than 10 eligible independent targets: no confirmatory opening", "Unresolved endpoint labels: no endpoint-specific interpretation", "Near-duplicate original experiments cannot be regarded as independent assays"],
+  "resource_budget": {"cpu_threads": 2, "memory_mib": 1536, "scratch_mib": 256},
+  "claims_allowed": "provisional feasibility observations only; no biological mechanism or guaranteed journal suitability"
+}

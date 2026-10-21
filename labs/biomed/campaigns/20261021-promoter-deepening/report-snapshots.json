@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-21",
+  "reports": [
+    {
+      "snapshot": "studies/functional_genomics_day1_20261021/REPORT.md",
+      "source": "/home/biostar/work/openlabs-artifacts/artifact-stage/biomed/day1-workers-20261021/functional_genomics/FINAL_REPORT.md",
+      "sha256": "eb8c0cca61056b8fb46a16b8fec28330cacbe7a38fc4bf0386b744bdc2cba3b4"
+    },
+    {
+      "snapshot": "studies/drug_response_day1_20261021/REPORT.md",
+      "source": "/home/biostar/work/openlabs-artifacts/artifact-stage/biomed/day1-workers-20261021/drug_response/FINAL_REPORT.md",
+      "sha256": "764bb7e720d7558026e86307ddf4749c3fa16adb32ff743cc9939ce2f2882f04"
+    },
+    {
+      "snapshot": "studies/promoter_portability_20261021/REPORT.md",
+      "source": "/home/biostar/work/openlabs-data/workspaces/biology/projects/biomed-promoter-portability-20261021/FINAL_REPORT.md",
+      "sha256": "c7c12d0e7e821c09f783a70685597ecbfbc520513989abc839cef602ddffa9ae"
+    }
+  ],
+  "raw_data_included": false
+}
