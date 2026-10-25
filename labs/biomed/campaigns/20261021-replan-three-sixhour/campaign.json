@@ -1,0 +1,30 @@
+{
+  "schema_version": "openlabs.bounded_research_campaign.v1",
+  "campaign_id": "biomed-replan-three-sixhour-20261021",
+  "authorization": "用户2026-10-21：1，2，4路进行评估和重新规划，然后再次开启深入研究，时间预算为6小时",
+  "created_at_utc": "2026-10-21T13:51:45.199167+00:00",
+  "deadline_utc": "2026-10-21T19:51:45.199167+00:00",
+  "research_target": "2025 CAS upgraded major-category Zone 2 or higher; evidence target, not publication guarantee",
+  "duration_hours": 6,
+  "lanes": [
+    "promoter_transfer",
+    "drug_support",
+    "disease_cell_state"
+  ],
+  "per_lane": {
+    "cpu_threads": 2,
+    "memory_high_mib": 4096,
+    "memory_max_mib": 5120,
+    "swap_max_mib": 512,
+    "tasks_max": 96,
+    "download_max_gib": 6,
+    "scratch_max_gib": 12,
+    "http_concurrency": 2
+  },
+  "publication_authorized": false,
+  "submission_authorized": false,
+  "global_policy_changed": false,
+  "resumption_authorization": "2026-10-21 用户授权：继续之前的4路并行实验，不过每路上限降为5G，目标仍然是2区论文",
+  "previous_campaign": "biomed-four-lanes-20261021",
+  "phase": "new bounded replanning and research; prior evidence retained"
+}

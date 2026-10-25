@@ -12,6 +12,8 @@ from tools.common import atomic_json, sha256
 UNIT_COLUMNS = {
     "molecule": "molecule_id",
     "donor": "donor_id",
+    "patient": "donor_id",
+    "protein_position": "protein_position",
     "cell_line": "cell_line_id",
     "study": "study_id",
 }

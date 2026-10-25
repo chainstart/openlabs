@@ -1,0 +1,5 @@
+from common import *
+name='GSE301246_PARM_Training_Library_v2_MH4_raw_counts.txt.gz'
+write(DATA/'parm-alternative-plan.json',dict(time=now(),purpose='Official GEO alternate endpoint for full fragment coordinate/direction feasibility. No inferential outcome use before plan.',url='https://www.ncbi.nlm.nih.gov/geo/download/',file=name,per_attempt_max_seconds=7200,max_attempts=2,download_cap_bytes=256*1024**2,memory_strategy='gzip stream into lane SQLite coordinate counts, no dense matrix; retain candidate exact coordinate plus opposite strand keys only. Exact sequences still require genotype/reference audit.',independent_unit='fragment locus, not reads or barcode rows'))
+p=fetch(name,'https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE301246&format=file&file='+name,limit=256*1024**2,max_seconds=7200,terms={'terms_url':'https://www.ncbi.nlm.nih.gov/geo/info/disclaimer.html','reuse_basis':'Internal attributed analysis of official processed data; no redistribution'},study='10.1038/s41586-025-10093-z',accession='GSE301246')
+print('complete',str(p),flush=True)

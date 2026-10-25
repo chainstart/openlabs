@@ -1,0 +1,23 @@
+用户最新授权原文：“除了上述的2条优先研究线外，再开启2条研究线，一共4路研究路线，开启并行进程，进行深入研究，目标2区论文级成果”。你是四路并行持续研究之一，要实际推进研究和实验，不停留在建议。目标按2025中科院升级版大类二区及以上的创新性与证据强度理解，仅本轮研究目标；不能承诺录用、制造正结果或改全局选刊政策。
+
+先读：根AGENTS.md、labs/biomed/skills/biomed-research-loop/SKILL.md及其README/registry/evidence-contract、../openlabs-data/AGENTS.md、本campaign的campaign.json和README.md。文献核查按paper-lookup技能；优先近期原始论文/官方仓库，区分预印本。当前代码根是 /home/biostar/work/projects/openlabs/openlabs；旧报告中的 /home/biostar/work/openlabs* 路径在本机不存在，旧原始实验未同步。旧报告SHA已核验，但不能声称重新验证原始实验。所有新工作留在下面本路线指定目录。
+
+执行方式：本轮首个监督窗口为24小时，绝对deadline见campaign.json。持续完成“文献和真实数据门槛—冻结科学问题/计划—小规模真实实验—必要补充验证—结果复核/报告”。发现问题不成立，最多探索3个本路线内有实质区别的候选或设计；每个留下证据和裁定。不得只因单次下载失败或模型不优就停止整个领域；尝试有依据的官方替代数据和科学问题。也不得为了正结果修改确认集、阈值和主终点。充分完成或候选穷尽可提前结束，不能空转耗满时间。
+
+原始先验/负结果：labs/biomed/RESULTS-20261021.md及相关studies/REPORT.md只读。既有测试集已暴露，若重新取得原数据，只能复算/开发，不能标成新独立确认。旧共同研究不同细胞、不同promoter、重复下载、不同数据库收录不自动构成外部独立。论文候选默认false，研究进度和进程存活是不同状态。
+
+资源：先核验/proc/self/cgroup含本路线service及openlabs-workers.slice。每路CPUQuota200%、MemoryHigh4GiB/Max5GiB、SwapMax512MiB、TasksMax96。线程最多2，HTTP并发最多2；所有运行时/下载/解析/测试/安装/后台命令继续经 /home/biostar/work/projects/openlabs/openlabs/bin/openlabs-resource-guard --task-type cpu --。不得移出service或修改限额。此次CPU研究，不执行CUDA、不下载大模型。禁止嵌套Codex和派生子代理。旧后台任务不接管。所有子进程须在本service内，退出时清理。
+
+科学环境已按锁文件建立：labs/biomed/.venv/bin/python（core+chem+bulk），labs/biomed/environments/singlecell/.venv/bin/python（Scanpy/AnnData CPU）。使用完整路径，记录实际解释器和锁哈希。不要修改共享环境/依赖锁；确需轻量补充工具可在自己的artifact目录建独立环境，固定版本并保存lock，新增安装<=512MiB；禁止训练型大依赖。优先处理后数据、流式稀疏聚合、供体级pseudobulk，不解压整图谱或将大稀疏矩阵稠密化。
+
+每路下载总量上限6GiB，单文件默认<=256MiB；确需大型稀疏矩阵时，先记录下载/流式处理计划与内存估算，可在本预算内使用<=2.5GiB单文件。总scratch<=12GiB，留足临时双份空间。使用有超时/实际字节计数/最大重试2次的流式下载。官方支持的Range/分块接口可用，但检查每次响应确为206/合理字节；不得将403/验证码通过伪装或关闭安全检查绕过。发现预算不足时留下具体需求，尝试合理处理后替代。
+
+数据接入：用labs/biomed/tools/dataset_intake.py或等价、范围严格且可审计的本路线实现。记录accession/release/精确来源/文件条款/独立单位/上游实验/实际bytes与SHA256。新官方host若需加到共享source registry，仅允许在 /tmp/openlabs-biomed-source-registry.lock 上flock后重读、追加唯一路线条目并原子写入；其余共享工具/全局配置/工厂SQLite不得写。可自有本路线registry并按同标准验证。不要外发消息、投稿、付费或公开发布、git提交推送。
+
+研究设计：明确用途和可证伪科学问题，先查最近最直接工作，不用“没有搜索到”证明首创。核验真实独立donor/study/locus/drug/perturbation/replicate，细胞数和测定对数不等于独立样本数。先完成metadata可行性和功效/精度估计，再冻结主终点、最小实际相关效应、训练/验证/确认划分、预处理与完整试验预算。不要任意把达到100行称为二区标准。模型/阈值/归一化/特征筛选只能在训练验证数据上选择；独立确认一次打开，错误和暴露要如实记录。最多12个事先登记模型配置，种子与失败另列。新假说由开发结果提出则需要新确认。负结果也可有价值，但须有新问题与足够精度；区间包含零不等于等价。
+
+比较：包含最强简单对照、最接近已发表方法及公平预算；不要只击败零模型/随机基线。新方法无优势时分析科学发现是否仍有独立贡献，不能反复换有利指标。按真实独立单位报告效应和区间，报告零结果、排除、失败、模型选择不确定性范围。临床效果、因果机制及独立实验室验证都需相应证据，不能由富集、SHAP、合成数据或单个病例代替。
+
+进度与交付：开始即在artifact路线根 research_status.json写真实状态，每个实质步骤/尽量每10分钟原子更新（UTC时间、问题、阶段、实际命令、证据路径、已完成/剩余、失败/停止理由、paper_candidate=false）；同步到专用data project目录。计划及状态保存在data，代码保存在专用studies，原始payload/预测/模型留artifact。按evidence-contract可适用部分记录；协议未覆盖设计时明确标记，不伪造通过。最终用中文写artifact根FINAL_REPORT.md和RESULTS.json：科学问题、最近工作差异、实际数据规模和独立性、全基线结果/不确定性、全部试验账本、局限、复现命令及数据/代码/环境哈希、下一步或停止判断。原始冻结文件和负结果均保留。科学结束时research_status设completed或needs_replan并写scientific_disposition，不能用process.finished冒充科学目标完成。不要为了填写表单替代实际研究。
+
+断电恢复授权（2026-10-21）：继续原四路实验，每路硬上限5GiB、软上限4GiB，二区论文目标不变。先读取本路线research_status.json、data项目内冻结计划/试验账本、代码和已落盘产物，以及本路线recovery/内旧进程日志末尾，恢复科学上下文。旧running状态来自死机前，不能视为旧进程仍存活。核对部分下载/中断结果完整性，复用已验证数据和结果；不要从头重做、改写冻结计划、重开已暴露确认集或重置3候选/12配置的累计预算。原截止时间不延长。需要重跑的中断步骤记录原因及输入输出，保留旧证据。

@@ -1,0 +1,9 @@
+from common import *
+terms={'terms_url':'https://www.ncbi.nlm.nih.gov/geo/info/disclaimer.html','article_license':'https://creativecommons.org/licenses/by/4.0/','reuse_basis':'Official GEO processed research data linked by PARM article; internal attributed analysis, no redistribution; sequence-specific credits inspected in original article.'}
+write(DATA/'parm-intake-plan.json',dict(time=now(),source='GSE301246',goal='Audit exact reverse-clone pairs; raw counts plus normalized fold0 sequence schema; no outcomes for confirmation examined',files=['v1 raw counts ~167MiB','v2 raw counts ~190MiB','v1 normalized fold0 ~80MiB'],memory_plan='Stream gzip rows; retain only coordinate and strand keys, or SQLite in lane artifact; never dense whole table. Max working memory 2GiB.',download_total_mib=440,scratch_estimate_mib=1500,terms=terms))
+write(DATA/'source-registry.json',dict(source_id='fourlane_promoter_official',hosts=['ftp.ncbi.nlm.nih.gov','www.ncbi.nlm.nih.gov','api.github.com','raw.githubusercontent.com','www.ebi.ac.uk','api.crossref.org','api.biorxiv.org','media.springernature.com','www.encodeproject.org'],terms=terms,policy='Official publication linked sources only, metadata snapshots distinct from scientific payload; upstream independence audited separately.'))
+for suffix in ('PARM_Training_Library_v1_pHY3_raw_counts.txt.gz','PARM_Training_Library_v1_pHY3_normalized_fold0.bed.gz','PARM_Training_Library_v2_MH4_raw_counts.txt.gz'):
+    name='GSE301246_'+suffix
+    p=fetch(name,'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE301nnn/GSE301246/suppl/'+name,limit=256*1024**2,terms=terms,study='10.1038/s41586-025-10093-z',accession='GSE301246')
+    print(name,str(p),flush=True)
+    status('exact_pair_feasibility',[name+' download attempted'],['stream metadata and count reverse clone pairs'])

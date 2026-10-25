@@ -1,0 +1,33 @@
+"""Append recovery findings; never rewrite the original frozen protocol."""
+from intake import *
+import xml.etree.ElementTree as ET
+from scipy.stats import t,norm
+
+def main():
+    papers=[]
+    descriptions={
+      'PMC11787294':('ReDeconv','Transcriptome-size and gene-length mismatch are existing methodological issues; full published normalization/signature/estimator is the planned comparator, not an invented new algorithm.'),
+      'PMC12492706':('Unico','Already evaluates cell-type-resolved expression using lung HLCA pseudobulks. Thus using lung atlas pseudobulks alone is not novel. Assumes supplied/estimated cell proportions and performs tensor inference; not identical to fixed ECM source-share error.'),
+      'PMC12982128':('DECODE','Published 2026 multiomics cell-type/state deconvolution with target-domain adaptation. Deep-learning training outside this CPU-only bounded experiment; no superiority claim over DECODE.'),
+      'PMC12344038':('scRNA DE meta-analysis','Published neurodegeneration multi-study DE reproducibility/aggregation, not a direct new IPF attribution result. Motivates donor/study-level replication rather than cell-level significance.'),
+      'PMC11906353':('Vannan spatial lung pathology','Already links molecular niches, composition and pathology. Corrected2025 data required; partially observed summary tables are corroborative only, donor overlap exclusions required.'),
+      'PMC7439444':('Habermann 2020','Development study already reports KRT5-/KRT17+ epithelium expressing COL1A1/FN1. ECM epithelial production is prior knowledge, not a discovery here.'),
+      'PMC7439502':('Adams 2020','Holdout study already reports aberrant basaloid cells and deconvolves GSE134692 with MuSiC. Broad disease composition analysis on these accessions duplicates published work.'),
+      'PMC6689672':('Sivakumar bulk','Transplant-stage total-RNA bulk; adult eligibility, repeated Sample.property and conflicting sex fields prevent naive row-level disease inference.')}
+    for pmc,(name,note) in descriptions.items():
+        p=ART/'payload'/f'{pmc}.xml';root=ET.parse(p).getroot()
+        ids={a.attrib.get('pub-id-type'):a.text for a in root.findall('.//article-id')}
+        permissions=root.find('.//permissions')
+        papers.append(dict(name=name,pmcid=pmc,doi=ids.get('doi'),type='published journal article',source='https://pmc.ncbi.nlm.nih.gov/articles/'+pmc+'/',source_file=str(p),sha256=hashlib.sha256(p.read_bytes()).hexdigest(),finding=note,license_text=' '.join(permissions.itertext()) if permissions is not None else None))
+    papers.append(dict(name='MuSiC2',type='published journal article',source='https://pmc.ncbi.nlm.nih.gov/articles/PMC9677503/',official_repository='https://github.com/xuranw/MuSiC',finding='Multi-condition deconvolution already iteratively excludes disease-variable genes; healthy/disease reference mismatch is established. Official PMC web search and author repository inspected. PMC page CAPTCHA and EuropePMC fullTextXML HTTP500 prevented this full-text intake; do not claim full-text verification.',raw_lookup_failure='manifest.jsonl records three HTTP500 attempts'))
+    atomic(DATA/'literature_audit_recovery.json',dict(at=now(),papers=papers,databases_queried=['Crossref (before power loss; saved raw works JSON)','Europe PMC (before power loss; raw search JSON and full-text XML retained)','PMC and official author repositories (recovery cross-check)'],raw_responses=str(ART/'payload'),novelty_claim='None established; narrow reference-attribution failure pilot only'))
+    atomic(DATA/'candidate_ledger.json',dict(at=now(),candidates=[dict(id=1,question='General composition/state explanation of bulk IPF ECM and alveolar signals',disposition='not advanced as a novelty claim',reason='MuSiC2, ReDeconv, Unico and original Adams bulk analysis directly cover broad methodological premise; adult identity and clinical confounding also restrict inference',expression_models=0),dict(id=2,question=json.loads((DATA/'plan_frozen_v1.json').read_text())['research_question'],disposition='frozen and running',original_frozen_at='2026-10-21T12:11:05.539846+00:00',original_plan_sha256=hashlib.sha256((DATA/'plan_frozen_v1.json').read_bytes()).hexdigest())],maximum_candidates=3,remaining_unused_candidates=1,model_budget_original_plan=8,user_absolute_max_configurations=12,paper_candidate=False))
+    precision=[]
+    for sd in [.05,.1,.2,.3]:
+        n=32;se=sd/n**.5
+        precision.append(dict(n_ipf=n,assumed_paired_error_difference_sd=sd,approx_ci95_halfwidth=float(t.ppf(.975,n-1)*se),approx_80pct_power_mde=float((t.ppf(.975,n-1)+norm.ppf(.8))*se)))
+    atomic(DATA/'primary_precision_clarification.json',dict(at=now(),timing='Before extracted expression or any model result; original plan not changed',issue='Original prospective_precision.json concerns age-adjusted disease comparisons, not the primary paired attribution error. This document adds the relevant paired precision assumptions transparently.',minimum_relevant_effect=.05,scenarios=precision,warning='No observed variance used; sampling and reference uncertainty may further widen intervals. Insufficient precision is not equivalence.'))
+    atomic(DATA/'implementation_details_pre_results.json',dict(at=now(),endpoint_eligibility='20 unweighted actual sampled ECM UMIs per donor; weighted source shares use N/n',reference='within-donor/compartment raw means averaged equally over available donors, then each compartment column normalized to CPM',healthy_missing_compartment='Absent types omitted, never filled with disease reference information',gene_symbols='All source Ensembl gene rows retained; endpoint symbol duplicates included in sums, if any, and reported',raw_CPM_sensitivity='For unregularized NNLS, scaling columns changes coefficients but not per-gene fitted contributions. Report numerical invariance; not independent new evidence about true transcriptome sizes.',constant='Training IPF median donor source share, only eligible training donors; exclude heldout donor in development',reference_bootstrap='100 stratified development donor resamples; keep disease/control counts, rebuild marker selection and reference; no target-label tuning',ReDeconv='Try official normalization and signature workflow with same input cells and 50 markers/type maximum, 0.95 correlation default; if contract fails retain concrete failure and prohibit full-method superiority claim',confirmation='Only after development inputs, software checks and reference models are fixed; evaluate once, never use result for model/threshold changes'))
+    print('Recovery literature, candidate ledger and pre-result execution details recorded',now())
+
+if __name__=='__main__':main()

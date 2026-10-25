@@ -1,0 +1,14 @@
+你的路线：drug_support，药敏预测的拟合标签改善与实验支持的药物/细胞排序能否一致。
+专属代码：labs/biomed/studies/fourlane_drug_support_20261021/
+专属小型数据/状态：/home/biostar/work/projects/openlabs/openlabs-data/workspaces/biology/projects/biomed-fourlane-drug-support-20261021/
+专属artifact根（也放research_status.json/FINAL_REPORT.md）：/home/biostar/work/projects/openlabs/openlabs-artifacts/artifact-stage/biomed/four-lanes-20261021/drug_support/
+
+先读studies/drug_support_20261021/REPORT.md及source-and-literature-audit.md、studies/drug_response_day1_20261021/REPORT.md。旧GDSC1/2 75,627配对、104药物名称组、960细胞系；测试18药物/187细胞/2471对。支持规则排序不一致28.43%，相同覆盖差值基线24.16%，主方法负结果；HGB总体优势未建立，但实验支持域内MAE变差、范围外拟合标签改善。该标签分层是已暴露的回顾性线索，不可当源数据可部署门槛。旧测试不再确认，name-heldout不是structure-heldout，拟合值粗化区间不是真实IC50置信界。
+
+优先任务：用原始剂量反应点/重复和精确化合物结构/官方模型ID构成独立实验验证，检验“对拟合摘要标签的性能增益”是否改善实际支持浓度内响应或跨筛选敏感性排序。明确相同药物/细胞跨筛选迁移和新药/新细胞预测的区别。不要混用IC50/Ki/Kd或不同dose范围的AUC，公共支持范围计算需足够曲线证据。以实际用途定义主要评价，不能通过删除外推标签人为制造优势。
+
+最近必读：2025 specification game 10.1186/s13321-025-00972-y；2016 support harmonization 10.18632/oncotarget.10010；2026 benchmark 10.1038/s42004-026-01916-9；2026 Harmonization and integration 10.1093/bioinformatics/btag382；DrEval2026 10.1038/s41467-026-72903-w（raw曲线处理、强基线、跨研究及外部ex vivo已覆盖）；2026 intraclass generalization 10.1371/journal.pcbi.1013232。DrEval官方数据Zenodo10.5281/zenodo.12633909，preprocess代码 https://github.com/daisybio/preprocess_drp_data ，主代码 https://github.com/daisybio/drevalpy ，都需核验上游来源/复用许可；不将再打包GDSC当新独立实验。
+
+候选独立数据路线：CTRP/CCLE官方原始曲线及相应复制；PRISM若有确实兼容dose重复；BeatAML/公开PDX作为明确另层级而非与细胞系混合的外部验证。精确数据可用性/体积/化合物身份/单位和重复先核验，至少探索有依据的2–3路线。使用共享已有工具和本路线代码，优先小型处理后与有原始曲线链接的记录。
+
+对照至少包括identity、训练集affine、同容量dose-only、drug/cell均值、强简单树模型、同覆盖差值筛选，并按任务选最近方法。如果目标是方法贡献，要求强基线公平比较；若核心为新诊断结论，需独立验证其实际影响而非仅报总体相关下降。按药物/细胞真实依赖给出区间，冻结primary comparison/支持范围/主要指标；不把百万药物细胞对当百万独立样本。原始曲线不足或最新文献直接覆盖核心问题，则在本路线最多3种实质设计内重规划；不得包装旧负结果。

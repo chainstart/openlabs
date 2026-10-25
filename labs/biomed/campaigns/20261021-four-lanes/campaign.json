@@ -1,0 +1,29 @@
+{
+  "schema_version": "openlabs.bounded_research_campaign.v1",
+  "campaign_id": "biomed-four-lanes-20261021",
+  "authorization": "除了上述的2条优先研究线外，再开启2条研究线，一共4路研究路线，开启并行进程，进行深入研究，目标2区论文级成果",
+  "created_at_utc": "2026-10-21T11:46:31.613021+00:00",
+  "deadline_utc": "2026-10-22T11:46:31.613021+00:00",
+  "research_target": "2025 CAS upgraded major-category Zone 2 or higher; evidence target, not publication guarantee",
+  "duration_hours": 24,
+  "lanes": [
+    "promoter_transfer",
+    "drug_support",
+    "perturbation_context",
+    "disease_cell_state"
+  ],
+  "per_lane": {
+    "cpu_threads": 2,
+    "memory_high_mib": 4096,
+    "memory_max_mib": 5120,
+    "swap_max_mib": 512,
+    "tasks_max": 96,
+    "download_max_gib": 6,
+    "scratch_max_gib": 12,
+    "http_concurrency": 2
+  },
+  "publication_authorized": false,
+  "submission_authorized": false,
+  "global_policy_changed": false,
+  "resumption_authorization": "2026-10-21 用户授权：继续之前的4路并行实验，不过每路上限降为5G，目标仍然是2区论文"
+}

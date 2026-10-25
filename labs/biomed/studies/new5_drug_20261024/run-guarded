@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec /home/biostar/work/projects/openlabs/openlabs/bin/openlabs-resource-guard --task-type cpu -- systemd-run --user --scope --quiet --slice=openlabs-workers.slice --property=CPUQuota=200% --property=MemoryHigh=3G --property=MemoryMax=4G --property=MemorySwapMax=0 --property=TasksMax=64 env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 "$@"

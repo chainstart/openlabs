@@ -1,0 +1,37 @@
+本路线 disease_cell_state。新代码目录：labs/biomed/studies/replan_disease_cell_state_20261021/
+新小型数据/状态目录：/home/biostar/work/projects/openlabs/openlabs-data/workspaces/biology/projects/biomed-replan-disease-cell-state-20261021/
+新artifact（状态/最终报告）：/home/biostar/work/projects/openlabs/openlabs-artifacts/artifact-stage/biomed/replan-three-sixhour-20261021/disease_cell_state/
+旧artifact只读：/home/biostar/work/projects/openlabs/openlabs-artifacts/artifact-stage/biomed/four-lanes-20261021/disease_cell_state/
+旧data只读：/home/biostar/work/projects/openlabs/openlabs-data/workspaces/biology/projects/biomed-fourlane-disease-cell-state-20261021/
+
+协调者初评与候选：
+{
+  "assessment": "上一轮19供体开发已运行但图谱raw/X与GEO原始计数存在未解释差异，主比较亦未支持改善，确认仍封存。原始全矩阵下载按旧速度超预算；来源问题与阴性结果应分开。",
+  "preferred": "先给来源修复最多45-60分钟可行性窗口：寻找原作者官方供体级pseudobulk/小型处理后矩阵或可完整核验的转换链；不能只是再次下载同一派生图谱。小范围原始共同基因/同细胞审计通过后才能恢复归因问题。",
+  "alternatives": [
+    "若原始计数无法核验，改为来源明确的成人IPF跨独立bulk队列效应稳定性/年龄与组成敏感性问题，优先小型官方矩阵，先证明区别于现有文献。不能退化为DEG+富集或分类AUC。",
+    "若原作者有可靠的供体级细胞类型汇总，评估预指定程序对参考构成的失效边界；开发结果用于提假说，新确认必须独立且只开一次。"
+  ],
+  "gate": "不将未核验计数用于论文结论，不以放宽来源标准解锁确认。新设计需先核查成人年龄、同供体重用、批次与疾病混杂、目标程序选择及功效；原空间数据仅补充。"
+}
+
+上一轮路线背景（只读；其中旧输出路径均由上面新路径取代，旧冻结方案不能改写）：
+你的路线：disease_cell_state，成人肺纤维化跨队列信号的细胞组成/细胞内状态归因及独立复现。新增疾病转录组研究线，与单细胞基因扰动、启动子报告体系、药敏三线区分。
+专属代码：labs/biomed/studies/fourlane_disease_cell_state_20261021/
+专属小型数据/状态：/home/biostar/work/projects/openlabs/openlabs-data/workspaces/biology/projects/biomed-fourlane-disease-cell-state-20261021/
+专属artifact根（也放research_status.json/FINAL_REPORT.md）：/home/biostar/work/projects/openlabs/openlabs-artifacts/artifact-stage/biomed/four-lanes-20261021/disease_cell_state/
+
+首选可证伪问题：成人IPF中，bulk ECM/肺泡修复信号的跨队列变化，有多少由细胞比例变化或细胞内表达变化解释？开发数据预定义的归因稳定信号能否在另一scRNA研究的供体级pseudobulk和独立空间病理数据保持方向与效应？希望获得可复核的归因规律/失败边界，不能仅做DEG+富集+机器学习签名或疾病分类AUC。
+
+scoping已实际访问的官方路线（还需你落manifest/条款并完整核验）：
+1. GSE134692 bulk，官方FTP https://ftp.ncbi.nlm.nih.gov/geo/series/GSE134nnn/GSE134692/suppl/ 。counts约4.9MB、design约2.2KB。design80行但Sample.property仅61独特对象（IPF36/Normal17/ALI8），重复不得算独立人。Normal存在Age=1儿童，gender与sex字段冲突；先查原文/metadata解释，成人匹配、诊断/临床混杂和样本身份必须预先冻结，不可直接所有Normal对IPF。ALI不混入IPF结论。
+2. GSE135893开发scRNA，metadata约3.2MB含Sample_Name/Sample_Source/Diagnosis/celltype，稀疏matrix约1GB。https://ftp.ncbi.nlm.nih.gov/geo/series/GSE135nnn/GSE135893/suppl/ 。供体pseudobulk优先，流式稀疏聚合；不把细胞当独立病例。
+3. GSE136831留出scRNA，metadata约4.1MB含Subject_Identity/Library_Identity/Disease_Identity/Subclass_Cell_Identity，matrix约2GB；21GB RDS/16GB TAR禁止下载。https://ftp.ncbi.nlm.nih.gov/geo/series/GSE136nnn/GSE136831/suppl/ 。先查是否与上面bulk/scRNA重用同供体/中心；GEO号不同不是独立保证。
+4. GSE250346正交空间候选，只有供体/样本重叠排除后可用。官方README https://ftp.ncbi.nlm.nih.gov/geo/series/GSE250nnn/GSE250346/suppl/GSE250346_RDS_README.txt 明确旧preprint有codeword基因错标（如ACTA2→MRC1、FN1→COL1A2等），只能使用corrected2025发布。空间面板343基因，不是全转录组。HE_annotations约27MB含病理区域对应、corrected Seurat RDS约967MB；禁下164GB RAW/45GB TAR。R环境本机未重建，优先可以审计转换的处理后格式；不要随意安装庞大R生态或把错误旧数据当新验证。
+
+前沿创新门槛：MuSiC/MuSiC2已做健康疾病参考与细胞类型分析，2025 ReDeconv、2025 Unico（cell-type-resolution）、2026 DECODE、2025 Nat Commun单细胞DE meta-analysis及Vannan2025肺空间病理原文必须精确检索核查。原空间论文已做病理关联和组分变化；“区分composition/state”本身不是新贡献。先确认是否有跨研究可复现的具体归因问题、参考库变化引起错误归因的实质影响或尚未验证的疾病程序，不能泛称首次。选近期最直接方法作为对照，不要重写通用deconvolution算法。
+精确入口：MuSiC2 https://pmc.ncbi.nlm.nih.gov/articles/PMC9677503/ ；ReDeconv10.1038/s41467-025-56623-1；Unico10.1186/s13059-025-03776-3；跨研究DE meta-analysis10.1038/s41467-025-62579-z；DECODE10.1038/s41592-026-03007-y；Vannan空间病理10.1038/s41588-025-02080-x。单细胞捕获比例不是组织真实比例，转录组大小与归一化对归因的影响需要明确。
+
+建议设计：冻结成人疾病/正常资格、重复样本策略、共同基因/细胞注释、临床混杂和外部供体。以开发scRNA建立参考、真实bulk做归因，另一独立scRNA供体内pseudobulk检验效应方向及幅度；空间只检验已在其有限面板覆盖且未用于选择的信号。以供体/研究为不确定性单位。强对照包括unadjusted bulk、组成-only、常规组成协变量调整和合适现有方法；组成和状态统计分解不自动因果。避免批次与疾病完全混杂；不能用目标状态标签选择参考基因后宣称盲外验证。
+
+阶段停止：无可信供体映射/成人对照/独立外证、来源重用、目标标签适应复用、核心问题已直接发表且无新增独立证据价值。最多3种本路线内实质设计，每种留下原因。初题重复可明确转为某个预先指定疾病程序/细胞类群的归因失效与正交验证，但需要新的问题依据与验证边界，不能挑显著基因救结果。

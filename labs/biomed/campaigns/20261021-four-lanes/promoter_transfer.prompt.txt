@@ -1,0 +1,14 @@
+你的路线：promoter_transfer，启动子方向信息的跨报告体系迁移及失效边界。
+专属代码：labs/biomed/studies/fourlane_promoter_transfer_20261021/
+专属小型数据/状态：/home/biostar/work/projects/openlabs/openlabs-data/workspaces/biology/projects/biomed-fourlane-promoter-transfer-20261021/
+专属artifact根（也放research_status.json/FINAL_REPORT.md）：/home/biostar/work/projects/openlabs/openlabs-artifacts/artifact-stage/biomed/four-lanes-20261021/promoter_transfer/
+
+先读第一轮studies/functional_genomics_day1_20261021/REPORT.md和深化studies/promoter_portability_20261021/REPORT.md。454个位点同研究跨细胞MSE改善15.18%；150元件同QUASARR载体背景改善20.74%，但identity_delta的MSE0.275216优于selected full_hgb0.305603。近端仅55测试元件，区间含零。不能把主对照“活性基线”叫最强所有简单基线或把两轮称同一目标独立复现。旧代码硬编码不存在路径及一次确认标记，不直接执行旧入口；可复制合适逻辑到自有新代码并记录来源。
+
+最优先数据任务：核验精确插入序列、参考基因组/方向、报告终点、长度、载体和原始研究。此前Roberts2021/GSE156857及SuRE/GSE128325为异质片段聚合tracks；Bose2025/GSE279057没有建立精确正反克隆配对；QUASARR2026/GSE310760虽有方向配对，但与旧Agarwal插入同一性未成立。ENCSR382BVV就是旧K562来源。不能再次把坐标重叠当精确序列或独立性。不要只重复三条失败路线；评估新的原始库、处理文件和替代设计是否真正解锁问题。
+
+当前近邻必须覆盖：Roberts2021 10.1101/gr.270751.120；Agarwal2025 10.1038/s41586-024-08430-9；Zhang2025 10.1186/s13059-025-03828-8；QUASARR2026 10.1038/s41467-026-68780-y；PARM2026 10.1038/s41586-025-10093-z（含跨系统/多背景预测与突变验证）；Tan2026预印本 10.64898/2026.06.25.734173（多报告设计、启动子responsiveness和内源CRISPR）；RegTrust-XAI2026预印本10.64898/2026.08.20.745945（reliability/独立MPRA解释验证）。这些均不证明本题已无空间，但排除泛泛“方向偏好/载体影响/序列预测/可靠性”。
+
+科学候选：哪些可测量来源特征能预示方向性在独立报告体系保留或失效，是否超出总体活性、测量精度及直接方向复制？在开发阶段提出具体可证伪的失效规律或校准用途，并在独立面板检验。必须分别定义observed-source transfer与sequence-only prediction；前者以identity/affine/ridge为主要强基线，后者使用终点兼容的当前模型并审计预训练重叠。若精确配对数据不足，可论证另一科学问题，但不能将bin或不同长度直接伪装原问题。至多3个实质设计；新问题也需独立验证和最近文献审查。公开突变/扰动可支持生物解释，motif相关并非机制证明。
+
+达成门槛：有可复核的独立体系证据及明确超过先前研究的规律/实用改进，或有足够精度的新负结果。若数据/创新门槛不成立，保留全部审计和结果，明确needs_replan，不在旧确认集调参追求15%或20%改善。

@@ -292,7 +292,7 @@
         "www.encodeproject.org",
         "encode-public.s3.amazonaws.com"
       ],
-      "citation_policy": "Agarwal et al. Nature 639:411\u2013420 (2025), DOI10.1038/s41586-024-08430-9; ENCODE Consortium and exact experiment/file accessions.",
+      "citation_policy": "Agarwal et al. Nature 639:411–420 (2025), DOI10.1038/s41586-024-08430-9; ENCODE Consortium and exact experiment/file accessions.",
       "independence_risks": [
         "Cell contexts share synthetic library and upstream study; not independent laboratories",
         "Biological replicates are cultures, not independent donors",
@@ -356,6 +356,499 @@
         "Variable-length inserts require sequence audit"
       ],
       "checked_at": "2026-10-21"
+    },
+    {
+      "source_id": "publisher_supplementary_tables",
+      "phase": 2,
+      "access": "public_file_specific_terms",
+      "name": "Publisher-hosted supplementary research tables",
+      "documentation_url": "https://www.nature.com/nature-portfolio/editorial-policies/reporting-standards",
+      "terms_url": "https://www.nature.com/nature-portfolio/open-access",
+      "reuse_basis": "Verify the selected article and each supplementary file terms; retain article identity and disclaimers. No general licence inferred from hosting.",
+      "allowed_hosts": [
+        "www.nature.com",
+        "link.springer.com",
+        "media.springernature.com",
+        "static-content.springer-cdn.com"
+      ],
+      "recommended_start": "Small identified tabular supplements with exact DOI, file identity, biological units and file-level licence evidence; no raw genome/atlas crawl.",
+      "independence_risks": [
+        "Different supplements may use identical upstream samples",
+        "MAG rows are not independent donors",
+        "Processed annotation pipelines and databases may differ"
+      ],
+      "citation_policy": "Cite original article, exact supplementary file and reuse terms checked at intake."
+    },
+    {
+      "source_id": "public_biomechanics_figshare",
+      "phase": 2,
+      "access": "public_file_specific_terms",
+      "name": "Public biomechanics research datasets hosted by Figshare",
+      "documentation_url": "https://docs.figshare.com/",
+      "terms_url": "https://figshare.com/terms",
+      "reuse_basis": "Each selected record must have explicit file-level research reuse terms. Retain attribution and any noncommercial/share-alike restriction; do not infer terms across records.",
+      "allowed_hosts": [
+        "api.figshare.com",
+        "ndownloader.figshare.com",
+        "figshare.com",
+        "s3-eu-west-1.amazonaws.com"
+      ],
+      "recommended_start": "Record metadata, exact file IDs, sample identity, measurement units and acquisition/processing before waveform extraction.",
+      "independence_risks": [
+        "Republished records may share participants",
+        "Force columns can be altered for anonymization",
+        "Derived COP features are not raw force waveforms"
+      ],
+      "citation_policy": "Cite source record DOI/version and original study; do not redistribute identifiable or restricted payloads."
+    },
+    {
+      "source_id": "nemar_isruc_public_research",
+      "phase": 2,
+      "access": "public_research_use_unspecified_redistribution",
+      "name": "NEMAR nm000111 v1.0.1 derivative of ISRUC PSG for bounded research",
+      "documentation_url": "https://nemar.org/dataset/nm000111.md",
+      "terms_url": "https://sleeptight.isr.uc.pt/?page_id=48",
+      "reuse_basis": "Original ISRUC official download page states publicly available for research purposes for PSG including EEG/EOG/EMG. NEMAR nm000111 v1.0.1 explicitly lists License n/a. This task uses publicly downloadable derivative waveforms only for local noncommercial computational research with original ISRUC and NEMAR attribution. No CC licence inferred, no raw-waveform redistribution, no institutional ethics exemption asserted. Preserve derivative conversion and source identity limitations.",
+      "allowed_hosts": [
+        "nemar.org",
+        "www.nemar.org",
+        "data.nemar.org",
+        "nemar.s3.us-east-2.amazonaws.com",
+        "raw.githubusercontent.com",
+        "api.github.com"
+      ],
+      "recommended_start": "Exact release manifest plus fixed declared-night EDF files, hashes and original labels; establish training overlap and derivative provenance before evaluation.",
+      "independence_risks": [
+        "ISRUC subgroups/IDs may overlap",
+        "Derivative labels and waveform conversion require audit",
+        "Model training sources must be checked separately; new model does not make exposed participants blinded"
+      ],
+      "citation_policy": "Cite original ISRUC dataset publication, nm000111 version1.0.1 and source/derivative manifests; do not redistribute waveforms or imply unrestricted licence."
+    },
+    {
+      "source_id": "robustsleepnet_official",
+      "phase": 2,
+      "access": "public_mit_source_and_released_weights",
+      "name": "Dreem Organization RobustSleepNet fixed official implementation",
+      "documentation_url": "https://github.com/Dreem-Organization/RobustSleepNet",
+      "terms_url": "https://raw.githubusercontent.com/Dreem-Organization/RobustSleepNet/c8ff3f6f857299eb2bf2e9400483084d5ecd4106/LICENSE",
+      "reuse_basis": "MIT licence at fixed official commit c8ff3f6f857299eb2bf2e9400483084d5ecd4106; preserve copyright and licence notices. Verify exact weight provenance and training cohort overlap individually; repository licence does not relicense upstream PSG.",
+      "allowed_hosts": [
+        "codeload.github.com",
+        "github.com",
+        "raw.githubusercontent.com",
+        "api.github.com"
+      ],
+      "recommended_start": "Commit-pinned native embedded6-model inference and exact training descriptions; no synthetic path reconstruction relabeled native.",
+      "independence_risks": [
+        "Native weight training cohorts overlap",
+        "Model ensemble members are not independent participants",
+        "Training-source exclusions must be checked for each selected test source"
+      ],
+      "citation_policy": "Cite RobustSleepNet original publication and fixed commit; retain MIT attribution."
+    },
+    {
+      "source_id": "public_scientific_zenodo",
+      "phase": 2,
+      "access": "public_file_specific_terms",
+      "name": "Public scientific Zenodo research deposits",
+      "documentation_url": "https://developers.zenodo.org/",
+      "terms_url": "https://about.zenodo.org/policies/",
+      "reuse_basis": "Verify each exact record version and file licence; citation, upstream identity and actual explicit licence required. Hosting alone is not unrestricted permission.",
+      "allowed_hosts": [
+        "zenodo.org"
+      ],
+      "recommended_start": "Metadata-qualified small research files with record DOI and exact file checksum; explicit per-file size limits.",
+      "independence_risks": [
+        "Concept records redirect to updated versions",
+        "Repackaged studies can overlap",
+        "Summary tables are not raw waveform/phenotype data"
+      ],
+      "citation_policy": "Cite original study and exact version DOI; retain selected licence and attribution."
+    },
+    {
+      "source_id": "hlrmdb_public_research",
+      "phase": 2,
+      "access": "public_local_research_no_redistribution",
+      "name": "HLRMDB official human long-read microbiome data",
+      "documentation_url": "https://www.inbirg.com/hlrmdb/",
+      "terms_url": "https://academic.oup.com/nar/article/54/D1/D763/8317319",
+      "reuse_basis": "Original article DOI10.1093/nar/gkaf1152 describes the database as freely accessible and datasets publicly downloadable. Official database footer reserves copyright and no specific downloaded-data CC licence is identified. This campaign performs bounded local noncommercial research with attribution, preserves licence uncertainty and does not redistribute source data or infer article CC terms extend to every payload.",
+      "allowed_hosts": [
+        "www.inbirg.com",
+        "inbirg.com"
+      ],
+      "recommended_start": "Exact official bin and metadata endpoints, limited qualification downloads; confirm joined annotation resolution and upstream donor/study identities before outcomes.",
+      "independence_risks": [
+        "Same source run can have multiple assemblers/bins",
+        "Long-read and hybrid entries can represent same donor",
+        "Database annotation definitions differ from original EARB/RGI pipeline",
+        "MAGs are not independent people"
+      ],
+      "citation_policy": "Cite HLRMDB DOI10.1093/nar/gkaf1152, exact source accessions and snapshot checksums; preserve copyright, do not redistribute raw payloads."
+    },
+    {
+      "source_id": "isruc_official_mega_public_research",
+      "phase": 2,
+      "access": "public_research_purpose_official_encrypted_share",
+      "name": "Original ISRUC CohortI scorer labels via officially linked public MEGA directory",
+      "documentation_url": "https://sleeptight.isr.uc.pt/?page_id=48",
+      "terms_url": "https://sleeptight.isr.uc.pt/?page_id=48",
+      "reuse_basis": "Original official ISRUC page explicitly publicly available for research purposes and links this public MEGA folder. Read small original scorer label files only for bounded local noncommercial provenance/label analysis; no account, restricted access, quota bypass, or raw redistribution. Preserve unspecified downstream redistribution licence.",
+      "allowed_hosts": [
+        "mega.nz",
+        "g.api.mega.co.nz",
+        "gfs302n127.userstorage.mega.co.nz",
+        "gfs204n331.userstorage.mega.co.nz",
+        "gfs270n360.userstorage.mega.co.nz",
+        "gfs270n361.userstorage.mega.co.nz",
+        "gfs302n524.userstorage.mega.co.nz",
+        "gfs206n189.userstorage.mega.co.nz",
+        "gfs302n516.userstorage.mega.co.nz"
+      ],
+      "recommended_start": "Frozen100participants×2TXT,543187plaintextbytes. Exact official public folder and node identities; source-specific read-only adapter required because files are publicly encrypted. Authenticate ciphertext/plaintext hashes and SDK-compatible MAC; ephemeral byte URLs stay in memory only. Fail closed on host change, timeout, size or MAC failure.",
+      "independence_risks": [
+        "These are original labels for existing ISRUC participants, not a new cohort",
+        "Two scorer labels are not independent physiologicaltruth",
+        "NEMAR transformations and missing labels must be explicitly audited"
+      ],
+      "citation_policy": "Cite original ISRUC dataset/publication and source directory accessed at exact date; retain source-specific adapter and licence uncertainty."
+    },
+    {
+      "source_id": "yasa_official",
+      "phase": 2,
+      "access": "public_bsd_source_and_selected_released_classifier",
+      "name": "YASA official pinned native staging implementation and one released EEG+EOG classifier",
+      "documentation_url": "https://github.com/raphaelvallat/yasa/tree/v0.6.5",
+      "terms_url": "https://github.com/raphaelvallat/yasa/tree/v0.6.5",
+      "reuse_basis": "Official source BSD3-Clause; verify exact pinned licence and selected classifier attribution/terms before inference. This provider does not relicense upstream PSG.",
+      "allowed_hosts": [
+        "api.github.com",
+        "raw.githubusercontent.com",
+        "codeload.github.com",
+        "github.com"
+      ],
+      "recommended_start": "One fixed v0.6.5 native EEG+EOG classifier after training-provenance and named-channel/physical-unit qualification; no model search.",
+      "independence_risks": [
+        "Same ISRUC people as prior primary are not a new cohort",
+        "Published training provenance is not an independent reconstruction of training execution",
+        "DOD prior-source relationship and NSRR training datasets must be disclosed",
+        "Earlobe and mastoid references must not be falsely treated as physically identical"
+      ],
+      "citation_policy": "Cite official YASA publication and exact software/classifier commit and SHA; preserve BSD attribution and source-data terms."
+    },
+    {
+      "source_id": "sleep_edf_expanded_official",
+      "phase": 2,
+      "access": "public_ODC_attribution",
+      "name": "Official PhysioNet Sleep-EDF Expanded fixed1.0.0 files with exact file SHA256 and RECORDS-v1 subset audit",
+      "documentation_url": "https://physionet.org/content/sleep-edfx/1.0.0/",
+      "terms_url": "https://physionet.org/content/sleep-edfx/1.0.0/",
+      "reuse_basis": "Official page lists open access under Open Data Commons Attribution License1.0; verify and preserve attribution and EDF source terms. Raw headers are local private analysis inputs, not selected delivery.",
+      "allowed_hosts": [
+        "physionet.org",
+        "physionet-open.s3.amazonaws.com",
+        "physionet-open.s3.us-east-1.amazonaws.com"
+      ],
+      "recommended_start": "Bounded qualification of original SleepCassette20subjects firstnight only; official RECORDS-v1 vs current197-file listing distinction must be checked before cohort freeze. No target-result-based substitutions.",
+      "independence_risks": [
+        "Different people from ISRUC but single-scored R&K labels are not multi-rater joint truth",
+        "Source page mixes2013versionlabel with2018expandeddescription; exact files and subset must be certified",
+        "YASA published training7NSRR source provenance is not actual training execution reconstruction",
+        "Fpz-Cz/Pz-Oz and horizontalEOG differ from ISRUC; select channel before outcome, no effect-based switching",
+        "Age range, record duration, sleep-window definition and valid-label coverage affect transfer endpoint"
+      ],
+      "citation_policy": "Cite original Kemp2000/Mourtazaev1995 and PhysioNet with exact DOI10.13026/C2X676, fixedversion and selected file hashes; no direct participant identifiers or raw headers in release.",
+      "transport_scope": "Only the officially linked anonymous bucket physionet-open/sleep-edfx/1.0.0/, exact frozen40fileidentities and official SHA256. Same bytes/source cohort; no target-result-dependent fallback. HTTP availability is not asserted."
+    },
+    {
+      "source_id": "cbioportal_public_datahub",
+      "phase": 2,
+      "access": "public_file_specific_research",
+      "name": "cBioPortal official curated published-study datahub",
+      "documentation_url": "https://docs.cbioportal.org/user-guide/faq/",
+      "terms_url": "https://docs.cbioportal.org/user-guide/faq/",
+      "reuse_basis": "Use published CPTAC study data locally for noncommercial research with original study attribution. No universal file licence is inferred from hosting; retain study README, original publication and file metadata; no raw redistribution. cBioPortal software licence is not asserted to cover scientific data.",
+      "allowed_hosts": [
+        "api.github.com",
+        "raw.githubusercontent.com",
+        "media.githubusercontent.com",
+        "cbioportal-datahub.s3.amazonaws.com",
+        "www.cbioportal.org"
+      ],
+      "independence_risks": [
+        "Patient identities must be mapped within original study; different data modalities are not independent people.",
+        "Prospective CPTAC cohorts must not be conflated with TCGA repackagings; exclude overlapping source cohorts.",
+        "Continuous CNA and curated GISTIC-like cutoffs differ between studies."
+      ],
+      "citation_policy": "Cite exact datahub commit, study README transformations, original CPTAC articles and cBioPortal."
+    },
+    {
+      "source_id": "mavedb_public_scores",
+      "phase": 2,
+      "access": "public_file_specific_terms",
+      "name": "MaveDB public experimental variant-effect scores",
+      "documentation_url": "https://www.mavedb.org/",
+      "terms_url": "https://www.mavedb.org/",
+      "reuse_basis": "Inspect exact score-set metadata licence before use; initial CYP2C9/NUDT15 records explicitly CC0. Preserve original publication, score direction, controls and uncertainty semantics; do not conflate raw and normalized scores.",
+      "allowed_hosts": [
+        "api.mavedb.org",
+        "www.mavedb.org",
+        "mavedb.org"
+      ],
+      "independence_risks": [
+        "Paired assays from the same variant library are related observations, not independent proteins or people.",
+        "Combined scores can reuse component assays and cannot be independent validation.",
+        "Per-variant standard deviation is not standard error unless replicate count and aggregation are established."
+      ],
+      "citation_policy": "Cite original assay paper, exact score-set URN/version, MaveDB and file hashes."
+    },
+    {
+      "source_id": "cancergd_paralog_reference",
+      "phase": 2,
+      "access": "public_local_research_no_raw_redistribution",
+      "name": "Original De Kegel2021 paralog reference universe",
+      "documentation_url": "https://www.cancergd.org/static/paralogs/supplemental_files.html",
+      "terms_url": "https://www.cancergd.org/static/paralogs/supplemental_files.html",
+      "reuse_basis": "Original author-hosted published TableS8 used locally for fixed gene-pair identities; explicit blanket raw-data licence unresolved. Attribute original DeKegel2021 Cell Systems study; no raw redistribution and no use of predictions as independent validation.",
+      "allowed_hosts": [
+        "www.cancergd.org",
+        "cancergd.org"
+      ],
+      "independence_risks": [
+        "Predictions and SL outcomes must not define tumour outcome-selected pair universe; use all listed identities only."
+      ],
+      "citation_policy": "Cite DeKegel2021 DOI10.1016/j.cels.2021.08.006, exact TableS8 snapshot and checksum. Initial manifest citation typo .010 corrected by project SOURCE_CORRECTIONS.json; raw bytes unchanged."
+    },
+    {
+      "source_id": "hgnc_public_annotations",
+      "phase": 2,
+      "access": "public_CC0",
+      "name": "HGNC complete human gene annotation set",
+      "documentation_url": "https://www.genenames.org/download/statistics-and-files/",
+      "terms_url": "https://www.genenames.org/about/license/",
+      "reuse_basis": "Official HGNC CC0 annotations with attribution. Use current complete-set snapshot only for stable gene IDs and chromosome location; retain exact date and checksum, no phenotype inference.",
+      "allowed_hosts": [
+        "storage.googleapis.com",
+        "www.genenames.org",
+        "ftp.ebi.ac.uk"
+      ],
+      "independence_risks": [
+        "Symbol aliases can be ambiguous; use exact stable ID or exact symbol and report unmatched entries."
+      ],
+      "citation_policy": "Cite HGNC, exact snapshot date and file hash."
+    },
+    {
+      "source_id": "harle_supplement",
+      "allowed_hosts": [
+        "media.springernature.com"
+      ],
+      "reuse_basis": "Harle2025 article and included supplementary materials CC BY4.0 unless separately credited; local attributed computational analysis; no raw redistribution.",
+      "phase": 2,
+      "name": "harle_supplement",
+      "registration_provenance": {
+        "source_registry": "workspaces/biology/projects/biomed-new5-functional-20261024/source_registry_local.json",
+        "source_registry_sha256": "da6c59e37e5e87290fd3c258477898e80550a1787d8841b54b11adeb5cdf5b06",
+        "reviewed_at_utc": "2026-10-24T15:48:14.216614+00:00",
+        "scope": "Exact task-specific primary sources and terms were audited by the dedicated research lineage; original local provider preserved."
+      }
+    },
+    {
+      "source_id": "paralogmap_figshare",
+      "allowed_hosts": [
+        "api.figshare.com",
+        "ndownloader.figshare.com",
+        "figshare.com",
+        "s3-eu-west-1.amazonaws.com"
+      ],
+      "reuse_basis": "Exact Figshare record31058182 version3 CC BY4.0; preserve Daldal2026 and record citation. Predictions are computational outputs, not experimental evidence.",
+      "phase": 2,
+      "name": "paralogmap_figshare",
+      "registration_provenance": {
+        "source_registry": "workspaces/biology/projects/biomed-new5-functional-20261024/source_registry_local.json",
+        "source_registry_sha256": "da6c59e37e5e87290fd3c258477898e80550a1787d8841b54b11adeb5cdf5b06",
+        "reviewed_at_utc": "2026-10-24T15:48:14.216668+00:00",
+        "scope": "Exact task-specific primary sources and terms were audited by the dedicated research lineage; original local provider preserved."
+      }
+    },
+    {
+      "source_id": "flister_supplement",
+      "allowed_hosts": [
+        "ars.els-cdn.com"
+      ],
+      "reuse_basis": "Original Cell Reports2025 article doi10.1016/j.celrep.2025.116512 is CC BY-NC-ND4.0; included official supplementary workbook used for local noncommercial computational analysis with attribution. No raw or modified workbook redistribution; article license is not asserted to override any third-party credited data.",
+      "phase": 2,
+      "name": "flister_supplement",
+      "registration_provenance": {
+        "source_registry": "workspaces/biology/projects/biomed-new5-functional-20261024/source_registry_local.json",
+        "source_registry_sha256": "da6c59e37e5e87290fd3c258477898e80550a1787d8841b54b11adeb5cdf5b06",
+        "reviewed_at_utc": "2026-10-24T15:48:14.216705+00:00",
+        "scope": "Exact task-specific primary sources and terms were audited by the dedicated research lineage; original local provider preserved."
+      }
+    },
+    {
+      "source_id": "dekegel_author",
+      "allowed_hosts": [
+        "www.cancergd.org"
+      ],
+      "reuse_basis": "Authors explicitly provide full supplementary CSV for Cell Systems2021 paper at official linked site. Local noncommercial attributed analysis only; no new unrestricted data license or raw redistribution inferred.",
+      "phase": 2,
+      "name": "dekegel_author",
+      "registration_provenance": {
+        "source_registry": "workspaces/biology/projects/biomed-new5-functional-20261024/source_registry_local.json",
+        "source_registry_sha256": "da6c59e37e5e87290fd3c258477898e80550a1787d8841b54b11adeb5cdf5b06",
+        "reviewed_at_utc": "2026-10-24T15:48:14.216739+00:00",
+        "scope": "Exact task-specific primary sources and terms were audited by the dedicated research lineage; original local provider preserved."
+      }
+    },
+    {
+      "source_id": "ifn_author_github",
+      "allowed_hosts": [
+        "raw.githubusercontent.com"
+      ],
+      "reuse_basis": "Author-published data/code in the publication-associated public repositories, internal noncommercial research with attribution only. No repository-wide explicit licence located; do not redistribute source payloads or infer that article licence covers all files.",
+      "phase": 2,
+      "name": "ifn_author_github",
+      "registration_provenance": {
+        "source_registry": "workspaces/biology/projects/biomed-new5-singlecell-20261024/source_registry_local.json",
+        "source_registry_sha256": "7d758e0392d6f4601524e53cdcf60c1bf0f11c78a070cf962e711b7859aae3bb",
+        "reviewed_at_utc": "2026-10-24T15:48:14.216807+00:00",
+        "scope": "Exact task-specific primary sources and terms were audited by the dedicated research lineage; original local provider preserved."
+      }
+    },
+    {
+      "source_id": "hirisa_official_public",
+      "allowed_hosts": [
+        "allenimmunology.org",
+        "www.allenimmunology.org",
+        "apps.allenimmunology.org"
+      ],
+      "reuse_basis": "Explicitly linked official public download for HIRISA differential expression tables, anonymous HTTPS. Website requests attribution to HIRISA and original study. No explicit per-file redistribution licence identified; local noncommercial research only, no raw redistribution. Portal login wrapper is not used, no credentials or restricted data accessed.",
+      "phase": 2,
+      "name": "hirisa_official_public",
+      "registration_provenance": {
+        "source_registry": "workspaces/biology/projects/biomed-new5-singlecell-20261024/source_registry_local.json",
+        "source_registry_sha256": "7d758e0392d6f4601524e53cdcf60c1bf0f11c78a070cf962e711b7859aae3bb",
+        "reviewed_at_utc": "2026-10-24T15:48:14.216841+00:00",
+        "scope": "Exact task-specific primary sources and terms were audited by the dedicated research lineage; original local provider preserved."
+      }
+    },
+    {
+      "source_id": "scverse_kang",
+      "allowed_hosts": [
+        "exampledata.scverse.org"
+      ],
+      "reuse_basis": "Official pertpy dataset function publicly links this exampledata.scverse.org file, derived from Kang GSE96583; no per-file unrestricted redistribution licence identified. Internal attributed research only; same upstream cohort as GEO, never independent validation of GEO.",
+      "phase": 2,
+      "name": "scverse_kang",
+      "registration_provenance": {
+        "source_registry": "workspaces/biology/projects/biomed-new5-singlecell-20261024/source_registry_local.json",
+        "source_registry_sha256": "7d758e0392d6f4601524e53cdcf60c1bf0f11c78a070cf962e711b7859aae3bb",
+        "reviewed_at_utc": "2026-10-24T15:48:14.216875+00:00",
+        "scope": "Exact task-specific primary sources and terms were audited by the dedicated research lineage; original local provider preserved."
+      }
+    },
+    {
+      "source_id": "aybey_author_github",
+      "allowed_hosts": [
+        "raw.githubusercontent.com"
+      ],
+      "reuse_basis": "Aybey2025 publication-associated repository has CC0-1.0 LICENSE. Retrieve only published signature list, preserve attribution to DOI10.1186/s12967-025-06628-7; this statement does not relicense upstream third-party expression payloads.",
+      "phase": 2,
+      "name": "aybey_author_github",
+      "registration_provenance": {
+        "source_registry": "workspaces/biology/projects/biomed-new5-singlecell-20261024/source_registry_local.json",
+        "source_registry_sha256": "7d758e0392d6f4601524e53cdcf60c1bf0f11c78a070cf962e711b7859aae3bb",
+        "reviewed_at_utc": "2026-10-24T15:48:14.216906+00:00",
+        "scope": "Exact task-specific primary sources and terms were audited by the dedicated research lineage; original local provider preserved."
+      }
+    },
+    {
+      "source_id": "gdsc_combinations_figshare",
+      "name": "Sanger GDSC combination matrix screens linked by Cancer Discovery 2024 original article",
+      "allowed_hosts": [
+        "api.figshare.com",
+        "ndownloader.figshare.com",
+        "figshare.com",
+        "s3-eu-west-1.amazonaws.com"
+      ],
+      "documentation_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11061612/",
+      "terms_url": "https://creativecommons.org/licenses/by/4.0/",
+      "reuse_basis": "Each selected exact Figshare record declares CC BY4.0. Preserve attribution, exact version/file IDs and original study; these are cell line in vitro screens, not patients.",
+      "phase": 2,
+      "registration_provenance": {
+        "source_registry": "workspaces/biology/projects/biomed-new5-drug-20261024/source-registry-local.json",
+        "source_registry_sha256": "7ee44976bf830838078ff6e42350d8fea585dcd280dd6f3ddef4cfa2cb73b733",
+        "reviewed_at_utc": "2026-10-24T15:48:14.216964+00:00",
+        "scope": "Exact task-specific primary sources and terms were audited by the dedicated research lineage; original local provider preserved."
+      }
+    },
+    {
+      "source_id": "ensembl_grch37_coordinates",
+      "phase": 2,
+      "access": "public_reference_annotation_local_use",
+      "name": "Official Ensembl GRCh37 stable-gene coordinate API",
+      "documentation_url": "https://grch37.rest.ensembl.org/documentation/info/lookup",
+      "terms_url": "https://www.ensembl.org/info/about/legal/disclaimer.html",
+      "reuse_basis": "Public reference gene coordinates used locally with attribution; pin stable gene IDs, assembly, exact JSON snapshots and hashes. No inferred patient data or broad re-licensing claim.",
+      "allowed_hosts": [
+        "grch37.rest.ensembl.org"
+      ],
+      "independence_risks": [
+        "Stable identifiers can change version or coordinates across assembly; require explicitGRCh37 and exact source gene mapping."
+      ],
+      "citation_policy": "Cite Ensembl, exact stable gene identifier, GRCh37 lookup URL, date and checksum."
+    },
+    {
+      "source_id": "parse_cytokine_public",
+      "phase": 1,
+      "access": "public_noncommercial",
+      "name": "Parse 10million PBMC cytokine atlas public pseudobulk release20260203",
+      "data": [
+        "Donor-by-lineage cytokine/control pseudobulk H5AD matrices selected from public ZIP"
+      ],
+      "documentation_url": "https://www.parsebiosciences.com/datasets/10-million-human-pbmcs-in-a-single-experiment/",
+      "terms_url": "https://www.parsebiosciences.com/datasets/10-million-human-pbmcs-in-a-single-experiment/",
+      "reuse_basis": "Official dataset page explicitly licenses dataset CC BY-NC4.0. Internal noncommercial research with attribution only; preserve original creators and release. No commercial use or public raw-data redistribution in this task.",
+      "allowed_hosts": [
+        "www.parsebiosciences.com",
+        "parse-wget.s3.us-west-2.amazonaws.com"
+      ],
+      "recommended_start": "Do not download41GB atlas or6.2GB ZIP. Qualify exact pseudobulk members via central directory and version-bound HTTP206/If-Match ranges with extracted-member CRC/SHA; record whole-object hash as unavailable, never synthesize it.",
+      "independence_risks": [
+        "Same Parse atlas may be mirrored in HumanCytokineDict and is not independent of its publication",
+        "Multiple lineages, conditions and cells share12donors",
+        "Donor identity outside public coded IDs is not established; no claim of verified absence of overlap with other collections",
+        "Public pseudobulk processing and control reuse must be qualified from file metadata, not guessed"
+      ],
+      "citation_policy": "Cite official dataset landing page, exact pseudobulks_20260203.zip version and Human Cytokine Dictionary original publication after metadata qualification.",
+      "checked_at": "2026-10-24T17:05:25.810636+00:00"
+    },
+    {
+      "source_id": "chan2025_supplement_v4_local",
+      "allowed_hosts": [
+        "media.springernature.com"
+      ],
+      "reuse_basis": "Chan et al Nature Genetics 2025 doi10.1038/s41588-025-02222-1 official supplementary workbook, article CC BY4.0; included original supplementary data used with attribution, inspect credit lines before redistribution. Not a license grant for separately credited third-party data.",
+      "phase": 1,
+      "access": "public",
+      "name": "Chan2025 official Nature Genetics original supplementary workbook",
+      "data": [
+        "Dual-guide raw counts and actual guide annotation",
+        "Independent single-guide whole-genome counts",
+        "Sample/batch/technical replicate metadata"
+      ],
+      "documentation_url": "https://doi.org/10.1038/s41588-025-02222-1",
+      "terms_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12283370/",
+      "recommended_start": "Pin93,806,292byte supplementary workbook SHA6fe74cc8958e899ae1ef80f4affecb4fccd8b4a8ebf72fc56ab95ae2665d1270. Preserve batch A/B Cas9-negative D7 controls andtechnicaltriplicates. No claim of independent biological repeats or whole raw-read processing.",
+      "independence_risks": [
+        "4score-matched evalcells are3PatientIDs",
+        "Mel202 participates in original model Ito training and is excluded from eval",
+        "Shared batch reference creates correlated cell/replicate errors",
+        "Private model selection and exact unseen training-family boundary not established"
+      ],
+      "citation_policy": "Cite Chan2025 DOI and exactsupplementaryfile, worksheets, rawcount accessions and original fixed processing code; CC BY4.0 original count tables with credit-line qualification. Historic _local source_id retained to avoid changing frozen manifests.",
+      "checked_at": "2026-10-24T18:11:10.299877+00:00"
     }
   ]
 }

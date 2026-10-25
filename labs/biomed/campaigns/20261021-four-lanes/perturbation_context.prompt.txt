@@ -1,0 +1,24 @@
+你的路线：perturbation_context，CRISPRi抑制强度差异与真实情境依赖调控的区分，供体/刺激/独立sgRNA验证。属于新增单细胞扰动研究线，与旧CRISPR跨实验室风险筛选不同。
+专属代码：labs/biomed/studies/fourlane_perturbation_context_20261021/
+专属小型数据/状态：/home/biostar/work/projects/openlabs/openlabs-data/workspaces/biology/projects/biomed-fourlane-perturbation-context-20261021/
+专属artifact根（也放research_status.json/FINAL_REPORT.md）：/home/biostar/work/projects/openlabs/openlabs-artifacts/artifact-stage/biomed/four-lanes-20261021/perturbation_context/
+
+可证伪首选：同一基因在不同供体、Rest/8h/48h刺激条件下的转录效应异质性，有多少可由实际靶基因抑制强度差异解释？在匹配效力后，残余情境依赖效应能否由独立guide和未用供体复现？靶基因抑制是干预后变量，直接回归可能产生测量误差、共享计数噪声和选择偏差；不得把统计调整叫机制证明。
+
+前置独立scoping已经发现泛题高度重叠，务必读最近原文：
+- Ahlmann-Eltze2025 10.1038/s41592-025-02772-6、Wong2025 10.1093/bioinformatics/btaf317：简单基线与评估。
+- Zhu2026原Cell论文10.1016/j.cell.2026.08.002：情境调控、guide效力/off-target/供体一致性本来就在原研究中。
+- Virtual Cells Need Context, Not Just Scale，2026预印本10.64898/2026.02.04.703804：同T细胞数据供体×刺激泛化。
+- Reliable single-cell perturbations explain and improve model performance，2026预印本10.64898/2026.08.11.744177：可靠性、筛选、采样量。
+- The recoverable resolution of cellular perturbation-response prediction，2026预印本10.64898/2026.09.30.755756：供体交互、独立重复、有限干预支持/低维通路。
+- Deep learning perturbation models can outperform baselines on calibrated metrics，2026 10.1038/s41587-026-03307-w：评价校准。
+仅“泛化/可靠性/有限校准预算/深模型不如简单模型”不足创新，必须先核验首选问题是否被直接解决。
+
+已实测可用的官方数据候选（具体仍需你记录新manifest和文件条款）：
+1. GSE314342／Zhu；作者说明 https://github.com/emdann/GWT_perturbseq_analysis_2025/blob/master/metadata/data_sharing_readme.md ；S3清单 https://genome-scale-tcell-perturb-seq.s3.amazonaws.com/?list-type=2&prefix=marson2025_data/&max-keys=100 。完整pseudobulk44,566,657,140字节、donorDE16.9GB、guideDE29.4GB、各单细胞119–173GB，禁止整库下载。首轮小文件在 marson2025_data/suppl_tables/：sample_metadata.suppl_table.csv(2966bytes)、DE_stats.suppl_table.csv(7.3MB)、guide_kd_efficiency.suppl_table.csv(13.3MB)、guide_offtarget_analysis_results.csv(2.2MB)、IL10IL21bulkRNAseq_DESeq2_results_byguide.csv(30.5MB)、validation_donor_metadata.csv(1185bytes)。GEO另有约1MB的独立供体bulk表达CSV。pseudobulk字段理论含10xrun_id/donor_id/culture_condition/guide_id/n_cells；只有确认公开range支持、块布局与预算后才能提取有意义子集。供体DE由两两供体组合构成，重叠组合不独立。
+2. Replogle2022官方 https://doi.org/10.25452/figshare.plus.20029387.v1 ，API https://api.figshare.com/v2/articles/20029387 （scoping返回CC BY4.0）。K562 raw pseudobulk https://ndownloader.figshare.com/files/35773070 (79,766,954bytes)，RPE1 https://ndownloader.figshare.com/files/35775581 (95,350,546bytes)。先核对obs是否保留guide/真实replicate。两个细胞系不是人类供体，技术现象可复核但不能当同免疫问题直接外部验证。
+3. GSE190604／Schmidt2022人T细胞CRISPRa：guide分配约976KB、barcode419KB、features327KB、matrix950MB。16GSM含guide/mRNA/刺激及非刺激四well；well不自动独立供体，CRISPRa不可与CRISPRi直接混表。只在同一明确定义现象成立且供体映射充分时作另层验证。
+
+设计建议需你依据数据冻结：target×guide×donor×stimulation×真实replicate。开发上选gene/program，确认不能按显著DE筛特征。对照未校准效应迁移、训练集线性幅度校准、效力比例校准、测量误差收缩、细胞数/测序深度匹配；去除直接靶基因再评分，处理off-target与低表达。独立guide和供体均隔离，报告真实供体少导致的推断边界。9个原作者选定验证靶点存在选择偏差，只能受限外证。
+
+前半程必须确认新问题差异、可获取guide/donor层级效力与响应、独立验证路线和预算可行。首选失败最多转向两个实质不同问题：8h瞬时/48h持续调控模式的独立复现；probe-based Perturb-seq与独立bulk读出不一致的基因可测性/探针覆盖解释。两者仍须查原Cell论文覆盖及有效规模，不能只改名救论文。若数据只能导出统计关联，就真实报告关联和探索范围，不能声称干预机制。

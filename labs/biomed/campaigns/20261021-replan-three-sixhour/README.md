@@ -1,0 +1,1 @@
+本轮：用户授权第1、2、4路重新评估并研究6小时。入口 workers.py launch/status。评估见 assessment-plan.json，绝对截止及资源见campaign.json。旧证据只读，新路线独立目录，第3路不受影响。每路4GiB软/5GiB硬内存、512MiB交换、2核CPU，独立systemd service并保留整体护栏。详尽研究要求见common.prompt.txt和路线prompt。
