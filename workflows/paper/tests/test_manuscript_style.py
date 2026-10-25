@@ -34,6 +34,38 @@ def _write(tmp_path: Path, body: str, declaration: str = CODE_DECLARATION) -> Pa
     return path
 
 
+JOURNAL_DECLARATION = r"""
+\section*{Declaration of generative AI and AI-assisted technologies in the manuscript preparation process}
+During the preparation of this work, the authors used OpenAI Codex (gpt-5.6-sol and gpt-6.1-sol) for manuscript drafting, editing and analysis-code preparation. The authors reviewed and edited the output as needed and take full responsibility for the content of the published article.
+"""
+
+
+def test_journal_template_accepts_concise_code_disclosure(tmp_path: Path) -> None:
+    main = _write(tmp_path, "Python scripts compute the reported numerical results.", JOURNAL_DECLARATION)
+    assert audit_tex_tree(main)["valid"]
+
+
+def test_journal_template_still_requires_code_purpose(tmp_path: Path) -> None:
+    main = _write(tmp_path, "Python scripts compute the reported numerical results.",
+                  JOURNAL_DECLARATION.replace(" and analysis-code preparation", ""))
+    codes = {e["code"] for e in audit_tex_tree(main)["errors"]}
+    assert "STYLE-AI-DISCLOSURE-CODE" in codes
+
+
+def test_journal_template_still_requires_actual_model(tmp_path: Path) -> None:
+    main = _write(tmp_path, "We study a classification problem.",
+                  JOURNAL_DECLARATION.replace(" (gpt-5.6-sol and gpt-6.1-sol)", ""))
+    codes = {e["code"] for e in audit_tex_tree(main)["errors"]}
+    assert "STYLE-AI-DISCLOSURE-MODEL-MISSING" in codes
+
+
+def test_journal_template_requires_review_and_responsibility(tmp_path: Path) -> None:
+    main = _write(tmp_path, "We study a classification problem.",
+                  JOURNAL_DECLARATION.replace("reviewed and edited the output as needed and take full responsibility", "used the output"))
+    codes = {e["code"] for e in audit_tex_tree(main)["errors"]}
+    assert "STYLE-AI-DISCLOSURE-ACCOUNTABILITY" in codes
+
+
 def _artwork_fixture(tmp_path):
     figure = tmp_path / 'figures/flow.png'
     figure.parent.mkdir()

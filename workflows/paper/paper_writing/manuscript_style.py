@@ -588,6 +588,16 @@ def audit_tex_tree(
         )
 
     if has_declaration:
+        # Author-preferred journal template (2026-10-24). Its two sentences
+        # disclose actual tools/purposes and author review/responsibility;
+        # private runtime and scientific-verification evidence remain required
+        # by their separate checks, rather than as extra public boilerplate.
+        journal_template = bool(re.search(
+            r"During the preparation of this work, the authors? used .+? for .+?\.\s+"
+            r"The authors? reviewed and edited the output as needed and take full "
+            r"responsibility for the content of the published article\.\s*$",
+            declaration_text, re.IGNORECASE | re.DOTALL,
+        )) and not re.search(r"\[(?:NAME OF TOOL/SERVICE|REASON)\]", declaration_text, re.IGNORECASE)
         requirements: tuple[tuple[str, re.Pattern[str], str], ...] = (
             (
                 "STYLE-AI-DISCLOSURE-TOOL",
@@ -624,6 +634,11 @@ def audit_tex_tree(
             ),
         )
         for code, pattern, message in requirements:
+            if journal_template and code in {
+                "STYLE-AI-DISCLOSURE-TEXT-PURPOSES",
+                "STYLE-AI-DISCLOSURE-EVIDENCE-BOUNDARY",
+            }:
+                continue
             if not pattern.search(declaration_text):
                 issues.append(
                     _issue(code, message, path=next(iter(declaration_ranges)), root=report_root)
@@ -634,7 +649,8 @@ def audit_tex_tree(
                                  path=next(iter(declaration_ranges)), root=report_root))
         if code_assistance_relevant:
             if not re.search(
-                r"source[- ]code development|development.{0,60}(?:source )?code",
+                r"source[- ]code development|development.{0,60}(?:source )?code"
+                + (r"|(?:analysis|source)[- ]code preparation" if journal_template else ""),
                 declaration_text,
                 re.IGNORECASE | re.DOTALL,
             ):
@@ -646,7 +662,7 @@ def audit_tex_tree(
                         root=report_root,
                     )
                 )
-            if not re.search(
+            if not journal_template and not re.search(
                 r"(?:inspected|reviewed).{0,100}code.{0,120}"
                 r"(?:tested|executed|validated|checked)",
                 declaration_text,

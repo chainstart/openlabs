@@ -133,6 +133,16 @@ inspection or rewrite a historical review hash.
 
 ## Disclose the model actually used
 
+Author default, 2026-10-24: use the short journal tool/purpose template in the
+data repository's `registry/paper-declarations/templates.yaml`, selected by
+`default_ai_template_id`, for new manuscripts unless their venue requires another
+format. Its heading is "Declaration of generative AI and AI-assisted technologies
+in the manuscript preparation process". Fill the two sentences with the actual
+tool/service, evidenced model identifiers and actual purposes; do not copy the
+current JBI paper's model list or image service as facts for another paper.
+Keep detailed runtime and validation provenance in private records. Do not append
+long preparation or audit narratives merely to satisfy the legacy disclosure style.
+
 New AI-use declarations identify each tool actually used (OpenAI Codex or Anthropic Claude Code)
 and the exact model identifiers supported by the work's runtime records, not a globally preferred
 version. Register each use under `declarations.ai_use.model_usage` with `provider: openai-codex`,
@@ -196,9 +206,12 @@ audit/campaign filenames or paths, bibliography workflow notes, and preparation 
 does not belong in scientific prose. A registered institutional name is allowed.
 Publisher-required provenance for an explanatory image may additionally appear in its actual caption through `artwork_disclosures`. This is a source-bound image credit, not an exception for preparation narration in scientific prose. The checker verifies the exact image hash, a hash-bound generation record, tool/model identity (or an explicitly unreported image model), and one occurrence in that image's caption. It does not replace the consolidated final declaration; unregistered captions and ordinary body narration remain blocked.
 
-Exactly one final AI-use declaration is required. It must identify the tool and textual purposes;
-manuscripts with computational code must also disclose source-code-development/verification
-assistance and human checking, and manuscripts reporting Codex-assisted Lean work must disclose
+Exactly one final AI-use declaration is required. It must identify the actual tool and purposes.
+For the complete two-sentence journal template, state actual code-development or
+analysis-code-preparation assistance in the purpose field when relevant; the
+author-review/responsibility sentence remains in its recommended form. Detailed
+completed checking belongs in the private evidence and applicable scientific methods,
+not an automatically appended declaration paragraph. Manuscripts reporting Codex-assisted Lean work must disclose
 Lean-code preparation/checking while attributing formal verification to the pinned Lean toolchain
 rather than to AI output. The check is non-scoring, but every failure is projected into
 `unresolved_review_blockers`; neither score nor decision can override it. It does not authorize
