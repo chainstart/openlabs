@@ -339,7 +339,30 @@ def _declaration_ranges(
             break
     ranges[path] = range(start, end)
 
-    # The declaration must be the final scientific prose/declaration block.
+    # Publisher templates may put AI disclosure inside Author declarations,
+    # before data availability and appendices. This is still end matter: do not
+    # permit a return to an ordinary scientific section after the disclosure.
+    before = "\n".join(_strip_tex_comment(line) for line in lines[:start])
+    sections = re.findall(r"\\section\*?\s*\{([^{}]+)\}", before)
+    in_declarations = bool(sections and sections[-1].strip().lower() in {
+        "author declarations", "declarations",
+    })
+    tail = "\n".join(_strip_tex_comment(line) for line in lines[end:])
+    before_appendix = re.split(r"\\appendix\b|\\bibliography\s*\{|\\begin\s*\{thebibliography\}", tail, maxsplit=1)[0]
+    following_headings = re.findall(
+        r"\\(?:section|subsection|subsubsection)\*?\s*\{([^{}]+)\}", before_appendix)
+    end_matter_headings = {
+        "data availability", "data availability statement", "code availability",
+        "author contributions", "competing interests", "conflict of interest",
+        "conflicts of interest", "funding", "acknowledgments", "acknowledgements",
+        "ethics approval", "ethics approval and consent to participate",
+        "consent for publication", "supplementary material", "supplementary information",
+        "references",
+    }
+    if in_declarations and all(h.strip().lower() in end_matter_headings for h in following_headings):
+        return ranges, issues
+
+    # Otherwise the declaration must be the final prose/declaration block.
     # Once the bibliography begins, venue-mandated back matter such as author
     # addresses may follow without moving the AI declaration behind the
     # reference list.
@@ -589,13 +612,16 @@ def audit_tex_tree(
 
     if has_declaration:
         # Author-preferred journal template (2026-10-24). Its two sentences
-        # disclose actual tools/purposes and author review/responsibility;
-        # private runtime and scientific-verification evidence remain required
+        # disclose actual tools/purposes and author responsibility. Review of
+        # the output is an optional factual attestation, never boilerplate that
+        # a checker should force authors to invent. Private runtime and
+        # scientific/code-validation evidence remain required
         # by their separate checks, rather than as extra public boilerplate.
         journal_template = bool(re.search(
             r"During the preparation of this work, the authors? used .+? for .+?\.\s+"
-            r"The authors? reviewed and edited the output as needed and take full "
-            r"responsibility for the content of the published article\.\s*$",
+            r"The authors? (?:reviewed and edited the output as needed and )?take full "
+            r"responsibility for the content of (?:the |this )(?:published )?article"
+            r"(?: and associated materials)?\.\s*$",
             declaration_text, re.IGNORECASE | re.DOTALL,
         )) and not re.search(r"\[(?:NAME OF TOOL/SERVICE|REASON)\]", declaration_text, re.IGNORECASE)
         requirements: tuple[tuple[str, re.Pattern[str], str], ...] = (

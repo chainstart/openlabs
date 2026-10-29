@@ -66,6 +66,30 @@ def test_journal_template_requires_review_and_responsibility(tmp_path: Path) -> 
     assert "STYLE-AI-DISCLOSURE-ACCOUNTABILITY" in codes
 
 
+def test_truthful_short_template_does_not_require_unattested_human_review(tmp_path: Path) -> None:
+    declaration = JOURNAL_DECLARATION.replace(
+        "reviewed and edited the output as needed and ", ""
+    ).replace("the published article", "this article")
+    main = _write(tmp_path, "Python scripts compute the numerical results.", declaration)
+    assert audit_tex_tree(main)["valid"]
+    # The truthful variant still has to disclose code assistance.
+    main.write_text(main.read_text().replace(" and analysis-code preparation", ""))
+    assert "STYLE-AI-DISCLOSURE-CODE" in {e["code"] for e in audit_tex_tree(main)["errors"]}
+
+
+def test_publisher_declarations_can_precede_data_and_appendix(tmp_path: Path) -> None:
+    main = _write(tmp_path, "We establish the comparison.\n\\section*{Author declarations}",
+                  JOURNAL_DECLARATION.replace("\\section*{Declaration", "\\subsection*{Declaration"))
+    main.write_text(main.read_text().replace(
+        "\\bibliographystyle{plain}",
+        "\\section*{Data availability}\nThe code accompanies this article.\n"
+        "\\appendix\n\\section{Proof details}\nThe bound follows.\n\\bibliographystyle{plain}"))
+    assert audit_tex_tree(main)["valid"]
+    # Ordinary body sections after a declaration remain an ordering error.
+    main.write_text(main.read_text().replace("\\appendix\n", ""))
+    assert "STYLE-AI-DECLARATION-POSITION" in {e["code"] for e in audit_tex_tree(main)["errors"]}
+
+
 def _artwork_fixture(tmp_path):
     figure = tmp_path / 'figures/flow.png'
     figure.parent.mkdir()

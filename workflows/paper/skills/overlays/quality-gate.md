@@ -142,6 +142,12 @@ tool/service, evidenced model identifiers and actual purposes; do not copy the
 current JBI paper's model list or image service as facts for another paper.
 Keep detailed runtime and validation provenance in private records. Do not append
 long preparation or audit narratives merely to satisfy the legacy disclosure style.
+The short template's statement that authors reviewed and edited the output is a
+factual attestation, not mandatory boilerplate: omit that clause when it is not
+supported, retaining the actual tool, purposes and full author responsibility.
+This does not attest human scientific/code verification or waive independent
+review. A venue's Author declarations section may precede data availability and
+appendices; other scientific body sections must still precede the disclosure.
 
 New AI-use declarations identify each tool actually used (OpenAI Codex or Anthropic Claude Code)
 and the exact model identifiers supported by the work's runtime records, not a globally preferred
