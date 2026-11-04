@@ -490,6 +490,7 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
         claim_maps = []
     fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
     expanded = expand_tex(manuscript / "main.tex", manuscript)
+    bibliography = bibliography_text(manuscript)
     try:
         documents, bibliography = formal_checks.current_inputs(metadata, root)
         formal_inventory = formal_checks.inventory(documents, bibliography)
@@ -505,7 +506,7 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
         blockers.append(f"Active journal revision context: {exc}")
         revision_context = None
     return {"blockers": blockers, "fingerprints": fingerprints, "expanded": expanded,
-            "bibliography": bibliography_text(manuscript), "metadata": metadata, "target": target,
+            "bibliography": bibliography, "metadata": metadata, "target": target,
             "support_claim_evidence_maps": claim_maps, "formal_inventory": formal_inventory,
             "active_revision_context": revision_context}
 

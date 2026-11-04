@@ -810,7 +810,10 @@ def test_preflight_records_selected_map_failure_before_roles(tmp_path, monkeypat
     metadata.update(target_journal='J', target_journal_fit={'status': 'approved'})
     manuscript = tmp_path / 'papers/p/manuscript'
     manuscript.mkdir()
-    (manuscript / 'main.tex').write_text('Main')
+    (manuscript / 'main.tex').write_text(
+        r'\begin{thebibliography}{9}\bibitem{mainref}Main reference.\end{thebibliography}')
+    (manuscript / 'supplementary.tex').write_text(
+        r'\begin{thebibliography}{9}\bibitem{siref}Supplement-only reference.\end{thebibliography}')
     pdf = tmp_path / 'built.pdf'
     pdf.write_bytes(b'fixture PDF')
     path.write_text('Actual declared source no longer matches the verified archive.\n')
@@ -827,3 +830,7 @@ def test_preflight_records_selected_map_failure_before_roles(tmp_path, monkeypat
     pre = flow.preflight('p', tmp_path, tmp_path / 'build')
     assert any('Selected support claim-evidence map' in b and 'bytes differ' in b for b in pre['blockers'])
     assert pre['support_claim_evidence_maps'] == []
+    # Ordinary editor/referee packets must see the same complete printed
+    # bibliography that the mandatory reference verifier receives.
+    assert 'mainref' in pre['bibliography']
+    assert 'siref' in pre['bibliography']
