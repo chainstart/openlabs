@@ -918,6 +918,31 @@ def test_real_release_history_around_path_remains_blocked(tmp_path: Path) -> Non
     assert "SUPPORT-PROCESS-NARRATIVE" in codes
 
 
+def test_historical_class_support_is_scientific_context(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    main = tmp_path / "papers" / PAPER_ID / "manuscript" / "main.tex"
+    main.write_text(main.read_text().replace(
+        "The archive contains the exact certificate and replay instructions.",
+        "Online Resource 1 retains the class-support diagnostics. Current labels "
+        "check predictions rather than treating repaired historical class support "
+        "as a current-batch guarantee.",
+    ))
+    codes = {item["code"] for item in audit_manuscript_support(PAPER_ID, root=tmp_path)["errors"]}
+    assert "SUPPORT-PROCESS-NARRATIVE" not in codes
+
+
+@pytest.mark.parametrize("noun", ["support version", "supporting materials", "support archive"])
+def test_previous_support_material_history_remains_blocked(tmp_path: Path, noun: str) -> None:
+    _workspace(tmp_path)
+    main = tmp_path / "papers" / PAPER_ID / "manuscript" / "main.tex"
+    main.write_text(main.read_text().replace(
+        "The archive contains the exact certificate and replay instructions.",
+        f"The previous {noun} was superseded by the current Zenodo record.",
+    ))
+    codes = {item["code"] for item in audit_manuscript_support(PAPER_ID, root=tmp_path)["errors"]}
+    assert "SUPPORT-PROCESS-NARRATIVE" in codes
+
+
 @pytest.mark.parametrize("narration", [
     "The previous archive was replaced by this deposited record.",
     "The earlier published archive was superseded by this record.",

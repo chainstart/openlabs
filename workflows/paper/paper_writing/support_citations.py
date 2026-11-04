@@ -150,7 +150,9 @@ PROCESS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "version-history",
         re.compile(
             r"\b(?:earlier|previous|old|new|superseded|historical)\b.{0,100}"
-            r"\b(?:support|version|release|bundle)\b|"
+            # Scientific class/source support is not supporting-material history.
+            r"\b(?:support(?:ing)?\s+(?:materials?|versions?|archives?|files?|"
+            r"packages?|bundles?|releases?)|version|release|bundle)\b|"
             r"\b(?:earlier|previous|old|new|superseded|historical)\b(?=.{0,120}\b"
             r"(?:Zenodo|DOI|version|release|replaced?|supersedes?|superseded|deposited|published)\b)"
             r".{0,100}\b(?:archive|record)\b|"
