@@ -1429,3 +1429,77 @@ writing_release:
     )
     assert dirty["ok"] is False
     assert "differs from Git HEAD" in dirty["errors"][0]["error"]
+
+
+def _register_word(manuscript: Path, registry: Path, asset: str | None = None) -> Path:
+    word = manuscript / "primary.docx"
+    with zipfile.ZipFile(word, "w") as archive:
+        archive.writestr("[Content_Types].xml", '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        archive.writestr("_rels/.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
+        archive.writestr("word/document.xml", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>')
+    relative = asset if asset is not None else f"papers/{manuscript.parent.name}/manuscript/primary.docx"
+    registry.write_text(registry.read_text() + (
+        "target_journal_format:\n  primary_submission_format: docx\n"
+        f"  primary_submission_asset: {relative}\n"
+    ))
+    return word
+
+
+def test_registered_word_is_retained_but_unregistered_word_is_excluded(tmp_path: Path) -> None:
+    paper_id, manuscript, registry = _supplement_repo(tmp_path)
+    word = _register_word(manuscript, registry)
+    (manuscript / "unregistered.docx").write_bytes(word.read_bytes())
+    before = manuscript_snapshot_sha256(manuscript, manuscript / "main.pdf")
+    build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+    with zipfile.ZipFile(tmp_path / "dist/source.zip") as archive:
+        assert set(archive.namelist()) == {"main.tex", "supplement.tex", "primary.docx"}
+        assert archive.read("primary.docx") == word.read_bytes()
+    word.write_bytes(b"changed")
+    assert manuscript_snapshot_sha256(manuscript, manuscript / "main.pdf") != before
+
+
+@pytest.mark.parametrize("failure", ["missing", "outside", "invalid", "excluded", "absent-registration", "symlink"])
+def test_registered_word_fails_closed(tmp_path: Path, failure: str) -> None:
+    paper_id, manuscript, registry = _supplement_repo(tmp_path)
+    word = _register_word(manuscript, registry)
+    if failure == "missing":
+        word.unlink()
+    elif failure == "outside":
+        outside = tmp_path / "outside.docx"
+        outside.write_bytes(word.read_bytes())
+        registry.write_text(registry.read_text().replace(f"papers/{paper_id}/manuscript/primary.docx", "outside.docx"))
+    elif failure == "invalid":
+        word.write_bytes(b"not a docx")
+    elif failure == "excluded":
+        hidden = manuscript / "build" / "primary.docx"
+        hidden.parent.mkdir()
+        hidden.write_bytes(word.read_bytes())
+        registry.write_text(registry.read_text().replace("manuscript/primary.docx", "manuscript/build/primary.docx"))
+    elif failure == "symlink":
+        target = manuscript / "other.docx"
+        word.rename(target)
+        word.symlink_to(target.name)
+    else:
+        registry.write_text(registry.read_text().replace(f"  primary_submission_asset: papers/{paper_id}/manuscript/primary.docx\n", ""))
+    with pytest.raises(HandoffError, match="Registered Word"):
+        build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+
+
+@pytest.mark.parametrize("include_word", [False, True])
+def test_verified_archive_requires_registered_word_and_tex_mirrors(tmp_path: Path, include_word: bool) -> None:
+    paper_id, manuscript, registry = _supplement_repo(tmp_path)
+    _register_word(manuscript, registry)
+    archive_path = tmp_path / "journal-source.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        for name in ["main.tex", "supplement.tex"] + (["primary.docx"] if include_word else []):
+            archive.write(manuscript / name, name)
+    registry.write_text(registry.read_text() + (
+        "submission_package:\n  version: 1.0.0\n  source_archive: journal-source.zip\n"
+        f"  source_archive_sha256: {hashlib.sha256(archive_path.read_bytes()).hexdigest()}\n"
+    ))
+    if include_word:
+        result = build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+        assert result["source"]["file_count"] == 3
+    else:
+        with pytest.raises(HandoffError, match="omits a required manuscript source"):
+            build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")

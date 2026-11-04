@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
@@ -736,6 +737,36 @@ def _paper_projection(
     return projection
 
 
+def _registered_word_source(
+    metadata: Mapping[str, Any], repo_root: Path, manuscript: Path, files: list[Path],
+) -> Path | None:
+    """Admit only the explicitly registered, snapshot-bound Word primary source."""
+    policy = metadata.get("target_journal_format")
+    if not isinstance(policy, Mapping) or policy.get("primary_submission_format") != "docx":
+        return None
+    asset = policy.get("primary_submission_asset")
+    registered = repo_root / str(asset or "")
+    path = registered.resolve()
+    if (
+        not asset or registered.is_symlink() or path.parent != manuscript.resolve()
+        or path.suffix.casefold() != ".docx" or not path.is_file()
+        or path not in {item.resolve() for item in files}
+    ):
+        raise HandoffError("Registered Word primary source must exist in the canonical manuscript root and snapshot")
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for name in ("[Content_Types].xml", "_rels/.rels", "word/document.xml"):
+                info = archive.getinfo(name)
+                if info.file_size > 10485760:
+                    raise ValueError("oversized Word XML")
+                node = ET.fromstring(archive.read(info))
+                if name == "word/document.xml" and node.tag != "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document":
+                    raise ValueError("not a Word document")
+    except (zipfile.BadZipFile, KeyError, ET.ParseError, ValueError) as exc:
+        raise HandoffError("Registered Word primary source is not a valid DOCX") from exc
+    return path
+
+
 def _verified_journal_source_archive(
     metadata: Mapping[str, Any], repo_root: Path, manuscript: Path,
     files: list[Path], supplement_source: Path | None,
@@ -784,10 +815,13 @@ def _verified_journal_source_archive(
     except zipfile.BadZipFile as exc:
         raise HandoffError("Journal source archive is not a valid ZIP") from exc
     required = {"main.tex"}
+    word_source = _registered_word_source(metadata, repo_root, manuscript, files)
+    if word_source is not None:
+        required.add(word_source.name)
     if supplement_source is not None:
         required.add(supplement_source.with_suffix(".tex").name)
     if not required.issubset(names):
-        raise HandoffError("Journal source archive omits a manuscript document's LaTeX source")
+        raise HandoffError("Journal source archive omits a required manuscript source (LaTeX or registered Word)")
     return archive_path, len(names)
 
 
@@ -830,6 +864,7 @@ def build_handoff_package(
     target.mkdir(parents=True, exist_ok=True)
     source_zip = target / "source.zip"
     files = list(_source_files(manuscript, pdf_source))
+    word_source = _registered_word_source(metadata, repo_root, manuscript, files)
     if supplement_source is not None:
         # _source_files deliberately includes this PDF in the review snapshot;
         # only the clean LaTeX ZIP excludes its separately delivered output.
@@ -837,7 +872,7 @@ def build_handoff_package(
             raise HandoffError("Supplementary PDF is excluded from the manuscript snapshot")
         files = [path for path in files if path.resolve() != supplement_source]
     files = [path for path in files if (
-        path.suffix.casefold() in CLEAN_SOURCE_SUFFIXES
+        (path.suffix.casefold() in CLEAN_SOURCE_SUFFIXES or path.resolve() == word_source)
         and not (
             path.parent == manuscript
             and path.suffix.casefold() == ".pdf"
