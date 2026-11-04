@@ -313,6 +313,30 @@ def _validate_journal_target_policy(
         journal_key(name) for name in excluded
     }:
         raise ValueError(f"target_journal is excluded by journal_target_policy for {paper_id}")
+    required_indexes = paper.get("target_journal_required_indexes")
+    if required_indexes is not None:
+        if (
+            not isinstance(required_indexes, list) or not required_indexes
+            or any(not isinstance(x, str) or not x.strip() for x in required_indexes)
+        ):
+            raise ValueError(f"target_journal_required_indexes must be a nonempty list for {paper_id}")
+        indexing = paper.get("target_journal_indexing")
+        if not isinstance(indexing, Mapping):
+            raise ValueError(f"target_journal_indexing evidence is required for {paper_id}")
+        if journal_key(str(indexing.get("journal") or "")) != journal_key(str(paper.get("target_journal") or "")):
+            raise ValueError(f"target_journal_indexing evidence names a different journal for {paper_id}")
+        actual_indexes = indexing.get("indexes")
+        if (
+            not isinstance(actual_indexes, list)
+            or any(not isinstance(x, str) or not x.strip() for x in actual_indexes)
+            or not {x.strip().upper() for x in required_indexes}.issubset(
+                {x.strip().upper() for x in actual_indexes}
+            )
+        ):
+            raise ValueError(f"target_journal does not meet required indexes {required_indexes!r} for {paper_id}")
+        _require_http_source(indexing, "source", paper_id, prefix="target_journal_indexing")
+        if not _iso_date(str(indexing.get("checked_at") or "")):
+            raise ValueError(f"target_journal_indexing.checked_at must be a date for {paper_id}")
     if not policy.get("required_after_basic_draft"):
         return
     if str(paper.get("venue_type") or "journal") != "journal":
