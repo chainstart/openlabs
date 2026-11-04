@@ -376,25 +376,54 @@ def bibliography_text(manuscript: Path) -> str:
     return "\n".join(p.read_text(errors="replace") for p in sorted(manuscript.glob("*.bib")))
 
 
-def _build(manuscript: Path, workdir: Path) -> tuple[Path, set[str]]:
+def _build(manuscript: Path, workdir: Path, *, document: str = "main.tex") -> tuple[Path, set[str]]:
+    if Path(document).name != document or Path(document).suffix != ".tex":
+        raise ValueError("Build document must be a manuscript-root TeX filename")
+    stem = Path(document).stem
     copy = workdir / "build"
     shutil.copytree(manuscript, copy, ignore=shutil.ignore_patterns(
         '*.aux', '*.blg', '*.fdb_latexmk', '*.fls', '*.log', '*.out',
         '*.synctex.gz', '*.toc', '*.spl', '__pycache__'))
-    proc = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
+    proc = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", document],
                           cwd=copy, capture_output=True, text=True, errors="replace", timeout=1800)
     (workdir / "build.log").write_text(proc.stdout[-20000:] + proc.stderr[-5000:])
-    if proc.returncode != 0 or not (copy / "main.pdf").is_file():
+    if proc.returncode != 0 or not (copy / (stem + ".pdf")).is_file():
         raise ValueError(f"LaTeX build failed; see {workdir / 'build.log'}")
     used = set()
-    for line in (copy / "main.fls").read_text(errors="replace").splitlines():
+    for line in (copy / (stem + ".fls")).read_text(errors="replace").splitlines():
         if line.startswith("INPUT ") and not line[6:].startswith("/"):
             used.add(os.path.normpath(line[6:].removeprefix("./")))
-    blg = copy / "main.blg"
+    blg = copy / (stem + ".blg")
     if blg.is_file():
         for name in re.findall(r"(?:Database file #\d+|The style file): (\S+)", blg.read_text(errors="replace")):
             used.add(os.path.normpath(name))
-    return copy / "main.pdf", used
+    # A class can declare its bibliography style even when the standalone
+    # document currently has no citations and BibTeX is therefore not run.
+    aux = copy / (stem + ".aux")
+    if aux.is_file():
+        for name in re.findall(r"\\bibstyle\{([^{}]+)\}", aux.read_text(errors="replace")):
+            if (copy / (name + ".bst")).is_file():
+                used.add(os.path.normpath(name + ".bst"))
+    return copy / (stem + ".pdf"), used
+
+
+def build_registered_supplement(metadata: Mapping[str, Any], root: Path,
+                                manuscript: Path, workdir: Path) -> set[str]:
+    """Freshen the scientific SI and collect its actual standalone dependencies."""
+    relative = metadata.get("latest_supplementary_pdf")
+    if not relative:
+        return set()
+    pdf = root / str(relative)
+    source = pdf.with_suffix(".tex")
+    if (pdf.suffix.lower() != ".pdf" or source.parent.resolve() != manuscript.resolve()
+            or not source.is_file()):
+        raise ValueError("Registered supplementary PDF requires its manuscript-root TeX source")
+    fresh_pdf, used = _build(manuscript, workdir / "supplement", document=source.name)
+    shutil.copyfile(fresh_pdf, pdf)
+    bbl = fresh_pdf.with_suffix(".bbl")
+    if bbl.is_file():
+        shutil.copyfile(bbl, source.with_suffix(".bbl"))
+    return used | {source.name}
 
 
 def standalone_document_files(manuscript: Path) -> set[str]:
@@ -446,9 +475,7 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     if fresh_bbl.is_file():
         # A stale committed .bbl would reach referees and the journal source package.
         shutil.copyfile(fresh_bbl, manuscript / "main.bbl")
-    supplement = metadata.get("latest_supplementary_pdf")
-    if supplement:  # a registered supplementary document is built separately and is part of the package
-        used.add((root / str(supplement)).with_suffix(".tex").relative_to(manuscript).as_posix())
+    used |= build_registered_supplement(metadata, root, manuscript, workdir)
     used |= standalone_document_files(manuscript)
     unused = unused_source_files(manuscript, used)
     if unused:

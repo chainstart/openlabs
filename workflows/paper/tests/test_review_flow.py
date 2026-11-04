@@ -640,6 +640,61 @@ def test_standalone_documents_count_as_used(tmp_path):
     assert flow.unused_source_files(tmp_path, used) == ["draft.tex"]
 
 
+def test_build_reads_registered_document_recorder_and_declared_bibstyle(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    manuscript = tmp_path / 'manuscript'
+    manuscript.mkdir()
+    for name, text in {'main.tex': 'Main', 'si.tex': 'Supplement',
+                       'si-class.cls': 'Class', 'si-style.bst': 'Style',
+                       'unused.sty': 'Unused'}.items():
+        (manuscript / name).write_text(text)
+
+    def compile_document(command, *, cwd, **kwargs):
+        assert command[-1] == 'si.tex'
+        (cwd / 'si.pdf').write_bytes(b'fresh supplement PDF')
+        (cwd / 'si.fls').write_text('INPUT ./si.tex\nINPUT ./si-class.cls\n')
+        (cwd / 'si.aux').write_text('\\bibstyle{si-style}\n')
+        return SimpleNamespace(returncode=0, stdout='built', stderr='')
+
+    monkeypatch.setattr(flow.subprocess, 'run', compile_document)
+    pdf, used = flow._build(manuscript, tmp_path / 'work', document='si.tex')
+    assert pdf.name == 'si.pdf'
+    assert used == {'si.tex', 'si-class.cls', 'si-style.bst'}
+    assert flow.unused_source_files(manuscript, used) == ['unused.sty']
+
+
+def test_registered_supplement_refreshes_pdf_bbl_and_dependencies(tmp_path, monkeypatch):
+    manuscript = tmp_path / 'papers/p/manuscript'
+    manuscript.mkdir(parents=True)
+    (manuscript / 'si.tex').write_text('SI')
+    (manuscript / 'si.pdf').write_bytes(b'old PDF')
+    built = tmp_path / 'fresh/si.pdf'
+    built.parent.mkdir()
+    built.write_bytes(b'fresh PDF')
+    built.with_suffix('.bbl').write_text('fresh bibliography')
+
+    def build(source, workdir, *, document):
+        assert source == manuscript and document == 'si.tex'
+        assert workdir == tmp_path / 'work/supplement'
+        return built, {'si.tex', 'si-class.cls', 'si-style.bst'}
+
+    monkeypatch.setattr(flow, '_build', build)
+    metadata = {'latest_supplementary_pdf': 'papers/p/manuscript/si.pdf'}
+    used = flow.build_registered_supplement(metadata, tmp_path, manuscript, tmp_path / 'work')
+    assert used == {'si.tex', 'si-class.cls', 'si-style.bst'}
+    assert (manuscript / 'si.pdf').read_bytes() == b'fresh PDF'
+    assert (manuscript / 'si.bbl').read_text() == 'fresh bibliography'
+    assert flow.build_registered_supplement({}, tmp_path, manuscript, tmp_path / 'work') == set()
+
+
+def test_registered_supplement_rejects_source_outside_manuscript(tmp_path):
+    (tmp_path / 'outside.tex').write_text('Not a manuscript source')
+    with pytest.raises(ValueError, match='manuscript-root'):
+        flow.build_registered_supplement({'latest_supplementary_pdf': 'outside.pdf'},
+                                         tmp_path, tmp_path / 'manuscript', tmp_path / 'work')
+
+
 def test_support_inventory_keeps_directories(tmp_path):
     pkg = tmp_path / "papers/p/support/v1"
     (pkg / "verification").mkdir(parents=True)
