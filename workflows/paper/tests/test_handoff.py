@@ -146,6 +146,54 @@ def test_paper_projection_only_clears_an_explicit_target_journal() -> None:
     )["target_journal"] is None
 
 
+@pytest.mark.parametrize("schema", ["legacy_list", "mapping", "mapping_without_names"])
+def test_writing_projection_preserves_ordered_authors_without_contacts(schema: str) -> None:
+    people = [
+        {"name": "First Author", "email": "private@example.org", "affiliation_ids": ["lab"]},
+        {"name": "Second Author", "orcid": "private-orcid"},
+    ]
+    authors = people if schema == "legacy_list" else {"people": people}
+    if schema == "mapping":
+        authors["names"] = ["First Author", "Second Author"]
+    projection = build_writing_projection(
+        "20260414aiuncertainty0002",
+        {
+            "authors": authors,
+            "affiliations": [{"id": "lab", "name": "Example Lab", "private": "hidden"}],
+            "funding": [{"funder": "Example Funder", "grant_number": "123"}],
+        },
+        origin_commit=None,
+    )
+    public = projection["authors"]
+    assert public["names"] == ["First Author", "Second Author"]
+    assert public["people"] == [
+        {"name": "First Author", "affiliation_ids": ["lab"]},
+        {"name": "Second Author"},
+    ]
+    assert public["status"] == "declared"
+    assert public["verification_required"] is False
+    assert public["affiliations"] == [{"id": "lab", "name": "Example Lab"}]
+    assert public["funding"] == [{"funder": "Example Funder", "grant_number": "123"}]
+
+
+@pytest.mark.parametrize("names", [["Second Author", "First Author"], ["First Author"], "First Author"])
+def test_writing_projection_rejects_inconsistent_mapping_author_names(names: object) -> None:
+    with pytest.raises(HandoffError, match="byline order"):
+        build_writing_projection(
+            "20260414aiuncertainty0002",
+            {"authors": {"people": [{"name": "First Author"}, {"name": "Second Author"}], "names": names}},
+            origin_commit=None,
+        )
+
+
+@pytest.mark.parametrize("people", [None, "First Author", [{"name": "First Author"}, "invalid"]])
+def test_writing_projection_rejects_malformed_mapping_people(people: object) -> None:
+    with pytest.raises(HandoffError, match="authors.people"):
+        build_writing_projection(
+            "20260414aiuncertainty0002", {"authors": {"people": people}}, origin_commit=None
+        )
+
+
 def test_writing_projection_exposes_simulated_reviews_and_quality_gate() -> None:
     projection = build_writing_projection(
         "20260805-math-graph-reviewed-paper",

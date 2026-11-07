@@ -581,11 +581,23 @@ def build_writing_projection(
 ) -> dict[str, Any]:
     """Build the contact-free Writing-owned projection consumed by Manage."""
 
+    author_metadata = metadata.get("authors")
+    author_people = author_metadata
+    if isinstance(author_metadata, Mapping):
+        author_people = author_metadata.get("people")
+        if not isinstance(author_people, list) or any(
+            not isinstance(person, Mapping) for person in author_people
+        ):
+            raise HandoffError("authors.people must be a list of author records")
     authors = _public_records(
-        metadata.get("authors"),
+        author_people,
         ("name", "name_zh", "display_name", "affiliation_ids", "corresponding"),
     )
     names = [str(item["name"]) for item in authors if item.get("name")]
+    if isinstance(author_metadata, Mapping) and author_metadata.get("names") is not None:
+        declared_names = author_metadata["names"]
+        if not isinstance(declared_names, list) or declared_names != names:
+            raise HandoffError("Author names must match authors.people in byline order")
     release = _release_snapshot(metadata)
     ready = release.get("status") == "ready"
     version = str(metadata.get("version") or "1.0.0")
