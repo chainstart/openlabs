@@ -73,6 +73,24 @@ def contributions_latex(authors: list[Mapping[str, Any]]) -> str:
     return render_contributions(authors).replace("–", "--").replace("&", r"\&")
 
 
+def contribution_authors(metadata: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Read explicit roles from legacy lists or the canonical people mapping."""
+    authors = metadata.get("authors", [])
+    if isinstance(authors, Mapping):
+        people = authors.get("people")
+        names = authors.get("names")
+    else:
+        people, names = authors, None
+    if not isinstance(people, list) or any(not isinstance(p, Mapping) for p in people):
+        raise ValueError("Explicit author records are required")
+    if names is not None and (not isinstance(names, list) or
+                              names != [p.get("name") for p in people]):
+        raise ValueError("Author names must match the explicit people in byline order")
+    # Reuse the same nonempty, unique-name and explicit-role checks for both schemas.
+    render_contributions(people)
+    return people
+
+
 def check_record(metadata: Mapping[str, Any], source: str, *, root: Path | None = None) -> dict[str, Any]:
     """Check completeness and text binding, not scientific truth or journal acceptance."""
     errors = []
@@ -102,12 +120,13 @@ def check_record(metadata: Mapping[str, Any], source: str, *, root: Path | None 
         else:
             errors.append("ai_use: an existing required disclosure cannot be suppressed by metadata")
         if kind == "author_contributions" and included:
-            names = [a["name"] for a in metadata.get("authors", [])]
-            positions = [text.find(n) for n in names]
-            if not names or any(p < 0 for p in positions) or positions != sorted(positions) or any(text.count(n) != 1 for n in names):
-                errors.append("author_contributions: all byline authors must appear once, in order")
             try:
-                role_text = contributions_latex(metadata.get("authors", []))
+                authors = contribution_authors(metadata)
+                names = [a["name"] for a in authors]
+                positions = [text.find(n) for n in names]
+                if any(p < 0 for p in positions) or positions != sorted(positions) or any(text.count(n) != 1 for n in names):
+                    errors.append("author_contributions: all byline authors must appear once, in order")
+                role_text = contributions_latex(authors)
                 if normalized(text) != normalized(role_text):
                     errors.append("author_contributions: statement differs from explicit author roles")
             except ValueError as exc:

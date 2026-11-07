@@ -42,6 +42,36 @@ def test_metadata_matches_and_layout_is_not_disclosure():
     assert "sloppy" not in section(tex, "ai_use")[1]
 
 
+def test_canonical_author_mapping_matches_legacy_declaration_checks():
+    metadata, tex = sample()
+    people = metadata["authors"]
+    metadata["authors"] = {"people": people, "names": [p["name"] for p in people],
+                           "affiliations": []}
+    assert check_record(metadata, tex)["valid"]
+    people[0]["credit_roles"] = ["Methodology"]
+    assert not check_record(metadata, tex)["valid"]
+
+
+@pytest.mark.parametrize("failure", ["order", "missing_roles", "duplicate", "names_only", "malformed"])
+def test_canonical_author_mapping_rejects_incomplete_or_conflicting_facts(failure):
+    metadata, tex = sample()
+    people = metadata["authors"]
+    authors = {"people": people, "names": ["Alice", "Bob"]}
+    metadata["authors"] = authors
+    if failure == "order":
+        authors["names"] = ["Bob", "Alice"]
+    elif failure == "missing_roles":
+        people[0].pop("credit_roles")
+    elif failure == "duplicate":
+        people[1]["name"] = "Alice"
+        authors["names"] = ["Alice", "Alice"]
+    elif failure == "names_only":
+        authors.pop("people")
+    else:
+        authors["people"] = ["Alice", "Bob"]
+    assert not check_record(metadata, tex)["valid"]
+
+
 def test_nocite_is_not_disclosure_and_does_not_hide_later_prose():
     metadata, tex = sample()
     tex = tex.replace(r"\sloppy", r"\nocite{*}")
