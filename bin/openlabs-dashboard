@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Read-only researcher dashboard. Runs inside the aggregate OpenLabs resource guard.
+#   bin/openlabs-dashboard serve [--port 8765] [--site-api | --site-snapshot FILE]
+#   bin/openlabs-dashboard build --output /path/openlabs-dashboard.html
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+PYTHON=${OPENLABS_DASHBOARD_PYTHON:-$ROOT/workflows/paper/.venv/bin/python}
+export OPENLABS_WORKSPACE=${OPENLABS_WORKSPACE:-$(dirname -- "$ROOT")}
+export PYTHONPATH="$ROOT/tools/dashboard:$ROOT/workflows/paper:$ROOT/orchestrator/src${PYTHONPATH:+:$PYTHONPATH}"
+exec "$ROOT/bin/openlabs-resource-guard" --task-type cpu -- "$PYTHON" -m openlabs_dashboard "$@"

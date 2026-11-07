@@ -474,7 +474,7 @@ def test_referee_receives_supplement_and_inspectable_scientific_paths(tmp_path, 
     code.write_text('scientific implementation')
     meta = {'paper_id': 'p', 'manuscript_dir': 'paper',
             'support': {'publication': {'source_files': ['public-support/solver.py']}}}
-    monkeypatch.setattr(flow, '_target_block', lambda metadata: 'Journal')
+    monkeypatch.setattr(flow, '_target_block', lambda metadata, track='routine': 'Journal')
     packet = flow.referee_packet({'metadata': meta, 'expanded': 'Main paper', 'bibliography': 'Refs'},
                                  tmp_path, None)
     assert 'Independent control objective gap: 0.000001.' in packet

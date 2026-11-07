@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from paper_writing.ai_disclosure import configured_attempts_for_record, model_disclosure_issues, model_usage_for_record
+from paper_writing.editorial_voice import editorial_voice_issues
 from paper_writing.funding import ineligible_funding
 from paper_writing.registry import load_paper_metadata, load_registry
 
@@ -494,6 +495,7 @@ def audit_tex_tree(
     model_usage: Any = None,
     configured_attempts: Any = None,
     artwork_disclosures: Any = None,
+    editorial_voice_limits: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Check one compiled TeX tree without assigning a prose score."""
 
@@ -595,6 +597,7 @@ def audit_tex_tree(
                 )
 
     body_text = "\n".join(combined_body)
+    voice_metrics, voice_issues = editorial_voice_issues(body_text, editorial_voice_limits)
     declaration_text = " ".join(declaration_parts)
     has_declaration = bool(declaration_parts)
     code_assistance_relevant = bool(CODE_CUE.search(body_text))
@@ -750,7 +753,8 @@ def audit_tex_tree(
             "lean_assistance_relevant": lean_assistance_relevant,
         },
         "errors": unique,
-        "warnings": [],
+        "warnings": voice_issues,
+        "editorial_voice": voice_metrics,
     }
 
 
@@ -773,6 +777,7 @@ def audit_manuscript_style(
             settings.get("quality_gate", {}).get("require_ai_use_declaration", True)
         )
     metadata = load_paper_metadata(paper_id, repo_root)
+    voice_config = dict(settings.get("quality_gate", {}).get("editorial_voice") or {})
     manuscript = repo_root / str(
         metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript"
     )
@@ -808,7 +813,14 @@ def audit_manuscript_style(
         model_usage=model_usage_for_record(metadata),
         configured_attempts=configured_attempts_for_record(metadata),
         artwork_disclosures=metadata.get('artwork_disclosures'),
+        editorial_voice_limits=voice_config,
     )
+    if voice_config.get("blocking"):
+        # Explicitly configured: threshold breaches become style errors for new gate runs.
+        result["errors"].extend(
+            {**issue, "path": result["main_tex"]} for issue in result.get("warnings", [])
+        )
+        result["warnings"] = []
     version = str(metadata.get("version") or "").strip()
     submission_root = repo_root / f"papers/{paper_id}/journal-submissions"
     package_files: list[Path] = []

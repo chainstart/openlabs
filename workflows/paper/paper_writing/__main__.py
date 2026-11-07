@@ -47,6 +47,19 @@ def build_parser() -> argparse.ArgumentParser:
     history_summary = history_commands.add_parser("summary", help="Show the generated per-journal table.")
     history_summary.add_argument("--root", default=str(default_repo_root()))
 
+    cadence = subparsers.add_parser("cadence", help="Check team submission spacing before an actual submission.")
+    cadence_commands = cadence.add_subparsers(dest="cadence_command", required=True)
+    cadence_check = cadence_commands.add_parser("check", help="Exit 0 when allowed, 1 when blocked, 2 when the ledger is unusable.")
+    cadence_check.add_argument("--root", default=str(default_repo_root()))
+    cadence_check.add_argument("--venue", required=True, help="Journal or conference name.")
+    cadence_check.add_argument("--paper-id", required=True)
+
+    submissions = subparsers.add_parser("submissions", help="Read-only monitoring of ongoing submissions.")
+    submission_commands = submissions.add_subparsers(dest="submissions_command", required=True)
+    monitor = submission_commands.add_parser("monitor", help="Report revision deadlines, stale attempts and missing letters.")
+    monitor.add_argument("--snapshot", help="Full management-site paper-detail JSON; default reads the API (GET only).")
+    monitor.add_argument("--json", action="store_true", help="Print JSON instead of Markdown.")
+
     scan = subparsers.add_parser("scan", help="Build the derived inventory snapshot.")
     _common_arguments(scan)
     scan.add_argument("--output", default=str(default_output_path()))
@@ -396,6 +409,29 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError, KeyError) as exc:
             print(json.dumps({"valid": False, "error": str(exc)}, ensure_ascii=False))
             return 2
+    if args.command == "cadence":
+        from paper_writing.submission_cadence import check_cadence
+        try:
+            result = check_cadence(Path(args.root).resolve(), venue=args.venue, paper_id=args.paper_id)
+        except (OSError, ValueError, KeyError) as exc:
+            print(json.dumps({"valid": False, "error": str(exc)}, ensure_ascii=False))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["status"] == "ok" else 1
+    if args.command == "submissions":
+        from paper_writing import submission_monitor
+        try:
+            if args.snapshot:
+                papers = submission_monitor.load_snapshot(Path(args.snapshot).resolve())
+            else:
+                from paper_writing.journal_history import fetch_site_papers
+                papers = fetch_site_papers()
+            report = submission_monitor.build_report(papers)
+        except (OSError, ValueError, KeyError) as exc:
+            print(json.dumps({"valid": False, "error": str(exc)}, ensure_ascii=False))
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else submission_monitor.format_report(report))
+        return 0
     if args.command == "scan":
         payload = build_inventory(args.root, config=load_config(args.config))
         output = write_inventory(payload, args.output)

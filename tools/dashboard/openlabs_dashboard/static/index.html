@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenLabs 研究监控</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f4f2; --surface: #fcfcfb; --surface-2: #efeeea; --border: #dddcd6;
+  --text: #0b0b0b; --text-2: #52514e; --muted: #7a7974;
+  --accent: #2a78d6; --accent-soft: #cde2fb; --bar: #2a78d6; --bar-hover: #1c5cab;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --shadow: 0 1px 2px rgb(0 0 0 / .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #121211; --surface: #1a1a19; --surface-2: #242422; --border: #34332f;
+    --text: #f0efec; --text-2: #c3c2b7; --muted: #94938b;
+    --accent: #3987e5; --accent-soft: #184f95; --bar: #3987e5; --bar-hover: #86b6ef;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211; --surface: #1a1a19; --surface-2: #242422; --border: #34332f;
+  --text: #f0efec; --text-2: #c3c2b7; --muted: #94938b;
+  --accent: #3987e5; --accent-soft: #184f95; --bar: #3987e5; --bar-hover: #86b6ef;
+  --shadow: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.55 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+a { color: var(--accent); word-break: break-all; }
+header { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--border); }
+.bar { max-width: 1280px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.brand { font-weight: 650; font-size: 16px; margin-right: auto; }
+.meta { color: var(--muted); font-size: 12px; }
+button, select, input { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; }
+button { cursor: pointer; }
+button:hover { background: var(--surface-2); }
+nav { max-width: 1280px; margin: 0 auto; padding: 0 16px; display: flex; gap: 4px; overflow-x: auto; }
+nav button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 10px; color: var(--text-2); white-space: nowrap; }
+nav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+main { max-width: 1280px; margin: 0 auto; padding: 16px; }
+.grid { display: grid; gap: 12px; }
+.tiles { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); min-width: 0; }
+.tile .num { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile .lab { color: var(--text-2); font-size: 13px; }
+.tile .sub { color: var(--muted); font-size: 12px; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+h3 { font-size: 14px; margin: 14px 0 6px; }
+.muted { color: var(--muted); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
+.filters input[type=search] { flex: 1 1 220px; min-width: 0; }
+.chart-row { display: grid; grid-template-columns: 88px 1fr 40px; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; border-radius: 6px; }
+.chart-row:hover .track span { background: var(--bar-hover); }
+.chart-row:focus-visible { outline: 2px solid var(--accent); }
+.track { height: 14px; }
+.track span { display: block; height: 100%; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; }
+.chart-row .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); }
+.tip { position: fixed; pointer-events: none; background: var(--text); color: var(--surface); padding: 4px 8px; border-radius: 6px; font-size: 12px; display: none; z-index: 20; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--text-2); font-weight: 600; font-size: 12px; white-space: nowrap; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--surface-2); }
+.table-wrap { overflow-x: auto; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--surface-2); color: var(--text-2); white-space: nowrap; border: 1px solid var(--border); }
+.badge.accent { background: var(--accent-soft); color: var(--text); border-color: transparent; }
+.status { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; white-space: nowrap; }
+.status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--muted)); }
+.status.good { --c: var(--good); } .status.warning { --c: var(--warning); }
+.status.serious { --c: var(--serious); } .status.critical { --c: var(--critical); }
+.list { margin: 0; padding: 0; list-style: none; }
+.list li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.list li:last-child { border-bottom: 0; }
+.project h3 { margin: 0 0 4px; font-size: 14px; }
+.project p { margin: 6px 0; color: var(--text-2); }
+.links { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+dialog { width: min(920px, calc(100vw - 32px)); max-height: calc(100vh - 32px); border: 1px solid var(--border); border-radius: 14px; padding: 0; background: var(--surface); color: var(--text); }
+dialog::backdrop { background: rgb(0 0 0 / .4); }
+.dlg-head { position: sticky; top: 0; background: var(--surface); padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 12px; align-items: start; }
+.dlg-head h2 { margin: 0; flex: 1; font-size: 16px; }
+.dlg-body { padding: 4px 16px 16px; }
+.kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.timeline li { border-left: 2px solid var(--border); padding: 4px 0 8px 12px; margin-left: 4px; }
+.empty { color: var(--muted); padding: 20px 0; text-align: center; }
+.err { color: var(--critical); }
+.pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 8px; }
+@media (max-width: 640px) {
+  .kv { grid-template-columns: 1fr; }
+  .hide-sm { display: none; }
+  .chart-row { grid-template-columns: 72px 1fr 32px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand">OpenLabs 研究监控</div>
+    <span class="meta" id="meta">加载中…</span>
+    <button id="refresh" title="重新读取数据">刷新</button>
+    <button id="theme" title="切换明暗">明/暗</button>
+  </div>
+  <nav role="tablist" id="tabs">
+    <button role="tab" data-tab="overview" aria-selected="true">总览</button>
+    <button role="tab" data-tab="papers">论文</button>
+    <button role="tab" data-tab="projects">研究项目</button>
+    <button role="tab" data-tab="monitor">投稿监控</button>
+    <button role="tab" data-tab="policy">投稿规则</button>
+  </nav>
+</header>
+<main id="main"><div class="empty">加载中…</div></main>
+<dialog id="detail"></dialog>
+<div class="tip" id="tip"></div>
+<script>window.OPENLABS_STATE = null;</script>
+<script>
+(() => {
+  "use strict";
+  const $ = (s, r = document) => r.querySelector(s);
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const day = (v) => (v ? String(v).slice(0, 10) : "—");
+  const STAGE_CLASS = {"已录用":"good","在审":"","返修中":"warning","被拒待处理":"serious","已停止":"","待投稿":"","写作中":"","研究中":""};
+  const ATTEMPT = {submitted:"已投稿",under_review:"外审中",resubmitted:"已返修重投",accepted:"录用",published:"已发表",rejected:"拒稿",closed:"已关闭",preparing:"准备中",withdrawn:"撤稿"};
+  const ATTEMPT_CLASS = {accepted:"good",published:"good",rejected:"critical",resubmitted:"warning"};
+  const DECISION = {major_revision:"大修",minor_revision:"小修",revise_resubmit:"修改后重投",reject:"拒稿",other:"其他"};
+  let state = null, tab = "overview";
+  const ui = { q: "", domain: "", stage: "", level: "", pq: "", pdomain: "", active: true, page: 0 };
+  try { const saved = JSON.parse(localStorage.getItem("openlabs-dashboard") || "{}"); Object.assign(ui, saved.ui || {}); tab = saved.tab || tab;
+        if (saved.theme) document.documentElement.dataset.theme = saved.theme; } catch (_) {}
+  const persist = () => { try { localStorage.setItem("openlabs-dashboard", JSON.stringify({ ui, tab, theme: document.documentElement.dataset.theme })); } catch (_) {} };
+
+  const safeLink = (raw) => {
+    const value = String(raw || "").trim();
+    const href = /^10\.\d{4,9}\//.test(value) ? "https://doi.org/" + value : value;
+    return /^https?:\/\//i.test(href) ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(value)}</a>` : esc(value);
+  };
+  const statusSpan = (cls, text) => `<span class="status ${cls || ""}">${esc(text)}</span>`;
+
+  async function load(refresh) {
+    $("#meta").textContent = "加载中…";
+    try {
+      if (window.OPENLABS_STATE && !refresh) state = window.OPENLABS_STATE;
+      else {
+        const res = await fetch("api/state" + (refresh ? "?refresh=1" : ""), { cache: "no-store" });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || res.statusText);
+        state = body;
+      }
+      const src = state.submission_source || {};
+      const srcText = src.kind === "snapshot" ? `投稿数据：快照 ${day(src.modified_at)}` : src.kind === "management_api" ? "投稿数据：管理网站实时" : "投稿数据：仅本地拒稿台账";
+      $("#meta").textContent = `生成于 ${String(state.generated_at).replace("T", " ").slice(0, 16)} UTC · ${srcText}`;
+      $("#meta").title = src.path || "";
+      render();
+    } catch (e) {
+      if (window.OPENLABS_STATE && refresh) { $("#meta").textContent = "静态导出版本无法刷新；请重新运行 build"; return; }
+      $("#main").innerHTML = `<div class="card err">读取失败：${esc(e.message)}</div>`;
+    }
+  }
+
+  function barChart(rows, onPick) {
+    const max = Math.max(1, ...rows.map((r) => r[1]));
+    return rows.map(([label, value]) => `<div class="chart-row" tabindex="0" role="button" data-pick="${esc(label)}" data-tip="${esc(label)}：${value}">
+      <span>${esc(label)}</span><div class="track"><span style="width:${(value / max) * 100}%"></span></div><span class="v">${value}</span></div>`).join("");
+  }
+
+  function latestAttempt(p) { return p.attempts.length ? p.attempts[p.attempts.length - 1] : null; }
+
+  function overview() {
+    const s = state.summary, st = s.stages;
+    const tiles = [
+      ["论文总数", s.papers, `${s.attempts} 次投稿`], ["在审", st["在审"], "已投稿 / 外审 / 已重投"],
+      ["返修中", st["返修中"], "待提交修改稿"], ["已录用 / 发表", st["已录用"], `${s.accepted} 次录用记录`],
+      ["累计拒稿", s.rejections, `${st["被拒待处理"]} 篇待处理`], ["活跃研究项目", s.active_projects, `共 ${s.projects} 个项目目录 · 14 天内有更新`],
+    ];
+    const byDomain = {};
+    state.papers.forEach((p) => { byDomain[p.domain_label] = (byDomain[p.domain_label] || 0) + 1; });
+    const m = state.monitor || {};
+    const urgent = (m.revision_deadlines || []).filter((r) => r.urgency !== "scheduled");
+    const fac = state.factory || {};
+    return `<div class="grid tiles">${tiles.map(([l, n, sub]) => `<div class="card tile"><div class="lab">${esc(l)}</div><div class="num">${esc(n)}</div><div class="sub">${esc(sub)}</div></div>`).join("")}</div>
+    <div class="grid two" style="margin-top:12px">
+      <div class="card"><h2>论文阶段分布</h2><div id="stage-chart">${barChart(Object.entries(st), true)}</div><div class="muted" style="font-size:12px;margin-top:6px">点击一行查看该阶段论文</div></div>
+      <div class="card"><h2>论文领域分布</h2><div id="domain-chart">${barChart(Object.entries(byDomain).sort((a, b) => b[1] - a[1]))}</div></div>
+    </div>
+    <div class="grid two" style="margin-top:12px">
+      <div class="card"><h2>需要处理</h2><ul class="list">
+        ${urgent.map((r) => `<li>${statusSpan(r.urgency === "overdue" ? "critical" : "warning", r.urgency === "overdue" ? "已逾期" : "临近截止")} <b>${esc(r.venue)}</b> ${esc(DECISION[r.decision] || r.decision)}，截止 ${day(r.due_at)}<div class="muted">${esc(r.paper_id)}</div></li>`).join("")}
+        ${(m.stale_submissions || []).slice(0, 6).map((r) => `<li>${statusSpan("serious", "长时间无进展")} <b>${esc(r.venue)}</b> ${r.days ?? "?"} 天<div class="muted">${esc(r.paper_id)}</div></li>`).join("")}
+        ${s.papers_without_registered_data ? `<li>${statusSpan("warning", "数据未登记")} ${s.papers_without_registered_data} 篇非数学论文未在登记表填写 data_sources（目前显示的是从稿件中提取的链接）</li>` : ""}
+        ${!urgent.length && !(m.stale_submissions || []).length ? `<li class="muted">没有临近截止或长时间无进展的投稿</li>` : ""}
+      </ul></div>
+      <div class="card"><h2>自动调度器</h2>${fac.available ? `<dl class="kv">
+        <dt>最近建任务</dt><dd>${day(fac.last_task_created_at)}</dd>
+        <dt>待运行任务</dt><dd>${(fac.open_tasks || []).length}</dd>
+        <dt>任务状态</dt><dd>${Object.entries(fac.tasks || {}).map(([k, v]) => `<span class="badge">${esc(k)} ${v}</span>`).join(" ")}</dd>
+        <dt>课题</dt><dd>${fac.campaigns.length} 个（${fac.campaigns.filter((c) => c.status === "active").length} 个 active）</dd></dl>` : `<div class="muted">未找到 factory.sqlite</div>`}</div>
+    </div>`;
+  }
+
+  function filteredPapers() {
+    const q = ui.q.trim().toLowerCase();
+    return state.papers.filter((p) => (!ui.domain || p.domain === ui.domain) && (!ui.stage || p.stage === ui.stage)
+      && (!ui.level || (p.venue.level || "").includes(ui.level))
+      && (!q || [p.title, p.paper_id, p.venue.name, p.abstract, ...(p.key_findings || [])].join(" ").toLowerCase().includes(q)))
+      .sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)));
+  }
+
+  function papers() {
+    const domains = [...new Set(state.papers.map((p) => p.domain))].sort();
+    const rows = filteredPapers(), size = 50, pages = Math.max(1, Math.ceil(rows.length / size));
+    ui.page = Math.min(ui.page, pages - 1);
+    const view = rows.slice(ui.page * size, ui.page * size + size);
+    return `<div class="card"><div class="filters">
+      <input type="search" id="f-q" placeholder="搜索标题、期刊、摘要、发现…" value="${esc(ui.q)}" aria-label="搜索">
+      <select id="f-domain" aria-label="领域"><option value="">全部领域</option>${domains.map((d) => `<option value="${esc(d)}" ${ui.domain === d ? "selected" : ""}>${esc(state.papers.find((p) => p.domain === d).domain_label)}</option>`).join("")}</select>
+      <select id="f-stage" aria-label="阶段"><option value="">全部阶段</option>${Object.keys(state.summary.stages).map((s) => `<option ${ui.stage === s ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>
+      <select id="f-level" aria-label="级别"><option value="">全部级别</option>${["1区","2区","3区","4区","CCF-A","CCF-B","CCF-C","未登记"].map((l) => `<option ${ui.level === l ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <span class="muted">${rows.length} 篇</span></div>
+      <div class="table-wrap"><table><thead><tr><th>论文</th><th>阶段</th><th>目标期刊 / 会议</th><th class="hide-sm">最近投稿</th><th class="hide-sm">更新</th></tr></thead><tbody>
+      ${view.map((p) => { const a = latestAttempt(p); return `<tr data-paper="${esc(p.paper_id)}" tabindex="0">
+        <td><div>${esc(p.title)}</div><div class="muted" style="font-size:12px">${esc(p.domain_label)} · ${esc(p.display_id)}</div></td>
+        <td>${statusSpan(STAGE_CLASS[p.stage], p.stage)}</td>
+        <td>${esc(p.venue.name || "—")}<div>${p.venue.level ? `<span class="badge ${p.venue.escalation ? "accent" : ""}">${esc(p.venue.level)}${p.venue.escalation ? " · 冲刺" : ""}</span>` : ""}</div></td>
+        <td class="hide-sm">${a ? `${statusSpan(ATTEMPT_CLASS[a.status], ATTEMPT[a.status] || a.status)}<div class="muted" style="font-size:12px">${esc(a.venue)}</div>` : '<span class="muted">未投</span>'}</td>
+        <td class="hide-sm">${day(p.updated_at || p.created_at)}</td></tr>`; }).join("") || `<tr><td colspan="5" class="empty">没有匹配的论文</td></tr>`}
+      </tbody></table></div>
+      <div class="pager"><button id="prev" ${ui.page ? "" : "disabled"}>上一页</button><span class="muted">${ui.page + 1} / ${pages}</span><button id="next" ${ui.page + 1 < pages ? "" : "disabled"}>下一页</button></div></div>`;
+  }
+
+  function paperDetail(p) {
+    const sources = p.data_sources_registered
+      ? `<table><thead><tr><th>数据</th><th>类型</th><th>来源</th><th>版本 / 获取</th><th>许可</th></tr></thead><tbody>${p.data_sources.map((d) => `<tr><td>${esc(d.name)}</td><td>${esc(d.kind)}</td><td>${safeLink(d.source || d.doi)}</td><td>${esc(d.version || d.accessed_at || "")}</td><td>${esc(d.license_or_access || "")}</td></tr>`).join("")}</tbody></table>`
+      : `<div>${statusSpan("warning", "登记表未填写 data_sources")}</div>${p.data_availability ? `<p>${esc(p.data_availability)}</p>` : ""}${p.data_links.length ? `<div class="links">${p.data_links.map(safeLink).join("")}</div>` : `<div class="muted">稿件数据可用性部分未找到链接</div>`}`;
+    const findings = p.key_findings.length ? `<ul>${p.key_findings.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : `<div class="muted" style="font-size:12px">未登记 key_findings，以下为稿件摘要</div><p>${esc(p.abstract || "（未找到摘要）")}</p>`;
+    const attempts = p.attempts.length ? `<ul class="list timeline">${p.attempts.map((a) => `<li>${statusSpan(ATTEMPT_CLASS[a.status], ATTEMPT[a.status] || a.status)} <b>${esc(a.venue)}</b> <span class="muted">投稿 ${day(a.submitted_at)} · 结束 ${day(a.closed_at)}${a.manuscript_number ? " · " + esc(a.manuscript_number) : ""}</span>
+        ${(a.rounds || []).map((r) => `<div class="muted">审稿轮：${esc(DECISION[r.decision] || r.decision)} ${r.due_at ? "，截止 " + day(r.due_at) : ""}</div>`).join("")}
+        ${a.reason ? `<div style="margin-top:4px">${esc(a.reason)}</div>` : ""}</li>`).join("")}</ul>` : `<div class="muted">尚未投稿</div>`;
+    const v = p.venue;
+    return `<div class="dlg-head"><h2>${esc(p.title)}</h2><button id="close" aria-label="关闭">关闭</button></div><div class="dlg-body">
+      <dl class="kv" style="margin-top:12px">
+        <dt>阶段</dt><dd>${statusSpan(STAGE_CLASS[p.stage], p.stage)} ${p.writing_release ? `<span class="badge">写作发布：${esc(p.writing_release)}</span>` : ""}</dd>
+        <dt>领域</dt><dd>${esc(p.domain_label)} / ${esc(p.subdomain || "")}</dd>
+        <dt>目标${v.type === "conference" ? "会议" : "期刊"}</dt><dd>${esc(v.name || "—")} ${v.level ? `<span class="badge">${esc(v.level)}</span>` : ""} ${v.category ? `<span class="muted">${esc(v.category)}</span>` : ""}
+          ${v.indexes ? `<span class="badge">${esc(v.indexes.join("/"))}</span>` : ""} ${v.fee === "no_mandatory_author_fee" || v.fee === "no_mandatory_publication_fee" ? statusSpan("good", "免版面费") : v.fee ? statusSpan("critical", v.fee) : ""}
+          ${v.unregistered ? `<div class="muted" style="font-size:12px">登记表未填写目标，显示最近一次投稿的期刊</div>` : ""}</dd>
+        ${v.escalation ? `<dt>冲刺</dt><dd>${p.escalation_record ? statusSpan("good", "已批准 " + (p.escalation_record.approved_at || "")) + " · 备选 " + esc(p.escalation_record.fallback_venue || "") : statusSpan("critical", "高区目标但缺少 target_escalation 审批")}</dd>` : ""}
+        <dt>科学验证</dt><dd>${esc(p.validation || "未登记")}${p.validation_note ? `<div class="muted" style="font-size:12px">${esc(p.validation_note)}</div>` : ""}</dd>
+        <dt>版本</dt><dd>${esc(p.version || "—")} · 建档 ${day(p.created_at)}</dd>
+        <dt>作者</dt><dd>${esc((p.authors || []).join("、") || "—")}</dd>
+        <dt>稿件</dt><dd class="muted">${esc(p.pdf || "—")}</dd>
+      </dl>
+      <h3>主要发现与结论</h3>${findings}
+      <h3>使用的数据</h3>${sources}
+      <h3>投稿历史</h3>${attempts}
+      <div class="muted" style="font-size:12px;margin-top:12px">${esc(p.paper_id)}</div></div>`;
+  }
+
+  function projects() {
+    const domains = [...new Set(state.projects.map((p) => p.domain))].sort();
+    const q = ui.pq.trim().toLowerCase();
+    const rows = state.projects.filter((p) => (!ui.pdomain || p.domain === ui.pdomain) && (!ui.active || p.active)
+      && (!q || [p.title, p.objective, p.summary, p.latest_progress, p.id].join(" ").toLowerCase().includes(q)));
+    return `<div class="filters">
+      <input type="search" id="p-q" placeholder="搜索项目、目标、进展…" value="${esc(ui.pq)}" aria-label="搜索项目">
+      <select id="p-domain" aria-label="领域"><option value="">全部领域</option>${domains.map((d) => `<option value="${esc(d)}" ${ui.pdomain === d ? "selected" : ""}>${esc(state.projects.find((p) => p.domain === d).domain_label)}</option>`).join("")}</select>
+      <label><input type="checkbox" id="p-active" ${ui.active ? "checked" : ""}> 只看 14 天内有更新</label>
+      <span class="muted">${rows.length} 个</span></div>
+      <div class="grid two">${rows.slice(0, 120).map((p) => `<div class="card project">
+        <h3>${esc(p.title)}</h3>
+        <div><span class="badge">${esc(p.domain_label)}</span> ${p.status ? `<span class="badge">${esc(p.status)}</span>` : ""} ${p.paper_candidate ? statusSpan("good", "可成文") : ""} <span class="muted" style="font-size:12px">更新 ${day(p.updated_at)}</span></div>
+        ${p.objective ? `<p><b>目标：</b>${esc(p.objective)}</p>` : ""}
+        ${p.latest_progress ? `<p><b>最新进展：</b>${esc(p.latest_progress)}</p>` : p.summary ? `<p>${esc(p.summary)}</p>` : `<p class="muted">没有 README 摘要</p>`}
+        ${p.data_links.length ? `<details><summary>数据与来源（${p.data_links.length}）</summary><div class="links">${p.data_links.map(safeLink).join("")}</div></details>` : ""}
+        ${p.campaigns.length ? `<div class="muted" style="font-size:12px">调度课题：${p.campaigns.map((c) => `${esc(c.id)}（${esc(c.status)}，${c.agent_hours} h）`).join("；")}</div>` : ""}
+        <div class="muted" style="font-size:12px">${esc(p.path)}</div></div>`).join("") || `<div class="card empty">没有匹配的项目</div>`}</div>
+      ${rows.length > 120 ? `<div class="muted">仅显示前 120 个，请用搜索缩小范围</div>` : ""}`;
+  }
+
+  function monitor() {
+    const m = state.monitor || {};
+    if (!m.checked_at) return `<div class="card">没有管理网站数据。请用 <code>--site-snapshot</code> 指定快照，或用 <code>--site-api</code> 实时读取。</div>`;
+    const t = m.thresholds || {};
+    return `<div class="grid two">
+      <div class="card"><h2>返修截止</h2><ul class="list">${(m.revision_deadlines || []).map((r) => `<li>${statusSpan({overdue:"critical",urgent:"warning",scheduled:"good"}[r.urgency], {overdue:"已逾期",urgent:"临近截止",scheduled:"按计划",unknown_due_date:"截止未知"}[r.urgency])} <b>${esc(r.venue)}</b> ${esc(DECISION[r.decision] || r.decision)} · 截止 ${day(r.due_at)} ${r.days_left != null ? `（剩 ${r.days_left} 天）` : ""}<div class="muted">${esc(r.paper_id)}</div></li>`).join("") || `<li class="muted">没有待提交的返修</li>`}</ul></div>
+      <div class="card"><h2>长时间无进展</h2><div class="muted" style="font-size:12px">阈值：已投稿 ${t.submitted_without_review_days} 天、外审 ${t.under_review_days} 天、已重投 ${t.resubmitted_days} 天</div><ul class="list">${(m.stale_submissions || []).map((r) => `<li>${statusSpan("serious", (ATTEMPT[r.status] || r.status) + " " + (r.days ?? "?") + " 天")} <b>${esc(r.venue)}</b><div class="muted">${esc(r.paper_id)} · 建议：登录系统查看并发催稿邮件</div></li>`).join("") || `<li class="muted">无</li>`}</ul></div>
+      <div class="card"><h2>在审投稿（${m.active_submissions}）</h2><div class="table-wrap"><table><thead><tr><th>期刊 / 会议</th><th>状态</th><th>天数</th></tr></thead><tbody>${(m.active || []).sort((a, b) => (b.days || 0) - (a.days || 0)).map((r) => `<tr data-paper="${esc(r.paper_id)}"><td>${esc(r.venue)}<div class="muted" style="font-size:12px">${esc(r.title || r.paper_id)}</div></td><td>${statusSpan(ATTEMPT_CLASS[r.status], ATTEMPT[r.status] || r.status)}</td><td>${r.days ?? "—"}</td></tr>`).join("")}</tbody></table></div></div>
+      <div class="card"><h2>缺少决定信（${(m.missing_decision_letters || []).length}）</h2><div class="muted" style="font-size:12px">需要找回原始决定信和审稿意见</div><ul class="list">${(m.missing_decision_letters || []).map((r) => `<li><b>${esc(r.venue)}</b><div class="muted">${esc(r.paper_id)}</div></li>`).join("") || `<li class="muted">无</li>`}</ul></div>
+    </div>`;
+  }
+
+  function policy() {
+    const p = state.policy || {}, j = p.journal || {}, c = p.conference || {}, e = p.escalation || {}, cad = p.cadence || {}, pf = p.portfolio || {};
+    return `<div class="grid two">
+      <div class="card"><h2>投稿场所</h2><dl class="kv">
+        <dt>期刊</dt><dd>${esc((j.required_indexes || []).join("/"))}，中科院 2025 升级版大类分区 ${esc((j.allowed_tiers || []).join("、"))} 区；${j.require_no_mandatory_author_fee ? "必须免版面费" : ""}</dd>
+        <dt>会议</dt><dd>CCF ${esc((c.allowed_ccf_ranks || []).join("/"))} 类；${c.require_no_mandatory_publication_fee ? "不得强制收取版面/出版费" : ""}${c.ccf_list_name ? `<div class="muted" style="font-size:12px">依据：${esc(c.ccf_list_name)}</div>` : ""}</dd>
+        <dt>内部评审</dt><dd>常规目标按该刊/会实际水平评审；冲刺目标按其完整选择性评审，且每位审稿人总分 ≥ ${esc(e.minimum_internal_score)}</dd>
+        <dt>常规选刊</dt><dd>${esc((j.routine_tiers || p.new_selection_tiers || []).join("、"))} 区 / CCF ${esc((c.routine_ccf_ranks || []).join("、"))}</dd>
+        <dt>冲刺</dt><dd>${esc((e.journal_tiers || []).join("、"))} 区或 CCF-${esc((e.ccf_ranks || []).join("/"))}：需批准的 target_escalation，内部评审 ≥ ${esc(e.minimum_internal_score)} 分，并登记备选期刊</dd></dl></div>
+      <div class="card"><h2>投稿节奏</h2><dl class="kv">
+        <dt>同刊在审</dt><dd>团队同时最多 ${esc(cad.max_active_per_venue)} 篇</dd>
+        <dt>同刊间隔</dt><dd>≥ ${esc(cad.min_days_between_same_venue)} 天</dd>
+        <dt>每周上限</dt><dd>${esc(cad.max_team_submissions_per_7_days)} 篇；每天 ${esc(cad.max_team_submissions_per_day)} 篇</dd>
+        <dt>拒稿冷却</dt><dd>${esc(cad.min_days_after_rejection_same_paper)} 天，且需要实质修改</dd></dl>
+        <div class="muted" style="font-size:12px">每次实际投稿前运行 <code>paper-writing cadence check</code></div></div>
+      <div class="card"><h2>课题组合</h2><dl class="kv">${Object.entries(pf.target_share || {}).map(([k, v]) => `<dt>${esc({empirical_real_data:"真实数据实证",escalation_candidates:"冲刺高区",theory_and_mathematics:"理论与数学"}[k] || k)}</dt><dd>${Math.round(v * 100)}%</dd>`).join("")}
+        <dt>立题到投稿</dt><dd>≤ ${esc((pf.stop_rules || {}).max_days_from_topic_to_submission)} 天</dd></dl>
+        <ul>${(pf.topic_requirements || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>
+    </div>`;
+  }
+
+  function render() {
+    document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+    $("#main").innerHTML = ({ overview, papers, projects, monitor, policy })[tab]();
+    bind();
+    persist();
+  }
+
+  function openPaper(id) {
+    const p = state.papers.find((x) => x.paper_id === id);
+    if (!p) return;
+    const d = $("#detail");
+    d.innerHTML = paperDetail(p);
+    $("#close", d).onclick = () => d.close();
+    d.showModal();
+  }
+
+  function bind() {
+    const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+    on("f-q", "input", (e) => { ui.q = e.target.value; ui.page = 0; rerenderKeepFocus("f-q"); });
+    on("f-domain", "change", (e) => { ui.domain = e.target.value; ui.page = 0; render(); });
+    on("f-stage", "change", (e) => { ui.stage = e.target.value; ui.page = 0; render(); });
+    on("f-level", "change", (e) => { ui.level = e.target.value; ui.page = 0; render(); });
+    on("prev", "click", () => { ui.page--; render(); });
+    on("next", "click", () => { ui.page++; render(); });
+    on("p-q", "input", (e) => { ui.pq = e.target.value; rerenderKeepFocus("p-q"); });
+    on("p-domain", "change", (e) => { ui.pdomain = e.target.value; render(); });
+    on("p-active", "change", (e) => { ui.active = e.target.checked; render(); });
+    document.querySelectorAll("tr[data-paper]").forEach((tr) => {
+      tr.addEventListener("click", () => openPaper(tr.dataset.paper));
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter") openPaper(tr.dataset.paper); });
+    });
+    document.querySelectorAll("#stage-chart .chart-row").forEach((row) => {
+      const pick = () => { ui.stage = row.dataset.pick; ui.domain = ""; ui.q = ""; ui.page = 0; tab = "papers"; render(); };
+      row.addEventListener("click", pick);
+      row.addEventListener("keydown", (e) => { if (e.key === "Enter") pick(); });
+    });
+    const tip = $("#tip");
+    document.querySelectorAll("[data-tip]").forEach((el) => {
+      el.addEventListener("mousemove", (e) => { tip.textContent = el.dataset.tip; tip.style.display = "block"; tip.style.left = e.clientX + 12 + "px"; tip.style.top = e.clientY + 12 + "px"; });
+      el.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+    });
+  }
+
+  function rerenderKeepFocus(id) {
+    const pos = document.getElementById(id).selectionStart;
+    render();
+    const el = document.getElementById(id);
+    el.focus(); el.setSelectionRange(pos, pos);
+  }
+
+  document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));
+  $("#refresh").onclick = () => load(true);
+  $("#theme").onclick = () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    persist();
+  };
+  load(false);
+})();
+</script>
+</body>
+</html>

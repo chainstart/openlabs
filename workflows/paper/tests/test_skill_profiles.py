@@ -64,8 +64,11 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert profiles["quality_gate"]["target_journal_classification_scope"] == (
         "major_category"
     )
-    assert profiles["quality_gate"]["allowed_target_journal_tiers"] == [1, 2]
-    assert profiles["quality_gate"]["allowed_target_journal_tiers_after_rejections"] == {1: [1, 2, 3], 2: [1, 2, 3, 4]}
+    assert profiles["quality_gate"]["allowed_target_journal_tiers"] == [1, 2, 3, 4]
+    assert profiles["quality_gate"]["allowed_target_journal_tiers_after_rejections"] == {1: [1, 2, 3, 4], 2: [1, 2, 3, 4]}
+    assert profiles["quality_gate"]["new_selection_journal_tiers"] == [3, 4]
+    assert profiles["quality_gate"]["required_target_journal_indexes"] == ["SCIE"]
+    assert profiles["quality_gate"]["allowed_target_conference_ccf_ranks"] == ["A", "B", "C"]
     assert profiles["quality_gate"]["require_no_mandatory_author_fee"] is True
     assert profiles["quality_gate"]["require_canonical_target_journal_format"] is True
     assert profiles["quality_gate"]["require_evidence_backed_target_fit"] is True
@@ -244,8 +247,14 @@ def test_local_llm_score_gate_uses_role_specific_views_and_cas_zone_1() -> None:
     assert target_policy["classification_year"] == 2025
     assert target_policy["classification_scope"] == "major_category"
     assert target_policy["classification_reference"] == "https://www.fenqubiao.com/"
-    assert target_policy["allowed_tiers"] == [1, 2]
-    assert target_policy["allowed_tiers_after_rejections"] == {1: [1, 2, 3], 2: [1, 2, 3, 4]}
+    assert target_policy["allowed_tiers"] == [1, 2, 3, 4]
+    assert target_policy["allowed_tiers_after_rejections"] == {1: [1, 2, 3, 4], 2: [1, 2, 3, 4]}
+    eligibility = target_policy["venue_eligibility"]
+    assert eligibility["journal"]["required_indexes"] == ["SCIE"]
+    assert eligibility["journal"]["require_no_mandatory_author_fee"] is True
+    assert eligibility["conference"]["allowed_ccf_ranks"] == ["A", "B", "C"]
+    assert eligibility["conference"]["require_no_mandatory_publication_fee"] is True
+    assert eligibility["escalation"] == {**eligibility["escalation"], "journal_tiers": [1, 2], "ccf_ranks": ["A"]}
     assert target_policy["require_no_mandatory_author_fee"] is True
     assert target_policy["require_canonical_venue_format"] is True
     assert settings["support_publication"]["public_archive_identifier"] == "display_id"

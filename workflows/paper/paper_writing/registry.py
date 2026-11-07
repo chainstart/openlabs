@@ -18,6 +18,7 @@ from paper_writing.identifiers import (
     work_id_from_paper_id,
 )
 from paper_writing.support_policy import validate_publication_policy
+from paper_writing import venue_policy
 
 
 REGISTRY_SCHEMA_VERSION = "ara.paper_writing.registry.v1"
@@ -26,6 +27,7 @@ RESEARCH_TRACKS = {
     "bound_paper",
     "scoped_theorem",
     "classification",
+    "empirical_real_data",
     "not_applicable",
 }
 DISCOVERY_SCHEDULING = {"active", "candidate", "frozen", "writing_only", "not_applicable"}
@@ -205,6 +207,11 @@ def load_registry(
                     allow_blocked_history=True,
                     root=repo_root,
                 )
+        if enforce_target_policy:
+            target_policy = global_settings.get("journal_target_policy")
+            venue_policy.validate_journal_eligibility(paper, paper_id=paper_id, policy=target_policy)
+            venue_policy.validate_conference_eligibility(paper, paper_id=paper_id, policy=target_policy)
+            venue_policy.validate_empirical_data_sources(paper, paper_id=paper_id, policy=target_policy)
         _validate_research_outcomes(paper, paper_id=paper_id)
         workspace = str(paper.pop("workspace", f"papers/{paper_id}")).strip("/")
         paper.setdefault("manuscript_dir", f"{workspace}/manuscript")

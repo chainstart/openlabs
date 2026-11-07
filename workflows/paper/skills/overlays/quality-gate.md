@@ -67,8 +67,17 @@ submissions in their follow-up queue and use the existing review router; do not 
 old internal ready record as reversal of an external rejection.
 
 For a journal manuscript beyond its basic draft in a domain configured by
-`journal_target_policy`, the registry must identify a verified
-Zone 4 target for every new recommendation or retarget, regardless of prior rejection count, under the user instruction of 2026-10-16. Preserve historical targets and ongoing revisions/submissions. Classify using the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition,
+`journal_target_policy`, the registry must identify a verified eligible venue for every new
+recommendation or retarget. **User instruction 2026-11-07** (superseding the 2026-10-16 Zone-4-only
+rule): every paper targets an **SCIE** journal in the 2025 CAS major-category **Zones 1-4** with a
+fee-free route, or a **CCF-recommended conference ranked C or better** with no mandatory page or
+publication charge. Paid routes are never selected; ESCI-only journals are ineligible. Routine
+selections use Zones 3-4 / CCF B-C (`new_selection_tiers`). A strong result may target Zones 1-2 or
+CCF-A only through an approved `target_escalation` record (venue, approver, date, unified-review
+score at least `venue_eligibility.escalation.minimum_internal_score`, review source, strength
+evidence, routine fallback venue). The registry enforces this for targets checked on or after
+`venue_eligibility.effective_from`; see "Venue eligibility, escalation and cadence" below.
+Preserve historical targets and ongoing revisions/submissions. Classify using the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition,
 using its major-category partition, an official no-mandatory-author-fee publication route, and the
 official formatting source. The record must bind year `2025`, scope `major_category`, the
 major-category name, source, and check date. Never relabel a JCR/WOS/JCI quartile, a CAS
@@ -76,7 +85,9 @@ subject-category result, or a XinRui tier as the CAS major-category zone. The ca
 `manuscript/` must be marked and checked as the venue-specific edition. A side candidate alone is
 a blocker. Public Zenodo ZIP names and enclosing roots must use the registered `display_id`.
 
-The rejection-stage selection rule of 2026-09-19 was superseded on 2026-10-16 by direct Zone 4 selection, stored in `journal_target_policy.new_selection_tiers`. Compatibility lists retain historical target validation and authorize Zone 4 at every rejection stage; they do not authorize new Zone 1–3 recommendations. Before selecting a transfer target, reconcile management-site submission
+The rejection-stage selection rule of 2026-09-19 and the Zone-4-only rule of 2026-10-16 are
+superseded by the 2026-11-07 venue eligibility above. Compatibility lists accept Zones 1-4 for
+historical validation. Before selecting a transfer target, reconcile management-site submission
 history with actual decision letters and record distinct external journal rejections in the paper's
 `journal_rejections` list. Each entry requires `journal` (canonical title), `manuscript_number`,
 `rejected_at` (YYYY-MM-DD, no later than target verification), and `source` (auditable local
@@ -104,6 +115,68 @@ contribution scale; cite the official scope and at least two recent topically ad
 articles; and record a shared-history check. A broad category or keyword match is insufficient.
 A prior rejection at the same target remains blocking until a material scientific revision is
 identified; reformatting, reframing, or a new cover letter is not such a revision.
+
+### Venue eligibility, escalation and cadence
+
+Registry fields for a journal target checked on or after the effective date: `target_journal_tier`
+(1-4), `target_journal_fee_policy: no_mandatory_author_fee`, and `target_journal_indexing` with
+`journal`, `indexes` containing `SCIE`, an HTTP(S) `source` and `checked_at`. For a conference:
+
+```yaml
+venue_type: conference
+target_conference: International Conference on Example Learning 2027
+target_conference_checked_at: '2026-11-07'
+target_conference_ccf: {rank: C, category: 人工智能, edition: '2026',
+                        source: 'https://www.ccf.org.cn/...', checked_at: '2026-11-07'}
+target_conference_fee_policy: no_mandatory_publication_fee
+target_conference_fee_source: https://example.org/registration
+```
+
+Escalation (Zones 1-2 or CCF-A) additionally needs:
+
+```yaml
+target_escalation:
+  status: approved
+  venue: <exact target name>
+  approved_by: <human author who approved the escalation>
+  approved_at: '2026-11-07'
+  internal_review_score: 7
+  internal_review_source: reviews/unified/<record>.json
+  strength_evidence: why this result is broader than the routine venue (external validation, effect size, readership)
+  fallback_venue: <eligible routine venue used after an escalation rejection>
+```
+
+CCF ranks come from the latest list, 中国计算机学会推荐国际学术会议和期刊目录 2026年第七版（正式版）
+(`ccf_list_edition: '2026'`); journal zones come only from the 2025 CAS upgraded-edition major-category
+table.
+
+The unified review is tiered by target (user decision 2026-11-07). The packet states the review
+track. Routine targets (Zones 3-4 / CCF B-C) are judged at the venue's actual level. Escalation
+targets (Zones 1-2 / CCF-A) are judged at full selectivity, and a ready outcome additionally needs
+every referee's overall score at or above `venue_eligibility.escalation.minimum_internal_score`
+with no low-confidence report; otherwise the outcome becomes `revision_required`. Conference
+targets use the same unified review with `target_conference` and the shared `target_journal_fit`
+venue-fit record.
+
+Escalate only after a result passed the routine gate with margin. After one escalation rejection,
+return to the recorded fallback venue instead of descending venue by venue.
+
+Before every actual submission run `paper-writing cadence check --venue <venue> --paper-id <id>`
+after `journal-history sync`. It blocks a second concurrent team paper at one venue, the same venue
+within 30 days, more than three team submissions in seven days or one per day, and resubmitting a
+paper within seven days of its rejection (`registry/settings.yaml#submission_cadence`). Combine
+closely related narrow results into one manuscript instead of parallel submissions.
+
+New empirical papers (`venue_eligibility.empirical_real_data.domains`) must list `data_sources`:
+each row has `name`, `kind` (public_dataset, experimental_measurement, observational_survey,
+clinical_or_cohort_registry, field_or_sensor_record, benchmark_with_real_samples; simulation,
+synthetic and derived_model_output are allowed only alongside real data), an HTTP(S) `source` or
+`doi`, `version` or `accessed_at`, and `license_or_access`. Also record `key_findings` (short
+reader-facing statements) so the monitoring dashboard can show them.
+
+`style-check` reports editorial-voice warnings (hedge density, repository vocabulary in the
+scientific body, stock generated phrasing, abstract length). Resolve them before review; with
+`quality_gate.editorial_voice.blocking: true` they become errors.
 
 ## Route revisions before launching reviewers
 

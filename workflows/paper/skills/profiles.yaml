@@ -57,10 +57,20 @@ quality_gate:
   target_journal_classification_system: 2025 CAS Journal Ranking Table (Major Category)
   target_journal_classification_year: 2025
   target_journal_classification_scope: major_category
-  new_selection_journal_tiers: [4]
-  new_selection_effective_from: '2026-10-16'
-  # Historical-target compatibility only; new selections follow the Zone 4 rule above.
-  allowed_target_journal_tiers: [1, 2, 4]
+  # User instruction 2026-11-07: SCIE Zones 1-4 (fee-free) or CCF A/B/C conferences.
+  # Routine selections use Zones 3-4 / CCF B-C; Zones 1-2 / CCF-A need an approved target_escalation.
+  new_selection_journal_tiers: [3, 4]
+  new_selection_effective_from: '2026-11-07'
+  required_target_journal_indexes: [SCIE]
+  allowed_target_conference_ccf_ranks: [A, B, C]
+  escalation_journal_tiers: [1, 2]
+  escalation_conference_ccf_ranks: [A]
+  venue_eligibility_settings_key: journal_target_policy.venue_eligibility
+  submission_cadence_settings_key: submission_cadence
+  submission_cadence_check_command: python -m paper_writing cadence check --venue <venue> --paper-id <paper_id>
+  research_portfolio_settings_key: research_portfolio
+  empirical_topic_skill: skills/openlabs-empirical-topic-scout
+  allowed_target_journal_tiers: [1, 2, 3, 4]
   allowed_target_journal_tiers_after_rejections:
     1: [1, 2, 3, 4]
     2: [1, 2, 3, 4]

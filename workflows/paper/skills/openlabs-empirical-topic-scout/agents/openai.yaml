@@ -1,0 +1,6 @@
+interface:
+  display_name: OpenLabs empirical topic scout
+  short_description: Real-data interdisciplinary topic selection for eligible fee-free venues
+  default_prompt: Use $openlabs-empirical-topic-scout to select or stop-or-go a real-data empirical topic.
+policy:
+  allow_implicit_invocation: false

@@ -50,6 +50,16 @@ ALIASES = {
 }
 
 
+CONFERENCE_PATTERN = re.compile(
+    r"\b(?:PRICAI|ICONIP|ICASSP|NeurIPS|ICML|ICLR|AAAI|IJCAI|KDD|CIKM|WSDM|ECAI|ACML|"
+    r"conference|symposium|workshop|congress)\b|\b(?:19|20)\d{2}\b", re.IGNORECASE)
+
+
+def venue_type_for(name: str) -> str:
+    """Classify a management-site venue name; conference refusals never count as journals."""
+    return "conference" if CONFERENCE_PATTERN.search(name or "") else "journal"
+
+
 def journal_key(name: str) -> str:
     text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]", "", text.casefold()).removeprefix("the")
@@ -190,7 +200,10 @@ def refresh_history(root: Path, papers: list[dict[str, Any]], *, source: str,
             name = canonical_journal(attempt["journal_name"], config.get("aliases"))
             aid = attempt["id"]
             if attempt["status"] in ACTIVE:
-                active.append({"paper_id": pid, "journal": name, "attempt_id": aid, "status": attempt["status"]})
+                active.append({"paper_id": pid, "journal": name, "attempt_id": aid, "status": attempt["status"],
+                               "venue_type": venue_type_for(name),
+                               "submitted_at": attempt.get("submitted_at") or "",
+                               "updated_at": attempt.get("updated_at") or ""})
             if attempt["status"] != "rejected":
                 continue
             events = [e for e in paper.get("submission_events", [])
@@ -200,9 +213,10 @@ def refresh_history(root: Path, papers: list[dict[str, Any]], *, source: str,
             reason = next((payload[k] for k in ("reason_summary", "comment_to_author", "reason", "editor_comments")
                            if isinstance(payload.get(k), str) and payload[k].strip()), "")
             row = {"attempt_id": aid, "paper_id": pid, "title": paper.get("title", ""),
-                   "journal": name, "venue_type": "conference" if re.search(r"\b(PRICAI|ICONIP)\b", name, re.I) else "journal",
+                   "journal": name, "venue_type": venue_type_for(name),
                    "manuscript_number": attempt.get("manuscript_number") or "",
                    "rejected_at": event.get("occurred_at") or attempt.get("closed_at") or "",
+                   "submitted_at": attempt.get("submitted_at") or "",
                    "reason_summary": reason, "source_event_id": event.get("id") or "",
                    "evidence_level": "decision_event" if event else "management_status_only",
                    "source": f"management:papers/{pid}/submission-attempts/{aid}"}
@@ -244,6 +258,11 @@ def refresh_history(root: Path, papers: list[dict[str, Any]], *, source: str,
 
 
 def sync_from_site(root: Path) -> dict[str, Any]:
+    return refresh_history(root, fetch_site_papers(), source="management_api_read_only")
+
+
+def fetch_site_papers() -> list[dict[str, Any]]:
+    """Read every paper detail from the management API with GET requests only."""
     from openlabs.config import load_local_environment
     from paper_writing.handoff import ManageApiClient
     load_local_environment()
@@ -254,5 +273,4 @@ def sync_from_site(root: Path) -> dict[str, Any]:
         with ManageApiClient.from_environment(url) as client:
             return client._request("GET", "/v1/papers/" + paper["paper_id"])
     with ThreadPoolExecutor(max_workers=4) as pool:
-        papers = list(pool.map(read, listing))
-    return refresh_history(root, papers, source="management_api_read_only")
+        return list(pool.map(read, listing))

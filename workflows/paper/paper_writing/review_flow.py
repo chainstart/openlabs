@@ -461,12 +461,21 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     from paper_writing.journal_history import guard_target
     guard_target(root, metadata)  # New reviews cannot reuse an excluded historical target.
     blockers: list[str] = []
-    if str(metadata.get("venue_type") or "journal") != "journal":
-        blockers.append("The unified review currently supports journal manuscripts only")
-    target = str(metadata.get("target_journal") or "")
+    venue_type = str(metadata.get("venue_type") or "journal")
+    if venue_type == "conference":
+        # CCF-ranked conference targets (policy 2026-11-07); target_journal_fit is the
+        # venue-neutral fit record shared with journals.
+        target = str(metadata.get("target_conference") or "")
+        if not target:
+            blockers.append("A verified CCF-ranked target conference is required")
+    elif venue_type == "journal":
+        target = str(metadata.get("target_journal") or "")
+    else:
+        target = ""
+        blockers.append("The unified review supports journal and conference manuscripts only")
     fit = metadata.get("target_journal_fit") or {}
     if not target or not isinstance(fit, Mapping) or fit.get("status") != "approved":
-        blockers.append("A verified target journal with an approved fit record is required")
+        blockers.append("A verified target venue with an approved fit record is required")
     manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
     pdf, used = _build(manuscript, workdir)
     canonical = root / str(metadata.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf")
@@ -848,12 +857,60 @@ def rejection_context_blockers(record: Mapping[str, Any], metadata: Mapping[str,
     return blockers
 
 
-def _target_block(metadata: Mapping[str, Any]) -> str:
+TRACK_TEXT = {
+    "routine": ("Review track: routine. Judge by this venue's actual level as shown by its recent "
+                "articles; do not demand the significance expected at the very top venues."),
+    "escalation": ("Review track: escalation. The authors are aiming above their routine venues "
+                   "(CAS Zone 1-2 journal or CCF-A conference). Apply this venue's full selectivity; "
+                   "a result that would only suit a routine venue should be declined or sent back."),
+}
+
+
+def review_track(metadata: Mapping[str, Any], root: Path | None = None) -> dict[str, Any]:
+    """Routine or escalation review, derived from the registered target and venue policy."""
+    from paper_writing import venue_policy
+    from paper_writing.registry import settings_path
+    settings = load_registry_settings(root) if root and settings_path(root).is_file() else {}
+    policy = settings.get("journal_target_policy") or {}
+    config = venue_policy.eligibility_config(policy)
+    escalation = bool(config) and venue_policy.is_escalation_venue(metadata, policy)
+    return {"track": "escalation" if escalation else "routine",
+            "minimum_overall_score": config["escalation"]["minimum_internal_score"] if escalation else None}
+
+
+def apply_review_track(merged: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
+                       track: Mapping[str, Any]) -> dict[str, Any]:
+    """An escalation target needs every referee at or above the score bar; it can only tighten."""
+    result = dict(merged)
+    if track.get("track") != "escalation" or result.get("outcome") != "ready":
+        return result
+    minimum = float(track["minimum_overall_score"])
+    blockers = [f"Escalation bar: {name} overall score {r['scores']['overall']} is below {minimum:g}"
+                for name, r in referees.items() if r["scores"]["overall"] < minimum]
+    blockers += [f"Escalation bar: {name} reported low confidence" for name, r in referees.items()
+                 if r.get("confidence") == "low"]
+    if blockers:
+        result.update(outcome="revision_required", next_action="evidence_remediation",
+                      escalation_blockers=blockers,
+                      scientific_blockers=sorted(set(result.get("scientific_blockers", [])) | set(blockers)))
+    return result
+
+
+def _target_block(metadata: Mapping[str, Any], track: str = "routine") -> str:
     fit = metadata.get("target_journal_fit") or {}
     recent = "\n".join(f"- {u}" for u in fit.get("recent_article_sources") or [])
+    if str(metadata.get("venue_type") or "journal") == "conference":
+        ccf = metadata.get("target_conference_ccf") or {}
+        return (f"Conference: {metadata.get('target_conference')}\n"
+                f"CCF recommended list {ccf.get('edition')}: class {ccf.get('rank')} ({ccf.get('category')})\n"
+                f"{TRACK_TEXT.get(track, TRACK_TEXT['routine'])}\n"
+                f"Recent topically related papers at this conference:\n{recent}\n"
+                f"Recorded target fit evidence (author-supplied; assess critically):\n"
+                f"{json.dumps(fit, ensure_ascii=False, indent=2)}")
     return (f"Journal: {metadata.get('target_journal')}\n"
             f"Official journal page: {metadata.get('target_journal_source')}\n"
             f"CAS 2025 major-category zone: {metadata.get('target_journal_tier')}\n"
+            f"{TRACK_TEXT.get(track, TRACK_TEXT['routine'])}\n"
             f"Recent topically related articles in this journal:\n{recent}\n"
             f"Recorded target fit evidence (author-supplied; assess critically):\n"
             f"{json.dumps(fit, ensure_ascii=False, indent=2)}")
@@ -862,7 +919,7 @@ def _target_block(metadata: Mapping[str, Any]) -> str:
 def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> str:
     parts = front_matter(pre["expanded"])
     letters = json.dumps(decisions, ensure_ascii=False, indent=2) if decisions else "No prior rejections recorded."
-    return (_active_revision_packet(pre) + f"## Target journal\n{_target_block(pre['metadata'])}\n\n"
+    return (_active_revision_packet(pre) + f"## Target journal\n{_target_block(pre['metadata'], pre.get('review_track', 'routine'))}\n\n"
             f"## Prior editorial decisions on this paper\n"
             "Any prior_review_documents are authenticated pre-final expert reports, not the final "
             "refusal letter. Read their complete texts as historical context; they cannot replace "
@@ -1008,7 +1065,7 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
     else:
         mapping = root / str(metadata.get('evidence_dir') or f"papers/{metadata.get('paper_id')}/evidence") / 'claim_evidence_map.md'
         evidence = mapping.read_text(errors='replace') if mapping.is_file() else '[No canonical claim-evidence map available]'
-    text = (f"## Target journal\n{_target_block(pre['metadata'])}\n\n"
+    text = (f"## Target journal\n{_target_block(pre['metadata'], pre.get('review_track', 'routine'))}\n\n"
             f"## Manuscript (LaTeX, all inputs expanded)\n{pre['expanded']}\n\n"
             f"## Bibliography\n{pre['bibliography']}\n\n"
             f"## Claim-evidence map\n{evidence}\n\n"
@@ -1216,11 +1273,14 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     round_limit = review_round_limit_override(metadata, root, paper_id, target)
     if round_limit is not None:
         config = dict(config, max_rounds_per_target=round_limit["max_rounds_per_target"])
-    pre = dict(pre, history_policy=history_policy)
+    track = review_track(metadata, root)
+    pre = dict(pre, history_policy=history_policy, review_track=track["track"])
     (run / "manuscript-expanded.tex").write_text(pre["expanded"])
     record: dict[str, Any] = {"schema_version": "openlabs.review.decision.v1", "process": PROCESS,
                               "paper_id": paper_id, "run_id": run_id, "target_journal": target,
                               "target_journal_tier": metadata.get("target_journal_tier"),
+                              "venue_type": str(metadata.get("venue_type") or "journal"),
+                              "review_track": track,
                               "manuscript_version": str(metadata.get("version") or ""),
                               "fingerprints": pre["fingerprints"], "started_at": _now()}
     record |= {"review_policy_sha256": review_policy_sha256(config, history_policy, round_limit), "active_referee_roles": panel,
@@ -1273,7 +1333,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                     raise ValueError('Referee omitted or introduced a previous mandatory item')
         # Scientific merit/correctness is evaluated before the narrower check;
         # an output-format defect must not prevent an overall referee report.
-        scientific_decision = merge(editor, referees, history_blockers)
+        scientific_decision = apply_review_track(merge(editor, referees, history_blockers), referees, track)
         if scientific_decision['outcome'] == 'ready':
             try:
                 formal = formal_checks.run_checks(pre, root, run, roles['editor'], config['timeout_seconds'], run_role)
@@ -1290,8 +1350,8 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     formal_summary = record.get('formal_check', {}).get('issue_summary')
     if formal_blockers and formal_summary and not any(formal_summary.get('by_category', {}).values()):
         formal_summary = {'by_category': {'scientific': [], 'technical': formal_blockers}}
-    merged = merge(editor, referees, history_blockers, formal_blockers=formal_blockers,
-                   formal_summary=formal_summary)
+    merged = apply_review_track(merge(editor, referees, history_blockers, formal_blockers=formal_blockers,
+                                      formal_summary=formal_summary), referees, track)
     consumes_round = not (formal_blockers and formal_summary is not None
                           and not merged['scientific_blockers'] and not history_blockers)
     letter_packet = json.dumps({"fixed_decision": merged, "editor_screen": editor, "referee_reports": referees,

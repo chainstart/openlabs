@@ -78,11 +78,25 @@ For every journal manuscript beyond its basic draft, use the domain-specific tar
 `workflows/paper/skills/profiles.yaml` and the active data repository's
 `registry/settings.yaml`.
 
-- User instruction 2026-10-16 supersedes the former rejection-stage selection rule: for every new journal recommendation or retarget, search directly and only within verified major-category Zone 4 journals, regardless of prior rejection count. Preserve existing targets and ongoing revisions/submissions unless separately retargeting them. Use the **2025 edition of the Chinese Academy
+- User instruction 2026-11-07 supersedes the 2026-10-16 Zone-4-only rule: every paper targets an
+  **SCIE** journal in 2025 CAS major-category **Zones 1-4** with a fee-free route, or a
+  **CCF-recommended conference ranked C or better** with no mandatory page/publication charge.
+  Paid routes are never selected; ESCI-only journals are ineligible. Routine selections use Zones
+  3-4 / CCF B-C; Zones 1-2 / CCF-A require an approved `target_escalation` record. The registry
+  enforces `registry/settings.yaml#journal_target_policy.venue_eligibility` for targets checked
+  on or after its effective date. Preserve existing targets and ongoing revisions/submissions.
+  Use the **2025 edition of the Chinese Academy
   of Sciences Journal Ranking Table, upgraded edition, major-category partition**. This 2025 CAS
   major-category table is the repository's fixed journal-classification baseline until a human
   explicitly changes the policy. JCR/WOS/JCI quartiles, CAS subject-category partitions, and
   XinRui tiers are different systems and must never be substituted or relabeled as this value.
+- New research is mainly real-data interdisciplinary empirical work
+  (`registry/settings.yaml#research_portfolio`). Select topics with
+  `workflows/paper/skills/openlabs-empirical-topic-scout`; new empirical papers must register
+  sourced real `data_sources` and reader-facing `key_findings`.
+- Before every actual submission run `paper-writing cadence check --venue <venue> --paper-id <id>`
+  after `journal-history sync`; follow `registry/settings.yaml#submission_cadence`. Review
+  `paper-writing submissions monitor` for revision deadlines and stale submissions.
 - Before using the relaxed transfer tiers, record distinct sourced external decisions in
   `journal_rejections` as specified in `workflows/paper/skills/overlays/quality-gate.md`.
   Internal reviews, withdrawals and duplicate letters do not increase the rejection count.
