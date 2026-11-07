@@ -47,7 +47,11 @@ defaults: {}
 
 
 def test_real_registry_contains_migrated_papers() -> None:
-    registry = load_registry(repository_root(), include_local_repositories=False)
+    # This is a read-only migration inventory, not a new target selection.
+    # A changing live rejection ledger must not hide historical paper records.
+    registry = load_registry(
+        repository_root(), include_local_repositories=False, enforce_target_policy=False
+    )
 
     assert len(registry["papers"]) >= 46
     assert "papers/20260706aihealth0001" in registry["papers"]
@@ -306,9 +310,10 @@ def test_journal_target_policy_requires_evidence_backed_editorial_fit(
         "sha256": "a" * 64,
         "reason": "Current editorial criteria and accountable fit approval are missing.",
     }
-    metadata["writing_release"] = {"status": "revision_required"}
-    write_paper_metadata(paper_id, metadata, tmp_path)
-    assert load_registry(tmp_path, include_local_repositories=False)["papers"]
+    for status in ("draft", "blocked", "revision_required", "desk_rejected"):
+        metadata["writing_release"] = {"status": status}
+        write_paper_metadata(paper_id, metadata, tmp_path)
+        assert load_registry(tmp_path, include_local_repositories=False)["papers"]
     from paper_writing.registry import _validate_journal_target_fit
     with pytest.raises(ValueError, match="target_journal_fit"):
         _validate_journal_target_fit(metadata, paper_id=paper_id)

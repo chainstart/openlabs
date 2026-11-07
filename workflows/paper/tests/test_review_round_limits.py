@@ -45,6 +45,9 @@ def report(ready=True):
 @pytest.mark.parametrize("used,override,allowed", [(14, False, True), (15, False, False),
                                                    (15, True, True), (19, True, True), (20, True, False)])
 def test_official_run_enforces_effective_paper_target_cap(tmp_path, monkeypatch, used, override, allowed):
+    # This unit test exercises round caps, independently of the live paper's
+    # evolving rejection ledger and availability of its original letters.
+    monkeypatch.setattr(flow, "prior_decisions", lambda *args: [])
     monkeypatch.setattr(flow.formal_checks, 'run_checks', lambda *args: {'valid': True, 'blockers': []})
     monkeypatch.setattr(flow.formal_checks, 'validate_binding', lambda *args: [])
     monkeypatch.setattr(flow.formal_checks, 'packet', lambda *args: 'Formal audit fixture')

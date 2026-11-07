@@ -519,7 +519,7 @@ def _validate_journal_target_fit(
         )
     history_status = history.get("status")
     retained_blocked_refusal = (allow_blocked_history and history_status == "rejected"
-                               and (paper.get("writing_release") or {}).get("status") in {"blocked", "revision_required", "desk_rejected"})
+                               and (paper.get("writing_release") or {}).get("status") in {"draft", "blocked", "revision_required", "desk_rejected"})
     if history_status not in JOURNAL_HISTORY_CLEAR_STATUSES and not retained_blocked_refusal:
         raise ValueError(
             f"target_journal_fit.same_target_history.status must be one of "
