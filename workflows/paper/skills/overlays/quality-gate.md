@@ -178,6 +178,24 @@ reader-facing statements) so the monitoring dashboard can show them.
 scientific body, stock generated phrasing, abstract length). Resolve them before review; with
 `quality_gate.editorial_voice.blocking: true` they become errors.
 
+## Editor-facing rewrite pass and cross-model review
+
+User decision 2026-11-07 (blind experiment: rewriting the opening and closing helped in every
+model; each model judge preferred its own model's text 4/5):
+
+- Before the unified review of a target checked on or after
+  `quality_gate.editorial_rewrite.required_from`, run
+  `paper-writing rewrite run <paper_id> [--apply]`. Every configured rewriter (GPT and Opus) rewrites
+  only the abstract, Introduction and closing section in a fresh empty process; judges of both
+  families rank the original and all candidates blind. A candidate is used only when it passes the
+  deterministic checks (no new citation keys, labels kept, references resolve, length within the
+  hard limit), no judge finds a major fidelity issue, and every judge ranks it above the original.
+  Otherwise the original stays, which also satisfies the gate. Review the diff before committing.
+- The review panel is two referees from different model families (`review.referee_roles`), and
+  `review.cross_model.required` blocks a panel in which every referee uses the drafting model
+  (`review.writer_model`, or a paper-level `writer_model`). Both referees must clear `ready`.
+- Never let the drafting model be the only judge of its own text in any ad-hoc comparison either.
+
 ## Route revisions before launching reviewers
 
 Run `paper-writing review route --paper-id <paper_id>` under the resource guard before launching

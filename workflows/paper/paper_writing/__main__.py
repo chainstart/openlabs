@@ -60,6 +60,17 @@ def build_parser() -> argparse.ArgumentParser:
     monitor.add_argument("--snapshot", help="Full management-site paper-detail JSON; default reads the API (GET only).")
     monitor.add_argument("--json", action="store_true", help="Print JSON instead of Markdown.")
 
+    rewrite = subparsers.add_parser("rewrite", help="Editor-facing rewrite pass before the unified review.")
+    rewrite_commands = rewrite.add_subparsers(dest="rewrite_command", required=True)
+    rewrite_run = rewrite_commands.add_parser("run", help="Rewrite abstract/Introduction/closing with every configured model and select blind.")
+    rewrite_run.add_argument("paper_id")
+    rewrite_run.add_argument("--root", default=str(default_repo_root()))
+    rewrite_run.add_argument("--rewriter", action="append", help="Limit to these configured rewriters.")
+    rewrite_run.add_argument("--apply", action="store_true", help="Write the selected candidate into the sources.")
+    rewrite_apply = rewrite_commands.add_parser("apply", help="Apply the selection of an earlier run.")
+    rewrite_apply.add_argument("paper_id")
+    rewrite_apply.add_argument("run_dir")
+    rewrite_apply.add_argument("--root", default=str(default_repo_root()))
     scan = subparsers.add_parser("scan", help="Build the derived inventory snapshot.")
     _common_arguments(scan)
     scan.add_argument("--output", default=str(default_output_path()))
@@ -431,6 +442,24 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"valid": False, "error": str(exc)}, ensure_ascii=False))
             return 2
         print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else submission_monitor.format_report(report))
+        return 0
+    if args.command == "rewrite":
+        from paper_writing import editorial_rewrite
+        root = Path(args.root).resolve()
+        try:
+            if args.rewrite_command == "run":
+                record = editorial_rewrite.run_rewrite(args.paper_id, root=root, rewriters=args.rewriter)
+                summary = {k: record.get(k) for k in ("run_dir", "outcome", "rewriter_failures", "deterministic_problems")}
+                summary["selected"] = (record.get("selection") or {}).get("selected", "original")
+                summary["rejected_candidates"] = (record.get("selection") or {}).get("rejected_candidates")
+                if args.apply and record["outcome"] == "candidate_selected":
+                    summary["applied"] = editorial_rewrite.apply_rewrite(args.paper_id, root=root, run_dir=record["run_dir"])
+            else:
+                summary = editorial_rewrite.apply_rewrite(args.paper_id, root=root, run_dir=args.run_dir)
+        except (OSError, ValueError, KeyError) as exc:
+            print(json.dumps({"valid": False, "error": str(exc)}, ensure_ascii=False))
+            return 2
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
     if args.command == "scan":
         payload = build_inventory(args.root, config=load_config(args.config))

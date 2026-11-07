@@ -133,10 +133,64 @@ def review_config(root: str | Path) -> dict[str, Any]:
         raise ValueError("Unknown referee role")
     if len(panel) == 1 and not review.get("single_referee_authorization"):
         raise ValueError("A single referee requires an explicit recorded user authorization")
+    cross = review.get("cross_model") or {}
+    if not isinstance(cross, Mapping):
+        raise ValueError("review.cross_model must be a mapping")
+    previous = review.get("previous_panels") or []
+    if not isinstance(previous, list) or any(
+            not isinstance(p, Mapping) or not isinstance(p.get("roles"), Mapping)
+            or not isinstance(p.get("referee_roles"), list) or not _parse_time(p.get("valid_for_reviews_started_before"))
+            for p in previous):
+        raise ValueError("review.previous_panels entries need roles, referee_roles and valid_for_reviews_started_before")
     return {"process": gate.get("review_process"), "roles": review.get("roles") or {},
             "referee_roles": panel, "rejection_clearance_required": True,
             "max_rounds_per_target": int(review.get("max_rounds_per_target", 10)),
-            "timeout_seconds": int(review.get("timeout_seconds", 3600))}
+            "timeout_seconds": int(review.get("timeout_seconds", 3600)),
+            "writer_model": str(review.get("writer_model") or ""),
+            "cross_model_required": bool(cross.get("required", False)),
+            "previous_panels": [dict(p) for p in previous]}
+
+
+def _parse_time(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def writer_model(metadata: Mapping[str, Any], config: Mapping[str, Any]) -> str:
+    """The model that drafted the manuscript: paper-level record first, then the team default."""
+    return str(metadata.get("writer_model") or config.get("writer_model") or "")
+
+
+def cross_model_blockers(config: Mapping[str, Any], writer: str) -> list[str]:
+    """User decision 2026-11-07: the same model must not be the only judge of its own text."""
+    if not config.get("cross_model_required"):
+        return []
+    if not writer:
+        return ["review.writer_model (or the paper's writer_model) must name the drafting model"]
+    roles = config["roles"]
+    independent = [n for n in config["referee_roles"] if roles.get(n, {}).get("model") != writer]
+    if not independent:
+        return [f"Cross-model review requires an active referee whose model differs from the writer {writer}"]
+    if len(config["referee_roles"]) < 2:
+        return ["Cross-model review requires two active referees from different model families"]
+    return []
+
+
+def policy_for_record(record: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
+    """Current config, or the recorded earlier panel a review started under.
+
+    Changing the panel must not silently invalidate decisions made under the panel that was
+    configured when they started; those stay bound to the historical panel they used.
+    """
+    started = _parse_time(record.get("started_at"))
+    for panel in config.get("previous_panels", []):
+        until = _parse_time(panel["valid_for_reviews_started_before"])
+        if started and started < until and list(record.get("active_referee_roles") or []) == list(panel["referee_roles"]):
+            return dict(config, roles=dict(panel["roles"]), referee_roles=list(panel["referee_roles"]))
+    return dict(config)
 
 
 def rejection_history_policy(metadata: Mapping[str, Any], root: Path,
@@ -514,6 +568,8 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     except ValueError as exc:
         blockers.append(f"Active journal revision context: {exc}")
         revision_context = None
+    from paper_writing.editorial_rewrite import preflight_blockers as rewrite_blockers
+    blockers.extend(rewrite_blockers(metadata, root, paper_id))
     return {"blockers": blockers, "fingerprints": fingerprints, "expanded": expanded,
             "bibliography": bibliography, "metadata": metadata, "target": target,
             "support_claim_evidence_maps": claim_maps, "formal_inventory": formal_inventory,
@@ -1258,6 +1314,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
         raise ValueError("The editorial screen must use an independent Codex process")
     if len(panel) == 2 and roles[panel[0]].get("model") == roles[panel[1]].get("model"):
         raise ValueError("The two referees must use different models")
+    # Cross-model decision 2026-11-07 is checked after the paper metadata is loaded.
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run = runs_dir(root, paper_id) / run_id
     run.mkdir(parents=True)
@@ -1274,7 +1331,9 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     if round_limit is not None:
         config = dict(config, max_rounds_per_target=round_limit["max_rounds_per_target"])
     track = review_track(metadata, root)
+    writer = writer_model(metadata, config)
     pre = dict(pre, history_policy=history_policy, review_track=track["track"])
+    pre["blockers"] = [*pre["blockers"], *cross_model_blockers(config, writer)]
     (run / "manuscript-expanded.tex").write_text(pre["expanded"])
     record: dict[str, Any] = {"schema_version": "openlabs.review.decision.v1", "process": PROCESS,
                               "paper_id": paper_id, "run_id": run_id, "target_journal": target,
@@ -1284,7 +1343,8 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                               "manuscript_version": str(metadata.get("version") or ""),
                               "fingerprints": pre["fingerprints"], "started_at": _now()}
     record |= {"review_policy_sha256": review_policy_sha256(config, history_policy, round_limit), "active_referee_roles": panel,
-               "single_referee_panel": len(panel) == 1}
+               "single_referee_panel": len(panel) == 1, "writer_model": writer,
+               "cross_model_referees": [n for n in panel if roles[n].get("model") != writer]}
     if pre.get('active_revision_context') is not None:
         record['active_revision_context'] = pre['active_revision_context']
     if history_policy is not None:
@@ -1386,7 +1446,7 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
         raise ValueError("Decision record changed after it was written")
     metadata = load_paper_metadata(paper_id, root)
     history_policy = rejection_history_policy(metadata, root, paper_id)
-    config = review_config(root)
+    config = policy_for_record(record, review_config(root))
     round_limit = review_round_limit_override(metadata, root, paper_id)
     if record.get("review_policy_sha256") != review_policy_sha256(config, history_policy, round_limit):
         raise ValueError("Review policy changed; rerun the review")
@@ -1448,7 +1508,7 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
     if not path.is_file() or _sha256(path.read_bytes()) != release.get("decision_record_sha256"):
         return ["The unified decision record is missing or changed"]
     record = json.loads(path.read_text())
-    config = review_config(root)
+    config = policy_for_record(record, review_config(root))
     try:
         history_policy = rejection_history_policy(metadata, root, paper_id)
     except (ValueError, OSError) as exc:

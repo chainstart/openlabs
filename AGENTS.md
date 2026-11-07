@@ -94,6 +94,10 @@ For every journal manuscript beyond its basic draft, use the domain-specific tar
   (`registry/settings.yaml#research_portfolio`). Select topics with
   `workflows/paper/skills/openlabs-empirical-topic-scout`; new empirical papers must register
   sourced real `data_sources` and reader-facing `key_findings`.
+- Since 2026-11-07 the unified review uses two referees from different model families (Opus and
+  GPT), and new targets first pass `paper-writing rewrite run <paper_id>` (editor-facing rewrite of
+  abstract/Introduction/closing, judged blind by both families); see
+  `workflows/paper/skills/overlays/quality-gate.md`.
 - Before every actual submission run `paper-writing cadence check --venue <venue> --paper-id <id>`
   after `journal-history sync`; follow `registry/settings.yaml#submission_cadence`. Review
   `paper-writing submissions monitor` for revision deadlines and stale submissions.
