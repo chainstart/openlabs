@@ -14,6 +14,10 @@ order unknown to them.  A candidate replaces the original only when
    resolve, no sectioning commands, length within tolerance);
 2. no judge reports a major fidelity issue for it;
 3. every judge ranks it above the original;
+4. every judge clears the absolute editorial floors and complete-manuscript readiness.
+
+Keeping the original is a pass only when it also clears the absolute checks. Approvals
+bind every reachable TeX source and bibliography file, not just the three edited parts.
 
 and among the surviving candidates the lowest summed rank wins (self-preference is
 symmetric when both families judge), then fewer fidelity issues, then the higher mean
@@ -37,6 +41,8 @@ from paper_writing.registry import load_paper_metadata, load_registry_settings, 
 from paper_writing.review_launcher import LaunchError, run_role
 
 PARTS = ("abstract", "introduction", "closing")
+VOICE_DIMENSIONS = ("naturalness", "restraint", "clarity", "venue_fit")
+MIN_EDITORIAL_SCORE = 7
 _END = r"(?=\\section\*?\{|\\appendix\b|\\begin\{appendix\}|\\bibliography\{|\\printbibliography|\\end\{document\}|\Z)"
 _CITE = re.compile(r"\\[A-Za-z]*cite[A-Za-z]*\*?(?:\s*\[[^\]]*\])*\s*\{([^}]*)\}")
 _LABEL = re.compile(r"\\label\{([^}]*)\}")
@@ -102,6 +108,15 @@ the manuscript body. List each overstatement, unsupported claim, wrong number, i
 or misrepresentation (severity "major" if it would mislead a reader about what the paper shows).
 Over-claiming is worse than hedging. Rank all versions from best to worst.
 
+For EACH version also assess the COMPLETE manuscript, combining that version with the body.
+Set editorial_ready=true only when no substantial presentation repair remains anywhere:
+the contribution and argument are recoverable, prose is concrete rather than formulaic,
+limitations are proportionate without repetitive defensive qualifications, and internal
+workflow/revision dialogue is absent. Preserve necessary hypotheses, uncertainty, negative
+results, reproducibility methods and truthful AI disclosures. List located actionable defects
+in editorial_blockers; an empty list and all four editorial scores >=7 are required to pass.
+Relative improvement alone is insufficient. Do not predict actual editorial acceptance.
+
 {versions}
 ## Manuscript body (the rewritten parts are omitted)
 
@@ -115,6 +130,21 @@ def _now() -> str:
 
 def _sha(data: bytes | str) -> str:
     return hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
+
+
+def manuscript_sources(manuscript: Path) -> dict[str, str]:
+    """Bind all reachable TeX and bibliography files, including changes outside rewritten parts."""
+    files = set(_tex_files(manuscript)) | set(manuscript.rglob("*.bib"))
+    return {p.relative_to(manuscript).as_posix(): _sha(p.read_bytes()) for p in sorted(files)}
+
+
+def editorial_problems(scores: Mapping[str, Any]) -> list[str]:
+    problems = [f"{name} below {MIN_EDITORIAL_SCORE}" for name in VOICE_DIMENSIONS
+                if scores.get(name, 0) < MIN_EDITORIAL_SCORE]
+    if scores.get("editorial_ready") is not True:
+        problems.append("complete manuscript needs presentation repair")
+    problems.extend(str(item) for item in scores.get("editorial_blockers", []))
+    return problems
 
 
 def _date(value: Any) -> date | None:
@@ -335,12 +365,15 @@ def judge_schema(labels: list[str]) -> dict[str, Any]:
                             "severity": {"type": "string", "enum": ["minor", "major"]}}}
     version = {"type": "object", "additionalProperties": False,
                "required": ["naturalness", "restraint", "clarity", "venue_fit", "overall",
-                            "send_to_review_probability", "fidelity_issues", "comments"],
+                            "send_to_review_probability", "fidelity_issues", "comments",
+                            "editorial_ready", "editorial_blockers"],
                "properties": {"naturalness": score, "restraint": score, "clarity": score, "venue_fit": score,
                               "overall": score,
                               "send_to_review_probability": {"type": "integer", "minimum": 0, "maximum": 100},
                               "fidelity_issues": {"type": "array", "items": issue},
-                              "comments": {"type": "string"}}}
+                              "comments": {"type": "string"},
+                              "editorial_ready": {"type": "boolean"},
+                              "editorial_blockers": {"type": "array", "items": {"type": "string", "minLength": 1}}}}
     return {"type": "object", "additionalProperties": False, "required": ["versions", "ranking", "rationale"],
             "properties": {"versions": {"type": "object", "additionalProperties": False, "required": labels,
                                         "properties": {label: version for label in labels}},
@@ -388,16 +421,20 @@ def _rejections(paper_id: str, root: Path) -> str:
 def select(original: str, candidates: list[str], judgments: Mapping[str, Mapping[str, Any]],
            keys: Mapping[str, Mapping[str, str]], disqualified: Mapping[str, list[str]]) -> dict[str, Any]:
     """Pure selection rule; ``keys[judge][label] -> version`` unblinds each judgment."""
-    table: dict[str, dict[str, Any]] = {v: {"ranks": {}, "overall": {}, "major": 0, "minor": 0}
+    table: dict[str, dict[str, Any]] = {v: {"ranks": {}, "overall": {}, "major": 0, "minor": 0,
+                                         "editorial_problems": {}}
                                         for v in [original, *candidates]}
     for judge, result in judgments.items():
         mapping = keys[judge]
         order = [mapping[label] for label in result["ranking"]]
+        if len(order) != len(mapping) or set(order) != set(mapping.values()):
+            raise ValueError("Judge ranking must contain every version exactly once")
         for label, version in mapping.items():
             scores = result["versions"][label]
             row = table[version]
             row["ranks"][judge] = order.index(version) + 1
             row["overall"][judge] = scores["overall"]
+            row["editorial_problems"][judge] = editorial_problems(scores)
             issues = scores.get("fidelity_issues") or []
             row["major"] += sum(i.get("severity") == "major" for i in issues)
             row["minor"] += sum(i.get("severity") != "major" for i in issues)
@@ -405,6 +442,8 @@ def select(original: str, candidates: list[str], judgments: Mapping[str, Mapping
     for version in candidates:
         row = table[version]
         why = list(disqualified.get(version, []))
+        why.extend(f"{judge}: {problem}" for judge, problems in row["editorial_problems"].items()
+                   for problem in problems)
         if row["major"]:
             why.append(f"{row['major']} major fidelity issue(s) reported")
         beaten = [j for j in judgments if row["ranks"][j] > table[original]["ranks"][j]]
@@ -420,9 +459,13 @@ def select(original: str, candidates: list[str], judgments: Mapping[str, Mapping
         return (sum(row["ranks"].values()), row["minor"], -sum(row["overall"].values()) / len(row["overall"]))
 
     eligible.sort(key=order)
-    return {"selected": eligible[0] if eligible else original, "eligible_ranked": eligible,
+    selected = eligible[0] if eligible else original
+    ready = bool(judgments) and not table[selected]["major"] and not any(
+        table[selected]["editorial_problems"].values())
+    return {"selected": selected, "editorial_ready": ready, "eligible_ranked": eligible,
             "rejected_candidates": reasons, "table": table,
             "rule": "unanimously above original, no major fidelity issue, deterministic checks pass; "
+                    "absolute editorial floors and complete-manuscript readiness; "
                     "then lowest summed rank, fewer fidelity issues, higher mean overall"}
 
 
@@ -460,13 +503,15 @@ def run_rewrite(paper_id: str, *, root: str | Path, rewriters: list[str] | None 
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run = runs_dir(root, paper_id) / run_id
     run.mkdir(parents=True)
-    sources = {p.file: _sha((manuscript / p.file).read_bytes()) for p in parts.values()}
+    sources = manuscript_sources(manuscript)
     record: dict[str, Any] = {
         "schema_version": "openlabs.editorial_rewrite.v1", "paper_id": paper_id, "run_id": run_id,
         "target": venue, "manuscript_version": str(metadata.get("version") or ""), "started_at": _now(),
         "source_sha256": sources, "parts": {n: {"file": p.file, "heading": p.heading, "words": _words(p.body)}
                                              for n, p in parts.items()},
         "rewriters": {k: config["rewriters"][k] for k in chosen}, "judges": config["judges"]}
+    record["outcome"] = "in_progress"
+    _finish(run, root, record)
     versions: dict[str, dict[str, str]] = {"original": {n: p.body.strip() for n, p in parts.items()}}
     receipts: dict[str, Any] = {}
     failures: dict[str, str] = {}
@@ -510,10 +555,16 @@ def run_rewrite(paper_id: str, *, root: str | Path, rewriters: list[str] | None 
                                          user_prompt=prompt, schema=judge_schema(labels_all),
                                          workdir=run / f"judge-{judge}", timeout=config["timeout_seconds"])
         for judge, future in futures.items():
-            judgments[judge], receipts[f"judge_{judge}"] = future.result()
+            try:
+                judgments[judge], receipts[f"judge_{judge}"] = future.result()
+            except (LaunchError, ValueError, OSError) as exc:
+                record |= {"outcome": "judge_failed", "judge_failure": {judge: str(exc)},
+                           "receipts": receipts, "finished_at": _now()}
+                return _finish(run, root, record)
     selection = select("original", candidates, judgments, keys, disqualified)
     record |= {"blind_keys": keys, "judgments": judgments, "selection": selection, "receipts": receipts,
-               "outcome": "candidate_selected" if selection["selected"] != "original" else "original_kept",
+               "outcome": ("editorial_failed" if not selection["editorial_ready"] else
+                           "candidate_selected" if selection["selected"] != "original" else "original_kept"),
                "finished_at": _now()}
     return _finish(run, root, record)
 
@@ -539,9 +590,8 @@ def apply_rewrite(paper_id: str, *, root: str | Path, run_dir: str | Path) -> di
     if target_of(metadata) != record["target"]:
         raise ValueError("Target venue changed since the rewrite run")
     manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
-    for rel, digest in record["source_sha256"].items():
-        if _sha((manuscript / rel).read_bytes()) != digest:
-            raise ValueError(f"{rel} changed after the rewrite run; run the pass again")
+    if manuscript_sources(manuscript) != record["source_sha256"]:
+        raise ValueError("Manuscript sources changed after the rewrite run; run the pass again")
     chosen = json.loads((run / "versions.json").read_text())[record["selection"]["selected"]]
     parts = locate_parts(manuscript)
     by_file: dict[str, list[Part]] = {}
@@ -556,7 +606,7 @@ def apply_rewrite(paper_id: str, *, root: str | Path, run_dir: str | Path) -> di
             text = text[:part.start] + new + text[part.end:]
         path.write_text(text)
     applied = {"applied_at": _now(), "selected": record["selection"]["selected"],
-               "files": {rel: _sha((manuscript / rel).read_bytes()) for rel in by_file}}
+               "files": manuscript_sources(manuscript)}
     (run / "applied.json").write_text(json.dumps(applied, indent=2) + "\n")
     return applied
 
@@ -565,7 +615,7 @@ def latest_record(root: Path, paper_id: str, target: str) -> dict[str, Any] | No
     base = runs_dir(root, paper_id)
     for path in sorted(base.glob("*/record.json"), reverse=True) if base.is_dir() else []:
         record = json.loads(path.read_text())
-        if record.get("target") == target and record.get("outcome") in {"candidate_selected", "original_kept"}:
+        if record.get("target") == target:
             record["_applied"] = (path.parent / "applied.json").is_file()
             record["_run_dir"] = path.parent.relative_to(root).as_posix()
             return record
@@ -587,6 +637,15 @@ def preflight_blockers(metadata: Mapping[str, Any], root: Path, paper_id: str) -
     record = latest_record(root, paper_id, target)
     if record is None:
         return [f"Run the editor-facing rewrite pass for {target} first (`paper-writing rewrite run {paper_id}`)"]
+    if record.get("outcome") not in {"candidate_selected", "original_kept"} or not (
+            record.get("selection") or {}).get("editorial_ready"):
+        return ["Editorial rewrite has not passed absolute, complete-manuscript presentation checks; rerun after repair"]
     if record["outcome"] == "candidate_selected" and not record["_applied"]:
         return [f"Apply or supersede the selected rewrite in {record['_run_dir']} before the unified review"]
+    run = root / record["_run_dir"]
+    expected = (json.loads((run / "applied.json").read_text()).get("files")
+                if record["outcome"] == "candidate_selected" else record.get("source_sha256"))
+    manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
+    if not expected or manuscript_sources(manuscript) != expected:
+        return ["Manuscript sources changed since editorial approval; rerun the editor-facing rewrite pass"]
     return []

@@ -190,7 +190,18 @@ model; each model judge preferred its own model's text 4/5):
   families rank the original and all candidates blind. A candidate is used only when it passes the
   deterministic checks (no new citation keys, labels kept, references resolve, length within the
   hard limit), no judge finds a major fidelity issue, and every judge ranks it above the original.
-  Otherwise the original stays, which also satisfies the gate. Review the diff before committing.
+  Every judge must additionally score naturalness, restraint, clarity and venue fit at least 7/10,
+  affirm `editorial_ready`, and report no located `editorial_blockers` for the complete manuscript
+  (candidate opening/closing plus unchanged body). Necessary scientific qualifications and truthful
+  disclosures must remain. A better ranking alone does not establish readiness. If no candidate
+  qualifies, keeping the original satisfies the gate only if it independently meets these same
+  absolute conditions and has no major fidelity issue; otherwise repair and rerun.
+  Approval binds all reachable TeX sources and bibliography files before application and at review
+  preflight. Any change, including body-only or bibliography changes, requires a fresh pass. The
+  latest failed run cannot fall back to an older success. Legacy records without explicit readiness
+  must be rerun for targets subject to this gate. Review the diff before committing.
+  Keyword-density checks remain diagnostic warnings: independent contextual assessment of the
+  complete manuscript is mandatory and blocking, not a word blacklist or an AI-detector score.
 - The review panel is two referees from different model families (`review.referee_roles`), and
   `review.cross_model.required` blocks a panel in which every referee uses the drafting model
   (`review.writer_model`, or a paper-level `writer_model`). Both referees must clear `ready`.

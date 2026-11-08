@@ -76,7 +76,9 @@ def judgment(order: list[str], major: str | None = None) -> dict:
     versions = {}
     for rank, label in enumerate(order):
         issues = [{"quote": "q", "problem": "p", "severity": "major"}] if label == major else []
-        versions[label] = {"overall": 9 - rank, "fidelity_issues": issues}
+        versions[label] = {"overall": 9 - rank, "fidelity_issues": issues,
+                           **{name: 7 for name in er.VOICE_DIMENSIONS},
+                           "editorial_ready": True, "editorial_blockers": []}
     return {"versions": versions, "ranking": order, "rationale": ""}
 
 
@@ -109,7 +111,8 @@ def fake_runner(order_pref: dict[str, str]):
         order = sorted(labels, key=lambda l: (0 if text[l].startswith(f"### Abstract\n{order_pref[role_name]}")
                                               else 2 if "Old abstract" in text[l] else 1))
         versions = {l: {"naturalness": 7, "restraint": 7, "clarity": 7, "venue_fit": 7, "overall": 8 - i,
-                        "send_to_review_probability": 50, "fidelity_issues": [], "comments": ""}
+                        "send_to_review_probability": 50, "fidelity_issues": [], "comments": "",
+                        "editorial_ready": True, "editorial_blockers": []}
                     for i, l in enumerate(order)}
         return {"versions": versions, "ranking": order, "rationale": ""}, {"model": role["model"]}
     return run
@@ -175,6 +178,111 @@ def test_apply_refuses_changed_sources(tmp_path):
         er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
     saved = json.loads((root / record["run_dir"] / "record.json").read_text())
     assert saved["selection"]["selected"] == "gpt"
+
+
+def required_root(tmp_path):
+    root = make_root(tmp_path)
+    (root / "registry/settings.yaml").write_text(yaml.safe_dump({
+        "schema_version": "ara.paper_writing.registry.v1",
+        "quality_gate": {"editorial_rewrite": {"required": True, "required_from": "2026-11-08"}}
+    }))
+    return root, yaml.safe_load((root / "registry/papers/p.yaml").read_text())
+
+
+@pytest.mark.parametrize("dimension", er.VOICE_DIMENSIONS)
+def test_relative_improvement_does_not_override_absolute_floor(dimension):
+    keys = {"judge": {"V1": "original", "V2": "candidate"}}
+    report = judgment(["V2", "V1"])
+    report["versions"]["V2"][dimension] = 6
+    result = er.select("original", ["candidate"], {"judge": report}, keys, {})
+    assert result["selected"] == "original"
+    assert dimension in str(result["rejected_candidates"])
+
+
+def test_original_must_pass_and_full_body_blockers_cannot_be_outvoted():
+    keys = {"judge": {"V1": "original", "V2": "candidate"}}
+    report = judgment(["V1", "V2"])
+    for scores in report["versions"].values():
+        scores["editorial_ready"] = False
+        scores["editorial_blockers"] = ["Methods paragraph 2 repeats internal review dialogue"]
+    result = er.select("original", ["candidate"], {"judge": report}, keys, {})
+    assert result["selected"] == "original" and not result["editorial_ready"]
+
+
+@pytest.mark.parametrize("filename", ["body.tex", "refs.bib"])
+def test_full_sources_bound_before_apply_and_after_approval(tmp_path, filename):
+    root, metadata = required_root(tmp_path)
+    man = root / "papers/p/manuscript"
+    main = man / "main.tex"
+    main.write_text(main.read_text().replace("The method body stays.", r"\input{body}"))
+    (man / "body.tex").write_text("The method body stays.")
+    record = er.run_rewrite("p", root=root, runner=fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"}))
+    path = man / filename
+    old = path.read_text()
+    path.write_text(old + "\nchanged\n")
+    with pytest.raises(ValueError, match="changed after"):
+        er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
+    path.write_text(old)
+    er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
+    assert er.preflight_blockers(metadata, root, "p") == []
+    path.write_text(old + "\nchanged\n")
+    assert "changed since" in er.preflight_blockers(metadata, root, "p")[0]
+
+
+def test_original_kept_requires_current_sources_and_latest_failed_run_blocks(tmp_path):
+    root, metadata = required_root(tmp_path)
+    record = er.run_rewrite("p", root=root, runner=fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"}))
+    run = root / record["run_dir"]
+    record["outcome"] = "original_kept"
+    (run / "record.json").write_text(json.dumps(record))
+    assert er.preflight_blockers(metadata, root, "p") == []
+    (root / "papers/p/manuscript/refs.bib").write_text("changed")
+    assert er.preflight_blockers(metadata, root, "p")
+    newer = run.parent / "99991231T235959Z"
+    newer.mkdir()
+    (newer / "record.json").write_text(json.dumps({"target": "J Widgets", "outcome": "rewrite_failed"}))
+    assert "has not passed" in er.preflight_blockers(metadata, root, "p")[0]
+
+
+def test_failed_full_manuscript_assessment_cannot_satisfy_gate(tmp_path):
+    root, metadata = required_root(tmp_path)
+    base_runner = fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"})
+
+    def runner(**kwargs):
+        result, receipt = base_runner(**kwargs)
+        if kwargs["role_name"].startswith("judge_"):
+            for scores in result["versions"].values():
+                scores["editorial_ready"] = False
+                scores["editorial_blockers"] = ["Discussion: repeated defensive qualifications"]
+        return result, receipt
+
+    record = er.run_rewrite("p", root=root, runner=runner)
+    assert record["outcome"] == "editorial_failed"
+    assert er.preflight_blockers(metadata, root, "p")
+    with pytest.raises(ValueError, match="No candidate"):
+        er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
+
+
+def test_judge_failure_is_recorded_and_blocks(tmp_path):
+    root, metadata = required_root(tmp_path)
+    base_runner = fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"})
+
+    def runner(**kwargs):
+        if kwargs["role_name"].startswith("judge_"):
+            raise er.LaunchError("judge unavailable")
+        return base_runner(**kwargs)
+
+    record = er.run_rewrite("p", root=root, runner=runner)
+    assert record["outcome"] == "judge_failed"
+    assert er.preflight_blockers(metadata, root, "p")
+
+
+def test_duplicate_judge_ranking_is_rejected():
+    report = judgment(["V1", "V2"])
+    report["ranking"] = ["V1", "V1"]
+    with pytest.raises(ValueError, match="exactly once"):
+        er.select("original", ["candidate"], {"judge": report},
+                  {"judge": {"V1": "original", "V2": "candidate"}}, {})
 
 
 # --------------------------------------------------------------------------- cross-model review
