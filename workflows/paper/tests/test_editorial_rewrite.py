@@ -72,6 +72,56 @@ def test_deterministic_checks(tmp_path):
     assert "sectioning" in problems
 
 
+def test_verified_venue_abstract_limit_is_hard_for_candidates_and_original(tmp_path):
+    root = make_root(tmp_path)
+    man = root / "papers/p/manuscript"
+    parts = er.locate_parts(man)
+    expanded = flow.expanded_review_documents(man)
+    problems = er.candidate_problems(candidate("A"), parts, expanded=expanded,
+                                     known_keys=er.bibliography_keys(man, expanded),
+                                     tolerance=0.5, abstract_bounds=(1, 10))
+    assert any("verified venue limit" in problem for problem in problems)
+    report = judgment(["V1", "V2"])
+    selection = er.select("original", ["candidate"], {"judge": report},
+                          {"judge": {"V1": "original", "V2": "candidate"}},
+                          {"original": ["abstract too long"]})
+    assert selection["selected"] == "original" and not selection["editorial_ready"]
+
+
+def test_registered_abstract_limits_reach_prompt_and_cannot_be_bypassed_by_original(tmp_path):
+    root, _metadata = required_root(tmp_path)
+    path = root / "registry/papers/p.yaml"
+    metadata = yaml.safe_load(path.read_text())
+    metadata["target_journal_format"] = {"abstract_word_limits": [1, 10]}
+    path.write_text(yaml.safe_dump(metadata))
+    delegate = fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"})
+
+    def runner(**kwargs):
+        if kwargs["role_name"].startswith("rewriter_"):
+            assert "Verified venue abstract word limit: 1–10" in kwargs["user_prompt"]
+        return delegate(**kwargs)
+
+    record = er.run_rewrite("p", root=root, runner=runner)
+    assert record["outcome"] == "editorial_failed"
+    assert "original" in record["deterministic_problems"]
+    assert all(record["deterministic_problems"][key] for key in ("original", "gpt", "opus"))
+
+
+def test_changed_venue_abstract_limit_is_rechecked_at_apply_and_preflight(tmp_path):
+    root, metadata = required_root(tmp_path)
+    record = er.run_rewrite("p", root=root, runner=fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"}))
+    path = root / "registry/papers/p.yaml"
+    metadata["target_journal_format"] = {"abstract_word_limits": [1, 10]}
+    path.write_text(yaml.safe_dump(metadata))
+    with pytest.raises(ValueError, match="verified venue limit"):
+        er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
+    metadata.pop("target_journal_format")
+    path.write_text(yaml.safe_dump(metadata))
+    er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
+    metadata["target_journal_format"] = {"abstract_word_limits": [1, 10]}
+    assert "verified venue limit" in er.preflight_blockers(metadata, root, "p")[0]
+
+
 def judgment(order: list[str], major: str | None = None) -> dict:
     versions = {}
     for rank, label in enumerate(order):
