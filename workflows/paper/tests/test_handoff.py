@@ -885,6 +885,24 @@ def test_manage_client_does_not_resign_other_upload_failures(tmp_path: Path) -> 
     assert registrations == 1
 
 
+@pytest.mark.parametrize("suffix", [".ilg", ".ind"])
+def test_makeindex_generated_output_is_not_manuscript_source(tmp_path: Path, suffix: str) -> None:
+    from paper_writing.handoff import _source_files
+    manuscript = tmp_path / "manuscript"
+    manuscript.mkdir()
+    source = manuscript / "main.tex"
+    source.write_text(r"\documentclass{article}\begin{document}Result.\end{document}")
+    pdf = manuscript / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fixture")
+    snapshot = manuscript_snapshot_sha256(manuscript, pdf)
+    cache = manuscript / ("main" + suffix)
+    cache.write_text("Rebuildable makeindex output")
+    assert cache not in set(_source_files(manuscript, pdf))
+    assert manuscript_snapshot_sha256(manuscript, pdf) == snapshot
+    source.write_text(source.read_text().replace("Result.", "Changed result."))
+    assert manuscript_snapshot_sha256(manuscript, pdf) != snapshot
+
+
 def test_release_requires_current_gate_and_git_frozen_snapshot(tmp_path: Path, monkeypatch) -> None:
     paper_id = "20260721aillm0001"
     manuscript = tmp_path / "papers" / paper_id / "manuscript"

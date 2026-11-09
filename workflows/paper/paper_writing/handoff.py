@@ -54,6 +54,8 @@ EXCLUDED_SOURCE_SUFFIXES = {
     ".blg",
     ".fdb_latexmk",
     ".fls",
+    ".ilg",
+    ".ind",
     ".log",
     ".out",
     ".rar",
