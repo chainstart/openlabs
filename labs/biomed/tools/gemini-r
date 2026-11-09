@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+gemini_code_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
+gemini_workspace_root="${OPENLABS_WORKSPACE:-$(dirname -- "$gemini_code_root")}"
+gemini_library="$gemini_workspace_root/openlabs-artifacts/environments/gemini-1.5.1-R4.4.3-library"
+gemini_interpreter="$gemini_code_root/labs/biomed/environments/bulk-r/.venv/bin/Rscript"
+if [[ ! -d "$gemini_library/gemini" ]]; then
+    printf 'The isolated GEMINI 1.5.1 library is missing: %s\n' "$gemini_library" >&2
+    exit 1
+fi
+exec "$gemini_code_root/bin/openlabs-resource-guard" --task-type cpu -- env \
+    R_LIBS_USER="$gemini_library" \
+    PATH="$(dirname -- "$gemini_interpreter"):$PATH" \
+    OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
+    "$gemini_interpreter" "$@"

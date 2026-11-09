@@ -1,5 +1,29 @@
 # 本机建立与验证记录
 
+## 2026-11-09 恢复与补齐
+
+R 4.4.3 已按现有 208 包 explicit 锁恢复，GEOquery、DESeq2、limma、edgeR 和
+SummarizedExperiment 的加载及基础计算已验收。原始恢复记录已归档到数据仓库的
+`maintenance/biomed-sixhour-20261109/environment/`。
+
+GEMINI 1.5.1 的完整 R 命名空间及 31 个缺失依赖已安装在独立库中；固定上游
+commit 为 `e4fea9e1d4151f1f3ce46a8e976d57af6e6a388c`，20 个 R 文件与已有
+研究源码锁逐字节一致。入口会设置专用库并使用资源护栏：
+
+```bash
+labs/biomed/tools/gemini-r -e 'library(gemini); packageVersion("gemini")'
+```
+
+已实际检查 namespace、9 条合成 guide 的 input/LFC，以及 400 个配对、两个条件的
+构造后验对象经 `gemini_score(nc_pairs=...)` 完成混合分布、p 值和 FDR 分支。
+验收范围是软件功能；研究推断收敛和生物学结论仍以逐项研究证据为准。
+原有 source 接口和基础包环境保持原配置。
+
+依赖版本、CRAN 校验值、下载通道、安装日志及复现脚本见数据仓库
+`maintenance/resumed-sixhour-20261109/environment-overlay/`。
+
+## 2026-10-20 历史建立记录
+
 检查日期：2026-10-20。此记录描述本次本机部署，不表示任何科学发现或论文质量通过。
 
 ## 已就绪
