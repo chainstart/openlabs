@@ -271,8 +271,16 @@ def current_inputs(metadata: Mapping[str, Any], root: Path) -> tuple[list[dict[s
         if not text and re.search(r"\\(?:bibliography|printbibliography)\b", document["text"]):
             raise ValueError(f"Printed bibliography is missing for {document['id']}")
         for row in bibliography_entries(text):
-            if row["key"] in references and references[row["key"]] != row:
-                raise ValueError(f"Conflicting bibliography key across manuscript documents: {row['key']}")
+            if row["key"] in references:
+                # BibTeX assigns author-year display suffixes separately for
+                # each document's cited subset (e.g. n.d.a versus n.d.d).
+                # They are not part of the reference identity. Keep the first
+                # printed entry for auditing, and still reject content changes.
+                def identity(value: str) -> str:
+                    return " ".join(re.sub(r"\\natexlab\{[a-z]+\}", "", value).split())
+                if identity(references[row["key"]]["text"]) != identity(row["text"]):
+                    raise ValueError(f"Conflicting bibliography key across manuscript documents: {row['key']}")
+                continue
             references[row["key"]] = row
     return documents, "\n\n".join(row["text"] for row in references.values())
 

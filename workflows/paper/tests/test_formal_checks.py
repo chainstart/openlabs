@@ -367,6 +367,29 @@ def test_supplement_independent_printed_bibliography_is_covered(tmp_path, inline
     assert any(c["key"] == "extra" for p in inv["passages"] for c in p["citations"])
 
 
+@pytest.mark.parametrize("changed", [None, "title", "year"])
+def test_document_local_natbib_suffix_preserves_reference_identity(tmp_path, changed):
+    metadata = fixture_workspace(tmp_path)
+    manuscript = tmp_path / metadata["manuscript_dir"]
+    main = r"\bibitem[Smith(2020{\natexlab{d}})]{s}Smith. Work. 2020{\natexlab{d}}."
+    supplement = main.replace(r"\natexlab{d}", r"\natexlab{a}")
+    if changed == "title":
+        supplement = supplement.replace("Work.", "Different work.")
+    elif changed == "year":
+        supplement = supplement.replace("2020", "2021")
+    (manuscript / "main.tex").write_text(r"Main \cite{s}. \bibliography{references}")
+    (manuscript / "main.bbl").write_text(main)
+    (manuscript / "supplementary.tex").write_text(r"Supplement \cite{s}. \bibliography{references}")
+    (manuscript / "supplementary.bbl").write_text(supplement)
+    if changed:
+        with pytest.raises(ValueError, match="Conflicting bibliography key"):
+            formal.current_inputs(metadata, tmp_path)
+    else:
+        _, bibliography = formal.current_inputs(metadata, tmp_path)
+        assert bibliography == main
+        assert len(formal.bibliography_entries(bibliography)) == 1
+
+
 @pytest.mark.parametrize("fault", ["missing", "recursive", "dynamic", "unbraced", "conflicting_bib", "missing_bbl"])
 def test_source_expansion_never_silently_drops_material(tmp_path, fault):
     metadata = fixture_workspace(tmp_path)
