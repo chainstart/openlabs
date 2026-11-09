@@ -71,6 +71,7 @@ def simulated_output(packet):
                 "formulas": [{"formula_id": f["id"], "status": "verified", "assumptions": "real x",
                     "derivation_or_source_check": "Real square is nonnegative; notation is consistent", "evidence": proof} for f in unit["formulas"]],
                 "citations": [{"citation_id": c["id"], "key": c["key"], "status": "verified",
+                    "mathematical_support": True, "scope_rationale": "Supports the real-square inequality",
                     "manuscript_claim": "Real squares are nonnegative", "support_check": "Exact Theorem 2 matches",
                     "evidence": proof} for c in unit["citations"]]})
     return result
@@ -108,6 +109,53 @@ def run_fixture(root, monkeypatch):
     binding = formal.run_checks({"metadata": metadata}, root, run, ROLE, 1, simulated_runner)
     assert binding["valid"] is True
     return metadata, binding, json.loads((root / binding["path"]).read_text())
+
+
+@pytest.mark.parametrize("mathematical,status,blocked", [
+    (False, "unchecked", False), (True, "unchecked", True),
+    (False, "error", True), (False, "gap", True)])
+def test_independent_citation_use_scope_keeps_errors_and_math_blocking(
+        tmp_path, monkeypatch, mathematical, status, blocked):
+    _, _, result = run_fixture(tmp_path, monkeypatch)
+    report = copy.deepcopy(result["report"])
+    row = next(p for p in report["passages"] if p["citations"])
+    item = row["citations"][0]
+    item.update(mathematical_support=mathematical, status=status,
+                scope_rationale="Empirical apparatus context" if not mathematical else "Supports the inequality")
+    blockers = formal.report_blockers(report, result["inventory"], result["sources"])
+    assert bool(blockers) is blocked
+    assert item["status"] == status  # Scope handling must not invent verification.
+    if not blocked:
+        row["prerequisites"][0]["status"] = "gap"
+        assert formal.report_blockers(report, result["inventory"], result["sources"])
+
+
+def test_same_reference_can_have_mathematical_and_empirical_uses(tmp_path, monkeypatch):
+    _, _, result = run_fixture(tmp_path, monkeypatch)
+    inv, report = copy.deepcopy(result["inventory"]), copy.deepcopy(result["report"])
+    unit = next(p for p in inv["passages"] if p["citations"])
+    row = next(p for p in report["passages"] if p["passage_id"] == unit["id"])
+    extra_id = unit["citations"][0]["id"] + ":empirical"
+    unit["citations"].append(dict(unit["citations"][0], id=extra_id))
+    row["citations"].append(dict(row["citations"][0], citation_id=extra_id,
+        mathematical_support=False, scope_rationale="Separate empirical use in the same paragraph",
+        manuscript_claim="Apparatus description", support_check="Not checked by the mathematical verifier",
+        status="unchecked", evidence=[]))
+    assert formal.report_blockers(report, inv, result["sources"]) == []
+    row["citations"][0]["status"] = "unchecked"
+    assert formal.report_blockers(report, inv, result["sources"])
+
+
+def test_citation_scope_is_required_and_cannot_exempt_reference_identity(tmp_path, monkeypatch):
+    _, _, result = run_fixture(tmp_path, monkeypatch)
+    report = copy.deepcopy(result["report"])
+    item = next(p for p in report["passages"] if p["citations"])["citations"][0]
+    item.pop("mathematical_support")
+    with pytest.raises(LaunchError):
+        formal.report_blockers(report, result["inventory"], result["sources"])
+    item.update(mathematical_support=False, status="unchecked")
+    report["references"][0]["status"] = "unchecked"
+    assert formal.report_blockers(report, result["inventory"], result["sources"])
 
 
 @pytest.mark.parametrize('group', ['references', 'passages'])

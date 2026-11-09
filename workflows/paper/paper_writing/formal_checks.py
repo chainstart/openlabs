@@ -65,6 +65,7 @@ REFERENCE_SCHEMA = object_schema({"key": TEXT, "status": STATUS,
 FORMULA_SCHEMA = object_schema({"formula_id": TEXT, "status": STATUS,
     "assumptions": TEXT, "derivation_or_source_check": TEXT, "evidence": EVIDENCE})
 CITATION_SCHEMA = object_schema({"citation_id": TEXT, "key": TEXT, "status": STATUS,
+    "mathematical_support": {"type": "boolean"}, "scope_rationale": TEXT,
     "manuscript_claim": TEXT, "support_check": TEXT, "evidence": EVIDENCE})
 PREREQUISITE_SCHEMA = object_schema({"statement": TEXT, "status": STATUS,
     "kind": {"type": "string", "enum": ["external", "internal_derivation"]},
@@ -75,6 +76,15 @@ PASSAGE_SCHEMA = object_schema({"passage_id": TEXT, "status": STATUS,
     "coverage_rationale": TEXT, "prerequisites": array(PREREQUISITE_SCHEMA),
     "formulas": array(FORMULA_SCHEMA), "citations": array(CITATION_SCHEMA)})
 REPORT_SCHEMA = object_schema({"references": array(REFERENCE_SCHEMA), "passages": array(PASSAGE_SCHEMA)})
+
+
+def _nonmathematical_unchecked_citation(row: Mapping[str, Any]) -> bool:
+    """Retain an independent out-of-scope assessment without claiming verification."""
+    return (isinstance(row.get("citation_id"), str)
+            and row.get("status") == "unchecked"
+            and row.get("mathematical_support") is False
+            and all(isinstance(row.get(key), str) and row[key].strip()
+                    for key in ("scope_rationale", "manuscript_claim", "support_check")))
 
 
 def _strip_comments(text: str) -> str:
@@ -737,6 +747,13 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
         for item in row["citations"]:
             if item["key"] != cites[item["citation_id"]]:
                 raise ValueError("Citation-use report changes the cited reference")
+            # Mathematical paragraphs can also cite apparatus descriptions,
+            # datasets or code. The independent verifier must classify each
+            # use explicitly; the raw unchecked assessment remains in the
+            # report. Reference identity, mathematical prerequisites, and any
+            # actual error/gap are still checked without this exception.
+            if _nonmathematical_unchecked_citation(item):
+                continue
             if checked(item, item["citation_id"], ("manuscript_claim", "support_check")):
                 if item["evidence"]:
                     evidence(item["evidence"], {item["key"]}, kinds={"primary_text", "publisher_catalog", "bibliographic_metadata", "current_support_draft"})
@@ -975,7 +992,8 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
                 root_id = str(row.get('passage_id', row.get('key', '')))
                 def retain(value, location):
                     if isinstance(value, dict):
-                        if value.get('status') in {'error','gap','unchecked'}:
+                        if (value.get('status') in {'error','gap','unchecked'}
+                                and not _nonmathematical_unchecked_citation(value)):
                             if not any(f['root']==root_id and f['location']==location and f.get('status') for f in findings):
                                 findings.append({'category':'scientific','root':root_id,'location':location,
                                     'message':f"{location}: {value['status']}",'aggregate':location==root_id,

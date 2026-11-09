@@ -30,6 +30,16 @@ conjectures or empirical estimates; check their mathematical formulation instead
 
 Check every supplied formula and relevant citation-use ID exactly once. Explain
 concrete mathematical reasoning rather than "standard" or "looks correct".
+For every citation use, set mathematical_support and give scope_rationale:
+true when the use supports a mathematical statement, derivation or prerequisite;
+false for empirical apparatus, measurements, datasets, code or other ordinary
+context. Classify the use in its actual passage, never by bibliographic key alone.
+An empirical use may honestly remain unchecked in this stage; preserve that
+status rather than calling it verified. This alone does not block core mathematics.
+All reference identities still require verification. Mathematical uses left
+unchecked, any actual citation error or gap, and all formula/prerequisite gaps
+remain blockers even when the same source also has an empirical use. Do not
+classify a mathematical prerequisite as empirical to avoid checking it.
 For external prerequisites give a valid reference key, identifiable statement,
 its assumptions/conclusion and actual applicability. Direct mathematical
 reconstruction is sufficient: no mandatory original-page/theorem number or
