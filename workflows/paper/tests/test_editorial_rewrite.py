@@ -209,6 +209,26 @@ def test_original_must_pass_and_full_body_blockers_cannot_be_outvoted():
     assert result["selected"] == "original" and not result["editorial_ready"]
 
 
+def test_separate_journal_tables_reach_writers_judges_and_are_hash_bound(tmp_path):
+    root, _metadata = required_root(tmp_path)
+    man = root / "papers/p/manuscript"
+    table = man / "table1.tex"
+    table.write_text(r"\documentclass{article}\begin{document}SEPARATE_TABLE_DATA\end{document}")
+    prompts = []
+    delegate = fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"})
+
+    def runner(**kwargs):
+        prompts.append((kwargs["role_name"], kwargs["user_prompt"]))
+        return delegate(**kwargs)
+
+    record = er.run_rewrite("p", root=root, runner=runner)
+    assert all("SEPARATE_TABLE_DATA" in prompt for _, prompt in prompts)
+    assert "table1.tex" in record["source_sha256"]
+    table.write_text(table.read_text().replace("TABLE_DATA", "TABLE_CHANGED"))
+    with pytest.raises(ValueError, match="changed after"):
+        er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
+
+
 @pytest.mark.parametrize("filename", ["body.tex", "refs.bib"])
 def test_full_sources_bound_before_apply_and_after_approval(tmp_path, filename):
     root, metadata = required_root(tmp_path)

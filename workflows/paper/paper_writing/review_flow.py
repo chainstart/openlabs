@@ -489,6 +489,23 @@ def standalone_document_files(manuscript: Path) -> set[str]:
     return {item.relative_to(manuscript).as_posix() for item in seen}
 
 
+def expanded_review_documents(manuscript: Path) -> str:
+    """Include separately supplied tables and SI without changing journal layout.
+
+    These top-level documents already belong to the preflight source inventory.
+    A journal's separate-file requirement must not hide them from the reviewers.
+    """
+    seen: set[Path] = set()
+    text = expand_tex(manuscript / "main.tex", manuscript, seen)
+    for path in sorted(manuscript.glob("*.tex")):
+        if path in seen or not re.search(r"^\s*\\documentclass", path.read_text(errors="replace"), re.MULTILINE):
+            continue
+        text += (f"\n\n## Separately supplied manuscript document: {path.name}\n"
+                 "This is a separate journal file, not an embedded main-text document.\n"
+                 + expand_tex(path, manuscript, seen))
+    return text
+
+
 def unused_source_files(manuscript: Path, used: set[str]) -> list[str]:
     unused = []
     for path in sorted(manuscript.rglob("*")):
@@ -552,7 +569,7 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
         blockers.append(f"Selected support claim-evidence map: {exc}")
         claim_maps = []
     fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
-    expanded = expand_tex(manuscript / "main.tex", manuscript)
+    expanded = expanded_review_documents(manuscript)
     bibliography = bibliography_text(manuscript)
     try:
         documents, bibliography = formal_checks.current_inputs(metadata, root)
@@ -573,7 +590,8 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     return {"blockers": blockers, "fingerprints": fingerprints, "expanded": expanded,
             "bibliography": bibliography, "metadata": metadata, "target": target,
             "support_claim_evidence_maps": claim_maps, "formal_inventory": formal_inventory,
-            "active_revision_context": revision_context}
+            "active_revision_context": revision_context,
+            "expanded_includes_standalone_documents": True}
 
 
 # --------------------------------------------------------------------------- packets
@@ -1129,7 +1147,7 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
     manuscript = root / str(metadata.get('manuscript_dir') or f"papers/{metadata.get('paper_id')}/manuscript")
     supplement = metadata.get('latest_supplementary_pdf')
     supplement_path = (root / str(supplement)).with_suffix('.tex') if supplement else manuscript / 'supplementary.tex'
-    if supplement_path.is_file():
+    if supplement_path.is_file() and not pre.get("expanded_includes_standalone_documents"):
         text += ("\n## Supplementary material (LaTeX, all inputs expanded)\n"
                  + expand_tex(supplement_path, manuscript) + "\n")
     if decisions:

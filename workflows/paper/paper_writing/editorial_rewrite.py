@@ -134,7 +134,10 @@ def _sha(data: bytes | str) -> str:
 
 def manuscript_sources(manuscript: Path) -> dict[str, str]:
     """Bind all reachable TeX and bibliography files, including changes outside rewritten parts."""
+    from paper_writing.review_flow import standalone_document_files
+
     files = set(_tex_files(manuscript)) | set(manuscript.rglob("*.bib"))
+    files |= {manuscript / rel for rel in standalone_document_files(manuscript)}
     return {p.relative_to(manuscript).as_posix(): _sha(p.read_bytes()) for p in sorted(files)}
 
 
@@ -473,7 +476,7 @@ def select(original: str, candidates: list[str], judgments: Mapping[str, Mapping
 
 def run_rewrite(paper_id: str, *, root: str | Path, rewriters: list[str] | None = None,
                 runner=run_role) -> dict[str, Any]:
-    from paper_writing.review_flow import expand_tex
+    from paper_writing.review_flow import expanded_review_documents
 
     root = Path(root).resolve()
     config = rewrite_config(root)
@@ -485,7 +488,7 @@ def run_rewrite(paper_id: str, *, root: str | Path, rewriters: list[str] | None 
         raise ValueError(f"{paper_id} has no registered target venue")
     manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
     parts = locate_parts(manuscript)
-    expanded = expand_tex(manuscript / "main.tex", manuscript)
+    expanded = expanded_review_documents(manuscript)
     known = bibliography_keys(manuscript, expanded)
     tolerance = int(round(config["length_tolerance"] * 100))
     labels = {n: sorted(_keys(_LABEL, p.body)) for n, p in parts.items()}

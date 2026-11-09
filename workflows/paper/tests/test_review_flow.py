@@ -14,6 +14,22 @@ def editor(decision="send_to_review", category="none"):
     return {"decision": decision, "desk_reject_category": category}
 
 
+def test_separate_document_packet_includes_tables_and_supplement_once(tmp_path):
+    man = tmp_path / "papers/p/manuscript"
+    man.mkdir(parents=True)
+    (man / "main.tex").write_text(r"\documentclass{article}\begin{document}MAIN\end{document}")
+    for name, marker in [("table1.tex", "TABLE_CONTENT"), ("supplementary.tex", "SI_CONTENT")]:
+        (man / name).write_text(r"\documentclass{article}\begin{document}" + marker + r"\end{document}")
+    (man / "unreferenced-fragment.tex").write_text("NOT_A_DECLARED_DOCUMENT")
+    expanded = flow.expanded_review_documents(man)
+    assert expanded.count("TABLE_CONTENT") == expanded.count("SI_CONTENT") == 1
+    assert "NOT_A_DECLARED_DOCUMENT" not in expanded
+    pre = {"metadata": {"paper_id": "p"}, "expanded": expanded, "bibliography": "",
+           "expanded_includes_standalone_documents": True}
+    for packet in (flow.editor_packet(pre, []), flow.referee_packet(pre, tmp_path, None)):
+        assert packet.count("TABLE_CONTENT") == packet.count("SI_CONTENT") == 1
+
+
 def _active_revision_fixture(tmp_path):
     docs = []
     for kind, text in [('decision_letter', 'JBI-26-3391: invitation to revise, not acceptance.'),
