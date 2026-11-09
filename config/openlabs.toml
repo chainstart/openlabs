@@ -23,7 +23,9 @@ reserve_cpu_threads = 2
 # an 8 GiB reservation would reject every task before a worker can start.
 # This is scheduler headroom, not a change to the aggregate cgroup ceilings.
 reserve_memory_mib = 2048
-reserve_scratch_mib = 65536
+# Keep 16 GiB free on the current workspace volume; the previous 64 GiB
+# reservation exceeded available disk and rejected every bounded task.
+reserve_scratch_mib = 16384
 default_task_cpu_threads = 2
 default_task_memory_mib = 4096
 default_task_scratch_mib = 4096
