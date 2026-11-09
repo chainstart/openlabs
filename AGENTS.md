@@ -119,6 +119,18 @@ For every journal manuscript beyond its basic draft, use the domain-specific tar
 - Journal selection and a passing paper gate never authorize submission, spending, or a journal
   event.
 
+# Standing author declarations
+
+User instruction 2026-11-09: use the active data registry's default five-person
+author roster and confirmed CRediT allocation, no competing interests to disclose,
+and no specific funding for the research as the default for subsequent papers.
+Do not ask the user to reconfirm these routine facts for each manuscript.
+Apply an explicit paper-specific author order/submission-handler instruction or
+known contrary funding/conflict facts when present. This standing instruction
+does not attest individual author replies, final-version human review or human
+code verification. See `registry/settings.yaml#defaults.author_declarations` and
+`registry/paper-declarations/README.md` in the active data repository.
+
 # Paper identifier policy
 
 For every domain, follow `docs/PAPER_ID_POLICY.md` when creating a paper or naming a public

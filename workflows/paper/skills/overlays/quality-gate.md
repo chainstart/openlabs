@@ -7,6 +7,18 @@
 > sections on journal targets, AI-use disclosure, readability, style-check and support-check still
 > apply and are enforced by the unified preflight.
 
+### Standing author facts: no routine reconfirmation
+
+The user confirmed on 2026-11-09 that subsequent papers default to the active
+registry's five-person author roster and CRediT allocation, no competing interests
+to disclose, and no specific research funding. Apply
+`registry/settings.yaml#defaults.author_declarations` and the current default
+author records without asking these questions again. Explicit paper-specific
+author order/submission-handler instructions and known contrary facts take
+precedence. This standing confirmation is about those declarations; it does not
+supply individual author replies, final-version human review, human code
+verification, or a scientific/readiness decision. Preserve actual AI-use evidence.
+
 This overlay is mandatory for every paper profile. `registry/settings.yaml#quality_gate` is the
 single source of thresholds. The current minimum LLM self-review score is **5.0/10**. Never round
 up, average around, or bypass it inside a profile. Change the threshold policy only with explicit
