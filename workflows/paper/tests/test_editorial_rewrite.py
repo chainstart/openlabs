@@ -122,6 +122,53 @@ def test_changed_venue_abstract_limit_is_rechecked_at_apply_and_preflight(tmp_pa
     assert "verified venue limit" in er.preflight_blockers(metadata, root, "p")[0]
 
 
+def test_registered_person_rule_distinguishes_pronouns_from_scientific_symbols():
+    assert er._abstract_person_problems("We assessed the electrodes.", None) == []
+    assert er._abstract_person_problems("We assessed the electrodes.", "third")
+    assert er._abstract_person_problems("Our measurements were paired.", "third")
+    assert er._abstract_person_problems("Copper(I), CO2, US data and $I=2$ were evaluated.", "third") == []
+
+
+def test_venue_style_reaches_both_independent_roles(tmp_path):
+    root, _ = required_root(tmp_path)
+    path = root / "registry/papers/p.yaml"
+    metadata = yaml.safe_load(path.read_text())
+    metadata["target_journal_format"] = {
+        "source": "https://journal.example/guide", "abstract_person": "third",
+        "editorial_requirements": ["Use past tense in the abstract."]}
+    path.write_text(yaml.safe_dump(metadata))
+    delegate = fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"})
+    roles = set()
+    def runner(**kwargs):
+        roles.add(kwargs["role_name"])
+        assert "Use past tense in the abstract." in kwargs["user_prompt"]
+        assert '"abstract_person": "third"' in kwargs["user_prompt"]
+        return delegate(**kwargs)
+    er.run_rewrite("p", root=root, runner=runner)
+    assert roles == {"rewriter_gpt", "rewriter_opus", "judge_gpt", "judge_opus"}
+
+
+def test_new_person_requirement_is_rechecked_before_apply_and_release(tmp_path):
+    root, metadata = required_root(tmp_path)
+    delegate = fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"})
+    def runner(**kwargs):
+        result, receipt = delegate(**kwargs)
+        if kwargs["role_name"].startswith("rewriter_"):
+            result["abstract"] += " We assessed the result."
+        return result, receipt
+    record = er.run_rewrite("p", root=root, runner=runner)
+    path = root / "registry/papers/p.yaml"
+    metadata["target_journal_format"] = {"abstract_person": "third"}
+    path.write_text(yaml.safe_dump(metadata))
+    with pytest.raises(ValueError, match="third person"):
+        er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
+    metadata.pop("target_journal_format")
+    path.write_text(yaml.safe_dump(metadata))
+    er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
+    metadata["target_journal_format"] = {"abstract_person": "third"}
+    assert any("third person" in problem for problem in er.preflight_blockers(metadata, root, "p"))
+
+
 def judgment(order: list[str], major: str | None = None) -> dict:
     versions = {}
     for rank, label in enumerate(order):

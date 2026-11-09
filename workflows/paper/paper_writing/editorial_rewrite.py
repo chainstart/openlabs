@@ -211,6 +211,46 @@ def _abstract_limit_problems(text: str, bounds: tuple[int, int] | None) -> list[
     return []
 
 
+def _abstract_person(metadata: Mapping[str, Any]) -> str | None:
+    value = (metadata.get("target_journal_format") or {}).get("abstract_person")
+    if value not in (None, "third"):
+        raise ValueError("Registered abstract_person must be 'third' or absent")
+    return value
+
+
+def _abstract_person_problems(text: str, person: str | None) -> list[str]:
+    if person != "third":
+        return []
+    prose = re.sub(r"\$\$.*?\$\$|\$[^$]*\$|\\\[.*?\\\]|\\\(.*?\\\)",
+                   " ", _uncommented(text), flags=re.S)
+    # Unambiguous personal plurals; do not misclassify chemical symbols,
+    # oxidation state (I), mathematical I, or the country abbreviation US.
+    match = re.search(r"\b(?:[Ww]e|[Oo]ur|[Oo]urs)\b", prose)
+    return ([f"abstract: registered venue requires third person; found '{match.group()}'"]
+            if match else [])
+
+
+def _abstract_problems(text: str, metadata: Mapping[str, Any]) -> list[str]:
+    return (_abstract_limit_problems(text, _abstract_bounds(metadata))
+            + _abstract_person_problems(text, _abstract_person(metadata)))
+
+
+def _venue_format_prompt(metadata: Mapping[str, Any]) -> str:
+    fmt = metadata.get("target_journal_format") or {}
+    requirements = fmt.get("editorial_requirements", [])
+    if (not isinstance(requirements, list) or len(requirements) > 16
+            or any(not isinstance(item, str) or not item.strip() or len(item) > 1000
+                   for item in requirements)):
+        raise ValueError("Venue editorial_requirements must be bounded nonempty strings")
+    person = _abstract_person(metadata)
+    if not requirements and person is None:
+        return ""
+    return ("\nRegistered venue preparation requirements (apply these alongside fidelity):\n"
+            + json.dumps({"source": fmt.get("source"), "abstract_person": person,
+                          "editorial_requirements": requirements}, ensure_ascii=False)
+            + "\nRespect these requirements when rewriting and when judging each version.\n")
+
+
 # --------------------------------------------------------------------------- source parts
 
 @dataclass(frozen=True)
@@ -341,7 +381,8 @@ def bibliography_keys(manuscript: Path, expanded: str) -> set[str]:
 
 def candidate_problems(candidate: Mapping[str, str], parts: Mapping[str, Part], *, expanded: str,
                        known_keys: set[str], tolerance: float,
-                       abstract_bounds: tuple[int, int] | None = None) -> list[str]:
+                       abstract_bounds: tuple[int, int] | None = None,
+                       abstract_person: str | None = None) -> list[str]:
     """Deterministic checks that need no model."""
     problems = []
     labels = _keys(_LABEL, expanded)
@@ -364,6 +405,7 @@ def candidate_problems(candidate: Mapping[str, str], parts: Mapping[str, Part], 
         before, after = _words(original), _words(text)
         if name == "abstract":
             problems.extend(_abstract_limit_problems(text, abstract_bounds))
+            problems.extend(_abstract_person_problems(text, abstract_person))
         if before and abs(after - before) / before > tolerance:
             problems.append(f"{name}: length {after} words vs {before} (limit ±{tolerance:.0%})")
     return problems
@@ -522,6 +564,8 @@ def run_rewrite(paper_id: str, *, root: str | Path, rewriters: list[str] | None 
     if abstract_bounds is not None:
         writer_prompt += (f"\nVerified venue abstract word limit: {abstract_bounds[0]}–{abstract_bounds[1]}. "
                           "This is a hard requirement, even when relative length tolerance would allow more.\n")
+    format_prompt = _venue_format_prompt(metadata)
+    writer_prompt += format_prompt
     chosen = rewriters or list(config["rewriters"])
     unknown = set(chosen) - set(config["rewriters"])
     if unknown:
@@ -555,9 +599,10 @@ def run_rewrite(paper_id: str, *, root: str | Path, rewriters: list[str] | None 
                 failures[name] = str(exc)
     candidates = [name for name in chosen if name in versions]
     disqualified = {name: candidate_problems(versions[name], parts, expanded=expanded, known_keys=known,
-                                            tolerance=config["length_hard_limit"], abstract_bounds=abstract_bounds)
+                                            tolerance=config["length_hard_limit"], abstract_bounds=abstract_bounds,
+                                            abstract_person=_abstract_person(metadata))
                     for name in candidates}
-    disqualified["original"] = _abstract_limit_problems(versions["original"]["abstract"], abstract_bounds)
+    disqualified["original"] = _abstract_problems(versions["original"]["abstract"], metadata)
     record |= {"rewriter_failures": failures, "deterministic_problems": disqualified}
     (run / "versions.json").write_text(json.dumps(versions, ensure_ascii=False, indent=1) + "\n")
     if not candidates:
@@ -579,6 +624,7 @@ def run_rewrite(paper_id: str, *, root: str | Path, rewriters: list[str] | None 
             prompt = JUDGE_TASK.format(
                 venue=venue, count=len(order), labels=", ".join(labels_all), targets=targets_text(closing),
                 versions="".join(render_version(l, versions[v], closing) for l, v in keys[judge].items()), body=body)
+            prompt += format_prompt
             futures[judge] = pool.submit(runner, role_name=f"judge_{judge}", role=role, system_prompt=JUDGE_SYSTEM,
                                          user_prompt=prompt, schema=judge_schema(labels_all),
                                          workdir=run / f"judge-{judge}", timeout=config["timeout_seconds"])
@@ -621,7 +667,7 @@ def apply_rewrite(paper_id: str, *, root: str | Path, run_dir: str | Path) -> di
     if manuscript_sources(manuscript) != record["source_sha256"]:
         raise ValueError("Manuscript sources changed after the rewrite run; run the pass again")
     chosen = json.loads((run / "versions.json").read_text())[record["selection"]["selected"]]
-    venue_problems = _abstract_limit_problems(chosen["abstract"], _abstract_bounds(metadata))
+    venue_problems = _abstract_problems(chosen["abstract"], metadata)
     if venue_problems:
         raise ValueError("; ".join(venue_problems))
     parts = locate_parts(manuscript)
@@ -680,6 +726,6 @@ def preflight_blockers(metadata: Mapping[str, Any], root: Path, paper_id: str) -
     if not expected or manuscript_sources(manuscript) != expected:
         return ["Manuscript sources changed since editorial approval; rerun the editor-facing rewrite pass"]
     try:
-        return _abstract_limit_problems(locate_parts(manuscript)["abstract"].body, _abstract_bounds(metadata))
+        return _abstract_problems(locate_parts(manuscript)["abstract"].body, metadata)
     except ValueError as exc:
         return [str(exc)]
