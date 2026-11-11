@@ -184,6 +184,13 @@ class ProgramSettings:
     git_user_name: str | None = None
     git_user_email: str | None = None
     git_message: str = DEFAULT_GIT_MESSAGE
+    # Experiment locations this instance can serve (topic card
+    # cost_estimate.compute_plan.locations). A card naming another location is
+    # rejected at registration and admission. Inside a container ``wsl_math`` is
+    # never available, whatever this says (the launcher refuses mathematics there).
+    compute_locations: tuple[str, ...] = (
+        "container_cpu", "container_gpu", "ailab", "wsl_math",
+    )
 
 
 DEFAULT_DIRECTION_LIMITS: dict[str, int] = {
@@ -683,9 +690,20 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         release_review_timeout_seconds=_positive_int(
             program.get("release_review_timeout_seconds"), 7_200
         ),
+        compute_locations=_compute_locations(program.get("compute_locations")),
         **_git_settings(program.get("git")),
     )
 
+
+def _compute_locations(value: Any) -> tuple[str, ...]:
+    default = ProgramSettings().compute_locations
+    if value is None:
+        return default
+    if not isinstance(value, list) or any(item not in default for item in value):
+        raise ValueError(
+            "[program].compute_locations must be an array of " + ", ".join(default)
+        )
+    return tuple(dict.fromkeys(value))
 
 
 def _git_settings(value: Any) -> dict[str, Any]:

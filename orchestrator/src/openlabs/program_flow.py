@@ -34,6 +34,7 @@ from .contracts import (
     artifact_digests,
     atomic_write_json,
     canonical_json_bytes,
+    compute_plan_locations,
     data_source_identifiers,
     sha256_file,
     validate_topic_admission,
@@ -471,6 +472,38 @@ def _card_metadata(
     }
 
 
+# Docker marks every container with this file; tests override it.
+CONTAINER_MARKER = Path("/.dockerenv")
+
+
+def available_compute_locations(settings: FactorySettings) -> tuple[str, ...]:
+    """Configured experiment locations, minus WSL mathematics inside a container."""
+
+    allowed = settings.program.compute_locations
+    if CONTAINER_MARKER.exists():
+        allowed = tuple(item for item in allowed if item != "wsl_math")
+    return allowed
+
+
+def compute_location_problem(settings: FactorySettings, card: Mapping[str, Any]) -> str | None:
+    """Deterministic refusal reason for a card this instance cannot run, else None."""
+
+    allowed = available_compute_locations(settings)
+    missing = [
+        item for item in compute_plan_locations(card.get("cost_estimate"))
+        if item not in allowed
+    ]
+    if not missing:
+        return None
+    return (
+        "compute_location_unavailable:" + ",".join(missing)
+        + " (this instance runs " + (", ".join(allowed) or "no location") + "; "
+        + ("mathematics runs on the WSL host, not in the container"
+           if "wsl_math" in missing else "see [program].compute_locations")
+        + ")"
+    )
+
+
 def _store_card(paths: WorkspacePaths, project: ProjectConfig, card: Mapping[str, Any]) -> Path:
     """Content-addressed copy of a registered card (the ledger keeps its hash)."""
 
@@ -504,6 +537,9 @@ def intake_card(
     card["domain"] = project.domain
     errors = list(validate_topic_card(card).errors)
     errors.extend(asset_library.card_reference_errors(paths, settings, card))
+    location_problem = compute_location_problem(settings, card)
+    if location_problem is not None:
+        errors.append(location_problem)
     decisive = card.get("decisive_analysis")
     receipt = decisive.get("access_receipt") if isinstance(decisive, Mapping) else None
     if isinstance(receipt, Mapping) and receipt.get("sha256"):
@@ -920,6 +956,8 @@ def materialize_admission_decisions(
                 problem = "not_computational_only"
             elif cost.get("proportionate") is not True:
                 problem = "cost_not_proportionate"
+            else:
+                problem = compute_location_problem(settings, card) or ""
             if problem:
                 if status == "proposed":
                     reject_topic(ledger, topic_id, db=db, reason=problem,

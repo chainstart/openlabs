@@ -14,6 +14,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
 
+from .remote_compute import CPU_RANGE, MEMORY_MIB_RANGE
+
 TASK_SCHEMA = "openlabs.task.v3"
 RESULT_SCHEMA = "openlabs.result_bundle.v1"
 RECEIPT_SCHEMA = "openlabs.result_receipt.v2"
@@ -590,6 +592,8 @@ REOPEN_BASIS_TYPES = frozenset(
 )
 PRIMARY_ENDPOINT_FIELDS = ("metric", "matched_baseline", "split", "decision_rule", "stop_rule")
 COST_ESTIMATE_FIELDS = ("agent_seconds", "tokens", "gpu_hours", "calendar_days")
+# Where a topic's experiments run (AGENTS.md, "Where computation runs").
+COMPUTE_LOCATIONS = ("container_cpu", "container_gpu", "ailab", "wsl_math")
 AUDIENCE_RECENT_YEARS = 3
 
 
@@ -763,6 +767,7 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
                 errors.append(f"cost_estimate.{name} must be a non-negative number")
         if not _text(cost.get("basis")):
             errors.append("cost_estimate.basis is missing")
+        errors.extend(compute_plan_errors(cost))
 
     assets = card.get("reusable_assets")
     if not isinstance(assets, list):
@@ -788,6 +793,69 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
         ):
             errors.append("reopen_basis needs a type and a description")
     return ValidationResult(not errors, tuple(errors))
+
+
+def compute_plan_locations(cost_estimate: Any) -> tuple[str, ...]:
+    """Locations named by ``cost_estimate.compute_plan`` (``()`` when absent or malformed)."""
+
+    if not isinstance(cost_estimate, Mapping):
+        return ()
+    plan = cost_estimate.get("compute_plan")
+    locations = plan.get("locations") if isinstance(plan, Mapping) else None
+    if not isinstance(locations, list):
+        return ()
+    return tuple(str(item) for item in locations if isinstance(item, str))
+
+
+def compute_plan_errors(cost: Mapping[str, Any]) -> list[str]:
+    """``cost_estimate.compute_plan``: where the experiments run and rough sizes per place."""
+
+    plan = cost.get("compute_plan")
+    if not isinstance(plan, Mapping):
+        return [
+            "cost_estimate.compute_plan is missing (locations: "
+            + ", ".join(COMPUTE_LOCATIONS) + ")"
+        ]
+    errors: list[str] = []
+    locations = plan.get("locations")
+    if (
+        not isinstance(locations, list)
+        or not locations
+        or any(item not in COMPUTE_LOCATIONS for item in locations)
+        or len(set(locations)) != len(locations)
+    ):
+        errors.append(
+            "cost_estimate.compute_plan.locations must be a non-empty list of distinct values from "
+            + ", ".join(COMPUTE_LOCATIONS)
+        )
+        locations = []
+    if "container_gpu" in locations:
+        memory = plan.get("gpu_memory_mib")
+        if not _nonnegative_number(memory) or memory <= 0:
+            errors.append("cost_estimate.compute_plan.gpu_memory_mib must be a positive number "
+                          "when container_gpu is used")
+    elif _nonnegative_number(cost.get("gpu_hours")) and cost["gpu_hours"] > 0:
+        errors.append("cost_estimate.gpu_hours > 0 needs container_gpu in compute_plan.locations")
+    if "ailab" in locations:
+        ailab = plan.get("ailab")
+        if not isinstance(ailab, Mapping):
+            errors.append("cost_estimate.compute_plan.ailab needs cpus, memory_mib and hours")
+        else:
+            cpus, memory, hours = ailab.get("cpus"), ailab.get("memory_mib"), ailab.get("hours")
+            if not (isinstance(cpus, int) and not isinstance(cpus, bool)
+                    and CPU_RANGE[0] <= cpus <= CPU_RANGE[1]):
+                errors.append(
+                    f"cost_estimate.compute_plan.ailab.cpus must be {CPU_RANGE[0]}-{CPU_RANGE[1]}"
+                )
+            if not (_nonnegative_number(memory)
+                    and MEMORY_MIB_RANGE[0] <= memory <= MEMORY_MIB_RANGE[1]):
+                errors.append(
+                    "cost_estimate.compute_plan.ailab.memory_mib must be "
+                    f"{MEMORY_MIB_RANGE[0]}-{MEMORY_MIB_RANGE[1]}"
+                )
+            if not _nonnegative_number(hours) or hours <= 0:
+                errors.append("cost_estimate.compute_plan.ailab.hours must be a positive number")
+    return errors
 
 
 def validate_topic_admission(admission: Any) -> ValidationResult:

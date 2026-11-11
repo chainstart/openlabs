@@ -63,7 +63,11 @@ Each field is there because the gate needs it to decide:
 - `cost_estimate` — `agent_seconds`, `tokens`, `gpu_hours`, `calendar_days`, and `basis`: what
   the estimate rests on (a reusable pipeline, a comparable past campaign, a dry run). The gate
   weighs cost against the tier the result can reach; an expensive topic with an uncertain payoff
-  is not admitted.
+  is not admitted. `cost_estimate.compute_plan` is required: `locations` (from `container_cpu`,
+  `container_gpu`, `ailab`, `wsl_math`; chosen as in AGENTS.md "Where computation runs"), with
+  `gpu_memory_mib` when the GPU is used and `ailab: {cpus, memory_mib, hours}` for the ailab
+  queue (1-8 CPUs, at most 62961 MiB). The container instance cannot run `wsl_math` and rejects
+  such a card outright; propose mathematics only where the packet's instance runs it.
 - `reusable_assets[]` — index entries you rely on (may be empty).
 - `ledger_check.compared_topic_ids` — the ledger topics you compared against.
 - optional `target_tier` (`routine`/`escalation`), `reopens`, `reopen_basis` (`type`,

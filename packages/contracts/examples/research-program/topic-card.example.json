@@ -44,7 +44,12 @@
     "tokens": 6000000,
     "gpu_hours": 12,
     "calendar_days": 10,
-    "basis": "Reuses the clinical text pipeline from the asset index; one comparable campaign used about 10 GPU hours."
+    "basis": "Reuses the clinical text pipeline from the asset index; one comparable campaign used about 10 GPU hours.",
+    "compute_plan": {
+      "locations": ["container_cpu", "container_gpu"],
+      "gpu_memory_mib": 16000,
+      "notes": "Fine-tuning on the reserved container GPU; preprocessing and evaluation in the container."
+    }
   },
   "reusable_assets": ["clinical-text-pipeline"],
   "ledger_check": {"compared_topic_ids": []},

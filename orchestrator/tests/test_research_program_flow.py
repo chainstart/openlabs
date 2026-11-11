@@ -787,3 +787,86 @@ def test_lead_shortage_pauses_the_admission_gate(tmp_path) -> None:
     assert router.route(ordinary, {}) is not None or router.deferred["review"]["reason"] != (
         "lead_quota_short"
     )
+
+
+# --------------------------------------------------------------------------- compute locations
+
+
+def _math_card(n: int, receipt_sha: str = RECEIPT_SHA) -> dict:
+    card = _card(n, receipt_sha)
+    card["cost_estimate"]["gpu_hours"] = 0
+    card["cost_estimate"]["compute_plan"] = {"locations": ["container_cpu", "wsl_math"]}
+    return card
+
+
+def test_topic_card_needs_a_compute_plan_with_sizes_per_location() -> None:
+    card = _card()
+    card["cost_estimate"].pop("compute_plan")
+    errors = validate_topic_card(card, current_year=YEAR).errors
+    assert any(e.startswith("cost_estimate.compute_plan is missing") for e in errors)
+    card["cost_estimate"]["compute_plan"] = {"locations": ["laptop"]}
+    assert any("compute_plan.locations must be" in e
+               for e in validate_topic_card(card, current_year=YEAR).errors)
+    card["cost_estimate"]["compute_plan"] = {"locations": ["container_cpu", "ailab"]}
+    errors = validate_topic_card(card, current_year=YEAR).errors
+    assert "cost_estimate.compute_plan.ailab needs cpus, memory_mib and hours" in errors
+    assert "cost_estimate.gpu_hours > 0 needs container_gpu in compute_plan.locations" in errors
+    card["cost_estimate"]["gpu_hours"] = 0
+    card["cost_estimate"]["compute_plan"]["ailab"] = {"cpus": 16, "memory_mib": 8192, "hours": 3}
+    assert any("ailab.cpus must be 1-8" in e
+               for e in validate_topic_card(card, current_year=YEAR).errors)
+    card["cost_estimate"]["compute_plan"]["ailab"]["cpus"] = 8
+    assert validate_topic_card(card, current_year=YEAR).valid
+    assert validate_topic_card(_math_card(0), current_year=YEAR).valid
+
+
+def test_container_instance_rejects_wsl_math_cards_at_registration(tmp_path, monkeypatch):
+    import openlabs.program_flow as program_flow
+
+    marker = tmp_path / "dockerenv"
+    marker.write_text("", encoding="utf-8")
+    monkeypatch.setattr(program_flow, "CONTAINER_MARKER", marker)
+    paths = _paths(tmp_path)
+    _install_program(paths)
+    db = _db(paths)
+    settings = _settings()
+
+    _, report = _scout_round(paths, db, settings, monkeypatch,
+                             [_card(0, RECEIPT_SHA), _math_card(1)])
+
+    assert len(report.program["cards_registered"]) == 1
+    [rejected] = report.program["rejected_cards"]
+    assert any(error.startswith("compute_location_unavailable:wsl_math")
+               and "WSL host" in error for error in rejected["errors"])
+
+
+def test_container_instance_refuses_to_admit_a_wsl_math_topic(tmp_path, monkeypatch):
+    import openlabs.program_flow as program_flow
+
+    marker = tmp_path / "dockerenv"
+    monkeypatch.setattr(program_flow, "CONTAINER_MARKER", marker)  # absent: not a container
+    paths = _paths(tmp_path)
+    _install_program(paths)
+    db = _db(paths)
+    settings = _settings()
+    _, admission, report = _to_admission(paths, db, settings, monkeypatch, [_math_card(0)])
+    assert len(report.program["cards_registered"]) == 1
+    [entry] = _packet(admission)["topic_cards"]
+    _complete(db, paths, admission["task_id"], extra={"candidate_branches": [_branch(entry)]})
+    marker.write_text("", encoding="utf-8")  # the admission runs in the container instance
+
+    report = _tick(paths, settings, monkeypatch)
+
+    [decision] = report.program["admission_decisions"]
+    assert decision["outcome"] == "rejected"
+    assert decision["reason"].startswith("compute_location_unavailable:wsl_math")
+    topic = open_topic_ledger(paths, settings.program).read()["topics"][0]
+    assert topic["status"] == "rejected"
+    assert report.program["materialized"] == []
+    # An explicit [program].compute_locations without wsl_math refuses it anywhere.
+    marker.unlink()
+    narrowed = replace(settings, program=replace(
+        settings.program, compute_locations=("container_cpu", "container_gpu", "ailab")))
+    assert program_flow.compute_location_problem(narrowed, _math_card(1)).startswith(
+        "compute_location_unavailable:wsl_math")
+    assert program_flow.compute_location_problem(settings, _math_card(1)) is None
