@@ -7,10 +7,16 @@ import json
 import os
 import sqlite3
 import sys
+import tomllib
 from collections.abc import Sequence
 from pathlib import Path
 
-from .config import load_local_environment, load_settings, workspace_paths
+from .config import (
+    FactorySettings,
+    load_local_environment,
+    load_settings,
+    workspace_paths,
+)
 from .contracts import atomic_write_json
 from .control import halt_production, halt_project
 from .db import FactoryDB
@@ -209,6 +215,13 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def configured_providers(settings: FactorySettings) -> tuple[str, ...] | None:
+    """Providers of the configured runners; None (Codex only) without a [runners] table."""
+
+    providers = sorted({spec.provider for spec in settings.runners.values()})
+    return tuple(providers) or None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     # Keep manual CLI invocations, transient workers, and the systemd timer on
     # one local Agent/proxy configuration path. Explicit inherited values win.
@@ -222,9 +235,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(arguments)
     if args.command in {"network-preflight", "tick"}:
         try:
+            preflight_paths = workspace_paths(args.workspace)
+            providers = configured_providers(load_settings(preflight_paths))
+        except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+            print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
+                  file=sys.stderr)
+            return 78
+        try:
             network_report = ensure_proxy_ready(
                 environment=os.environ,
                 inherited_environment=inherited_environment,
+                providers=providers,
             )
         except ProxyPreflightError as exc:
             print(

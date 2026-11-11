@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,11 @@ PROXY_NAMES = (
 _URL_PROXY_NAMES = PROXY_NAMES[:3] + PROXY_NAMES[4:7]
 _ASSIGNMENT = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
 _DEFAULT_TARGET = "https://chatgpt.com/backend-api/codex"
+_ANTHROPIC_TARGET = "https://api.anthropic.com"
+OPENAI_PROVIDER = "openai-codex"
+ANTHROPIC_PROVIDER = "anthropic"
+# Credentials Claude Code accepts instead of a subscription login file (names only).
+_ANTHROPIC_CREDENTIAL_NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
 class ProxyPreflightError(RuntimeError):
@@ -188,6 +194,78 @@ def agent_preflight_target(environment: Mapping[str, str]) -> str:
     return _DEFAULT_TARGET
 
 
+def anthropic_preflight_target(environment: Mapping[str, str]) -> str:
+    override = environment.get("OPENLABS_AGENT_PREFLIGHT_URL_ANTHROPIC", "").strip()
+    target = override or environment.get("ANTHROPIC_BASE_URL", "").strip() or _ANTHROPIC_TARGET
+    _origin(target)
+    return target
+
+
+def provider_preflight_targets(
+    environment: Mapping[str, str], providers: Sequence[str] | None
+) -> list[tuple[str, str]]:
+    """(provider, URL) per provider to probe; ``None`` keeps the single Codex probe."""
+
+    selected = list(dict.fromkeys(providers or (OPENAI_PROVIDER,)))
+    targets: list[tuple[str, str]] = []
+    for provider in selected:
+        if provider == ANTHROPIC_PROVIDER:
+            targets.append((provider, anthropic_preflight_target(environment)))
+        else:
+            # Codex, and any unknown provider, keep the historical target rule.
+            targets.append((provider, agent_preflight_target(environment)))
+    return targets
+
+
+def _runner_commands(environment: Mapping[str, str], adapter: str) -> list[list[str]]:
+    commands: list[list[str]] = []
+    for name, raw in environment.items():
+        if not (name.startswith("OPENLABS_AGENT_COMMAND_") and name.endswith("_JSON")):
+            continue
+        try:
+            command = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(command, list)
+            and command
+            and all(isinstance(item, str) for item in command)
+            and Path(command[0]).name == adapter
+        ):
+            commands.append(command)
+    return commands
+
+
+def anthropic_local_problem(
+    environment: Mapping[str, str],
+    *,
+    home: Path | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+) -> str | None:
+    """No-cost Claude readiness: an executable and a login (file or credential variable).
+
+    Never starts Claude and never reads a credential's value.
+    """
+
+    commands = _runner_commands(environment, "claude")
+    if not commands:
+        return "no OPENLABS_AGENT_COMMAND_*_JSON runs claude, but an anthropic runner is configured"
+    for command in commands:
+        if which(command[0]) is None:
+            return f"Claude executable {command[0]!r} is not on PATH"
+    if any(environment.get(name, "").strip() for name in _ANTHROPIC_CREDENTIAL_NAMES):
+        return None
+    configured = environment.get("CLAUDE_CONFIG_DIR", "").strip()
+    root = Path(configured).expanduser() if configured else (home or Path.home()) / ".claude"
+    credentials = root / ".credentials.json"
+    try:
+        if credentials.is_file() and credentials.stat().st_size > 0:
+            return None
+    except OSError:
+        pass
+    return f"Claude Code has no login state ({credentials} missing or empty)"
+
+
 def _probe(target: str, proxies: Mapping[str, str], timeout: float) -> None:
     handler_proxies: dict[str, str] = {}
     if proxies:
@@ -288,12 +366,26 @@ def ensure_proxy_ready(
     config_home: str | Path | None = None,
     probe: Callable[[str, Mapping[str, str], float], None] | None = None,
     sync_systemd: bool | None = None,
+    providers: Sequence[str] | None = None,
+    local_check: Callable[[Mapping[str, str]], str | None] | None = None,
 ) -> dict[str, Any]:
-    """Select a reachable proxy, synchronize it, or fail before research starts."""
+    """Select a proxy reaching every configured provider, synchronize it, or fail.
+
+    ``providers`` are the configured runners' providers (``None``: Codex only,
+    the historical single probe). Every provider's endpoint gets one
+    unauthenticated HEAD request (an HTTP error still proves the route); for
+    ``anthropic`` the Claude executable and its login state are checked
+    locally as well. Nothing here makes a billable model call.
+    """
 
     target_environment = environment if environment is not None else os.environ
     inherited = inherited_environment if inherited_environment is not None else target_environment
-    target = agent_preflight_target(target_environment)
+    targets = provider_preflight_targets(target_environment, providers)
+    if any(provider == ANTHROPIC_PROVIDER for provider, _ in targets):
+        problem = (local_check or anthropic_local_problem)(target_environment)
+        if problem is not None:
+            raise ProxyPreflightError(f"Agent provider anthropic is not ready: {problem}")
+    target = targets[0][1]
     origin = _origin(target)
     timeout = _timeout(target_environment)
     config_path = proxy_environment_file(target_environment, config_home=config_home)
@@ -314,13 +406,22 @@ def ensure_proxy_ready(
     selected: dict[str, str] = {}
     errors: list[str] = []
     checker = probe or _probe
+
+    def unreachable(candidate: Mapping[str, str]) -> tuple[str, str] | None:
+        for provider, provider_target in targets:
+            try:
+                checker(provider_target, candidate, timeout)
+            except (OSError, TimeoutError, urllib.error.URLError) as exc:
+                return _origin(provider_target), type(exc).__name__
+        return None
+
     if candidates:
         for source, candidate in candidates:
-            try:
-                checker(target, candidate, timeout)
-            except (OSError, TimeoutError, urllib.error.URLError) as exc:
+            failure = unreachable(candidate)
+            if failure is not None:
                 errors.append(
-                    f"{source} proxy {_proxy_label(candidate, target)}: {type(exc).__name__}"
+                    f"{source} proxy {_proxy_label(candidate, target)}: "
+                    + (failure[1] if len(targets) == 1 else f"{failure[0]} {failure[1]}")
                 )
                 continue
             selected_source = source
@@ -328,14 +429,15 @@ def ensure_proxy_ready(
             break
         else:
             detail = "; ".join(errors) or "no usable proxy candidate"
-            raise ProxyPreflightError(f"Agent provider {origin} is unreachable ({detail})")
+            raise ProxyPreflightError(f"Agent provider {origin} is unreachable ({detail})"
+                                      if len(targets) == 1 else
+                                      f"Agent providers are unreachable ({detail})")
     else:
-        try:
-            checker(target, {}, timeout)
-        except (OSError, TimeoutError, urllib.error.URLError) as exc:
+        failure = unreachable({})
+        if failure is not None:
             raise ProxyPreflightError(
-                f"Agent provider {origin} is unreachable without a proxy ({type(exc).__name__})"
-            ) from exc
+                f"Agent provider {failure[0]} is unreachable without a proxy ({failure[1]})"
+            )
 
     file_changed = False
     systemd_synced = False
@@ -356,6 +458,11 @@ def ensure_proxy_ready(
         "schema_version": "openlabs.proxy_preflight.v1",
         "status": "passed",
         "target": origin,
+        "targets": [
+            {"provider": provider, "target": _origin(provider_target),
+             "route": _proxy_label(selected, provider_target)}
+            for provider, provider_target in targets
+        ],
         "route": _proxy_label(selected, target),
         "source": selected_source,
         "proxy_file": str(config_path),

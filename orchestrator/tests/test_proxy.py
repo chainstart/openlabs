@@ -159,3 +159,63 @@ def test_network_preflight_exec_preserves_nested_command_separator() -> None:
 
     assert arguments.execute is True
     assert arguments.exec_command == ["/repo/bin/openlabs-resource-guard", "--", "codex"]
+
+
+def test_both_configured_providers_are_probed_and_must_share_a_route(tmp_path) -> None:
+    from openlabs.proxy import anthropic_local_problem
+
+    environment = _environment(tmp_path, 60032)
+    environment["OPENLABS_AGENT_PREFLIGHT_URL_ANTHROPIC"] = "https://anthropic.example/"
+    claude = json.dumps(["claude", "-p", "--model", "claude-haiku-5-5"])
+    environment["OPENLABS_AGENT_COMMAND_LIGHT_CLAUDE_JSON"] = claude
+    _write_proxy_file(tmp_path, 50827)
+    seen: list[tuple[str, str]] = []
+
+    def probe(target, proxies, _timeout):
+        seen.append((target, proxies["HTTPS_PROXY"]))
+        if target.startswith("https://anthropic.example") and proxies["HTTPS_PROXY"].endswith(
+            "60032"
+        ):
+            raise urllib.error.URLError("refused")
+
+    report = ensure_proxy_ready(
+        environment=environment, inherited_environment=dict(environment), config_home=tmp_path,
+        probe=probe, sync_systemd=False, providers=("anthropic", "openai-codex"),
+        local_check=lambda _env: None,
+    )
+
+    # The process proxy reaches Codex but not Anthropic; the configured one reaches both.
+    assert report["source"] == "configured"
+    assert [item["provider"] for item in report["targets"]] == ["anthropic", "openai-codex"]
+    assert {target for target, _ in seen} == {
+        "https://anthropic.example/", "https://chatgpt.example/backend-api/codex"}
+
+    # The Claude side costs nothing: executable and login file, no model call.
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    assert "no login state" in anthropic_local_problem(
+        environment, home=home, which=lambda name: f"/bin/{name}")
+    (home / ".claude" / ".credentials.json").write_text("{}", encoding="utf-8")
+    assert anthropic_local_problem(
+        environment, home=home, which=lambda name: f"/bin/{name}") is None
+    assert "not on PATH" in anthropic_local_problem(
+        environment, home=home, which=lambda _name: None)
+    with pytest.raises(ProxyPreflightError, match="anthropic is not ready: Claude Code has no login"):
+        ensure_proxy_ready(
+            environment=dict(environment), config_home=tmp_path, probe=probe,
+            sync_systemd=False, providers=("anthropic",),
+            local_check=lambda env: anthropic_local_problem(
+                env, home=tmp_path / "nobody", which=lambda name: f"/bin/{name}"),
+        )
+
+
+def test_without_runners_only_the_codex_endpoint_is_probed(tmp_path) -> None:
+    environment = _environment(tmp_path, 60032)
+    seen: list[str] = []
+    report = ensure_proxy_ready(
+        environment=environment, inherited_environment=dict(environment), config_home=tmp_path,
+        probe=lambda target, _p, _t: seen.append(target), sync_systemd=False,
+        local_check=lambda _env: pytest.fail("no Claude check without an anthropic runner"),
+    )
+    assert seen == ["https://chatgpt.example/backend-api/codex"]
+    assert [item["provider"] for item in report["targets"]] == ["openai-codex"]
