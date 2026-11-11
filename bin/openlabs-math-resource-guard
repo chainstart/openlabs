@@ -10,6 +10,13 @@ if (( $# == 0 )); then
   exit 64
 fi
 
+# A Docker container never joins openlabs-workers.slice, so the re-exec below
+# would recurse without end. Containers have no math child slice: refuse.
+if [[ -e /.dockerenv ]]; then
+  printf 'Math guard: this container has no dedicated 16/18 GiB no-swap math cgroup; refusing to use the aggregate container limit.\n' >&2
+  exit 78
+fi
+
 # Always retain the repository-wide guard as the outer resource boundary.
 if ! /usr/bin/grep -Eq '(^|/)openlabs-workers\.slice(/|$)' /proc/self/cgroup; then
   exec "$ROOT/bin/openlabs-resource-guard" --task-type cpu -- "$0" -- "$@"

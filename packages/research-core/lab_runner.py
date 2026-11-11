@@ -1672,7 +1672,10 @@ def _transaction_sandbox(
     attempt_root = Path(str(transaction["attempt_root"])).expanduser().resolve()
     if not attempt_root.is_dir() or not attempt_root.is_relative_to(workspace):
         raise ValueError("Transaction attempt_root is missing or outside OPENLABS_WORKSPACE")
-    sandbox = [bubblewrap, "--die-with-parent", "--bind", "/", "/"]
+    # Unprivileged root binds are nodev. Preserve the outer container's device
+    # access (including /dev/null and CUDA) without adding any new devices.
+    sandbox = [bubblewrap, "--die-with-parent", "--bind", "/", "/",
+               "--dev-bind", "/dev", "/dev"]
     for relative in ("openlabs", "openlabs-data", "openlabs-artifacts", "openlabs-database"):
         root = (workspace / relative).resolve()
         if root.exists():
@@ -1685,7 +1688,10 @@ def _transaction_sandbox(
     # empty file instead; login state and session files under ~/.claude stay.
     user_memory = Path.home() / ".claude" / "CLAUDE.md"
     if Path(command[0]).name == "claude" and user_memory.is_file():
-        sandbox.extend(["--ro-bind", "/dev/null", str(user_memory)])
+        # A regular bind adds nodev and makes this character device unreadable
+        # in an unprivileged namespace. Device-bind the null sink instead: reads
+        # are empty and writes are discarded, never touching the real file.
+        sandbox.extend(["--dev-bind", "/dev/null", str(user_memory)])
     sandbox.append("--")
     sandbox.extend(command)
     return sandbox, "bubblewrap"

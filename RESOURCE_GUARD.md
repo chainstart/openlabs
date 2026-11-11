@@ -1,6 +1,32 @@
 # OpenLabs aggregate resource guard
 
-All interactive Codex research, worker services and heavy local commands share
+## cc-sg container support (2026-11-11)
+
+`bin/openlabs-resource-guard` also supports the cc-sg Docker workspace without
+an in-container systemd manager. The wrapper verifies the actual cgroup v2
+CPU quota (at most 75% of visible CPUs), memory hard limit (34 GiB), swap limit
+(4 GiB) and task limit (512). It also requires the host GPU lock directory to
+be bind-mounted at `$XDG_RUNTIME_DIR/openlabs-gpu-guard` (default
+`/run/user/1000/openlabs-gpu-guard`). Missing limits or the mount fail closed.
+CPU and GPU command syntax is unchanged. GPU admission, allocator caps,
+telemetry supervision and descendant cleanup still use `gpu_guard.py`.
+
+The cc-sg workspace has 15 CPUs, a 34 GiB hard memory limit, a 30 GiB Docker
+memory reservation, 4 GiB swap and 512 tasks. A Docker memory reservation is
+not the WSL guard's `memory.high` soft throttle. These are aggregate limits
+for processes **inside that container**, not a combined host-and-container
+CPU/RAM budget. WSL research remains in its own systemd slice; do not assume
+the combined RAM usage is capped at 34 GiB or run simultaneous large host and
+container workloads on that assumption. Separate `cc-sg open` containers also
+have separate CPU/RAM limits. GPU leases, by contrast, are shared with WSL and
+the cc-sg containers through the same host lock inodes.
+
+The current container is configured live; Compose and `cc-sg open` persist the
+limits and mount for subsequent launches. Container tasks do not need root,
+privileged mode, Docker socket access or a writable cgroup filesystem. Installing
+model dependencies and preparing model weights remain separate steps.
+
+On the WSL host, interactive Codex research, worker services and heavy local commands share
 `openlabs-workers.slice`. The guard limits the aggregate research workload; it
 does not reduce Codex filesystem or network permissions.
 

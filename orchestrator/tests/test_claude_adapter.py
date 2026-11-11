@@ -394,7 +394,7 @@ def test_claude_uses_the_bubblewrap_transaction_sandbox(tmp_path, monkeypatch) -
         command, layout["task"], layout["workspace"].resolve()
     )
     assert masked[masked.index("--") - 3 : masked.index("--")] == [
-        "--ro-bind", "/dev/null", str(memory),
+        "--dev-bind", "/dev/null", str(memory),
     ]
     # Codex keeps its native full-access runtime.
     assert lab_runner._transaction_sandbox(["codex", "exec"], layout["task"], tmp_path) == (

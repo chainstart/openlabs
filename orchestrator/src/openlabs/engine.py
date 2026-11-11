@@ -1398,6 +1398,65 @@ def _user_systemd_available() -> bool:
     return completed.returncode == 0
 
 
+# Same marker bin/openlabs-resource-guard uses to select its container path.
+_CONTAINER_MARKER = Path("/.dockerenv")
+_CONTAINER_CGROUP = Path("/sys/fs/cgroup")
+_MATH_LIMITS = {
+    "memory.high": 16 * 1024**3,
+    "memory.max": 18 * 1024**3,
+    "memory.swap.max": 0,
+}
+
+
+def _in_container() -> bool:
+    return _CONTAINER_MARKER.exists()
+
+
+def _container_math_cgroup_verified(root: Path) -> bool:
+    """True only when this cgroup itself enforces the approved math budget."""
+
+    try:
+        for name, expected in _MATH_LIMITS.items():
+            if (root / name).read_text().strip() != str(expected):
+                return False
+        pids = (root / "pids.max").read_text().strip()
+        return pids != "max" and 0 < int(pids) <= 512
+    except (OSError, ValueError):
+        return False
+
+
+def _container_worker_command(
+    task: Mapping[str, Any], paths: WorkspacePaths, job_path: Path
+) -> list[str]:
+    """Verify the Docker cgroup and return the wrapper-guarded worker command.
+
+    Without a systemd user manager the container's own cgroup is the aggregate
+    boundary, so its kernel limits are checked here (clear error before any
+    launch) and again by bin/openlabs-resource-guard when the worker starts.
+    """
+
+    from . import container_guard
+
+    try:
+        container_guard.validate(_CONTAINER_CGROUP)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            f"container resource guard refused worker launch: {exc}"
+        ) from exc
+    if str(task.get("domain") or "") == "math" and not _container_math_cgroup_verified(
+        _CONTAINER_CGROUP
+    ):
+        raise RuntimeError(
+            "Math worker requires the approved shared 16/18 GiB, no-swap math cgroup; "
+            "this container has no dedicated math cgroup (its aggregate container limit "
+            "is not the math budget), refusing to launch"
+        )
+    return [
+        str(paths.code / "bin" / "openlabs-resource-guard"), "--task-type", "cpu", "--",
+        sys.executable, "-m", "openlabs", "_worker", str(job_path),
+    ]
+
+
 def _launch_worker(
     *,
     task: Mapping[str, Any],
@@ -1408,6 +1467,20 @@ def _launch_worker(
     cpu_ceiling_threads: int | None = None,
 ) -> int | None:
     """Launch a worker outside the short-lived tick service cgroup when supervised."""
+
+    if _in_container():
+        command = _container_worker_command(task, paths, job_path)
+        with log_path.open("ab") as log_handle:
+            process = subprocess.Popen(
+                command,
+                cwd=paths.code,
+                env=dict(environment),
+                stdin=subprocess.DEVNULL,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        return process.pid
 
     command = [
         sys.executable, str(Path(__file__).with_name("gpu_guard.py")), "--task-type", "cpu", "--",

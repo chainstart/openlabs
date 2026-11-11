@@ -27,6 +27,13 @@ if (( $# == 0 )); then
   exit 64
 fi
 
+# Docker provides the aggregate container cgroup; verify its real limits before
+# accepting it instead of requiring a systemd user manager inside the container.
+if [[ -e /.dockerenv ]]; then
+  /usr/bin/python3 "$GUARD_ROOT/orchestrator/src/openlabs/container_guard.py"
+  exec /usr/bin/python3 "$GUARD_ROOT/orchestrator/src/openlabs/gpu_guard.py" "${gpu_options[@]}" -- "$@"
+fi
+
 # A guarded Codex session passes this cgroup to all tools it starts. Reuse the
 # shared guard instead of nesting another transient scope.
 if /usr/bin/grep -Eq '(^|/)openlabs-workers\.slice(/|$)' /proc/self/cgroup 2>/dev/null; then

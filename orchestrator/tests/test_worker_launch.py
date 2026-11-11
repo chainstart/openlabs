@@ -7,6 +7,12 @@ from openlabs.config import WorkspacePaths
 from openlabs.engine import _launch_worker, _worker_unit_name
 
 
+@pytest.fixture(autouse=True)
+def _host_not_container(tmp_path, monkeypatch):
+    # These cover the systemd host path; keep them valid inside Docker too.
+    monkeypatch.setattr("openlabs.engine._CONTAINER_MARKER", tmp_path / "no-dockerenv")
+
+
 @pytest.mark.parametrize("approved", [True, False])
 def test_math_worker_requires_and_inherits_shared_math_reservation(tmp_path, monkeypatch, approved):
     paths = WorkspacePaths(workspace=tmp_path, code=tmp_path / "openlabs",
