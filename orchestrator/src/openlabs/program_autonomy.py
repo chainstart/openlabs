@@ -1492,8 +1492,13 @@ def commit_paper_paths(paths: WorkspacePaths, settings: FactorySettings, *, pape
             raise ReleaseError(f"refusing to commit a path outside the data repository: {raw}")
         if relative not in scope:
             scope.append(relative)
-    present = [item for item in scope if (root / item).exists()
-               or _git(root, "ls-files", "--", item).strip()]
+    # A path counts only when git knows a file under it (tracked, including a
+    # deleted one, or untracked and not ignored). An empty directory, or one with
+    # only ignored files, exists on disk but makes `git commit --only` fail with
+    # "pathspec ... did not match any file(s) known to git".
+    present = [item for item in scope
+               if _git(root, "ls-files", "--cached", "--others", "--exclude-standard",
+                       "--", item).strip()]
     if not present:
         return None
     if not _git(root, "status", "--porcelain=v1", "--untracked-files=all", "--",

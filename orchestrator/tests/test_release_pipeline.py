@@ -317,6 +317,29 @@ def test_commit_only_takes_the_papers_paths(tmp_path, monkeypatch):
             commit_paths=["../elsewhere"])
 
 
+def test_commit_skips_paper_paths_git_cannot_match(tmp_path, monkeypatch):
+    """An empty (or only-ignored) review directory must not break `git commit --only`."""
+
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch)
+    root = paths.data
+    (root / "reviews" / "unified" / PAPER_ID).mkdir(parents=True)  # exists, nothing for git
+    (root / ".gitignore").write_text("*.aux\n")
+    (root / "papers" / PAPER_ID / "main.aux").write_text("ignored\n")
+    _write_paper(paths, {**_paper(paths), "delivery": {"package_id": "pkg-1"}})
+    sha = program_autonomy.commit_paper_paths(
+        paths, settings, paper_id=PAPER_ID, version="1.0.0", action="test",
+        topic_id=topic["topic_id"],
+        commit_paths=[f"registry/papers/{PAPER_ID}.json", f"papers/{PAPER_ID}",
+                      f"reviews/unified/{PAPER_ID}"])
+    files = _commit_files(root, sha)
+    assert f"registry/papers/{PAPER_ID}.json" in files
+    assert f"papers/{PAPER_ID}/main.aux" not in files
+    # Only ignored files under a path: nothing to commit, and no pathspec error.
+    assert program_autonomy.commit_paper_paths(
+        paths, settings, paper_id=PAPER_ID, version="1.0.0", action="test",
+        topic_id=topic["topic_id"], commit_paths=[f"reviews/unified/{PAPER_ID}"]) is None
+
+
 def test_failed_stage_is_retried_then_exhausted_and_reported(tmp_path, monkeypatch):
     paths, db, settings, topic, log = _setup(
         tmp_path, monkeypatch, release_max_attempts=2,
