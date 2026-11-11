@@ -465,7 +465,7 @@ def main(argv: list[str] | None = None) -> int:
         from datetime import UTC, datetime
         from paper_writing import formal_checks
         from paper_writing.registry import load_paper_metadata
-        from paper_writing.review_flow import review_config
+        from paper_writing.review_flow import formal_role, review_config
         from paper_writing.review_launcher import run_role
         root = Path(args.root).resolve()
         metadata = load_paper_metadata(args.paper_id, root)
@@ -475,8 +475,8 @@ def main(argv: list[str] | None = None) -> int:
                               "source_plan": formal_checks.source_plan(metadata)}, ensure_ascii=False, indent=2))
             return 0
         config = review_config(root)
-        role = config["roles"]["editor"]
-        if role.get("provider") != "openai-codex":
+        role = formal_role(config["roles"])
+        if not role or role.get("provider") != "openai-codex":
             raise ValueError("Formal verification requires an independent Codex process")
         run = root / "reviews/formal-check" / args.paper_id / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         run.mkdir(parents=True, exist_ok=False)

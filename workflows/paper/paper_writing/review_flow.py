@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from paper_writing.registry import load_paper_metadata, load_registry, load_registry_settings, write_paper_metadata
-from paper_writing.review_launcher import LaunchError, run_role
+from paper_writing.review_launcher import LaunchError, role_runtime, run_role
 from paper_writing import formal_checks
 
 PROCESS = "unified_v1"
@@ -41,6 +41,9 @@ DIRECTION_OPTIONS = ("targeted_core_analysis", "retarget_or_short_format", "free
 # transitions (current plus the two preceding refereed rounds).
 STALL_TRANSITIONS = 2
 ROLES = ("editor", "referee_a", "referee_b")
+# Optional cheaper role for the mechanical reference/core-mathematics verification.
+# Absent, the editor's model runs it (the behaviour before this role existed).
+FORMAL_ROLE = "formal_verifier"
 PROMPTS = Path(__file__).resolve().parents[1] / "skills" / "openlabs-paper-review" / "references" / "unified"
 CLEAN_SOURCE_SUFFIXES = {".tex", ".sty", ".cls", ".bst", ".bib", ".eps", ".png", ".jpg", ".jpeg", ".svg",
                          ".tikz", ".pgf", ".clo", ".def", ".fd", ".cfg"}
@@ -153,13 +156,40 @@ def review_config(root: str | Path) -> dict[str, Any]:
             or not isinstance(p.get("referee_roles"), list) or not _parse_time(p.get("valid_for_reviews_started_before"))
             for p in previous):
         raise ValueError("review.previous_panels entries need roles, referee_roles and valid_for_reviews_started_before")
-    return {"process": gate.get("review_process"), "roles": review.get("roles") or {},
+    roles = review.get("roles") or {}
+    if FORMAL_ROLE in roles:
+        verifier = roles[FORMAL_ROLE]
+        if (not isinstance(verifier, Mapping)
+                or any(not isinstance(verifier.get(k), str) or not verifier[k].strip()
+                       for k in ("provider", "tool", "model"))):
+            raise ValueError(f"review.roles.{FORMAL_ROLE} needs provider, tool and model, like the other roles")
+        if verifier["provider"] != "openai-codex":
+            raise ValueError(f"review.roles.{FORMAL_ROLE} must use an independent Codex process (provider openai-codex)")
+        try:
+            role_runtime(verifier)
+        except LaunchError as exc:
+            raise ValueError(f"review.roles.{FORMAL_ROLE}: {exc}") from exc
+    return {"process": gate.get("review_process"), "roles": roles,
             "referee_roles": panel, "rejection_clearance_required": True,
             "max_rounds_per_target": int(review.get("max_rounds_per_target", 10)),
             "timeout_seconds": int(review.get("timeout_seconds", 3600)),
             "writer_model": str(review.get("writer_model") or ""),
             "cross_model_required": bool(cross.get("required", False)),
             "previous_panels": [dict(p) for p in previous]}
+
+
+def formal_role_name(roles: Mapping[str, Any]) -> str:
+    """Which configured role runs the formal verification: the verifier, else the editor."""
+    return FORMAL_ROLE if FORMAL_ROLE in roles else "editor"
+
+
+def formal_role(roles: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The role a formal report must have been produced by under ``roles``.
+
+    Records made under a policy without ``formal_verifier`` (current or a
+    ``previous_panels`` entry, see ``policy_for_record``) stay bound to the editor.
+    """
+    return roles.get(formal_role_name(roles))
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -567,11 +597,14 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     Only what makes a review impossible or meaningless blocks here: a manuscript
     that does not build, missing registration, broken evidence/data hash bindings,
     the user's venue policy (excluded journals, fee-free route, SCIE/zone
-    eligibility) and reference-routing defects. Presentation and preparation
-    findings (internal vocabulary, AI-declaration wording, abstract length/person,
-    TODO markers, unused source files, support-record identifiers and the pre-review
-    Zenodo draft) are returned as ``preparation_advisories``: they never fail the
-    preflight, and the delivery exit enforces them (see ``delivery_blockers``).
+    eligibility) and a declared source routed to an absent bibliography key.
+    Presentation and preparation findings (internal vocabulary, AI-declaration
+    wording, abstract length/person, TODO markers, unused source files,
+    support-record identifiers and the pre-review Zenodo draft) are returned as
+    ``preparation_advisories``: they never fail the preflight, and the delivery exit
+    enforces them (see ``delivery_blockers``). Registered passage selectors and
+    local evidence files that no longer match are advisories too; nothing uses them
+    since the formal check was narrowed, so the delivery exit only notes them.
     """
     from paper_writing.journal_history import tolerate_stale_ledger
 
@@ -642,7 +675,13 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
         documents, bibliography = formal_checks.current_inputs(metadata, root)
         formal_inventory = formal_checks.inventory(documents, bibliography)
         formal_checks.source_plan(metadata)
-        blockers.extend(formal_checks.local_route_preflight(metadata, formal_inventory, root))
+        # Only an absent bibliography key still stops the reference verification;
+        # stale selectors and local evidence files bind nothing (ADVISORY_ROUTE_KINDS).
+        for finding in formal_checks.route_findings(metadata, formal_inventory, root):
+            if finding["kind"] in formal_checks.ADVISORY_ROUTE_KINDS:
+                advisories.append(_route_advisory(finding))
+            else:
+                blockers.append(finding["message"])
         for problem in formal_checks.artifact_inventory(metadata, root)['blockers']:
             # A stale or missing journal source archive is a delivery artifact; the
             # handoff rebuilds and verifies it. Every other artifact binds evidence.
@@ -676,6 +715,23 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
             "support_claim_evidence_maps": claim_maps, "formal_inventory": formal_inventory,
             "active_revision_context": revision_context,
             "expanded_includes_standalone_documents": True}
+
+
+ROUTE_ADVISORY_CODES = {"stale_selector": "SOURCE-SELECTOR-STALE",
+                        "local_evidence_file": "LOCAL-EVIDENCE-UNBOUND"}
+
+
+def _route_advisory(finding: Mapping[str, Any]) -> dict[str, Any]:
+    """A declared route that no verification or delivery path uses; names source and selector."""
+    if finding["kind"] == "stale_selector":
+        message = (f"Registered source {finding['route']}: passage selector {finding['selector']!r} matches no "
+                   "current manuscript passage. The formal check no longer uses passage selectors; update "
+                   "or remove it in formal_check of the paper registration.")
+    else:
+        message = (f"{finding['message']}. The formal check no longer reads registered local evidence; "
+                   "update or remove the entry in formal_check.local_evidence of the paper registration.")
+    return _preparation_advisory("formal_checks", ROUTE_ADVISORY_CODES[finding["kind"]], message,
+                                 location=str(finding["route"]))
 
 
 # --------------------------------------------------------------------------- packets
@@ -1292,6 +1348,59 @@ def direction_context(editor: Mapping[str, Any]) -> dict[str, Any]:
             "options": list(DIRECTION_OPTIONS)}
 
 
+def principal_rejection_reason(report: Mapping[str, Any]) -> tuple[str, str]:
+    """A referee's leading reason for ``reject``, taken from the report itself (no model call).
+
+    Order: the first scientific blocker, the first blocking required change, then the
+    referee's significance assessment (referee.md asks for the most important reason first).
+    """
+    blockers = [str(b) for b in report.get("scientific_blockers") or [] if str(b).strip()]
+    if blockers:
+        return blockers[0], "scientific_blocker"
+    for change in report.get("required_changes") or []:
+        if isinstance(change, Mapping) and change_blocks(change) and str(change.get("change") or "").strip():
+            return f"{change['change']} ({change.get('location', '')})", "required_change"
+    for field in ("significance", "novelty_and_context", "summary"):
+        if str(report.get(field) or "").strip():
+            return str(report[field]), f"{field}_assessment"
+    return "", "none"
+
+
+def unanimous_rejection(referees: Mapping[str, Mapping[str, Any]]) -> bool:
+    """Every referee of a two-referee panel recommends reject.
+
+    A single-referee panel keeps the ordinary rule: one opinion does not stop the
+    research direction (a split 1:1 decision likewise keeps the ordinary rule).
+    """
+    return len(referees) >= 2 and all(r.get("recommendation") == "reject" for r in referees.values())
+
+
+def rejection_direction_context(editor: Mapping[str, Any],
+                                referees: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """Direction context after both referees reject: their reasons, scores and the editor's prior work."""
+    rejections = []
+    for name, report in referees.items():
+        reason, source = principal_rejection_reason(report)
+        scores = report.get("scores") if isinstance(report.get("scores"), Mapping) else {}
+        rejections.append({"referee": name, "recommendation": report.get("recommendation"),
+                           "principal_reason": reason, "principal_reason_source": source,
+                           "scientific_blockers": list(report.get("scientific_blockers") or []),
+                           "significance_score": scores.get("significance"),
+                           "novelty_score": scores.get("novelty"),
+                           "overall_score": scores.get("overall"),
+                           "significance_assessment": str(report.get("significance") or ""),
+                           "novelty_assessment": str(report.get("novelty_and_context") or "")})
+    return {"trigger": "all_referees_reject", "referee_rejections": rejections,
+            "mean_significance_score": _mean_score(referees, "significance"),
+            "mean_novelty_score": _mean_score(referees, "novelty"),
+            "editor_decision": editor.get("decision"),
+            "closest_prior_work": copy.deepcopy(list(editor.get("closest_prior_work") or [])),
+            "advance_over_prior_work": str(editor.get("advance_over_prior_work") or ""),
+            "significance_for_journal": str(editor.get("significance_for_journal") or ""),
+            "strongest_desk_reject_reason": str(editor.get("strongest_desk_reject_reason") or ""),
+            "options": list(DIRECTION_OPTIONS)}
+
+
 def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
           history_blockers: list[str] | None = None, *,
           previous_ids: set[str] | None = None, formal_blockers: list[str] | None = None,
@@ -1304,6 +1413,10 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
     minor revision. When referees disagree, the more favourable recommendation is
     used unless someone substantiated the stricter one with such an item; then the
     stricter recommendation stands. ``text`` changes are kept, marked advisory.
+    When every referee of a two-referee panel recommends reject (with or without
+    listed blockers), ``next_action`` is ``direction_decision`` with a
+    ``direction_context``, as after a significance desk reject; a split decision
+    with one reject keeps the rule above.
     """
     # Compatibility with the earlier numbered-item API; the current pipeline
     # supplies rejection blockers as a list and constrains exact mandatory items
@@ -1383,18 +1496,28 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
     best = min(recommendations.values(), key=RECOMMENDATIONS.index)
     rec = worst if substantive else best
     ready = rec in {"accept", "minor_revision"} and not substantive
-    if ready:
+    unanimous_reject = unanimous_rejection(referees)
+    if unanimous_reject:
+        # Both referees decline, with or without itemized blockers: another
+        # remediation round on the same framing rarely turns two rejects around.
+        # Hand the orchestrator the same choice as a significance desk reject.
+        rec, ready, action = "reject", False, "direction_decision"
+    elif ready:
         action = None
     elif blockers or any(c["type"] == "evidence" for c in blocking_changes) or rec == "reject":
         action = "evidence_remediation"
     else:
         action = "text_revision"
-    return {"outcome": "ready" if ready else "revision_required", "recommendation": rec,
-            "referee_recommendations": recommendations,
-            "recommendation_basis": ("stricter recommendation: substantive items reported" if substantive
-                                     else "more favourable recommendation: no substantive items reported"),
-            "scientific_blockers": blockers, "required_changes": changes,
-            "unresolved_previous_items": unresolved_previous, "next_action": action}
+    result = {"outcome": "ready" if ready else "revision_required", "recommendation": rec,
+              "referee_recommendations": recommendations,
+              "recommendation_basis": ("all referees recommend reject" if unanimous_reject else
+                                       "stricter recommendation: substantive items reported" if substantive
+                                       else "more favourable recommendation: no substantive items reported"),
+              "scientific_blockers": blockers, "required_changes": changes,
+              "unresolved_previous_items": unresolved_previous, "next_action": action}
+    if unanimous_reject:
+        result["direction_context"] = rejection_direction_context(editor, referees)
+    return result
 
 
 # --------------------------------------------------------------------------- runs
@@ -1634,10 +1757,11 @@ def _formal_stage(pre: Mapping[str, Any], root: Path, run: Path, roles: Mapping[
                   record: dict[str, Any]) -> tuple[dict[str, Any], list[str], Any]:
     """Run the mandatory reference/core verification and return (pre, blockers, summary)."""
     try:
-        formal = formal_checks.run_checks(pre, root, run, roles['editor'], config['timeout_seconds'], run_role)
+        verifier = formal_role(roles)
+        formal = formal_checks.run_checks(pre, root, run, verifier, config['timeout_seconds'], run_role)
         formal_blockers = formal['blockers']
         if not formal_blockers:
-            formal_blockers = formal_checks.validate_binding(formal, metadata, root, roles['editor'])
+            formal_blockers = formal_checks.validate_binding(formal, metadata, root, verifier)
     except (ValueError, OSError, LaunchError) as exc:
         formal = {'valid': False, 'schema': formal_checks.VERSION}
         formal_blockers = [f'Mandatory core-verification stage failed: {exc}']
@@ -1733,6 +1857,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                               "manuscript_version": str(metadata.get("version") or ""),
                               "fingerprints": pre["fingerprints"], "started_at": _now()}
     record |= {"review_policy_sha256": review_policy_sha256(config, history_policy, round_limit), "active_referee_roles": panel,
+               "formal_verifier_role": formal_role_name(roles),
                "single_referee_panel": len(panel) == 1, "writer_model": writer,
                "cross_model_referees": [n for n in panel if roles[n].get("model") != writer]}
     if pre.get('active_revision_context') is not None:
@@ -1845,7 +1970,7 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
         panel = config['referee_roles']
         if set(record.get('referee_reports', {})) != set(panel):
             raise ValueError("Ready decision is missing an active referee")
-        formal_errors = formal_checks.validate_binding(record.get("formal_check"), metadata, root, config["roles"].get("editor"))
+        formal_errors = formal_checks.validate_binding(record.get("formal_check"), metadata, root, formal_role(config["roles"]))
         if formal_errors:
             raise ValueError("; ".join(formal_errors))
         if any("formal_check_assessment" not in r for r in record["referee_reports"].values()):
@@ -1922,7 +2047,8 @@ def delivery_blockers(paper_id: str, metadata: Mapping[str, Any], root: Path,
     read. Internal-vocabulary hits are reported with their sentence for a human
     decision and do not block (see manuscript_style.BLACKLIST_CODES); they are
     appended to ``notes`` together with references that could not be verified for
-    lack of source access.
+    lack of source access and with registered passage selectors / local evidence
+    files that no longer match (nothing uses them; see ``stale_route_notes``).
     """
     from paper_writing.editorial_rewrite import abstract_findings
     from paper_writing.manuscript_style import audit_manuscript_style, manuscript_style_blockers
@@ -1938,6 +2064,7 @@ def delivery_blockers(paper_id: str, metadata: Mapping[str, Any], root: Path,
         access = ((record or {}).get("formal_check") or {}).get("unverifiable_source_access")
         if access:
             notes.append({"kind": "unverifiable_source_access", **dict(access)})
+        notes.extend(stale_route_notes(metadata, root))
     problems += support_audit_blockers(audit_manuscript_support(paper_id, root=root))
     problems += [f"Venue abstract format: {p}" for p in abstract_findings(metadata, root, paper_id)]
     if record is not None:
@@ -1953,6 +2080,19 @@ def delivery_blockers(paper_id: str, metadata: Mapping[str, Any], root: Path,
         # Decisions written before build_inputs existed were made by a preflight that
         # still rejected unused source files, and their snapshot is bound: nothing to add.
     return problems
+
+
+def stale_route_notes(metadata: Mapping[str, Any], root: Path) -> list[dict[str, Any]]:
+    """Registered selectors / local evidence nothing uses any more: cleanup notes, never blockers."""
+    try:
+        documents, bibliography = formal_checks.current_inputs(metadata, root)
+        findings = formal_checks.route_findings(metadata, formal_checks.inventory(documents, bibliography), root)
+    except (ValueError, OSError):
+        return []  # the formal binding revalidation reports unreadable inputs
+    return [{**f, "kind": "stale_registration_route", "route_kind": f["kind"],
+             "code": ROUTE_ADVISORY_CODES[f["kind"]],
+             "note": "Not used by the formal check or delivery; the registration entry can be updated or removed."}
+            for f in findings if f["kind"] in formal_checks.ADVISORY_ROUTE_KINDS]
 
 
 def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: Path, snapshot: str) -> list[str]:
@@ -1976,7 +2116,7 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
         return [f'Paper/target-scoped review round limit is invalid: {exc}']
     if not review_policy_matches(record, config, root, history_policy, round_limit):
         problems.append("Review policy changed after this decision; a fresh review is required")
-    problems.extend(formal_checks.validate_binding(record.get("formal_check"), metadata, root, config["roles"].get("editor")))
+    problems.extend(formal_checks.validate_binding(record.get("formal_check"), metadata, root, formal_role(config["roles"])))
     if release.get("formal_check") != record.get("formal_check"):
         problems.append("The release is not bound to the actual mandatory formal check")
     if any("formal_check_assessment" not in r for r in record.get("referee_reports", {}).values()):

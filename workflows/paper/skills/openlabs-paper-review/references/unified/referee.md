@@ -66,6 +66,9 @@ Check, in this order:
 Recommend in the journal's vocabulary: `accept`, `minor_revision`, `major_revision`, `reject`.
 `minor_revision` means only local text changes are needed and no new argument, computation or
 claim is required.
+When you recommend `reject`, put your most important reason first: as the first
+`scientific_blocker` when it concerns correctness or support, otherwise as the opening
+sentence of `significance`.
 
 Separate what decides whether the conclusions hold from what would merely improve the paper.
 The two kinds are treated differently: the first keeps the paper in revision, the second is

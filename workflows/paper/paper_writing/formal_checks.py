@@ -420,18 +420,31 @@ def _whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
-def local_route_preflight(metadata: Mapping[str, Any], inv: Mapping[str, Any], root: Path) -> list[str]:
-    """Check declared routes before paying for any independent model call."""
-    errors = []
+# Route findings that no verification or delivery path consumes any more. Since the
+# formal gate was narrowed to bibliography and core mathematics (2026-10-12),
+# ``verification_source_metadata`` strips ``passage_patterns`` and drops
+# ``local_evidence`` before ``run_checks``/``validate_binding``; a stale selector
+# or a changed local evidence file therefore binds nothing. They are reported as
+# preparation advisories (review) and delivery notes (handoff), never blockers.
+# An absent bibliography key still blocks: a declared source routed to a key the
+# manuscript does not print stops the reference verification.
+ADVISORY_ROUTE_KINDS = frozenset({"stale_selector", "local_evidence_file"})
+
+
+def route_findings(metadata: Mapping[str, Any], inv: Mapping[str, Any], root: Path) -> list[dict[str, str]]:
+    """Declared-route problems as {kind, route, message[, selector]}; see ADVISORY_ROUTE_KINDS."""
+    findings = []
     plan = source_plan(metadata)
     keys = {r['key'] for r in inv['references']}
     for item in plan.get('sources', []) + plan.get('local_evidence', []):
         label = item.get('path') or item.get('url')
         if set(item.get('reference_keys', [])) - keys:
-            errors.append(f"Source routing: {label}: absent bibliography key")
+            findings.append({'kind': 'absent_key', 'route': label,
+                             'message': f"Source routing: {label}: absent bibliography key"})
         for pattern in item.get('passage_patterns', []):
             if not any(pattern in p['text'] for p in inv['passages']):
-                errors.append(f"Source routing: {label}: selector matches no current passage: {pattern}")
+                findings.append({'kind': 'stale_selector', 'route': label, 'selector': pattern,
+                                 'message': f"Source routing: {label}: selector matches no current passage: {pattern}"})
     for item in plan.get('local_evidence', []):
         try:
             body = _safe_file(root, item['path']).read_bytes()
@@ -441,8 +454,14 @@ def local_route_preflight(metadata: Mapping[str, Any], inv: Mapping[str, Any], r
             if not text.strip() or '\x00' in text:
                 raise ValueError('not nonempty UTF-8 evidence')
         except (ValueError, OSError) as exc:
-            errors.append(f"Source routing: {item['path']}: {exc}")
-    return errors
+            findings.append({'kind': 'local_evidence_file', 'route': item['path'],
+                             'message': f"Source routing: {item['path']}: {exc}"})
+    return findings
+
+
+def local_route_preflight(metadata: Mapping[str, Any], inv: Mapping[str, Any], root: Path) -> list[str]:
+    """Every declared-route problem (the formal stage passes route-free source metadata)."""
+    return [f['message'] for f in route_findings(metadata, inv, root)]
 
 
 def artifact_inventory(metadata: Mapping[str, Any], root: Path) -> dict[str, Any]:

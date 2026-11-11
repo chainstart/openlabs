@@ -8,5 +8,6 @@ Write the decision letter the authors will receive: state the decision, then lis
 importance, what must be done, merging duplicate points from the referees and keeping their
 locations. Required changes marked `advisory: true` are recommendations: list them separately
 from what must be done, together with the optional suggestions. If the fixed decision's
-`next_action` is `direction_decision`, state the editor's strongest reason and the closest prior work plainly. Be specific and brief; no
+`next_action` is `direction_decision`, state the editor's strongest reason and the closest prior work plainly;
+when both referees recommended reject, state each referee's principal reason instead of the editor's. Be specific and brief; no
 praise padding. Return only the JSON object required by the schema.
