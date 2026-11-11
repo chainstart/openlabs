@@ -104,6 +104,10 @@ Zenodo 文件必须是当前用户拥有的普通文件且权限不宽于 `0600`
 `ZENODO_ACCESS_TOKEN`、`ZENODO_SANDBOX_ACCESS_TOKEN` 和 `ZENODO_ENVIRONMENT`；OpenLabs
 启动的 Codex/worker 可以继承它们，但普通登录 shell 仍不会自动携带密钥。该加载机制也不会
 设置 `OPENLABS_ENABLE_EXTERNAL_WRITES`，外部写操作仍须按下文针对一次明确操作单独开启。
+设置 `OPENLABS_ENV_FILES=<文件1>:<文件2>`（`os.pathsep` 分隔）时只读取列出的文件、完全不读上面
+三个默认文件（包括 `zenodo.env`），适合隔离的演练或测试环境。配置只从
+`$OPENLABS_WORKSPACE/openlabs/config/openlabs.toml` 读取（没有单独指定配置文件的变量）；
+演练时可把 `$OPENLABS_WORKSPACE/openlabs` 做成除 `config/` 外都链接到代码仓库的目录。
 `tick` 和 `bin/openlabs-codex` 在启动研究前还会执行严格网络门禁：依次探测当前进程继承的
 代理和持久代理文件。若当前进程携带一个新的可用代理，它会原子更新
 `90-openlabs-proxy.conf`，并通过 `systemctl --user import-environment` 同步大小写代理变量；
@@ -303,7 +307,9 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
 2. 配置六个 `[runners.<name>]`（上文），确认 lead 档两家模型族都有。
 3. 环境变量：`ARA_PAPER_MANAGE_API_URL/_KEY`、`ZENODO_ACCESS_TOKEN`（或 `~/.config/ara/zenodo.env`）；
    不要全局设置 `OPENLABS_ENABLE_EXTERNAL_WRITES`。
-4. 本机有 `bwrap`（Claude 执行者的文件边界）。
+4. 本机有 `bwrap` 且能创建用户命名空间（Claude 执行者的文件边界，也是复现重放的沙箱）：
+   `bwrap --die-with-parent --bind / / -- true` 应返回 0；报 `No permissions to create new
+   namespace` 的环境（例如当前容器）不能运行 Claude 执行者。
 5. 按上文手工验证一次 Claude 执行者。
 6. 数据仓库的 git 身份或 `[program.git]`；`paper_writing_command` 在 tick 环境里可执行。
 7. 依次打开 `enabled`、`auto_handoff`，确认首篇停在 `auto_release_off` 后再打开 `auto_release`。
