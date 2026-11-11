@@ -514,7 +514,8 @@ class TickReport:
     # scout_blocked, admissions_scheduled, admissions_waiting, cards_registered,
     # rejected_cards (with reasons), admission_decisions and materialized; the
     # back half adds direction_decisions (scheduled and their outcomes),
-    # topics_frozen, ready_queued and handoffs.
+    # topics_frozen, ready_queued and handoffs; the release pipeline adds releases
+    # (one entry per step taken) and release_exhausted (papers stopped for a human).
     program: dict[str, Any] = field(default_factory=dict)
     # Provider-quota budget: current launch ceiling and per-runner backoff ends.
     effective_parallel: int | None = None
