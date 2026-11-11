@@ -1412,6 +1412,19 @@ def _in_container() -> bool:
     return _CONTAINER_MARKER.exists()
 
 
+_PROC_CGROUP = Path("/proc/self/cgroup")
+
+
+def _inside_worker_slice() -> bool:
+    """Same inherited-guard test as bin/openlabs-resource-guard."""
+
+    try:
+        text = _PROC_CGROUP.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return re.search(r"(^|/)openlabs-workers\.slice(/|$)", text, re.MULTILINE) is not None
+
+
 def _container_math_cgroup_verified(root: Path) -> bool:
     """True only when this cgroup itself enforces the approved math budget."""
 
@@ -1566,6 +1579,15 @@ def _launch_worker(
             pid = 0
         return pid or None
 
+    # No container, no systemd: only an already-guarded caller (for example a
+    # tick started from bin/openlabs-codex) may start a worker directly, because
+    # gpu_guard.py adds no CPU/RAM/pids limit of its own.
+    if not _inside_worker_slice():
+        raise RuntimeError(
+            "no resource guard for the worker: not in a verified container, no systemd "
+            "user manager, and this process is not inside openlabs-workers.slice; "
+            "refusing to launch"
+        )
     with log_path.open("ab") as log_handle:
         process = subprocess.Popen(
             command,

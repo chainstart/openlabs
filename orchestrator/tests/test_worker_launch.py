@@ -161,3 +161,42 @@ def test_manual_tick_uses_transient_service_when_user_systemd_is_available(
     assert calls[1][0] == "/usr/bin/systemd-run"
     assert "--slice=openlabs-workers.slice" in calls[1]
     assert any(token.endswith("/openlabs/gpu_guard.py") for token in calls[1])
+
+
+@pytest.mark.parametrize("inherited", [True, False])
+def test_worker_without_systemd_or_container_needs_an_inherited_guard(
+    tmp_path, monkeypatch, inherited
+) -> None:
+    paths = WorkspacePaths(workspace=tmp_path, code=tmp_path / "openlabs",
+        data=tmp_path / "data", artifacts=tmp_path / "artifacts",
+        database=tmp_path / "database", database_file=tmp_path / "database/factory.sqlite")
+    paths.code.mkdir()
+    task = {"task_id": "manual:node", "current_attempt_id": "attempt-3",
+            "cpu_threads": 1, "memory_mib": 1024, "scratch_mib": 512}
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    monkeypatch.setattr("openlabs.engine._user_systemd_available", lambda: False)
+    cgroup = tmp_path / "cgroup"
+    cgroup.write_text(
+        "0::/user.slice/openlabs.slice/openlabs-workers.slice/openlabs-codex.scope\n"
+        if inherited else "0::/user.slice/user-1000.slice/session-2.scope\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("openlabs.engine._PROC_CGROUP", cgroup)
+    started = []
+
+    class FakeProcess:
+        pid = 4321
+
+    def fake_popen(command, **_kwargs):
+        started.append(command)
+        return FakeProcess()
+
+    monkeypatch.setattr("openlabs.engine.subprocess.Popen", fake_popen)
+    arguments = dict(task=task, paths=paths, job_path=tmp_path / "job.json",
+                     log_path=tmp_path / "worker.log", environment={})
+    if inherited:
+        assert _launch_worker(**arguments) == 4321
+    else:
+        with pytest.raises(RuntimeError, match="no resource guard for the worker"):
+            _launch_worker(**arguments)
+        assert started == []
