@@ -52,6 +52,11 @@ profiles:
       primary_writing: scientific-writing
       domain: statistical-analysis
       review_or_citation: peer-review
+# Policy values (venue tiers, exclusions, review panel, round limit) live only in the data
+# repository's registry/settings.yaml; the *_settings_key entries point there. The review-panel,
+# score_standard, recommendation_views, reviewer_* and gate_decision_standard keys below describe
+# the pre-unified (legacy) review vocabulary. No runtime code reads this file; the keys remain
+# because workflows/paper/tests/test_skill_profiles.py asserts them.
 quality_gate:
   require_target_journal_after_basic_draft: true
   target_journal_classification_system: 2025 CAS Journal Ranking Table (Major Category)
@@ -60,11 +65,8 @@ quality_gate:
   # User instruction 2026-11-07: SCIE Zones 1-4 (fee-free) or CCF A/B/C conferences.
   # Routine selections use Zones 3-4 / CCF B-C; Zones 1-2 / CCF-A need an approved target_escalation.
   new_selection_journal_tiers: [3, 4]
-  new_selection_effective_from: '2026-11-07'
   required_target_journal_indexes: [SCIE]
   allowed_target_conference_ccf_ranks: [A, B, C]
-  escalation_journal_tiers: [1, 2]
-  escalation_conference_ccf_ranks: [A]
   venue_eligibility_settings_key: journal_target_policy.venue_eligibility
   submission_cadence_settings_key: submission_cadence
   submission_cadence_check_command: python -m paper_writing cadence check --venue <venue> --paper-id <paper_id>
@@ -74,7 +76,6 @@ quality_gate:
   allowed_target_journal_tiers_after_rejections:
     1: [1, 2, 3, 4]
     2: [1, 2, 3, 4]
-  excluded_target_journals: [EPJC, The European Physical Journal C, Eur. Phys. J. C, JHEP, Journal of High Energy Physics, J. High Energy Phys.]
   journal_exclusions_settings_key: journal_target_policy.excluded_journals
   require_no_mandatory_author_fee: true
   require_canonical_target_journal_format: true

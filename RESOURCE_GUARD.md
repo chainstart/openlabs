@@ -18,6 +18,42 @@ The memory, swap and task limits match the installed OpenMath guard. OpenMath
 does not currently define a CPU quota; OpenLabs retains its pre-existing 75%
 CPU policy and applies it at the aggregate slice as well as scheduler admission.
 
+## What must run inside the guard
+
+This is a hard requirement. When resource use is uncertain, treat the command as
+resource-intensive and use the guard.
+
+- Launch interactive Codex research with `bin/openlabs-codex` so every child
+  process inherits the guard. Otherwise launch each potentially heavy command
+  with `bin/openlabs-resource-guard -- <command> [args...]` (from the data
+  repository: `../openlabs/bin/openlabs-resource-guard`).
+- Always guard interpreters and runtimes that execute repository or generated
+  code (Python, R, Julia, Java, Node.js, Bun, Deno), including inline scripts
+  and small probes; tests, benchmarks, fuzzers, solvers, symbolic or exact
+  computation, model inference or training, compilers, linkers, documentation
+  and PDF builds, package installation or synchronization, browser or Electron
+  automation, container builds, archive or dataset processing, and nested
+  Codex invocations.
+- Put the whole pipeline inside one guard, e.g.
+  `bin/openlabs-resource-guard -- bash -lc '<producer> | <consumer>'`.
+- Background jobs, asynchronous sessions, `nohup`, `tmux`, `timeout`, resumed
+  campaigns, workers, subagents and child processes must not bypass the guard.
+- Only inherently small, bounded commands may run directly: `pwd`, `ls`,
+  bounded `find`, `rg`, `sed`, `head`, `tail`, `stat`, `git status`, `git diff`,
+  `systemctl status` and bounded `journalctl`. A command that reads an
+  unbounded file or tree, loads project code, or can fan out is not exempt.
+- Before relying on inherited protection, verify that `/proc/self/cgroup`
+  contains `openlabs-workers.slice`; another guarded job elsewhere proves nothing.
+- Declare CPU work with `--task-type cpu`. Every GPU workload explicitly
+  reserves its device with `--task-type gpu --gpu-memory-mib N --gpu-device N`,
+  even inside an inherited worker cgroup; a CPU label never authorizes CUDA
+  work. Do not unset the allocator cap, launch parallel GPU children inside one
+  lease, or bypass the supervisor. Solve GPU pressure by reducing
+  batch/context/model memory, offloading or queueing, never by disabling CUDA
+  or raising ceilings.
+- If the guard, the systemd user manager or cgroup v2 controllers are
+  unavailable, fail closed: repair or install the guard first.
+
 ## Install and verify
 
 ```bash

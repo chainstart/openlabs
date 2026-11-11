@@ -1,144 +1,79 @@
-# OpenLabs mandatory resource policy
+# OpenLabs working principles
 
-Every process that can plausibly consume substantial memory or CPU must run
-inside the repository aggregate resource guard. This is a hard requirement,
-not a recommendation. When resource use is uncertain, treat the command as
-resource-intensive and use the guard.
+OpenLabs is meant to run unattended for long stretches: it reads the literature, picks
+questions, does the research, writes it up, and decides on its own when a topic should be
+frozen and replaced. These principles state the goal and the few hard limits. How to get
+there is your judgment; leave a record of each consequential decision so a later agent or
+the owner can see why it was made.
 
-- Launch interactive Codex research with `bin/openlabs-codex` so every child
-  process inherits the guard.
-- If the current Codex or shell is not already inside `openlabs-workers.slice`,
-  launch each potentially resource-intensive command with
-  `bin/openlabs-resource-guard -- <command> [args...]`.
-- Always guard interpreters and runtimes that execute repository or generated
-  code, including Python, R, Julia, Java, Node.js, Bun and Deno. Inline scripts,
-  one-off probes and commands expected to use only a small input are not exempt.
-- Always guard tests, benchmarks, fuzzers, solvers, symbolic or exact
-  computation, model inference or training, compilers, linkers, documentation
-  and PDF builds, package installation or synchronization, browser or Electron
-  automation, container builds, archive or dataset processing, and nested
-  Codex invocations.
-- Put the whole pipeline or command group inside one guard. For example, use
-  `bin/openlabs-resource-guard -- bash -lc '<producer> | <consumer>'`; guarding
-  only one stage is insufficient.
-- Background jobs, asynchronous exec sessions, `nohup`, `tmux`, `timeout`,
-  resumed campaigns, workers, subagents and child processes must not bypass the
-  guard. Nested wrapper calls intentionally reuse the shared slice.
-- Only commands whose memory use is inherently small and bounded may run
-  directly, such as `pwd`, `ls`, `find` over a narrowly bounded tree, `rg`,
-  `sed`, `head`, `tail`, `stat`, `git status`, `git diff`, `systemctl status`
-  and bounded `journalctl` queries. If a command reads an unbounded file/tree,
-  loads project code, or can fan out into child processes, it is not exempt.
-- Before relying on inherited protection, verify `/proc/self/cgroup` contains
-  `openlabs-workers.slice`. Do not infer protection merely because another
-  guarded job is running elsewhere.
-- The aggregate limit is 75% of visible logical CPUs, 30 GiB memory soft, 34
-  GiB memory hard, 4 GiB swap and 512 tasks.
-- Classify resources by task: use `--task-type cpu` for CPU-only solvers,
-  exact arithmetic, tests, builds and orchestration. These tasks do not query
-  GPU telemetry, receive GPU allocator caps or stop for external VRAM pressure.
-  Existing commands without GPU options default to CPU resource protection.
-- Keep GPU available. Every GPU model inference/training or other CUDA workload
-  must explicitly reserve its GPU with
-  `bin/openlabs-resource-guard --task-type gpu --gpu-memory-mib 8192 --gpu-device 0 -- <command>`
-  (choose a smaller budget when sufficient). Only one declared GPU job may run
-  on each device at a time; CPU research can continue in parallel. Call this
-  wrapper even inside an inherited worker cgroup to acquire the GPU reservation.
-- GPU admission and supervision preserve at least 25% VRAM and 2048 MiB free,
-  enforce an 85 C temperature stop, and fail closed on telemetry loss. PyTorch
-  receives a native allocator cap with 768 MiB of each budget reserved for
-  contexts/other allocations. Do not unset/override the allocator cap, launch
-  parallel GPU children inside one lease, or bypass the supervisor. For another
-  framework, configure its allocator budget explicitly before model allocation.
-  Global sampling is a backstop, not a kernel-level VRAM or utilization quota.
-- Factory controllers are CPU tasks; their GPU computation children must
-  explicitly acquire a GPU reservation. `--task-type auto` chooses GPU when
-  a GPU budget is supplied and CPU otherwise; it does not detect program behavior.
-  A CPU label is not permission to execute undeclared CUDA workloads. CPU children
-  inside an existing GPU reservation still inherit its outer watchdog.
-  Never solve GPU pressure by disabling CUDA or
-  increasing ceilings; reduce batch/context/model memory, offload, or queue work.
-- If the guard, systemd user manager or cgroup v2 controllers are unavailable,
-  fail closed: do not start the command unbounded. Repair or install the guard
-  first.
+## Goal
 
-See `RESOURCE_GUARD.md` for installation, monitoring and recovery commands.
+Within the configured research scope, keep producing research that holds up and that someone
+in the field cares about. Choosing, advancing, freezing and replacing topics, and changing
+the target venue, are decisions the system makes itself. Record each one with its evidence
+in the campaign or paper record. A frozen topic keeps its state and reasons so it can be
+resumed or cited later.
 
-# Paper target policy
+## Integrity
 
-Before any journal recommendation or retarget, refresh and query the shared team rejection
-ledger using `paper-writing journal-history sync` and `paper-writing journal-history check`.
-The data repository owns `registry/journal-rejections.json` (canonical), `.csv` (detailed table)
-and `.md` (journal summary). Thresholds are in
-`registry/settings.yaml#journal_target_policy.team_rejection_history`: exclude at 3 distinct
-rejected team papers; 2 is a cautious alternative. Apply across all disciplines. Preserve
-ongoing submissions and historical evidence; see `docs/JOURNAL_HISTORY.md`.
+- Do not fabricate data, results, citations, reviews, human checks or attestations. The
+  value of every output depends on this.
+- Keep negative, failed, null and contradictory results in the record and, where relevant,
+  in the paper. Deleting them makes the remaining evidence misleading.
+- Disclose AI use truthfully in the one final AI-use declaration, naming the tools and model
+  identifiers the runtime records actually show.
 
-For every journal manuscript beyond its basic draft, use the domain-specific target policy in
-`workflows/paper/skills/profiles.yaml` and the active data repository's
-`registry/settings.yaml`.
+## Safety and resources
 
-- User instruction 2026-11-07 supersedes the 2026-10-16 Zone-4-only rule: every paper targets an
-  **SCIE** journal in 2025 CAS major-category **Zones 1-4** with a fee-free route, or a
-  **CCF-recommended conference ranked C or better** with no mandatory page/publication charge.
-  Paid routes are never selected; ESCI-only journals are ineligible. Routine selections use Zones
-  3-4 / CCF B-C; Zones 1-2 / CCF-A require an approved `target_escalation` record. The registry
-  enforces `registry/settings.yaml#journal_target_policy.venue_eligibility` for targets checked
-  on or after its effective date. Preserve existing targets and ongoing revisions/submissions.
-  Use the **2025 edition of the Chinese Academy
-  of Sciences Journal Ranking Table, upgraded edition, major-category partition**. This 2025 CAS
-  major-category table is the repository's fixed journal-classification baseline until a human
-  explicitly changes the policy. JCR/WOS/JCI quartiles, CAS subject-category partitions, and
-  XinRui tiers are different systems and must never be substituted or relabeled as this value.
-- New research is mainly real-data interdisciplinary empirical work
-  (`registry/settings.yaml#research_portfolio`). Select topics with
-  `workflows/paper/skills/openlabs-empirical-topic-scout`; new empirical papers must register
-  sourced real `data_sources` and reader-facing `key_findings`.
-- Since 2026-11-07 the unified review uses two referees from different model families (Opus and
-  GPT), and new targets first pass `paper-writing rewrite run <paper_id>` (editor-facing rewrite of
-  abstract/Introduction/closing, judged blind by both families); see
-  `workflows/paper/skills/overlays/quality-gate.md`.
-- Before every actual submission run `paper-writing cadence check --venue <venue> --paper-id <id>`
-  after `journal-history sync`; follow `registry/settings.yaml#submission_cadence`. Review
-  `paper-writing submissions monitor` for revision deadlines and stale submissions.
-- Before using the relaxed transfer tiers, record distinct sourced external decisions in
-  `journal_rejections` as specified in `workflows/paper/skills/overlays/quality-gate.md`.
-  Internal reviews, withdrawals and duplicate letters do not increase the rejection count.
-- Record the numeric major-category zone in the compatibility field `target_journal_tier`, plus
-  `target_journal_ranking_year: 2025`, `target_journal_ranking_scope: major_category`, the CAS
-  major-category name, a dated classification source, and the check date. If the 2025 CAS value
-  cannot be verified, leave the target blocked rather than infer it from another ranking.
-- Missing local ranking metadata is a lookup task, not a reason to stop at `unverified`: query the
-  2025 CAS major-category record from the official service or an auditable public index, verify the
-  exact title/ISSN, and write the zone, category, source, and check date back into local metadata.
-  Use `unverified` only when those searches genuinely fail or conflict, and record the conflict.
-- Require an official publication route carrying no mandatory author fee. Optional paid open
-  access is acceptable only when a fee-free subscription route remains available. Record dated
-  official sources for scope, article type, author fees, and formatting, and apply the verified
-  venue format to the canonical manuscript; a side candidate alone is insufficient.
-- Journal selection and a passing paper gate never authorize submission, spending, or a journal
-  event.
+Every process that can use substantial CPU or memory runs inside the aggregate resource
+guard (`bin/openlabs-codex`, or `bin/openlabs-resource-guard -- <command>`); GPU work also
+declares its budget. If the guard is unavailable, do not run the command unguarded; only
+small bounded inspection (`rg`, `ls`, `git status`) runs directly. The full list, the limits
+and the GPU rules are in `RESOURCE_GUARD.md` ("What must run inside the guard"). Never
+commit credentials, tokens or private keys.
 
-# Standing author declarations
+## Actions that need a human
 
-User instruction 2026-11-09: use the active data registry's default five-person
-author roster and confirmed CRediT allocation, no competing interests to disclose,
-and no specific funding for the research as the default for subsequent papers.
-Do not ask the user to reconfirm these routine facts for each manuscript.
-Apply an explicit paper-specific author order/submission-handler instruction or
-known contrary funding/conflict facts when present. This standing instruction
-does not attest individual author replies, final-version human review or human
-code verification. See `registry/settings.yaml#defaults.author_declarations` and
-`registry/paper-declarations/README.md` in the active data repository.
+Submitting a manuscript, any formal publication or journal event, spending money, and
+changing authorship are irreversible or have consequences outside the repository. A human
+confirms each one; a passing review gate or a selected journal is not that confirmation.
+Paid routes are never used: no venue with a mandatory author, page or publication fee.
+(Releasing a ready paper's supporting materials to Zenodo has standing authorization in
+`registry/settings.yaml#support_publication`.)
 
-# Paper identifier policy
+## Scientific judgment
 
-For every domain, follow `docs/PAPER_ID_POLICY.md` when creating a paper or naming a public
-manuscript file.
+- Work on questions that readers of real venues already study. Of 113 team submissions,
+  4 were accepted; most rejections came from editors within two weeks, usually for narrow
+  scope or limited interest, not for errors (see `openlabs-empirical-topic-scout`).
+- Every conclusion must follow from the evidence; claim exactly what the evidence supports.
+- State the contribution against the closest existing work, by name.
+- When a finding is too slight, first run the single analysis that would decide whether it
+  matters (external validation, a stronger baseline, a mechanism test). Narrowing the wording
+  of a slight result does not make it publishable; if the decisive analysis fails, freeze
+  the topic.
 
-- New `paper_id` values use `YYYYMMDD-domain-subdomain-keywords`; the date, domain and subdomain
-  must match the registry record.
-- Repository-local question, task, round and workstream labels such as `tp-042` are provenance,
-  not paper identifiers or public filenames.
-- Keep an established `paper_id` immutable. Use the domain-scoped `display_id` for reader-facing
-  names and `<display_id>-v<MAJOR.MINOR.PATCH>.pdf` for exported manuscripts.
+## Review
+
+Authors do not review their own manuscripts. Readiness comes from independent referees in
+fresh processes, from model families different from the drafting model, because a blind
+test showed each model judge preferring its own family's text 4 times out of 5.
+
+## Writing
+
+One main conclusion per paper. Neutral, objective scholarly tone. Internal process
+(agents, scripts, review rounds, audits, repository paths) stays out of the manuscript.
+
+## Where decisions live
+
+User decisions are recorded once, in the data repository's `registry/settings.yaml`, with
+their dates and quotes: venue eligibility and ranking system, review panel and round limit,
+author and declaration defaults, team rejection ledger, submission cadence, research
+portfolio and support publication. Read the relevant key instead of relying on a copy in
+prose. Paper-specific exceptions live in that paper's registry record with a hash-bound
+user receipt. Other references:
+
+- paper writing: `workflows/paper/skills/openlabs-paper-writing/SKILL.md`;
+- paper identifiers: `docs/PAPER_ID_POLICY.md`;
+- journal history and rejection handling: `docs/JOURNAL_HISTORY.md`;
+- supporting-material uploads: `docs/ZENODO_GUIDE.md`.

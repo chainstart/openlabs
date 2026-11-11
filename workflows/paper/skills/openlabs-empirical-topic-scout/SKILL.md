@@ -8,9 +8,8 @@ description: Select, scope and stop-or-go real-data interdisciplinary empirical 
 Read `registry/settings.yaml#research_portfolio` and `#journal_target_policy.venue_eligibility`,
 `../overlays/quality-gate.md` and the team ledger (`paper-writing journal-history sync/check`).
 New work is mainly **real-data interdisciplinary empirical research** (user instruction
-2026-11-07). Topics must be publishable at an eligible venue: an SCIE journal in 2025 CAS
-major-category Zones 1-4 with a fee-free route, or a CCF A/B/C conference with no mandatory
-page or publication charge. Never choose a paid route.
+2026-11-07). Topics must be publishable at a venue eligible under
+`venue_eligibility`; never choose a paid route.
 
 ## What the 2026-11 audit showed
 

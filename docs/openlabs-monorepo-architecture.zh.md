@@ -228,7 +228,7 @@ workflows/paper 是所有领域共用、按需调用的下游工作流，不是�
 - 使用确定性代码完成 registry、结果包、构建、引用、质量门和不可变版本校验；
 - 投稿、期刊事件和一般外部副作用等待管理员批准；通过门禁只授权精确绑定的 Zenodo 支撑材料发布。
 
-现有 paper workflow 以 AI/ML、数学、材料、物理和量化金融薄协调 Skill 覆盖领域证据边界；审稿默认由一个空白、独立的 Codex 完成，registry 可按需启用经 Packy 调用的空白 Claude Code Opus 5 作为第二位审阅人。它们依赖 vendored 写作/统计/审稿 Skill、仓库 registry、claim-evidence map，以及 paper_writing 确定性 Python。纯复制 Skill 只能获得写作方法，不能获得可审计论文流水线。
+现有 paper workflow 以一个通用写作 Skill（`openlabs-paper-writing`）加各领域的薄入口 Skill 覆盖领域证据边界；审稿走统一评审，编辑与跨模型审稿人面板以数据仓库 `registry/settings.yaml#review` 为准。它们依赖 vendored 写作/统计/审稿 Skill、仓库 registry、claim-evidence map，以及 paper_writing 确定性 Python。纯复制 Skill 只能获得写作方法，不能获得可审计论文流水线。
 
 迁入 OpenLabs 时保留“Skill 决策层 + 薄确定性 workflow”：
 
@@ -459,9 +459,8 @@ campaign、同使命使用 `codex exec resume`；节点输入应优先指向最�
 | 审阅要求新证据 | 新 `researcher`/`experimenter`，完成后恢复原 `writer` | 让证据生产与写作独立，再重新审阅 |
 
 控制面硬性保证 session 只能来自同一 campaign、同一角色且位于当前任务祖先链中的任务；reviewer
-任务的 session mode 固定为 `fresh`。当前论文门禁默认只冻结 Codex reviewer-1 并形成单成员
-面板；只有 registry 显式启用双审时，才以 Packy 上的 Claude Code Opus 5 启动 reviewer-2。
-第二位只能获得同一冻结科学输入和 reviewer-1 的哈希，不得读取其内容。角色切换不能在一个
+任务的 session mode 固定为 `fresh`。论文评审面板（编辑与不同模型家族的审稿人，各自全新
+进程）以 `registry/settings.yaml#review` 为准。角色切换不能在一个
 对话里靠提示词“扮演”，必须新建任务。
 结果包中的普通字符串 `next_action` 表示当前角色续接；需要换角色或启动独立同角色运行时，
 必须写出含 `objective`、`agent_role`、`session_mode` 的结构化 action；审阅回流还必须声明
@@ -473,7 +472,7 @@ session。研究/实验结果不能绕过 paper-readiness 审查直接生成 wri
 研究/实验 paper_candidate
   → fresh paper_readiness reviewer
   → fresh writer
-  → fresh Codex review（可配置增加 fresh Packy Claude Opus 5）
+  → fresh unified review（面板见 settings.yaml#review）
       ├── 通过：内部终止态
       ├── text_revision：恢复原 writer → 再次 fresh review
       └── evidence_remediation：fresh researcher/experimenter

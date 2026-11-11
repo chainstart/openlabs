@@ -2,7 +2,7 @@
 
 默认规则仍要求独立编辑逐一核对历史拒信，只有有依据的 `resolved` 或 `compatible`
 才能进入审稿。2026-10-11 用户明确授权四篇论文：缺失原信这一事实本身不阻断正常
-编辑与唯一 Codex referee B 的判断。它不是免除科学要求，也不授权投稿。
+编辑与审稿人（当时为唯一的 Codex referee B，现按 `settings.yaml#review` 配置）的判断。它不是免除科学要求，也不授权投稿。
 
 数据仓库的逐篇元数据可登记以下结构。实际授权收据必须是
 `openlabs.actual_author_instruction.v1`，来源为当前会话的真实用户消息；读取 JSON

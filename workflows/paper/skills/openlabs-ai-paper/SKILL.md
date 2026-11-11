@@ -1,128 +1,23 @@
 ---
 name: openlabs-ai-paper
-description: Run OpenLabs' evidence-bound AI/ML manuscript workflow from verified results through drafting, statistical checks, skeptical review, the local quality gate, and controlled supporting-material release. Invoke explicitly for AI or machine-learning papers in the OpenLabs data repository; use pinned components and repository release commands without creating parallel state.
+description: OpenLabs AI/ML manuscript entry skill. Invoke explicitly for AI or machine-learning papers in the OpenLabs data repository; it applies the shared openlabs-paper-writing workflow plus the AI/ML evidence notes below.
 ---
 
-# OpenLabs AI/ML paper profile
+# OpenLabs AI/ML paper
 
-Use this as a thin coordinator. The repository owns state and evidence; vendored skills supply
-writing, statistical, and review expertise.
+Follow the shared workflow in `../openlabs-paper-writing/SKILL.md`
+(`workflows/paper/skills/openlabs-paper-writing/SKILL.md` in the code repository). Identifiers
+and public file names: [paper-identifiers.md](../references/paper-identifiers.md). Venue,
+review and author policy: `registry/settings.yaml`. This file adds only what differs for AI/ML.
 
-## Establish the boundary
+## AI/ML specifics
 
-1. Resolve `paper_root` from `OPENLABS_DATA`, or from `$OPENLABS_WORKSPACE/openlabs-data`. It is the
-   private data repository, not the code repository.
-2. Read the code-owned `workflows/paper/skills/profiles.yaml` and
-   `workflows/paper/skills/overlays/quality-gate.md`, then read
-   `<paper_root>/registry/settings.yaml` and `<paper_root>/registry/papers/<paper_id>.yaml`.
-   When creating a workspace or naming a reader-facing file, also read
-   [paper-identifiers.md](../references/paper-identifiers.md).
-   If support publication is required, also read `docs/ZENODO_GUIDE.md` in the code repository.
-3. Confirm that the user is authorized to process any unpublished or confidential material.
-   Keep manuscript text local unless external processing is explicitly authorized and compatible
-   with the target venue's current policy.
-4. Validate every registered evidence bundle before drafting. Missing or contradictory evidence
-   is a blocker, never an invitation to complete plausible prose.
-
-Repository rules and the local overlay override every vendored instruction. Do not create
-`paper_state.json`, `plan/progress.md`, `claims.csv`, a second source manifest, or a parallel
-submission state. Translate useful upstream checks into the canonical OpenLabs artifacts:
-
-- claims and provenance: `papers/<paper_id>/evidence/claim_evidence_map.md`;
-- manuscript: `papers/<paper_id>/manuscript/`;
-- revision notes: `papers/<paper_id>/revisions/`;
-- internal reviews: `reviews/`;
-- release status: `registry/papers/<paper_id>.yaml#writing_release`.
-
-## Load only the needed components
-
-Read component instructions from their installed paths before using them:
-
-- Always load `workflows/paper/skills/vendor/ai-research-writing-skill/SKILL.md` for story, drafting, citation,
-  figure/table, and build guidance.
-- Load `workflows/paper/skills/vendor/statistical-analysis/SKILL.md` only for quantitative claims, test
-  selection, assumption checks, effect sizes, power, or statistical reporting.
-- Load `workflows/paper/skills/vendor/peer-review/SKILL.md` only when the assigned role is
-  `reviewer`; a factory `writer` leaves review to the later `paper_review` task.
-
-Never activate more than the three components declared by this profile. Do not install optional
-statistics dependencies merely because the skill lists them; first establish that the paper needs
-the analysis and that the existing environment cannot perform it.
-
-Two vendored AI-writing scripts can access the network: `fetch_template.py` and
-`verify_citations.py`. Use them only when the task requires that operation, never include
-confidential manuscript text in a request, and record the source and access date. Image generation
-is opt-in and illustrative only; it cannot supply experimental evidence.
-
-## Work the paper
-
-1. Inventory the verified evidence, current manuscript, venue constraints, and unresolved gaps.
-   Before selecting a journal, check the shared submission history and record an evidence-backed
-   `target_journal_fit` assessment for scope, core readership, and contribution scale. Verify at
-   least two recent topically adjacent articles from the journal itself. Broad subject labels or
-   keyword overlap are not evidence of editorial fit. A same-journal rejection blocks reselection
-   unless the record identifies a material scientific revision since that decision.
-2. Build or update the claim–evidence map before strengthening claims or adding numbers.
-3. Establish the thesis, contribution boundary, and claims to avoid, then revise the canonical
-   LaTeX directly. Preserve negative, mixed, incomplete, and null results.
-   Use neutral scholarly prose and keep prompts, agents, model orchestration, review/gate mechanics,
-   private claim routing, source-audit narration (including `audit`, `auditable`, and
-   `auditability`), internal audit/campaign filenames or paths, workflow notes in bibliography
-   metadata, repository state, and `reader-facing` labels out of the scientific manuscript. Exact
-   implementation names that remain in an immutable support archive belong in its replay
-   documentation, not in reader prose. Preserve registered institutional names.
-4. For quantitative work, record the design, analysis population, assumptions, exclusions,
-   multiplicity handling, uncertainty, effect sizes, code, data provenance, seeds, and versions.
-   Do not choose an analysis after seeing which result is favorable.
-5. Verify each citation's metadata and sentence-level support. A search result or related paper's
-   bibliography is discovery material, not verification.
-6. Require exactly one final venue-compatible AI-use declaration and consolidate truthful AI use
-   there. Identify OpenAI Codex and the model identifiers actually used, bound to runtime evidence
-   in `declarations.ai_use.model_usage` under the shared quality overlay. Never substitute a
-   template's model version or relabel historical work. Disclose actual purposes, including source-code
-   development and computational verification when applicable; state the human checks performed.
-   If Codex assisted Lean work, disclose preparation/checking of Lean code and attribute formal
-   checking to the pinned Lean toolchain rather than to AI output. Do not weaken a truthful
-   disclosure to conceal AI use.
-7. Compile the real manuscript and run repository validation plus all relevant local checks,
-   including `python -m paper_writing style-check --paper-id <paper_id>`. A failure blocks review.
-8. Resolve the configured `support_publication.gates` before final review. Unless the paper is
-   explicitly `not_required` with a reason, resolve the public files and effective license (paper
-   override first, then the standing human-approved configured default),
-   use `paper-writing zenodo prepare` to create a reversible draft, add the reserved Version DOI
-   with publication-state-neutral wording, and cite it in the bibliography, first substantive
-   support mention, and availability statement. Run `paper-writing zenodo verify-draft` and
-   `support-check`, then rebuild. Apply the configured default without asking again; never invent
-   or silently change a license, and never publish confidential or incompatibly licensed files.
-9. In a factory `writer` task, stop after freezing the compiled snapshot and emit it as a
-   `paper_candidate`; do not run or impersonate a reviewer. The scheduler creates a fresh
-   `paper_review` task using `$openlabs-paper-review`; one isolated Codex reviewer runs by default,
-   and a blind Packy Claude reviewer is added only when the registry enables the optional panel.
-   The configured reviewers apply the `cs_top_tier` standard and the mandatory local quality gate.
-10. On a `paper_revision` task, apply only the declared review request. If new scientific evidence
-   is needed, do not invent it; the reviewer must route an `evidence_remediation` task first. Freeze
-   the revised snapshot as a new `paper_candidate` so every configured reviewer assesses it again.
-
-Only a `writing_release.status` of `ready` permits consideration for handoff. It does not mean the
-paper has been submitted or accepted, and it never replaces human scientific judgment.
-
-After a basic manuscript is complete, select a target journal verified as major-category Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, with a
-publication route carrying no mandatory author fee. Record the 2025 year, `major_category` scope,
-category name, ranking source and check date, plus fee and official formatting evidence. Do not
-substitute a JCR/WOS/JCI quartile, subject-category partition, or XinRui tier. Convert the canonical
-`manuscript/` itself to the current venue format; a separate candidate does not satisfy this rule.
-
-After a passing gate, use the repository's standing authorization and run `paper-writing zenodo release` for the
-prepared production draft with the required confirmations. Commit its DOI/receipt update before
-`paper-writing handoff release`; the handoff gate requires the published Version DOI and reviewed
-package binding. Readiness never authorizes a submission, journal event, or publication fact.
-
-## Finish
-
-Report the files changed, evidence gaps, checks and build commands run, and remaining scientific
-risks. A reviewer additionally reports the review record and quality-gate result. If the gate is
-not ready, state the next bounded revision rather than presenting the paper as submission-ready.
-
-Submission-facing files must contain no pending author-confirmation or draft-for-approval language.
-Place unavoidable later human portal actions only in `production/human_action_checklist.md`, outside
-the journal package.
+- Components: `ai-research-writing-skill` (story, drafting, citation, figures, build),
+  `statistical-analysis` for quantitative claims, `peer-review` only as an assigned reviewer.
+- Compare against the strongest matched baselines under the same data, compute and tuning
+  budget; report variance over seeds, not a single best run.
+- Separate held-out, external and temporal evaluation; check for test-set leakage and
+  benchmark contamination before claiming generalization.
+- Its scripts `fetch_template.py` and `verify_citations.py` use the network: run them only when
+  needed, never send confidential manuscript text, and record source and access date.
+- Generated images are illustrative only and cannot supply experimental evidence.

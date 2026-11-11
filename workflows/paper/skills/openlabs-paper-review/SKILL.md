@@ -1,14 +1,15 @@
 ---
 name: openlabs-paper-review
-description: "Run the sole OpenLabs journal self-review: deterministic preflight, independent target-editor screen with actual rejection history, configured scientific referee, bibliography and core-mathematics verification, then a bound decision."
+description: "Run the sole OpenLabs journal self-review: deterministic preflight, independent target-editor screen with actual rejection history, the configured cross-model referees, bibliography and core-mathematics verification, then a bound decision."
 ---
 
 # OpenLabs unified paper review
 
 Use `review unified-run` under the resource guard; this is the only route to
-`writing_release: ready`. Models and the active referee panel come from
-`registry/settings.yaml`. Claude remains disabled under the actual user instruction;
-only the configured Codex referee B runs. A gate never authorizes journal submission.
+`writing_release: ready`. The editor, the referees, their models and the round limit come
+from `registry/settings.yaml#review`; do not restate them here. The panel must include a
+referee from a model family other than the drafting model (`review.cross_model`). A gate never
+authorizes journal submission.
 
 ```bash
 bin/openlabs-resource-guard --task-type cpu -- env PYTHONPATH=workflows/paper python -m paper_writing \
@@ -26,11 +27,11 @@ keep internal review negotiation and claims about editor approval outside the pa
    verified journal scope/ranking/fees/format. File integrity is preparation work.
 2. Independent target-journal editor: contribution, closest prior work, readership,
    strongest desk-reject reason and actual available historical refusal letters.
-3. Independent scientific referee: complete manuscript and supplementary arguments,
+3. Independent scientific referees (each in a fresh process): complete manuscript and supplementary arguments,
    novelty, significance for the target, correctness, experimental credibility,
    actual previous objections and required changes. Do not defer this judgment
    until a paragraph/quote audit passes.
-The referee records actual unsupported main claims in `scientific_blockers` and
+Each referee records actual unsupported main claims in `scientific_blockers` and
 local prose/index repairs as typed changes. Its pre-verification diagnostic is
 preserved; a diagnostic observation is not automatically a scientific defect.
 
@@ -65,22 +66,12 @@ references without identified metadata still need an official catalog record. Ea
 evidence IDs must belong to sources bound to that reference key, with honest gaps still allowed.
 
 `ready` requires `send_to_review`, a merged `accept` or `minor_revision`, no scientific blocker,
-no unresolved previous item, and only `text` changes remaining. Scores are recorded for
-calibration only. At most `review.max_rounds_per_target` rounds (10) per target journal; after
-that the paper is `blocked` and the user decides (retarget, more research, or stop).
-The user's 2026-10-10 instruction sets the active limit to 15 rounds per target in
-`registry/settings.yaml`; the configured limit takes precedence over the older 10-round default.
-The global limit remains 15. The Biology paper
-`20261005-biology-genetics-reference-orientation-depth` alone has a user-authorized limit of
-30 for `Computational Biology and Chemistry` under the user's 2026-10-13 actual
-instruction, registered in the top-level paper field
-`review_round_limit_override`. Its exact paper ID, target and integer limit must match a
-SHA256-bound actual user instruction receipt (`authorization.path`, `sha256`, `json_pointer`
-and exact `summary`). Missing, changed or mismatched authorization stops the review and
-release validation. Papers without an override retain their configured round limit; the
-mandatory formal-check upgrade changes every paper's review policy digest. At the effective
-limit the user still decides how to proceed; this override
-adds no referee role and changes no editorial or referee decision standard.
+no unresolved previous item, and only `text` changes remaining; under the escalation track
+every referee must also reach the configured escalation score with no low-confidence
+report. Scores are otherwise recorded for calibration. The round limit per target journal is `review.max_rounds_per_target`; a paper may
+carry a `review_round_limit_override` only when it matches a SHA-256-bound user receipt
+(path, sha256, json_pointer, exact summary). At the limit the paper is `blocked`; decide and
+record whether to retarget, do more research, or freeze the topic.
 
 Records: `reviews/unified/<paper_id>/<run_id>/` (`decision.json`, per-role prompts, outputs and
 receipts with the runtime-reported model). The registry `writing_release` binds the decision
@@ -107,7 +98,8 @@ output without editing the manuscript:
 - `next_action: evidence_remediation` (scientific blocker, evidence change, `reject`, or a desk
   rejection for significance, novelty or incrementality) -> one action to a fresh `researcher`
   (or `experimenter` for an already frozen protocol).
-- `next_action: retarget_required` or `blocked` -> no automatic action; report to the user.
+- `next_action: retarget_required` or `blocked` -> no automatic review action; record the
+  decision (retarget, more research, or freeze) with its reasons.
 - `preflight_failed` -> one `text_revision` action listing the preflight blockers.
 
 Report the editor decision and its strongest desk-reject reason, the active referee recommendations
@@ -125,35 +117,23 @@ closeouts and the separate editorial screen are disabled for new work while
 readable and unchanged. The previous instructions are kept at
 `references/legacy-SKILL-before-20261006.md` for reading old records only.
 
-## Temporary configuration and rejection clearance (2026-10-09)
+## Rejection clearance
 
-The editor must use a fresh Codex process. Original letters are also supplied to the
-active referee, without the current editor verdict, so newly recovered evidence can
-resolve an earlier missing-letter request. Claude referee A is temporarily inactive;
-`review.referee_roles: [referee_b]` and the recorded user authorization select one Codex
-referee. This lacks the normal second-model cross-check and must be reported honestly.
-For every distinct historical rejection, supply a verbatim letter with its source and
+The editor uses a fresh process. Original letters are also supplied to the referees, without
+the current editor verdict, so newly recovered evidence can resolve an earlier missing-letter
+request. Reviews started before 2026-11-07T11:30Z under the single-referee panel stay bound to
+`review.previous_panels`. For every distinct historical rejection, supply a verbatim letter with its source and
 SHA-256 (registry `journal_rejection_letters`). An internal summary is not a letter.
 The editor must identify each decision ID and judge it `resolved` or `compatible` with
 located evidence before refereeing can start. Missing, omitted, unresolved or contradictory
 letters stop advancement. The decision binds the active review policy as well as the
 manuscript; old gates cannot be reused after a policy change.
 
-### Scoped user instruction (2026-10-11)
+### Missing original letters (user instruction 2026-10-11)
 
-The user explicitly authorized standard editor/referee evaluation without making missing
-original rejection letters alone blocking for four identified papers. A paper can enable
-`missing_rejection_letter_policy.mode: available_originals_only` only with its exact paper ID,
-missing decision IDs and a hash-bound actual-user receipt whose JSON pointer explicitly
-authorizes that paper and decision scope. Every other paper keeps the strict default.
-For listed originals that are genuinely unavailable, the fresh editor records
-`not_assessable`, `answered: false`, and the unknown-source boundary; it must not invent a
-letter or call it resolved/compatible. All available authentic letters and expert reports
-reach both editor and active referee, with the scoped instruction. Actual unaddressed
-objections, scientific gaps, invalid bindings and changed file hashes remain blocking.
-Fresh referees can independently close an earlier request solely for the authorized
-missing original as no longer required; old review records are never rewritten. Do not
-ask for authorization again when the valid actual-user receipt already supplies it.
-This policy is included in the opted-in paper's current review binding only; strict-paper
-fingerprints remain unchanged. It does not waive target, manuscript, support, author,
-scientific or other release requirements and does not authorize journal submission.
+A paper may set `missing_rejection_letter_policy.mode: available_originals_only` only with its
+exact paper ID, missing decision IDs and a hash-bound user receipt covering that scope. The editor then records a genuinely unavailable original as
+`not_assessable`, never invents or "resolves" it, and all available letters still reach the
+editor and referees. Every other requirement stays blocking; do not ask again when a valid
+receipt exists. Details:
+`workflows/paper/docs/REJECTION_HISTORY_POLICY.zh.md`.

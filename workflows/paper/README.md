@@ -1,11 +1,8 @@
 # OpenLabs paper workflow
 
-Before recommending or changing a journal, use `paper-writing journal-history sync` and
-`journal-history check --journal <title>` against the active data repository. Team-wide
-refusals live in `registry/journal-rejections.json` with a single generated CSV table and
-Markdown summary. The shared policy excludes journals at 3 distinct rejected team papers;
-2 means cautious alternative. Settings and exemptions for existing submissions are documented
-in [JOURNAL_HISTORY.md](../../docs/JOURNAL_HISTORY.md).
+Before recommending or changing a journal, run `paper-writing journal-history sync` and
+`journal-history check --journal <title>`; see [JOURNAL_HISTORY.md](../../docs/JOURNAL_HISTORY.md).
+All policy values live in the data repository's `registry/settings.yaml`.
 
 This is the deterministic half of paper production: registry validation, evidence bundles,
 manuscript inventory, review-record validation, conservative minimum aggregation, quality gates,
@@ -40,13 +37,10 @@ PYTHONPATH=workflows/paper python3 -m paper_writing validate \
   --root "$OPENLABS_WORKSPACE/openlabs-data"
 ```
 
-Every post-basic-draft journal target in a configured domain must satisfy the prospective registry policy for Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections in
-the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, using the major-category partition, plus an
-official no-mandatory-author-fee route and canonical venue format. The compatibility field
-`target_journal_tier` stores that CAS zone only; JCR/WOS/JCI quartiles, subject-category partitions,
-and XinRui tiers are not substitutes.
-Targets newly checked under the fit policy must also document topic-level scope, core readership,
-contribution scale, two recent adjacent articles, and a clear same-target history check.
+Every post-basic-draft target must satisfy `registry/settings.yaml#journal_target_policy`
+(venue eligibility, 2025 CAS major-category zone stored in `target_journal_tier`, fee-free route,
+canonical venue format, evidence-backed fit); field details are in
+[quality-gate.md](skills/overlays/quality-gate.md).
 `style-check` and `support-check` are mandatory before review. See
 [`docs/ZENODO_GUIDE.md`](../../docs/ZENODO_GUIDE.md) for controlled support-material publication.
 
@@ -57,6 +51,10 @@ command revalidates all bindings. It never authorizes manuscript submission, a j
 spending decision, or a publication claim.
 
 ## Default submission-ready contract
+
+The two subsections below (revision-round exceptions and CAS minor-revision closeout) document
+pre-unified routes. With `quality_gate.review_process: unified_v1` they are disabled for new work
+and kept for reading historical records; the active round limit is `review.max_rounds_per_target`.
 
 ### Temporary revision-round exceptions
 
@@ -116,7 +114,7 @@ SHA-256 values. It requires a valid native review with `scientific_ready: true`,
 overall score at least 5 and simulated `cas_zone_1_journal` decision
 `minor_revision` or `accept`. For journal papers these conditions now also require a
 target-specific editorial screen bound to the current manuscript and selected journal;
-see [EDITORIAL_SCREEN.md](docs/EDITORIAL_SCREEN.md). Scientific, evidence, ethics and unclassified
+see [EDITORIAL_SCREEN.md](docs/archive/EDITORIAL_SCREEN.md). Scientific, evidence, ethics and unclassified
 blockers cannot be waived. Only verbatim-authorized, explicitly self-qualified
 four-leading-journal suitability findings can be set aside for the CAS decision;
 they remain in the raw review and in the closeout's nonblocking findings.
