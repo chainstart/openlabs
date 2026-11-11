@@ -61,3 +61,66 @@ quota_retry_limit = 8
 # Automatic retries of needs_human/quarantined tasks that failed for an
 # infrastructure reason (transport, quota, launch, missing result bundle).
 infrastructure_retry_limit = 3
+
+[routing]
+# Quota-aware runner selection. INERT until a [runners] table exists: without
+# one, every runner is its own quota key and scheduling is exactly as before.
+# Fraction of every provider window kept for review and decision tasks.
+review_reserve = 0.15
+# Readings older than this are "unknown": dispatch allowed, one task in flight.
+snapshot_stale_hours = 6
+unknown_headroom = 0.5
+# Protected lead (Fable): of every window it depends on, keep this much for
+# decision tasks only (topic admission, direction decisions, portfolio
+# planning); reviews may not use it.
+lead_decision_reserve = 0.25
+# Fable takes reviews (and other non-decision work) only up to this used
+# fraction; past it Claude-family reviews go to the Claude worker runner.
+lead_review_ceiling = 0.60
+# Consecutive non-infrastructure failures of a worker-tier task before its next
+# attempt is routed to the lead tier with a diagnosis preamble (0 disables).
+escalate_to_lead_after_failures = 2
+# Provider assumed for the legacy cheap/balanced/frontier backoff keys.
+legacy_runner_provider = "openai-codex"
+protected_models = ["claude-fable-5-2"]
+# Read once every probe_idle_minutes at most, and only while readings are stale.
+probe_idle_minutes = 360
+codex_sessions_dir = "~/.codex/sessions"
+
+[routing.model_windows]
+# Extra windows a model's calls report (measured 2026-11-11; name not documented).
+"claude-fable-5-2" = ["seven_day_overage_included"]
+
+[routing.probe_commands]
+# Cheapest model only; a protected (Fable) model here is rejected at load time.
+anthropic = ["claude", "-p", "ok", "--model", "claude-haiku-5-5", "--output-format", "stream-json", "--verbose", "--max-turns", "1"]
+
+# [routing.task_tiers] / [routing.claim_ranks] override the built-in maps in
+# orchestrator/src/openlabs/config.py (DEFAULT_TASK_TIERS, DEFAULT_CLAIM_RANKS).
+
+# Enable routing by declaring runners; argv comes from
+# OPENLABS_AGENT_COMMAND_<NAME>_JSON (see openlabs.env.example).
+# [runners.lead_gpt]
+# provider = "openai-codex"
+# tier = "lead"
+# model = "gpt-6-astra"
+# [runners.lead_claude]
+# provider = "anthropic"
+# tier = "lead"
+# model = "claude-fable-5-2"     # protected; extra window from [routing.model_windows]
+# [runners.worker_gpt]
+# provider = "openai-codex"
+# tier = "worker"
+# model = "gpt-6.1-sol"
+# [runners.worker_claude]
+# provider = "anthropic"
+# tier = "worker"
+# model = "claude-opus-5-5"
+# [runners.light_gpt]
+# provider = "openai-codex"
+# tier = "light"
+# model = "<cheapest GPT model id>"
+# [runners.light_claude]
+# provider = "anthropic"
+# tier = "light"
+# model = "claude-haiku-5-5"

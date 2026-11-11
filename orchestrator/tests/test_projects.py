@@ -12,7 +12,7 @@ from openlabs.contracts import (
     atomic_write_json,
     sha256_file,
 )
-from openlabs.db import FactoryDB
+from openlabs.db import SCHEMA_VERSION, FactoryDB
 from openlabs.engine import (
     TickReport,
     _validate_bound_protocol,
@@ -772,7 +772,7 @@ def test_database_v8_migrates_generic_project_bindings(tmp_path) -> None:
         version = connection.execute(
             "SELECT value FROM meta WHERE key='schema_version'"
         ).fetchone()[0]
-    assert version == "8"
+    assert version == str(SCHEMA_VERSION)  # migrated through to the current schema
 
 
 def test_legacy_and_generic_bindings_replace_each_other_cleanly(tmp_path) -> None:

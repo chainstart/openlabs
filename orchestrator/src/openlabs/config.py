@@ -97,6 +97,136 @@ class BudgetSettings:
     infrastructure_retry_limit: int = 3
 
 
+TIERS = ("lead", "worker", "light")
+# Pre-provider runner names. They request a tier, never a model family: with a
+# ``[runners]`` table configured, a task carrying one of them is routed.
+LEGACY_RUNNER_TIERS: dict[str, str] = {"frontier": "lead", "balanced": "worker", "cheap": "light"}
+
+DEFAULT_TASK_TIERS: dict[str, str] = {
+    # lead: portfolio planning, admission, direction and review decisions.
+    "paper_review": "lead",
+    "independent_review": "lead",
+    "review": "lead",
+    "portfolio_review": "lead",
+    "portfolio_planning": "lead",
+    "direction_decision": "lead",
+    "topic_admission": "lead",
+    "failure_diagnosis": "lead",
+    "replan": "lead",
+    # worker: code, experiments, analysis, writing.
+    "research": "worker",
+    "research_continue": "worker",
+    "experiment_continue": "worker",
+    "experiment": "worker",
+    "analysis": "worker",
+    "evidence_remediation": "worker",
+    "candidate_maturation": "worker",
+    "paper_revision": "worker",
+    "paper_readiness": "worker",
+    "paper_writing": "worker",
+    # light: cheapest model.
+    "literature_scan": "light",
+    "literature_search": "light",
+    "literature_screening": "light",
+    "data_download": "light",
+    "data_curation": "light",
+    "format_fix": "light",
+    "figure_redraw": "light",
+}
+DEFAULT_ROLE_TIERS: dict[str, str] = {
+    "reviewer": "lead",
+    "researcher": "worker",
+    "experimenter": "worker",
+    "writer": "worker",
+}
+# decision > review > ordinary governs which reserves a task may spend.
+DEFAULT_DECISION_TASK_TYPES: tuple[str, ...] = (
+    "topic_admission",
+    "direction_decision",
+    "portfolio_review",
+    "portfolio_planning",
+)
+DEFAULT_REVIEW_TASK_TYPES: tuple[str, ...] = ("paper_review", "independent_review", "review")
+# Claim order while parallelism is limited (higher first); unlisted types use
+# ``default_claim_rank`` (in-progress research).
+DEFAULT_CLAIM_RANKS: dict[str, int] = {
+    "paper_review": 3,
+    "independent_review": 3,
+    "review": 3,
+    "direction_decision": 3,
+    "portfolio_review": 3,
+    "portfolio_planning": 3,
+    "paper_revision": 3,
+    "paper_readiness": 3,
+    "paper_writing": 3,
+    "topic_admission": 1,
+    "literature_scan": 0,
+    "literature_search": 0,
+    "literature_screening": 0,
+}
+# Task types held while no lead runner can take a decision task.
+DEFAULT_LEAD_SHORTAGE_PAUSED: tuple[str, ...] = (
+    "topic_admission",
+    "literature_scan",
+    "literature_search",
+    "literature_screening",
+)
+# Measured 2026-11-11: claude-fable-5-2 calls report an extra window that
+# cheaper-model calls do not.
+DEFAULT_MODEL_WINDOWS: dict[str, tuple[str, ...]] = {
+    "claude-fable-5-2": ("seven_day_overage_included",),
+}
+DEFAULT_PROTECTED_MODELS: tuple[str, ...] = ("claude-fable-5-2",)
+
+
+@dataclass(frozen=True)
+class RunnerSpec:
+    """One ``[runners.<name>]`` entry; the argv still comes from the environment."""
+
+    name: str
+    provider: str
+    tier: str
+    model: str | None = None
+    # Windows constraining only this runner, beyond the provider-wide ones.
+    windows: tuple[str, ...] = ()
+    # The provider's protected lead (Fable): its windows carry the decision
+    # reserve and the review ceiling.
+    protected: bool = False
+
+
+@dataclass(frozen=True)
+class RoutingSettings:
+    """Quota-aware runner selection (``[routing]`` in openlabs.toml).
+
+    Only active when ``FactorySettings.runners`` is non-empty.
+    """
+
+    review_reserve: float = 0.15
+    snapshot_stale_hours: float = 6.0
+    unknown_headroom: float = 0.5
+    pace_min_elapsed_fraction: float = 0.1
+    lead_decision_reserve: float = 0.25
+    lead_review_ceiling: float = 0.60
+    escalate_to_lead_after_failures: int = 2
+    legacy_runner_provider: str = "openai-codex"
+    task_tiers: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_TASK_TIERS))
+    role_tiers: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_ROLE_TIERS))
+    decision_task_types: tuple[str, ...] = DEFAULT_DECISION_TASK_TYPES
+    review_task_types: tuple[str, ...] = DEFAULT_REVIEW_TASK_TYPES
+    claim_ranks: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_CLAIM_RANKS))
+    default_claim_rank: int = 2
+    lead_shortage_paused: tuple[str, ...] = DEFAULT_LEAD_SHORTAGE_PAUSED
+    model_windows: dict[str, tuple[str, ...]] = field(
+        default_factory=lambda: dict(DEFAULT_MODEL_WINDOWS)
+    )
+    protected_models: tuple[str, ...] = DEFAULT_PROTECTED_MODELS
+    # provider -> argv of a cheap probe whose stdout carries a quota reading.
+    probe_commands: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    probe_idle_minutes: int = 360
+    # Codex probe: read the newest session file here (None disables it).
+    codex_sessions_dir: str | None = None
+
+
 @dataclass(frozen=True)
 class FactorySettings:
     # Resource admission is the primary concurrency control. This is only a
@@ -123,6 +253,8 @@ class FactorySettings:
     default_task_scratch_mib: int = 4_096
     program: ProgramSettings = field(default_factory=ProgramSettings)
     budget: BudgetSettings = field(default_factory=BudgetSettings)
+    runners: dict[str, RunnerSpec] = field(default_factory=dict)
+    routing: RoutingSettings = field(default_factory=RoutingSettings)
 
 
 def _default_workspace() -> Path:
@@ -304,6 +436,167 @@ def load_budget_settings(payload: Any) -> BudgetSettings:
     )
 
 
+def _unit_fraction(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if 0 <= parsed <= 1 else default
+
+
+def _string_tuple(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return default
+    return tuple(str(item).strip() for item in value if str(item).strip())
+
+
+def load_runner_specs(payload: Any) -> dict[str, RunnerSpec]:
+    """Parse ``[runners.<name>]``; tier and provider are required per entry."""
+
+    if not isinstance(payload, dict):
+        return {}
+    specs: dict[str, RunnerSpec] = {}
+    for name, raw in payload.items():
+        if not isinstance(raw, dict):
+            continue
+        runner = str(name).strip()
+        provider = str(raw.get("provider") or "").strip()
+        tier = str(raw.get("tier") or "").strip()
+        if not runner or not provider:
+            raise ValueError(f"[runners.{name}] needs a provider")
+        if tier not in TIERS:
+            raise ValueError(f"[runners.{name}].tier must be one of {TIERS}")
+        model = str(raw.get("model") or "").strip() or None
+        specs[runner] = RunnerSpec(
+            name=runner,
+            provider=provider,
+            tier=tier,
+            model=model,
+            # Unset windows/protected take [routing] model defaults (apply_model_defaults).
+            windows=_string_tuple(raw.get("windows"), ()),
+            protected=raw.get("protected") is True,
+        )
+    return specs
+
+
+def load_routing_settings(payload: Any) -> RoutingSettings:
+    routing = payload if isinstance(payload, dict) else {}
+    defaults = RoutingSettings()
+    task_tiers = dict(defaults.task_tiers)
+    if isinstance(routing.get("task_tiers"), dict):
+        for key, value in routing["task_tiers"].items():
+            if str(value) not in TIERS:
+                raise ValueError(f"[routing.task_tiers].{key} must be one of {TIERS}")
+            task_tiers[str(key)] = str(value)
+    role_tiers = dict(defaults.role_tiers)
+    if isinstance(routing.get("role_tiers"), dict):
+        for key, value in routing["role_tiers"].items():
+            if str(value) in TIERS:
+                role_tiers[str(key)] = str(value)
+    claim_ranks = dict(defaults.claim_ranks)
+    if isinstance(routing.get("claim_ranks"), dict):
+        for key, value in routing["claim_ranks"].items():
+            try:
+                claim_ranks[str(key)] = int(value)
+            except (TypeError, ValueError):
+                continue
+    model_windows = dict(defaults.model_windows)
+    if isinstance(routing.get("model_windows"), dict):
+        for key, value in routing["model_windows"].items():
+            model_windows[str(key)] = _string_tuple(value, ())
+    protected_models = _string_tuple(routing.get("protected_models"), defaults.protected_models)
+    probe_commands: dict[str, tuple[str, ...]] = {}
+    if isinstance(routing.get("probe_commands"), dict):
+        for key, value in routing["probe_commands"].items():
+            command = _string_tuple(value, ())
+            if not command:
+                continue
+            # A one-word Fable call costs ~70x the cheapest model; Fable-only
+            # windows are read from real Fable task receipts instead.
+            if any(token in protected_models for token in command) or any(
+                token.split("=", 1)[-1] in protected_models
+                for token in command
+                if token.startswith("--model=")
+            ):
+                raise ValueError(f"[routing.probe_commands].{key} must not use a protected model")
+            probe_commands[str(key)] = command
+    try:
+        stale = float(routing.get("snapshot_stale_hours", defaults.snapshot_stale_hours))
+    except (TypeError, ValueError):
+        stale = defaults.snapshot_stale_hours
+    return RoutingSettings(
+        review_reserve=_unit_fraction(routing.get("review_reserve"), defaults.review_reserve),
+        snapshot_stale_hours=stale if stale > 0 else defaults.snapshot_stale_hours,
+        unknown_headroom=_unit_fraction(
+            routing.get("unknown_headroom"), defaults.unknown_headroom
+        ),
+        pace_min_elapsed_fraction=_unit_fraction(
+            routing.get("pace_min_elapsed_fraction"), defaults.pace_min_elapsed_fraction
+        ),
+        lead_decision_reserve=_unit_fraction(
+            routing.get("lead_decision_reserve"), defaults.lead_decision_reserve
+        ),
+        lead_review_ceiling=_unit_fraction(
+            routing.get("lead_review_ceiling"), defaults.lead_review_ceiling
+        ),
+        escalate_to_lead_after_failures=_nonnegative_int(
+            routing.get("escalate_to_lead_after_failures"),
+            defaults.escalate_to_lead_after_failures,
+        ),
+        legacy_runner_provider=str(
+            routing.get("legacy_runner_provider") or defaults.legacy_runner_provider
+        ),
+        task_tiers=task_tiers,
+        role_tiers=role_tiers,
+        decision_task_types=_string_tuple(
+            routing.get("decision_task_types"), defaults.decision_task_types
+        ),
+        review_task_types=_string_tuple(
+            routing.get("review_task_types"), defaults.review_task_types
+        ),
+        claim_ranks=claim_ranks,
+        default_claim_rank=int(routing.get("default_claim_rank", defaults.default_claim_rank)),
+        lead_shortage_paused=_string_tuple(
+            routing.get("lead_shortage_paused"), defaults.lead_shortage_paused
+        ),
+        model_windows=model_windows,
+        protected_models=protected_models,
+        probe_commands=probe_commands,
+        probe_idle_minutes=_positive_int(
+            routing.get("probe_idle_minutes"), defaults.probe_idle_minutes
+        ),
+        codex_sessions_dir=str(routing.get("codex_sessions_dir") or "").strip() or None,
+    )
+
+
+def apply_model_defaults(
+    runners: dict[str, RunnerSpec],
+    routing: RoutingSettings,
+    raw_runners: Any,
+) -> dict[str, RunnerSpec]:
+    """Apply ``[routing].model_windows``/``protected_models`` to runners that did not override."""
+
+    raw = raw_runners if isinstance(raw_runners, dict) else {}
+    resolved: dict[str, RunnerSpec] = {}
+    for name, spec in runners.items():
+        entry = raw.get(name) if isinstance(raw.get(name), dict) else {}
+        windows = spec.windows
+        protected = spec.protected
+        if "windows" not in entry:
+            windows = routing.model_windows.get(spec.model or "", ())
+        if "protected" not in entry:
+            protected = bool(spec.model and spec.model in routing.protected_models)
+        resolved[name] = RunnerSpec(
+            name=spec.name,
+            provider=spec.provider,
+            tier=spec.tier,
+            model=spec.model,
+            windows=windows,
+            protected=protected,
+        )
+    return resolved
+
+
 def load_settings(paths: WorkspacePaths) -> FactorySettings:
     path = paths.code / "config" / "openlabs.toml"
     payload: dict[str, Any] = {}
@@ -313,6 +606,9 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
     factory = payload.get("factory") if isinstance(payload.get("factory"), dict) else {}
     resources = payload.get("resources") if isinstance(payload.get("resources"), dict) else {}
     retention = payload.get("retention") if isinstance(payload.get("retention"), dict) else {}
+    runners = load_runner_specs(payload.get("runners"))
+    routing = load_routing_settings(payload.get("routing"))
+    runners = apply_model_defaults(runners, routing, payload.get("runners"))
     return FactorySettings(
         max_worker_processes=_positive_int(
             factory.get("max_worker_processes", factory.get("max_concurrent_jobs")), 8
@@ -342,4 +638,6 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
         default_task_scratch_mib=_positive_int(resources.get("default_task_scratch_mib"), 4_096),
         program=load_program_settings(payload.get("program")),
         budget=load_budget_settings(payload.get("budget")),
+        runners=runners,
+        routing=routing,
     )

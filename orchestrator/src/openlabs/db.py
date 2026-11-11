@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from collections.abc import Collection, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 ACTIVE_STATUSES = ("leased", "running")
 AGENT_ROLES = ("researcher", "experimenter", "writer", "reviewer")
 SESSION_MODES = ("resume", "fresh")
@@ -285,6 +285,7 @@ class FactoryDB:
             self._migrate_v6(connection, prior_version=prior_version)
             self._migrate_v7(connection)
             self._migrate_v8(connection)
+            self._migrate_v9(connection)
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS task_attempts_task_idx
@@ -442,6 +443,18 @@ class FactoryDB:
             "workstream_policy_json TEXT NOT NULL DEFAULT '{}'",
         ):
             cls._add_column(connection, "campaigns", definition)
+
+    @classmethod
+    def _migrate_v9(cls, connection: sqlite3.Connection) -> None:
+        """Quota-aware routing: the original runner request and a family exclusion.
+
+        ``runner_request`` is NULL until the router first replaces ``runner`` with a
+        concrete runner; it then keeps the tier request (a legacy alias, a tier
+        name, or '' for none) so retries are routed again instead of being pinned.
+        """
+
+        for definition in ("runner_request TEXT", "exclude_provider TEXT"):
+            cls._add_column(connection, "tasks", definition)
 
     @staticmethod
     def _event(
@@ -1183,6 +1196,45 @@ class FactoryDB:
             )
         return True
 
+    def escalate_task_tier(
+        self,
+        task_id: str,
+        *,
+        tier: str,
+        note: str,
+        payload: Mapping[str, Any],
+    ) -> bool:
+        """Re-request a queued retry at ``tier`` and prefix its objective once."""
+
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, objective, runner, runner_request FROM tasks WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if row is None or str(row["status"]) != "queued":
+                return False
+            if str(row["runner_request"] or "") == tier:
+                return False
+            objective = str(row["objective"] or "")
+            if not objective.startswith(note):
+                objective = f"{note}\n\n{objective}"
+            connection.execute(
+                """
+                UPDATE tasks SET runner_request=?, objective=?, updated_at=?
+                WHERE task_id=?
+                """,
+                (tier, objective, utc_now(), task_id),
+            )
+            self._event(
+                connection,
+                "task",
+                task_id,
+                "task_escalated",
+                {**dict(payload), "tier": tier, "prior_runner": row["runner"]},
+            )
+        return True
+
     def cancel_queued_tasks_for_inactive_campaigns(self) -> tuple[str, ...]:
         """Remove stale queue entries that can never be admitted by the scheduler."""
 
@@ -1334,6 +1386,7 @@ class FactoryDB:
         cpu_threads: int = 2,
         memory_mib: int = 4_096,
         scratch_mib: int = 4_096,
+        exclude_provider: str | None = None,
     ) -> str:
         identifier = task_id or str(uuid.uuid4())
         now = utc_now()
@@ -1432,9 +1485,9 @@ class FactoryDB:
                     session_source_task_id, campaign_epoch, status, priority,
                     max_attempts, not_before,
                     max_wall_seconds, cpu_threads, memory_mib, scratch_mib,
-                    created_at, updated_at
+                    created_at, updated_at, exclude_provider
                 ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                         'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -1462,6 +1515,7 @@ class FactoryDB:
                     scratch_mib,
                     now,
                     now,
+                    (str(exclude_provider).strip() or None) if exclude_provider else None,
                 ),
             )
             self._event(
@@ -1759,6 +1813,9 @@ class FactoryDB:
         resource_capacity: Mapping[str, int] | None = None,
         excluded_runners: Collection[str] = (),
         runner_active_limits: Mapping[str, int] | None = None,
+        route: Callable[[Mapping[str, Any], Mapping[str, int]], Mapping[str, Any] | None]
+        | None = None,
+        rank: Callable[[Mapping[str, Any]], int] | None = None,
     ) -> dict[str, Any] | None:
         """Lease the highest-priority ready task.
 
@@ -1766,6 +1823,12 @@ class FactoryDB:
         ``runner_active_limits`` caps leased/running tasks per runner tier (used
         for the single probe task after a backoff ends). Runner names are
         normalized like the lab runner does (missing -> ``balanced``).
+
+        ``rank`` (while parallelism is limited) orders candidates by
+        ``(rank, priority)``. ``route(candidate, active_by_runner)`` picks the
+        concrete runner for a candidate or returns None to leave it queued; the
+        chosen runner is written to ``tasks.runner`` with the original request
+        kept in ``runner_request`` and a ``task_routed`` event.
         """
 
         now = utc_now()
@@ -1805,7 +1868,13 @@ class FactoryDB:
                 """,
                 (now,),
             ).fetchall()
-            if excluded or runner_limits:
+            if rank is not None:
+                rows = sorted(
+                    rows,
+                    key=lambda item: (-int(rank(dict(item))), -int(item["priority"])),
+                )
+            active_by_runner: dict[str, int] = {}
+            if excluded or runner_limits or route is not None:
                 active_by_runner = {
                     str(item["runner"]): int(item["n"])
                     for item in connection.execute(
@@ -1826,10 +1895,11 @@ class FactoryDB:
                     )
                 ]
             row = None
-            if resource_capacity is None:
-                row = rows[0] if rows else None
-            else:
-                keys = ("cpu_threads", "memory_mib", "scratch_mib")
+            decision: Mapping[str, Any] | None = None
+            capacity: dict[str, int] | None = None
+            used: dict[str, int] = {}
+            keys = ("cpu_threads", "memory_mib", "scratch_mib")
+            if resource_capacity is not None:
                 capacity = {key: int(resource_capacity[key]) for key in keys}
                 active = connection.execute(
                     """
@@ -1840,13 +1910,33 @@ class FactoryDB:
                     """
                 ).fetchone()
                 used = {key: int(active[key]) for key in keys}
-                for candidate in rows:
-                    if all(used[key] + int(candidate[key]) <= capacity[key] for key in keys):
-                        row = candidate
-                        break
+            for candidate in rows:
+                if capacity is not None and not all(
+                    used[key] + int(candidate[key]) <= capacity[key] for key in keys
+                ):
+                    continue
+                if route is not None:
+                    decision = route(dict(candidate), dict(active_by_runner))
+                    if decision is None:
+                        continue
+                row = candidate
+                break
             if row is None:
                 return None
             task_id = str(row["task_id"])
+            if decision is not None:
+                chosen = str(decision["runner"])
+                if chosen != str(row["runner"] or ""):
+                    connection.execute(
+                        """
+                        UPDATE tasks
+                        SET runner_request=COALESCE(runner_request, runner, ''),
+                            runner=?, updated_at=?
+                        WHERE task_id=? AND status='queued'
+                        """,
+                        (chosen, now, task_id),
+                    )
+                self._event(connection, "task", task_id, "task_routed", dict(decision))
             attempt_id = str(uuid.uuid4())
             attempt_number = int(row["attempt"]) + 1
             connection.execute(

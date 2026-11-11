@@ -34,7 +34,7 @@ from .attempts import (
     recover_attempt_promotion,
     rollback_attempt_promotion,
 )
-from .config import FactorySettings, WorkspacePaths
+from .config import LEGACY_RUNNER_TIERS, FactorySettings, WorkspacePaths
 from .contracts import (
     IDENTIFIER,
     TASK_SCHEMA,
@@ -498,8 +498,38 @@ class TickReport:
     provider_backoff_until: dict[str, str] = field(default_factory=dict)
     quota_deferred: list[dict[str, Any]] = field(default_factory=list)
     infrastructure_retried: list[dict[str, Any]] = field(default_factory=list)
+    # Quota-aware routing (empty while no [runners] table is configured):
+    # per-provider newest windows, headroom, pace and reserve state.
+    provider_quota: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # {"short": bool, "paused_task_types": [...], "runners": {...}}; short=True
+    # means no lead runner may take decision work (负责人额度不足).
+    lead_quota: dict[str, Any] = field(default_factory=dict)
+    routed: list[dict[str, Any]] = field(default_factory=list)
+    routing_deferred: list[dict[str, Any]] = field(default_factory=list)
+    escalated: list[dict[str, Any]] = field(default_factory=list)
+    quota_probes: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        payload = self._base_dict()
+        # Routing keys appear only with a [runners] table, so the default report
+        # shape is unchanged.
+        if self.provider_quota or self.lead_quota or self.routed or self.routing_deferred or (
+            self.escalated or self.quota_probes
+        ):
+            payload.update(
+                {
+                    "provider_quota": self.provider_quota,
+                    "lead_quota": self.lead_quota,
+                    "lead_quota_short": bool(self.lead_quota.get("short")),
+                    "routed": self.routed,
+                    "routing_deferred": self.routing_deferred,
+                    "escalated": self.escalated,
+                    "quota_probes": self.quota_probes,
+                }
+            )
+        return payload
+
+    def _base_dict(self) -> dict[str, Any]:
         return {
             "schema_version": "openlabs.tick_report.v1",
             "ingested": self.ingested,
@@ -1774,7 +1804,7 @@ def _replenish_continuous_campaign(
     elif status == "needs_replan":
         runner = "frontier"
     elif latest:
-        runner = str(latest.get("runner") or "balanced")
+        runner = _inherited_runner(latest)
     else:
         runner = "balanced"
     db.enqueue_task(
@@ -2023,6 +2053,7 @@ def ingest_results(
                         f"{receipt.get(key)!r} != {expected_value!r}"
                     )
             runtime = dict(receipt["runtime"])
+            _record_quota_reading(db, settings, report, task, runtime)
             result_path = Path(str(receipt["result_path"])).expanduser().resolve()
             actual_sha: str | None = None
             try:
@@ -2270,6 +2301,8 @@ def ingest_results(
                         reason=f"database_ingest_failed:{exc}",
                     )
                 raise
+            if final_status == "queued":
+                _maybe_escalate_to_lead(db, settings, report, task)
             if budget_control.is_healthy_result(runtime):
                 budget_control.record_healthy_completion(
                     db,
@@ -2714,7 +2747,7 @@ def ingest_results(
                         skill_path=(str(task["skill_path"]) if task.get("skill_path") else None),
                         runner=(
                             next_plan.runner
-                            or ("frontier" if is_replan else str(task.get("runner") or "balanced"))
+                            or ("frontier" if is_replan else _inherited_runner(task))
                         ),
                         routing_reason=(
                             "production_rollover"
@@ -3013,6 +3046,103 @@ def _launch_task(
         raise
 
 
+def _inherited_runner(task: Mapping[str, Any]) -> str:
+    """The runner request a successor inherits.
+
+    A routed task's ``runner`` is the concrete runner the router chose; the
+    successor inherits the original request instead, so it is routed afresh
+    rather than pinned to the predecessor's family. An escalation tier maps back
+    to its legacy alias.
+    """
+
+    request = task.get("runner_request")
+    if request is None:
+        return str(task.get("runner") or "balanced")
+    text = str(request).strip()
+    if text in TIER_ALIASES:
+        return TIER_ALIASES[text]
+    return text or "balanced"
+
+
+TIER_ALIASES = {tier: alias for alias, tier in LEGACY_RUNNER_TIERS.items()}
+
+
+def _record_quota_reading(
+    db: FactoryDB,
+    settings: FactorySettings,
+    report: TickReport,
+    task: Mapping[str, Any],
+    runtime: dict[str, Any],
+) -> None:
+    """Store the receipt's quota snapshot per provider/window; never fails ingestion."""
+
+    try:
+        if budget_control.routing_enabled(settings):
+            runtime["execution"] = budget_control.execution_record(settings, task, runtime)
+        if runtime.get("quota_snapshot") is not None:
+            budget_control.record_quota_snapshot(
+                db,
+                settings,
+                runtime["quota_snapshot"],
+                runner=runtime.get("runner") or task.get("runner"),
+                task_id=str(task["task_id"]),
+            )
+    except Exception as exc:  # noqa: BLE001 - a reading is advisory
+        report.errors.append(f"Could not record quota reading for {task.get('task_id')}: {exc}")
+
+
+ESCALATION_NOTE = (
+    "[Escalated to the lead tier] Diagnose the causes of the previous {count} failed "
+    "attempts before continuing; fix the cause, not the symptom. "
+    "（诊断前{count}次失败原因后再继续。）"
+)
+
+
+def _maybe_escalate_to_lead(
+    db: FactoryDB,
+    settings: FactorySettings,
+    report: TickReport,
+    task: Mapping[str, Any],
+) -> None:
+    """After N consecutive non-infrastructure failures of a worker-tier task, re-request lead.
+
+    The ordinary retry path requeues the same task (same objective) while
+    attempts remain; the next claim routes it to a lead runner with a diagnosis
+    preamble. Only active with a ``[runners]`` table.
+    """
+
+    threshold = settings.routing.escalate_to_lead_after_failures
+    if not budget_control.routing_enabled(settings) or threshold <= 0:
+        return
+    if budget_control.tier_of(settings, task.get("runner")) != "worker":
+        return
+    if task.get("runner_request") is None and normalize_runner(task.get("runner")) in (
+        settings.runners
+    ):
+        return  # a caller-pinned runner is never re-routed
+    failures: list[str] = []
+    for attempt in reversed(db.task_attempts(str(task["task_id"]))):
+        status = str(attempt.get("status") or "")
+        runtime = attempt.get("runtime") if isinstance(attempt.get("runtime"), Mapping) else {}
+        if status in {"quota_deferred", "launch_failed"} or str(
+            runtime.get("failure_class") or ""
+        ) in INFRASTRUCTURE_FAILURE_CLASSES:
+            continue  # infrastructure neither counts nor breaks the streak
+        if status not in {"queued", "failed", "quarantined"}:
+            break
+        failures.append(str(attempt.get("error") or "unspecified failure")[:300])
+    if len(failures) < threshold:
+        return
+    note = ESCALATION_NOTE.format(count=len(failures))
+    payload = {
+        "consecutive_failures": len(failures),
+        "threshold": threshold,
+        "recent_errors": failures[:threshold],
+    }
+    if db.escalate_task_tier(str(task["task_id"]), tier="lead", note=note, payload=payload):
+        report.escalated.append({"task_id": str(task["task_id"]), **payload})
+
+
 def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport:
     paths.ensure_runtime_directories()
     db = FactoryDB(paths.database_file)
@@ -3046,24 +3176,60 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
 
     budget_now = budget_control.current_time()
     launch_limit = budget_control.launch_limit(db, settings)
-    backoffs = budget_control.runner_backoffs(db, now=budget_now)
+    backoffs = budget_control.runner_backoffs(db, now=budget_now, settings=settings)
     report.effective_parallel = launch_limit
     report.provider_backoff_until = backoffs
+    router: budget_control.QuotaRouter | None = None
+    if budget_control.routing_enabled(settings):
+        try:
+            report.quota_probes = budget_control.probe_stale_providers(
+                db, settings, now=budget_now
+            )
+        except Exception as exc:  # noqa: BLE001 - probing is advisory
+            report.errors.append(f"Quota probe failed: {exc}")
+        router = budget_control.QuotaRouter.build(db, settings, now=budget_now)
+        report.provider_quota = router.provider_summary()
+        report.lead_quota = router.lead_summary()
+        budget_control.record_lead_shortage(db, router)
     if settings.launch_jobs:
         capacity = max(0, launch_limit - db.active_count())
         owner = f"tick:{socket.gethostname()}:{os.getpid()}"
-        probes = budget_control.probe_limits(db, now=budget_now)
+        rank = (
+            router.rank
+            if router is not None and router.constrained(launch_limit)
+            else None
+        )
         for _ in range(capacity):
-            task = db.claim_next_task(
-                owner=owner,
-                lease_seconds=settings.lease_seconds,
-                max_active=launch_limit,
-                resource_capacity=resource_capacity.to_dict(),
-                excluded_runners=tuple(backoffs),
-                runner_active_limits=probes,
-            )
+            if router is not None:
+                task = db.claim_next_task(
+                    owner=owner,
+                    lease_seconds=settings.lease_seconds,
+                    max_active=launch_limit,
+                    resource_capacity=resource_capacity.to_dict(),
+                    route=router.route,
+                    rank=rank,
+                )
+            else:
+                task = db.claim_next_task(
+                    owner=owner,
+                    lease_seconds=settings.lease_seconds,
+                    max_active=launch_limit,
+                    resource_capacity=resource_capacity.to_dict(),
+                    excluded_runners=tuple(backoffs),
+                    runner_active_limits=budget_control.probe_limits(db, now=budget_now),
+                )
             if task is None:
                 break
+            if router is not None:
+                router.deferred.pop(str(task["task_id"]), None)
+                report.routed.append(
+                    {
+                        "task_id": str(task["task_id"]),
+                        **router.decisions.get(
+                            str(task["task_id"]), {"runner": str(task.get("runner") or "")}
+                        ),
+                    }
+                )
             try:
                 _launch_task(db, paths, settings, task, owner=owner)
                 report.launched.append(str(task["task_id"]))
@@ -3080,9 +3246,33 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
                 report.errors.append(f"Could not launch {task['task_id']}: {exc}")
                 break
 
+    if router is not None:
+        _record_routing_deferrals(db, report, router)
     report.resource_reserved = db.active_resource_totals()
     report.status_counts = db.status_counts()
     return report
+
+
+def _record_routing_deferrals(
+    db: FactoryDB,
+    report: TickReport,
+    router: budget_control.QuotaRouter,
+) -> None:
+    """Tasks left queued because no runner fits: one event per task, reason and attempt."""
+
+    for task_id, detail in sorted(router.deferred.items()):
+        task = db.task(task_id)
+        if task is None or str(task.get("status")) != "queued":
+            continue
+        entry = {"task_id": task_id, **detail}
+        report.routing_deferred.append(entry)
+        db.record_event_once(
+            "task",
+            task_id,
+            "routing_deferred",
+            detail,
+            event_key=f"{detail.get('reason')}:attempt{int(task.get('attempt') or 0)}",
+        )
 
 
 def tick(paths: WorkspacePaths, settings: FactorySettings) -> TickReport:

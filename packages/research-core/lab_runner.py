@@ -705,6 +705,317 @@ def _agent_quota_failure(stdout_path: Path, stderr_path: Path) -> dict[str, Any]
     )
 
 
+# --------------------------------------------------------------------------
+# Subscription quota readings (runtime.quota_snapshot).
+#
+# Claude Code (`-p --output-format stream-json --verbose`) emits one
+# ``rate_limit_event`` per call whose ``rate_limit_info.unifiedWindows`` maps a
+# window name (five_hour, seven_day, and model-specific ones such as
+# seven_day_overage_included) to ``utilization`` in 0..1. Codex writes
+# ``rate_limits`` (``primary``/``secondary`` slots, ``used_percent`` 0..100,
+# ``window_minutes``) into ``$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl``;
+# ``codex exec --json`` (0.166.0) does not repeat it on stdout, so the session file
+# is read when the stream has none. Every reading is normalised to
+# ``{"provider", "observed_at", "model", "windows": [{"name", "window_minutes",
+# "used_fraction", "resets_at"}], "credits_balance"}``.
+QUOTA_SNAPSHOT_SCHEMA = "openlabs.quota_snapshot.v1"
+ADAPTER_PROVIDERS = {"claude": "anthropic", "codex": "openai-codex"}
+_NAMED_WINDOW_MINUTES = {"five_hour": 300, "seven_day": 10_080, "one_day": 1_440}
+_WINDOW_NAME_PATTERN = re.compile(r"^(?P<count>\d+|one|five|seven)_(?P<unit>hour|day|minute)")
+_WORD_NUMBERS = {"one": 1, "five": 5, "seven": 7}
+_CODEX_SESSION_TAIL_BYTES = 512 * 1024
+_CODEX_SESSION_DAY_LOOKBACK = 3
+
+
+def _window_minutes_from_name(name: str) -> int | None:
+    """``five_hour`` -> 300, ``seven_day_overage_included`` -> 10080, else None."""
+
+    if name in _NAMED_WINDOW_MINUTES:
+        return _NAMED_WINDOW_MINUTES[name]
+    match = _WINDOW_NAME_PATTERN.match(name)
+    if match is None:
+        return None
+    raw = match.group("count")
+    count = int(raw) if raw.isdigit() else _WORD_NUMBERS[raw]
+    return count * {"minute": 1, "hour": 60, "day": 1_440}[match.group("unit")]
+
+
+def _window_name_from_minutes(minutes: int | None) -> str:
+    for name, value in _NAMED_WINDOW_MINUTES.items():
+        if minutes == value:
+            return name
+    return f"{minutes}_minute" if minutes else "unknown_window"
+
+
+def _epoch_iso(value: Any) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    seconds = float(value) / 1000 if value > 10**11 else float(value)
+    try:
+        return _iso_z(datetime.fromtimestamp(seconds, UTC))
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _fraction(value: Any, *, percent: bool) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    fraction = float(value) / 100.0 if percent else float(value)
+    return max(0.0, min(1.0, fraction))
+
+
+def claude_quota_windows(event: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Windows of one Claude ``rate_limit_event`` (all names kept, unknown ones too)."""
+
+    info = event.get("rate_limit_info")
+    if not isinstance(info, Mapping):
+        return []
+    windows: list[dict[str, Any]] = []
+    unified = info.get("unifiedWindows")
+    if isinstance(unified, Mapping):
+        for name, raw in unified.items():
+            if not isinstance(raw, Mapping):
+                continue
+            used = _fraction(raw.get("utilization"), percent=False)
+            if used is None:
+                continue
+            windows.append(
+                {
+                    "name": str(name),
+                    "window_minutes": _window_minutes_from_name(str(name)),
+                    "used_fraction": used,
+                    "resets_at": _epoch_iso(raw.get("resetsAt")),
+                    "status": raw.get("status"),
+                }
+            )
+    elif info.get("rateLimitType") and info.get("utilization") is not None:
+        name = str(info["rateLimitType"])
+        used = _fraction(info.get("utilization"), percent=False)
+        if used is not None:
+            windows.append(
+                {
+                    "name": name,
+                    "window_minutes": _window_minutes_from_name(name),
+                    "used_fraction": used,
+                    "resets_at": _epoch_iso(info.get("resetsAt")),
+                    "status": info.get("status"),
+                }
+            )
+    return windows
+
+
+def codex_quota_windows(rate_limits: Mapping[str, Any]) -> tuple[list[dict[str, Any]], Any]:
+    """Windows and credit balance of one Codex ``rate_limits`` object.
+
+    Slots are named by ``window_minutes`` (a weekly-only plan has just a 10080-minute
+    ``primary``; ``secondary`` may be null). A non-default ``limit_id`` prefixes the name.
+    """
+
+    windows: list[dict[str, Any]] = []
+    limit_id = str(rate_limits.get("limit_id") or "codex")
+    for slot in ("primary", "secondary"):
+        raw = rate_limits.get(slot)
+        if not isinstance(raw, Mapping):
+            continue
+        used = _fraction(raw.get("used_percent"), percent=True)
+        if used is None:
+            continue
+        minutes = raw.get("window_minutes")
+        minutes = int(minutes) if isinstance(minutes, (int, float)) and minutes > 0 else None
+        name = _window_name_from_minutes(minutes)
+        if limit_id != "codex":
+            name = f"{limit_id}:{name}"
+        windows.append(
+            {
+                "name": name,
+                "window_minutes": minutes,
+                "used_fraction": used,
+                "resets_at": _epoch_iso(raw.get("resets_at")),
+                "slot": slot,
+            }
+        )
+    credits = rate_limits.get("credits")
+    balance = credits.get("balance") if isinstance(credits, Mapping) else None
+    return windows, balance
+
+
+def _find_rate_limits(value: Any, depth: int = 0) -> Mapping[str, Any] | None:
+    if depth > 4 or not isinstance(value, Mapping):
+        return None
+    candidate = value.get("rate_limits")
+    if isinstance(candidate, Mapping):
+        return candidate
+    for child in value.values():
+        if isinstance(child, Mapping):
+            found = _find_rate_limits(child, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+def _jsonl_events(text: str) -> list[Mapping[str, Any]]:
+    events: list[Mapping[str, Any]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, Mapping):
+            events.append(event)
+    return events
+
+
+def _snapshot(
+    provider: str,
+    windows: list[dict[str, Any]],
+    *,
+    observed_at: str,
+    model: str | None,
+    source: str,
+    credits_balance: Any = None,
+) -> dict[str, Any] | None:
+    if not windows:
+        return None
+    snapshot: dict[str, Any] = {
+        "schema_version": QUOTA_SNAPSHOT_SCHEMA,
+        "provider": provider,
+        "observed_at": observed_at,
+        "model": model,
+        "source": source,
+        "windows": windows,
+    }
+    if credits_balance is not None:
+        try:
+            snapshot["credits_balance"] = float(credits_balance)
+        except (TypeError, ValueError):
+            snapshot["credits_balance"] = str(credits_balance)
+    return snapshot
+
+
+def codex_sessions_root() -> Path:
+    configured = os.environ.get("CODEX_HOME", "").strip()
+    home = Path(configured).expanduser() if configured else Path.home() / ".codex"
+    return home / "sessions"
+
+
+def find_codex_session_file(
+    thread_id: str,
+    *,
+    sessions_root: Path | None = None,
+    now: datetime | None = None,
+) -> Path | None:
+    """Locate ``rollout-*-<thread_id>.jsonl`` in the last few day directories only."""
+
+    if not thread_id or "/" in thread_id or not re.fullmatch(r"[A-Za-z0-9-]+", thread_id):
+        return None
+    root = sessions_root or codex_sessions_root()
+    current = (now or datetime.now(UTC)).astimezone()
+    for offset in range(_CODEX_SESSION_DAY_LOOKBACK):
+        day = current - timedelta(days=offset)
+        directory = root / f"{day.year:04d}" / f"{day.month:02d}" / f"{day.day:02d}"
+        if not directory.is_dir():
+            continue
+        matches = sorted(directory.glob(f"rollout-*{thread_id}.jsonl"))
+        if matches:
+            return matches[-1]
+    return None
+
+
+def codex_session_quota(path: Path, *, model: str | None = None) -> dict[str, Any] | None:
+    """The newest ``rate_limits`` reading in the tail of one Codex session file."""
+
+    text = _read_tail(path, _CODEX_SESSION_TAIL_BYTES)
+    for event in reversed(_jsonl_events(text)):
+        rate_limits = _find_rate_limits(event)
+        if rate_limits is None:
+            continue
+        windows, balance = codex_quota_windows(rate_limits)
+        observed = event.get("timestamp")
+        observed_at = (
+            observed if isinstance(observed, str) and observed else _iso_z(datetime.now(UTC))
+        )
+        return _snapshot(
+            "openai-codex",
+            windows,
+            observed_at=observed_at,
+            model=model,
+            source="codex_session_file",
+            credits_balance=balance,
+        )
+    return None
+
+
+def extract_quota_snapshot(
+    stdout_text: str,
+    *,
+    adapter: str,
+    model: str | None = None,
+    now: datetime | None = None,
+    sessions_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Return the run's last quota reading, or None when the run reported none."""
+
+    observed_at = _iso_z((now or datetime.now(UTC)).astimezone(UTC))
+    events = _jsonl_events(stdout_text)
+    if adapter == "claude":
+        reported_model = model
+        for event in events:
+            if event.get("type") == "system" and isinstance(event.get("model"), str):
+                reported_model = event["model"]
+        for event in reversed(events):
+            if event.get("type") == "rate_limit_event":
+                return _snapshot(
+                    "anthropic",
+                    claude_quota_windows(event),
+                    observed_at=observed_at,
+                    model=reported_model,
+                    source="claude_stream_json",
+                )
+        return None
+    if adapter == "codex":
+        thread_id = ""
+        for event in reversed(events):
+            rate_limits = _find_rate_limits(event)
+            if rate_limits is not None:
+                windows, balance = codex_quota_windows(rate_limits)
+                return _snapshot(
+                    "openai-codex",
+                    windows,
+                    observed_at=observed_at,
+                    model=model,
+                    source="codex_exec_json",
+                    credits_balance=balance,
+                )
+        for event in events:
+            candidate = event.get("thread_id") or event.get("session_id")
+            if isinstance(candidate, str) and candidate:
+                thread_id = candidate
+                break
+        session_file = find_codex_session_file(
+            thread_id, sessions_root=sessions_root, now=now
+        )
+        if session_file is None:
+            return None
+        return codex_session_quota(session_file, model=model)
+    return None
+
+
+def _agent_quota_snapshot(
+    stdout_path: Path,
+    *,
+    adapter: str,
+    model: str | None,
+) -> dict[str, Any] | None:
+    try:
+        text = stdout_path.read_text(encoding="utf-8", errors="replace")
+        return extract_quota_snapshot(text, adapter=adapter, model=model)
+    except (OSError, ValueError):
+        return None
+
+
 def _jsonl_startup_health(path: Path) -> tuple[int, bool]:
     """Count transport failures and detect any meaningful Codex progress."""
 
@@ -770,6 +1081,18 @@ def _jsonl_runtime(path: Path) -> dict[str, Any]:
                 value = usage.get(key)
                 if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                     runtime[key] = value
+            # Claude stream-json ``result`` usage names its cache reads differently.
+            cache_read = usage.get("cache_read_input_tokens")
+            if (
+                "cached_input_tokens" not in usage
+                and isinstance(cache_read, int)
+                and not isinstance(cache_read, bool)
+                and cache_read >= 0
+            ):
+                runtime["cached_input_tokens"] = cache_read
+        total_cost = event.get("total_cost_usd")
+        if isinstance(total_cost, (int, float)) and not isinstance(total_cost, bool):
+            runtime["cost_usd"] = total_cost
     return runtime
 
 
@@ -1340,7 +1663,12 @@ def _run_agent(
             "adapter": Path(agent_command[0]).name,
             "adapter_version": _adapter_version(agent_command),
             "runner": runner,
-            "profile": _command_option(agent_command, "--profile", "-p"),
+            # Claude's ``-p`` is --print, not a profile.
+            "profile": (
+                _command_option(agent_command, "--profile", "-p")
+                if Path(agent_command[0]).name == "codex"
+                else None
+            ),
             "configured_model": _command_option(agent_command, "--model", "-m"),
             "filesystem_sandbox": sandbox,
             "resumed_from": session_id or None,
@@ -1354,6 +1682,16 @@ def _run_agent(
             "agent_request_sha256": sha256_file(request_path),
         }
     )
+    adapter_name = Path(agent_command[0]).name
+    if adapter_name in ADAPTER_PROVIDERS:
+        runtime["provider_family"] = ADAPTER_PROVIDERS[adapter_name]
+        snapshot = _agent_quota_snapshot(
+            stdout_path,
+            adapter=adapter_name,
+            model=str(runtime.get("model") or runtime.get("configured_model") or "") or None,
+        )
+        if snapshot is not None:
+            runtime["quota_snapshot"] = snapshot
     quota = (
         None
         if termination_signal is not None or output.is_file()
