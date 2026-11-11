@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import os
 import shutil
@@ -53,17 +54,89 @@ def _digest_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
 
 
-def _replay(workspace: Path, command: list[str], *, timeout_seconds: int) -> dict[str, Any]:
-    bubblewrap = shutil.which("bwrap")
+# Explicit, default-off operator switch read from the tick/worker environment (the
+# container's env file, never the shared config/openlabs.toml). Honoured only when
+# bubblewrap cannot create a namespace and container_guard accepts the cgroup.
+REPLAY_CONTAINER_FALLBACK_ENV = "OPENLABS_REPLAY_WITHOUT_BWRAP_IN_VERIFIED_CONTAINER"
+_SANDBOX = "bubblewrap-readonly-system-unshared-network"
+_FALLBACK_SANDBOX = "none-verified-container"
+# Same marker engine.py and bin/openlabs-resource-guard use for the container path.
+_CONTAINER_MARKER = Path("/.dockerenv")
+
+
+@functools.lru_cache(maxsize=4)
+def _bubblewrap_problem(bubblewrap: str | None) -> str | None:
+    """Why bubblewrap cannot create a namespace here (None when it can).
+
+    Docker's default seccomp profile lets ``bwrap`` exist but fail every launch
+    with "No permissions to create new namespace"; report that as an unavailable
+    sandbox rather than as a failed reproduction of the agent's script.
+    """
+
     if bubblewrap is None:
-        return {
-            "schema_version": REPLAY_SCHEMA,
-            "status": "unavailable",
-            "reason": "bubblewrap is unavailable",
-        }
+        return "bubblewrap is unavailable"
+    try:
+        completed = subprocess.run(
+            [bubblewrap, "--die-with-parent", "--unshare-net", "--ro-bind", "/", "/", "--", "true"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"bubblewrap cannot start: {exc}"
+    if completed.returncode == 0:
+        return None
+    detail = completed.stderr.strip() or f"exit code {completed.returncode}"
+    return f"bubblewrap cannot create a namespace on this host ({detail})"
+
+
+def _container_fallback_allowed() -> tuple[bool, str | None]:
+    raw = os.environ.get(REPLAY_CONTAINER_FALLBACK_ENV, "").strip().lower()
+    if raw not in {"1", "true", "yes", "on"}:
+        return False, None
+    if not _CONTAINER_MARKER.exists():
+        return False, f"{REPLAY_CONTAINER_FALLBACK_ENV} applies only inside a Docker container"
+    from .container_guard import validate
+
+    try:
+        validate()
+    except (OSError, ValueError) as exc:
+        return False, f"{REPLAY_CONTAINER_FALLBACK_ENV} is set but the container guard refused: {exc}"
+    return True, None
+
+
+def _replay(workspace: Path, command: list[str], *, timeout_seconds: int) -> dict[str, Any]:
+    """Replay ``command`` on a private copy of ``workspace``.
+
+    ``{workspace}`` tokens in ``command`` name the copied closure root.
+    """
+
+    bubblewrap = shutil.which("bwrap")
+    problem = _bubblewrap_problem(bubblewrap)
+    fallback = False
+    if problem is not None:
+        fallback, refusal = _container_fallback_allowed()
+        if not fallback:
+            return {
+                "schema_version": REPLAY_SCHEMA,
+                "status": "unavailable",
+                "reason": refusal or problem,
+            }
     with tempfile.TemporaryDirectory(prefix="openlabs-replay-") as temporary:
         replay_workspace = Path(temporary) / "workspace"
         shutil.copytree(workspace, replay_workspace)
+        if fallback:
+            return _replay_in_verified_container(
+                replay_workspace,
+                [item.replace("{workspace}", str(replay_workspace)) for item in command],
+                home=Path(temporary),
+                timeout_seconds=timeout_seconds,
+                reason=str(problem),
+            )
+        command = [item.replace("{workspace}", "/work") for item in command]
         sandbox = [bubblewrap, "--die-with-parent", "--unshare-net", "--clearenv"]
         for system_root in ("/usr", "/bin", "/lib", "/lib64", "/etc"):
             path = Path(system_root)
@@ -114,7 +187,7 @@ def _replay(workspace: Path, command: list[str], *, timeout_seconds: int) -> dic
                 "duration_seconds": max(0.0, time.monotonic() - started),
                 "stdout_sha256": _digest_text(str(exc.stdout or "")),
                 "stderr_sha256": _digest_text(str(exc.stderr or "")),
-                "sandbox": "bubblewrap-readonly-system-unshared-network",
+                "sandbox": _SANDBOX,
             }
     return {
         "schema_version": REPLAY_SCHEMA,
@@ -123,7 +196,66 @@ def _replay(workspace: Path, command: list[str], *, timeout_seconds: int) -> dic
         "duration_seconds": max(0.0, time.monotonic() - started),
         "stdout_sha256": _digest_text(completed.stdout),
         "stderr_sha256": _digest_text(completed.stderr),
-        "sandbox": "bubblewrap-readonly-system-unshared-network",
+        "sandbox": _SANDBOX,
+    }
+
+
+def _replay_in_verified_container(
+    replay_workspace: Path,
+    command: list[str],
+    *,
+    home: Path,
+    timeout_seconds: int,
+    reason: str,
+) -> dict[str, Any]:
+    """Weaker replay: private copy and clean environment, no namespace isolation.
+
+    It still catches undeclared workspace-relative inputs, but not absolute-path
+    reads of the live repositories or network access; the receipt says so.
+    """
+
+    environment = {
+        "HOME": str(home),
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "PYTHONPATH": "",
+        "PYTHONHASHSEED": "0",
+        "LANG": "C.UTF-8",
+    }
+    started = time.monotonic()
+    base = {
+        "schema_version": REPLAY_SCHEMA,
+        "sandbox": _FALLBACK_SANDBOX,
+        "sandbox_reason": reason,
+    }
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=replay_workspace,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            start_new_session=True,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            **base,
+            "status": "timed_out",
+            "duration_seconds": max(0.0, time.monotonic() - started),
+            "stdout_sha256": _digest_text(str(exc.stdout or "")),
+            "stderr_sha256": _digest_text(str(exc.stderr or "")),
+        }
+    except OSError as exc:
+        return {**base, "status": "failed", "error": str(exc)}
+    return {
+        **base,
+        "status": "passed" if completed.returncode == 0 else "failed",
+        "exit_code": completed.returncode,
+        "duration_seconds": max(0.0, time.monotonic() - started),
+        "stdout_sha256": _digest_text(completed.stdout),
+        "stderr_sha256": _digest_text(completed.stderr),
     }
 
 
@@ -170,10 +302,7 @@ def materialize_reproduction(
             }
         )
     raw_command = [str(item) for item in reproduction.get("command", [])]
-    command = [
-        item.replace("{artifact}", artifact_relative.as_posix()).replace("{workspace}", "/work")
-        for item in raw_command
-    ]
+    command = [item.replace("{artifact}", artifact_relative.as_posix()) for item in raw_command]
     replay = _replay(
         workspace,
         command,
@@ -216,7 +345,9 @@ def preflight_reproductions(
             replay = frozen["replay"]
             receipts.append({"artifact_id": artifact_id, **replay})
             if replay.get("status") != "passed":
+                reason = f" ({replay['reason']})" if replay.get("reason") else ""
                 errors.append(
-                    f"{artifact_id}: isolated reproduction replay status is {replay.get('status')}"
+                    f"{artifact_id}: isolated reproduction replay status is "
+                    f"{replay.get('status')}{reason}"
                 )
     return errors, receipts

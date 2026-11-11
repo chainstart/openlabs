@@ -27,7 +27,7 @@ from openlabs.contracts import (
 )
 from openlabs.db import FactoryDB
 from openlabs.engine import TickReport, _launch_task, ingest_results, tick
-from openlabs.reproduction import preflight_reproductions
+from openlabs.reproduction import _bubblewrap_problem, preflight_reproductions
 
 
 def _paths(tmp_path: Path, code_root: Path | None = None) -> WorkspacePaths:
@@ -497,6 +497,10 @@ def test_result_archive_survives_later_live_file_mutation(tmp_path) -> None:
     assert json.loads(result_path.read_text(encoding="utf-8"))["artifacts"][0]["sha256"] == digest
 
 
+@pytest.mark.skipif(
+    _bubblewrap_problem(shutil.which("bwrap")) is not None,
+    reason="bubblewrap cannot create a namespace here (e.g. Docker's default seccomp)",
+)
 def test_result_archive_materializes_and_replays_declared_dependency_closure(tmp_path) -> None:
     paths = _paths(tmp_path)
     workspace = paths.data / "workspaces" / "math" / "campaign"
@@ -564,6 +568,10 @@ def test_result_archive_materializes_and_replays_declared_dependency_closure(tmp
     assert validate_result_bundle(json.loads(result_path.read_text(encoding="utf-8"))).valid
 
 
+@pytest.mark.skipif(
+    _bubblewrap_problem(shutil.which("bwrap")) is not None,
+    reason="bubblewrap cannot create a namespace here (e.g. Docker's default seccomp)",
+)
 def test_preflight_rejects_undeclared_live_dependency(tmp_path) -> None:
     workspace = tmp_path / "campaign"
     dependency = atomic_write_json(workspace / "data" / "hidden.json", {"value": 7})
@@ -736,3 +744,79 @@ def test_ingestion_commits_staged_state_and_indexes_immutable_result(
         {"task_id": "task", "attempt_id": attempt_id, "campaign_id": "campaign"}
     ]
 
+
+def _replay_payload(workspace: Path) -> dict:
+    input_path = atomic_write_json(workspace / "data" / "input.json", {"value": 7})
+    script = workspace / "evidence" / "verify.py"
+    script.parent.mkdir(parents=True)
+    script.write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "root = Path(sys.argv[1])\n"
+        "assert json.loads((root / 'data/input.json').read_text())['value'] == 7\n",
+        encoding="utf-8",
+    )
+    return {
+        "status": "completed",
+        "artifacts": [
+            {
+                "artifact_id": "validator",
+                "uri": script.resolve().as_uri(),
+                "sha256": sha256_file(script),
+                "kind": "verification_script",
+                "reproduction": {
+                    "command": ["python3", "{artifact}", "{workspace}"],
+                    "inputs": [{"path": "data/input.json", "sha256": sha256_file(input_path)}],
+                    "timeout_seconds": 10,
+                },
+            }
+        ],
+    }
+
+
+def test_replay_without_namespaces_is_unavailable_not_a_failed_script(
+    tmp_path, monkeypatch
+) -> None:
+    from openlabs import reproduction
+
+    monkeypatch.setattr(
+        reproduction, "_bubblewrap_problem",
+        lambda _bwrap: "bubblewrap cannot create a namespace on this host (bwrap: denied)",
+    )
+    monkeypatch.delenv(reproduction.REPLAY_CONTAINER_FALLBACK_ENV, raising=False)
+    errors, receipts = preflight_reproductions(
+        _replay_payload(tmp_path / "campaign"), workspace_root=tmp_path / "campaign"
+    )
+    assert receipts[0]["status"] == "unavailable"
+    assert errors == [
+        "validator: isolated reproduction replay status is unavailable "
+        "(bubblewrap cannot create a namespace on this host (bwrap: denied))"
+    ]
+
+
+def test_replay_container_fallback_needs_the_switch_and_a_verified_container(
+    tmp_path, monkeypatch
+) -> None:
+    from openlabs import container_guard, reproduction
+
+    monkeypatch.setattr(reproduction, "_bubblewrap_problem", lambda _bwrap: "no namespaces")
+    monkeypatch.setenv(reproduction.REPLAY_CONTAINER_FALLBACK_ENV, "1")
+    marker = tmp_path / ".dockerenv"
+    marker.touch()
+    monkeypatch.setattr(reproduction, "_CONTAINER_MARKER", marker)
+
+    def refuse(*_args, **_kwargs):
+        raise ValueError("container memory.max is missing or exceeds 36507222016")
+
+    monkeypatch.setattr(container_guard, "validate", refuse)
+    workspace = tmp_path / "campaign"
+    payload = _replay_payload(workspace)
+    errors, receipts = preflight_reproductions(payload, workspace_root=workspace)
+    assert receipts[0]["status"] == "unavailable"
+    assert "container guard refused" in errors[0]
+
+    monkeypatch.setattr(container_guard, "validate", lambda *_args, **_kwargs: None)
+    errors, receipts = preflight_reproductions(payload, workspace_root=workspace)
+    assert errors == []
+    assert receipts[0]["status"] == "passed"
+    assert receipts[0]["sandbox"] == "none-verified-container"

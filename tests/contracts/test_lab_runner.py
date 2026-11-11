@@ -234,6 +234,21 @@ def test_agent_runs_from_campaign_workspace(tmp_path, monkeypatch) -> None:
 
 def test_transaction_sandbox_blocks_canonical_state_writes(tmp_path, monkeypatch) -> None:
     runner = _load_runner()
+    bubblewrap = runner.shutil.which("bwrap")
+    problem = "bubblewrap is not installed" if bubblewrap is None else runner._bubblewrap_probe(
+        bubblewrap
+    )
+    if problem is not None:
+        # e.g. Docker's default seccomp profile; the runner then refuses to start
+        # the agent instead of running it unsandboxed.
+        with pytest.raises(RuntimeError, match="refusing to start the agent"):
+            runner._transaction_sandbox(
+                [sys.executable], {"transaction": {
+                    "mode": "isolated_attempt_workspace",
+                    "attempt_root": str(tmp_path),
+                }}, tmp_path,
+            )
+        pytest.skip(f"bubblewrap cannot create a namespace here: {problem}")
     manifest_path = tmp_path / "openlabs" / "labs" / "math" / "lab.json"
     manifest_path.parent.mkdir(parents=True)
     manifest_path.write_text("{}", encoding="utf-8")

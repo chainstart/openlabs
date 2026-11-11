@@ -7,14 +7,22 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
 from openlabs.config import FactorySettings, WorkspacePaths
 from openlabs.db import FactoryDB
 from openlabs.engine import tick
+from openlabs.reproduction import _bubblewrap_problem
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = CODE_ROOT / "orchestrator" / "src"
 
 
+# The fake agent is not a native Codex adapter, so the lab runner puts it in the
+# bubblewrap attempt sandbox; where namespaces are refused it fails closed.
+@pytest.mark.skipif(
+    _bubblewrap_problem(shutil.which("bwrap")) is not None,
+    reason="bubblewrap cannot create a namespace here (e.g. Docker's default seccomp)",
+)
 def test_tick_records_and_resumes_one_researcher_session(tmp_path, monkeypatch) -> None:
     paths = WorkspacePaths(
         workspace=tmp_path,

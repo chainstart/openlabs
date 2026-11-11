@@ -1652,6 +1652,64 @@ def _replace_rejected_result(
     )
 
 
+def _bubblewrap_probe(bubblewrap: str) -> str | None:
+    """Return why bubblewrap cannot create a sandbox here, or None when it can.
+
+    An installed ``bwrap`` is not enough: Docker's default seccomp profile (and
+    hosts with unprivileged user namespaces disabled) make every launch fail
+    with "No permissions to create new namespace". Probe once so the agent is
+    refused with that reason instead of exiting as an anonymous process failure.
+    """
+
+    try:
+        completed = subprocess.run(
+            [bubblewrap, "--die-with-parent", "--bind", "/", "/", "--", "true"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return str(exc)
+    if completed.returncode == 0:
+        return None
+    return completed.stderr.strip() or f"exit code {completed.returncode}"
+
+
+# Explicit, default-off operator switch (environment of the tick/worker, i.e. the
+# container's env file -- never the shared config/openlabs.toml, which the WSL host
+# reads too). It is honoured only when bubblewrap cannot create a namespace AND the
+# Docker cgroup limits pass orchestrator/src/openlabs/container_guard.py.
+CLAUDE_CONTAINER_FALLBACK_ENV = "OPENLABS_CLAUDE_WITHOUT_BWRAP_IN_VERIFIED_CONTAINER"
+CONTAINER_GUARD_SCRIPT = (
+    Path(__file__).resolve().parents[2] / "orchestrator" / "src" / "openlabs" / "container_guard.py"
+)
+
+
+def _verified_container() -> str | None:
+    """Return None when the container guard accepts this cgroup, else the reason."""
+
+    if not Path("/.dockerenv").exists():
+        return "not running inside a Docker container"
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(CONTAINER_GUARD_SCRIPT)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return str(exc)
+    if completed.returncode == 0:
+        return None
+    return completed.stderr.strip() or f"exit code {completed.returncode}"
+
+
 def _transaction_sandbox(
     command: list[str],
     task: Mapping[str, Any],
@@ -1666,12 +1724,35 @@ def _transaction_sandbox(
         "isolated_attempt_workspace"
     ):
         return command, None
-    bubblewrap = shutil.which("bwrap")
-    if bubblewrap is None:
-        raise RuntimeError("bubblewrap is required for isolated attempt workspaces")
     attempt_root = Path(str(transaction["attempt_root"])).expanduser().resolve()
     if not attempt_root.is_dir() or not attempt_root.is_relative_to(workspace):
         raise ValueError("Transaction attempt_root is missing or outside OPENLABS_WORKSPACE")
+    bubblewrap = shutil.which("bwrap")
+    unusable = (
+        "bubblewrap is not installed"
+        if bubblewrap is None
+        else _bubblewrap_probe(bubblewrap)
+    )
+    if unusable is not None:
+        if Path(command[0]).name == "claude" and _environment_flag(CLAUDE_CONTAINER_FALLBACK_ENV):
+            container_error = _verified_container()
+            if container_error is None:
+                # The container's kernel limits are the resource boundary; the
+                # attempt workspace, result-bundle promotion and Git remain the
+                # state boundary. Nothing below the container stops writes to the
+                # canonical repositories, so this mode is opt-in per machine.
+                return command, "none-verified-container"
+            raise RuntimeError(
+                f"{CLAUDE_CONTAINER_FALLBACK_ENV} is set but the container guard refused: "
+                f"{container_error}"
+            )
+        raise RuntimeError(
+            "bubblewrap cannot create the isolated attempt sandbox on this host "
+            f"({unusable}); refusing to start the agent. Allow unprivileged user "
+            "namespaces, route this runner to Codex, or (Claude in a verified container "
+            f"only) set {CLAUDE_CONTAINER_FALLBACK_ENV}=1 after accepting the risk"
+        )
+    assert bubblewrap is not None
     # Unprivileged root binds are nodev. Preserve the outer container's device
     # access (including /dev/null and CUDA) without adding any new devices.
     sandbox = [bubblewrap, "--die-with-parent", "--bind", "/", "/",

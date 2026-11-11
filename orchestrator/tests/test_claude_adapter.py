@@ -373,6 +373,7 @@ def test_claude_resume_command_keeps_the_session_and_adds_the_policy(tmp_path) -
 def test_claude_uses_the_bubblewrap_transaction_sandbox(tmp_path, monkeypatch) -> None:
     layout = _layout(tmp_path)
     monkeypatch.setattr(lab_runner.shutil, "which", lambda _name: "/usr/bin/bwrap")
+    monkeypatch.setattr(lab_runner, "_bubblewrap_probe", lambda _bwrap: None)
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     monkeypatch.setattr(lab_runner.Path, "home", classmethod(lambda cls: home))
@@ -401,6 +402,55 @@ def test_claude_uses_the_bubblewrap_transaction_sandbox(tmp_path, monkeypatch) -
         ["codex", "exec"],
         "codex-native-danger-full-access",
     )
+
+
+def test_claude_is_refused_when_bubblewrap_cannot_create_a_namespace(
+    tmp_path, monkeypatch
+) -> None:
+    layout = _layout(tmp_path)
+    monkeypatch.setattr(lab_runner.shutil, "which", lambda _name: "/usr/bin/bwrap")
+    monkeypatch.setattr(
+        lab_runner, "_bubblewrap_probe",
+        lambda _bwrap: "bwrap: No permissions to create new namespace",
+    )
+    monkeypatch.delenv(lab_runner.CLAUDE_CONTAINER_FALLBACK_ENV, raising=False)
+    container_checked = []
+    monkeypatch.setattr(
+        lab_runner, "_verified_container", lambda: container_checked.append(1)
+    )
+    with pytest.raises(RuntimeError, match="No permissions to create new namespace"):
+        lab_runner._transaction_sandbox(
+            ["claude", "-p"], layout["task"], layout["workspace"].resolve()
+        )
+    # The default never consults the container: there is no implicit fallback.
+    assert container_checked == []
+
+
+def test_claude_container_fallback_needs_the_switch_and_a_verified_container(
+    tmp_path, monkeypatch
+) -> None:
+    layout = _layout(tmp_path)
+    workspace = layout["workspace"].resolve()
+    monkeypatch.setattr(lab_runner.shutil, "which", lambda _name: "/usr/bin/bwrap")
+    monkeypatch.setattr(lab_runner, "_bubblewrap_probe", lambda _bwrap: "no namespaces")
+    monkeypatch.setenv(lab_runner.CLAUDE_CONTAINER_FALLBACK_ENV, "1")
+
+    monkeypatch.setattr(lab_runner, "_verified_container", lambda: "memory.max exceeds 34 GiB")
+    with pytest.raises(RuntimeError, match="container guard refused: memory.max"):
+        lab_runner._transaction_sandbox(["claude", "-p"], layout["task"], workspace)
+
+    monkeypatch.setattr(lab_runner, "_verified_container", lambda: None)
+    assert lab_runner._transaction_sandbox(["claude", "-p"], layout["task"], workspace) == (
+        ["claude", "-p"],
+        "none-verified-container",
+    )
+    # Only Claude Code: other (test-double) commands keep failing closed.
+    with pytest.raises(RuntimeError, match="refusing to start the agent"):
+        lab_runner._transaction_sandbox(["python3", "-c", "1"], layout["task"], workspace)
+    # A working bubblewrap always wins over the switch.
+    monkeypatch.setattr(lab_runner, "_bubblewrap_probe", lambda _bwrap: None)
+    _wrapped, sandbox = lab_runner._transaction_sandbox(["claude", "-p"], layout["task"], workspace)
+    assert sandbox == "bubblewrap"
 
 
 def test_claude_requires_the_isolated_transaction(tmp_path) -> None:
