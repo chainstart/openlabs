@@ -27,6 +27,7 @@ kills every descendant when its command exits. Do not run a single tick as
 `openlabs-resource-guard -- python -m openlabs tick`: its workers would die
 about a second after launch, so `tick` refuses that (exit 78). Run the tick
 loop inside one long-lived guard; workers then live as long as the loop.
+`bin/openlabs-container-loop` does exactly that (`docs/operations.zh.md`, "容器实例").
 
 The current container is configured live; Compose and `cc-sg open` persist the
 limits and mount for subsequent launches. Container tasks do not need root,

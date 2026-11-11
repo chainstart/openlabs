@@ -105,11 +105,14 @@ Zenodo 文件必须是当前用户拥有的普通文件且权限不宽于 `0600`
 启动的 Codex/worker 可以继承它们，但普通登录 shell 仍不会自动携带密钥。该加载机制也不会
 设置 `OPENLABS_ENABLE_EXTERNAL_WRITES`，外部写操作仍须按下文针对一次明确操作单独开启。
 设置 `OPENLABS_ENV_FILES=<文件1>:<文件2>`（`os.pathsep` 分隔）时只读取列出的文件、完全不读上面
-三个默认文件（包括 `zenodo.env`），适合隔离的演练或测试环境。配置只从
-`$OPENLABS_WORKSPACE/openlabs/config/openlabs.toml` 读取（没有单独指定配置文件的变量）；
-演练时可把 `$OPENLABS_WORKSPACE/openlabs` 做成除 `config/` 外都链接到代码仓库的目录。
+三个默认文件（包括 `zenodo.env`），适合隔离的演练或测试环境。配置默认从
+`$OPENLABS_WORKSPACE/openlabs/config/openlabs.toml` 读取；`OPENLABS_CONFIG_FILE` 指定另一份
+TOML（文件缺失即报错），容器实例就是这样读它自己的设置（见“容器实例”）。
 `tick` 和 `bin/openlabs-codex` 在启动研究前还会执行严格网络门禁：依次探测当前进程继承的
-代理和持久代理文件。若当前进程携带一个新的可用代理，它会原子更新
+代理和持久代理文件。有 `[runners]` 表时，门禁检查表中出现的每一家：Codex 端点和
+`api.anthropic.com`（可用 `OPENLABS_AGENT_PREFLIGHT_URL_ANTHROPIC` 覆盖）各发一次不带凭据的
+HEAD 请求，选中的代理必须两家都通；Claude 一侧另在本地确认配置的 `claude` 命令在 PATH 上、
+`~/.claude/.credentials.json` 存在（不调用模型、不读凭据内容）。没有 runner 表时只查 Codex。若当前进程携带一个新的可用代理，它会原子更新
 `90-openlabs-proxy.conf`，并通过 `systemctl --user import-environment` 同步大小写代理变量；
 随后启动的 transient worker 会继承同一组值。如果所有候选都不可达，则在领取或启动科研
 任务前以退出码 69 拒绝运行，不会消耗任务墙钟预算。可独立执行
@@ -442,6 +445,64 @@ adapter 仍由 worker 使用 bubblewrap 只开放本 attempt；本机缺少 bubb
 systemd 只保证 tick 被再次调用；科学恢复由 SQLite 租约、心跳、超时、有限重试、结果
 门禁和 `quarantined`/`needs_replan` 状态负责。Agent 有界超时后会终止其进程组。复杂且
 不可逆的十字路口进入 `needs_human`，但工厂继续运行其他课题。
+
+## 容器实例
+
+容器里的新自动研究用一个独立实例：自己的运行库、自己的设置文件、自己的项目，与 WSL 旧实例
+共用数据仓库和制品库。三个变量选择实例（都不设时一切如前）：`OPENLABS_INSTANCE`（实例名）、
+`OPENLABS_DATABASE_ROOT`（运行库目录，含它自己的 job/result inbox）、`OPENLABS_CONFIG_FILE`。
+前两个必须同时设置，且运行库不能是默认的 `openlabs-database`。
+
+初始化（默认只打印将要创建的内容，`--write` 才写；可重复执行，已有文件从不覆盖）：
+
+```bash
+cd /workspace/openlabs/openlabs
+PYTHONPATH=orchestrator/src python3 -m openlabs program init-instance            # 预览
+PYTHONPATH=orchestrator/src python3 -m openlabs program init-instance --write    # 创建
+```
+
+默认实例名 `cc-sg`、目录 `/workspace/openlabs/openlabs-instances/cc-sg/`：`database/`、
+`openlabs.toml`（由仓库 TOML 加上实例设置生成，仓库那份不改）、`instance.env`、`state/`；数据
+仓库里是五个学科（ai、biology、materials、physics、quant；数学不建）的计划项目
+`workspaces/<domain>/instances/cc-sg/projects/`，以及空的 `registry/instances/cc-sg/topic-ledger.json`
+和 `reusable-assets.json`。改预设：`--preset full --update-config --write`（旧文件留 `.bak`）。
+
+| 开关 | observe（默认） | full |
+| --- | --- | --- |
+| `[program] enabled`、六个 `[runners]`（额度路由）、`enforce_admission` | 开 | 开 |
+| `[program.assets] enabled`（先查资产库） | 关 | 开 |
+| `[program.assets] retrospective_enabled`（沉淀） | 关 | 开 |
+| `[program] auto_handoff`、`auto_release` | 关 | 开 |
+
+两档都是 `max_active_topics = 5`、`max_parallel_agents = 3`、`compute_locations` 不含 `wsl_math`。
+full 还需要 `--paper-writing-command`、`[program.git]` 身份（`--git-user-name/--git-user-email`）
+和管理网站凭据，见“发布流水线”。
+
+运行（容器里没有 systemd；整个循环在一个长驻资源护栏里，单次 tick 不能单独包护栏）：
+
+```bash
+bin/openlabs-container-loop start            # 后台启动
+bin/openlabs-container-loop status           # 是否在跑、最近一次 tick
+bin/openlabs-container-loop stop             # 跑完当前 tick 后退出；在跑的智能体随护栏结束，重启后重试
+bin/openlabs-container-loop stop --drain     # 同上，但先等在跑的 worker 结束
+bin/openlabs-container-loop cli -- status    # 以本实例身份执行任意 python -m openlabs 子命令
+```
+
+每次 tick 的报告追加到 `state/ticks.jsonl`，循环日志在 `state/loop.log`；有结果回执时提前唤醒。
+间隔等见脚本头部（`OPENLABS_LOOP_INTERVAL_SECONDS` 默认 180）。在容器环境文件里加
+`OPENLABS_REQUIRE_INSTANCE=1` 后，没有选实例的 `python -m openlabs tick` 会被拒绝。
+
+与 WSL 旧实例并存的边界：
+
+- 项目：旧实例只扫 `workspaces/*/projects/*` 与 `workspaces/*/production/*`，看不到
+  `instances/` 下的项目；新实例只扫自己的 `instances/<name>/projects/`，也不接旧的数学生产计划。
+- 运行库、锁、事件、inbox、attempt 工作区（`openlabs-artifacts/instances/<name>/`）、
+  program-control 各自独立；结果包、实验目录和内容寻址对象按 campaign/attempt 编号区分，共用无冲突。
+  回执归档 `ledger/receipts/` 共用（文件名含任务与 attempt 编号）。
+- 共用且需注意的：GPU 锁（本来就是两边共用来防冲突的）、ailab 队列（桥接最多 8 个并发、按
+  CPU/内存准入，但不分实例、不限排队长度）、数据仓库的 Git 提交（两边同时提交时一边会因
+  `index.lock` 失败后重试）。
+- 新实例不认识旧实例的 13 个在研项目，旧实例跑完它们；不要把新实例的设置写进仓库 TOML。
 
 ## 台式机与笔记本交接
 

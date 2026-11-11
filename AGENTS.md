@@ -52,7 +52,9 @@ private keys.
 ## Where computation runs
 
 Agents run in the container. Choose where an experiment runs by what it needs, and state
-the choice in the topic card's cost estimate so admission can weigh it:
+the choice in the topic card's `cost_estimate.compute_plan` (locations `container_cpu`,
+`container_gpu`, `ailab`, `wsl_math`, with rough GPU memory or ailab cores, memory and hours)
+so admission can weigh it:
 
 - Minutes of work with modest memory: run it directly in the container.
 - Anything that needs the GPU: run it in the container after reserving the device. The GPU
@@ -61,7 +63,8 @@ the choice in the topic card's cost estimate so admission can weigh it:
 - Many cores, large memory or hours of CPU time: package it for the ailab host through the
   remote compute queue (`bin/openlabs-remote`, `docs/REMOTE_COMPUTE.md`). ailab has CPU and
   memory only, and sending heavy work there keeps the container free for the agents.
-- Mathematics that needs the dedicated memory cap runs on the WSL host, not in the container.
+- Mathematics that needs the dedicated memory cap runs on the WSL host, not in the container;
+  the container instance rejects a topic whose plan names `wsl_math`.
 
 ## Actions that need a human
 
