@@ -53,6 +53,7 @@ from .portfolio import (
     schedule_portfolio_review,
     spawn_candidate_workstreams,
 )
+from .program import run_program_controller
 from .projects import (
     EPISTEMIC_FRESH_BOUNDARIES,
     ExecutionPolicy,
@@ -378,6 +379,8 @@ class TickReport:
     status_counts: dict[str, int] = field(default_factory=dict)
     resource_capacity: dict[str, int] = field(default_factory=dict)
     resource_reserved: dict[str, int] = field(default_factory=dict)
+    # Research-program controller summary; empty while [program] is disabled.
+    program: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -401,6 +404,7 @@ class TickReport:
             "status_counts": self.status_counts,
             "resource_capacity": self.resource_capacity,
             "resource_reserved": self.resource_reserved,
+            "program": self.program,
         }
 
 
@@ -653,6 +657,9 @@ def _sync_active_projects(
         campaign_id = str(campaign["campaign_id"])
         if campaign_id in desired:
             continue
+        if str(campaign.get("status") or "") == "frozen":
+            # A frozen topic is terminal for its campaign; never pause/rebind it.
+            continue
         policy = workstream_policy(campaign)
         if (
             policy.get("dynamic") is True
@@ -730,6 +737,9 @@ def _sync_active_projects(
             else settings.max_campaign_agent_seconds
         )
         campaign = db.campaign(binding.workstream_id)
+        if campaign is not None and str(campaign.get("status") or "") == "frozen":
+            # Like a paused workstream: skip silently and never reactivate it.
+            continue
         if binding.legacy_plan_path is None:
             bound_state_status = str(
                 _read_json_object(binding.workstream_path).get("status") or ""
@@ -2743,6 +2753,9 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     for disposition in recovery.attempts:
         _apply_attempt_disposition(paths, report, disposition)
     report.budget_stopped.extend(db.stop_budget_exhausted_tasks())
+    # Research-program bookkeeping runs after ingestion so freezes recorded in the
+    # topic ledger stop their campaigns before any continuous replenishment.
+    run_program_controller(db, paths, settings.program, report)
     if settings.auto_continue:
         _replenish_continuous_campaigns(db, paths, settings, report)
 

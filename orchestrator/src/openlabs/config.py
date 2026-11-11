@@ -8,7 +8,7 @@ import shlex
 import stat
 import tomllib
 from collections.abc import MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +55,24 @@ class WorkspacePaths:
             path.mkdir(parents=True, exist_ok=True)
 
 
+DEFAULT_TOPIC_LEDGER_PATH = "registry/topic-ledger.json"
+
+
+@dataclass(frozen=True)
+class ProgramSettings:
+    """Research-program controller switches (``[program]`` in openlabs.toml).
+
+    Disabled by default: when ``enabled`` is false the controller neither reads nor
+    writes the topic ledger and the tick behaves exactly as before.
+    """
+
+    enabled: bool = False
+    max_active_topics: int = 5
+    max_ready_unsubmitted: int = 6
+    # Relative to the data repository root (``WorkspacePaths.data``).
+    ledger_path: str = DEFAULT_TOPIC_LEDGER_PATH
+
+
 @dataclass(frozen=True)
 class FactorySettings:
     # Resource admission is the primary concurrency control. This is only a
@@ -79,6 +97,7 @@ class FactorySettings:
     default_task_cpu_threads: int = 2
     default_task_memory_mib: int = 4_096
     default_task_scratch_mib: int = 4_096
+    program: ProgramSettings = field(default_factory=ProgramSettings)
 
 
 def _default_workspace() -> Path:
@@ -214,6 +233,26 @@ def _fraction(value: Any, default: float) -> float:
     return parsed if 0 < parsed <= 1 else default
 
 
+def _relative_ledger_path(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return DEFAULT_TOPIC_LEDGER_PATH
+    candidate = Path(text)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError(f"[program].ledger_path must stay inside the data repository: {text!r}")
+    return candidate.as_posix()
+
+
+def load_program_settings(payload: Any) -> ProgramSettings:
+    program = payload if isinstance(payload, dict) else {}
+    return ProgramSettings(
+        enabled=program.get("enabled", False) is True,
+        max_active_topics=_positive_int(program.get("max_active_topics"), 5),
+        max_ready_unsubmitted=_nonnegative_int(program.get("max_ready_unsubmitted"), 6),
+        ledger_path=_relative_ledger_path(program.get("ledger_path")),
+    )
+
+
 def load_settings(paths: WorkspacePaths) -> FactorySettings:
     path = paths.code / "config" / "openlabs.toml"
     payload: dict[str, Any] = {}
@@ -250,4 +289,5 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
         default_task_cpu_threads=_positive_int(resources.get("default_task_cpu_threads"), 2),
         default_task_memory_mib=_positive_int(resources.get("default_task_memory_mib"), 4_096),
         default_task_scratch_mib=_positive_int(resources.get("default_task_scratch_mib"), 4_096),
+        program=load_program_settings(payload.get("program")),
     )

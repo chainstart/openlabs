@@ -32,3 +32,15 @@ default_task_scratch_mib = 4096
 
 [retention]
 archive_result_receipts = true
+
+[program]
+# Research-program controller (topic ledger, active-topic slots, freezes).
+# Off by default; when false the tick neither reads nor writes the ledger.
+enabled = false
+# Topics counted against this limit: admitted (reserved), active and in_review.
+max_active_topics = 5
+# Papers waiting in ready_queue beyond this pause new admissions (they do not
+# occupy research slots).
+max_ready_unsubmitted = 6
+# Relative to the data repository root.
+ledger_path = "registry/topic-ledger.json"

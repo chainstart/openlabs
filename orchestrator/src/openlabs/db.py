@@ -839,6 +839,131 @@ class FactoryDB:
                 )
         return tuple(cancelled)
 
+    def freeze_campaign(
+        self,
+        campaign_id: str,
+        *,
+        reason: str,
+        topic_id: str | None = None,
+        evidence: Any = None,
+    ) -> tuple[str, ...]:
+        """Freeze a research campaign permanently and cancel its queued work.
+
+        A frozen campaign is never claimed (``claim_next_task`` requires
+        ``status='active'``), never renewed, and never reactivated by project
+        synchronization; reopening a frozen topic creates a new topic and campaign.
+        Leased/running work may finish, but its expired lease is cancelled rather
+        than requeued. Repeating the call is a no-op apart from cancelling any
+        queued task that appeared in between.
+        """
+
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            campaign = connection.execute(
+                "SELECT status FROM campaigns WHERE campaign_id=?",
+                (campaign_id,),
+            ).fetchone()
+            if campaign is None:
+                raise KeyError(campaign_id)
+            prior_status = str(campaign["status"])
+            rows = connection.execute(
+                """
+                SELECT task_id FROM tasks
+                WHERE campaign_id=? AND status='queued'
+                ORDER BY task_id
+                """,
+                (campaign_id,),
+            ).fetchall()
+            cancelled = [str(row["task_id"]) for row in rows]
+            connection.execute(
+                """
+                UPDATE tasks
+                SET status='cancelled', not_before=NULL, last_error=?, updated_at=?
+                WHERE campaign_id=? AND status='queued'
+                """,
+                (f"campaign_frozen:{reason}", now, campaign_id),
+            )
+            if prior_status != "frozen":
+                connection.execute(
+                    "UPDATE campaigns SET status='frozen', updated_at=? WHERE campaign_id=?",
+                    (now, campaign_id),
+                )
+            if prior_status != "frozen" or cancelled:
+                self._event(
+                    connection,
+                    "campaign",
+                    campaign_id,
+                    "campaign_frozen",
+                    {
+                        "reason": reason,
+                        "prior_status": prior_status,
+                        "topic_id": topic_id,
+                        "evidence": evidence,
+                        "cancelled_tasks": cancelled,
+                    },
+                )
+        return tuple(cancelled)
+
+    def record_event_once(
+        self,
+        entity_type: str,
+        entity_id: str,
+        event_type: str,
+        payload: Mapping[str, Any],
+        *,
+        event_key: str,
+    ) -> bool:
+        """Write one event unless an event with the same ``event_key`` exists.
+
+        Returns True when a new row was written.
+        """
+
+        body = dict(payload)
+        body["event_key"] = event_key
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """
+                SELECT 1 FROM events
+                WHERE entity_type=? AND entity_id=? AND event_type=?
+                  AND json_extract(payload_json, '$.event_key')=?
+                LIMIT 1
+                """,
+                (entity_type, entity_id, event_type, event_key),
+            ).fetchone()
+            if existing is not None:
+                return False
+            self._event(connection, entity_type, entity_id, event_type, body)
+        return True
+
+    def events(
+        self,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        parameters: list[str] = []
+        if entity_type is not None:
+            clauses.append("entity_type=?")
+            parameters.append(entity_type)
+        if entity_id is not None:
+            clauses.append("entity_id=?")
+            parameters.append(entity_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM events {where} ORDER BY event_id",  # noqa: S608
+                parameters,
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(str(item.pop("payload_json") or "{}"))
+            result.append(item)
+        return result
+
     def cancel_queued_tasks_for_inactive_campaigns(self) -> tuple[str, ...]:
         """Remove stale queue entries that can never be admitted by the scheduler."""
 
