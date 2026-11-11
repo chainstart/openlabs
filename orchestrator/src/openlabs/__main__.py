@@ -35,6 +35,26 @@ def _agent_role(task_type: str) -> str:
     return "researcher"
 
 
+def _asset_command(library, args, db, paths, settings) -> dict:
+    command = args.assets_command
+    if command == "seed":
+        payload = library.seed_candidates(paths, settings)
+        if args.output is not None:
+            atomic_write_json(args.output, payload)
+            payload = {**payload, "written_to": str(args.output)}
+        return payload
+    if command == "register":
+        return library.register_draft(db, paths, settings, args.draft, by=args.by)
+    if command == "list":
+        return library.list_assets(paths, settings, include_archived=args.all)
+    if command == "show":
+        return library.show_asset(paths, settings, args.asset_id)
+    if command == "archive":
+        return library.archive_asset(db, paths, settings, args.asset_id, reason=args.reason,
+                                     decided_by=f"manual:{args.by}")
+    return library.reuse_cost_comparison(db, paths, settings)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m openlabs")
     parser.add_argument("--workspace", help="Override OPENLABS_WORKSPACE")
@@ -158,6 +178,34 @@ def _parser() -> argparse.ArgumentParser:
         help="second_author (default) or an author name from the paper's byline",
     )
     assign.add_argument("--by", default="owner", help="Who completed the review (provenance)")
+    assets = program_commands.add_parser(
+        "assets", help="Reusable-asset index: seed drafts, register, list, show, archive"
+    )
+    asset_commands = assets.add_subparsers(dest="assets_command", required=True)
+    seed = asset_commands.add_parser(
+        "seed",
+        help="Scan [program.assets].seed_paths for standalone tools and print registration "
+        "drafts (never registers)",
+    )
+    seed.add_argument("--dry-run", action="store_true", default=True,
+                      help="Always on: seeding only proposes drafts")
+    seed.add_argument("--output", type=Path, help="Also write the drafts to this file")
+    register = asset_commands.add_parser(
+        "register", help="Register a confirmed draft (one proposal or asset_proposals[])"
+    )
+    register.add_argument("draft", type=Path)
+    register.add_argument("--by", default="operator", help="Who confirmed it (provenance)")
+    listing = asset_commands.add_parser("list", help="One line per asset")
+    listing.add_argument("--all", action="store_true", help="Include archived assets")
+    show = asset_commands.add_parser("show", help="Full index entry of one asset")
+    show.add_argument("asset_id")
+    archive = asset_commands.add_parser("archive", help="Archive an asset (never deletes)")
+    archive.add_argument("asset_id")
+    archive.add_argument("--reason", default="manual")
+    archive.add_argument("--by", default="operator")
+    asset_commands.add_parser(
+        "cost", help="Tasks, tokens and Agent time of topics with vs without reused assets"
+    )
     return parser
 
 
@@ -238,6 +286,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 65
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
+    if (
+        args.command == "program" and args.program_command == "assets"
+        and args.assets_command in {"seed", "list", "show"}
+    ):
+        # Read-only: neither runtime directories nor the database are touched.
+        from . import assets as asset_library
+
+        try:
+            payload = _asset_command(asset_library, args, None, paths, load_settings(paths))
+        except (asset_library.AssetIndexError, OSError, ValueError) as exc:
+            print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False),
+                  file=sys.stderr)
+            return 1
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
     paths.ensure_runtime_directories()
     db = FactoryDB(paths.database_file)
     db.initialize()
@@ -247,10 +310,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == "tick":
         payload = tick(paths, load_settings(paths)).to_dict()
     elif args.command == "program":
+        from . import assets as asset_library
         from .program_autonomy import DeliveryError, assign_submission_handler
         from .program_flow import backfill_grandfathered, submit_topic_card
 
-        if args.program_command == "backfill":
+        if args.program_command == "assets":
+            try:
+                payload = _asset_command(asset_library, args, db, paths, settings)
+            except (asset_library.AssetIndexError, OSError, ValueError) as exc:
+                print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
+                return 1
+        elif args.program_command == "backfill":
             payload = backfill_grandfathered(db, paths, settings, write=args.write)
         elif args.program_command == "assign-handler":
             try:

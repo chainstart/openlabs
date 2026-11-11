@@ -68,6 +68,7 @@ from .program import (
     run_program_controller,
     topic_for_campaign,
 )
+from . import assets as asset_library
 from . import program_autonomy
 from .program_autonomy import DIRECTION_TASK_TYPE, EVIDENCE_REMEDIATION_ROUTINGS
 from .program_flow import (
@@ -2475,7 +2476,9 @@ def ingest_results(
             # A topic scout only proposes cards; the program controller owns
             # what happens next (registration, admission), never the result.
             # A direction decision is applied by the program controller below.
-            automatic_successors_allowed = task_type not in {SCOUT_TASK_TYPE, DIRECTION_TASK_TYPE}
+            automatic_successors_allowed = task_type not in {
+                SCOUT_TASK_TYPE, DIRECTION_TASK_TYPE, asset_library.RETROSPECTIVE_TASK_TYPE
+            }
             if task_type == "portfolio_review" and payload.get("paper_candidate") is True:
                 report.errors.append(
                     f"Portfolio reviewer {task_id} set paper_candidate=true; ignored for "
@@ -2503,6 +2506,14 @@ def ingest_results(
                 except Exception as exc:  # noqa: BLE001 - the result stays authoritative.
                     program_disposition = "handled"
                     report.errors.append(f"Program handling of {task_id} failed: {exc}")
+            try:
+                # Declared assets_used / assets_broken (no-op unless [program.assets] enabled).
+                asset_library.record_result_usage(
+                    db, paths, settings, report, task=task, attempt_id=attempt_id,
+                    payload=payload, successful=successful,
+                )
+            except Exception as exc:  # noqa: BLE001 - usage counting is advisory.
+                report.errors.append(f"Asset usage of {task_id} not recorded: {exc}")
             # "continue_research": a paper candidate of an admitted topic whose primary
             # endpoint is inconclusive stays in research (within budget and deadline).
             paper_candidate = (
@@ -2953,6 +2964,7 @@ def _write_task_spec(
     output_path: Path,
     wall_seconds: int,
     campaign: Mapping[str, Any] | None = None,
+    extra_read_resources: list[dict[str, str]] | None = None,
 ) -> Path:
     agent_workspace = attempt_workspace.campaign_root
     agent_workspace.mkdir(parents=True, exist_ok=True)
@@ -3040,7 +3052,8 @@ def _write_task_spec(
         }
         known_paths = {item["path"] for item in payload["project"]["read_resources"]}
         known_labels = {item["label"] for item in payload["project"]["read_resources"]}
-        for item in packet_read_resources(task.get("input_path")):
+        for item in [*packet_read_resources(task.get("input_path")),
+                     *(extra_read_resources or [])]:
             if item["path"] not in known_paths and item["label"] not in known_labels:
                 payload["project"]["read_resources"].append(item)
                 known_paths.add(item["path"])
@@ -3146,6 +3159,7 @@ def _launch_task(
         output_path=output_path,
         wall_seconds=wall_seconds,
         campaign=campaign,
+        extra_read_resources=asset_library.research_read_resources(paths, settings, task, campaign),
     )
     log_path = output_path.parent / "worker.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3328,6 +3342,8 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     program_autonomy.run_program_autonomy(db, paths, settings, report)
     # Topic scouts, card intake and ordered materialization of admitted topics.
     run_program_pipeline(db, paths, settings, report)
+    # Asset retrospectives and archiving (no-op unless [program.assets] is enabled).
+    asset_library.run_assets_tick(db, paths, settings, report)
     if settings.auto_continue:
         _replenish_continuous_campaigns(db, paths, settings, report)
 

@@ -164,6 +164,8 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
     # Topic scouting verifies data access and estimates cost, not just
     # literature screening, so it runs on the worker tier.
     "topic_scout": "worker",
+    # Distilling a finished topic into reusable assets is bookkeeping-sized work.
+    "topic_retrospective": "light",
     "paper_revision": "worker",
     "paper_readiness": "worker",
     "paper_writing": "worker",
@@ -300,6 +302,63 @@ class FactorySettings:
     budget: BudgetSettings = field(default_factory=BudgetSettings)
     runners: dict[str, RunnerSpec] = field(default_factory=dict)
     routing: RoutingSettings = field(default_factory=RoutingSettings)
+    assets: AssetSettings = field(default_factory=lambda: AssetSettings())
+
+
+@dataclass(frozen=True)
+class AssetSettings:
+    """Reusable-asset library (``[program.assets]`` in openlabs.toml).
+
+    Both switches are off by default; with them off the tick, the packets and
+    the task specs are exactly as before. Everything only acts while
+    ``[program].enabled`` is true as well.
+    """
+
+    # Check-before-build: index summaries in scout/admission/direction/research
+    # inputs, the admission reference check, usage counting and archiving.
+    enabled: bool = False
+    # One ``topic_retrospective`` task per topic entering ready_queue or frozen.
+    retrospective_enabled: bool = False
+    # Asset bodies, relative to the data repository (archive under ``<root>/archive``).
+    root: str = "assets"
+    summary_limit: int = 40
+    summary_max_chars: int = 12_000
+    maintenance_interval_hours: float = 24.0
+    unused_archive_days: float = 120.0
+    max_lessons: int = 200
+    broken_reports_to_archive: int = 2
+    # Code-repository globs scanned by ``program assets seed``.
+    seed_paths: tuple[str, ...] = ("labs/*/tools", "packages/research-core")
+
+
+def load_asset_settings(program_payload: Any) -> AssetSettings:
+    program = program_payload if isinstance(program_payload, dict) else {}
+    raw = program.get("assets")
+    assets = raw if isinstance(raw, dict) else {}
+    seed = assets.get("seed_paths")
+    if seed is not None and (
+        not isinstance(seed, list) or any(not isinstance(item, str) or not item.strip()
+                                           for item in seed)
+    ):
+        raise ValueError("[program.assets].seed_paths must be an array of glob strings")
+    return AssetSettings(
+        enabled=assets.get("enabled", False) is True,
+        retrospective_enabled=assets.get(
+            "retrospective_enabled", program.get("retrospective_enabled", False)
+        ) is True,
+        root=_relative_data_path(assets.get("root"), "assets", "assets.root"),
+        summary_limit=_positive_int(assets.get("summary_limit"), 40),
+        summary_max_chars=_positive_int(assets.get("summary_max_chars"), 12_000),
+        maintenance_interval_hours=_positive_float(
+            assets.get("maintenance_interval_hours"), 24.0
+        ),
+        unused_archive_days=_positive_float(assets.get("unused_archive_days"), 120.0),
+        max_lessons=_positive_int(assets.get("max_lessons"), 200),
+        broken_reports_to_archive=_positive_int(assets.get("broken_reports_to_archive"), 2),
+        seed_paths=tuple(item.strip() for item in seed) if seed is not None else (
+            "labs/*/tools", "packages/research-core"
+        ),
+    )
 
 
 def _default_workspace() -> Path:
@@ -759,6 +818,7 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
         default_task_memory_mib=_positive_int(resources.get("default_task_memory_mib"), 4_096),
         default_task_scratch_mib=_positive_int(resources.get("default_task_scratch_mib"), 4_096),
         program=load_program_settings(payload.get("program")),
+        assets=load_asset_settings(payload.get("program")),
         budget=load_budget_settings(payload.get("budget")),
         runners=runners,
         routing=routing,

@@ -27,12 +27,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from . import assets as asset_library
 from . import budget as budget_control
 from .config import FactorySettings, WorkspacePaths
 from .contracts import (
     artifact_digests,
     atomic_write_json,
     canonical_json_bytes,
+    data_source_identifiers,
     sha256_file,
     validate_topic_admission,
     validate_topic_card,
@@ -396,6 +398,7 @@ def maybe_schedule_scout(
             "candidate_pool": len(_proposed_pool(document)),
             "ledger_snapshot": _ledger_snapshot(document),
             "read_resources": program_read_resources(paths, settings, ledger),
+            **asset_library.packet_fields(paths, settings, domains=[project.domain]),
             "created_at": stamp,
         }
     )
@@ -505,6 +508,7 @@ def intake_card(
     card.pop("topic_id", None)
     card["domain"] = project.domain
     errors = list(validate_topic_card(card).errors)
+    errors.extend(asset_library.card_reference_errors(paths, settings, card))
     decisive = card.get("decisive_analysis")
     receipt = decisive.get("access_receipt") if isinstance(decisive, Mapping) else None
     if isinstance(receipt, Mapping) and receipt.get("sha256"):
@@ -690,6 +694,7 @@ def schedule_topic_admission(
                 "card": card,
             }
         )
+    asset_library.annotate_admission_entries(paths, settings, entries)
     topic_ids = [str(entry["topic_id"]) for entry in entries]
     result_ids = sorted({str(entry["source_result_id"]) for entry in entries})
     digest = hashlib.sha256("\0".join(topic_ids + result_ids).encode()).hexdigest()
@@ -714,6 +719,13 @@ def schedule_topic_admission(
             "exclude_provider": exclude,
             "ledger_snapshot": _ledger_snapshot(ledger.read()),
             "read_resources": program_read_resources(paths, settings, ledger),
+            **asset_library.packet_fields(
+                paths, settings, domains=[project.domain],
+                data_sources=[
+                    source for entry in entries
+                    for source in data_source_identifiers(entry["card"].get("data_sources"))
+                ],
+            ),
             "created_at": utc_now(),
         }
     )

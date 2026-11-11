@@ -34,6 +34,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from . import assets as asset_library
 from . import budget as budget_control
 from .config import FactorySettings, WorkspacePaths
 from .contracts import (
@@ -487,6 +488,8 @@ def schedule_direction_decision(
         "routine_fallback": topic.get("routine_fallback") or [],
         "escalation_fallback_venue": routine[0] if routine else None,
         "read_resources": resources,
+        **asset_library.packet_fields(paths, settings, domains=[str(topic.get("domain") or "")],
+                                      topic=topic),
         "research_executor_provider": exclude,
         "options": ["targeted_core_analysis", "retarget_or_short_format", "freeze"],
         "created_at": utc_now(),
