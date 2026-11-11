@@ -86,6 +86,31 @@ class ProgramSettings:
     # Domains taking part in scout rotation, in preference order; empty means
     # every domain that has an active program project.
     domains: tuple[str, ...] = ()
+    # Calendar limit from admission to review ``ready``; past it the topic gets
+    # one direction decision (it is not frozen outright).
+    max_days_from_admission_to_ready: float = 28.0
+    # Hard per-topic Agent-time ceiling. A topic campaign's budget is the smaller
+    # of this and its card's ``cost_estimate.agent_seconds``.
+    topic_max_agent_seconds: int = 259_200
+    # Per-topic number of direction-decision choices that keep a topic alive;
+    # once used up only ``freeze`` is accepted.
+    direction_limits: dict[str, int] = field(
+        default_factory=lambda: dict(DEFAULT_DIRECTION_LIMITS)
+    )
+    # Deliver ready papers to the paper-management site automatically (without
+    # a submission handler). False: ready papers are only queued.
+    auto_handoff: bool = False
+    # argv prefix of the paper-writing CLI used for delivery and handler
+    # assignment (it owns the YAML/HTTP dependencies the orchestrator avoids).
+    paper_writing_command: tuple[str, ...] = ("paper-writing",)
+    # Delivery attempts per ready paper (one per tick) before it waits for a human.
+    handoff_max_attempts: int = 3
+
+
+DEFAULT_DIRECTION_LIMITS: dict[str, int] = {
+    "targeted_core_analysis": 1,
+    "retarget_or_short_format": 2,
+}
 
 
 DEFAULT_QUOTA_BACKOFF_MINUTES: tuple[int, ...] = (15, 30, 60, 120, 300)
@@ -463,7 +488,48 @@ def load_program_settings(payload: Any) -> ProgramSettings:
             program.get("asset_index_path"), DEFAULT_ASSET_INDEX_PATH, "asset_index_path"
         ),
         domains=_domain_list(program.get("domains")),
+        max_days_from_admission_to_ready=_positive_float(
+            program.get("max_days_from_admission_to_ready"), 28.0
+        ),
+        topic_max_agent_seconds=_positive_int(program.get("topic_max_agent_seconds"), 259_200),
+        direction_limits=_direction_limits(program.get("direction_limits")),
+        auto_handoff=program.get("auto_handoff", False) is True,
+        paper_writing_command=_command(program.get("paper_writing_command"), ("paper-writing",)),
+        handoff_max_attempts=_positive_int(program.get("handoff_max_attempts"), 3),
     )
+
+
+def _positive_float(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _direction_limits(value: Any) -> dict[str, int]:
+    limits = dict(DEFAULT_DIRECTION_LIMITS)
+    if value is None:
+        return limits
+    if not isinstance(value, dict):
+        raise ValueError("[program].direction_limits must be a table")
+    for key, raw in value.items():
+        if key not in DEFAULT_DIRECTION_LIMITS:
+            raise ValueError(f"[program].direction_limits has an unknown choice {key!r}")
+        limits[key] = _nonnegative_int(raw, DEFAULT_DIRECTION_LIMITS[key])
+    return limits
+
+
+def _command(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        value = shlex.split(value)
+    if not isinstance(value, (list, tuple)) or not value or any(
+        not isinstance(item, str) or not item.strip() for item in value
+    ):
+        raise ValueError("[program].paper_writing_command must be a non-empty argv array")
+    return tuple(value)
 
 
 def _minutes_sequence(value: Any) -> tuple[int, ...]:

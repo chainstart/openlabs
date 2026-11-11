@@ -107,8 +107,17 @@ output without editing the manuscript:
 - `next_action: evidence_remediation` (scientific blocker, evidence change, `reject`, or a desk
   rejection for significance, novelty or incrementality) -> one action to a fresh `researcher`
   (or `experimenter` for an already frozen protocol).
-- `next_action: retarget_required` or `blocked` -> no automatic action; report to the user.
+- `next_action: retarget_required`, `direction_decision`, `review_stalled: true` or
+  `status: blocked` (rounds used up) -> no action; the `review_outcome` below lets the
+  orchestrator schedule a direction decision. Do not choose a new venue or stop the topic here.
 - `preflight_failed` -> one `text_revision` action listing the preflight blockers.
+
+In every case also copy the paper's `registry/papers/<paper_id>.yaml#writing_release` unchanged
+into the result field `review_outcome`: `next_action`, `status`, `review_stalled` (false when
+absent), `rounds_for_target`, `max_rounds_per_target`, `direction_context` (null when absent),
+`decision_record`, `decision_record_sha256`, plus `paper_id`. The orchestrator checks it and
+decides the next step from it (for example no writer revision after a stalled review, even with a
+`text_revision` action).
 
 Report the editor decision and its strongest desk-reject reason, the active referee recommendations
 and actual models, the merged decision, and the run directory.

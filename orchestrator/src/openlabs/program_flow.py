@@ -64,6 +64,7 @@ from .program import (
     topic_for_campaign,
     topics_by_status,
 )
+from .program_autonomy import topic_budget_seconds
 from .projects import ProjectConfig, load_project, workstream_policy
 from .resources import ResourceVector, default_task_resources
 
@@ -977,11 +978,25 @@ def materialize_admission_decisions(
     return CandidateSpawn(spawned.campaign_ids, spawned.task_ids, tuple(decisions))
 
 
-def _research_state(record: Mapping[str, Any], topic: Mapping[str, Any]) -> dict[str, Any]:
+def _research_state(
+    record: Mapping[str, Any],
+    topic: Mapping[str, Any],
+    *,
+    record_path: Path | None = None,
+    agent_seconds_budget: int | None = None,
+) -> dict[str, Any]:
     card = record.get("card") if isinstance(record.get("card"), Mapping) else {}
     venues = card.get("venues") if isinstance(card.get("venues"), Mapping) else {}
     admission = record.get("admission") if isinstance(record.get("admission"), Mapping) else {}
+    extra: dict[str, Any] = {}
+    if record_path is not None and record_path.is_file():
+        # Writers record an escalation target as provisional with this record as
+        # its strength evidence (path plus hash).
+        extra["admission_record"] = {"path": str(record_path), "sha256": sha256_file(record_path)}
+    if agent_seconds_budget is not None:
+        extra["agent_seconds_budget"] = int(agent_seconds_budget)
     return {
+        **extra,
         "program_role": "research",
         "topic_id": topic["topic_id"],
         "target_tier": admission.get("target_tier"),
@@ -1025,6 +1040,8 @@ def materialize_waiting_topics(
             continue
         record = _read_object(record_path)
         project = load_project(str(record["project_path"]))
+        card = record.get("card") if isinstance(record.get("card"), Mapping) else {}
+        budget = topic_budget_seconds(card.get("cost_estimate"), settings)
         source_campaign = db.campaign(str(record.get("source_campaign_id") or "")) or {
             "priority": 0
         }
@@ -1047,8 +1064,12 @@ def materialize_waiting_topics(
             source_result_ids={str(record.get("source_result_id") or "")} - {""},
             review_task_id=str(record.get("review_task_id") or ""),
             result_path=Path(str(record.get("result_path") or "")),
-            extra_state=_research_state(record, topic),
-            extra_policy={"topic_id": topic_id, "program_research": True},
+            extra_state=_research_state(
+                record, topic, record_path=record_path, agent_seconds_budget=budget
+            ),
+            extra_policy={"topic_id": topic_id, "program_research": True,
+                          "max_agent_seconds": budget},
+            max_agent_seconds=budget,
         )
         activate_topic(
             ledger, topic_id, db=db, campaign_id=campaign_id,

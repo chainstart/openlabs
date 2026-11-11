@@ -9,7 +9,8 @@
     {"skill_id": "openlabs-biology-paper", "path": "../../workflows/paper/skills/openlabs-biology-paper/SKILL.md"},
     {"skill_id": "openlabs-paper-review", "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"},
     {"skill_id": "openlabs-empirical-topic-scout", "path": "../../workflows/paper/skills/openlabs-empirical-topic-scout/SKILL.md"},
-    {"skill_id": "openlabs-topic-admission", "path": "../../workflows/paper/skills/openlabs-topic-admission/SKILL.md"}
+    {"skill_id": "openlabs-topic-admission", "path": "../../workflows/paper/skills/openlabs-topic-admission/SKILL.md"},
+    {"skill_id": "openlabs-direction-decision", "path": "../../workflows/paper/skills/openlabs-direction-decision/SKILL.md"}
   ],
   "protocols": [{
     "protocol_id": "biomed-public-data-pilot",
@@ -19,7 +20,7 @@
   }, {
     "protocol_id": "research-program",
     "primary_skill": "biomed-research-loop",
-    "runtime_skills": ["biomed-research-loop", "openlabs-empirical-topic-scout", "openlabs-topic-admission"],
+    "runtime_skills": ["biomed-research-loop", "openlabs-empirical-topic-scout", "openlabs-topic-admission", "openlabs-direction-decision"],
     "validator": {"command": ["{python}", "../../packages/research-core/research_program_protocol.py", "--project", "{project_config}", "--workstream", "{workstream_state}", "--mode", "{validation_mode}"]}
   }],
   "capabilities": ["public-data-provenance", "cheminformatics", "bulk-transcriptomics", "cell-line-dependency-analysis", "single-cell-analysis", "grouped-holdout-audit", "reproducible-computational-pilots"]

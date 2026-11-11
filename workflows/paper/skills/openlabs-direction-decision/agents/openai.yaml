@@ -1,0 +1,6 @@
+interface:
+  display_name: OpenLabs direction decision
+  short_description: Lead-level choice after a negative signal - one decisive analysis, a retarget, or a freeze
+  default_prompt: Use $openlabs-direction-decision to take the direction decision in the packet.
+policy:
+  allow_implicit_invocation: false

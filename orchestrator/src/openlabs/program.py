@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import ProgramSettings, WorkspacePaths
+from .contracts import FREEZE_REASON_CLASSES as CONTRACT_FREEZE_REASON_CLASSES
 from .contracts import atomic_write_json, canonical_json_bytes
 from .db import FactoryDB, utc_now
 
@@ -68,17 +69,8 @@ TRANSITIONS: dict[str | None, frozenset[str]] = {
 # campaign is not materialized yet, so it must already count against capacity.
 SLOT_STATUSES = ("admitted", "active", "in_review")
 FREEZABLE_STATUSES = ("active", "in_review")
-FREEZE_REASON_CLASSES = frozenset(
-    {
-        "primary_endpoint_failed",
-        "decisive_data_unavailable",
-        "overdue",
-        "contribution_insufficient",
-        "no_eligible_venue",
-        "review_stalled",
-        "infrastructure",
-    }
-)
+# Shared with the direction-decision contract (``contracts.FREEZE_REASON_CLASSES``).
+FREEZE_REASON_CLASSES = CONTRACT_FREEZE_REASON_CLASSES
 REOPEN_CONDITION_TYPES = frozenset(
     {"new_data_source", "new_method", "venue_policy_change", "external_result"}
 )
@@ -121,6 +113,9 @@ TOPIC_FIELDS = (
     "cost_estimate",
     "admission",
     "admission_attempts",
+    # Autonomous back half (absent from ledgers written before it).
+    "awaiting_owner_review",
+    "handoff",
     "history",
 )
 # Rejections that judged the topic on its merits. A card with the same
@@ -595,6 +590,76 @@ def transition_topic(
     )
 
 
+# Fields an automatic decision may set on a topic without changing its status.
+NOTE_FIELDS = frozenset({"awaiting_owner_review", "handoff", "paper_id"})
+
+
+def record_topic_note(
+    ledger: TopicLedger,
+    topic_id: str,
+    *,
+    db: FactoryDB,
+    event_type: str,
+    reason: str,
+    decided_by: str,
+    detail: Mapping[str, Any] | None = None,
+    evidence: Any = None,
+    updates: Mapping[str, Any] | None = None,
+    key: str | None = None,
+) -> bool:
+    """Append a non-transition decision to a topic's history and write its event.
+
+    Used for automatic decisions that leave the lifecycle status unchanged
+    (direction decisions, deliveries, handler assignment). Notes carry ``kind``
+    instead of ``from``/``to``, so lifecycle replay detection never sees them.
+    Idempotent by ``key`` (default: the decision's content); returns True when a
+    new history entry was written.
+    """
+
+    if not decided_by:
+        raise TopicLedgerError("decided_by (deciding task id) is required")
+    evidence_items = _evidence_list(evidence, required=False, label="evidence")
+    values = dict(updates or {})
+    unknown = set(values) - NOTE_FIELDS
+    if unknown:
+        raise TopicLedgerError(f"fields {sorted(unknown)} cannot be set by a note")
+    body = {"kind": event_type, "reason": reason, "decided_by": decided_by,
+            "detail": dict(detail or {}), "evidence": evidence_items}
+    event_key = key or hashlib.sha256(
+        canonical_json_bytes({"topic_id": topic_id, **body})
+    ).hexdigest()
+    with ledger.transaction() as document:
+        topic = find_topic(document, topic_id)
+        if topic is None:
+            raise TopicLedgerError(f"unknown topic {topic_id}")
+        history = topic.setdefault("history", [])
+        written = not any(
+            entry.get("kind") == event_type and entry.get("event_key") == event_key
+            for entry in history
+        )
+        if written:
+            history.append({"at": utc_now(), "status": topic.get("status"), **body,
+                            "event_key": event_key})
+            topic.update(copy.deepcopy(values))
+        snapshot = copy.deepcopy(topic)
+    db.record_event_once(
+        "topic",
+        topic_id,
+        event_type,
+        {
+            "status": snapshot.get("status"),
+            "reason": reason,
+            "decided_by": decided_by,
+            "detail": dict(detail or {}),
+            "evidence": evidence_items,
+            "domain": snapshot.get("domain"),
+            "campaign_id": snapshot.get("campaign_id"),
+        },
+        event_key=event_key,
+    )
+    return written
+
+
 def propose_topic(
     ledger: TopicLedger,
     card: Mapping[str, Any],
@@ -641,7 +706,8 @@ def propose_topic(
                     f"topic {topic_id} already exists with a different card"
                 )
             snapshot = copy.deepcopy(existing)
-            entries = list(snapshot.get("history") or [])
+            # Lifecycle entries only: notes (``kind``) are not transitions.
+            entries = [entry for entry in snapshot.get("history") or [] if "to" in entry]
             changed = False
         else:
             rejection = ""

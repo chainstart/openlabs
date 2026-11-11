@@ -52,6 +52,10 @@
     {
       "skill_id": "openlabs-topic-admission",
       "path": "../../workflows/paper/skills/openlabs-topic-admission/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-direction-decision",
+      "path": "../../workflows/paper/skills/openlabs-direction-decision/SKILL.md"
     }
   ],
   "protocols": [
@@ -191,7 +195,8 @@
       "runtime_skills": [
         "math-autonomous-research",
         "openlabs-empirical-topic-scout",
-        "openlabs-topic-admission"
+        "openlabs-topic-admission",
+        "openlabs-direction-decision"
       ],
       "validator": {
         "command": [

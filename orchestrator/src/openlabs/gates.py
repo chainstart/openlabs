@@ -35,10 +35,57 @@ class GateResult:
         }
 
 
+PRIMARY_ENDPOINT_VERDICTS = frozenset({"met", "failed", "inconclusive"})
+
+
+def research_promotion(payload: Mapping[str, Any]) -> bool:
+    """A result that would leave research: a paper candidate or an audited terminal freeze."""
+
+    if str(payload.get("status") or "") not in {"completed", "succeeded"}:
+        return False
+    gate_result = payload.get("gate_result")
+    freeze = isinstance(gate_result, Mapping) and (
+        str(gate_result.get("promotion_decision") or "").strip().lower() == "freeze"
+    )
+    return payload.get("paper_candidate") is True or freeze
+
+
+def preregistration_blockers(
+    payload: Mapping[str, Any],
+    expected_sha256: str,
+) -> list[str]:
+    """Pre-registration binding of a research result of an admitted topic.
+
+    ``expected_sha256`` comes from the topic ledger (canonical), never from the
+    campaign state an agent can edit.
+    """
+
+    if not research_promotion(payload):
+        return []
+    blockers: list[str] = []
+    verdict = str(payload.get("primary_endpoint_verdict") or "").strip()
+    if verdict not in PRIMARY_ENDPOINT_VERDICTS:
+        blockers.append(
+            "a promoted research result of an admitted topic needs primary_endpoint_verdict "
+            "met, failed or inconclusive"
+        )
+    declared = str(payload.get("preregistration_sha256") or "").strip().lower()
+    if not declared:
+        blockers.append(
+            "a promoted research result of an admitted topic needs preregistration_sha256"
+        )
+    elif declared != expected_sha256:
+        blockers.append(
+            "preregistration_sha256 differs from the pre-registration recorded in the topic ledger"
+        )
+    return blockers
+
+
 def evaluate_result_bundle(
     payload: Mapping[str, Any],
     *,
     allowed_roots: tuple[Path, ...] = (),
+    preregistration_sha256: str | None = None,
 ) -> GateResult:
     validation = validate_result_bundle(payload)
     blockers = list(validation.errors)
@@ -124,6 +171,11 @@ def evaluate_result_bundle(
         ):
             blockers.append("paper_candidate requires at least one supported or verified claim")
             failure_classes.add("paper_candidate_evidence")
+    if validation.valid and preregistration_sha256 is not None:
+        problems = preregistration_blockers(payload, preregistration_sha256)
+        if problems:
+            blockers.extend(problems)
+            failure_classes.add("preregistration")
     return GateResult(
         passed=not blockers,
         validation=validation,

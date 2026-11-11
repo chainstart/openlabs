@@ -60,6 +60,29 @@ asset_index_path = "registry/reusable-assets.json"
 # Domains in scout rotation, in preference order; empty = every domain with an
 # active program project (project.json with "program": true).
 domains = []
+# Calendar limit from admission to a review-ready manuscript. Past it the topic
+# gets one direction decision (lead tier, other model family); it is not frozen
+# outright.
+max_days_from_admission_to_ready = 28
+# Hard Agent-time ceiling per topic (72 h). A topic campaign's budget is the
+# smaller of this and its card's cost_estimate.agent_seconds; exhausting it
+# schedules one direction decision instead of needs_human, and reaching this
+# ceiling freezes the topic (budget_exhausted).
+topic_max_agent_seconds = 259200
+# Ready papers are delivered to the paper-management site without a submission
+# handler (python -m openlabs program assign-handler after the owner's review).
+# false: they are only queued. Needs ARA_PAPER_MANAGE_API_URL/_KEY in the
+# environment and the paper-writing CLI (paper_writing_command).
+auto_handoff = false
+# paper_writing_command = ["paper-writing"]
+# Delivery attempts per ready paper, one per tick.
+handoff_max_attempts = 3
+
+# Per-topic direction-decision choices that keep a topic alive; afterwards only
+# freeze is accepted (an exhausted choice is refused and the topic frozen).
+[program.direction_limits]
+targeted_core_analysis = 1
+retarget_or_short_format = 2
 
 [budget]
 # Provider token-quota / rate-limit handling. Quota failures never consume

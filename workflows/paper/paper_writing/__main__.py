@@ -361,6 +361,42 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_claim.add_argument("--key-env", default="ARA_PAPER_MANAGE_API_KEY")
     handoff_claim.add_argument("--request-id", required=True)
     handoff_claim.add_argument("--claimed-by", required=True)
+
+    program = subparsers.add_parser(
+        "program",
+        help="Research-program steps called by the orchestrator (escalation, delivery, handler).",
+    )
+    program_commands = program.add_subparsers(dest="program_command", required=True)
+    program_escalation = program_commands.add_parser(
+        "register-escalation",
+        help="Record an admission-gate escalation target as target_escalation: provisional.",
+    )
+    program_escalation.add_argument("--paper-id", required=True)
+    program_escalation.add_argument("--venue", required=True)
+    program_escalation.add_argument("--admission-task-id", required=True)
+    program_escalation.add_argument("--admission-record", required=True)
+    program_escalation.add_argument("--fallback-venue", required=True)
+    program_confirm = program_commands.add_parser(
+        "confirm-escalation",
+        help="Approve a provisional escalation whose ready unified review meets the score bar.",
+    )
+    program_confirm.add_argument("--paper-id", required=True)
+    program_deliver = program_commands.add_parser(
+        "deliver",
+        help="Hand a ready paper to the management site without a submission handler.",
+    )
+    program_deliver.add_argument("--paper-id", required=True)
+    program_deliver.add_argument("--api-url", default=os.environ.get("ARA_PAPER_MANAGE_API_URL"))
+    program_deliver.add_argument("--key-env", default="ARA_PAPER_MANAGE_API_KEY")
+    program_assign = program_commands.add_parser(
+        "assign-handler",
+        help="After the owner's review, record the submission handler (default second author).",
+    )
+    program_assign.add_argument("--paper-id", required=True)
+    program_assign.add_argument("--handler", default="second_author")
+    for command in (program_escalation, program_confirm, program_deliver, program_assign):
+        command.add_argument("--root", default=str(default_repo_root()))
+        command.add_argument("--json", action="store_true", help="Print one JSON object.")
     return parser
 
 
@@ -639,7 +675,48 @@ def main(argv: list[str] | None = None) -> int:
         return _run_zenodo(args)
     if args.command == "handoff":
         return _run_handoff(args)
+    if args.command == "program":
+        return _run_program(args)
     return 2
+
+
+def _run_program(args: argparse.Namespace) -> int:
+    from paper_writing import program_delivery
+    from paper_writing.handoff import HandoffError, ManageApiClient
+
+    try:
+        if args.program_command == "register-escalation":
+            result = program_delivery.register_provisional_escalation(
+                args.paper_id, root=args.root, venue=args.venue,
+                admission_task_id=args.admission_task_id,
+                admission_record=args.admission_record, fallback_venue=args.fallback_venue,
+            )
+        elif args.program_command == "confirm-escalation":
+            result = program_delivery.confirm_escalation(args.paper_id, root=args.root)
+        elif args.program_command == "deliver":
+            # Same explicit switch as `handoff release`; the orchestrator sets it for
+            # this one call only when [program] auto_handoff is enabled.
+            if os.environ.get("OPENLABS_ENABLE_EXTERNAL_WRITES") != "1":
+                raise HandoffError(
+                    "Remote handoff is disabled. Set OPENLABS_ENABLE_EXTERNAL_WRITES=1 "
+                    "for this one operation."
+                )
+            if not args.api_url:
+                raise HandoffError("Missing --api-url or ARA_PAPER_MANAGE_API_URL")
+            with ManageApiClient.from_environment(
+                args.api_url, key_environment=args.key_env
+            ) as client:
+                result = program_delivery.deliver(args.paper_id, root=args.root, client=client)
+        else:
+            result = program_delivery.assign_handler(
+                args.paper_id, root=args.root, handler=args.handler
+            )
+    except (HandoffError, program_delivery.ProgramDeliveryError, OSError, ValueError,
+            KeyError) as exc:
+        print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False))
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=None if args.json else 2))
+    return 0
 
 
 def _bundle_summary(result: dict[str, object]) -> str:

@@ -426,6 +426,38 @@ def spawn_candidate_workstreams(
         )
     if not branches:
         return CandidateSpawn()
+    if settings.program.enabled and settings.program.enforce_admission:
+        # New research starts only behind the admission gate: a reviewer-selected
+        # candidate of an ordinary project is not materialized. It is recorded so
+        # a human (or a scout) can submit it as a topic card.
+        decisions = []
+        for raw_branch in branches:
+            if not isinstance(raw_branch, Mapping):
+                continue
+            candidate_id = str(raw_branch.get("candidate_id") or "").strip()
+            decisions.append(
+                {
+                    "candidate_id": candidate_id,
+                    "project_id": project.project_id,
+                    "outcome": "not_materialized",
+                    "reason": "topic_not_admitted",
+                    "hint": (
+                        "submit it as a topic card (python -m openlabs program submit-card) "
+                        "to a research-program admission gate"
+                    ),
+                }
+            )
+            db.record_event_once(
+                "project",
+                project.project_id,
+                "candidate_blocked_by_admission",
+                {"candidate_id": candidate_id, "review_task_id": task.get("task_id"),
+                 "title": raw_branch.get("title"), "objective": raw_branch.get("objective"),
+                 "rationale": raw_branch.get("rationale"),
+                 "source_result_ids": list(raw_branch.get("source_result_ids") or [])},
+                event_key=f"{task.get('task_id')}:{candidate_id}",
+            )
+        return CandidateSpawn(decisions=tuple(decisions))
     if project.status != "active":
         raise ValueError("project is not active; defer candidate materialization")
     portfolio = project.raw.get("portfolio")
@@ -495,6 +527,7 @@ def materialize_candidate(
     result_path: Path,
     extra_state: Mapping[str, Any] | None = None,
     extra_policy: Mapping[str, Any] | None = None,
+    max_agent_seconds: int | None = None,
 ) -> tuple[str, str | None]:
     """Create (idempotently) one reviewer-selected campaign and its first task.
 
@@ -585,7 +618,7 @@ def materialize_candidate(
             priority=int(source_campaign.get("priority") or 0) + 1,
             state_path=str(campaign_root),
             source=str(project.path),
-            max_agent_seconds=settings.max_campaign_agent_seconds,
+            max_agent_seconds=max_agent_seconds or settings.max_campaign_agent_seconds,
         )
     db.configure_project_campaign(
         campaign_id,
@@ -606,6 +639,7 @@ def materialize_candidate(
             **dict(extra_policy or {}),
         },
         priority=int(source_campaign.get("priority") or 0) + 1,
+        max_agent_seconds=max_agent_seconds,
     )
     db.upsert_research_record(
         f"candidate:{project.project_id}:{candidate_id}",

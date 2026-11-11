@@ -43,6 +43,8 @@ HANDOFF_KINDS = {
     "adversarial_review",
     "portfolio_review",
     "route_reselection",
+    # A direction decision moved the manuscript to another venue or a short format.
+    "retarget",
 }
 RESOURCE_KEYS = ("cpu_threads", "memory_mib", "scratch_mib")
 EXECUTABLE_ARTIFACT_KINDS = frozenset(
@@ -546,6 +548,27 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
                     f"{prefix}.{item}"
                     for item in validate_topic_admission(branch.get("admission")).errors
                 )
+    for name, validator in (
+        ("review_outcome", validate_review_outcome),
+        ("direction_decision", validate_direction_decision),
+    ):
+        if payload.get(name) is not None:
+            errors.extend(f"{name}.{item}" for item in validator(payload.get(name)).errors)
+    outcome = payload.get("review_outcome")
+    if (
+        isinstance(outcome, Mapping)
+        and payload.get("paper_candidate") is True
+        and outcome.get("status") != "ready"
+    ):
+        errors.append("paper_candidate=true requires review_outcome.status ready")
+    verdict = payload.get("primary_endpoint_verdict")
+    if verdict is not None and _text(verdict) not in PRIMARY_ENDPOINT_VERDICTS:
+        errors.append(
+            f"primary_endpoint_verdict must be one of {sorted(PRIMARY_ENDPOINT_VERDICTS)}"
+        )
+    declared = payload.get("preregistration_sha256")
+    if declared is not None and not SHA256.fullmatch(_text(declared)):
+        errors.append("preregistration_sha256 must be a lowercase SHA-256 digest")
     topic_cards = payload.get("topic_cards")
     # Card contents are judged per card by the program controller (a bad card is
     # rejected with reasons, not the whole scout result).
@@ -834,6 +857,127 @@ def validate_topic_admission(admission: Any) -> ValidationResult:
                 errors.append(
                     "admission.preregistration.sha256 does not match the primary_endpoint block"
                 )
+    return ValidationResult(not errors, tuple(errors))
+
+
+# ---------------------------------------------------------------- autonomous back half
+
+PRIMARY_ENDPOINT_VERDICTS = frozenset({"met", "failed", "inconclusive"})
+FREEZE_REASON_CLASSES = frozenset(
+    {
+        "primary_endpoint_failed",
+        "decisive_data_unavailable",
+        "overdue",
+        "contribution_insufficient",
+        "no_eligible_venue",
+        "review_stalled",
+        "infrastructure",
+        # The hard per-topic Agent-time ceiling was reached.
+        "budget_exhausted",
+    }
+)
+REVIEW_NEXT_ACTIONS = frozenset(
+    {"text_revision", "evidence_remediation", "retarget_required", "direction_decision"}
+)
+REVIEW_RELEASE_STATUSES = frozenset({"ready", "revision_required", "blocked"})
+DIRECTION_CHOICES = ("targeted_core_analysis", "retarget_or_short_format", "freeze")
+DIRECTION_ANALYSIS_FIELDS = ("name", "expected_to_change", "data", "success_criterion")
+
+
+def _optional_count(value: Any) -> bool:
+    return value is None or (isinstance(value, int) and not isinstance(value, bool) and value >= 0)
+
+
+def validate_review_outcome(value: Any) -> ValidationResult:
+    """``review_outcome`` of a paper_review result: the registry's writing_release, copied.
+
+    Fields: ``next_action`` (null or text_revision / evidence_remediation /
+    retarget_required / direction_decision), ``status`` (ready /
+    revision_required / blocked), ``review_stalled``, ``rounds_for_target``,
+    ``max_rounds_per_target``, ``direction_context``, ``decision_record`` and
+    ``decision_record_sha256``; optional ``paper_id``.
+    """
+
+    if not isinstance(value, Mapping):
+        return ValidationResult(False, ("must be an object copied from writing_release",))
+    errors: list[str] = []
+    action = value.get("next_action")
+    if action is not None and _text(action) not in REVIEW_NEXT_ACTIONS:
+        errors.append(f"next_action must be null or one of {sorted(REVIEW_NEXT_ACTIONS)}")
+    if _text(value.get("status")) not in REVIEW_RELEASE_STATUSES:
+        errors.append(f"status must be one of {sorted(REVIEW_RELEASE_STATUSES)}")
+    if not isinstance(value.get("review_stalled", False), bool):
+        errors.append("review_stalled must be a boolean")
+    for name in ("rounds_for_target", "max_rounds_per_target"):
+        if not _optional_count(value.get(name)):
+            errors.append(f"{name} must be null or a non-negative integer")
+    context = value.get("direction_context")
+    if context is not None and not isinstance(context, Mapping):
+        errors.append("direction_context must be null or an object")
+    if not _text(value.get("decision_record")):
+        errors.append("decision_record must name the unified decision record")
+    if not SHA256.fullmatch(_text(value.get("decision_record_sha256"))):
+        errors.append("decision_record_sha256 must be a lowercase SHA-256 digest")
+    paper_id = value.get("paper_id")
+    if paper_id is not None and not _text(paper_id):
+        errors.append("paper_id must be a non-empty string when present")
+    return ValidationResult(not errors, tuple(errors))
+
+
+def validate_direction_decision(value: Any) -> ValidationResult:
+    """``direction_decision`` of a direction_decision task (one choice, one branch block)."""
+
+    if not isinstance(value, Mapping):
+        return ValidationResult(False, ("must be an object",))
+    errors: list[str] = []
+    choice = _text(value.get("choice"))
+    if choice not in DIRECTION_CHOICES:
+        errors.append(f"choice must be one of {list(DIRECTION_CHOICES)}")
+    for name in ("rationale", "answers_reason"):
+        if not _text(value.get(name)):
+            errors.append(f"{name} must be a non-empty string")
+    if choice == "targeted_core_analysis":
+        analysis = value.get("analysis")
+        if not isinstance(analysis, Mapping):
+            errors.append("analysis is required for targeted_core_analysis")
+        else:
+            for name in DIRECTION_ANALYSIS_FIELDS:
+                if not _text(analysis.get(name)):
+                    errors.append(f"analysis.{name} must be a non-empty string")
+            seconds = analysis.get("budget_seconds")
+            if not isinstance(seconds, int) or isinstance(seconds, bool) or seconds < 1:
+                errors.append("analysis.budget_seconds must be a positive integer")
+    elif choice == "retarget_or_short_format":
+        retarget = value.get("retarget")
+        if not isinstance(retarget, Mapping):
+            errors.append("retarget is required for retarget_or_short_format")
+        else:
+            for name in ("venue_or_format", "why_fits"):
+                if not _text(retarget.get(name)):
+                    errors.append(f"retarget.{name} must be a non-empty string")
+    elif choice == "freeze":
+        freeze = value.get("freeze")
+        if not isinstance(freeze, Mapping):
+            errors.append("freeze is required for freeze")
+        else:
+            if _text(freeze.get("reason_class")) not in FREEZE_REASON_CLASSES:
+                errors.append(
+                    f"freeze.reason_class must be one of {sorted(FREEZE_REASON_CLASSES)}"
+                )
+            conditions = freeze.get("reopen_conditions")
+            if not isinstance(conditions, list) or not conditions:
+                errors.append("freeze.reopen_conditions must name at least one reopen condition")
+            else:
+                for index, item in enumerate(conditions):
+                    if (
+                        not isinstance(item, Mapping)
+                        or _text(item.get("type")) not in REOPEN_BASIS_TYPES
+                        or not _text(item.get("description"))
+                    ):
+                        errors.append(
+                            f"freeze.reopen_conditions[{index}] needs a type "
+                            f"({', '.join(sorted(REOPEN_BASIS_TYPES))}) and a description"
+                        )
     return ValidationResult(not errors, tuple(errors))
 
 

@@ -929,6 +929,31 @@ class FactoryDB:
                 )
         return tuple(cancelled)
 
+    def cancel_queued_campaign_tasks(self, campaign_id: str, *, reason: str) -> tuple[str, ...]:
+        """Cancel queued tasks of one campaign without changing the campaign status."""
+
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT task_id FROM tasks WHERE campaign_id=? AND status='queued' "
+                "ORDER BY task_id",
+                (campaign_id,),
+            ).fetchall()
+            cancelled = [str(row["task_id"]) for row in rows]
+            if cancelled:
+                connection.execute(
+                    """
+                    UPDATE tasks SET status='cancelled', not_before=NULL, last_error=?,
+                        updated_at=?
+                    WHERE campaign_id=? AND status='queued'
+                    """,
+                    (reason, now, campaign_id),
+                )
+                for task_id in cancelled:
+                    self._event(connection, "task", task_id, "task_cancelled", {"reason": reason})
+        return tuple(cancelled)
+
     def record_event_once(
         self,
         entity_type: str,
@@ -2629,9 +2654,15 @@ class FactoryDB:
             "prior_run_seconds": charged_seconds,
         }
 
-    def stop_budget_exhausted_tasks(self) -> list[str]:
-        """Stop queued work once a campaign has consumed its hard Agent-time budget."""
+    def stop_budget_exhausted_tasks(self, divert: Iterable[str] = ()) -> list[str]:
+        """Stop queued work once a campaign has consumed its hard Agent-time budget.
 
+        Queued tasks normally become ``needs_human``. For campaigns in ``divert``
+        (research-program topics, whose exhaustion is routed to a direction
+        decision instead) they are cancelled.
+        """
+
+        diverted = set(divert)
         now = utc_now()
         stopped: list[str] = []
         with self.connect() as connection:
@@ -2657,11 +2688,17 @@ class FactoryDB:
                 ).fetchall()
                 connection.execute(
                     """
-                    UPDATE tasks SET status='needs_human', not_before=NULL,
-                        last_error='campaign_agent_time_budget_exhausted', updated_at=?
+                    UPDATE tasks SET status=?, not_before=NULL,
+                        last_error=?, updated_at=?
                     WHERE campaign_id=? AND status='queued'
                     """,
-                    (now, campaign_id),
+                    (
+                        "cancelled" if campaign_id in diverted else "needs_human",
+                        "campaign_agent_time_budget_exhausted"
+                        + (":direction_decision" if campaign_id in diverted else ""),
+                        now,
+                        campaign_id,
+                    ),
                 )
                 connection.execute(
                     """
@@ -2678,7 +2715,7 @@ class FactoryDB:
                         connection,
                         "task",
                         task_id,
-                        "task_needs_human",
+                        "task_cancelled" if campaign_id in diverted else "task_needs_human",
                         {"reason": "campaign_agent_time_budget_exhausted"},
                     )
                 self._event(
@@ -2689,6 +2726,7 @@ class FactoryDB:
                     {
                         "agent_seconds_used": float(campaign["agent_seconds_used"]),
                         "max_agent_seconds": int(campaign["max_agent_seconds"]),
+                        **({"handling": "direction_decision"} if campaign_id in diverted else {}),
                     },
                 )
         return stopped

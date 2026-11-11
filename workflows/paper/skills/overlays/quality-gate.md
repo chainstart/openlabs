@@ -172,6 +172,12 @@ venue-fit record.
 
 Escalate only after a result passed the routine gate with margin. After one escalation rejection,
 return to the recorded fallback venue instead of descending venue by venue.
+Exception for research-program topics: when the campaign's `research_state.json` has
+`target_tier: escalation`, register the paper with `paper-writing program register-escalation
+--paper-id <id> --venue <escalation venue> --admission-task-id <admission_task_id>
+--admission-record <admission_record.path> --fallback-venue <first routine venue>`; this
+`provisional` record allows the escalation-track review, and delivery at that target needs the
+ready review's score (it then becomes `approved`).
 
 Before every actual submission run `paper-writing cadence check --venue <venue> --paper-id <id>`
 after `journal-history sync`. It blocks a second concurrent team paper at one venue, the same venue

@@ -147,6 +147,17 @@ def _parser() -> argparse.ArgumentParser:
     submit.add_argument("--project", required=True, type=Path, help="Program project.json")
     submit.add_argument("--card", required=True, type=Path, help="openlabs.topic_card.v1 JSON")
     submit.add_argument("--by", default="operator", help="Who submits the card (provenance)")
+    assign = program_commands.add_parser(
+        "assign-handler",
+        help="After the owner's review of a delivered paper, assign its submission handler "
+        "(default: the second author of the registry's default roster)",
+    )
+    assign.add_argument("--paper-id", required=True)
+    assign.add_argument(
+        "--handler", default="second_author",
+        help="second_author (default) or an author name from the paper's byline",
+    )
+    assign.add_argument("--by", default="owner", help="Who completed the review (provenance)")
     return parser
 
 
@@ -236,10 +247,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == "tick":
         payload = tick(paths, load_settings(paths)).to_dict()
     elif args.command == "program":
+        from .program_autonomy import DeliveryError, assign_submission_handler
         from .program_flow import backfill_grandfathered, submit_topic_card
 
         if args.program_command == "backfill":
             payload = backfill_grandfathered(db, paths, settings, write=args.write)
+        elif args.program_command == "assign-handler":
+            try:
+                payload = assign_submission_handler(
+                    db, paths, settings, paper_id=args.paper_id, handler=args.handler,
+                    assigned_by=args.by,
+                )
+            except DeliveryError as exc:
+                print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
+                return 1
         else:
             card = json.loads(args.card.read_text(encoding="utf-8"))
             payload = {

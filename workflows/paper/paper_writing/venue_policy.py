@@ -28,7 +28,10 @@ REAL_DATA_KINDS = {
     "benchmark_with_real_samples",
 }
 NON_REAL_DATA_KINDS = {"simulation", "synthetic", "derived_model_output"}
-ESCALATION_STATUSES = {"approved"}
+# ``provisional``: set by the research-program admission gate (``approved_by:
+# admission:<task_id>``). It allows review on the escalation track without an
+# internal score yet; delivery at that target needs the score (then ``approved``).
+ESCALATION_STATUSES = {"approved", "provisional"}
 
 
 def _date(value: Any) -> date | None:
@@ -110,7 +113,8 @@ def _validate_escalation(paper: Mapping[str, Any], *, paper_id: str, venue: str,
             f"target_escalation for {paper_id}"
         )
     if record.get("status") not in ESCALATION_STATUSES:
-        raise ValueError(f"{prefix} must have status approved")
+        raise ValueError(f"{prefix} must have status approved (or provisional from admission)")
+    provisional = record.get("status") == "provisional"
     if str(record.get("venue") or "").strip().casefold() != venue.strip().casefold():
         raise ValueError(f"{prefix} names a different venue")
     if not _date(record.get("approved_at")):
@@ -119,6 +123,11 @@ def _validate_escalation(paper: Mapping[str, Any], *, paper_id: str, venue: str,
         if not _filled(record.get(key)):
             raise ValueError(f"{prefix}.{key} is required")
     score = record.get("internal_review_score")
+    if provisional:
+        if not str(record.get("approved_by") or "").startswith("admission:"):
+            raise ValueError(f"{prefix}: a provisional escalation is set by the admission gate")
+        if score is None:
+            return  # reviewed on the escalation track; scored before delivery
     if isinstance(score, bool) or not isinstance(score, (int, float)):
         raise ValueError(f"{prefix}.internal_review_score must be a number")
     if float(score) < config["escalation"]["minimum_internal_score"]:
@@ -247,6 +256,38 @@ def _validate_sources(sources: Any, *, paper_id: str, require_real: bool) -> Non
         raise ValueError(
             f"{paper_id} must use at least one real (non-synthetic, non-simulated) data source"
         )
+
+
+def provisional_escalation_blockers(paper: Mapping[str, Any], policy: Mapping[str, Any] | None,
+                                    *, paper_id: str) -> list[str]:
+    """Why a provisional escalation target cannot be delivered yet (``[]``: it can).
+
+    Delivery needs a ready unified review whose score (the lowest referee overall
+    score) meets ``venue_eligibility.escalation.minimum_internal_score``.
+    """
+
+    record = paper.get("target_escalation")
+    if not isinstance(record, Mapping) or record.get("status") != "provisional":
+        return []
+    config = eligibility_config(policy)
+    if not config or not is_escalation_venue(paper, policy):
+        return []
+    minimum = config["escalation"]["minimum_internal_score"]
+    release = paper.get("writing_release")
+    release = release if isinstance(release, Mapping) else {}
+    score = release.get("score")
+    if release.get("status") != "ready":
+        return [f"target_escalation for {paper_id} is provisional and the review is not ready"]
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        return [f"target_escalation for {paper_id} is provisional and has no internal review score"]
+    if float(score) < minimum:
+        return [
+            f"target_escalation for {paper_id} is provisional: internal review score {score} is "
+            f"below the escalation minimum {minimum:g}; deliver at the fallback venue instead"
+        ]
+    if not _filled(release.get("decision_record")):
+        return [f"target_escalation for {paper_id} is provisional and the review has no record"]
+    return []
 
 
 def is_escalation_venue(paper: Mapping[str, Any], policy: Mapping[str, Any] | None) -> bool:

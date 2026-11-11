@@ -68,6 +68,8 @@ from .program import (
     run_program_controller,
     topic_for_campaign,
 )
+from . import program_autonomy
+from .program_autonomy import DIRECTION_TASK_TYPE, EVIDENCE_REMEDIATION_ROUTINGS
 from .program_flow import (
     SCOUT_TASK_TYPE,
     packet_read_resources,
@@ -501,7 +503,9 @@ class TickReport:
     # Research-program controller summary; empty while [program] is disabled.
     # Slot counts plus candidate_pool, waiting_admitted, scouts_scheduled,
     # scout_blocked, admissions_scheduled, admissions_waiting, cards_registered,
-    # rejected_cards (with reasons), admission_decisions and materialized.
+    # rejected_cards (with reasons), admission_decisions and materialized; the
+    # back half adds direction_decisions (scheduled and their outcomes),
+    # topics_frozen, ready_queued and handoffs.
     program: dict[str, Any] = field(default_factory=dict)
     # Provider-quota budget: current launch ceiling and per-runner backoff ends.
     effective_parallel: int | None = None
@@ -814,12 +818,20 @@ def _sync_active_projects(
     active_project_paths = {
         str(binding.project_path) for binding in bindings if binding.legacy_plan_path is None
     }
+    try:
+        program_held = program_autonomy.held_campaigns(paths, settings)
+    except (OSError, TopicLedgerError, ValueError) as exc:
+        report.errors.append(f"program held campaigns: {exc}")
+        program_held = set()
     for campaign in db.project_campaigns():
         campaign_id = str(campaign["campaign_id"])
         if campaign_id in desired:
             continue
         if str(campaign.get("status") or "") == "frozen":
             # A frozen topic is terminal for its campaign; never pause/rebind it.
+            continue
+        if campaign_id in program_held:
+            # A ready-queued or submitted topic: its research campaign stays paused.
             continue
         policy = workstream_policy(campaign)
         if (
@@ -1649,6 +1661,12 @@ def _replenish_continuous_campaign(
     if stream_policy.get("continuation") == "on_demand":
         # Scheduled by a controller (the research-program topic scout) only.
         return
+    if program_autonomy.campaign_on_hold(db, settings, campaign_id):
+        # The topic waits for its direction decision; it decides what runs next.
+        report.production_blocked.append(
+            {"campaign_id": campaign_id, "reason": "direction_decision_pending"}
+        )
+        return
     latest_status = str(latest.get("status") or "") if latest else ""
     campaign = db.campaign(campaign_id) or dict(campaign)
     state_status = _workstream_state_status(campaign)
@@ -1787,6 +1805,21 @@ def _replenish_continuous_campaign(
             if isinstance(actions, list) and actions
             else None
         )
+        if (
+            action is None
+            and latest
+            and latest_status == "succeeded"
+            and str(latest.get("task_type") or "") == "paper_review"
+            and not binding_failure
+            and not infrastructure_retry
+        ):
+            # A review that did not pass names its own next step (writer revision,
+            # evidence remediation or a direction decision); never reseed a generic
+            # researcher from the fallback objective after it.
+            report.production_blocked.append(
+                {"campaign_id": campaign_id, "reason": "paper_review_without_next_action"}
+            )
+            return
         action = action or _fallback_project_action(campaign, execution_policy)
     if binding_failure:
         action = ActionPlan(
@@ -2176,7 +2209,14 @@ def ingest_results(
                     _archive_receipt(receipt_path, paths, keep=settings.archive_result_receipts)
                     continue
                 quota_exhausted = True
-            gate = evaluate_result_bundle(payload, allowed_roots=roots)
+            # A research result of an admitted topic is held to the ledger's
+            # pre-registration (None: no topic, or the program is disabled).
+            preregistration = program_autonomy.expected_preregistration(
+                paths, settings, task, report
+            )
+            gate = evaluate_result_bundle(
+                payload, allowed_roots=roots, preregistration_sha256=preregistration
+            )
             attempt_workspace = find_attempt_workspace(
                 paths,
                 campaign_id=str(task["campaign_id"]),
@@ -2280,7 +2320,9 @@ def ingest_results(
                             else None
                         ),
                     )
-                    gate = evaluate_result_bundle(payload, allowed_roots=roots)
+                    gate = evaluate_result_bundle(
+                        payload, allowed_roots=roots, preregistration_sha256=preregistration
+                    )
                     if not gate.passed:
                         raise ValueError(
                             "immutable archive failed result gate: " + "; ".join(gate.blockers)
@@ -2431,7 +2473,8 @@ def ingest_results(
             successful = final_status == "succeeded" and gate.passed
             # A topic scout only proposes cards; the program controller owns
             # what happens next (registration, admission), never the result.
-            automatic_successors_allowed = task_type != SCOUT_TASK_TYPE
+            # A direction decision is applied by the program controller below.
+            automatic_successors_allowed = task_type not in {SCOUT_TASK_TYPE, DIRECTION_TASK_TYPE}
             if task_type == "portfolio_review" and payload.get("paper_candidate") is True:
                 report.errors.append(
                     f"Portfolio reviewer {task_id} set paper_candidate=true; ignored for "
@@ -2449,6 +2492,22 @@ def ingest_results(
                     )
                 except Exception as exc:  # noqa: BLE001 - derived index is rebuildable.
                     report.errors.append(f"Could not index project result {task_id}: {exc}")
+            program_disposition: str | None = None
+            if successful and settings.program.enabled:
+                try:
+                    program_disposition = program_autonomy.on_result(
+                        db, paths, settings, report, task=task, payload=payload,
+                        result_path=result_path, result_sha256=actual_sha,
+                    )
+                except Exception as exc:  # noqa: BLE001 - the result stays authoritative.
+                    program_disposition = "handled"
+                    report.errors.append(f"Program handling of {task_id} failed: {exc}")
+            # "continue_research": a paper candidate of an admitted topic whose primary
+            # endpoint is inconclusive stays in research (within budget and deadline).
+            paper_candidate = (
+                payload.get("paper_candidate") is True
+                and program_disposition != "continue_research"
+            )
             candidate_materialization_ok = True
             if (
                 successful
@@ -2492,7 +2551,11 @@ def ingest_results(
                 and _workstream_state_status(campaign_binding) in {"paused", "completed"}
                 and payload.get("paper_candidate") is not True
             )
-            successor_handled = agent_closed_workstream or not automatic_successors_allowed
+            successor_handled = (
+                agent_closed_workstream
+                or not automatic_successors_allowed
+                or program_disposition == "handled"
+            )
             if agent_closed_workstream:
                 state_status = _workstream_state_status(campaign_binding or {})
                 db.pause_production_campaign(
@@ -2521,7 +2584,7 @@ def ingest_results(
                 and automatic_successors_allowed
                 and successful
                 and task_type == "evidence_remediation"
-                and task.get("routing_reason") == "review_evidence_remediation"
+                and task.get("routing_reason") in EVIDENCE_REMEDIATION_ROUTINGS
             ):
                 successor_handled = True
                 if not has_room:
@@ -2588,7 +2651,7 @@ def ingest_results(
                 and settings.auto_continue
                 and not successor_handled
                 and task_type != "portfolio_review"
-                and payload.get("paper_candidate") is True
+                and paper_candidate
             ):
                 successor_handled = True
                 transition: dict[str, str] | None = None
@@ -2633,7 +2696,11 @@ def ingest_results(
                             "It runs the preflight, the target-journal editor screen, two blind referees and the "
                             "conservative decision; do not reproduce its stages or edit the manuscript. Return "
                             "paper_candidate=true only for outcome ready; otherwise return exactly one structured "
-                            "text_revision or evidence_remediation action, or none for retarget_required/blocked."
+                            "text_revision or evidence_remediation action, or none for retarget_required/blocked. "
+                            "Always copy the paper's registered writing_release into the result field "
+                            "`review_outcome` (next_action, status, review_stalled, rounds_for_target, "
+                            "max_rounds_per_target, direction_context, decision_record, "
+                            "decision_record_sha256, paper_id); the orchestrator decides what follows."
                         ),
                         "skill": "openlabs-paper-review",
                         "routing_reason": "paper_review_scope_selection",
@@ -2672,6 +2739,16 @@ def ingest_results(
                             routing_reason=transition["routing_reason"],
                             agent_role=transition["agent_role"],
                         )
+                        if transition["task_type"] == "paper_review" and settings.program.enabled:
+                            try:
+                                program_autonomy.on_review_scheduled(
+                                    db, paths, settings, campaign_id=campaign_id,
+                                    review_task_id=successor_id,
+                                )
+                            except (OSError, TopicLedgerError, ValueError) as exc:
+                                report.errors.append(
+                                    f"Could not mark topic of {campaign_id} in review: {exc}"
+                                )
 
             # Only a paper reviewer may send a manuscript back across the role
             # boundary, and only to the writer session in its own ancestry.
@@ -2768,7 +2845,7 @@ def ingest_results(
                 and current_role != "reviewer"
                 and not successor_handled
                 and not _explicit_terminal_freeze(payload)
-                and payload.get("paper_candidate") is not True
+                and not paper_candidate
                 and has_room
                 and not protocol_managed_continuation
             )
@@ -3237,10 +3314,17 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     report.cancelled.extend(recovery.cancelled)
     for disposition in recovery.attempts:
         _apply_attempt_disposition(paths, report, disposition)
-    report.budget_stopped.extend(db.stop_budget_exhausted_tasks())
+    try:
+        divert = program_autonomy.budget_divert_campaigns(paths, settings)
+    except (OSError, TopicLedgerError, ValueError) as exc:
+        report.errors.append(f"program budget routing: {exc}")
+        divert = set()
+    report.budget_stopped.extend(db.stop_budget_exhausted_tasks(divert))
     # Research-program bookkeeping runs after ingestion so freezes recorded in the
     # topic ledger stop their campaigns before any continuous replenishment.
     run_program_controller(db, paths, settings.program, report)
+    # Stop rules (deadline, budget), direction-decision recovery and delivery.
+    program_autonomy.run_program_autonomy(db, paths, settings, report)
     # Topic scouts, card intake and ordered materialization of admitted topics.
     run_program_pipeline(db, paths, settings, report)
     if settings.auto_continue:
