@@ -44,6 +44,22 @@ max_active_topics = 5
 max_ready_unsubmitted = 6
 # Relative to the data repository root.
 ledger_path = "registry/topic-ledger.json"
+# A topic scout is scheduled only while fewer proposed (not yet judged) topics
+# than this wait for the admission gate, a slot is free, admissions are not
+# paused and the lead tier has quota. Scouts and the gate need a [runners]
+# table: the gate must run on a different model family than the scout.
+candidate_pool_low_water = 3
+# Minimum hours between two scheduled scouts (whole program).
+scout_min_interval_hours = 12
+# true: a new researcher/experimenter workstream of an ordinary (non-program)
+# project is not activated unless the ledger links it to an admitted topic.
+enforce_admission = false
+# Reusable scripts/SOP index offered to scouts and the gate when the file exists
+# (relative to the data repository root).
+asset_index_path = "registry/reusable-assets.json"
+# Domains in scout rotation, in preference order; empty = every domain with an
+# active program project (project.json with "program": true).
+domains = []
 
 [budget]
 # Provider token-quota / rate-limit handling. Quota failures never consume

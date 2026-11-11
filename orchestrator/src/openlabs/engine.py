@@ -68,6 +68,13 @@ from .program import (
     run_program_controller,
     topic_for_campaign,
 )
+from .program_flow import (
+    SCOUT_TASK_TYPE,
+    packet_read_resources,
+    record_admission_deferral,
+    run_program_pipeline,
+    workstream_admitted,
+)
 from .projects import (
     EPISTEMIC_FRESH_BOUNDARIES,
     ExecutionPolicy,
@@ -492,6 +499,9 @@ class TickReport:
     resource_capacity: dict[str, int] = field(default_factory=dict)
     resource_reserved: dict[str, int] = field(default_factory=dict)
     # Research-program controller summary; empty while [program] is disabled.
+    # Slot counts plus candidate_pool, waiting_admitted, scouts_scheduled,
+    # scout_blocked, admissions_scheduled, admissions_waiting, cards_registered,
+    # rejected_cards (with reasons), admission_decisions and materialized.
     program: dict[str, Any] = field(default_factory=dict)
     # Provider-quota budget: current launch ceiling and per-runner backoff ends.
     effective_parallel: int | None = None
@@ -878,6 +888,15 @@ def _sync_active_projects(
         )
         report.production_paused.append(campaign_id)
 
+    enforce_admission = settings.program.enabled and settings.program.enforce_admission
+    ledger_document: Mapping[str, Any] | None = None
+    if enforce_admission:
+        try:
+            ledger_document = open_topic_ledger(paths, settings.program).read()
+        except (OSError, TopicLedgerError) as exc:
+            report.errors.append(f"program enforce_admission: {exc}")
+            ledger_document = {"topics": []}
+    program_project_paths: dict[Path, bool] = {}
     for binding in bindings:
         configured_budget = binding.workstream_policy.get("max_agent_seconds")
         max_agent_seconds = (
@@ -891,6 +910,32 @@ def _sync_active_projects(
         if campaign is not None and str(campaign.get("status") or "") == "frozen":
             # Like a paused workstream: skip silently and never reactivate it.
             continue
+        if (
+            enforce_admission
+            and campaign is None
+            and binding.legacy_plan_path is None
+            and str(binding.workstream_policy.get("default_agent_role") or "researcher")
+            in {"researcher", "experimenter"}
+        ):
+            if binding.project_path not in program_project_paths:
+                program_project_paths[binding.project_path] = load_project(
+                    binding.project_path
+                ).program
+            if not program_project_paths[binding.project_path] and not workstream_admitted(
+                ledger_document or {}, binding.workstream_id
+            ):
+                # New research starts only behind the admission gate.
+                report.production_blocked.append(
+                    {
+                        "campaign_id": binding.workstream_id,
+                        "reason": "topic_not_admitted",
+                        "hint": (
+                            "submit a topic card (python -m openlabs program submit-card) "
+                            "to the admission gate first"
+                        ),
+                    }
+                )
+                continue
         if binding.legacy_plan_path is None:
             bound_state_status = str(
                 _read_json_object(binding.workstream_path).get("status") or ""
@@ -1601,6 +1646,9 @@ def _replenish_continuous_campaign(
         )
         return
     stream_policy = workstream_policy(campaign)
+    if stream_policy.get("continuation") == "on_demand":
+        # Scheduled by a controller (the research-program topic scout) only.
+        return
     latest_status = str(latest.get("status") or "") if latest else ""
     campaign = db.campaign(campaign_id) or dict(campaign)
     state_status = _workstream_state_status(campaign)
@@ -1635,6 +1683,10 @@ def _replenish_continuous_campaign(
         if reconciled.reconciled:
             report.enqueued.extend(reconciled.spawned.task_ids)
             report.production_synced.extend(reconciled.spawned.campaign_ids)
+            if reconciled.spawned.decisions:
+                report.program.setdefault("admission_decisions", []).extend(
+                    reconciled.spawned.decisions
+                )
             return
         scheduled = schedule_portfolio_review(
             db,
@@ -1646,6 +1698,15 @@ def _replenish_continuous_campaign(
         if scheduled.task_id is not None:
             report.enqueued.append(scheduled.task_id)
             report.production_reseeded.append(campaign_id)
+            scheduled_task = db.task(scheduled.task_id) or {}
+            if str(scheduled_task.get("routing_reason") or "") == "topic_admission":
+                report.program.setdefault("admissions_scheduled", []).append(
+                    {
+                        "task_id": scheduled.task_id,
+                        "campaign_id": campaign_id,
+                        "exclude_provider": scheduled_task.get("exclude_provider"),
+                    }
+                )
         elif scheduled.reason is not None:
             report.production_blocked.append(
                 {"campaign_id": campaign_id, "reason": scheduled.reason}
@@ -2368,7 +2429,9 @@ def ingest_results(
             campaign_id = str(payload["campaign_id"])
             task_type = str(task.get("task_type") or "")
             successful = final_status == "succeeded" and gate.passed
-            automatic_successors_allowed = True
+            # A topic scout only proposes cards; the program controller owns
+            # what happens next (registration, admission), never the result.
+            automatic_successors_allowed = task_type != SCOUT_TASK_TYPE
             if task_type == "portfolio_review" and payload.get("paper_candidate") is True:
                 report.errors.append(
                     f"Portfolio reviewer {task_id} set paper_candidate=true; ignored for "
@@ -2406,6 +2469,10 @@ def ingest_results(
                     )
                     report.enqueued.extend(spawned.task_ids)
                     report.production_synced.extend(spawned.campaign_ids)
+                    if spawned.decisions:
+                        report.program.setdefault("admission_decisions", []).extend(
+                            spawned.decisions
+                        )
                 except Exception as exc:  # noqa: BLE001 - result remains authoritative.
                     candidate_materialization_ok = False
                     report.errors.append(
@@ -2425,7 +2492,7 @@ def ingest_results(
                 and _workstream_state_status(campaign_binding) in {"paused", "completed"}
                 and payload.get("paper_candidate") is not True
             )
-            successor_handled = agent_closed_workstream
+            successor_handled = agent_closed_workstream or not automatic_successors_allowed
             if agent_closed_workstream:
                 state_status = _workstream_state_status(campaign_binding or {})
                 db.pause_production_campaign(
@@ -2893,6 +2960,13 @@ def _write_task_spec(
                 else []
             ),
         }
+        known_paths = {item["path"] for item in payload["project"]["read_resources"]}
+        known_labels = {item["label"] for item in payload["project"]["read_resources"]}
+        for item in packet_read_resources(task.get("input_path")):
+            if item["path"] not in known_paths and item["label"] not in known_labels:
+                payload["project"]["read_resources"].append(item)
+                known_paths.add(item["path"])
+                known_labels.add(item["label"])
         payload["execution_policy"] = execution_policy.to_dict()
     skill_dirs = [
         paths.code / "orchestrator" / "skills" / "openlabs-research-factory",
@@ -3167,6 +3241,8 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     # Research-program bookkeeping runs after ingestion so freezes recorded in the
     # topic ledger stop their campaigns before any continuous replenishment.
     run_program_controller(db, paths, settings.program, report)
+    # Topic scouts, card intake and ordered materialization of admitted topics.
+    run_program_pipeline(db, paths, settings, report)
     if settings.auto_continue:
         _replenish_continuous_campaigns(db, paths, settings, report)
 
@@ -3266,6 +3342,11 @@ def _record_routing_deferrals(
             continue
         entry = {"task_id": task_id, **detail}
         report.routing_deferred.append(entry)
+        waiting = record_admission_deferral(db, task, detail)
+        if waiting:
+            report.program.setdefault("admissions_waiting", []).append(
+                {"task_id": task_id, "topic_ids": waiting, **detail}
+            )
         db.record_event_once(
             "task",
             task_id,

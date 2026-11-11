@@ -130,6 +130,23 @@ def _parser() -> argparse.ArgumentParser:
         help="Capability/cost tier; concrete model commands stay in local environment config",
     )
 
+    program = commands.add_parser(
+        "program", help="Research-program topic ledger maintenance"
+    )
+    program_commands = program.add_subparsers(dest="program_command", required=True)
+    backfill = program_commands.add_parser(
+        "backfill",
+        help="Register existing active research campaigns as grandfathered active topics "
+        "(dry-run unless --write)",
+    )
+    backfill.add_argument("--write", action="store_true", help="Write the topic ledger")
+    submit = program_commands.add_parser(
+        "submit-card",
+        help="Submit a human-written topic card to a research-program project's admission gate",
+    )
+    submit.add_argument("--project", required=True, type=Path, help="Program project.json")
+    submit.add_argument("--card", required=True, type=Path, help="openlabs.topic_card.v1 JSON")
+    submit.add_argument("--by", default="operator", help="Who submits the card (provenance)")
     return parser
 
 
@@ -218,6 +235,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         payload = {"schema_version": "openlabs.init.v1", "database": str(paths.database_file)}
     elif args.command == "tick":
         payload = tick(paths, load_settings(paths)).to_dict()
+    elif args.command == "program":
+        from .program_flow import backfill_grandfathered, submit_topic_card
+
+        if args.program_command == "backfill":
+            payload = backfill_grandfathered(db, paths, settings, write=args.write)
+        else:
+            card = json.loads(args.card.read_text(encoding="utf-8"))
+            payload = {
+                "schema_version": "openlabs.program_card_submission.v1",
+                **submit_topic_card(
+                    db, paths, settings, args.project, card, submitted_by=args.by
+                ),
+            }
     elif args.command == "status":
         reserved = db.active_resource_totals()
         campaigns = db.campaigns()

@@ -17,7 +17,9 @@ from .resources import ResourceVector
 
 PROJECT_SCHEMA = "openlabs.project.v1"
 PROJECT_STATUSES = frozenset({"active", "paused", "retired"})
-WORKSTREAM_CONTINUATIONS = frozenset({"continuous", "review_on_new_results"})
+# ``on_demand``: the control plane never replenishes the workstream on its own;
+# tasks are scheduled by a controller (the research-program topic scout).
+WORKSTREAM_CONTINUATIONS = frozenset({"continuous", "review_on_new_results", "on_demand"})
 AGENT_ROLES = frozenset({"researcher", "experimenter", "writer", "reviewer"})
 EPISTEMIC_FRESH_BOUNDARIES = frozenset(
     {
@@ -111,6 +113,12 @@ class ProjectConfig:
     research_index_source_campaign_ids: tuple[str, ...]
     read_resources: tuple[ProjectReadResource, ...]
     raw: dict[str, Any]
+
+    @property
+    def program(self) -> bool:
+        """A research-program project (topic scout + admission gate)."""
+
+        return self.raw.get("program") is True
 
 
 def _text(value: object) -> str:
@@ -264,6 +272,9 @@ def load_project(path: str | Path) -> ProjectConfig:
     raw_workstreams = payload.get("workstreams")
     if not isinstance(raw_workstreams, list) or not raw_workstreams:
         raise ValueError("project workstreams must be a nonempty array")
+    program_value = payload.get("program", False)
+    if not isinstance(program_value, bool):
+        raise ValueError("project program must be a boolean")
     workstreams: list[ProjectWorkstream] = []
     seen: set[str] = set()
     for index, item in enumerate(raw_workstreams):

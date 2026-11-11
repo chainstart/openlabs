@@ -1,0 +1,52 @@
+{
+  "schema_version": "openlabs.topic_card.v1",
+  "question": "Do retrieval-augmented clinical note classifiers keep their advantage over fine-tuned encoders when evaluated on a later admission year?",
+  "audience": {
+    "who": "Clinical NLP researchers choosing between retrieval augmentation and fine-tuning for coding tasks.",
+    "citations": [
+      {"citation": "Example A et al. Retrieval for ICD coding.", "year": 2025, "venue": "Journal of Biomedical Informatics"},
+      {"citation": "Example B et al. Temporal drift in clinical NLP.", "year": 2024, "venue": "Artificial Intelligence in Medicine"}
+    ]
+  },
+  "closest_prior_work": [
+    {
+      "citation": "Example A et al. Retrieval for ICD coding (2025).",
+      "what_it_shows": "Retrieval helps on a random split of one admission period.",
+      "our_difference": "Temporal split across admission years with a matched fine-tuned baseline."
+    }
+  ],
+  "decisive_analysis": {
+    "description": "Temporal-split macro-F1 of both model families on the later admission year.",
+    "data_access_verified": true,
+    "access_receipt": {"path": "receipts/data-access.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+  },
+  "primary_endpoint": {
+    "metric": "macro-F1 on the held-out later admission year",
+    "matched_baseline": "fine-tuned encoder with the same label set and training years",
+    "split": "train on earlier years, test on the latest year",
+    "decision_rule": "retrieval model better by at least 1.0 macro-F1 with a bootstrap 95% CI excluding 0",
+    "stop_rule": "stop if the CI includes 0 after the pre-registered run"
+  },
+  "data_sources": [
+    {"doi": "10.13026/example", "url": "https://physionet.org/content/example/", "version": "2.2", "license": "PhysioNet Credentialed Health Data License 1.5.0"}
+  ],
+  "computational_only": true,
+  "computational_only_rationale": "Re-analysis of an existing de-identified database; no new data collection, wet lab or human contact.",
+  "venues": {
+    "routine": [
+      {"name": "Journal of Biomedical Informatics"},
+      {"name": "Artificial Intelligence in Medicine"}
+    ],
+    "escalation": null
+  },
+  "cost_estimate": {
+    "agent_seconds": 43200,
+    "tokens": 6000000,
+    "gpu_hours": 12,
+    "calendar_days": 10,
+    "basis": "Reuses the clinical text pipeline from the asset index; one comparable campaign used about 10 GPU hours."
+  },
+  "reusable_assets": ["clinical-text-pipeline"],
+  "ledger_check": {"compared_topic_ids": []},
+  "target_tier": "routine"
+}

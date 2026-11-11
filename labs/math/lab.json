@@ -44,6 +44,14 @@
     {
       "skill_id": "722",
       "path": "skills/722/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-empirical-topic-scout",
+      "path": "../../workflows/paper/skills/openlabs-empirical-topic-scout/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-topic-admission",
+      "path": "../../workflows/paper/skills/openlabs-topic-admission/SKILL.md"
     }
   ],
   "protocols": [
@@ -175,6 +183,27 @@
           ],
           "timeout_seconds": 30
         }
+      }
+    },
+    {
+      "protocol_id": "research-program",
+      "primary_skill": "math-autonomous-research",
+      "runtime_skills": [
+        "math-autonomous-research",
+        "openlabs-empirical-topic-scout",
+        "openlabs-topic-admission"
+      ],
+      "validator": {
+        "command": [
+          "{python}",
+          "../../packages/research-core/research_program_protocol.py",
+          "--project",
+          "{project_config}",
+          "--workstream",
+          "{workstream_state}",
+          "--mode",
+          "{validation_mode}"
+        ]
       }
     }
   ],

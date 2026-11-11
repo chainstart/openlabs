@@ -39,6 +39,8 @@ class ReviewSchedule:
 class CandidateSpawn:
     campaign_ids: tuple[str, ...] = ()
     task_ids: tuple[str, ...] = ()
+    # Research-program admission outcomes ({topic_id, outcome, reason}).
+    decisions: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -297,6 +299,11 @@ def schedule_portfolio_review(
     epoch: int,
 ) -> ReviewSchedule:
     campaign_id = str(campaign["campaign_id"])
+    configured = str(campaign.get("project_config_path") or "").strip()
+    if configured and load_project(configured).program:
+        from .program_flow import schedule_topic_admission
+
+        return schedule_topic_admission(db, paths, settings, campaign, epoch=epoch)
     index_path = rebuild_project_research_index(db, campaign)
     if index_path is None or not index_path.is_file():
         return ReviewSchedule(reason="awaiting_project_research_index")
@@ -395,11 +402,30 @@ def spawn_candidate_workstreams(
         policy.get("spawn_candidate_workstreams") is not True
         or str(task.get("agent_role") or "") != "reviewer"
         or not isinstance(branches, list)
-        or not branches
     ):
         return CandidateSpawn()
     project_path = Path(str(source_campaign.get("project_config_path") or "")).resolve()
-    project = load_project(project_path)
+    if not branches:
+        # Unchanged for ordinary projects: an empty verdict needs no project.
+        try:
+            project = load_project(project_path)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return CandidateSpawn()
+        if not project.program:
+            return CandidateSpawn()
+    else:
+        project = load_project(project_path)
+    if project.program:
+        # Research-program projects materialize only admitted topics, through
+        # the deterministic admission checks (an empty array is a verdict too).
+        from .program_flow import materialize_admission_decisions
+
+        return materialize_admission_decisions(
+            db, paths, settings, source_campaign, task, payload,
+            result_path=result_path, project=project,
+        )
+    if not branches:
+        return CandidateSpawn()
     if project.status != "active":
         raise ValueError("project is not active; defer candidate materialization")
     portfolio = project.raw.get("portfolio")
@@ -425,11 +451,6 @@ def spawn_candidate_workstreams(
         str(item) for item in packet.get("result_ids", []) if isinstance(item, str) and item
     }
     known_results.intersection_update(packet_results)
-    labs = discover_labs(paths.code)
-    lab = lab_for_domain(labs, project.domain)
-    protocol = lab.protocol(project.protocol_id)
-    if protocol is None:
-        raise ValueError(f"project protocol is not registered: {project.protocol_id}")
     campaign_ids: list[str] = []
     task_ids: list[str] = []
     for raw_branch in branches:
@@ -444,154 +465,206 @@ def spawn_candidate_workstreams(
             raise ValueError(
                 f"candidate {candidate_id} cites unknown project results: {sorted(unknown)}"
             )
-        campaign_id = _candidate_campaign_id(project.project_id, candidate_id)
-        campaign_root = paths.data / "workspaces" / project.domain / campaign_id
-        state_path = campaign_root / "research_state.json"
-        existing = db.campaign(campaign_id)
-        current_validation = (
-            validate_protocol_state(
+        campaign_id, first_task_id = materialize_candidate(
+            db,
+            paths,
+            settings,
+            project=project,
+            source_campaign=source_campaign,
+            branch=raw_branch,
+            source_result_ids=source_result_ids,
+            review_task_id=str(task.get("task_id") or ""),
+            result_path=result_path,
+        )
+        if first_task_id is not None:
+            campaign_ids.append(campaign_id)
+            task_ids.append(first_task_id)
+    return CandidateSpawn(tuple(campaign_ids), tuple(task_ids))
+
+
+def materialize_candidate(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    *,
+    project: Any,
+    source_campaign: Mapping[str, Any],
+    branch: Mapping[str, Any],
+    source_result_ids: set[str],
+    review_task_id: str,
+    result_path: Path,
+    extra_state: Mapping[str, Any] | None = None,
+    extra_policy: Mapping[str, Any] | None = None,
+) -> tuple[str, str | None]:
+    """Create (idempotently) one reviewer-selected campaign and its first task.
+
+    Returns ``(campaign_id, first_task_id)``; the task id is ``None`` when the
+    campaign already had tasks (a replay).
+    """
+
+    if project.status != "active":
+        raise ValueError("project is not active; defer candidate materialization")
+    portfolio = project.raw.get("portfolio")
+    if not isinstance(portfolio, Mapping) or portfolio.get(
+        "allow_dynamic_candidate_workstreams"
+    ) is not True:
+        raise ValueError("project does not allow reviewer-created candidate workstreams")
+    labs = discover_labs(paths.code)
+    lab = lab_for_domain(labs, project.domain)
+    protocol = lab.protocol(project.protocol_id)
+    if protocol is None:
+        raise ValueError(f"project protocol is not registered: {project.protocol_id}")
+    raw_branch = branch
+    candidate_id = str(raw_branch.get("candidate_id") or "").strip()
+    campaign_id = _candidate_campaign_id(project.project_id, candidate_id)
+    campaign_root = paths.data / "workspaces" / project.domain / campaign_id
+    state_path = campaign_root / "research_state.json"
+    existing = db.campaign(campaign_id)
+    current_validation = (
+        validate_protocol_state(
+            lab,
+            protocol,
+            project_path=project.path,
+            workstream_path=state_path,
+            mode="discovery",
+        )
+        if state_path.is_file()
+        else None
+    )
+    if current_validation is not None and not current_validation.valid and existing is not None:
+        raise ValueError(
+            f"candidate {candidate_id} existing state rejected by protocol: "
+            + "; ".join(current_validation.errors)
+        )
+    if current_validation is None or not current_validation.valid:
+        campaign_root.mkdir(parents=True, exist_ok=True)
+        state_template = portfolio.get("candidate_state_template")
+        if not isinstance(state_template, Mapping):
+            raise ValueError("project portfolio requires candidate_state_template")
+        candidate_state = dict(state_template)
+        candidate_state.update(
+            {
+                "project_id": project.project_id,
+                "workstream_id": campaign_id,
+                "candidate_id": candidate_id,
+                "title": raw_branch.get("title"),
+                "objective": raw_branch.get("objective"),
+                "rationale": raw_branch.get("rationale"),
+                "source_result_ids": sorted(source_result_ids),
+                "source_review_task_id": review_task_id,
+                "source_review_result": str(result_path),
+                "created_at": _now(),
+            }
+        )
+        candidate_state.update(dict(extra_state or {}))
+        pending_state = state_path.with_name(
+            f".{state_path.name}.{hashlib.sha256(candidate_id.encode()).hexdigest()[:12]}.pending"
+        )
+        try:
+            atomic_write_json(pending_state, candidate_state)
+            validation = validate_protocol_state(
                 lab,
                 protocol,
                 project_path=project.path,
-                workstream_path=state_path,
+                workstream_path=pending_state,
                 mode="discovery",
             )
-            if state_path.is_file()
-            else None
-        )
-        if current_validation is not None and not current_validation.valid and existing is not None:
-            raise ValueError(
-                f"candidate {candidate_id} existing state rejected by protocol: "
-                + "; ".join(current_validation.errors)
-            )
-        if current_validation is None or not current_validation.valid:
-            campaign_root.mkdir(parents=True, exist_ok=True)
-            state_template = portfolio.get("candidate_state_template")
-            if not isinstance(state_template, Mapping):
-                raise ValueError("project portfolio requires candidate_state_template")
-            candidate_state = dict(state_template)
-            candidate_state.update(
-                {
-                    "project_id": project.project_id,
-                    "workstream_id": campaign_id,
-                    "candidate_id": candidate_id,
-                    "title": raw_branch.get("title"),
-                    "objective": raw_branch.get("objective"),
-                    "rationale": raw_branch.get("rationale"),
-                    "source_result_ids": sorted(source_result_ids),
-                    "source_review_task_id": task.get("task_id"),
-                    "source_review_result": str(result_path),
-                    "created_at": _now(),
-                }
-            )
-            pending_state = state_path.with_name(
-                f".{state_path.name}.{hashlib.sha256(candidate_id.encode()).hexdigest()[:12]}.pending"
-            )
-            try:
-                atomic_write_json(pending_state, candidate_state)
-                validation = validate_protocol_state(
-                    lab,
-                    protocol,
-                    project_path=project.path,
-                    workstream_path=pending_state,
-                    mode="discovery",
+            if not validation.valid:
+                raise ValueError(
+                    f"candidate {candidate_id} state rejected by protocol: "
+                    + "; ".join(validation.errors)
                 )
-                if not validation.valid:
-                    raise ValueError(
-                        f"candidate {candidate_id} state rejected by protocol: "
-                        + "; ".join(validation.errors)
-                    )
-                pending_state.replace(state_path)
-            finally:
-                pending_state.unlink(missing_ok=True)
-        if existing is None:
-            db.register_campaign(
-                campaign_id,
-                domain=project.domain,
-                title=str(raw_branch.get("title") or candidate_id),
-                priority=int(source_campaign.get("priority") or 0) + 1,
-                state_path=str(campaign_root),
-                source=str(project.path),
-                max_agent_seconds=settings.max_campaign_agent_seconds,
-            )
-        db.configure_project_campaign(
+            pending_state.replace(state_path)
+        finally:
+            pending_state.unlink(missing_ok=True)
+    if existing is None:
+        db.register_campaign(
             campaign_id,
-            project_config_path=str(project.path),
-            workstream_state_path=str(state_path),
-            protocol_id=project.protocol_id,
-            primary_skill=project.primary_skill,
-            execution_policy=project.execution.to_dict(),
-            project_id=project.project_id,
-            workstream_policy={
-                "dynamic": True,
-                "continuation": "continuous",
-                "default_agent_role": "researcher",
-                "default_session_mode": "resume",
-                "objective": str(raw_branch.get("objective") or ""),
-                "source_review_task_id": task.get("task_id"),
-                "candidate_id": candidate_id,
-            },
-            priority=int(source_campaign.get("priority") or 0) + 1,
-        )
-        db.upsert_research_record(
-            f"candidate:{project.project_id}:{candidate_id}",
-            kind="candidate",
             domain=project.domain,
             title=str(raw_branch.get("title") or candidate_id),
-            status="maturing",
-            source_path=str(result_path),
-            metadata={
-                "campaign_id": campaign_id,
-                "source_review_task_id": task.get("task_id"),
-                "source_result_ids": sorted(source_result_ids),
-                "rationale": raw_branch.get("rationale"),
-            },
-        )
-        if db.task_count(campaign_id):
-            continue
-        resources_value = raw_branch.get("resources")
-        resources = (
-            ResourceVector.from_mapping(resources_value)
-            if isinstance(resources_value, Mapping)
-            else default_task_resources(settings)
-        )
-        requested_wall = raw_branch.get("wall_seconds")
-        wall_seconds = min(
-            int(requested_wall)
-            if isinstance(requested_wall, int)
-            else settings.max_task_wall_seconds,
-            settings.max_task_wall_seconds,
-        )
-        first_task_id = f"candidate:{hashlib.sha256(campaign_id.encode()).hexdigest()[:32]}"
-        maturation_instruction = str(
-            portfolio.get("candidate_maturation_instruction") or ""
-        ).strip()
-        db.enqueue_task(
-            task_id=first_task_id,
-            campaign_id=campaign_id,
-            domain=project.domain,
-            task_type="candidate_maturation",
-            objective=(
-                str(raw_branch.get("objective") or "")
-                + " Freely deepen, revise, generalize, falsify, or abandon this reviewer-selected "
-                "idea as the evidence warrants. "
-                + (maturation_instruction + " " if maturation_instruction else "")
-                + "The original free-research workstream continues independently."
-            ),
-            input_path=str(result_path),
-            skill_path=project.primary_skill,
-            runner="frontier",
-            routing_reason="reviewer_selected_candidate_maturation",
-            agent_role="researcher",
-            session_mode="fresh",
             priority=int(source_campaign.get("priority") or 0) + 1,
-            max_attempts=settings.max_attempts,
-            max_wall_seconds=wall_seconds,
-            **resources.to_dict(),
+            state_path=str(campaign_root),
+            source=str(project.path),
+            max_agent_seconds=settings.max_campaign_agent_seconds,
         )
-        campaign_ids.append(campaign_id)
-        task_ids.append(first_task_id)
-    return CandidateSpawn(tuple(campaign_ids), tuple(task_ids))
+    db.configure_project_campaign(
+        campaign_id,
+        project_config_path=str(project.path),
+        workstream_state_path=str(state_path),
+        protocol_id=project.protocol_id,
+        primary_skill=project.primary_skill,
+        execution_policy=project.execution.to_dict(),
+        project_id=project.project_id,
+        workstream_policy={
+            "dynamic": True,
+            "continuation": "continuous",
+            "default_agent_role": "researcher",
+            "default_session_mode": "resume",
+            "objective": str(raw_branch.get("objective") or ""),
+            "source_review_task_id": review_task_id,
+            "candidate_id": candidate_id,
+            **dict(extra_policy or {}),
+        },
+        priority=int(source_campaign.get("priority") or 0) + 1,
+    )
+    db.upsert_research_record(
+        f"candidate:{project.project_id}:{candidate_id}",
+        kind="candidate",
+        domain=project.domain,
+        title=str(raw_branch.get("title") or candidate_id),
+        status="maturing",
+        source_path=str(result_path),
+        metadata={
+            "campaign_id": campaign_id,
+            "source_review_task_id": review_task_id,
+            "source_result_ids": sorted(source_result_ids),
+            "rationale": raw_branch.get("rationale"),
+            **dict(extra_policy or {}),
+        },
+    )
+    if db.task_count(campaign_id):
+        return campaign_id, None
+    resources_value = raw_branch.get("resources")
+    resources = (
+        ResourceVector.from_mapping(resources_value)
+        if isinstance(resources_value, Mapping)
+        else default_task_resources(settings)
+    )
+    requested_wall = raw_branch.get("wall_seconds")
+    wall_seconds = min(
+        int(requested_wall)
+        if isinstance(requested_wall, int)
+        else settings.max_task_wall_seconds,
+        settings.max_task_wall_seconds,
+    )
+    first_task_id = f"candidate:{hashlib.sha256(campaign_id.encode()).hexdigest()[:32]}"
+    maturation_instruction = str(
+        portfolio.get("candidate_maturation_instruction") or ""
+    ).strip()
+    db.enqueue_task(
+        task_id=first_task_id,
+        campaign_id=campaign_id,
+        domain=project.domain,
+        task_type="candidate_maturation",
+        objective=(
+            str(raw_branch.get("objective") or "")
+            + " Freely deepen, revise, generalize, falsify, or abandon this reviewer-selected "
+            "idea as the evidence warrants. "
+            + (maturation_instruction + " " if maturation_instruction else "")
+            + "The original free-research workstream continues independently."
+        ),
+        input_path=str(result_path),
+        skill_path=project.primary_skill,
+        runner="frontier",
+        routing_reason="reviewer_selected_candidate_maturation",
+        agent_role="researcher",
+        session_mode="fresh",
+        priority=int(source_campaign.get("priority") or 0) + 1,
+        max_attempts=settings.max_attempts,
+        max_wall_seconds=wall_seconds,
+        **resources.to_dict(),
+    )
+    return campaign_id, first_task_id
 
 
 def reconcile_pending_portfolio_review(

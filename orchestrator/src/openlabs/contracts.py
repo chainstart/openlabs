@@ -9,6 +9,7 @@ import re
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
@@ -538,7 +539,302 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
                 or wall_seconds < 1
             ):
                 errors.append(f"{prefix}.wall_seconds must be a positive integer")
+            if "admission" in branch:
+                if not _text(branch.get("topic_id")):
+                    errors.append(f"{prefix}.topic_id is required with an admission decision")
+                errors.extend(
+                    f"{prefix}.{item}"
+                    for item in validate_topic_admission(branch.get("admission")).errors
+                )
+    topic_cards = payload.get("topic_cards")
+    # Card contents are judged per card by the program controller (a bad card is
+    # rejected with reasons, not the whole scout result).
+    if topic_cards is not None and (
+        not isinstance(topic_cards, list)
+        or any(not isinstance(item, Mapping) for item in topic_cards)
+    ):
+        errors.append("topic_cards must be an array of objects")
     return ValidationResult(not errors, tuple(errors), tuple(warnings))
+
+
+# ---------------------------------------------------------------- research program
+
+TOPIC_CARD_SCHEMA = "openlabs.topic_card.v1"
+TOPIC_TIERS = frozenset({"routine", "escalation"})
+ADMISSION_VERDICTS = frozenset({"admit", "reject", "hold"})
+REOPEN_BASIS_TYPES = frozenset(
+    {"new_data_source", "new_method", "venue_policy_change", "external_result"}
+)
+PRIMARY_ENDPOINT_FIELDS = ("metric", "matched_baseline", "split", "decision_rule", "stop_rule")
+COST_ESTIMATE_FIELDS = ("agent_seconds", "tokens", "gpu_hours", "calendar_days")
+AUDIENCE_RECENT_YEARS = 3
+
+
+def _normalized_name(value: Any) -> str:
+    return " ".join(re.sub(r"[^\w]+", " ", _text(value).casefold()).split())
+
+
+def _nonnegative_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+
+
+def preregistration_sha256(primary_endpoint: Any) -> str:
+    """SHA-256 of the canonical JSON of a pre-registered primary-endpoint block."""
+
+    return hashlib.sha256(canonical_json_bytes(primary_endpoint)).hexdigest()
+
+
+def _endpoint_errors(value: Any, label: str) -> list[str]:
+    if not isinstance(value, Mapping):
+        return [f"{label} must be an object with {', '.join(PRIMARY_ENDPOINT_FIELDS)}"]
+    return [
+        f"{label}.{name} is missing"
+        for name in PRIMARY_ENDPOINT_FIELDS
+        if not _text(value.get(name))
+    ]
+
+
+def _venue_names(venues: Mapping[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for item in list(venues.get("routine") or []) + [venues.get("escalation")]:
+        if isinstance(item, Mapping) and _text(item.get("name")):
+            names.add(_normalized_name(item.get("name")))
+    return names
+
+
+def data_source_identifiers(data_sources: Any) -> list[str]:
+    """Stable identifiers (DOI preferred, else URL) used by the topic fingerprint."""
+
+    identifiers: list[str] = []
+    for item in data_sources if isinstance(data_sources, list) else []:
+        if isinstance(item, Mapping):
+            identifier = _text(item.get("doi")) or _text(item.get("url"))
+            if identifier:
+                identifiers.append(identifier)
+    return identifiers
+
+
+def validate_topic_card(card: Any, *, current_year: int | None = None) -> ValidationResult:
+    """Machine check of a topic card's structure (``openlabs.topic_card.v1``).
+
+    The check only establishes that every field the admission gate needs is
+    present and well formed; whether the answers are good is the gate's call.
+    Error strings name the missing or malformed field.
+    """
+
+    if not isinstance(card, Mapping):
+        return ValidationResult(False, ("topic card must be a JSON object",))
+    year = current_year or datetime.now(UTC).year
+    errors: list[str] = []
+    schema = card.get("schema_version")
+    if schema is not None and schema != TOPIC_CARD_SCHEMA:
+        errors.append(f"schema_version must be {TOPIC_CARD_SCHEMA}")
+    if not _text(card.get("question")):
+        errors.append("question is missing")
+
+    venues = card.get("venues")
+    if not isinstance(venues, Mapping):
+        errors.append("venues is missing (two routine candidates, optional escalation)")
+        venues = {}
+    else:
+        routine = venues.get("routine")
+        if not isinstance(routine, list) or len(routine) < 2:
+            errors.append("venues.routine needs two routine candidate venues")
+        else:
+            for index, item in enumerate(routine):
+                if not isinstance(item, Mapping) or not _text(item.get("name")):
+                    errors.append(f"venues.routine[{index}].name is missing")
+        escalation = venues.get("escalation")
+        if escalation is not None and (
+            not isinstance(escalation, Mapping) or not _text(escalation.get("name"))
+        ):
+            errors.append("venues.escalation must be null or an object with a name")
+    venue_names = _venue_names(venues)
+
+    audience = card.get("audience")
+    if not isinstance(audience, Mapping):
+        errors.append("audience is missing (who cares, with two recent candidate-venue papers)")
+    else:
+        if not _text(audience.get("who")):
+            errors.append("audience.who is missing")
+        citations = audience.get("citations")
+        recent = 0
+        if not isinstance(citations, list):
+            errors.append("audience.citations is missing")
+            citations = []
+        for index, item in enumerate(citations):
+            prefix = f"audience.citations[{index}]"
+            if not isinstance(item, Mapping) or not _text(item.get("citation")):
+                errors.append(f"{prefix}.citation is missing")
+                continue
+            published = item.get("year")
+            if not isinstance(published, int) or isinstance(published, bool):
+                errors.append(f"{prefix}.year must be an integer")
+                continue
+            if _normalized_name(item.get("venue")) not in venue_names:
+                errors.append(f"{prefix}.venue must be one of the card's candidate venues")
+                continue
+            if year - AUDIENCE_RECENT_YEARS <= published <= year:
+                recent += 1
+        if recent < 2:
+            errors.append(
+                "audience.citations needs at least two papers from the last "
+                f"{AUDIENCE_RECENT_YEARS} years published in candidate venues"
+            )
+
+    prior = card.get("closest_prior_work")
+    if not isinstance(prior, list) or not prior:
+        errors.append("closest_prior_work is missing")
+    else:
+        for index, item in enumerate(prior):
+            for name in ("citation", "what_it_shows", "our_difference"):
+                if not isinstance(item, Mapping) or not _text(item.get(name)):
+                    errors.append(f"closest_prior_work[{index}].{name} is missing")
+
+    decisive = card.get("decisive_analysis")
+    if not isinstance(decisive, Mapping):
+        errors.append("decisive_analysis is missing")
+    else:
+        if not _text(decisive.get("description")):
+            errors.append("decisive_analysis.description is missing")
+        if decisive.get("data_access_verified") is not True:
+            errors.append("decisive_analysis.data_access_verified must be true")
+        receipt = decisive.get("access_receipt")
+        if (
+            not isinstance(receipt, Mapping)
+            or not _text(receipt.get("path"))
+            or not SHA256.fullmatch(_text(receipt.get("sha256")))
+        ):
+            errors.append("decisive_analysis.access_receipt needs a path and a sha256")
+
+    errors.extend(_endpoint_errors(card.get("primary_endpoint"), "primary_endpoint"))
+
+    sources = card.get("data_sources")
+    if not isinstance(sources, list) or not sources:
+        errors.append("data_sources is missing")
+    else:
+        for index, item in enumerate(sources):
+            prefix = f"data_sources[{index}]"
+            if not isinstance(item, Mapping):
+                errors.append(f"{prefix} must be an object")
+                continue
+            if not (_text(item.get("doi")) or _text(item.get("url"))):
+                errors.append(f"{prefix} needs a stable doi or url")
+            for name in ("version", "license"):
+                if not _text(item.get(name)):
+                    errors.append(f"{prefix}.{name} is missing")
+
+    if card.get("computational_only") is not True:
+        errors.append("computational_only must be true")
+    if not _text(card.get("computational_only_rationale")):
+        errors.append(
+            "computational_only_rationale is missing (why no wet lab or real-world interaction)"
+        )
+
+    cost = card.get("cost_estimate")
+    if not isinstance(cost, Mapping):
+        errors.append("cost_estimate is missing")
+    else:
+        for name in COST_ESTIMATE_FIELDS:
+            if not _nonnegative_number(cost.get(name)):
+                errors.append(f"cost_estimate.{name} must be a non-negative number")
+        if not _text(cost.get("basis")):
+            errors.append("cost_estimate.basis is missing")
+
+    assets = card.get("reusable_assets")
+    if not isinstance(assets, list):
+        errors.append("reusable_assets must be an array (possibly empty)")
+
+    ledger_check = card.get("ledger_check")
+    if not isinstance(ledger_check, Mapping) or not isinstance(
+        ledger_check.get("compared_topic_ids"), list
+    ):
+        errors.append("ledger_check.compared_topic_ids must be an array")
+
+    tier = card.get("target_tier")
+    if tier is not None and tier not in TOPIC_TIERS:
+        errors.append("target_tier must be routine or escalation")
+    if card.get("reopens") is not None:
+        basis = card.get("reopen_basis")
+        if not _text(card.get("reopens")):
+            errors.append("reopens must name the topic_id being reopened")
+        if (
+            not isinstance(basis, Mapping)
+            or _text(basis.get("type")) not in REOPEN_BASIS_TYPES
+            or not _text(basis.get("description"))
+        ):
+            errors.append("reopen_basis needs a type and a description")
+    return ValidationResult(not errors, tuple(errors))
+
+
+def validate_topic_admission(admission: Any) -> ValidationResult:
+    """Structure of one admission-gate decision (``candidate_branches[i].admission``)."""
+
+    if not isinstance(admission, Mapping):
+        return ValidationResult(False, ("admission must be an object",))
+    errors: list[str] = []
+    verdict = _text(admission.get("verdict"))
+    if verdict not in ADMISSION_VERDICTS:
+        errors.append("admission.verdict must be admit, reject or hold")
+    if not _text(admission.get("strongest_rejection_reason")):
+        errors.append("admission.strongest_rejection_reason is missing")
+    if not isinstance(admission.get("data_access_confirmed"), bool):
+        errors.append("admission.data_access_confirmed must be a boolean")
+    cost = admission.get("cost_judgement")
+    if (
+        not isinstance(cost, Mapping)
+        or not isinstance(cost.get("proportionate"), bool)
+        or not _text(cost.get("rationale"))
+    ):
+        errors.append("admission.cost_judgement needs proportionate (boolean) and rationale")
+    checked = admission.get("closest_prior_work_checked")
+    if not isinstance(checked, list):
+        errors.append("admission.closest_prior_work_checked must be an array")
+        checked = []
+    for index, item in enumerate(checked):
+        if not isinstance(item, Mapping) or not _text(item.get("citation")) or not _text(
+            item.get("assessment")
+        ):
+            errors.append(
+                f"admission.closest_prior_work_checked[{index}] needs citation and assessment"
+            )
+    conditions = admission.get("reopen_conditions", [])
+    if not isinstance(conditions, list):
+        errors.append("admission.reopen_conditions must be an array")
+        conditions = []
+    for index, item in enumerate(conditions):
+        if (
+            not isinstance(item, Mapping)
+            or _text(item.get("type")) not in REOPEN_BASIS_TYPES
+            or not _text(item.get("description"))
+        ):
+            errors.append(f"admission.reopen_conditions[{index}] needs a type and description")
+    if verdict == "hold" and not conditions:
+        errors.append("admission.reopen_conditions is required for hold")
+    if verdict == "admit":
+        if _text(admission.get("target_tier")) not in TOPIC_TIERS:
+            errors.append("admission.target_tier must be escalation or routine")
+        if not _text(admission.get("tier_rationale")):
+            errors.append("admission.tier_rationale is missing")
+        if not checked:
+            errors.append("admission.closest_prior_work_checked must not be empty for admit")
+        preregistration = admission.get("preregistration")
+        if not isinstance(preregistration, Mapping):
+            errors.append("admission.preregistration is missing")
+        else:
+            endpoint = preregistration.get("primary_endpoint")
+            endpoint_errors = _endpoint_errors(
+                endpoint, "admission.preregistration.primary_endpoint"
+            )
+            errors.extend(endpoint_errors)
+            digest = _text(preregistration.get("sha256"))
+            if not SHA256.fullmatch(digest):
+                errors.append("admission.preregistration.sha256 must be a SHA-256 digest")
+            elif not endpoint_errors and digest != preregistration_sha256(endpoint):
+                errors.append(
+                    "admission.preregistration.sha256 does not match the primary_endpoint block"
+                )
+    return ValidationResult(not errors, tuple(errors))
 
 
 def validate_receipt(payload: Any) -> ValidationResult:

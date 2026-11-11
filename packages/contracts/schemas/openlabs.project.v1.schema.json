@@ -80,6 +80,10 @@
         }
       }
     },
+    "program": {
+      "type": "boolean",
+      "description": "Research-program project: a topic-scout workstream and an admission-gate workstream; research campaigns are created only by admission."
+    },
     "portfolio": {
       "type": "object",
       "additionalProperties": true,
@@ -108,7 +112,7 @@
           },
           "session_mode": {"enum": ["resume", "fresh"]},
           "continuation": {
-            "enum": ["continuous", "review_on_new_results"]
+            "enum": ["continuous", "review_on_new_results", "on_demand"]
           },
           "wall_seconds": {"type": "integer", "minimum": 1},
           "max_agent_seconds": {"type": "integer", "minimum": 1},

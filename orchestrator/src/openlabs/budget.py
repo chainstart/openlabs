@@ -1119,7 +1119,12 @@ class QuotaRouter:
     ) -> dict[str, Any] | None:
         klass = task_class(self.settings, task)
         task_type = str(task.get("task_type") or "")
-        if self.lead_short and task_type in self.settings.routing.lead_shortage_paused:
+        paused = self.settings.routing.lead_shortage_paused
+        # The admission gate runs as a portfolio_review task whose routing reason
+        # names the paused decision type.
+        if self.lead_short and (
+            task_type in paused or str(task.get("routing_reason") or "") in paused
+        ):
             self._defer(task, "lead_quota_short")
             return None
         pinned = self._pinned(task)

@@ -1,0 +1,51 @@
+{
+  "schema_version": "openlabs.project.v1",
+  "project_id": "ai-research-program",
+  "domain": "ai",
+  "status": "active",
+  "program": true,
+  "objective": "Propose, admit and run computational, real-data AI research topics under the research program's slot limit and independent admission gate.",
+  "protocol": {
+    "id": "research-program",
+    "primary_skill": "ai-research-loop"
+  },
+  "execution": {
+    "default_session_mode": "resume",
+    "fresh_session_boundaries": [
+      "independent_replication",
+      "adversarial_review",
+      "portfolio_review",
+      "route_reselection"
+    ]
+  },
+  "portfolio": {
+    "allow_dynamic_candidate_workstreams": true,
+    "candidate_state_template": {
+      "schema_version": "openlabs.research_program_state.v1",
+      "status": "active",
+      "research_log": []
+    },
+    "candidate_maturation_instruction": "Keep the pre-registered primary endpoint fixed; report a failed endpoint as such and stop when its stop rule fires."
+  },
+  "workstreams": [
+    {
+      "workstream_id": "ai-program-scout",
+      "title": "AI topic scout",
+      "state_path": "scout_state.json",
+      "agent_role": "researcher",
+      "session_mode": "fresh",
+      "continuation": "on_demand",
+      "wall_seconds": 7200
+    },
+    {
+      "workstream_id": "ai-program-admission",
+      "title": "AI admission gate",
+      "state_path": "admission_state.json",
+      "agent_role": "reviewer",
+      "session_mode": "fresh",
+      "continuation": "review_on_new_results",
+      "spawn_candidate_workstreams": true,
+      "review_batch_size": 6
+    }
+  ]
+}

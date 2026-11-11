@@ -26,6 +26,14 @@
     {
       "skill_id": "openlabs-paper-review",
       "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-empirical-topic-scout",
+      "path": "../../workflows/paper/skills/openlabs-empirical-topic-scout/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-topic-admission",
+      "path": "../../workflows/paper/skills/openlabs-topic-admission/SKILL.md"
     }
   ],
   "protocols": [
@@ -37,6 +45,23 @@
         "command": [
           "{python}",
           "protocols/physics_research_protocol.py",
+          "--project",
+          "{project_config}",
+          "--workstream",
+          "{workstream_state}",
+          "--mode",
+          "{validation_mode}"
+        ]
+      }
+    },
+    {
+      "protocol_id": "research-program",
+      "primary_skill": "physics-research-loop",
+      "runtime_skills": ["physics-research-loop", "openlabs-empirical-topic-scout", "openlabs-topic-admission"],
+      "validator": {
+        "command": [
+          "{python}",
+          "../../packages/research-core/research_program_protocol.py",
           "--project",
           "{project_config}",
           "--workstream",

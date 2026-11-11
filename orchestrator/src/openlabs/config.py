@@ -56,6 +56,7 @@ class WorkspacePaths:
 
 
 DEFAULT_TOPIC_LEDGER_PATH = "registry/topic-ledger.json"
+DEFAULT_ASSET_INDEX_PATH = "registry/reusable-assets.json"
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,20 @@ class ProgramSettings:
     max_ready_unsubmitted: int = 6
     # Relative to the data repository root (``WorkspacePaths.data``).
     ledger_path: str = DEFAULT_TOPIC_LEDGER_PATH
+    # A topic scout is scheduled only while fewer proposed (undecided) topics
+    # than this wait for the admission gate.
+    candidate_pool_low_water: int = 3
+    # Minimum time between two scheduled topic scouts (whole program).
+    scout_min_interval_hours: float = 12.0
+    # When true, a new research workstream of a non-program project is only
+    # activated if the topic ledger links it to an admitted topic.
+    enforce_admission: bool = False
+    # Reusable-asset index offered to scouts and the admission gate when present
+    # (relative to the data repository root).
+    asset_index_path: str = DEFAULT_ASSET_INDEX_PATH
+    # Domains taking part in scout rotation, in preference order; empty means
+    # every domain that has an active program project.
+    domains: tuple[str, ...] = ()
 
 
 DEFAULT_QUOTA_BACKOFF_MINUTES: tuple[int, ...] = (15, 30, 60, 120, 300)
@@ -121,6 +136,9 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
     "analysis": "worker",
     "evidence_remediation": "worker",
     "candidate_maturation": "worker",
+    # Topic scouting verifies data access and estimates cost, not just
+    # literature screening, so it runs on the worker tier.
+    "topic_scout": "worker",
     "paper_revision": "worker",
     "paper_readiness": "worker",
     "paper_writing": "worker",
@@ -160,6 +178,7 @@ DEFAULT_CLAIM_RANKS: dict[str, int] = {
     "paper_readiness": 3,
     "paper_writing": 3,
     "topic_admission": 1,
+    "topic_scout": 0,
     "literature_scan": 0,
     "literature_search": 0,
     "literature_screening": 0,
@@ -167,6 +186,7 @@ DEFAULT_CLAIM_RANKS: dict[str, int] = {
 # Task types held while no lead runner can take a decision task.
 DEFAULT_LEAD_SHORTAGE_PAUSED: tuple[str, ...] = (
     "topic_admission",
+    "topic_scout",
     "literature_scan",
     "literature_search",
     "literature_screening",
@@ -390,14 +410,41 @@ def _fraction(value: Any, default: float) -> float:
     return parsed if 0 < parsed <= 1 else default
 
 
-def _relative_ledger_path(value: Any) -> str:
+def _relative_data_path(value: Any, default: str, key: str) -> str:
     text = str(value or "").strip()
     if not text:
-        return DEFAULT_TOPIC_LEDGER_PATH
+        return default
     candidate = Path(text)
     if candidate.is_absolute() or ".." in candidate.parts:
-        raise ValueError(f"[program].ledger_path must stay inside the data repository: {text!r}")
+        raise ValueError(f"[program].{key} must stay inside the data repository: {text!r}")
     return candidate.as_posix()
+
+
+def _relative_ledger_path(value: Any) -> str:
+    return _relative_data_path(value, DEFAULT_TOPIC_LEDGER_PATH, "ledger_path")
+
+
+def _nonnegative_float(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def _domain_list(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("[program].domains must be an array of domain names")
+    result: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if not text:
+            raise ValueError("[program].domains entries must be non-empty strings")
+        if text not in result:
+            result.append(text)
+    return tuple(result)
 
 
 def load_program_settings(payload: Any) -> ProgramSettings:
@@ -407,6 +454,15 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         max_active_topics=_positive_int(program.get("max_active_topics"), 5),
         max_ready_unsubmitted=_nonnegative_int(program.get("max_ready_unsubmitted"), 6),
         ledger_path=_relative_ledger_path(program.get("ledger_path")),
+        candidate_pool_low_water=_nonnegative_int(program.get("candidate_pool_low_water"), 3),
+        scout_min_interval_hours=_nonnegative_float(
+            program.get("scout_min_interval_hours"), 12.0
+        ),
+        enforce_admission=program.get("enforce_admission", False) is True,
+        asset_index_path=_relative_data_path(
+            program.get("asset_index_path"), DEFAULT_ASSET_INDEX_PATH, "asset_index_path"
+        ),
+        domains=_domain_list(program.get("domains")),
     )
 
 

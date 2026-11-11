@@ -1,0 +1,7 @@
+{
+  "schema_version": "openlabs.research_program_state.v1",
+  "project_id": "ai-research-program",
+  "workstream_id": "ai-program-scout",
+  "program_role": "scout",
+  "status": "active"
+}

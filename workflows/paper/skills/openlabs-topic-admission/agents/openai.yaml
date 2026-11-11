@@ -1,0 +1,6 @@
+interface:
+  display_name: OpenLabs topic admission gate
+  short_description: Independent editor-style admit/hold/reject decision on research topic cards
+  default_prompt: Use $openlabs-topic-admission to judge the topic cards in the admission review packet.
+policy:
+  allow_implicit_invocation: false

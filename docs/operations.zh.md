@@ -162,6 +162,35 @@ Agent-time 耗尽、真实外部阻塞、明确的独立角色边界，或协议
 示例、prompt 和审阅产物都不得保存 Packy key。第一位 Codex 审阅结果先冻结；适配器只计算其
 SHA-256 绑定，不把内容发给 Claude。
 
+## 研究计划：自动选题与立项关口
+
+研究计划默认关闭（`config/openlabs.toml` 的 `[program] enabled = false`），关闭时 tick 与以前
+完全一致。启用步骤：
+
+1. 配置 `[runners]`（至少两家模型族各有一个 lead 档 runner）。立项判定者必须与出题者不同模型族；
+   没有 runner 表时无法区分模型族，scout 与立项都不会排（报告 `provider_routing_not_configured`）。
+2. 为每个参与的学科建一个计划项目：把 `packages/contracts/examples/research-program/` 下的
+   `project.json`、`scout_state.json`、`admission_state.json` 复制到
+   `openlabs-data/workspaces/<domain>/projects/research-program/`，改 `project_id`、`domain`、
+   `protocol.primary_skill`（该学科 lab.json 中 `research-program` 协议的主技能）和两个
+   `workstream_id`。项目必须带 `"program": true`；计划项目里不允许声明静态研究 workstream，
+   研究 campaign 只能由立项关口物化产生。
+3. 先运行 `python -m openlabs program backfill`（默认 dry-run）检查现有在研 campaign，确认后加
+   `--write`，把它们登记为 `admission: grandfathered` 的 active 题目，使名额计数如实。
+4. 设 `[program] enabled = true`。可选：`domains` 指定参与轮转的学科；`enforce_admission = true`
+   让普通项目里新的研究 workstream 必须对应已立项题目（否则报告 `topic_not_admitted`）。人工
+   题目用 `python -m openlabs program submit-card --project <计划项目 project.json> --card card.json`
+   提交，与 scout 的卡片一样过立项关口。
+
+每个 tick：有空位、未暂停立项、候选池（proposed）低于 `candidate_pool_low_water`、距上次 scout
+超过 `scout_min_interval_hours`、负责人额度充足时，为在研题目最少的学科排一个 `topic_scout`
+（worker 档）。卡片按 `openlabs.topic_card.v1` 校验后登记为 proposed；不合格的记为 rejected 并
+在 `card_errors` 写明原因。立项审查是 `portfolio_review` 任务（路由原因 `topic_admission`、
+lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族可用时任务保持排队并写
+`topic_admission_waiting` 事件，不回落。admit 的题目在有研究名额时按立项顺序物化成 campaign，
+初始 `research_state.json` 带预注册主终点及其哈希、目标档位、routine 退路和成本预算。tick
+报告的 `program` 字段给出候选池、等位题目、本 tick 排的 scout/立项任务和被拒卡片。
+
 ## 聚合资源护栏与 systemd user timer
 
 先安装资源 slice；该命令不会启用 factory timer。另行安装结果监听器后，worker 以原子
