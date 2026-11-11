@@ -1577,3 +1577,56 @@ def test_delivery_exit_only_notes_unused_routes(tmp_path, monkeypatch):
         ('SOURCE-SELECTOR-STALE', 'papers/p/evidence/result.json'),
         ('LOCAL-EVIDENCE-UNBOUND', 'papers/p/evidence/result.json')}
     assert next(n for n in stale if n.get('selector') == 'Old selector text')['route_kind'] == 'stale_selector'
+
+
+def _fake_claude_stream(tmp_path, monkeypatch, reported_model, *, rate_limit=True):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    events = [{"type": "system", "subtype": "init", "model": reported_model}]
+    if rate_limit:
+        events.append({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {
+            "five_hour": {"utilization": 0.25, "resetsAt": 1_800_000_000},
+            "seven_day_overage_included": {"utilization": 0.5, "resetsAt": 1_800_000_000}}}})
+    events.append({"type": "result", "subtype": "success", "is_error": False,
+                   "structured_output": {"answer": "ok"}, "modelUsage": {reported_model: {}}})
+    stream = "\n".join(json.dumps(e) for e in events)
+    script = bin_dir / "claude"
+    script.write_text("#!/bin/sh\ncat >/dev/null\ncat <<'JSON'\n" + stream + "\nJSON\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+
+def test_launcher_reads_stream_json_and_records_the_quota_reading(tmp_path, monkeypatch):
+    _fake_claude_stream(tmp_path, monkeypatch, "claude-fable-5-2")
+    schema = {"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string"}}}
+    result, receipt = run_role(role_name="referee_a", role={"provider": "anthropic", "tool": "Claude Code",
+                                                            "model": "claude-fable-5-2"},
+                               system_prompt="sys", user_prompt="hello", schema=schema, workdir=tmp_path / "run")
+    # The result, the hashes and the receipt fields mean what they meant with --output-format json.
+    assert result == {"answer": "ok"}
+    assert json.loads((tmp_path / "run" / "output.json").read_text()) == {"answer": "ok"}
+    assert receipt["output_sha256"] == hashlib.sha256((tmp_path / "run" / "output.json").read_bytes()).hexdigest()
+    assert receipt["prompt_sha256"] == hashlib.sha256(b"hello").hexdigest()
+    assert "stream-json" in receipt["command"] and "--verbose" in receipt["command"]
+    assert "quota" not in json.dumps(receipt)
+    quota = json.loads((tmp_path / "run" / "quota.json").read_text())
+    assert quota["schema_version"] == "openlabs.quota_snapshot.v1" and quota["provider"] == "anthropic"
+    assert quota["model"] == "claude-fable-5-2" and quota["role"] == "referee_a"
+    windows = {w["name"]: w for w in quota["windows"]}
+    assert windows["five_hour"]["used_fraction"] == 0.25 and windows["five_hour"]["window_minutes"] == 300
+    assert windows["seven_day_overage_included"]["window_minutes"] == 10_080
+
+
+def test_launcher_without_a_rate_limit_event_writes_no_quota_file(tmp_path, monkeypatch):
+    _fake_claude_stream(tmp_path, monkeypatch, "claude-opus-5-5", rate_limit=False)
+    result, _ = run_role(role_name="referee_a", role={"provider": "anthropic", "tool": "Claude Code",
+                                                      "model": "claude-opus-5-5"},
+                         system_prompt="s", user_prompt="u", schema={"type": "object"}, workdir=tmp_path / "run")
+    assert result == {"answer": "ok"} and not (tmp_path / "run" / "quota.json").exists()
+
+
+def test_stream_without_a_result_event_is_rejected():
+    from paper_writing.review_launcher import parse_claude_stream
+
+    with pytest.raises(LaunchError, match="no final result"):
+        parse_claude_stream(json.dumps({"type": "system"}) + "\n" + json.dumps({"type": "assistant"}))

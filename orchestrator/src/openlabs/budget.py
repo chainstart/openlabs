@@ -1292,6 +1292,53 @@ def record_lead_shortage(db: FactoryDB, router: QuotaRouter) -> str | None:
     return event
 
 
+# ------------------------------------------------------------ unified-review readings
+
+# ``paper_writing.review_launcher`` runs Claude reviewers with stream-json and
+# writes each role's last ``rate_limit_event`` as ``<run>/<role>/quota.json``.
+REVIEW_QUOTA_FILE = "quota.json"
+REVIEW_QUOTA_SCHEMA = "openlabs.quota_snapshot.v1"
+
+
+def ingest_review_quota(
+    db: FactoryDB,
+    settings: FactorySettings,
+    data_root: Path,
+    decision_record: Any,
+    *,
+    task_id: str | None = None,
+) -> list[str]:
+    """Merge the quota readings of one unified-review run into the quota snapshot.
+
+    ``decision_record`` is the data-repository path the review result reports
+    (``review_outcome.decision_record``); the role directories next to it hold
+    the readings. A reviewer on the protected lead model (Fable) otherwise never
+    reports its own windows, because review processes are not agent tasks.
+    Returns the providers written; anything unreadable is skipped.
+    """
+
+    relative = str(decision_record or "").strip()
+    if not relative:
+        return []
+    root = Path(data_root).resolve()
+    run_dir = (root / relative).resolve().parent
+    reviews = (root / "reviews").resolve()
+    if not run_dir.is_relative_to(reviews) or not run_dir.is_dir():
+        return []
+    written: list[str] = []
+    for path in sorted(run_dir.glob(f"*/{REVIEW_QUOTA_FILE}")):
+        try:
+            snapshot = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(snapshot, Mapping) or snapshot.get("schema_version") != REVIEW_QUOTA_SCHEMA:
+            continue
+        provider = record_quota_snapshot(db, settings, snapshot, task_id=task_id)
+        if provider:
+            written.append(provider)
+    return written
+
+
 # ------------------------------------------------------------ active probing
 
 

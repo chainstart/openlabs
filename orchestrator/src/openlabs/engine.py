@@ -2493,6 +2493,16 @@ def ingest_results(
                     )
                 except Exception as exc:  # noqa: BLE001 - derived index is rebuildable.
                     report.errors.append(f"Could not index project result {task_id}: {exc}")
+            if successful and task_type == "paper_review":
+                outcome = payload.get("review_outcome")
+                try:
+                    budget_control.ingest_review_quota(
+                        db, settings, paths.data,
+                        outcome.get("decision_record") if isinstance(outcome, Mapping) else None,
+                        task_id=task_id,
+                    )
+                except Exception as exc:  # noqa: BLE001 - readings are advisory.
+                    report.errors.append(f"Could not read review quota of {task_id}: {exc}")
             program_disposition: str | None = None
             if successful and settings.program.enabled:
                 try:

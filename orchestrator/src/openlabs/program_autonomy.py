@@ -1687,6 +1687,10 @@ class _ReleasePipeline:
         if not review.get("current"):
             self.stage = "delta_review"
             result = run_delta_review(self.paths, self.settings, self.paper_id)
+            if result.get("run_dir"):
+                budget_control.ingest_review_quota(
+                    self.db, self.settings, self.paths.data,
+                    f"{result['run_dir']}/decision.json", task_id=None)
             if result.get("outcome") == "ready" and result.get("review_mode") == "delta":
                 self.save("release_delta_review", "delta_review_ready", stage=self.stage,
                           status="running",

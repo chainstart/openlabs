@@ -28,6 +28,86 @@ class LaunchError(RuntimeError):
     """Raised when a review process cannot be run or returns unusable output."""
 
 
+QUOTA_SCHEMA = "openlabs.quota_snapshot.v1"
+QUOTA_FILE = "quota.json"
+_NAMED_WINDOW_MINUTES = {"five_hour": 300, "seven_day": 10_080, "one_day": 1_440}
+
+
+def _window_minutes(name: str) -> int | None:
+    if name in _NAMED_WINDOW_MINUTES:
+        return _NAMED_WINDOW_MINUTES[name]
+    match = re.match(r"^(\d+|one|five|seven)_(hour|day|minute)", name)
+    if not match:
+        return None
+    count = int(match.group(1)) if match.group(1).isdigit() else {"one": 1, "five": 5, "seven": 7}[match.group(1)]
+    return count * {"minute": 1, "hour": 60, "day": 1_440}[match.group(2)]
+
+
+def _epoch_iso(value: Any) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    seconds = float(value) / 1000 if value > 10**11 else float(value)
+    try:
+        return datetime.fromtimestamp(seconds, timezone.utc).isoformat().replace("+00:00", "Z")
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def claude_quota_windows(event: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Windows of one Claude ``rate_limit_event`` (same reading as the lab runner's)."""
+    info = event.get("rate_limit_info")
+    if not isinstance(info, Mapping):
+        return []
+    raw_windows: list[tuple[str, Mapping[str, Any]]] = []
+    if isinstance(info.get("unifiedWindows"), Mapping):
+        raw_windows = [(str(k), v) for k, v in info["unifiedWindows"].items() if isinstance(v, Mapping)]
+    elif info.get("rateLimitType") and info.get("utilization") is not None:
+        raw_windows = [(str(info["rateLimitType"]), info)]
+    windows = []
+    for name, raw in raw_windows:
+        used = raw.get("utilization")
+        if isinstance(used, bool) or not isinstance(used, (int, float)):
+            continue
+        windows.append({"name": name, "window_minutes": _window_minutes(name),
+                        "used_fraction": max(0.0, min(1.0, float(used))),
+                        "resets_at": _epoch_iso(raw.get("resetsAt")), "status": raw.get("status")})
+    return windows
+
+
+def parse_claude_stream(stdout: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """(final ``result`` event, last rate-limit reading) of a ``stream-json`` run.
+
+    A single JSON object (``--output-format json``, kept by older fakes and
+    callers) is accepted as the result envelope with no reading.
+    """
+    text = stdout.strip()
+    try:
+        whole = json.loads(text)
+    except json.JSONDecodeError:
+        whole = None
+    if isinstance(whole, dict):
+        return whole, None
+    events = []
+    for line in text.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    result = next((e for e in reversed(events) if e.get("type") == "result"), None)
+    if result is None:
+        raise LaunchError("Claude stream-json output has no final result event")
+    model = next((e["model"] for e in events if e.get("type") == "system" and isinstance(e.get("model"), str)),
+                 None)
+    rate = next((e for e in reversed(events) if e.get("type") == "rate_limit_event"), None)
+    windows = claude_quota_windows(rate) if rate is not None else []
+    reading = ({"schema_version": QUOTA_SCHEMA, "provider": "anthropic", "observed_at": _now(),
+                "model": model, "source": "unified_review_claude_stream_json", "windows": windows}
+               if windows else None)
+    return result, reading
+
+
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -129,7 +209,9 @@ def run_role(
     if runtime == "claude":
         command = [_executable("claude"), "-p", "--setting-sources", "project", "--strict-mcp-config",
                    "--model", model, "--tools", "", "--no-session-persistence",
-                   "--output-format", "json", "--json-schema", schema_text,
+                   # stream-json: the final ``result`` event is the former json envelope;
+                   # the ``rate_limit_event`` lines give the reviewer's quota reading.
+                   "--output-format", "stream-json", "--verbose", "--json-schema", schema_text,
                    "--system-prompt", system_prompt]
     else:
         command = [_executable("codex"), "exec", "-m", model, "-s", "read-only", "--skip-git-repo-check",
@@ -148,7 +230,10 @@ def run_role(
         raise LaunchError(f"{role_name}: process exited {proc.returncode}; see {workdir / 'stderr.txt'}")
 
     if runtime == "claude":
-        envelope = json.loads(proc.stdout)
+        envelope, reading = parse_claude_stream(proc.stdout)
+        if reading is not None:
+            # Read by the orchestrator into its quota snapshot; not part of the receipt.
+            (workdir / QUOTA_FILE).write_text(json.dumps({**reading, "role": role_name}, indent=2) + "\n")
         result = envelope.get("structured_output")
         if result is None:
             raise LaunchError(f"{role_name}: no structured output")
