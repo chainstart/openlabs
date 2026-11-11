@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from openlabs import container_guard
+from openlabs import container_guard, engine
 from openlabs.config import WorkspacePaths
 from openlabs.engine import _launch_worker
 
@@ -152,3 +152,28 @@ def test_math_wrapper_fails_closed_inside_docker_instead_of_recursing():
     assert completed.returncode == 78
     assert "no dedicated 16/18 GiB no-swap math cgroup" in completed.stderr
     assert "container guard: verified" not in completed.stderr
+
+
+@pytest.mark.parametrize(
+    ("in_container", "parent", "refused"),
+    [
+        (True, ["/usr/bin/python3", "/code/orchestrator/src/openlabs/gpu_guard.py",
+                "--task-type", "cpu", "--", "python3", "-m", "openlabs", "tick"], True),
+        (True, ["bash", "/code/bin/openlabs-container-loop"], False),
+        (False, ["/usr/bin/python3", "/code/orchestrator/src/openlabs/gpu_guard.py"], False),
+    ],
+)
+def test_container_tick_refuses_a_per_command_guard_parent(
+    tmp_path, monkeypatch, in_container, parent, refused
+) -> None:
+    marker = tmp_path / ".dockerenv"
+    if in_container:
+        marker.touch()
+    monkeypatch.setattr(engine, "_CONTAINER_MARKER", marker)
+    cmdline = tmp_path / "cmdline"
+    cmdline.write_bytes(b"\0".join(item.encode() for item in parent) + b"\0")
+    monkeypatch.setattr(engine, "_PARENT_CMDLINE", cmdline)
+    refusal = engine.per_command_guard_refusal()
+    assert (refusal is not None) is refused
+    if refused:
+        assert "kill every worker" in refusal

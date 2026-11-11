@@ -21,6 +21,13 @@ container workloads on that assumption. Separate `cc-sg open` containers also
 have separate CPU/RAM limits. GPU leases, by contrast, are shared with WSL and
 the cc-sg containers through the same host lock inodes.
 
+In the container, factory workers are detached children of the tick, not
+systemd units, and `gpu_guard.py` (behind the wrapper) is a child subreaper that
+kills every descendant when its command exits. Do not run a single tick as
+`openlabs-resource-guard -- python -m openlabs tick`: its workers would die
+about a second after launch, so `tick` refuses that (exit 78). Run the tick
+loop inside one long-lived guard; workers then live as long as the loop.
+
 The current container is configured live; Compose and `cc-sg open` persist the
 limits and mount for subsequent launches. Container tasks do not need root,
 privileged mode, Docker socket access or a writable cgroup filesystem. Installing

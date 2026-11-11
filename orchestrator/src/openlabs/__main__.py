@@ -14,7 +14,7 @@ from .config import load_local_environment, load_settings, workspace_paths
 from .contracts import atomic_write_json
 from .control import halt_production, halt_project
 from .db import FactoryDB
-from .engine import tick
+from .engine import per_command_guard_refusal, tick
 from .math_catalog import (
     KINDS, CatalogValidationError, catalog_receipt_path, catalog_stats, ingest_bundle,
     parse_metadata_filters, show_catalog,
@@ -308,6 +308,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "init":
         payload = {"schema_version": "openlabs.init.v1", "database": str(paths.database_file)}
     elif args.command == "tick":
+        refusal = per_command_guard_refusal()
+        if refusal is not None:
+            print(json.dumps({"status": "refused", "error": refusal}, ensure_ascii=False),
+                  file=sys.stderr)
+            return 78
         payload = tick(paths, load_settings(paths)).to_dict()
     elif args.command == "program":
         from . import assets as asset_library

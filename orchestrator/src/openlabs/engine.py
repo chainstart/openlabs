@@ -1413,6 +1413,33 @@ def _in_container() -> bool:
 
 
 _PROC_CGROUP = Path("/proc/self/cgroup")
+_PARENT_CMDLINE: Path | None = None  # tests override; default is the live parent
+
+
+def per_command_guard_refusal() -> str | None:
+    """Refuse a container tick whose own parent is a per-command resource guard.
+
+    In Docker, workers are plain detached children (no systemd-run). gpu_guard.py
+    is a child subreaper that kills every descendant when its command exits, so a
+    tick started as ``openlabs-resource-guard -- python -m openlabs tick`` would
+    have its workers killed about a second after launch. Run the tick loop inside
+    one long-lived guard instead (the tick's parent is then the loop).
+    """
+
+    if not _in_container():
+        return None
+    try:
+        source = _PARENT_CMDLINE or Path(f"/proc/{os.getppid()}/cmdline")
+        argv = source.read_bytes().split(b"\0")
+    except OSError:
+        return None
+    if not any(Path(item.decode(errors="replace")).name == "gpu_guard.py" for item in argv):
+        return None
+    return (
+        "this tick runs directly under a per-command resource guard inside a container; "
+        "the guard would kill every worker it starts when the tick exits. Run ticks from a "
+        "loop that is itself inside one long-lived openlabs-resource-guard"
+    )
 
 
 def _inside_worker_slice() -> bool:
