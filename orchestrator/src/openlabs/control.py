@@ -62,13 +62,8 @@ def _pause_projects_for_plan(
 ) -> list[dict[str, str]]:
     """Pause generic desired-state projects whose domain config is this plan."""
 
-    roots = paths.data / "workspaces"
-    candidates = {
-        *roots.glob("*/projects/*/project.json"),
-        *roots.glob("*/production/*/project.json"),
-    }
     paused: list[dict[str, str]] = []
-    for project_path in sorted(candidates):
+    for project_path in paths.project_config_paths():
         payload = json.loads(project_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise TypeError(f"Invalid project config: {project_path}")

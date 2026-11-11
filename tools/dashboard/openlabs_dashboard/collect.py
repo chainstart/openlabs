@@ -5,7 +5,8 @@ Sources (never written):
 - ``openlabs-data/registry/journal-rejections.json`` (API-sourced team ledger);
 - an optional management-site paper-detail snapshot (submission attempts, review rounds);
 - ``openlabs-data/workspaces/<domain>/...`` project directories;
-- ``openlabs-database/live/factory.sqlite`` opened in SQLite read-only mode.
+- ``openlabs-database/live/factory.sqlite`` (or ``$OPENLABS_DATABASE_ROOT/live/factory.sqlite``)
+  opened in SQLite read-only mode.
 """
 
 from __future__ import annotations
@@ -291,8 +292,18 @@ def _project_dirs(workspace: Path) -> Iterable[tuple[str, Path]]:
     root = workspace / "openlabs-data" / "workspaces"
     if not root.is_dir():
         return
+    instance = os.environ.get("OPENLABS_INSTANCE", "").strip()
     for domain_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        if instance:
+            # A named instance shows only its own projects (and their campaigns).
+            projects = domain_dir / "instances" / instance / "projects"
+            if projects.is_dir():
+                for project in sorted(p for p in projects.iterdir() if p.is_dir()):
+                    yield domain_dir.name, project
+            continue
         for child in sorted(p for p in domain_dir.iterdir() if p.is_dir()):
+            if child.name == "instances":
+                continue
             if child.name == "projects":
                 for project in sorted(p for p in child.iterdir() if p.is_dir()):
                     yield domain_dir.name, project
@@ -352,8 +363,15 @@ def collect_projects(workspace: Path, campaigns: list[dict[str, Any]]) -> list[d
     return rows
 
 
+def database_root(workspace: Path) -> Path:
+    """Runtime database directory: OPENLABS_DATABASE_ROOT (a separate instance) or the default."""
+
+    configured = os.environ.get("OPENLABS_DATABASE_ROOT", "").strip()
+    return Path(configured).expanduser() if configured else workspace / "openlabs-database"
+
+
 def collect_campaigns(workspace: Path) -> dict[str, Any]:
-    path = workspace / "openlabs-database" / "live" / "factory.sqlite"
+    path = database_root(workspace) / "live" / "factory.sqlite"
     if not path.is_file():
         return {"available": False, "campaigns": [], "tasks": {}}
     try:

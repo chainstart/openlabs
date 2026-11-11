@@ -232,7 +232,7 @@ def _review_control_root(paths: WorkspacePaths, campaign: Mapping[str, Any]) -> 
     campaign_id = str(campaign.get("campaign_id") or "review")
     project_token = re.sub(r"[^a-zA-Z0-9._-]+", "-", project_id).strip("-._")
     digest = hashlib.sha256(campaign_id.encode()).hexdigest()[:16]
-    return paths.artifacts / "portfolio-control" / (project_token or "project") / digest
+    return paths.instance_artifacts / "portfolio-control" / (project_token or "project") / digest
 
 
 def _review_cursor_path(paths: WorkspacePaths, campaign: Mapping[str, Any]) -> Path:

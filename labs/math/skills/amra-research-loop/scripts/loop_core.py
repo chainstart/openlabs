@@ -661,7 +661,12 @@ def _validate_reviewer_authority(
         errors.append("original-problem closure campaign is outside the canonical math workspace")
         return
     archive = (data_root / "ledger" / "receipts").resolve()
-    database = data_root / "openlabs-database" / "live" / "factory.sqlite"
+    configured_database = os.environ.get("OPENLABS_DATABASE_ROOT", "").strip()
+    database = (
+        Path(configured_database).expanduser().resolve()
+        if configured_database
+        else data_root / "openlabs-database"
+    ) / "live" / "factory.sqlite"
     reference = reconstruction.get("control_plane_receipt")
     if not isinstance(reference, dict):
         errors.append("independent reviewer needs a control-plane receipt reference")

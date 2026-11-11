@@ -1600,7 +1600,7 @@ def _validate_codex_transaction(
     canonical = (
         Path(str(transaction.get("canonical_campaign_workspace") or "")).expanduser().resolve()
     )
-    expected_attempts = (workspace / "openlabs-artifacts" / "attempt-workspaces").resolve()
+    expected_attempts = _attempt_workspaces_root(workspace)
     expected_data = (workspace / "openlabs-data").resolve()
     if not attempt_root.is_relative_to(expected_attempts):
         raise ValueError("Codex attempt root is outside the artifact transaction store")
@@ -1628,6 +1628,29 @@ def _validate_codex_transaction(
             raise ValueError("Codex factory workspace may not live under a system temporary root")
         if canonical == root or canonical.is_relative_to(root):
             raise ValueError("Canonical campaign may not live under a system temporary root")
+
+
+def _attempt_workspaces_root(workspace: Path) -> Path:
+    """Same rule as WorkspacePaths.attempt_workspaces (named instances nest theirs)."""
+
+    artifacts = workspace / "openlabs-artifacts"
+    instance = os.environ.get("OPENLABS_INSTANCE", "").strip()
+    if instance:
+        artifacts = artifacts / "instances" / instance
+    return (artifacts / "attempt-workspaces").resolve()
+
+
+def _instance_read_only_roots() -> list[Path]:
+    """A separate instance's database directory and settings file, if configured."""
+
+    roots: list[Path] = []
+    for name in ("OPENLABS_DATABASE_ROOT", "OPENLABS_CONFIG_FILE"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            path = Path(value).expanduser().resolve()
+            if path.exists():
+                roots.append(path)
+    return roots
 
 
 def _seal_result_envelope(
@@ -1797,8 +1820,12 @@ def _transaction_sandbox(
     # access (including /dev/null and CUDA) without adding any new devices.
     sandbox = [bubblewrap, "--die-with-parent", "--bind", "/", "/",
                "--dev-bind", "/dev", "/dev"]
-    for relative in ("openlabs", "openlabs-data", "openlabs-artifacts", "openlabs-database"):
-        root = (workspace / relative).resolve()
+    read_only = [
+        (workspace / relative).resolve()
+        for relative in ("openlabs", "openlabs-data", "openlabs-artifacts", "openlabs-database")
+    ]
+    read_only.extend(_instance_read_only_roots())
+    for root in dict.fromkeys(read_only):
         if root.exists():
             sandbox.extend(["--ro-bind", str(root), str(root)])
     # A nested writable bind overrides the read-only artifact-store mount.

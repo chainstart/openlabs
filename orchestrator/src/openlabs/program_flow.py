@@ -94,7 +94,7 @@ ADMITTED_WORK_STATUSES = ("admitted", "active", "in_review", "ready_queue", "sub
 
 
 def _control_root(paths: WorkspacePaths) -> Path:
-    return paths.artifacts / "program-control"
+    return paths.program_control
 
 
 def _token(value: str) -> str:
@@ -147,13 +147,8 @@ def admission_workstream_id(project: ProjectConfig) -> str | None:
 def program_projects(paths: WorkspacePaths) -> list[ProjectConfig]:
     """Active research-program projects (invalid configs are reported elsewhere)."""
 
-    root = paths.data / "workspaces"
     found: list[ProjectConfig] = []
-    candidates = {
-        *root.glob("*/projects/*/project.json"),
-        *root.glob("*/production/*/project.json"),
-    }
-    for path in sorted(candidates):
+    for path in paths.project_config_paths():
         try:
             project = load_project(path)
         except (OSError, TypeError, ValueError, json.JSONDecodeError):

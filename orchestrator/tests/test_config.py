@@ -129,3 +129,91 @@ def test_local_environment_rejects_unrelated_zenodo_file_variables(tmp_path) -> 
 
     with pytest.raises(ValueError, match="unsupported private environment name"):
         load_local_environment({}, config_home=tmp_path)
+
+
+def _clear_instance(monkeypatch) -> None:
+    for name in ("OPENLABS_INSTANCE", "OPENLABS_DATABASE_ROOT", "OPENLABS_CONFIG_FILE"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_default_instance_paths_are_unchanged(tmp_path, monkeypatch) -> None:
+    _clear_instance(monkeypatch)
+    paths = workspace_paths(tmp_path)
+
+    assert paths.instance is None
+    assert paths.settings_file == tmp_path / "openlabs" / "config" / "openlabs.toml"
+    assert paths.job_inbox == tmp_path / "openlabs-data" / "inbox" / "jobs"
+    assert paths.result_inbox == tmp_path / "openlabs-data" / "inbox" / "results"
+    assert paths.receipt_archive == tmp_path / "openlabs-data" / "ledger" / "receipts"
+    assert paths.attempt_workspaces == tmp_path / "openlabs-artifacts" / "attempt-workspaces"
+    assert paths.program_control == tmp_path / "openlabs-artifacts" / "program-control"
+    assert paths.scans_legacy_production_plans
+
+
+def test_named_instance_uses_its_own_database_inbox_config_and_state(
+    tmp_path, monkeypatch
+) -> None:
+    _clear_instance(monkeypatch)
+    root = tmp_path / "instances" / "cc-sg"
+    monkeypatch.setenv("OPENLABS_INSTANCE", "cc-sg")
+    monkeypatch.setenv("OPENLABS_DATABASE_ROOT", str(root / "database"))
+    monkeypatch.setenv("OPENLABS_CONFIG_FILE", str(root / "openlabs.toml"))
+    paths = workspace_paths(tmp_path)
+
+    assert paths.data == tmp_path / "openlabs-data"  # shared
+    assert paths.artifacts == tmp_path / "openlabs-artifacts"  # shared
+    assert paths.database_file == root / "database" / "live" / "factory.sqlite"
+    assert paths.job_inbox == root / "database" / "inbox" / "jobs"
+    assert paths.result_inbox == root / "database" / "inbox" / "results"
+    assert paths.settings_file == root / "openlabs.toml"
+    instance_artifacts = tmp_path / "openlabs-artifacts" / "instances" / "cc-sg"
+    assert paths.attempt_workspaces == instance_artifacts / "attempt-workspaces"
+    assert paths.program_control == instance_artifacts / "program-control"
+    assert not paths.scans_legacy_production_plans
+
+    with pytest.raises(FileNotFoundError):
+        load_settings(paths)
+    (root).mkdir(parents=True)
+    (root / "openlabs.toml").write_text("[budget]\nmax_parallel_agents = 2\n", encoding="utf-8")
+    assert load_settings(paths).budget.max_parallel_agents == 2
+
+
+def test_instance_project_discovery_is_disjoint_from_the_default(tmp_path, monkeypatch) -> None:
+    _clear_instance(monkeypatch)
+    workspaces = tmp_path / "openlabs-data" / "workspaces"
+    default = workspaces / "ai" / "projects" / "old" / "project.json"
+    production = workspaces / "ai" / "production" / "plan" / "project.json"
+    mine = workspaces / "ai" / "instances" / "cc-sg" / "projects" / "new" / "project.json"
+    other = workspaces / "ai" / "instances" / "other" / "projects" / "x" / "project.json"
+    for path in (default, production, mine, other):
+        path.parent.mkdir(parents=True)
+        path.write_text("{}", encoding="utf-8")
+
+    assert workspace_paths(tmp_path).project_config_paths() == [production, default]
+    monkeypatch.setenv("OPENLABS_INSTANCE", "cc-sg")
+    monkeypatch.setenv("OPENLABS_DATABASE_ROOT", str(tmp_path / "cc-sg-db"))
+    assert workspace_paths(tmp_path).project_config_paths() == [mine]
+
+
+@pytest.mark.parametrize(
+    ("instance", "database", "message"),
+    [
+        ("cc-sg", None, "needs its own"),
+        ("cc-sg", "DEFAULT", "needs its own"),
+        (None, "/elsewhere/db", "without OPENLABS_INSTANCE"),
+        ("CC SG", "/elsewhere/db", "lower-case"),
+    ],
+)
+def test_half_configured_instance_is_refused(
+    tmp_path, monkeypatch, instance, database, message
+) -> None:
+    _clear_instance(monkeypatch)
+    if instance is not None:
+        monkeypatch.setenv("OPENLABS_INSTANCE", instance)
+    if database is not None:
+        monkeypatch.setenv(
+            "OPENLABS_DATABASE_ROOT",
+            str(tmp_path / "openlabs-database") if database == "DEFAULT" else database,
+        )
+    with pytest.raises(ValueError, match=message):
+        workspace_paths(tmp_path)

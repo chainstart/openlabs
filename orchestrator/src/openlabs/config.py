@@ -22,6 +22,15 @@ _ZENODO_ENVIRONMENT_NAMES = frozenset(
 )
 
 
+# Project configs of the default (unnamed) instance, relative to
+# ``<data>/workspaces``. A named instance (OPENLABS_INSTANCE) scans only
+# ``<domain>/instances/<name>/projects/*/project.json``, which these globs never
+# match, so an instance that does not know about named instances (an older
+# orchestrator) never picks up a named instance's projects either.
+DEFAULT_PROJECT_GLOBS = ("*/projects/*/project.json", "*/production/*/project.json")
+INSTANCE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}\Z")
+
+
 @dataclass(frozen=True)
 class WorkspacePaths:
     workspace: Path
@@ -30,14 +39,61 @@ class WorkspacePaths:
     artifacts: Path
     database: Path
     database_file: Path
+    # Named orchestrator instance sharing the data and artifact repositories
+    # with others (None: the default instance, every path as before).
+    instance: str | None = None
+    # TOML settings file (None: <code>/config/openlabs.toml).
+    config_file: Path | None = None
+    # Job/result inbox root (None: <data>/inbox). Receipts name tasks of one
+    # database, so a separate database always gets its own inbox.
+    inbox_root: Path | None = None
+
+    @property
+    def settings_file(self) -> Path:
+        return self.config_file or self.code / "config" / "openlabs.toml"
 
     @property
     def job_inbox(self) -> Path:
-        return self.data / "inbox" / "jobs"
+        return (self.inbox_root or self.data / "inbox") / "jobs"
 
     @property
     def result_inbox(self) -> Path:
-        return self.data / "inbox" / "results"
+        return (self.inbox_root or self.data / "inbox") / "results"
+
+    @property
+    def instance_artifacts(self) -> Path:
+        """Artifact-store subtree for instance-private control state."""
+
+        if self.instance is None:
+            return self.artifacts
+        return self.artifacts / "instances" / self.instance
+
+    @property
+    def attempt_workspaces(self) -> Path:
+        # Every orchestrator reconciles all attempt workspaces under this root
+        # against its own database, so instances must never share it.
+        return self.instance_artifacts / "attempt-workspaces"
+
+    @property
+    def program_control(self) -> Path:
+        return self.instance_artifacts / "program-control"
+
+    def project_config_paths(self) -> list[Path]:
+        root = self.data / "workspaces"
+        if self.instance is None:
+            globs: tuple[str, ...] = DEFAULT_PROJECT_GLOBS
+        else:
+            globs = (f"*/instances/{self.instance}/projects/*/project.json",)
+        found: set[Path] = set()
+        for pattern in globs:
+            found.update(root.glob(pattern))
+        return sorted(found)
+
+    @property
+    def scans_legacy_production_plans(self) -> bool:
+        """Old math production plans belong to the default instance only."""
+
+        return self.instance is None
 
     @property
     def receipt_archive(self) -> Path:
@@ -486,17 +542,54 @@ def load_local_environment(
     return tuple(loaded)
 
 
+INSTANCE_ENV = "OPENLABS_INSTANCE"
+DATABASE_ROOT_ENV = "OPENLABS_DATABASE_ROOT"
+CONFIG_FILE_ENV = "OPENLABS_CONFIG_FILE"
+
+
 def workspace_paths(explicit: str | Path | None = None) -> WorkspacePaths:
+    """Resolve the repositories; three variables select a separate instance.
+
+    ``OPENLABS_DATABASE_ROOT`` (runtime database directory, with its own job and
+    result inbox), ``OPENLABS_INSTANCE`` (project discovery, attempt workspaces
+    and program control state under instance-specific paths) and
+    ``OPENLABS_CONFIG_FILE`` (TOML settings). The data and artifact repositories
+    stay shared. Unset, every path is exactly as before. The first two only come
+    together: a named instance on the shared database would pause every campaign
+    of the default instance, and a second database scanning the default
+    instance's projects would run them twice.
+    """
+
     configured = explicit or os.environ.get("OPENLABS_WORKSPACE")
     workspace = Path(configured).expanduser().resolve() if configured else _default_workspace()
     code = workspace / "openlabs"
+    default_database = workspace / "openlabs-database"
+    instance = str(os.environ.get(INSTANCE_ENV) or "").strip() or None
+    raw_database = str(os.environ.get(DATABASE_ROOT_ENV) or "").strip()
+    raw_config = str(os.environ.get(CONFIG_FILE_ENV) or "").strip()
+    if instance is not None and not INSTANCE_NAME.fullmatch(instance):
+        raise ValueError(
+            f"{INSTANCE_ENV} must be lower-case letters, digits and '-': {instance!r}"
+        )
+    database = Path(raw_database).expanduser().resolve() if raw_database else default_database
+    separate = database != default_database.resolve() if raw_database else False
+    if instance is not None and not separate:
+        raise ValueError(
+            f"{INSTANCE_ENV}={instance} needs its own {DATABASE_ROOT_ENV} "
+            f"(not {default_database})"
+        )
+    if separate and instance is None:
+        raise ValueError(f"{DATABASE_ROOT_ENV} is set without {INSTANCE_ENV}")
     return WorkspacePaths(
         workspace=workspace,
         code=code,
         data=workspace / "openlabs-data",
         artifacts=workspace / "openlabs-artifacts",
-        database=workspace / "openlabs-database",
-        database_file=workspace / "openlabs-database" / "live" / "factory.sqlite",
+        database=database,
+        database_file=database / "live" / "factory.sqlite",
+        instance=instance,
+        config_file=Path(raw_config).expanduser().resolve() if raw_config else None,
+        inbox_root=database / "inbox" if separate else None,
     )
 
 
@@ -592,6 +685,7 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         ),
         **_git_settings(program.get("git")),
     )
+
 
 
 def _git_settings(value: Any) -> dict[str, Any]:
@@ -841,8 +935,10 @@ def apply_model_defaults(
 
 
 def load_settings(paths: WorkspacePaths) -> FactorySettings:
-    path = paths.code / "config" / "openlabs.toml"
+    path = paths.settings_file
     payload: dict[str, Any] = {}
+    if paths.config_file is not None and not path.is_file():
+        raise FileNotFoundError(f"{CONFIG_FILE_ENV} names a missing file: {path}")
     if path.is_file():
         with path.open("rb") as handle:
             payload = tomllib.load(handle)

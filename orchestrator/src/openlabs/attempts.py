@@ -359,8 +359,7 @@ def prepare_attempt_workspace(
     canonical_campaign.mkdir(parents=True, exist_ok=True)
 
     root = (
-        paths.artifacts
-        / "attempt-workspaces"
+        paths.attempt_workspaces
         / _token(campaign_id, prefix="campaign")
         / _token(attempt_id, prefix="attempt")
     ).resolve()
@@ -467,8 +466,7 @@ def find_attempt_workspace(
     """Load an existing attempt workspace without creating authoritative state."""
 
     root = (
-        paths.artifacts
-        / "attempt-workspaces"
+        paths.attempt_workspaces
         / _token(campaign_id, prefix="campaign")
         / _token(attempt_id, prefix="attempt")
     ).resolve()
@@ -541,8 +539,7 @@ def quarantine_attempt_workspace(
     reason: str,
 ) -> dict[str, Any] | None:
     root = (
-        paths.artifacts
-        / "attempt-workspaces"
+        paths.attempt_workspaces
         / _token(campaign_id, prefix="campaign")
         / _token(attempt_id, prefix="attempt")
     ).resolve()

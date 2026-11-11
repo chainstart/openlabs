@@ -598,7 +598,7 @@ def _recover_attempt_workspaces(
 ) -> None:
     """Reconcile every nonterminal attempt metadata state against the database."""
 
-    root = paths.artifacts / "attempt-workspaces"
+    root = paths.attempt_workspaces
     for metadata_path in sorted(root.glob("*/*/attempt-workspace.json")):
         try:
             metadata = _read_json_object(metadata_path)
@@ -665,10 +665,7 @@ def _active_project_workstreams(
     seen: set[str] = set()
     root = paths.data / "workspaces"
     labs = discover_labs(paths.code)
-    project_paths = {
-        *root.glob("*/projects/*/project.json"),
-        *root.glob("*/production/*/project.json"),
-    }
+    project_paths = paths.project_config_paths()
     for project_path in sorted(project_paths):
         try:
             project = load_project(project_path)
@@ -752,7 +749,12 @@ def _active_project_workstreams(
         ) as exc:
             report.errors.append(f"Invalid project config {project_path}: {exc}")
 
-    for plan_path in sorted(root.glob("*/production/*/production_plan.json")):
+    legacy_plans = (
+        sorted(root.glob("*/production/*/production_plan.json"))
+        if paths.scans_legacy_production_plans
+        else []
+    )
+    for plan_path in legacy_plans:
         try:
             if (plan_path.parent / "project.json").is_file():
                 continue

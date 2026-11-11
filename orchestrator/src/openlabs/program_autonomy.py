@@ -121,7 +121,7 @@ def _now() -> datetime:
 
 
 def _control_root(paths: WorkspacePaths) -> Path:
-    return paths.artifacts / "program-control"
+    return paths.program_control
 
 
 def _token(value: str) -> str:

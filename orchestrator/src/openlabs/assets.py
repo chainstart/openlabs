@@ -779,7 +779,7 @@ def _research_read_resources(paths: WorkspacePaths, settings: FactorySettings,
         "reusable_assets_summary": view,
     }
     digest = hashlib.sha256(canonical_json_bytes(content)).hexdigest()
-    view_path = (paths.artifacts / "program-control" / "asset-views"
+    view_path = (paths.program_control / "asset-views"
                  / f"{_token(str(topic['topic_id']))}-{digest[:16]}.json")
     if not view_path.is_file():
         atomic_write_json(view_path, content)
@@ -1040,7 +1040,7 @@ def _schedule_retrospective(db: FactoryDB, paths: WorkspacePaths, settings: Fact
         ),
         "created_at": _iso(),
     })
-    packet_path = (paths.artifacts / "program-control" / "retrospective-packets"
+    packet_path = (paths.program_control / "retrospective-packets"
                    / _token(topic_id) / f"{state}-{attempt}-{task_id.split(':', 1)[1][:16]}.json")
     atomic_write_json(packet_path, packet)
     control = _control_campaign(db, settings, domain)
