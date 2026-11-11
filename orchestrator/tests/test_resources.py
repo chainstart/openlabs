@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from openlabs import resources
@@ -26,6 +27,13 @@ def test_workstation_profile_admits_a_three_gib_pilot_on_an_eight_gib_host(
     settings = load_settings(workspace_paths(code_root.parent))
     monkeypatch.setattr(resources, "_cpu_threads", lambda: 8)
     monkeypatch.setattr(resources, "_memory_mib", lambda: (7784, 6144))
+    # A workstation volume with room to spare; the real free space of whatever
+    # disk holds tmp_path is not part of this profile check.
+    monkeypatch.setattr(
+        resources.shutil,
+        "disk_usage",
+        lambda _path: shutil._ntuple_diskusage(256 * 1024**3, 128 * 1024**3, 128 * 1024**3),
+    )
     capacity = resources.effective_capacity(
         tmp_path, settings, {"cpu_threads": 0, "memory_mib": 0, "scratch_mib": 0},
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -375,6 +376,11 @@ def test_launch_failure_closes_and_quarantines_the_created_attempt(tmp_path, mon
         raise RuntimeError("synthetic launch failure")
 
     monkeypatch.setattr("openlabs.engine._launch_worker", fail_worker)
+    # Admission must not depend on the free space of the host disk under tmp_path.
+    monkeypatch.setattr(
+        "openlabs.resources.shutil.disk_usage",
+        lambda _path: shutil._ntuple_diskusage(512 * 1024**3, 0, 512 * 1024**3),
+    )
     report = tick(
         paths,
         FactorySettings(
@@ -591,13 +597,16 @@ def test_preflight_rejects_undeclared_live_dependency(tmp_path) -> None:
     assert receipts[0]["status"] == "failed"
 
 
-def test_launch_writes_job_against_private_campaign_copy(tmp_path) -> None:
+def test_launch_writes_job_against_private_campaign_copy(tmp_path, monkeypatch) -> None:
     code_root = Path(__file__).resolve().parents[2]
     paths = _paths(tmp_path, code_root)
     db, task = _leased_task(paths)
     from openlabs.config import FactorySettings
 
     settings = FactorySettings(launch_jobs=False)
+    # The job file is the contract under test, not the host's worker supervisor
+    # (a container without a dedicated math cgroup refuses math workers).
+    monkeypatch.setattr("openlabs.engine._launch_worker", lambda **_kwargs: None)
     _launch_task(db, paths, settings, task, owner="test")
 
     running = db.task("task")
@@ -726,3 +735,4 @@ def test_ingestion_commits_staged_state_and_indexes_immutable_result(
     assert report.attempts_committed == [
         {"task_id": "task", "attempt_id": attempt_id, "campaign_id": "campaign"}
     ]
+

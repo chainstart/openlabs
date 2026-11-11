@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -55,6 +57,12 @@ def test_exact_and_arb_outputs_require_typed_evidence() -> None:
 
 def test_resource_guard_enforces_memory_and_wall_limits(tmp_path) -> None:
     guard = _load(RESOURCE_GUARD_PATH, "openlabs_resource_guard_test")
+    systemd_run = shutil.which("systemd-run")
+    scope_available = systemd_run is not None and subprocess.run(
+        [systemd_run, "--user", "--scope", "--quiet", "--", "true"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
     limits = guard.ResourceLimits(
         memory_mib=64,
         cpu_seconds=5,
@@ -63,6 +71,10 @@ def test_resource_guard_enforces_memory_and_wall_limits(tmp_path) -> None:
         open_files=64,
         threads=1,
         output_mib=1,
+        # Without a systemd user scope (e.g. Docker) memory_mib has no cgroup to
+        # land in; the documented fallback is RLIMIT_AS, whose default floor is
+        # 8 GiB. Bound it explicitly so the fallback's own limit is exercised.
+        address_space_mib=0 if scope_available else 192,
     )
     memory = guard.run_guarded(
         [sys.executable, "-c", "bytearray(256 * 1024 * 1024)"],

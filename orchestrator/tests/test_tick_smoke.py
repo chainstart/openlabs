@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from openlabs.config import FactorySettings, WorkspacePaths
 from openlabs.db import FactoryDB
+from openlabs import engine
 from openlabs.engine import tick
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
@@ -56,6 +57,15 @@ def test_tick_launches_and_ingests_smoke_task(tmp_path, monkeypatch, domain: str
         reserve_scratch_mib=128,
     )
     first = tick(paths, settings)
+    if domain == "math" and engine._in_container() and not engine._container_math_cgroup_verified(
+        engine._CONTAINER_CGROUP
+    ):
+        # Without a dedicated 16/18 GiB no-swap math cgroup the container refuses
+        # math workers before anything starts; that refusal is the contract here.
+        assert first.launched == []
+        assert any("dedicated math cgroup" in error for error in first.errors)
+        assert db.task_attempts(task_id)[-1]["status"] == "launch_failed"
+        return
     assert first.launched == [task_id]
     running = db.task(task_id)
     assert running is not None

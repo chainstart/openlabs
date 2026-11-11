@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -46,11 +47,14 @@ def test_tick_records_and_resumes_one_researcher_session(tmp_path, monkeypatch) 
     )
     db = FactoryDB(paths.database_file)
     db.initialize()
-    db.register_campaign("campaign", domain="math", title="Campaign")
+    # Session continuity is domain-neutral. Use a lab every host can launch: a
+    # container without a dedicated math cgroup refuses math workers by design
+    # (covered by test_tick_smoke and test_container_worker_launch).
+    db.register_campaign("campaign", domain="ai", title="Campaign")
     db.enqueue_task(
         task_id="research",
         campaign_id="campaign",
-        domain="math",
+        domain="ai",
         task_type="research",
         objective="Run one fake bounded Agent step.",
         runner="balanced",
@@ -64,6 +68,11 @@ def test_tick_records_and_resumes_one_researcher_session(tmp_path, monkeypatch) 
         launch_jobs=True,
     )
 
+    # Admission must not depend on the free space of the disk under tmp_path.
+    monkeypatch.setattr(
+        "openlabs.resources.shutil.disk_usage",
+        lambda _path: shutil._ntuple_diskusage(512 * 1024**3, 0, 512 * 1024**3),
+    )
     first = tick(paths, settings)
     assert first.launched == ["research"]
     deadline = time.monotonic() + 10
