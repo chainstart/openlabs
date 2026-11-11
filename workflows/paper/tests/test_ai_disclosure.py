@@ -159,7 +159,9 @@ AI-generated output was not treated as mathematical proof.
     assert not any("MODEL" in code for code in codes)
 
 
-def test_no_provider_or_tool_is_still_rejected(tmp_path):
+def test_recorded_tool_missing_from_declaration_is_rejected(tmp_path):
+    # Rule change 2026-11: the tool is required because the record lists Codex,
+    # not because a vendor name is hard-coded (see the record-based tests below).
     main = tmp_path / "main.tex"
     main.write_text(r"""\documentclass{article}
 \begin{document}
@@ -262,3 +264,61 @@ AI-generated output was not treated as mathematical proof.
     codes = {item["code"] for item in result["errors"]}
     assert "STYLE-AI-DISCLOSURE-CODE-VALIDATION" in codes
     assert "STYLE-AI-DISCLOSURE-MODEL-UNREGISTERED" not in codes
+
+
+# --------------------------------------------------------------------------- record-based tools (2026-11)
+
+def _claude_usage(tmp_path):
+    raw = json.dumps({"runtime": {"model": "claude-opus-5-5"}}).encode()
+    (tmp_path / "claude.json").write_bytes(raw)
+    return [{"provider": "anthropic", "tool": "Claude Code", "model": "claude-opus-5-5",
+             "purpose": "Manuscript drafting",
+             "evidence": {"path": "claude.json", "sha256": hashlib.sha256(raw).hexdigest(),
+                          "json_pointer": "/runtime/model"}}]
+
+
+def _declaration(tmp_path, text):
+    main = tmp_path / "main.tex"
+    main.write_text("\\documentclass{article}\n\\begin{document}\nThe theorem has a proof.\n"
+                    "\\section*{Generative AI declaration}\n" + text + "\n\\end{document}\n")
+    return main
+
+
+DECLARATION_TAIL = ("assisted with manuscript drafting, editing, technical preparation.\n"
+                    "The authors take full responsibility for the article.\n"
+                    "AI-generated output was not treated as mathematical proof.")
+
+
+def test_declaration_is_checked_against_records_not_a_vendor(tmp_path):
+    # No vendor is hard-coded: a Claude-only record needs no "OpenAI ... Codex".
+    main = _declaration(tmp_path, "Claude Code with claude-opus-5-5 " + DECLARATION_TAIL)
+    result = audit_tex_tree(main, root=tmp_path, model_usage=_claude_usage(tmp_path))
+    assert result["valid"], result["errors"]
+    # Whatever the record lists is required: the recorded tool is missing here.
+    main = _declaration(tmp_path, "OpenAI Codex with claude-opus-5-5 " + DECLARATION_TAIL)
+    codes = {e["code"] for e in audit_tex_tree(main, root=tmp_path, model_usage=_claude_usage(tmp_path))["errors"]}
+    assert "STYLE-AI-DISCLOSURE-TOOL" in codes
+
+
+def test_declared_model_must_match_recorded_model(tmp_path):
+    main = _declaration(tmp_path, "Claude Code with claude-opus-4 " + DECLARATION_TAIL)
+    codes = {e["code"] for e in audit_tex_tree(main, root=tmp_path, model_usage=_claude_usage(tmp_path))["errors"]}
+    assert "STYLE-AI-DISCLOSURE-MODEL-MISMATCH" in codes
+
+
+def test_registered_writer_model_must_be_disclosed(tmp_path):
+    main = _declaration(tmp_path, "Claude Code with claude-opus-5-5 " + DECLARATION_TAIL)
+    result = audit_tex_tree(main, root=tmp_path, model_usage=_claude_usage(tmp_path), writer_model="gpt-6-astra")
+    assert "STYLE-AI-DISCLOSURE-WRITER-MODEL" in {e["code"] for e in result["errors"]}
+
+
+def test_without_records_only_presence_and_responsibility_are_required(tmp_path):
+    main = _declaration(tmp_path, "A generative assistant " + DECLARATION_TAIL)
+    for usage_record in (None, []):
+        result = audit_tex_tree(main, root=tmp_path, model_usage=usage_record)
+        assert result["valid"], result["errors"]
+        assert "STYLE-AI-DISCLOSURE-TOOLS-UNVERIFIABLE" in {n["code"] for n in result["notes"]}
+    main = _declaration(tmp_path, "A generative assistant " + DECLARATION_TAIL.replace("take full responsibility",
+                                                                                     "are listed"))
+    assert "STYLE-AI-DISCLOSURE-ACCOUNTABILITY" in {
+        e["code"] for e in audit_tex_tree(main, root=tmp_path, model_usage=None)["errors"]}

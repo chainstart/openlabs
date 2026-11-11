@@ -119,7 +119,9 @@ def test_changed_venue_abstract_limit_is_rechecked_at_apply_and_preflight(tmp_pa
     path.write_text(yaml.safe_dump(metadata))
     er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
     metadata["target_journal_format"] = {"abstract_word_limits": [1, 10]}
-    assert "verified venue limit" in er.preflight_blockers(metadata, root, "p")[0]
+    # Rule change 2026-11: abstract limits are a review advisory and a delivery requirement.
+    assert er.preflight_blockers(metadata, root, "p") == []
+    assert "verified venue limit" in er.abstract_findings(metadata, root, "p")[0]
 
 
 def test_registered_person_rule_distinguishes_pronouns_from_scientific_symbols():
@@ -166,7 +168,8 @@ def test_new_person_requirement_is_rechecked_before_apply_and_release(tmp_path):
     path.write_text(yaml.safe_dump(metadata))
     er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
     metadata["target_journal_format"] = {"abstract_person": "third"}
-    assert any("third person" in problem for problem in er.preflight_blockers(metadata, root, "p"))
+    assert er.preflight_blockers(metadata, root, "p") == []
+    assert any("third person" in problem for problem in er.abstract_findings(metadata, root, "p"))
 
 
 def judgment(order: list[str], major: str | None = None) -> dict:

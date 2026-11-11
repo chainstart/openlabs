@@ -1651,3 +1651,54 @@ def support_audit_blockers(result: Mapping[str, Any]) -> list[str]:
             prefix += f"{location}: "
         blockers.append(prefix + str(issue.get("message") or "support-material formal check failed"))
     return blockers
+
+
+# Support-record findings that still stop the unified review: the evidence package
+# is missing, unreadable or does not hash-match its registration, or the support
+# registration itself is invalid. Identifier presentation (DOI, version numbers,
+# file names, verbatim titles, creators, README wording) and the requirement to
+# have a Zenodo draft cited before review are preparation advisories at review
+# time; the delivery exit still enforces them through ``support_audit_blockers``.
+# Unknown codes block, so that a new check is never silently weakened.
+SUPPORT_REVIEW_BLOCKING_CODES = frozenset({
+    "SUPPORT-MODE-INVALID", "SUPPORT-NOT-REQUIRED-REASON", "SUPPORT-MANUSCRIPT-MISSING",
+    "SUPPORT-PACKAGE-SET", "SUPPORT-PACKAGE-MISSING", "SUPPORT-PACKAGE-HASH", "SUPPORT-PACKAGE-SIDECAR",
+    "SUPPORT-PACKAGE-INVALID", "SUPPORT-PACKAGE-PAPER", "SUPPORT-ARCHIVE-PROSE-INVALID",
+    "SUPPORT-ARCHIVE-SOURCE-IDENTITY-INVALID", "SUPPORT-ARCHIVE-SOURCE-IDENTITY-PATH",
+    "SUPPORT-ARCHIVE-SOURCE-IDENTITY-CONFLICT", "SUPPORT-ARCHIVE-SOURCE-IDENTITY-MISSING",
+    "SUPPORT-ARCHIVE-SOURCE-IDENTITY-HASH", "SUPPORT-RECEIPT-MISSING", "SUPPORT-RECEIPT-INVALID",
+    "SUPPORT-RECEIPT-PAPER", "SUPPORT-STATEMENT-CLAIM-ID",
+})
+SUPPORT_REVIEW_ADVISORY_CODES = frozenset({
+    # Pre-review Zenodo draft and its citation in the manuscript.
+    "SUPPORT-STATUS-BEFORE-REVIEW", "SUPPORT-LICENSE-MISSING", "SUPPORT-SOURCES-MISSING",
+    "SUPPORT-MANUSCRIPT-CITATION-REQUIRED", "SUPPORT-DOI-MISSING", "SUPPORT-VERSION-MISSING",
+    "SUPPORT-CITATION-MISSING", "SUPPORT-FIRST-CITATION", "SUPPORT-AVAILABILITY-CITATION",
+    # DOI / version / title / creator identity strings.
+    "SUPPORT-DRAFT-VERSION", "SUPPORT-RECORD-PAPER-TITLE", "SUPPORT-STATEMENT-PAPER-TITLE",
+    "SUPPORT-RECEIPT-VERSION", "SUPPORT-RECEIPT-ZENODO-VERSION", "SUPPORT-RECEIPT-DOI",
+    "SUPPORT-SOURCE-VERSION", "SUPPORT-PACKAGE-VERSION", "SUPPORT-BIB-MISSING", "SUPPORT-BIB-DOI",
+    "SUPPORT-BIB-VERSION", "SUPPORT-BIB-TITLE", "SUPPORT-BIB-CREATORS", "SUPPORT-ARCHIVE-DOI",
+    "SUPPORT-ARCHIVE-VERSION-MISSING", "SUPPORT-ARCHIVE-SOURCE-VERSION", "SUPPORT-ARCHIVE-STALE-VERSION",
+    "SUPPORT-ARCHIVE-IDENTITY-VERSION", "SUPPORT-ARCHIVE-IDENTITY-DOI", "SUPPORT-ARCHIVE-IDENTITY-TITLE",
+    "SUPPORT-ARCHIVE-IDENTITY-CREATORS", "SUPPORT-ARCHIVE-IDENTITY-INVALID",
+    "SUPPORT-PUBLIC-DIRECTORY-VERSION",
+    # Printed file names and paths.
+    "SUPPORT-ARCHIVE-FILENAME", "SUPPORT-ARCHIVE-PATH-MISSING", "SUPPORT-ARCHIVE-PATH-NOT-AT-ROOT",
+    # README / reader-facing wording.
+    "SUPPORT-PROCESS-NARRATIVE", "SUPPORT-DRAFT-PUBLIC-CLAIM", "SUPPORT-ARCHIVE-PROCESS-NARRATIVE",
+    "SUPPORT-ARCHIVE-DRAFT-PUBLIC-CLAIM", "SUPPORT-ARCHIVE-EVALUATION-PROJECTION",
+    "SUPPORT-ARCHIVE-PROSE-ENCODING", "SUPPORT-ARCHIVE-CHECKSUM-COVERAGE",
+    "SUPPORT-ARCHIVE-MANIFEST-COVERAGE",
+})
+
+
+def support_review_findings(result: Mapping[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+    """Split a support audit for the unified review: (blockers, preparation advisories)."""
+    from paper_writing.manuscript_style import advisory_record
+
+    issues = [issue for issue in result.get("errors", []) if isinstance(issue, Mapping)]
+    blocking = [issue for issue in issues if str(issue.get("code") or "") not in SUPPORT_REVIEW_ADVISORY_CODES]
+    advisories = [advisory_record("support_citations", issue, kind="preparation")
+                  for issue in issues if str(issue.get("code") or "") in SUPPORT_REVIEW_ADVISORY_CODES]
+    return support_audit_blockers({"errors": blocking}), advisories

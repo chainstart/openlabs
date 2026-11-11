@@ -1170,3 +1170,146 @@ def test_delta_review_record_passes_apply_revalidation(tmp_path, monkeypatch):
     release = written[-1]["writing_release"]
     assert release["status"] == "ready" and release["review_mode"] == "delta"
     assert release["delta_basis_run_id"] == "20200101T000000Z"
+
+
+# --------------------------------------------------------------------------- formal checks: entry vs exit (2026-11)
+
+def _formal_problem_preflight(tmp_path, monkeypatch, style_errors, support_errors, ledger=None):
+    from paper_writing import manuscript_style, operations, support_citations
+
+    metadata = {'paper_id': 'p', 'version': '1.0', 'target_journal': 'J',
+                'target_journal_fit': {'status': 'approved'}}
+    manuscript = tmp_path / 'papers/p/manuscript'
+    manuscript.mkdir(parents=True)
+    (manuscript / 'main.tex').write_text(
+        '\\begin{document}\n\nFor real $x$, $x^2\\ge0$ by \\cite{mainref}.\n\n'
+        r'\begin{thebibliography}{9}\bibitem{mainref}Main reference.\end{thebibliography}\end{document}')
+    (manuscript / 'leftover.tex').write_text('not read by the build')
+    pdf = tmp_path / 'built.pdf'
+    pdf.write_bytes(b'%PDF-1.4 fixture')
+    monkeypatch.setattr(flow, 'load_registry', lambda *args, **kwargs: None)
+    monkeypatch.setattr(flow, 'load_paper_metadata', lambda *args, **kwargs: metadata)
+    monkeypatch.setattr(flow, '_build', lambda *args, **kwargs: (pdf, {'main.tex'}))
+    style = {'errors': style_errors, 'blacklist_findings': [
+        {'code': 'STYLE-INTERNAL-AUDIT', 'message': 'internal vocabulary', 'path': 'main.tex', 'line': 3,
+         'context': 'We audit every smart-contract transfer on chain.'}], 'notes': []}
+    monkeypatch.setattr(manuscript_style, 'audit_manuscript_style', lambda *args, **kwargs: style)
+    monkeypatch.setattr(support_citations, 'audit_manuscript_support',
+                        lambda *args, **kwargs: {'errors': support_errors})
+    monkeypatch.setattr(operations, '_review_workspace_fingerprints', lambda *args: {})
+    from paper_writing import journal_history
+    if ledger is None:
+        monkeypatch.setattr(journal_history, 'guard_target', lambda *args, **kwargs: None)
+    return flow.preflight('p', tmp_path, tmp_path / 'build')
+
+
+FORMAL_STYLE_PROBLEMS = [
+    {'code': 'STYLE-AI-DECLARATION-MISSING', 'message': 'add one AI-use declaration', 'path': 'main.tex'},
+    {'code': 'STYLE-AI-DISCLOSURE-TOOL', 'message': 'name the recorded tool Codex', 'path': 'main.tex'},
+    {'code': 'STYLE-UNRESOLVED-MARKER', 'message': 'remove TODO', 'path': 'main.tex', 'line': 9},
+]
+FORMAL_SUPPORT_PROBLEMS = [
+    {'code': 'SUPPORT-DOI-MISSING', 'message': 'no current Zenodo Version DOI'},
+    {'code': 'SUPPORT-STATUS-BEFORE-REVIEW', 'message': 'no draft before review'},
+    {'code': 'SUPPORT-BIB-VERSION', 'message': 'version differs', 'path': 'references.bib'},
+]
+
+
+def test_formal_problems_become_preparation_advisories_not_preflight_blockers(tmp_path, monkeypatch):
+    pre = _formal_problem_preflight(tmp_path, monkeypatch, FORMAL_STYLE_PROBLEMS, FORMAL_SUPPORT_PROBLEMS)
+    assert pre['blockers'] == []
+    codes = {a['code'] for a in pre['preparation_advisories']}
+    assert {'STYLE-AI-DECLARATION-MISSING', 'STYLE-AI-DISCLOSURE-TOOL', 'STYLE-UNRESOLVED-MARKER',
+            'STYLE-INTERNAL-AUDIT', 'SUPPORT-DOI-MISSING', 'SUPPORT-STATUS-BEFORE-REVIEW',
+            'SUPPORT-BIB-VERSION', 'UNUSED-SOURCE-FILES'} <= codes
+    audit = next(a for a in pre['preparation_advisories'] if a['code'] == 'STYLE-INTERNAL-AUDIT')
+    assert audit['kind'] == 'internal_vocabulary' and 'smart-contract' in audit['context']
+    assert pre['build_inputs'] == ['main.tex']
+
+
+def test_evidence_hash_and_unreviewable_problems_still_block(tmp_path, monkeypatch):
+    pre = _formal_problem_preflight(
+        tmp_path, monkeypatch,
+        [{'code': 'STYLE-MANUSCRIPT-MISSING', 'message': 'canonical manuscript source is missing'}],
+        [{'code': 'SUPPORT-PACKAGE-HASH', 'message': 'support archive SHA-256 does not match the registry'},
+         {'code': 'SUPPORT-SOMETHING-NEW', 'message': 'an unclassified future check'}])
+    assert any(b.startswith('STYLE-MANUSCRIPT-MISSING') for b in pre['blockers'])
+    assert any(b.startswith('SUPPORT-PACKAGE-HASH') for b in pre['blockers'])
+    # Unknown codes are conservatively blocking.
+    assert any(b.startswith('SUPPORT-SOMETHING-NEW') for b in pre['blockers'])
+
+
+def test_run_review_records_advisories_without_preflight_failure(tmp_path, monkeypatch):
+    mock_formal_stage(monkeypatch)
+    config = {'process': flow.PROCESS, 'roles': {'editor': {'provider': 'openai-codex'},
+              'referee_a': {'provider': 'anthropic'}, 'referee_b': {'provider': 'openai-codex', 'model': 'g'}},
+              'referee_roles': ['referee_b'], 'rejection_clearance_required': True,
+              'timeout_seconds': 1, 'max_rounds_per_target': 10}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    advisories = [{'source': 'manuscript_style', 'kind': 'preparation', 'code': 'STYLE-AI-DECLARATION-MISSING',
+                   'location': 'main.tex', 'message': 'add one AI-use declaration'}]
+    pre = {'metadata': {'version': '1.0', 'target_journal': 'J'}, 'target': 'J', 'blockers': [],
+           'fingerprints': {}, 'expanded': 'x', 'bibliography': '', 'preparation_advisories': advisories,
+           'build_inputs': ['main.tex']}
+    monkeypatch.setattr(flow, 'preflight', lambda *args: pre)
+    monkeypatch.setattr(flow, 'prior_decisions', lambda *args: [])
+    monkeypatch.setattr(flow, 'run_role', lambda **kw: (
+        (editor(), {}) if kw['role_name'] == 'editor' else
+        ({'letter': 'fixed'}, {}) if kw['role_name'] == 'decision_letter' else (referee('accept'), {})))
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert record['merged']['outcome'] == 'ready'
+    assert record['preparation_advisories'] == advisories and record['build_inputs'] == ['main.tex']
+
+
+def test_delivery_exit_enforces_the_same_formal_problems(tmp_path, monkeypatch):
+    from paper_writing import editorial_rewrite, manuscript_style, registry, support_citations
+
+    manuscript = tmp_path / 'papers/p/manuscript'
+    manuscript.mkdir(parents=True)
+    (manuscript / 'main.tex').write_text('x')
+    (manuscript / 'leftover.tex').write_text('not read by the build')
+    monkeypatch.setattr(registry, 'load_registry_settings', lambda *args, **kwargs: {})
+    monkeypatch.setattr(manuscript_style, 'audit_manuscript_style',
+                        lambda *args, **kwargs: {'errors': FORMAL_STYLE_PROBLEMS, 'blacklist_findings': [
+                            {'code': 'STYLE-INTERNAL-AUDIT', 'message': 'internal vocabulary'}]})
+    monkeypatch.setattr(support_citations, 'audit_manuscript_support',
+                        lambda *args, **kwargs: {'errors': FORMAL_SUPPORT_PROBLEMS})
+    monkeypatch.setattr(editorial_rewrite, 'abstract_findings', lambda *args: ['abstract has 300 words'])
+    notes = []
+    access = {'references': {'u': ['https://api.crossref.org/works/u: ConnectTimeout']}, 'items': []}
+    problems = flow.delivery_blockers('p', {'paper_id': 'p'}, tmp_path,
+                                      {'build_inputs': ['main.tex'],
+                                       'formal_check': {'unverifiable_source_access': access}}, notes=notes)
+    assert {n['kind'] for n in notes} == {'internal_vocabulary', 'unverifiable_source_access'}
+    joined = '\n'.join(problems)
+    for code in ('STYLE-AI-DECLARATION-MISSING', 'STYLE-AI-DISCLOSURE-TOOL', 'STYLE-UNRESOLVED-MARKER',
+                 'SUPPORT-DOI-MISSING', 'SUPPORT-STATUS-BEFORE-REVIEW', 'SUPPORT-BIB-VERSION'):
+        assert code in joined
+    assert 'leftover.tex' in joined and 'abstract has 300 words' in joined
+    # Internal vocabulary is for a human decision, never a hard stop.
+    assert 'STYLE-INTERNAL-AUDIT' not in joined
+
+
+def test_stale_ledger_only_warns_in_internal_review(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from paper_writing import journal_history
+
+    ledger = tmp_path / 'registry/journal-rejections.json'
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text(json.dumps({'schema_version': journal_history.SCHEMA,
+                                  'updated_at': (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
+                                  'rejections': [], 'active_submissions': []}))
+    monkeypatch.setattr(journal_history, '_policy', lambda root, policy=None: {
+        'enabled': True, 'exclude_after_distinct_papers': 3, 'caution_after_distinct_papers': 2,
+        'max_age_days': 7})
+    paper = {'paper_id': 'p', 'target_journal': 'J'}
+    with pytest.raises(ValueError, match='stale'):
+        journal_history.guard_target(tmp_path, paper)
+    pre = _formal_problem_preflight(tmp_path, monkeypatch, [], [], ledger=True)
+    assert pre['blockers'] == []
+    warning = next(a for a in pre['preparation_advisories'] if a['code'] == 'LEDGER-STALE')
+    assert warning['kind'] == 'warning' and 'journal-history sync' in warning['message']
+    # Outside the internal review (selection, retargeting, delivery) it is still an error.
+    with pytest.raises(ValueError, match='stale'):
+        journal_history.check_journal(tmp_path, 'J')
+

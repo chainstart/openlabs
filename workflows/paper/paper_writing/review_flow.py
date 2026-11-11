@@ -553,17 +553,45 @@ def unused_source_files(manuscript: Path, used: set[str]) -> list[str]:
     return unused
 
 
+def _preparation_advisory(source: str, code: str, message: str, *, kind: str = "preparation",
+                          location: str = "", context: str = "") -> dict[str, Any]:
+    item = {"source": source, "kind": kind, "code": code, "location": location, "message": message}
+    if context:
+        item["context"] = context
+    return item
+
+
 def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
-    """Deterministic checks; no model is started when any blocker is found."""
-    from paper_writing.manuscript_style import audit_manuscript_style, manuscript_style_blockers
+    """Deterministic checks; no model is started when any blocker is found.
+
+    Only what makes a review impossible or meaningless blocks here: a manuscript
+    that does not build, missing registration, broken evidence/data hash bindings,
+    the user's venue policy (excluded journals, fee-free route, SCIE/zone
+    eligibility) and reference-routing defects. Presentation and preparation
+    findings (internal vocabulary, AI-declaration wording, abstract length/person,
+    TODO markers, unused source files, support-record identifiers and the pre-review
+    Zenodo draft) are returned as ``preparation_advisories``: they never fail the
+    preflight, and the delivery exit enforces them (see ``delivery_blockers``).
+    """
+    from paper_writing.journal_history import tolerate_stale_ledger
+
+    # Internal review: a stale team rejection ledger is a warning here. Journal
+    # selection, retargeting and delivery keep requiring a fresh ledger.
+    with tolerate_stale_ledger() as ledger_warnings:
+        return _preflight(paper_id, root, workdir, ledger_warnings)
+
+
+def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[str]) -> dict[str, Any]:
+    from paper_writing.journal_history import guard_target
+    from paper_writing.manuscript_style import audit_manuscript_style, manuscript_style_review_findings
     from paper_writing.operations import _review_workspace_fingerprints
-    from paper_writing.support_citations import audit_manuscript_support, support_audit_blockers
+    from paper_writing.support_citations import audit_manuscript_support, support_review_findings
 
     load_registry(root, include_local_repositories=False, paper_ids=[paper_id])  # target-policy validation
     metadata = load_paper_metadata(paper_id, root)
-    from paper_writing.journal_history import guard_target
     guard_target(root, metadata)  # New reviews cannot reuse an excluded historical target.
     blockers: list[str] = []
+    advisories: list[dict[str, Any]] = []
     venue_type = str(metadata.get("venue_type") or "journal")
     if venue_type == "conference":
         # CCF-ranked conference targets (policy 2026-11-07); target_journal_fit is the
@@ -580,7 +608,7 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     if not target or not isinstance(fit, Mapping) or fit.get("status") != "approved":
         blockers.append("A verified target venue with an approved fit record is required")
     manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
-    pdf, used = _build(manuscript, workdir)
+    pdf, used = _build(manuscript, workdir)  # a manuscript that does not build stops here
     canonical = root / str(metadata.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf")
     shutil.copyfile(pdf, canonical)
     fresh_bbl = pdf.with_suffix(".bbl")
@@ -591,10 +619,17 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     used |= standalone_document_files(manuscript)
     unused = unused_source_files(manuscript, used)
     if unused:
-        blockers.append("Source files not read by the build would enter the journal package: " + ", ".join(unused[:12]))
-    style = audit_manuscript_style(paper_id, root=root, require_ai_declaration=True)
-    blockers.extend(manuscript_style_blockers(style))
-    blockers.extend(support_audit_blockers(audit_manuscript_support(paper_id, root=root)))
+        advisories.append(_preparation_advisory(
+            "review_flow", "UNUSED-SOURCE-FILES",
+            "Source files not read by the build would enter the journal package: " + ", ".join(unused[:12]),
+            location=manuscript.relative_to(root).as_posix()))
+    style_blockers, style_advice = manuscript_style_review_findings(
+        audit_manuscript_style(paper_id, root=root, require_ai_declaration=True))
+    blockers.extend(style_blockers)
+    advisories.extend(style_advice)
+    support_blockers, support_advice = support_review_findings(audit_manuscript_support(paper_id, root=root))
+    blockers.extend(support_blockers)
+    advisories.extend(support_advice)
     try:
         claim_maps = selected_claim_evidence_maps(metadata, root)
     except ValueError as exc:
@@ -608,7 +643,13 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
         formal_inventory = formal_checks.inventory(documents, bibliography)
         formal_checks.source_plan(metadata)
         blockers.extend(formal_checks.local_route_preflight(metadata, formal_inventory, root))
-        blockers.extend(formal_checks.artifact_inventory(metadata, root)['blockers'])
+        for problem in formal_checks.artifact_inventory(metadata, root)['blockers']:
+            # A stale or missing journal source archive is a delivery artifact; the
+            # handoff rebuilds and verifies it. Every other artifact binds evidence.
+            if problem.startswith("Artifact preparation: journal_source_archive:"):
+                advisories.append(_preparation_advisory("formal_checks", "JOURNAL-SOURCE-ARCHIVE", problem))
+            else:
+                blockers.append(problem)
     except (ValueError, OSError) as exc:
         blockers.append(f"Formal-check inventory: {exc}")
         formal_inventory = None
@@ -617,14 +658,20 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     except ValueError as exc:
         blockers.append(f"Active journal revision context: {exc}")
         revision_context = None
-    from paper_writing.editorial_rewrite import advisory as rewrite_advisory, preflight_blockers as rewrite_blockers
+    from paper_writing.editorial_rewrite import (abstract_findings, advisory as rewrite_advisory,
+                                                 preflight_blockers as rewrite_blockers)
     blockers.extend(rewrite_blockers(metadata, root, paper_id))
+    advisories.extend(_preparation_advisory("editorial_rewrite", "ABSTRACT-VENUE-FORMAT", problem)
+                      for problem in abstract_findings(metadata, root, paper_id))
+    advisories.extend(_preparation_advisory("journal_history", "LEDGER-STALE", warning, kind="warning")
+                      for warning in ledger_warnings)
     try:
         rewrite_advice = rewrite_advisory(metadata, root, paper_id)
     except (ValueError, OSError) as exc:  # advice must never stop the review
         rewrite_advice = {"notes": [f"rewrite record unreadable: {exc}"], "blocking": False}
     return {"blockers": blockers, "fingerprints": fingerprints, "expanded": expanded,
-            "editorial_rewrite_advisory": rewrite_advice,
+            "editorial_rewrite_advisory": rewrite_advice, "preparation_advisories": advisories,
+            "build_inputs": sorted(used),
             "bibliography": bibliography, "metadata": metadata, "target": target,
             "support_claim_evidence_maps": claim_maps, "formal_inventory": formal_inventory,
             "active_revision_context": revision_context,
@@ -1696,6 +1743,10 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
         record['review_round_limit_override'] = round_limit
     if pre.get("editorial_rewrite_advisory") is not None:
         record["editorial_rewrite_advisory"] = pre["editorial_rewrite_advisory"]
+    # Presentation/preparation findings: reported with the review, never a reason
+    # for preflight_failed, enforced at the delivery exit (``delivery_blockers``).
+    record["preparation_advisories"] = list(pre.get("preparation_advisories", []))
+    record["build_inputs"] = list(pre.get("build_inputs", []))
     if pre["blockers"]:
         record |= {"stage_reached": "preflight", "merged": {"outcome": "preflight_failed",
                    "preflight_blockers": pre["blockers"], "next_action": "text_revision"}}
@@ -1829,6 +1880,10 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     }
     if record.get("formal_check", {}).get("valid") is True:
         release["formal_check"] = record["formal_check"]
+        access = record["formal_check"].get("unverifiable_source_access")
+        if access:
+            # Not manuscript defects; listed for manual or other-environment checking.
+            release["unverifiable_source_access"] = access
     if re.fullmatch(r"[0-9a-f]{64}", str(publication.get("package_sha256") or "")):
         release["support_package_sha256"] = publication["package_sha256"]
     if merged.get("scientific_blockers"):
@@ -1840,6 +1895,11 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     advisory = [c for c in merged.get("required_changes", []) if c.get("advisory")]
     if merged["outcome"] == "ready" and advisory:
         release["advisory_changes"] = advisory
+    if record.get("preparation_advisories"):
+        release["preparation_advisories"] = {
+            "count": len(record["preparation_advisories"]),
+            "codes": sorted({str(a.get("code")) for a in record["preparation_advisories"]}),
+            "enforced_at": "delivery (handoff / Zenodo release)", "details": "decision_record"}
     if record.get("review_mode") == "delta":
         release["review_mode"] = "delta"
         release["delta_basis_run_id"] = record["delta_review"]["basis_run_id"]
@@ -1847,6 +1907,52 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     metadata["status_updated_at"] = _now()
     write_paper_metadata(paper_id, metadata, root)
     return release
+
+
+def delivery_blockers(paper_id: str, metadata: Mapping[str, Any], root: Path,
+                      record: Mapping[str, Any] | None = None, *,
+                      notes: list[dict[str, Any]] | None = None) -> list[str]:
+    """The formal checks moved from the review entry to the delivery exit.
+
+    Everything the unified preflight reports as a preparation advisory is a hard
+    requirement here: the full manuscript-style audit (AI-use declaration,
+    TODO/draft markers, internal paths), the full support-record audit (Zenodo
+    DOI, versions, filenames, titles, README wording, citation), the verified
+    venue abstract limits and the absence of source files that the build does not
+    read. Internal-vocabulary hits are reported with their sentence for a human
+    decision and do not block (see manuscript_style.BLACKLIST_CODES); they are
+    appended to ``notes`` together with references that could not be verified for
+    lack of source access.
+    """
+    from paper_writing.editorial_rewrite import abstract_findings
+    from paper_writing.manuscript_style import audit_manuscript_style, manuscript_style_blockers
+    from paper_writing.registry import load_registry_settings
+    from paper_writing.support_citations import audit_manuscript_support, support_audit_blockers
+
+    gate = load_registry_settings(root).get("quality_gate") or {}
+    style = audit_manuscript_style(
+        paper_id, root=root, require_ai_declaration=bool(gate.get("require_ai_use_declaration", True)))
+    problems = manuscript_style_blockers(style)
+    if notes is not None:
+        notes.extend({"kind": "internal_vocabulary", **dict(item)} for item in style.get("blacklist_findings", []))
+        access = ((record or {}).get("formal_check") or {}).get("unverifiable_source_access")
+        if access:
+            notes.append({"kind": "unverifiable_source_access", **dict(access)})
+    problems += support_audit_blockers(audit_manuscript_support(paper_id, root=root))
+    problems += [f"Venue abstract format: {p}" for p in abstract_findings(metadata, root, paper_id)]
+    if record is not None:
+        used = record.get("build_inputs")
+        manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
+        if isinstance(used, list):
+            # The manuscript snapshot is bound to the decision, so the reviewed build's
+            # inputs are still the current build's inputs.
+            unused = unused_source_files(manuscript, {str(u) for u in used})
+            if unused:
+                problems.append("Source files not read by the build would enter the journal package: "
+                                + ", ".join(unused[:12]))
+        # Decisions written before build_inputs existed were made by a preflight that
+        # still rejected unused source files, and their snapshot is bound: nothing to add.
+    return problems
 
 
 def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: Path, snapshot: str) -> list[str]:

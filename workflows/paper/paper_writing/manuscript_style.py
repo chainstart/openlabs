@@ -15,7 +15,10 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from paper_writing.ai_disclosure import configured_attempts_for_record, model_disclosure_issues, model_usage_for_record
+from paper_writing.ai_disclosure import (
+    UNVERIFIABLE_MODEL_CODES, configured_attempts_for_record, model_disclosure_issues, model_usage_for_record,
+    tool_disclosure_issues,
+)
 from paper_writing.editorial_voice import editorial_voice_issues
 from paper_writing.funding import ineligible_funding
 from paper_writing.registry import load_paper_metadata, load_registry
@@ -192,6 +195,51 @@ UNRESOLVED_SUBMISSION_MARKER = re.compile(
 UNRESOLVED_SOURCE_MARKER = re.compile(
     r"(?:^|[^A-Za-z])(?:TODO|TBD|FIXME)(?:[^A-Za-z]|$)", re.IGNORECASE
 )
+
+
+# Internal-vocabulary blacklist (2026-11 review convergence). Words such as
+# "audit" are legitimate subject matter in, for example, blockchain or security
+# papers, so these hits never block: they are reported with the sentence that
+# contains them so that a human can judge a real workflow leak before delivery.
+BLACKLIST_CODES = frozenset(code for code, _, _ in PROHIBITED_BODY_PATTERNS) | {"STYLE-BIBLIOGRAPHY-WORKFLOW"}
+
+# Style findings that still stop the unified review before any model runs. Every
+# other style finding is a preparation advisory at review time and remains a hard
+# requirement at the delivery exit (handoff / Zenodo release). Unknown codes are
+# treated as blocking so that a new check is never silently weakened.
+REVIEW_BLOCKING_CODES = frozenset({
+    "STYLE-MANUSCRIPT-MISSING",          # nothing to review
+    "STYLE-ARTWORK-PROVENANCE",          # hash-bound artwork generation evidence
+    "STYLE-FUNDING-AUTHOR-ELIGIBILITY",  # registered funding-eligibility policy
+})
+REVIEW_ADVISORY_PREFIXES = ("STYLE-AI-", "VOICE-")
+REVIEW_ADVISORY_CODES = frozenset({
+    "STYLE-INTERNAL-PATH", "STYLE-UNRESOLVED-MARKER", "STYLE-UNCONFIRMED-SUBMISSION-TEXT",
+    "STYLE-UNCHECKED-SUBMISSION-ITEM", *BLACKLIST_CODES,
+})
+
+
+def review_stage_blocking(code: Any) -> bool:
+    """Whether a style finding blocks the unified review (unknown codes do)."""
+    code = str(code or "")
+    if code in REVIEW_BLOCKING_CODES:
+        return True
+    return not (code in REVIEW_ADVISORY_CODES or code.startswith(REVIEW_ADVISORY_PREFIXES))
+
+
+def _sentence_context(lines: list[str], index: int, pattern: re.Pattern[str]) -> str:
+    """The sentence around the first ``pattern`` hit on line ``index`` (bounded)."""
+    window = [_strip_tex_comment(lines[i]) for i in range(max(0, index - 2), min(len(lines), index + 3))]
+    offset = sum(len(part) + 1 for part in window[: index - max(0, index - 2)])
+    text = "\n".join(window)
+    match = pattern.search(text, offset) or pattern.search(text)
+    if match is None:
+        return " ".join(_strip_tex_comment(lines[index]).split())[:400]
+    boundary = r"[.!?](?=\s)|\n\s*\n|\\(?:begin|end|(?:sub)*section\*?|caption|item)\b(?:\{[^}]*\})?|\\\\"
+    start = max((m.end() for m in re.finditer(boundary, text[: match.start()])), default=0)
+    end_match = re.search(r"[.!?](?=\s|$)|\n\s*\n", text[match.end():])
+    end = match.end() + end_match.end() if end_match else len(text)
+    return " ".join(text[start:end].split())[:400]
 
 
 def _strip_tex_comment(line: str) -> str:
@@ -496,8 +544,14 @@ def audit_tex_tree(
     configured_attempts: Any = None,
     artwork_disclosures: Any = None,
     editorial_voice_limits: Mapping[str, Any] | None = None,
+    writer_model: str | None = None,
 ) -> dict[str, Any]:
-    """Check one compiled TeX tree without assigning a prose score."""
+    """Check one compiled TeX tree without assigning a prose score.
+
+    ``errors`` fail the check. ``blacklist_findings`` (internal vocabulary, each
+    with its sentence) and ``notes`` (for example an AI tool list that cannot be
+    checked against a record) are reported only and never fail it.
+    """
 
     main_path = Path(main_tex).resolve()
     manuscript_path = Path(manuscript).resolve() if manuscript else main_path.parent
@@ -505,6 +559,8 @@ def audit_tex_tree(
     files = _tex_tree(main_path, manuscript_path)
     bibliography_files = _bibliography_files(files, manuscript_path)
     issues: list[dict[str, Any]] = []
+    blacklist: list[dict[str, Any]] = []
+    ai_notes: list[dict[str, Any]] = []
     declaration_ranges, range_issues = _declaration_ranges(files, root=report_root)
     issues.extend(range_issues)
     caption_credits, credit_issues = _artwork_caption_credits(files, manuscript_path, report_root, artwork_disclosures)
@@ -572,29 +628,24 @@ def audit_tex_tree(
                 )
             for code, pattern, message in PROHIBITED_BODY_PATTERNS:
                 if pattern.search(scan_text):
-                    issues.append(
-                        _issue(
-                            code,
-                            message,
-                            path=path,
-                            line=index + 1,
-                            root=report_root,
-                        )
-                    )
+                    hit = _issue(code, message, path=path, line=index + 1, root=report_root)
+                    hit["context"] = _sentence_context(lines, index, pattern)
+                    blacklist.append(hit)
 
     for path in bibliography_files:
-        for index, raw in enumerate(path.read_text(encoding="utf-8").splitlines()):
+        bib_lines = path.read_text(encoding="utf-8").splitlines()
+        for index, raw in enumerate(bib_lines):
             visible = _strip_tex_comment(raw)
             if BIBLIOGRAPHY_WORKFLOW_MARKER.search(visible):
-                issues.append(
-                    _issue(
-                        "STYLE-BIBLIOGRAPHY-WORKFLOW",
-                        "remove manuscript-production or audit-process notes from bibliography metadata",
-                        path=path,
-                        line=index + 1,
-                        root=report_root,
-                    )
+                hit = _issue(
+                    "STYLE-BIBLIOGRAPHY-WORKFLOW",
+                    "remove manuscript-production or audit-process notes from bibliography metadata",
+                    path=path,
+                    line=index + 1,
+                    root=report_root,
                 )
+                hit["context"] = " ".join(visible.split())[:400]
+                blacklist.append(hit)
 
     body_text = "\n".join(combined_body)
     voice_metrics, voice_issues = editorial_voice_issues(body_text, editorial_voice_limits)
@@ -627,12 +678,10 @@ def audit_tex_tree(
             r"(?: and associated materials)?\.\s*$",
             declaration_text, re.IGNORECASE | re.DOTALL,
         )) and not re.search(r"\[(?:NAME OF TOOL/SERVICE|REASON)\]", declaration_text, re.IGNORECASE)
+        # The tools and models named in the declaration are checked against the
+        # paper's registered model-usage records (see tool_disclosure_issues and
+        # model_disclosure_issues), never against a hard-coded vendor name.
         requirements: tuple[tuple[str, re.Pattern[str], str], ...] = (
-            (
-                "STYLE-AI-DISCLOSURE-TOOL",
-                re.compile(r"\bOpenAI\b.{0,160}\bCodex\b|\bCodex\b.{0,160}\bOpenAI\b", re.IGNORECASE),
-                "identify OpenAI and Codex truthfully in the AI-use declaration",
-            ),
             (
                 "STYLE-AI-DISCLOSURE-TEXT-PURPOSES",
                 re.compile(
@@ -672,10 +721,21 @@ def audit_tex_tree(
                 issues.append(
                     _issue(code, message, path=next(iter(declaration_ranges)), root=report_root)
                 )
+        declaration_path = next(iter(declaration_ranges))
+        tool_errors, tool_notes = tool_disclosure_issues(declaration_text, model_usage, writer_model=writer_model)
         for code, message in model_disclosure_issues(
                 declaration_text, model_usage, root=report_root, configured_attempts=configured_attempts):
+            if code in UNVERIFIABLE_MODEL_CODES:
+                # No usable record to compare with: presence and responsibility
+                # are still required; the tool list is reported, not enforced.
+                tool_notes.append(("TOOLS-UNVERIFIABLE", message))
+                continue
             issues.append(_issue("STYLE-AI-DISCLOSURE-" + code, message,
-                                 path=next(iter(declaration_ranges)), root=report_root))
+                                 path=declaration_path, root=report_root))
+        for code, message in tool_errors:
+            issues.append(_issue("STYLE-AI-DISCLOSURE-" + code, message, path=declaration_path, root=report_root))
+        for code, message in dict(tool_notes).items():
+            ai_notes.append(_issue("STYLE-AI-DISCLOSURE-" + code, message, path=declaration_path, root=report_root))
         if code_assistance_relevant:
             if not re.search(
                 r"source[- ]code development|development.{0,60}(?:source )?code"
@@ -754,6 +814,8 @@ def audit_tex_tree(
         },
         "errors": unique,
         "warnings": voice_issues,
+        "notes": ai_notes,
+        "blacklist_findings": blacklist,
         "editorial_voice": voice_metrics,
     }
 
@@ -814,6 +876,7 @@ def audit_manuscript_style(
         configured_attempts=configured_attempts_for_record(metadata),
         artwork_disclosures=metadata.get('artwork_disclosures'),
         editorial_voice_limits=voice_config,
+        writer_model=str(metadata.get("writer_model") or "") or None,
     )
     if voice_config.get("blocking"):
         # Explicitly configured: threshold breaches become style errors for new gate runs.
@@ -927,3 +990,39 @@ def manuscript_style_blockers(result: Mapping[str, Any]) -> list[str]:
             prefix += f"{location}: "
         blockers.append(prefix + str(issue.get("message") or "manuscript style check failed"))
     return blockers
+
+
+def _location(issue: Mapping[str, Any]) -> str:
+    location = str(issue.get("path") or "")
+    if issue.get("line") is not None:
+        location = f"{location}:{issue['line']}"
+    return location
+
+
+def advisory_record(source: str, issue: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
+    """One preparation advisory as stored in a unified decision record."""
+    item = {"source": source, "kind": kind, "code": str(issue.get("code") or ""),
+            "location": _location(issue), "message": str(issue.get("message") or "")}
+    if issue.get("context"):
+        item["context"] = str(issue["context"])
+    return item
+
+
+def manuscript_style_review_findings(result: Mapping[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+    """Split a style audit for the unified review: (blockers, preparation advisories).
+
+    Only findings that make the manuscript unreviewable or that encode a registered
+    policy block. Presentation findings are advice at this stage and are enforced
+    again at the delivery exit by ``manuscript_style_blockers``; internal-vocabulary
+    hits and unverifiable AI tool lists are reported with their context only.
+    """
+    blocking = [issue for issue in result.get("errors", [])
+                if isinstance(issue, Mapping) and review_stage_blocking(issue.get("code"))]
+    advisories = [advisory_record("manuscript_style", issue, kind="preparation")
+                  for issue in result.get("errors", [])
+                  if isinstance(issue, Mapping) and not review_stage_blocking(issue.get("code"))]
+    advisories += [advisory_record("manuscript_style", issue, kind="internal_vocabulary")
+                   for issue in result.get("blacklist_findings", []) if isinstance(issue, Mapping)]
+    advisories += [advisory_record("manuscript_style", issue, kind="unverifiable")
+                   for issue in result.get("notes", []) if isinstance(issue, Mapping)]
+    return manuscript_style_blockers({"errors": blocking}), advisories

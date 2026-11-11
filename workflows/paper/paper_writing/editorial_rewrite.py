@@ -751,7 +751,9 @@ def preflight_blockers(metadata: Mapping[str, Any], root: Path, paper_id: str) -
 
     Its verdict is advice recorded with the review (see ``advisory``); editorial
     floors, unapplied candidates and later source changes no longer block. Only a
-    missing completed pass and the verified venue abstract limits do.
+    missing completed pass and an invalid rewrite configuration do. The verified
+    venue abstract limits are a preparation advisory at review time
+    (``abstract_findings``) and a hard requirement at delivery.
     """
     applies, problems = _gate_applies(metadata, root)
     if not applies:
@@ -760,8 +762,15 @@ def preflight_blockers(metadata: Mapping[str, Any], root: Path, paper_id: str) -
     if latest_record(root, paper_id, target, completed_only=True) is None:
         return [f"Run the editor-facing rewrite pass for {target} once before the unified review "
                 f"(`paper-writing rewrite run {paper_id}`); its result is advisory"]
+    return []
+
+
+def abstract_findings(metadata: Mapping[str, Any], root: Path, paper_id: str) -> list[str]:
+    """Registered venue abstract word limits and grammatical person, checked on the current text."""
     manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
     try:
+        if not _abstract_bounds(metadata) and _abstract_person(metadata) is None:
+            return []
         return _abstract_problems(locate_parts(manuscript)["abstract"].body, metadata)
     except ValueError as exc:
         return [str(exc)]

@@ -1004,6 +1004,11 @@ writing_release:
         encoding="utf-8",
     )
     monkeypatch.setattr(review_flow, "validate_unified_release", lambda *args: [])
+    # Formal checks are enforced directly at this exit: the fixture has no AI-use
+    # declaration, which the unified review only reports as an advisory.
+    with pytest.raises(HandoffError, match="Delivery formal check failed.*STYLE-AI-DECLARATION-MISSING"):
+        validate_release_preconditions(paper_id, root=tmp_path)
+    monkeypatch.setattr(review_flow, "delivery_blockers", lambda *args, **kwargs: [])
     unified = validate_release_preconditions(paper_id, root=tmp_path)
     assert unified["decision_standard"] == "unified_v1" and unified["decision"] == "minor_revision"
     monkeypatch.setattr(review_flow, "validate_unified_release", lambda *args: ["decision record changed"])
@@ -1569,3 +1574,33 @@ def test_verified_archive_requires_registered_word_and_tex_mirrors(tmp_path: Pat
     else:
         with pytest.raises(HandoffError, match="omits a required manuscript source"):
             build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
+
+
+@pytest.mark.parametrize("field", ["minor_revision_closeout", "targeted_review_closeout",
+                                   "editorial_closeout", "review_delta"])
+def test_release_on_removed_legacy_chain_is_refused(tmp_path: Path, field: str) -> None:
+    # The legacy closeout/delta replay validators were removed with the unified
+    # review; a release resting on such a chain fails closed instead of passing.
+    from paper_writing.handoff import _release_paths
+
+    manuscript = tmp_path / "papers/p/manuscript"
+    manuscript.mkdir(parents=True)
+    (manuscript / "main.tex").write_text("x")
+    (manuscript / "main.pdf").write_bytes(b"%PDF-1.4")
+    (tmp_path / "registry/papers").mkdir(parents=True)
+    (tmp_path / "registry/papers/p.yaml").write_text("paper_id: p\n")
+    metadata = {"paper_id": "p", "writing_release": {"status": "ready", field: {"path": "x"}}}
+    with pytest.raises(HandoffError, match="removed legacy review chain"):
+        _release_paths("p", tmp_path, metadata)
+    metadata["writing_release"].pop(field)
+    _release_paths("p", tmp_path, metadata)
+
+
+def test_removed_legacy_review_commands_are_not_offered() -> None:
+    from paper_writing.__main__ import build_parser
+
+    parser = build_parser()
+    for command in ("route", "prepare-delta", "validate-delta", "apply-delta",
+                    "prepare-minor-closeout", "validate-minor-closeout", "closeout-minor"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["review", command, "--paper-id", "p"])

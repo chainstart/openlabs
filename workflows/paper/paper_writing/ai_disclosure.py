@@ -190,3 +190,36 @@ def model_disclosure_issues(
     if mentioned - expected - supported_families - configured:
         issues.append(("MODEL-UNREGISTERED", "the declaration names a GPT model absent from the model-usage records"))
     return issues
+
+
+# model_disclosure_issues codes meaning "there is no usable record to compare the
+# declaration with" rather than "the declaration contradicts the record".
+UNVERIFIABLE_MODEL_CODES = frozenset({"MODEL-MISSING", "MODEL-UNRECORDED"})
+
+
+def tool_disclosure_issues(text: str, model_usage: Any = None, *,
+                           writer_model: str | None = None) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Check the declared tools against the registered usage records: (errors, notes).
+
+    Whatever the records contain is required: every recorded tool name and the
+    paper's registered writer model must appear in the declaration. No vendor or
+    tool is required for its own sake. Without usage records the tool list cannot
+    be checked; that is reported as a note, never as an error.
+    """
+    errors: list[tuple[str, str]] = []
+    notes: list[tuple[str, str]] = []
+    lowered = GPT_ID.sub(lambda m: normalized_model(m.group()), text.lower())
+    if isinstance(model_usage, list) and model_usage:
+        tools = sorted({str(entry["tool"]).strip() for entry in model_usage
+                        if isinstance(entry, Mapping) and isinstance(entry.get("tool"), str) and entry["tool"].strip()})
+        for tool in tools:
+            if not re.search(r"(?<![\w-])" + re.escape(tool.lower()) + r"(?![\w-])", lowered):
+                errors.append(("TOOL", f"the declaration must name the recorded tool {tool}"))
+    else:
+        notes.append(("TOOLS-UNVERIFIABLE", "no model-usage record is registered for this paper, so the "
+                      "disclosed tools and models cannot be checked against it"))
+    if writer_model and writer_model.strip():
+        model = normalized_model(writer_model)
+        if not re.search(r"(?<![\w.-])" + re.escape(model) + r"(?![\w-]|\.\w)", lowered):
+            errors.append(("WRITER-MODEL", f"the declaration must disclose the registered writing model {writer_model.strip()}"))
+    return errors, notes
