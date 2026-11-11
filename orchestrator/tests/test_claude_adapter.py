@@ -373,6 +373,9 @@ def test_claude_resume_command_keeps_the_session_and_adds_the_policy(tmp_path) -
 def test_claude_uses_the_bubblewrap_transaction_sandbox(tmp_path, monkeypatch) -> None:
     layout = _layout(tmp_path)
     monkeypatch.setattr(lab_runner.shutil, "which", lambda _name: "/usr/bin/bwrap")
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    monkeypatch.setattr(lab_runner.Path, "home", classmethod(lambda cls: home))
     command = ["claude", "-p", "--model", "claude-opus-5-5"]
 
     wrapped, sandbox = lab_runner._transaction_sandbox(
@@ -383,6 +386,16 @@ def test_claude_uses_the_bubblewrap_transaction_sandbox(tmp_path, monkeypatch) -
     assert wrapped[0] == "/usr/bin/bwrap" and wrapped[-len(command):] == command
     attempt = str(layout["attempt_root"].resolve())
     assert wrapped[wrapped.index("--") - 2 : wrapped.index("--")] == [attempt, attempt]
+
+    # The operator's user-level CLAUDE.md is hidden from the research agent.
+    memory = home / ".claude" / "CLAUDE.md"
+    memory.write_text("operator instructions", encoding="utf-8")
+    masked, _ = lab_runner._transaction_sandbox(
+        command, layout["task"], layout["workspace"].resolve()
+    )
+    assert masked[masked.index("--") - 3 : masked.index("--")] == [
+        "--ro-bind", "/dev/null", str(memory),
+    ]
     # Codex keeps its native full-access runtime.
     assert lab_runner._transaction_sandbox(["codex", "exec"], layout["task"], tmp_path) == (
         ["codex", "exec"],

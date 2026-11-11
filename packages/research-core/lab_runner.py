@@ -1678,7 +1678,15 @@ def _transaction_sandbox(
         if root.exists():
             sandbox.extend(["--ro-bind", str(root), str(root)])
     # A nested writable bind overrides the read-only artifact-store mount.
-    sandbox.extend(["--bind", str(attempt_root), str(attempt_root), "--"])
+    sandbox.extend(["--bind", str(attempt_root), str(attempt_root)])
+    # Claude Code loads the operator's user-level CLAUDE.md even with
+    # ``--setting-sources project`` (measured 2026-11-11). Those are instructions
+    # for the operator's own interactive sessions, so a research agent sees an
+    # empty file instead; login state and session files under ~/.claude stay.
+    user_memory = Path.home() / ".claude" / "CLAUDE.md"
+    if Path(command[0]).name == "claude" and user_memory.is_file():
+        sandbox.extend(["--ro-bind", "/dev/null", str(user_memory)])
+    sandbox.append("--")
     sandbox.extend(command)
     return sandbox, "bubblewrap"
 
