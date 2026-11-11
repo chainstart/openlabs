@@ -1,0 +1,6 @@
+interface:
+  display_name: OpenLabs asset retrospective
+  short_description: After a topic ends, keep the few scripts and facts that will save the next topic time
+  default_prompt: Use $openlabs-asset-retrospective to propose reusable assets from the topic in the packet.
+policy:
+  allow_implicit_invocation: false

@@ -56,6 +56,10 @@
     {
       "skill_id": "openlabs-direction-decision",
       "path": "../../workflows/paper/skills/openlabs-direction-decision/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-asset-retrospective",
+      "path": "../../workflows/paper/skills/openlabs-asset-retrospective/SKILL.md"
     }
   ],
   "protocols": [

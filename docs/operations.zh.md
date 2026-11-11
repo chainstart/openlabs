@@ -266,6 +266,40 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
 - 有 `[runners]` 表时按各模型族剩余额度派活，并为评审与决策保留余量（`[routing]`）；额度
   错误按 `[budget]` 退避，不消耗重试次数。
 
+## 可复用资产库
+
+研究计划启用后可再打开资产库（`config/openlabs.toml` 的 `[program.assets]`，两个开关默认都关，
+关闭时与上面完全一致）。索引在数据仓库 `[program] asset_index_path`（默认
+`registry/reusable-assets.json`），本体在 `[program.assets] root`（默认 `assets/<kind>/<id>/`，
+归档移到 `assets/archive/`，从不删除）。每项资产一行摘要：id、kind（`data_loader`、`analysis`、
+`figure`、`pipeline`、`lesson`、`negative_result`）、标题、一句话说明、学科、数据源（与题目卡片
+同一口径的 DOI/URL）、使用次数和最后验证时间。
+
+- `enabled = true`：scout、立项、方向性决定的输入包带 `reusable_assets_summary`（只含 active，
+  按学科和数据源相关性排序，最多 `summary_limit` 条、`summary_max_chars` 字符）；研究任务得到
+  `reusable-asset-summary` 和卡片所引资产本体的只读 read resource。卡片 `reusable_assets[]`
+  引用不存在或已归档的资产时卡片被拒；引用现成 pipeline/data_loader 的事实写进立项包的
+  `asset_reuse`。结果包里的 `assets_used[]` 累加使用次数，`assets_broken[]` 连续
+  `broken_reports_to_archive` 次即归档。每 `maintenance_interval_hours` 检查一次：注册后
+  `unused_archive_days` 天从未使用的工具、被连续报告损坏的资产、超过 `max_lessons` 的最久未用
+  lesson 归档。
+- `retrospective_enabled = true`：题目进入 ready_queue 或 frozen 时排一个 `topic_retrospective`
+  （light 档、空白会话、技能 `openlabs-asset-retrospective`，每题每个终态一次；开启前已到终态的
+  题目不补排）。工具类提案的文件须在该题工作区内（或是本次结果的哈希绑定产物），并附智能体
+  自己在资源护栏内跑过的最小验证命令的回执；编排器只核对回执哈希、命令和 `exit_code == 0`，
+  不执行命令。冻结题目至少登记一条 `negative_result`；连续两次没有时，按台账事实登记一条。
+
+命令（seed、list、show 只读，不建运行目录）：
+
+```bash
+python -m openlabs program assets seed --dry-run --output drafts.json  # 扫描 seed_paths，只出草稿
+python -m openlabs program assets register drafts.json --by <name>    # 补全草稿与验证回执后登记
+python -m openlabs program assets list [--all]
+python -m openlabs program assets show <asset_id>
+python -m openlabs program assets archive <asset_id> --reason <text>
+python -m openlabs program assets cost   # 引用资产与否的题目：任务数、token、时长对比
+```
+
 ## 聚合资源护栏与 systemd user timer
 
 先安装资源 slice；该命令不会启用 factory timer。另行安装结果监听器后，worker 以原子

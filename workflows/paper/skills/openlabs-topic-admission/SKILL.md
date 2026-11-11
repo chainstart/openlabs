@@ -28,7 +28,8 @@ Read it as the editor of the card's routine venue would read the eventual paper'
 4. **Weigh cost against payoff** (`cost_judgement`: `proportionate`, `rationale`). Compare the
    estimate and its basis with what the result can realistically reach. A cheap topic reusing a
    proven pipeline can justify a routine target; an expensive one needs a credible path to a
-   result readers care about.
+   result readers care about. A card entry's `asset_reuse` lists the indexed assets it relies on
+   (with use counts and last verification), when the packet has one.
 5. **Fix the primary endpoint.** For an admitted topic, copy or tighten the card's endpoint into
    `preregistration.primary_endpoint` (`metric`, `matched_baseline`, `split`, `decision_rule`,
    `stop_rule`) and put the SHA-256 of its canonical JSON (sorted keys, no spaces, UTF-8) in

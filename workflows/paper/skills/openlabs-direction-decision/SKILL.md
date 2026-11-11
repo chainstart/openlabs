@@ -17,7 +17,8 @@ The input path is a hash-bound packet. It holds the trigger and its evidence, th
 referee's principal reason and scores, the editor's significance judgement), the topic's ledger
 entry with its history, the decisions already used and still remaining, the remaining Agent-time
 budget and the calendar deadline, the routine fallback venues and the escalation fallback, and the
-team rejection ledger and reusable-asset index when they exist. Read the evidence it points to.
+team rejection ledger and reusable-asset index (or its ranked `reusable_assets_summary`) when
+they exist. Read the evidence it points to.
 
 Write down, before choosing, the single strongest reason this paper will not be accepted as it
 stands. It must be one of `reasons_to_answer`; quote it verbatim in `answers_reason`.
