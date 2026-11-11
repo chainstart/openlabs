@@ -239,8 +239,8 @@ def test_runtime_generates_claude_settings_skills_and_unchanged_codex_hooks(tmp_
     settings_path = staged / ".claude" / "openlabs-settings.json"
     assert policy["claude_settings"] == str(settings_path)
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
-    # Hooks only: a settings file that fails validation is silently ignored.
-    assert set(settings) == {"hooks"}
+    # Minimal keys only: a settings file that fails validation is silently ignored.
+    assert set(settings) == {"hooks", "claudeMdExcludes"}
     assert set(settings["hooks"]) == {"SessionStart", "Stop"}
     assert settings["hooks"]["SessionStart"][0]["matcher"] == "startup|resume|clear|compact"
     stop = settings["hooks"]["Stop"][0]["hooks"][0]
@@ -272,6 +272,8 @@ def test_claude_session_start_hook_names_skills_for_the_skill_tool(tmp_path) -> 
     layout = _layout(tmp_path)
     staged = layout["staged"]
     settings = json.loads((staged / ".claude" / "openlabs-settings.json").read_text())
+    # The operator's user-level memory is excluded even without bubblewrap.
+    assert settings["claudeMdExcludes"] == [str(Path.home() / ".claude" / "CLAUDE.md")]
     command = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
 
     completed = subprocess.run(

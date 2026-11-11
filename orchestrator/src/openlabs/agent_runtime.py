@@ -223,9 +223,17 @@ def configure_codex_runtime(
     hooks_path = atomic_write_json(codex_root / "hooks.json", hooks)
     # The same result gate and receipt file serve a Claude Code attempt.  Claude
     # silently ignores a settings file that fails validation, so this file holds
-    # nothing but the two hooks; the engine fails closed without a Stop receipt.
+    # only the two hooks and the memory exclusion below (both verified with
+    # claude 2.1.322 on 2026-11-11); the engine fails closed without a Stop receipt.
+    # ``--setting-sources project`` still loads the operator's user-level
+    # CLAUDE.md. Exclude it here as well as masking it in the bubblewrap sandbox,
+    # so it stays hidden when no sandbox is available.
     claude_settings_path = atomic_write_json(
-        claude_root / CLAUDE_SETTINGS_NAME, {"hooks": lifecycle_hooks("claude")}
+        claude_root / CLAUDE_SETTINGS_NAME,
+        {
+            "hooks": lifecycle_hooks("claude"),
+            "claudeMdExcludes": [str(Path.home() / ".claude" / "CLAUDE.md")],
+        },
     )
     return {
         "schema_version": RUNTIME_POLICY_SCHEMA,
