@@ -1,4 +1,11 @@
-"""Lifecycle hooks for an orchestrator-generated Codex attempt runtime."""
+"""Lifecycle hooks for an orchestrator-generated agent attempt runtime.
+
+Codex reads them from ``.codex/hooks.json``; Claude Code from the generated
+``.claude/openlabs-settings.json`` (``--adapter claude``).  Both CLIs share the
+hook protocol used here: JSON event on stdin, ``{"decision": "block", "reason"}``
+on stdout to continue a Stop, ``hookSpecificOutput.additionalContext`` for
+SessionStart.  The result gate and the receipt file are the same for both.
+"""
 
 from __future__ import annotations
 
@@ -30,12 +37,21 @@ def _read_event() -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _session_context(context: Mapping[str, Any]) -> dict[str, Any]:
-    skills = ", ".join(str(item) for item in context.get("skills", [])) or "the assigned Skill"
+def _session_context(context: Mapping[str, Any], adapter: str = "codex") -> dict[str, Any]:
+    if adapter == "claude":
+        # Claude Code invokes Skills by bare name through its Skill tool.
+        names = [str(item).removeprefix("$") for item in context.get("skills", [])]
+        skills = (
+            "the Skills " + ", ".join(names) + " (Skill tool)" if names else "the assigned Skill"
+        )
+        skill_root = context.get("claude_skill_source_root") or context.get("skill_source_root")
+    else:
+        skills = ", ".join(str(item) for item in context.get("skills", [])) or "the assigned Skill"
+        skill_root = context.get("skill_source_root")
     message = (
         f"OpenLabs task {context.get('expected_result', {}).get('task_id')} runs as role "
         f"{context.get('role')}. Invoke {skills}; their trusted project sources are under "
-        f"{context.get('skill_source_root')}. You own the scientific analysis, decomposition, "
+        f"{skill_root}. You own the scientific analysis, decomposition, "
         "tool use, and route decisions within the time budget. Work only in the private campaign "
         f"workspace {context.get('agent_workspace')}; never modify the canonical campaign "
         f"{context.get('canonical_campaign_workspace')}. Before stopping, atomically write the "
@@ -162,6 +178,7 @@ def _append_hook_receipt(
     finished_at: str,
     outcome: str | None = None,
     output_summary: str | None = None,
+    adapter: str = "codex",
 ) -> None:
     raw_path = str(context.get("hook_receipt_path") or "").strip()
     if not raw_path:
@@ -191,6 +208,10 @@ def _append_hook_receipt(
             json.dumps(output, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest(),
     }
+    if adapter != "codex":
+        # Claude Code events carry no turn_id but name the session transcript.
+        receipt["agent_adapter"] = adapter
+        receipt["transcript_path"] = event.get("transcript_path")
     path.parent.mkdir(parents=True, exist_ok=True)
     line = (json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
     descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
@@ -205,12 +226,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("event", choices=("session-start", "stop"))
     parser.add_argument("--context", type=Path, required=True)
+    parser.add_argument("--adapter", choices=("codex", "claude"), default="codex")
     args = parser.parse_args()
     context = runtime_context(args.context.resolve())
     event = _read_event()
     started_at = _utc_now()
     if args.event == "session-start":
-        output = _session_context(context)
+        output = _session_context(context, args.adapter)
         outcome = "context_injected"
         output_summary = outcome
     else:
@@ -224,6 +246,7 @@ def main() -> int:
         finished_at=_utc_now(),
         outcome=outcome,
         output_summary=output_summary,
+        adapter=args.adapter,
     )
     json.dump(output, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")

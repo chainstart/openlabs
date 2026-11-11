@@ -188,6 +188,11 @@ def test_run_agent_attaches_snapshot_from_a_fake_claude_process(tmp_path, monkey
                     "--model", "claude-fable-5-2"]),
     )
     monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ.get('PATH', '')}")
+    # Only the stream parsing is under test here; the Claude transaction, result-gate
+    # and permission policy are exercised in test_claude_adapter.py.
+    monkeypatch.setattr(lab_runner, "_validate_codex_transaction", lambda *a, **k: None)
+    monkeypatch.setattr(lab_runner, "_apply_claude_policy", lambda command, **k: command)
+    monkeypatch.setattr(lab_runner, "_adapter_version", lambda _command: None)
     runtime = lab_runner._run_agent(task, {"lab_id": "math", "domain": "math"}, output)
     snapshot = runtime["quota_snapshot"]
     assert snapshot["provider"] == "anthropic" and snapshot["model"] == "claude-fable-5-2"

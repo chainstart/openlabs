@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from . import budget as budget_control
-from .agent_runtime import configure_codex_runtime
+from .agent_runtime import HOOK_GATED_ADAPTERS, configure_codex_runtime
 from .attempts import (
     AttemptWorkspace,
     attempt_artifact_policy,
@@ -2084,18 +2084,19 @@ def _codex_hook_receipt_status(
     hook. Stop is the authoritative result gate and must always be present.
     """
 
+    agent = "Claude Code" if str(runtime.get("adapter") or "") == "claude" else "Codex"
     hooks = runtime.get("hooks")
     if not isinstance(hooks, Mapping) or hooks.get("schema_version") != (
         "openlabs.hook_runtime.v1"
     ):
-        return "Codex lifecycle hook receipts are missing or invalid", None
+        return f"{agent} lifecycle hook receipts are missing or invalid", None
     if hooks.get("stop_passed") is not True:
-        return "Codex final Stop gate receipt is incomplete", None
+        return f"{agent} final Stop gate receipt is incomplete", None
     if int(hooks.get("session_start_count") or 0) < 1:
         return (
             None,
             (
-                "Codex emitted no project-local SessionStart receipt; accepted because the "
+                f"{agent} emitted no project-local SessionStart receipt; accepted because the "
                 "trusted agent request carried the required context and the final Stop gate passed"
             ),
         )
@@ -2250,7 +2251,7 @@ def ingest_results(
             )
             if (
                 result_status in {"completed", "succeeded", "needs_replan"}
-                and str(runtime.get("adapter") or "") == "codex"
+                and str(runtime.get("adapter") or "") in HOOK_GATED_ADAPTERS
             ):
                 hook_error, hook_warning = _codex_hook_receipt_status(runtime)
                 if hook_warning:

@@ -75,7 +75,10 @@ _ARTIFACT_ONLY_SUFFIXES = (
 )
 _SAFE_NAME = re.compile(r"[^a-zA-Z0-9._-]+")
 _RENAME_EXCHANGE = 2
-_ATTEMPT_RUNTIME_DIRS = frozenset({".agents", ".codex", ".openlabs"})
+# Generated per attempt (Skill links, hooks, receipts, agent CLI settings); never
+# copied from or promoted to campaign state.  ``.claude`` holds the Claude Code
+# adapter's settings and Skill links.
+_ATTEMPT_RUNTIME_DIRS = frozenset({".agents", ".claude", ".codex", ".openlabs"})
 
 
 class AttemptWorkspaceError(RuntimeError):
