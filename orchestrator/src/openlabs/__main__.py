@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .config import (
     FactorySettings,
+    WorkspacePaths,
     load_local_environment,
     load_settings,
     workspace_paths,
@@ -184,6 +185,29 @@ def _parser() -> argparse.ArgumentParser:
         help="second_author (default) or an author name from the paper's byline",
     )
     assign.add_argument("--by", default="owner", help="Who completed the review (provenance)")
+    instance = program_commands.add_parser(
+        "init-instance",
+        help="Create a separate orchestrator instance (own database, settings and projects; "
+        "shared data and artifact repositories). Dry run unless --write",
+    )
+    instance.add_argument("--name", default="cc-sg", help="Instance name (default cc-sg)")
+    instance.add_argument(
+        "--instance-dir", type=Path,
+        default=Path("/workspace/openlabs/openlabs-instances/cc-sg"),
+        help="Instance directory (default /workspace/openlabs/openlabs-instances/cc-sg)",
+    )
+    instance.add_argument("--preset", choices=("observe", "full"), default="observe")
+    instance.add_argument("--write", action="store_true", help="Create what is missing")
+    instance.add_argument(
+        "--update-config", action="store_true",
+        help="Rewrite an existing instance TOML (the old one is kept as a .bak)",
+    )
+    instance.add_argument(
+        "--paper-writing-command", nargs="+", default=None, metavar="ARG",
+        help="[program].paper_writing_command for the instance",
+    )
+    instance.add_argument("--git-user-name", help="[program.git].user_name")
+    instance.add_argument("--git-user-email", help="[program.git].user_email")
     assets = program_commands.add_parser(
         "assets", help="Reusable-asset index: seed drafts, register, list, show, archive"
     )
@@ -222,6 +246,45 @@ def configured_providers(settings: FactorySettings) -> tuple[str, ...] | None:
     return tuple(providers) or None
 
 
+def _flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _init_instance(args: argparse.Namespace) -> int:
+    from .instance import InstanceInitError, init_instance
+
+    try:
+        payload = init_instance(
+            _shared_paths(args.workspace),
+            name=args.name,
+            instance_dir=args.instance_dir,
+            preset=args.preset,
+            write=args.write,
+            update_config=args.update_config,
+            paper_writing_command=args.paper_writing_command,
+            git_user_name=args.git_user_name,
+            git_user_email=args.git_user_email,
+        )
+    except (InstanceInitError, OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+        print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False),
+              file=sys.stderr)
+        return 1
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _shared_paths(workspace: str | None) -> WorkspacePaths:
+    """Shared repository paths, whatever instance the environment selects."""
+
+    saved = {name: os.environ.pop(name) for name in
+             ("OPENLABS_INSTANCE", "OPENLABS_DATABASE_ROOT", "OPENLABS_CONFIG_FILE")
+             if name in os.environ}
+    try:
+        return workspace_paths(workspace)
+    finally:
+        os.environ.update(saved)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     # Keep manual CLI invocations, transient workers, and the systemd timer on
     # one local Agent/proxy configuration path. Explicit inherited values win.
@@ -233,6 +296,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit("usage: python -m openlabs _worker JOB_FILE")
         return run_worker(arguments[1])
     args = _parser().parse_args(arguments)
+    if args.command == "program" and args.program_command == "init-instance":
+        return _init_instance(args)
     if args.command in {"network-preflight", "tick"}:
         try:
             preflight_paths = workspace_paths(args.workspace)
@@ -240,6 +305,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
             print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
                   file=sys.stderr)
+            return 78
+        if args.command == "tick" and _flag("OPENLABS_REQUIRE_INSTANCE") and (
+            preflight_paths.instance is None
+        ):
+            print(json.dumps({
+                "status": "refused",
+                "error": "OPENLABS_REQUIRE_INSTANCE is set but no OPENLABS_INSTANCE is selected; "
+                         "run ticks through bin/openlabs-container-loop (instance.env), never "
+                         "against the shared default database",
+            }, ensure_ascii=False), file=sys.stderr)
             return 78
         try:
             network_report = ensure_proxy_ready(
