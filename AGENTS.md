@@ -49,6 +49,20 @@ parallel, multi-process, large-memory, long-running, build and install work goes
 `RESOURCE_GUARD.md` ("What must run inside the guard"). Never commit credentials, tokens or
 private keys.
 
+## Where computation runs
+
+Agents run in the container. Choose where an experiment runs by what it needs, and state
+the choice in the topic card's cost estimate so admission can weigh it:
+
+- Minutes of work with modest memory: run it directly in the container.
+- Anything that needs the GPU: run it in the container after reserving the device. The GPU
+  belongs to this host and its lock is shared with WSL, so the reservation is what prevents
+  two jobs from colliding.
+- Many cores, large memory or hours of CPU time: package it for the ailab host through the
+  remote compute queue (`bin/openlabs-remote`, `docs/REMOTE_COMPUTE.md`). ailab has CPU and
+  memory only, and sending heavy work there keeps the container free for the agents.
+- Mathematics that needs the dedicated memory cap runs on the WSL host, not in the container.
+
 ## Actions that need a human
 
 Submitting a manuscript, any formal publication or journal event, spending money, and
