@@ -1887,7 +1887,8 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                                           "reasons": delta["reasons"], "summary": delta["summary"]}
     if len(rounds) >= config["max_rounds_per_target"]:
         raise ValueError(f"{paper_id} has used all {config['max_rounds_per_target']} review rounds for {target}; "
-                         "a user decision (retarget, more research, or stop) is required")
+                         "no further round starts: under the research program the orchestrator takes a "
+                         "direction decision (targeted analysis, retarget or freeze) on review_rounds_exhausted")
     response = Path(response_letter).read_text() if response_letter else None
     if response:
         pre = dict(pre, author_response=response)

@@ -1001,8 +1001,8 @@ def publish_zenodo_release(
     writing_release = writing_release if isinstance(writing_release, Mapping) else {}
     if writing_release.get("support_package_sha256") != expected_sha256:
         raise ZenodoError(
-            "Quality gate is not bound to this support package; rerun quality-gate after "
-            "`zenodo prepare`"
+            "Quality gate is not bound to this support package; rerun `paper-writing review "
+            "unified-run` after `zenodo prepare` (a support-only change is a delta review)"
         )
     if archive.stat().st_size != publication.get("package_size"):
         raise ZenodoError("Support archive size no longer matches the paper registry")

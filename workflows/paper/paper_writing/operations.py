@@ -834,7 +834,9 @@ def reuse_review_for_metadata_only_revision(
         raise ValueError("Unsupported review carry-forward baseline")
     source_release = candidate.get("source_release")
     if isinstance(source_release, Mapping) and source_release.get("review_delta"):
-        raise ValueError("Use review route to revalidate the cumulative delta chain")
+        raise ValueError(
+            "The baseline rests on a removed incremental-review chain; run `paper-writing review unified-run` (a text-only change after ready is carried over by its delta review)"
+        )
     if (
         not isinstance(source_release, Mapping)
         or source_release.get("status") != "ready"

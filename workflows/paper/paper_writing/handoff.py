@@ -1384,7 +1384,7 @@ def validate_release_preconditions(
             release_standard = str(release.get("decision_standard") or "")
             if release_standard != configured_standard:
                 raise HandoffError(
-                    "Writing quality gate uses a stale decision standard; rerun quality-gate"
+                    "Writing quality gate uses a stale decision standard; rerun `paper-writing review unified-run`"
                 )
         else:
             release_standard = str(release.get("decision_standard") or venue_type)
@@ -1432,11 +1432,11 @@ def validate_release_preconditions(
         gated_version = str(release.get("manuscript_version") or "")
         if not gated_version:
             raise HandoffError(
-                "Quality gate is not bound to a paper version; rerun quality-gate"
+                "Quality gate is not bound to a paper version; rerun `paper-writing review unified-run`"
             )
         if gated_version != str(metadata.get("version") or "1.0.0"):
             raise HandoffError(
-                "Paper version changed after the quality review; rerun quality-gate"
+                "Paper version changed after the quality review; rerun `paper-writing review unified-run`"
             )
         try:
             revision_exception = validate_release_revision_policy(
@@ -1460,7 +1460,7 @@ def validate_release_preconditions(
             or current_support_sha256 != gated_support_sha256
         ):
             raise HandoffError(
-                "Support package changed after the quality review; rerun quality-gate"
+                "Support package changed after the quality review; rerun `paper-writing review unified-run`"
             )
 
     manuscript, pdf, files = _release_paths(paper_id, repo_root, metadata)
@@ -1473,11 +1473,11 @@ def validate_release_preconditions(
     gated_snapshot = str(release.get("manuscript_snapshot_sha256") or "")
     if not re.fullmatch(r"[0-9a-f]{64}", gated_snapshot):
         raise HandoffError(
-            "Quality gate is not bound to a manuscript snapshot; rerun quality-gate"
+            "Quality gate is not bound to a manuscript snapshot; rerun `paper-writing review unified-run`"
         )
     if current_snapshot != gated_snapshot:
         raise HandoffError(
-            "Manuscript or PDF changed after the quality review; rerun quality-gate"
+            "Manuscript or PDF changed after the quality review; rerun `paper-writing review unified-run`"
         )
     if unified_review:
         from paper_writing.review_flow import validate_unified_release
@@ -1512,7 +1512,7 @@ def validate_release_preconditions(
             raise HandoffError(editorial_blockers[0])
         if editorial_digest != release.get("editorial_screen_sha256"):
             raise HandoffError(
-                "Target-specific editorial screen is unbound to the quality gate; rerun quality-gate"
+                "Target-specific editorial screen is unbound to the quality gate; rerun `paper-writing review unified-run`"
             )
 
     origin_commit = _git_head(repo_root)
