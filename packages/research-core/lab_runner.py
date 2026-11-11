@@ -125,6 +125,42 @@ def _smoke(task: dict[str, Any], manifest: dict[str, Any], output: Path) -> None
     )
 
 
+def _remote_compute_notice(code_root: Path, domain: str) -> str:
+    """Advertise configured compute transport without moving model calls or DB state."""
+    path = code_root / "config" / "remote-compute.json"
+    if not path.is_file():
+        return ""
+    settings = json.loads(path.read_text(encoding="utf-8"))
+    if not settings.get("enabled"):
+        return ""
+    command = code_root / "bin" / "openlabs-remote"
+    kind = "math" if domain == "math" else "cpu"
+    return f"""
+Remote CPU compute is available through backend `ailab`, using a shared file queue.
+Model calls, scientific decisions and research database writes stay in this local process.
+For a suitable CPU experiment, prepare a small source directory containing only its inputs,
+then use `{command} submit --source DIR --task-type {kind} --cpus N --memory-mib M
+--timeout-seconds S -- python3 SCRIPT.py`. The dedicated ailab host offers all 8 CPUs and about 61 GiB RAM, without an imposed
+aggregate CPU/RAM/swap/PID/storage cap. Declare realistic per-job resources and timeout;
+the queue schedules against the physical machine capacity. `--task-type math` labels a
+mathematical experiment but does not impose the local WSL/cc-sg 18 GiB math limit on ailab.
+ailab storage includes six independent experimental SSDs, `/data/ssd1` through
+`/data/ssd6`, separate from the system disk. Default placement selects the mounted SSD
+with most free space; add `--storage ssd1` through `--storage ssd6` to choose explicitly.
+Use `$OPENLABS_STORAGE_ROOT`, `$OPENLABS_STORAGE_ROOTS` (JSON), and
+`$OPENLABS_SCRATCH_DIR` for disk-local paths; TMPDIR already uses the selected SSD.
+Write remote outputs under `$OPENLABS_OUTPUT_DIR`. Use `{command} status JOB_ID` or
+`{command} wait JOB_ID --timeout-seconds S`; failures retain logs and outputs.
+The bridge returns files under `/workspace/.openlabs-remote/jobs/JOB_ID/result/`
+(on WSL: `~/work/projects/.openlabs-remote/jobs/JOB_ID/result/`). Copy the evidence
+needed by this attempt into its artifact staging, declare its hashes in the result bundle,
+and retain the remote receipt and source hash. Do not send whole home directories,
+credentials, or model login state. Do not SSH directly, alter network routes, start model
+clients on ailab, or write the research database from the worker. If this backend is offline,
+preserve the queued job and report the infrastructure state instead of fabricating results.
+"""
+
+
 def _agent_request(
     task: dict[str, Any],
     manifest: dict[str, Any],
@@ -223,6 +259,9 @@ workers run independently; do not terminate this process merely to make room for
             + json.dumps(lab_runtime, ensure_ascii=False, indent=2, sort_keys=True)
             + "\n"
         )
+    remote_notice = _remote_compute_notice(
+        Path(str(task["lab_manifest"])).resolve().parents[2], str(manifest["domain"])
+    )
     return f"""# OpenLabs autonomous research task
 
 {skill_instruction}{optional_skill_instruction}
@@ -257,6 +296,7 @@ switch, pause, revive, or abandon approaches and use any installed laboratory ca
 {independence}
 {continuity_notice}
 {runtime_notice}
+{remote_notice}
 {read_resource_notice}
 {transaction_notice}
 

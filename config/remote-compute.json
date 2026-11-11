@@ -1,0 +1,71 @@
+{
+  "schema_version": "openlabs.remote-capabilities.v1",
+  "enabled": true,
+  "backend": "ailab",
+  "transport": "shared-file-queue-via-wsl",
+  "cpu_threads": 8,
+  "memory_mib": 62961,
+  "memory_high_mib": null,
+  "swap_mib": null,
+  "storage_gib": null,
+  "max_concurrent_jobs": 8,
+  "math": {
+    "separate_memory_cap": false,
+    "swap_cap": false,
+    "policy": "same dedicated-host policy; WSL and cc-sg local math limits unchanged"
+  },
+  "model_calls_on_worker": false,
+  "research_database_on_worker": false,
+  "aggregate_limits": false,
+  "resource_policy": "Dedicated ailab experiment host; no administrator-imposed CPU/RAM/swap/PID/storage cap. Per-job declared budgets and timeouts remain.",
+  "user_decision": "2026-11-11: ailab基本就是拿来做实验的了，基本不设限制",
+  "storage": {
+    "mode": "independent-ssd-directory-pool",
+    "default": "auto-most-free",
+    "system_disk_excluded": true,
+    "volumes": [
+      {
+        "id": "ssd1",
+        "mount": "/data/ssd1",
+        "root": "/data/ssd1/openlabs-worker",
+        "kind": "nvme",
+        "filesystem_uuid": "e9c71581-6983-44e8-b603-1bee7bc86d17"
+      },
+      {
+        "id": "ssd2",
+        "mount": "/data/ssd2",
+        "root": "/data/ssd2/openlabs-worker",
+        "kind": "nvme",
+        "filesystem_uuid": "095b0d44-1be2-490b-b7af-9ed7a9917030"
+      },
+      {
+        "id": "ssd3",
+        "mount": "/data/ssd3",
+        "root": "/data/ssd3/openlabs-worker",
+        "kind": "sata",
+        "filesystem_uuid": "af05e09f-ae42-4465-8eb6-cf6fba7ee609"
+      },
+      {
+        "id": "ssd4",
+        "mount": "/data/ssd4",
+        "root": "/data/ssd4/openlabs-worker",
+        "kind": "sata",
+        "filesystem_uuid": "d6ca33be-dc2b-4404-9ccd-3d71f47946b6"
+      },
+      {
+        "id": "ssd5",
+        "mount": "/data/ssd5",
+        "root": "/data/ssd5/openlabs-worker",
+        "kind": "sata",
+        "filesystem_uuid": "08a63268-8553-408b-b423-76e0a6b928a3"
+      },
+      {
+        "id": "ssd6",
+        "mount": "/data/ssd6",
+        "root": "/data/ssd6/openlabs-worker",
+        "kind": "sata",
+        "filesystem_uuid": "db2785de-389b-4799-94d4-6136e8fd030e"
+      }
+    ]
+  }
+}
