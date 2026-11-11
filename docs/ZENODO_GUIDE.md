@@ -35,8 +35,9 @@ support_publication:
     require_reason: true
 ```
 
-`support-check` 实现审稿前门禁：非豁免论文必须至少具有已准备的 Zenodo 草稿、稳定的 Version
-DOI，以及正文首处材料说明、参考文献和 Data Availability 中一致的引用。`zenodo release`
+`support-check` 检查非豁免论文是否至少具有已准备的 Zenodo 草稿、稳定的 Version DOI，以及
+正文首处材料说明、参考文献和 Data Availability 中一致的引用。统一评审时草稿状态、引用和版本标识
+类问题只作为准备建议记录，交付出口（`zenodo release`、`handoff release`）要求全部通过。`zenodo release`
 使用独立的发布前门禁，允许状态仍为 `draft`，但要求当前包已绑定通过审阅的快照；发布完成后，
 `handoff release` 再要求状态为 `published`。确实无需公开材料的论文可以选择 `not_required`，
 但必须登记具体原因。调整这些配置即可改变研究政策，无需修改学科 Skill 或新增常驻 Hook。
@@ -97,13 +98,8 @@ Zenodo 使用两阶段流程，质量门禁不会调用网络：
 既有定向审阅／质量门禁流程处理。不能用精简材料为理由放宽科学或发布门禁。
 已有公开不可变版本不回改；历史只读核验不受新上传限制影响。
 
-对人工明确批准的代码优先精简，可在既有 `targeted_review_closeout` 机制中绑定
-`support_repackaging_authorization`，但不能走 metadata reuse：授权必须指向精确的新旧
-完整文件清单哈希；隔离定向审阅必须收到完整当前代码包，逐项覆盖增删改并明确确认没有
-丢失必要输入、正文与材料一致。原完整证据包仍按哈希核验，科学构造模块、保留的入口、
-依赖与许可不得变化，仅可新增复现调度入口和小型摘要。新增科学模块或科学源码修改不属于
-此路径。原评分、全文审阅、累计轮次及全部发布前检查保留；缺授权、缺审阅、负面结论或
-任一快照不符均阻断。这是经授权的定向材料审阅，不是自动降低证据门槛。
+旧的 `targeted_review_closeout` 材料精简路径已随 closeout 命令删除；已有记录仍可读取核验。
+现在精简材料包后重新运行 `review unified-run`。
 
 ## 本地大型科学证据：Git 清单与 sibling artifacts 双重绑定
 
@@ -256,18 +252,11 @@ python -m paper_writing support-check --paper-id <paper_id>
 版本以及包内面向读者的 claim map/README 一致。工具或依赖版本、不可变的嵌套旧归档可以保留
 自己的真实标签，但不得被表述为当前记录。
 
-`writing_release.support_package_sha256` 必须绑定当前版本的包。科学内容或支撑证据有变化时，
-只能由新的 `review apply` 重新绑定。若返修从通过的门禁启动，且只改作者、邮箱、单位、通讯
-作者或发布封装元数据，`zenodo prepare` 会比较独立的科学内容指纹和支撑源文件指纹，并在确定
-二者未变后自动复用原评审、绑定新 PDF 与新 ZIP；不会启动 LLM 复评，也不会修改原评分。也可
-显式执行：
-
-```bash
-python -m paper_writing review reuse-metadata --paper-id <paper_id>
-```
-
-正文、公式、图表、摘要、参考文献、结论、题名或支撑证据只要有一项变化，该命令就会失败
-关闭并要求新的隔离评审。绑定不一致时 `release` 仍会拒绝发布。
+`writing_release.support_package_sha256` 必须绑定当前版本的包，任何变化都由新的
+`review unified-run` 重新绑定。已 ready 的稿件之后只改文字或图件时，统一评审自动做差异复核：
+沿用原结论、重跑书目与核心数学核验，不消耗轮次；科学内容变化则完整评审。旧的
+`review reuse-metadata` 在统一评审下会拒绝运行，`zenodo prepare` 报告 `fresh_review_required`。
+绑定不一致时 `release` 仍会拒绝发布。
 
 ## 正式发布
 

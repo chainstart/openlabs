@@ -56,9 +56,10 @@ Keep conference refusals in the detailed table but exclude them from journal cou
 European/Electronic Journal of Combinatorics, JCTA/JCTB, Annals/JACO, or unrelated titles.
 Add a documented alias under the policy's `aliases` mapping if needed.
 
-New targets are checked by registry validation, unified-review preflight, legacy gate recording
-and release/handoff preconditions. An excluded target is stopped before compiling or launching a
-new unified review. Read-only inventory can retain historical records. Preserved historical
+New targets are checked by registry validation, unified-review preflight and release/handoff
+preconditions. During an internal review a stale ledger is only a warning; selecting a journal,
+retargeting and delivery still need a fresh one. An excluded target is stopped before compiling
+or launching a new unified review. Read-only inventory can retain historical records. Preserved historical
 refusals do not authorize a new review or handoff. A matching ongoing submission sourced from the
 management API may continue its existing revision even if the journal has since crossed the
 team threshold; this exemption does not apply to a different paper or recommendation query.
@@ -93,9 +94,9 @@ one paper's follow-up note:
    paper needs its next action, deliverable, completion condition and conditional shortlist or
    explicit research hold. Link older recommendations to the current plan to avoid competing
    instructions. Do not duplicate the canonical ledger as a second editable rejection database.
-6. Complete necessary research and target adaptation before changing clearance. Use the existing
-   review router to choose evidence reuse, delta or full review; do not restart scored reviews
-   merely to improve a score. A changed journal requires its own valid target assessment and
+6. Complete necessary research and target adaptation before changing clearance, then rerun
+   `review unified-run` (a text-only change after a ready review is rechecked as a delta
+   automatically); do not rerun reviews merely to improve a score. A changed journal requires its own valid target assessment and
    release checks. Submission, withdrawal and public release retain their separate authorization.
 
 If substantive contribution or evidence is still missing, define a bounded research question

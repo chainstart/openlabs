@@ -1,6 +1,6 @@
 interface:
   display_name: "OpenLabs Independent Paper Review"
-  short_description: "Fresh Codex review with optional Claude panel"
-  default_prompt: "Use $openlabs-paper-review to run the configured fresh Codex review and validate its panel result, adding blind Claude review only when enabled."
+  short_description: "Unified editor-and-referee review with the configured cross-model panel"
+  default_prompt: "Use $openlabs-paper-review to run `review unified-run` and return its decision as one factory result."
 policy:
   allow_implicit_invocation: false

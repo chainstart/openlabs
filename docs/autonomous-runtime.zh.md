@@ -1,7 +1,8 @@
 # Codex 自主科研运行时
 
-OpenLabs 的自动化边界按“科研判断归 Codex、状态确定性归控制面”划分。外层工作流不编码
-数学路线、不枚举科研微步骤，也不根据启发式分数替 Codex 决定下一项证明操作。
+OpenLabs 的自动化边界按“科研判断归 Agent（Codex 或 Claude Code，下文以 Codex 指代）、状态
+确定性归控制面”划分。外层工作流不编码数学路线、不枚举科研微步骤，也不根据启发式分数替
+Codex 决定下一项证明操作。
 
 ```text
 管理员期望状态（project objective / resources / services）
@@ -56,6 +57,8 @@ Hook 只负责：
 - 对每一种终止路径关闭 attempt，并执行 Codex 给出的 typed handoff，或在项目显式选择时执行
   protocol hook 返回的 typed allocation envelope；缺少二者时只用项目原始目标重新交还科学
   决策权，不在脚本里选择路线；
+- 研究计划启用时，维护题目台账、名额、触发条件与决定次数上限；选题、立项和方向性决定仍由
+  独立的 lead 档 Agent 作出（见 [operations.zh.md](operations.zh.md)“研究计划”）；
 - 阻止提交、发布、越权写入和其他不可逆外部动作。
 
 ## 运行时不变量

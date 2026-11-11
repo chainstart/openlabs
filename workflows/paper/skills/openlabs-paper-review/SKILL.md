@@ -21,57 +21,62 @@ edit manuscript/registry/evidence during review. Preserve actual outputs and mod
 receipts, including failures. Revised prose remains neutral scientific writing;
 keep internal review negotiation and claims about editor approval outside the paper.
 
-## Current sequence (user instruction, 2026-10-12)
+## Sequence
 
-1. Deterministic preflight: clean build, source/style/declarations, support package,
-   verified journal scope/ranking/fees/format. File integrity is preparation work.
-2. Independent target-journal editor: contribution, closest prior work, readership,
-   strongest desk-reject reason and actual available historical refusal letters.
-3. Independent scientific referees (each in a fresh process): complete manuscript and supplementary arguments,
-   novelty, significance for the target, correctness, experimental credibility,
-   actual previous objections and required changes. Do not defer this judgment
-   until a paragraph/quote audit passes.
-Each referee records actual unsupported main claims in `scientific_blockers` and
-local prose/index repairs as typed changes. Its pre-verification diagnostic is
-preserved; a diagnostic observation is not automatically a scientific defect.
+1. Deterministic preflight. It stops the review only when a review would be meaningless: the
+   manuscript does not build, the registration or an evidence/data hash binding is broken, the
+   target violates the venue policy, a declared source points at a missing bibliography key, or
+   the editor-facing rewrite pass has not run once for this target. Style, AI-declaration,
+   abstract-format, unused-source and support-record findings are recorded as
+   `preparation_advisories`; they are enforced at the delivery exit (handoff and Zenodo
+   release), not here, so a formal slip never costs a scientific round.
+2. Independent target-venue editor: contribution, closest prior work, readership, strongest
+   desk-reject reason and every available historical refusal letter.
+3. Independent scientific referees, each in a fresh process: complete manuscript and
+   supplement, novelty, significance for the target, correctness, experimental credibility,
+   previous objections. Unsupported main claims go in `scientific_blockers`; requested changes
+   are typed `evidence`, `claim_narrowing` (with `main_claim`) or `text`.
+4. If the scientific decision can advance, independent bibliography and core-mathematics
+   verification, run by `review.roles.formal_verifier` when configured (otherwise the editor's
+   model). Every printed reference is checked against authoritative metadata; named
+   statements, proofs, displayed formulas and inline derivations are checked as mathematics.
+   Real formula or theorem errors, missing essential proof steps and wrong or unknown reference
+   identities block. A reference whose authoritative record could not be fetched for access
+   reasons is listed as `unverifiable_source_access`, not as a defect. Details:
+   [formal-checks.md](references/formal-checks.md).
+5. Deterministic merge and editor decision letter.
 
-4. If the scientific decision can advance, independent **bibliography and core
-   mathematics** verification. Every printed reference is checked against authoritative
-   database/catalog metadata; no original document is required. Mathematical scope
-   covers named statements/proofs, displayed formulas and inline derivations,
-   excluding isolated variable names and ordinary prose. The complete source remains
-   context. Real formula/theorem errors, missing essential proof steps and unknown
-   reference identities block the gate. Read [formal-checks.md](references/formal-checks.md).
-5. Conservative merge and editor decision letter. A scientific rejection skips
-   unnecessary verification calls. A reference/core-mathematics failure cannot set ready.
+Technical failures (coverage, JSON, IDs) are not scientific findings and do not consume a
+round. Decisions bind the manuscript snapshot, source hashes, model receipts and the current
+review policy; old decisions and counts are never rewritten, and a policy change needs a
+fresh review.
 
-Formal verification does **not** audit every empirical row, historical execution,
-protocol timestamp, author agreement, funding/conflict statement, human inspection,
-classifier implementation or archive member. The ordinary scientific referee and
-preflight/release checks handle those responsibilities. Citation quotes, original
-PDFs, OCR and precise original theorem/page numbers are not compulsory substitutes
-for checking the actual mathematics. Bibliographic evidence uses real source IDs
-and metadata locations; literal quotation is optional and, if supplied, must be true.
+## What decides readiness
 
-The deterministic scope and full-document hashes are bound with source bytes,
-actual outputs/receipts and the current policy. There is no per-paper disable switch.
-Coverage/JSON/ID errors are technical failures, not mathematical counterexamples;
-pure technical failures do not consume scientific rounds. Old decisions and counts
-are never rewritten. A changed policy requires a fresh unified review, not a fake
-conversion of an old failure into a pass. This is not a Lean machine-proof certificate.
+Only scientific substance blocks. `ready` requires `send_to_review`, no scientific blocker, no
+`evidence` change, no main-claim narrowing, no unresolved previous scientific or evidence item,
+and an `accept` or `minor_revision` recommendation. When referees disagree the more favourable
+recommendation stands unless the stricter one is backed by such an item. `text` changes and
+the editor's presentation notes are advisory: they reach the letter and `advisory_changes`, but
+are not tracked into the next round. Under the escalation track every referee must also reach
+the configured escalation score without low confidence. Scores are otherwise kept for
+calibration.
 
-Once an identified authoritative metadata record covers a reference, do not automatically
-download its optional printed full-text links. Preserve those links and actual retrieval failures;
-references without identified metadata still need an official catalog record. Each reference's
-evidence IDs must belong to sources bound to that reference key, with honest gaps still allowed.
+Outcomes that are not a revision: a desk reject for significance or incrementality, or a
+`reject` from every referee of a two-referee panel, returns `direction_decision` with a
+`direction_context`; a scope or readership desk reject returns `retarget_required`. Both set
+the paper `blocked`. `stalled` marks a round with no evidence request whose mean significance
+and novelty scores have not risen over the last two transitions.
 
-`ready` requires `send_to_review`, a merged `accept` or `minor_revision`, no scientific blocker,
-no unresolved previous item, and only `text` changes remaining; under the escalation track
-every referee must also reach the configured escalation score with no low-confidence
-report. Scores are otherwise recorded for calibration. The round limit per target journal is `review.max_rounds_per_target`; a paper may
-carry a `review_round_limit_override` only when it matches a SHA-256-bound user receipt
-(path, sha256, json_pointer, exact summary). At the limit the paper is `blocked` and the
-orchestrator takes a direction decision (retarget, more research, or freeze the topic).
+After a ready review, a later text- or figure-only change is rechecked as a delta: when the
+title, abstract, introduction, statements, tables, conclusion-bearing sections and numbers are
+unchanged and few lines changed, the earlier judgment is reused, the formal verification
+reruns, and no round is consumed. Anything more gets a full review.
+
+The round limit per target is `review.max_rounds_per_target`; a paper may carry a
+`review_round_limit_override` only with a matching SHA-256-bound user receipt. At the limit the
+paper is `blocked` and the orchestrator takes a direction decision (retarget, more research, or
+freeze).
 
 Records: `reviews/unified/<paper_id>/<run_id>/` (`decision.json`, per-role prompts, outputs and
 receipts with the runtime-reported model). The registry `writing_release` binds the decision
@@ -95,9 +100,10 @@ output without editing the manuscript:
 - `next_action: text_revision` (presentation, claim narrowing, text changes, or a
   `revise_before_submission` screen) -> one action to the `writer`, `session_mode: resume`,
   `handoff_kind: text_revision`, carrying the decision letter.
-- `next_action: evidence_remediation` (scientific blocker, evidence change, `reject`, or a desk
-  rejection for significance, novelty or incrementality) -> one action to a fresh `researcher`
-  (or `experimenter` for an already frozen protocol).
+- `next_action: evidence_remediation` (scientific blocker, evidence change, a `reject` that is
+  not unanimous, a failed formal verification, uncleared rejection history, or a
+  `novelty_unclear` desk rejection) -> one action to a fresh `researcher` (or `experimenter` for
+  an already frozen protocol).
 - `next_action: retarget_required`, `direction_decision`, `review_stalled: true` or
   `status: blocked` (rounds used up) -> no action; the `review_outcome` below lets the
   orchestrator schedule a direction decision. Do not choose a new venue or stop the topic here.
@@ -119,19 +125,18 @@ never imply external review from an internal role's journal-style vocabulary.
 
 ## Legacy paths
 
-The earlier full-review panel, editorial delta, metadata reuse, minor/targeted/editorial
-closeouts and the separate editorial screen are disabled for new work while
-`review_process: unified_v1` is configured (they raise an error). Their historical records stay
-readable and unchanged. The previous instructions are kept at
-`references/legacy-SKILL-before-20261006.md` for reading old records only.
+The pre-unified routes (scored panel, delta and closeout commands, metadata reuse, separate
+editorial screen) are removed or refuse to run under `review_process: unified_v1`. Their
+records stay readable; the old instructions are in
+`references/archive/legacy-SKILL-before-20261006.md` for reading those records only.
 
 ## Rejection clearance
 
 The editor uses a fresh process. Original letters are also supplied to the referees, without
 the current editor verdict, so newly recovered evidence can resolve an earlier missing-letter
-request. Reviews started before 2026-11-07T11:30Z under the single-referee panel stay bound to
-`review.previous_panels`. For every distinct historical rejection, supply a verbatim letter with its source and
-SHA-256 (registry `journal_rejection_letters`). An internal summary is not a letter.
+request. Decisions started under an earlier panel stay bound to the matching
+`review.previous_panels` entry. For every distinct historical rejection, supply a verbatim
+letter with its source and SHA-256 (registry `journal_rejection_letters`). An internal summary is not a letter.
 The editor must identify each decision ID and judge it `resolved` or `compatible` with
 located evidence before refereeing can start. Missing, omitted, unresolved or contradictory
 letters stop advancement. The decision binds the active review policy as well as the
@@ -140,8 +145,8 @@ manuscript; old gates cannot be reused after a policy change.
 ### Missing original letters (user instruction 2026-10-11)
 
 A paper may set `missing_rejection_letter_policy.mode: available_originals_only` only with its
-exact paper ID, missing decision IDs and a hash-bound user receipt covering that scope. The editor then records a genuinely unavailable original as
-`not_assessable`, never invents or "resolves" it, and all available letters still reach the
+exact paper ID, missing decision IDs and a hash-bound user receipt covering that scope. The
+editor then records a genuinely unavailable original as `not_assessable`, never invents or "resolves" it, and all available letters still reach the
 editor and referees. Every other requirement stays blocking; do not ask again when a valid
 receipt exists. Details:
 `workflows/paper/docs/REJECTION_HISTORY_POLICY.zh.md`.

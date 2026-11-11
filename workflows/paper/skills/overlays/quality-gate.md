@@ -6,9 +6,14 @@ system, cadence, review panel, round limit) are in `registry/settings.yaml`, whi
 source of thresholds. With `quality_gate.review_process: unified_v1` (user decision 2026-10-06)
 the only route to `writing_release.ready` is `review unified-run` (`openlabs-paper-review`,
 `workflows/paper/docs/UNIFIED_REVIEW_DESIGN.zh.md`). The older score threshold, CAS Zone 1
-decision standard, separate editorial screen, delta routes, metadata reuse and closeouts no
-longer gate new work; their records stay readable (documents in `docs/archive/` and
+decision standard, separate editorial screen, delta and closeout routes and metadata reuse are
+gone; their records stay readable (documents in `docs/archive/` and
 `workflows/paper/docs/archive/`).
+
+The formal checks below (style, AI declaration, abstract format, support record, unused
+sources) do not stop a review: the review records them as `preparation_advisories`, and the
+delivery exit (`handoff release`, `zenodo release`) requires them clean. A formal slip should
+not cost a scientific review round, but it must not reach a journal either.
 
 ## Journal targets
 
@@ -108,22 +113,21 @@ synthetic and derived_model_output only alongside real data), an HTTP(S) `source
 User decision 2026-11-07 (blind experiment: rewriting the opening and closing helped in every
 model; each model judge preferred its own model's text 4/5):
 
-- Before the unified review of a target checked on or after
-  `quality_gate.editorial_rewrite.required_from`, run `paper-writing rewrite run <paper_id>
-  [--apply]`. Each configured rewriter rewrites only the abstract, Introduction and closing
-  section in a fresh process; judges of both families rank the original and candidates blind.
-  A candidate is used only if it passes the deterministic checks (no new citation keys, labels
-  kept, references resolve, length within the hard limit), no judge finds a major fidelity
-  issue, and every judge ranks it above the original. Every judge must also score naturalness,
-  restraint, clarity and venue fit at least 7/10, affirm `editorial_ready`, and report no located
-  `editorial_blockers` for the complete manuscript. Keeping the original passes only if it meets
-  the same absolute conditions. Necessary qualifications and truthful disclosures stay.
-- Approval binds all reachable TeX and bibliography files; any later change needs a fresh pass,
-  and a failed latest run cannot fall back to an older success. Keyword densities are
-  diagnostics; the contextual judgment is blocking.
+- Once per target checked on or after `quality_gate.editorial_rewrite.required_from`, before
+  its first unified review, run `paper-writing rewrite run <paper_id> [--apply]`. Only a
+  missing pass stops the review; its verdict is advice recorded with the review. Each
+  configured rewriter rewrites only the abstract, Introduction and closing section in a fresh
+  process; judges of both families rank the original and candidates blind. A candidate is used
+  only if it passes the deterministic checks (no new citation keys, labels kept, references
+  resolve, length within the hard limit), no judge finds a major fidelity issue, every judge
+  ranks it above the original, and every judge scores naturalness, restraint, clarity and venue
+  fit at least 7/10, affirms `editorial_ready` and reports no located `editorial_blockers`.
+  When no version meets these floors the pass ends `editorial_failed`, which the review also
+  receives as advice. Necessary qualifications and truthful disclosures stay. Later source
+  changes do not trigger a rerun; keyword densities are diagnostics.
 - The panel is configured in `settings.yaml#review`; `review.cross_model.required` blocks a panel
-  in which every referee uses the drafting model. Both referees must clear `ready`. Never let
-  the drafting model be the only judge of its own text in an ad-hoc comparison either.
+  in which every referee uses the drafting model. Never let the drafting model be the only
+  judge of its own text in an ad-hoc comparison either.
 
 ## AI-use disclosure
 
@@ -138,8 +142,8 @@ provenance stays in private records.
 Register each use under `declarations.ai_use.model_usage` with `provider: openai-codex`, `tool:
 Codex` or `provider: anthropic`, `tool: Claude Code`, `model`, purpose, and `evidence: {path,
 sha256, json_pointer}` pointing to a bounded JSON runtime record under the data root. The
-checks compare identifiers with the statement and verify hash and pointer; an empty list,
-changed record or invented identifier blocks review. Papers before 2026-09-06 without
+checks compare the tools and identifiers named in the statement with the registered usage and
+verify hash and pointer; an empty list, changed record or invented identifier blocks delivery. Papers before 2026-09-06 without
 structured metadata keep their legacy textual check; never rewrite an old model identity to a
 newer name. Model provenance does not attest that humans inspected or ran code; if human checks
 have not happened, say so and keep the blocker.
@@ -153,14 +157,15 @@ interest stay in private revision records. Referees reconstruct problem, result,
 literature difference and argument with locations (`openlabs-paper-review/references/`);
 substantial exposition problems are required changes, not minor revision. `style-check` is
 mechanical and does not assess readability, logic or novelty; with
-`quality_gate.editorial_voice.blocking: true` its voice warnings become errors.
+`quality_gate.editorial_voice.blocking: true` its voice warnings become delivery errors.
 
 ## style-check and support-check
 
 `paper-writing style-check --paper-id <paper_id>` scans the compiled TeX tree and bibliography
-and rejects AI/tool narration outside the final declaration, orchestration and claim-routing
-terms, audit narration (including `audit`, `auditable`, `auditability`), internal paths and
-preparation chronology. A registered institutional name is allowed. A publisher-required image
+and rejects AI/tool narration outside the final declaration, internal paths, unresolved markers
+and pending-confirmation text. Internal-vocabulary words (`audit`, `quality gate`, `claim map`,
+preparation chronology and similar) are only reported with their sentence, because the same
+words are legitimate subject matter in some papers; a human judges them before delivery. A registered institutional name is allowed. A publisher-required image
 credit may appear in that image's caption through `artwork_disclosures` (hash-bound image and
 generation record, one occurrence). Lean work: disclose Lean-code preparation and attribute
 formal verification to the pinned toolchain.
@@ -173,8 +178,7 @@ claim for an unpublished draft; the licence resolves from the paper override, th
 inspects the exact registered ZIP: source label, package version, packaged claim map/README and
 DOI agree; every printed path exists at its declared archive base; nested payloads carrying this
 paper's metadata match the current record; integrity prose matches the actual inventories.
-Counts of commands, checkers, tests or certificate groups come from the exact package. Every
-failure is projected into `unresolved_review_blockers`.
+Counts of commands, checkers, tests or certificate groups come from the exact package.
 
 ## Lean evidence
 

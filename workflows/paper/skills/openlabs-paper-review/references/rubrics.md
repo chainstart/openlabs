@@ -1,5 +1,8 @@
 # OpenLabs reviewer rubrics
 
+Scored rubric of the pre-unified review (used by `scripts/run_claude_reviewer.py` and to read old
+records). The unified review judges against the target venue with `references/unified/`.
+
 The computer-science high standard preserves the validated ARA `RevisionAgent` semantics. The
 mathematics standard uses the repository's four-leading-journal benchmark. The physics standard is
 calibrated to the same exceptional selectivity, while applying discipline-appropriate tests of

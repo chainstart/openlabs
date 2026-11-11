@@ -11,7 +11,9 @@ authors, title, dates, journal/book, volume/issue, pages/article number, DOI/arX
 ISBN and version. Crossref, DataCite, arXiv and authoritative publisher/library
 catalogs suffice. Correct online/print date distinctions and legitimately absent
 DOIs are allowed. No original PDF, full text, OCR or proof quotation is required.
-Wrong work identities and genuinely unresolved metadata block; available version
+Wrong work identities and genuinely unresolved metadata block. A lookup that failed only for
+network or access reasons is listed as `unverifiable_source_access` for a manual check instead;
+when no bibliographic service was reachable at all, the run fails as a technical retry. Version
 and correction notices are checked without claiming a universal retraction search.
 Real metadata-source IDs and locations bind the checks. `quote` may be empty;
 any supplied quotation must be genuine.
@@ -56,8 +58,8 @@ original-document retrieval merely because old routing lists contain it.
 
 ## Integrity and failure
 
-Each batch is a fresh independent configured Codex verifier, currently up to 16
-items. Every selected reference/formula/statement ID is covered exactly once.
+Each batch (currently up to 16 items) runs in a fresh Codex process of the configured
+`review.roles.formal_verifier`, or of the editor's model when that role is absent. Every selected reference/formula/statement ID is covered exactly once.
 Actual outputs, sources and prompts remain hash-bound and are revalidated before
 release. Technical output/ID/coverage failures fail closed but do not masquerade
 as scientific findings or consume a scientific round. Real negative judgments

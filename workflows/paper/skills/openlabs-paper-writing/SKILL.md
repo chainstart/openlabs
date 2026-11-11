@@ -69,21 +69,24 @@ Handling a rejection: `docs/JOURNAL_HISTORY.md#handling-a-rejection`.
 ## Check, prepare support, hand off
 
 1. Compile the real manuscript; run repository validation, `paper-writing style-check` and the
-   declaration checks under the resource guard. A failure blocks review.
+   declaration checks under the resource guard. The review only reports these findings as
+   preparation advisories, but delivery requires them clean, so fix them while drafting.
 2. Unless the record is `not_required` with a reason, prepare the Zenodo draft
    (`paper-writing zenodo prepare`, code-first per `docs/ZENODO_GUIDE.md`), cite its Version DOI
    in the bibliography, first substantive support mention and availability statement with
    wording that stays true after publication, then run `zenodo verify-draft` and
    `support-check`. Use the configured default licence without asking; surface a real licence
    conflict instead of changing files or licence silently.
-3. For targets checked from 2026-11-08, run `paper-writing rewrite run <paper_id>` (editor-facing
-   rewrite pass, `settings.yaml#quality_gate.editorial_rewrite`) before review.
+3. Run the editor-facing rewrite pass (`paper-writing rewrite run <paper_id>`,
+   `settings.yaml#quality_gate.editorial_rewrite`) once per target before its first review; its
+   verdict is advice.
 4. In a factory `writer` task, stop at the frozen `paper_candidate`; never run or impersonate a
    reviewer. The scheduler starts a fresh `$openlabs-paper-review` task. On `paper_revision`,
    apply only the declared request; new evidence goes through `evidence_remediation` first.
 5. After a passing gate, run `paper-writing zenodo release` under the standing authorization,
-   commit the DOI/receipt, then `paper-writing handoff release`. None of this submits the paper,
-   creates a journal event, or authorizes spending; those stay with a human.
+   commit the DOI/receipt, then `paper-writing handoff release` (research-program papers are
+   delivered by the orchestrator when `[program] auto_handoff` is on). None of this submits the
+   paper, creates a journal event, or authorizes spending; those stay with a human.
 
 ## Finish
 

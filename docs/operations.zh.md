@@ -38,7 +38,8 @@ python3 -m openlabs tick
 论文就绪审查任务。通过后依次进入写作和空白会话的统一评审（面板按
 `settings.yaml#review` 配置，跨模型）；评审通过即停止，
 文字问题返回原 writer session，证据问题先交给空白 researcher/experimenter，完成后再返回
-原 writer 并重新审阅。所有阶段都使用 `frontier` 档，但不产生任何外部发布副作用。
+原 writer 并重新审阅；需要换方向的评审结论在研究计划中交给方向性决定（见下文）。这些阶段
+都不产生外部发布副作用。
 
 `tick` 是一次短生命周期、幂等调度，不是永不退出的大 Agent。3 分钟是调度检查周期，不是
 worker 的寿命：tick 先接收完成结果，再回收过期租约，最后按 CPU、内存和临时盘余量启动
@@ -61,8 +62,8 @@ worker 的寿命：tick 先接收完成结果，再回收过期租约，最后�
 的 75%。共享 `openlabs-workers.slice` 对所有 worker、交互式 Codex 和重计算合计施加
 15 CPU（本机 20 线程）、30 GiB soft/34 GiB hard 内存、4 GiB swap 和 512 tasks 上限。
 `max_worker_processes = 8` 只是
-异常保险，不是日常并发目标。普通 campaign 预算耗尽后排队任务转为 `NEEDS_HUMAN`；连续
-产线在没有运行中任务时换轮并继续。两者都不会占用其他 campaign 的资源。
+异常保险，不是日常并发目标。普通 campaign 预算耗尽后排队任务转为 `NEEDS_HUMAN`（研究计划
+题目改为方向性决定）；连续产线在没有运行中任务时换轮并继续。两者都不会占用其他 campaign 的资源。
 
 ## Agent runner
 
@@ -194,9 +195,9 @@ lab runner 的适配层：
 配置六个 runner：把 `config/openlabs.env.example` 中三条 GPT 与三条 Claude 的
 `OPENLABS_AGENT_COMMAND_<NAME>_JSON`、`OPENLABS_AGENT_RESUME_COMMAND_<NAME>_JSON`
 （`LEAD/WORKER/LIGHT` × `GPT/CLAUDE`）复制到 `~/.config/openlabs/env`，再取消
-`config/openlabs.toml` 中六个 `[runners.<name>]` 表的注释（模型：`lead_claude` 为
-`claude-fable-5-2`、`worker_claude` 为 `claude-opus-5-5`、`light_claude` 为
-`claude-haiku-5-5`；GPT 三条按本机 Codex profile 填写）。存在 `[runners]` 表即启用额度路由；
+`config/openlabs.toml` 中六个 `[runners.<name>]` 表的注释（各档模型见该文件的示例和
+`settings.yaml#research_portfolio.autonomy.model_roles`；GPT 三条按本机 Codex profile 填写）。
+存在 `[runners]` 表即启用额度路由；
 `[routing]` 的保留比例与 `[routing.probe_commands]` 无需改动。只想先试 Claude 时，也可以只在当前
 shell 里把 `OPENLABS_AGENT_COMMAND_BALANCED_JSON` 设为 worker_claude 的命令（进程环境优先于
 env 文件），用一个有界 `enqueue --runner balanced` 任务走完整链路。
@@ -247,6 +248,23 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
 `topic_admission_waiting` 事件，不回落。admit 的题目在有研究名额时按立项顺序物化成 campaign，
 初始 `research_state.json` 带预注册主终点及其哈希、目标档位、routine 退路和成本预算。tick
 报告的 `program` 字段给出候选池、等位题目、本 tick 排的 scout/立项任务和被拒卡片。
+
+立项之后由控制面闭环，决定不再等人确认，每一项都写入 events 与题目台账历史：
+
+- 已立项题目的研究结果须带主终点判定和台账里的预注册哈希。主终点失败、超过
+  `max_days_from_admission_to_ready`、用完题目预算（卡片 `cost_estimate.agent_seconds` 与
+  `topic_max_agent_seconds` 的较小者），或评审的 `review_outcome` 为 `direction_decision`、
+  `retarget_required`、停滞、轮次用尽时，排一个 `direction_decision` 任务（lead 档、空白会话、
+  避开该题研究执行者的模型族，技能 `openlabs-direction-decision`）。它在
+  `[program.direction_limits]` 内选择一次定点分析、换刊/短文形式或冻结；次数用尽、决定任务
+  两次失败或达到 `topic_max_agent_seconds` 时题目冻结。研究者返回的有据冻结直接登记。
+- 评审通过的论文离开研究名额进入 ready 队列；队列超过 `max_ready_unsubmitted` 时暂停新立项。
+  `auto_handoff = true`（需 `ARA_PAPER_MANAGE_API_URL/_KEY` 与 `paper_writing_command`）时逐篇
+  交付到管理网站，不指定投稿人；业主审阅后运行
+  `python -m openlabs program assign-handler --paper-id <id>`（默认第二作者）。实际投稿、付费
+  和署名变更仍由人确认。
+- 有 `[runners]` 表时按各模型族剩余额度派活，并为评审与决策保留余量（`[routing]`）；额度
+  错误按 `[budget]` 退避，不消耗重试次数。
 
 ## 聚合资源护栏与 systemd user timer
 
@@ -360,10 +378,10 @@ systemd 只保证 tick 被再次调用；科学恢复由 SQLite 租约、心跳�
 ## 外部副作用
 
 OpenLabs 不自动投稿或创建期刊事件。论文适配器默认拒绝外部写操作；只有管理员针对一次明确
-操作设置 `OPENLABS_ENABLE_EXTERNAL_WRITES=1` 才会解除代码门禁。唯一例外是已经准备、远端
-回读且哈希绑定的 Zenodo 支撑材料：论文 `ready` 门禁授权 `zenodo release`，该命令再次核验
-门禁、Git 状态和本地/远端材料后才发布。此授权不延伸到投稿、远程 handoff、付费或论文发表
-事实。
+操作设置 `OPENLABS_ENABLE_EXTERNAL_WRITES=1` 才会解除代码门禁。两个常设例外：已经准备、远端
+回读且哈希绑定的 Zenodo 支撑材料（论文 `ready` 门禁授权 `zenodo release`，该命令再次核验
+门禁、Git 状态和本地/远端材料后才发布）；以及 `[program] auto_handoff = true` 时把 ready 论文
+交付到管理网站。两者都不延伸到投稿、付费或论文发表事实。
 
 ## 24 小时部署验收
 

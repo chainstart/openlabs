@@ -14,6 +14,18 @@ the target venue, are decisions the system makes itself. Record each one with it
 in the campaign or paper record. A frozen topic keeps its state and reasons so it can be
 resumed or cited later.
 
+## Research program
+
+When the research program is enabled, topics are not started directly. A topic card goes
+through an independent admission gate run by another model family, and the primary endpoint
+with its stop rule is registered before any analysis, so a negative result is recognisable
+and cannot be reworded into a positive one. Direction decisions (one targeted analysis, a
+retarget, or a freeze) and freezes are taken by the system itself and written to the topic
+ledger with their reasons. Cost weighs in every choice: a topic or a next step that would use
+large budgets without a likely publishable result is not worth taking. Check the reusable-asset
+index before building a pipeline, data loader or procedure that may already exist. Enabling
+it: `docs/operations.zh.md` ("研究计划").
+
 ## Integrity
 
 - Do not fabricate data, results, citations, reviews, human checks or attestations. The
@@ -39,7 +51,8 @@ changing authorship are irreversible or have consequences outside the repository
 confirms each one; a passing review gate or a selected journal is not that confirmation.
 Paid routes are never used: no venue with a mandatory author, page or publication fee.
 (Releasing a ready paper's supporting materials to Zenodo has standing authorization in
-`registry/settings.yaml#support_publication`.)
+`registry/settings.yaml#support_publication`; delivering a ready paper to the management site
+for the owner's review is not a submission.)
 
 ## Scientific judgment
 

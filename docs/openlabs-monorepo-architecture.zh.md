@@ -238,7 +238,8 @@ workflows/paper 是所有领域共用、按需调用的下游工作流，不是�
 - tests：协议、构建、引用和门禁测试。
 
 Zenodo、远程 handoff 和真实投稿属于外部适配器。Zenodo 支撑材料采用 prepare/verify/release
-两阶段闭环；只有 `ready` 门禁授权 release。远程 handoff 与真实投稿保持独立授权。
+两阶段闭环；只有 `ready` 门禁授权 release。远程 handoff 需单次授权，研究计划开启
+`auto_handoff` 时向管理网站交付 ready 论文；真实投稿始终由人确认。
 
 ### 3.4 共享包
 
@@ -421,7 +422,7 @@ systemd 只能保证进程被启动，科学恢复必须由工厂 watchdog 实�
 | 文件提升后、SQLite 入库前崩溃 | 下个加锁 tick 根据事务日志自动回滚；若数据库已成功则完成清理 |
 | 科学路线陷入僵局 | 合法 `NEEDS_REPLAN` 自动用 `frontier` runner 建立一个新任务 |
 | 可逆决策十字路口 | Agent 可在单个有界任务内启动互不写冲突的子 Agent 分支 |
-| 高成本或不可逆决策 | 进入 `NEEDS_HUMAN`，停止该链但继续其他 campaign |
+| 高成本或不可逆决策 | 进入 `NEEDS_HUMAN`，停止该链但继续其他 campaign；研究计划题目的方向选择由方向性决定任务完成 |
 | 连续成功但无实质进展 | 由领域状态门冻结当前路线；活动生产计划回收产线并从新 radar 周期继续 |
 
 工厂连续性的定义是：任何单个任务都可以暂停、隔离或等待管理员，但不能阻塞其他研究任务；
@@ -475,8 +476,9 @@ session。研究/实验结果不能绕过 paper-readiness 审查直接生成 wri
   → fresh unified review（面板见 settings.yaml#review）
       ├── 通过：内部终止态
       ├── text_revision：恢复原 writer → 再次 fresh review
-      └── evidence_remediation：fresh researcher/experimenter
-                                → 恢复原 writer → 再次 fresh review
+      ├── evidence_remediation：fresh researcher/experimenter
+      │                         → 恢复原 writer → 再次 fresh review
+      └── 换刊/意义不足/停滞/轮次用尽：研究计划的方向性决定（定点分析、换刊或冻结）
 ~~~
 
 无论是否恢复会话，每次节点都必须把下列状态写入文件和结果包：

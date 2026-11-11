@@ -74,8 +74,8 @@ check the current manuscript itself and require repair when this narration remai
 
 Save a private revision record with the manuscript version/hash, located issues, structural
 changes, before/after passages where useful, fidelity checks and remaining gaps. Keep it
-outside the public paper and fresh full-review packet. Follow the repository review router
-for any revised manuscript; an author's readability pass is not an independent gate pass.
+outside the public paper and fresh full-review packet. A revised manuscript goes back through
+`review unified-run`; an author's readability pass is not an independent gate pass.
 
 ## Referee mode: reconstruct without the author's explanation
 
