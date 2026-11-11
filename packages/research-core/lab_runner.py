@@ -1379,9 +1379,25 @@ CLAUDE_ALLOWED_TOOLS = (
     "WebSearch",
     "Skill",
     "TodoWrite",
-    "Task",
-    "Agent",
 )
+# Sub-agent tools, by tier (cost control: five parallel sub-agents once used a whole
+# five-hour window in ten minutes). The orchestrator writes the decision into the
+# task's ``agent_tools.allow_subagents``: lead tier yes, worker and light tiers no,
+# ``[runners.<name>].allow_subagents`` overrides. Task files written before that
+# field fall back to the legacy runner name (``frontier``/``lead`` only).
+CLAUDE_SUBAGENT_TOOLS = ("Task", "Agent")
+LEGACY_SUBAGENT_RUNNERS = frozenset({"frontier", "lead"})
+
+
+def claude_allowed_tools(*, allow_subagents: bool) -> tuple[str, ...]:
+    return CLAUDE_ALLOWED_TOOLS + (CLAUDE_SUBAGENT_TOOLS if allow_subagents else ())
+
+
+def task_allows_subagents(task: Mapping[str, Any]) -> bool:
+    tools = task.get("agent_tools")
+    if isinstance(tools, Mapping) and isinstance(tools.get("allow_subagents"), bool):
+        return tools["allow_subagents"]
+    return str(task.get("runner") or "") in LEGACY_SUBAGENT_RUNNERS
 # Project sources only: the attempt workspace's own ``.claude`` (generated, never
 # promoted).  The operator's user-level settings -- which may carry another default
 # permission mode, model, hooks or a relay endpoint -- are not loaded; the factory
@@ -1412,6 +1428,7 @@ def _prepare_claude_command(
     *,
     settings_path: Path,
     attempt_root: Path,
+    allow_subagents: bool = False,
 ) -> list[str]:
     """Apply the factory's invariant Claude Code policy to a configured argv."""
 
@@ -1461,7 +1478,7 @@ def _prepare_claude_command(
         "--add-dir",
         str(attempt_root),
         "--allowedTools",
-        ",".join(CLAUDE_ALLOWED_TOOLS),
+        ",".join(claude_allowed_tools(allow_subagents=allow_subagents)),
         "--permission-mode",
         CLAUDE_PERMISSION_MODE,
         "--setting-sources",
@@ -1506,6 +1523,7 @@ def _apply_claude_policy(
         command,
         settings_path=settings_path,
         attempt_root=Path(str(attempt_root)).expanduser().resolve(),
+        allow_subagents=task_allows_subagents(task),
     )
 
 

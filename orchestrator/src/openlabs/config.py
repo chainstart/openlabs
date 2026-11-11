@@ -257,6 +257,13 @@ class RunnerSpec:
     # The provider's protected lead (Fable): its windows carry the decision
     # reserve and the review ceiling.
     protected: bool = False
+    # Claude sub-agent tools (Task, Agent) for this runner's tasks; None: the
+    # tier decides (lead yes, worker and light no).
+    allow_subagents: bool | None = None
+
+    @property
+    def subagents_allowed(self) -> bool:
+        return self.tier == "lead" if self.allow_subagents is None else self.allow_subagents
 
 
 @dataclass(frozen=True)
@@ -640,8 +647,16 @@ def load_runner_specs(payload: Any) -> dict[str, RunnerSpec]:
             # Unset windows/protected take [routing] model defaults (apply_model_defaults).
             windows=_string_tuple(raw.get("windows"), ()),
             protected=raw.get("protected") is True,
+            allow_subagents=_optional_bool(raw.get("allow_subagents"),
+                                           f"[runners.{name}].allow_subagents"),
         )
     return specs
+
+
+def _optional_bool(value: Any, label: str) -> bool | None:
+    if value is None or isinstance(value, bool):
+        return value
+    raise ValueError(f"{label} must be true or false")
 
 
 def load_routing_settings(payload: Any) -> RoutingSettings:
@@ -758,6 +773,7 @@ def apply_model_defaults(
             model=spec.model,
             windows=windows,
             protected=protected,
+            allow_subagents=spec.allow_subagents,
         )
     return resolved
 

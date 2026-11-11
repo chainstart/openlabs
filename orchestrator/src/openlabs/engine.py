@@ -415,6 +415,15 @@ def _derived_task_id(parent_task_id: str, suffix: str, digest: str) -> str:
     return candidate if len(candidate) <= 128 else f"{suffix}:{digest[:32]}"
 
 
+def _agent_tools(settings: FactorySettings, runner: Any) -> dict[str, Any]:
+    """Tool decisions the lab runner applies (Claude: sub-agent tools by tier)."""
+
+    spec = settings.runners.get(normalize_runner(runner))
+    tier = budget_control.tier_of(settings, runner)
+    allow = spec.subagents_allowed if spec is not None else tier == "lead"
+    return {"tier": tier, "allow_subagents": allow}
+
+
 def _paper_skill(domain: str) -> str | None:
     return {
         "math": "openlabs-math-paper",
@@ -2963,6 +2972,7 @@ def _write_task_spec(
     output_path: Path,
     wall_seconds: int,
     campaign: Mapping[str, Any] | None = None,
+    agent_tools: Mapping[str, Any] | None = None,
 ) -> Path:
     agent_workspace = attempt_workspace.campaign_root
     agent_workspace.mkdir(parents=True, exist_ok=True)
@@ -3015,6 +3025,8 @@ def _write_task_spec(
         "resources": task_resources(task).to_dict(),
         "budget": {"wall_seconds": max(1, int(wall_seconds))},
     }
+    if agent_tools is not None:
+        payload["agent_tools"] = dict(agent_tools)
     project_path = (
         campaign.get("project_config_path") or campaign.get("production_plan_path")
         if campaign is not None
@@ -3156,6 +3168,7 @@ def _launch_task(
         output_path=output_path,
         wall_seconds=wall_seconds,
         campaign=campaign,
+        agent_tools=_agent_tools(settings, task.get("runner") or "balanced"),
     )
     log_path = output_path.parent / "worker.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)

@@ -633,3 +633,50 @@ def test_transport_doubles_are_not_hook_gated(tmp_path) -> None:
     runtime = _ingest_completed(tmp_path, {"adapter": "python3", "session_id": "s"})
 
     assert "hook_receipt_error" not in runtime
+
+
+# ------------------------------------------------------------ sub-agent tools by tier
+
+
+def test_subagent_tools_only_for_the_lead_tier(tmp_path) -> None:
+    settings = tmp_path / "openlabs-settings.json"
+    settings.write_text('{"hooks": {}}\n')
+
+    def tools(**kwargs) -> list[str]:
+        command = lab_runner._prepare_claude_command(
+            ["claude", "-p"], settings_path=settings, attempt_root=tmp_path, **kwargs)
+        return command[command.index("--allowedTools") + 1].split(",")
+
+    assert not {"Task", "Agent"} & set(tools())
+    assert {"Task", "Agent"} <= set(tools(allow_subagents=True))
+    assert lab_runner.task_allows_subagents({"agent_tools": {"allow_subagents": True}})
+    assert not lab_runner.task_allows_subagents({"agent_tools": {"allow_subagents": False},
+                                                 "runner": "frontier"})
+    # Task files from before agent_tools: the legacy lead runner name keeps them.
+    assert lab_runner.task_allows_subagents({"runner": "frontier"})
+    assert not lab_runner.task_allows_subagents({"runner": "balanced"})
+    assert not lab_runner.task_allows_subagents({"runner": "cheap"})
+
+
+def test_orchestrator_decides_subagent_tools_per_runner() -> None:
+    from openlabs.config import FactorySettings, load_runner_specs
+    from openlabs.engine import _agent_tools
+
+    runners = load_runner_specs({
+        "lead_claude": {"provider": "anthropic", "tier": "lead", "model": "claude-fable-5-2"},
+        "worker_claude": {"provider": "anthropic", "tier": "worker", "model": "claude-opus-5-5"},
+        "light_claude": {"provider": "anthropic", "tier": "light", "model": "claude-haiku-5-5"},
+        "worker_wide": {"provider": "anthropic", "tier": "worker", "allow_subagents": True},
+        "lead_narrow": {"provider": "anthropic", "tier": "lead", "allow_subagents": False},
+    })
+    settings = FactorySettings(runners=runners)
+    assert _agent_tools(settings, "lead_claude") == {"tier": "lead", "allow_subagents": True}
+    assert _agent_tools(settings, "worker_claude")["allow_subagents"] is False
+    assert _agent_tools(settings, "light_claude")["allow_subagents"] is False
+    assert _agent_tools(settings, "worker_wide")["allow_subagents"] is True
+    assert _agent_tools(settings, "lead_narrow")["allow_subagents"] is False
+    legacy = FactorySettings()
+    assert _agent_tools(legacy, "frontier")["allow_subagents"] is True
+    assert _agent_tools(legacy, "balanced")["allow_subagents"] is False
+    with pytest.raises(ValueError, match="allow_subagents must be true or false"):
+        load_runner_specs({"x": {"provider": "anthropic", "tier": "lead", "allow_subagents": "yes"}})
