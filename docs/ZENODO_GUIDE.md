@@ -66,6 +66,11 @@ Zenodo 使用两阶段流程，质量门禁不会调用网络：
 4. 提交 DOI/回执更新并推送；OpenLabs 的完成与投影流程随后同步结构化状态。仅在自动任务
    失败时手工运行 `handoff release` 恢复。该步骤只同步写作产物，不创建投稿或期刊事件。
 
+研究计划启用 `[program] auto_handoff` 与 `auto_release` 时，编排器的发布流水线按上述顺序自动调用
+`zenodo prepare`、差异复核（`review unified-run --delta-only`）、`support-check`、`zenodo release`，
+并在数据仓库对该论文路径做本地提交（不推送）；`auto_release = false` 时停在第一次 Zenodo 写入
+之前等人处理。见 `docs/operations.zh.md`“发布流水线”。
+
 质量门禁是公开发布的必要条件。仓库已配置长期生产发布授权，因此通过门禁且材料整理完成后
 默认直接执行 `zenodo release`，不再向作者重复提问；生产确认参数仍作为精确目标和不可逆操作
 的机器安全边界。命令自身会重新校验门禁、Git 状态与远端文件，门禁失效、未达标或未绑定材料包

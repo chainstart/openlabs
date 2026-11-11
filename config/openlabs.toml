@@ -34,8 +34,13 @@ default_task_scratch_mib = 4096
 archive_result_receipts = true
 
 [program]
-# Research-program controller (topic ledger, active-topic slots, freezes).
-# Off by default; when false the tick neither reads nor writes the ledger.
+# Research-program controller: topic ledger, active-topic slots, freezes, the
+# release pipeline and delivery. THIS FILE IS THE ONLY SOURCE of these switches
+# and limits; the code reads nothing else. The data repository's
+# registry/settings.yaml#research_portfolio.autonomy only records what the owner
+# decided and when (with quotes) and the scientific policy that agents read.
+# Every switch below is off by default; with enabled = false the tick neither
+# reads nor writes the ledger and behaves exactly as before.
 enabled = false
 # Topics counted against this limit: admitted (reserved), active and in_review.
 max_active_topics = 5
@@ -69,14 +74,45 @@ max_days_from_admission_to_ready = 28
 # schedules one direction decision instead of needs_human, and reaching this
 # ceiling freezes the topic (budget_exhausted).
 topic_max_agent_seconds = 259200
-# Ready papers are delivered to the paper-management site without a submission
-# handler (python -m openlabs program assign-handler after the owner's review).
-# false: they are only queued. Needs ARA_PAPER_MANAGE_API_URL/_KEY in the
-# environment and the paper-writing CLI (paper_writing_command).
+# false: ready papers are only queued (ready_queue). true: each ready paper goes
+# through the release pipeline (docs/operations.zh.md, "发布流水线"): formal
+# fixes, Zenodo support material, delta review, local data-repository commits,
+# then delivery to the paper-management site WITHOUT a submission handler
+# (python -m openlabs program assign-handler after the owner's review). Needs
+# ARA_PAPER_MANAGE_API_URL/_KEY, the paper-writing CLI (paper_writing_command)
+# and a commit identity ([program.git]).
 auto_handoff = false
+# argv prefix of the paper-writing CLI the pipeline calls (it owns YAML, HTTP
+# and LaTeX). The delta review builds LaTeX; to keep it inside the aggregate
+# resource guard give the guard's absolute path (the command runs in the data
+# repository): ["<openlabs>/bin/openlabs-resource-guard", "--", "paper-writing"].
 # paper_writing_command = ["paper-writing"]
-# Delivery attempts per ready paper, one per tick.
+# Delivery attempts per ready paper, one per tick; then it waits for a human.
 handoff_max_attempts = 3
+# false: the pipeline stops before the first Zenodo write (zenodo prepare /
+# zenodo release) and marks the paper as waiting for a human. true: it runs them
+# on production, but only while settings.yaml#support_publication.
+# standing_production_release_authorization is true and ZENODO_ACCESS_TOKEN is
+# set; OPENLABS_ENABLE_EXTERNAL_WRITES=1 is set for that one child process only.
+auto_release = false
+# Failures per pipeline stage, and formal-fix writer rounds, before the paper
+# stops for a human (listed under release_exhausted in the tick report).
+release_max_attempts = 3
+# Upper bound in seconds for one `review unified-run --delta-only` (LaTeX build
+# plus the mandatory formal verification).
+release_review_timeout_seconds = 7200
+
+# Local commits the release pipeline makes in the data repository: only the
+# paper's registry record, papers/<id>/, its review records and the topic
+# ledger; never `git add -A`, never pushed. Without user_name/user_email the
+# repository's own git config is used; with neither the commit step waits and
+# the tick report says so.
+[program.git]
+# user_name = "OpenLabs release pipeline"
+# user_email = "openlabs@example.invalid"
+# Subject line; fields {action} {paper_id} {version} {topic_id}. The body always
+# names paper, version, action and topic.
+message = "{action}: {paper_id} v{version}"
 
 # Per-topic direction-decision choices that keep a topic alive; afterwards only
 # freeze is accepted (an exhausted choice is refused and the topic frozen).
@@ -142,6 +178,9 @@ anthropic = ["claude", "-p", "ok", "--model", "claude-haiku-5-5", "--output-form
 # (see openlabs.env.example). Uncomment all six together: the GPT runners use
 # Codex, the Claude runners use Claude Code with the same lab runtime, result-gate
 # hooks and receipt check (docs/operations.zh.md, "Claude Code 研究执行者").
+# Optional per runner: allow_subagents = true|false. Claude's sub-agent tools
+# (Task, Agent) are granted to lead-tier runners only by default (cost control);
+# this key overrides the tier.
 # [runners.lead_gpt]
 # provider = "openai-codex"
 # tier = "lead"

@@ -195,8 +195,9 @@ lab runner 的适配层：
 配置六个 runner：把 `config/openlabs.env.example` 中三条 GPT 与三条 Claude 的
 `OPENLABS_AGENT_COMMAND_<NAME>_JSON`、`OPENLABS_AGENT_RESUME_COMMAND_<NAME>_JSON`
 （`LEAD/WORKER/LIGHT` × `GPT/CLAUDE`）复制到 `~/.config/openlabs/env`，再取消
-`config/openlabs.toml` 中六个 `[runners.<name>]` 表的注释（各档模型见该文件的示例和
-`settings.yaml#research_portfolio.autonomy.model_roles`；GPT 三条按本机 Codex profile 填写）。
+`config/openlabs.toml` 中六个 `[runners.<name>]` 表的注释（各档模型以该文件为准，
+`settings.yaml#research_portfolio.autonomy.model_roles` 只记录这一决定；GPT 三条按本机 Codex
+profile 填写）。
 存在 `[runners]` 表即启用额度路由；
 `[routing]` 的保留比例与 `[routing.probe_commands]` 无需改动。只想先试 Claude 时，也可以只在当前
 shell 里把 `OPENLABS_AGENT_COMMAND_BALANCED_JSON` 设为 worker_claude 的命令（进程环境优先于
@@ -259,12 +260,53 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
   `[program.direction_limits]` 内选择一次定点分析、换刊/短文形式或冻结；次数用尽、决定任务
   两次失败或达到 `topic_max_agent_seconds` 时题目冻结。研究者返回的有据冻结直接登记。
 - 评审通过的论文离开研究名额进入 ready 队列；队列超过 `max_ready_unsubmitted` 时暂停新立项。
-  `auto_handoff = true`（需 `ARA_PAPER_MANAGE_API_URL/_KEY` 与 `paper_writing_command`）时逐篇
-  交付到管理网站，不指定投稿人；业主审阅后运行
+  `auto_handoff = true` 时每篇走下面的发布流水线，交付到管理网站，不指定投稿人；业主审阅后运行
   `python -m openlabs program assign-handler --paper-id <id>`（默认第二作者）。实际投稿、付费
   和署名变更仍由人确认。
 - 有 `[runners]` 表时按各模型族剩余额度派活，并为评审与决策保留余量（`[routing]`）；额度
-  错误按 `[budget]` 退避，不消耗重试次数。
+  错误按 `[budget]` 退避，不消耗重试次数。Claude 的子 agent 工具（Task/Agent）只给 lead 档，
+  `[runners.<name>] allow_subagents` 可改。
+
+开关与上限只在 `config/openlabs.toml` 的 `[program]` 里配置，编排器不读
+`settings.yaml#research_portfolio.autonomy`（那里只记业主的决定及日期）。
+
+### 发布流水线（评审 ready → 交付）
+
+每个 tick 对每篇 ready 论文先运行 `paper-writing program release-status`（只读），再走下一步；
+任何一步失败或中断，下个 tick 从实际状态重新判断，每步写 events 和题目台账 `release` 字段
+（`stage`、各阶段 `attempts`、`writer_rounds`、`last_error`、`commits`）：
+
+| 阶段 | 调用 | 失败或不满足时 |
+|---|---|---|
+| 形式修正（确定性） | `zenodo prepare`（重建支撑包身份：回执、版本、DOI、记录标题） | 计次重试 |
+| 形式修正（文字） | 轻活档 `format_fix` writer，只改列出的问题，不改数字、表格、结论和标题 | 轮次用尽即停 |
+| 差异复核 | `review unified-run --delta-only`（不调编辑和审稿人、不计轮次） | 超出差异规则：题目回 `in_review`，排一次完整 `paper_review` |
+| 提交 | 本地 `git commit --only`，只含本论文的登记、`papers/<id>/`、评审记录和台账 | 无身份时等待 |
+| 支撑材料发布 | `support-check` → `zenodo release` | 计次重试 |
+| 交付 | `program deliver`（无投稿人），随后再提交一次 `delivery` 块 | `handoff_max_attempts` |
+
+黑名单词只作备注，不阻断。改标题、数字、表格或结论段的改动超出差异规则，走完整评审。
+用尽 `release_max_attempts` 的论文列在 tick 报告的 `program.release_exhausted` 并写入
+`errors`，不再重试；人处理后把台账该题的 `release.status` 改回 `pending` 即从头再判断。
+
+- `auto_release`（默认 false）：为 false 时流水线停在第一次 Zenodo 写入之前，`release.status`
+  为 `waiting`、`waiting_for: auto_release_off`；为 true 时还要求
+  `settings.yaml#support_publication.standing_production_release_authorization: true` 和
+  `ZENODO_ACCESS_TOKEN`，外部写开关只对该子进程设置。
+- `[program.git]`：`user_name`、`user_email`（缺省用数据仓库自己的 git 配置，都没有则等待并
+  在报告里提示）和提交标题 `message`（字段 `{action} {paper_id} {version} {topic_id}`）。只提交、
+  不 push；工作区里与该论文无关的改动保持原样。
+
+### 启用前检查清单
+
+1. 回填台账：`python -m openlabs program backfill`，确认后加 `--write`。
+2. 配置六个 `[runners.<name>]`（上文），确认 lead 档两家模型族都有。
+3. 环境变量：`ARA_PAPER_MANAGE_API_URL/_KEY`、`ZENODO_ACCESS_TOKEN`（或 `~/.config/ara/zenodo.env`）；
+   不要全局设置 `OPENLABS_ENABLE_EXTERNAL_WRITES`。
+4. 本机有 `bwrap`（Claude 执行者的文件边界）。
+5. 按上文手工验证一次 Claude 执行者。
+6. 数据仓库的 git 身份或 `[program.git]`；`paper_writing_command` 在 tick 环境里可执行。
+7. 依次打开 `enabled`、`auto_handoff`，确认首篇停在 `auto_release_off` 后再打开 `auto_release`。
 
 ## 聚合资源护栏与 systemd user timer
 

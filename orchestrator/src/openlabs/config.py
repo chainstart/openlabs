@@ -67,8 +67,11 @@ GIT_MESSAGE_FIELDS = ("action", "paper_id", "version", "topic_id")
 class ProgramSettings:
     """Research-program controller switches (``[program]`` in openlabs.toml).
 
-    Disabled by default: when ``enabled`` is false the controller neither reads nor
-    writes the topic ledger and the tick behaves exactly as before.
+    ``config/openlabs.toml`` is the only source of these values; the orchestrator
+    never reads ``registry/settings.yaml#research_portfolio.autonomy``, which only
+    records the owner's decisions. Disabled by default: when ``enabled`` is false
+    the controller neither reads nor writes the topic ledger and the tick behaves
+    exactly as before.
     """
 
     enabled: bool = False
