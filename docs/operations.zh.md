@@ -1,8 +1,7 @@
 # OpenLabs 个人运行手册
 
-论文返修的分流、独立增量审阅命令与失败处理见
-[论文增量复审](INCREMENTAL_PAPER_REVIEW.zh.md)。启用后由 `review route` 在审阅进程启动前
-选择元数据复用、累计增量、全文或预算停止；审阅者仍使用 fresh 会话。
+论文评审只走统一评审 `review unified-run`；编辑、审稿人、模型与轮次上限以数据仓库
+`registry/settings.yaml#review` 为准。已停用的增量复审文档见 `archive/`。
 
 ## 手工演练
 
@@ -36,8 +35,8 @@ python3 -m openlabs tick
 ```
 
 只有结果包通过证据门且显式给出 `paper_candidate: true` 时，控制面才自动排入相同领域的
-论文就绪审查任务。通过后依次进入写作和空白会话的配置化审阅面板（默认单 Codex，Claude
-双供应商审阅为可选）；面板通过即停止，
+论文就绪审查任务。通过后依次进入写作和空白会话的统一评审（面板按
+`settings.yaml#review` 配置，跨模型）；评审通过即停止，
 文字问题返回原 writer session，证据问题先交给空白 researcher/experimenter，完成后再返回
 原 writer 并重新审阅。所有阶段都使用 `frontier` 档，但不产生任何外部发布副作用。
 
@@ -155,12 +154,9 @@ campaign 进入 `budget_exhausted`；只有显式把预算提高到大于已累�
 Agent-time 耗尽、真实外部阻塞、明确的独立角色边界，或协议状态被 Codex 标为终态时才停链。
 `review_on_new_results` 仅用于按新结果机械触发独立组合审查。
 
-论文门禁默认只使用一个全新的 Codex 审阅 session。只有
-`registry/settings.yaml#quality_gate.review_panel_size` 显式设为 `2` 并选择对应的保守聚合时，
-才启用可选的第二位审阅人：`run_claude_reviewer.py` 启动一次全新的 Claude Code
-`claude-opus-5` 进程，并从用户自己的 Claude settings 读取 Packy endpoint 和凭据。仓库、env
-示例、prompt 和审阅产物都不得保存 Packy key。第一位 Codex 审阅结果先冻结；适配器只计算其
-SHA-256 绑定，不把内容发给 Claude。
+论文评审面板（编辑与两位不同模型家族的审稿人，均为全新进程）以
+`registry/settings.yaml#review` 为准。任何审稿凭据只从用户自己的配置读取，仓库、env 示例、
+prompt 和审阅产物都不得保存密钥。
 
 ### Claude Code 研究执行者与六个 runner
 

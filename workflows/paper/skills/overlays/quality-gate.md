@@ -1,138 +1,39 @@
-# OpenLabs local LLM quality gate
+# OpenLabs paper checks and registry fields
 
-> **Superseded for review (2026-10-06).** With `quality_gate.review_process: unified_v1`, the only
-> route to `writing_release.ready` is `review unified-run` (see `openlabs-paper-review` and
-> `docs/UNIFIED_REVIEW_DESIGN.zh.md`). The minimum score, CAS Zone 1 decision standard, separate
-> editorial screen, delta routes and closeouts described below no longer gate new work; the
-> sections on journal targets, AI-use disclosure, readability, style-check and support-check still
-> apply and are enforced by the unified preflight.
+Reference for the deterministic checks and registry fields used by every paper profile. The
+workflow is in `../openlabs-paper-writing/SKILL.md`; policy values (venue tiers, fees, ranking
+system, cadence, review panel, round limit) are in `registry/settings.yaml`, which is the only
+source of thresholds. With `quality_gate.review_process: unified_v1` (user decision 2026-10-06)
+the only route to `writing_release.ready` is `review unified-run` (`openlabs-paper-review`,
+`workflows/paper/docs/UNIFIED_REVIEW_DESIGN.zh.md`). The older score threshold, CAS Zone 1
+decision standard, separate editorial screen, delta routes, metadata reuse and closeouts no
+longer gate new work; their records stay readable (documents in `docs/archive/` and
+`workflows/paper/docs/archive/`).
 
-### Standing author facts: no routine reconfirmation
+## Journal targets
 
-The user confirmed on 2026-11-09 that subsequent papers default to the active
-registry's five-person author roster and CRediT allocation, no competing interests
-to disclose, and no specific research funding. Apply
-`registry/settings.yaml#defaults.author_declarations` and the current default
-author records without asking these questions again. Explicit paper-specific
-author order/submission-handler instructions and known contrary facts take
-precedence. This standing confirmation is about those declarations; it does not
-supply individual author replies, final-version human review, human code
-verification, or a scientific/readiness decision. Preserve actual AI-use evidence.
+Exclude every title and alias in `settings.yaml#journal_target_policy.excluded_journals` (EPJC
+and JHEP, user instruction 2026-09-12: both effectively require prior arXiv posting). For a
+replacement journal check whether prior arXiv posting is mandatory; permission to post a
+preprint is not a requirement. Keep truthful historical submissions; never swap a target for an
+alias or erase history.
 
-This overlay is mandatory for every paper profile. `registry/settings.yaml#quality_gate` is the
-single source of thresholds. The current minimum LLM self-review score is **5.0/10**. Never round
-up, average around, or bypass it inside a profile. Change the threshold policy only with explicit
-human authorization and synchronized repository policy, settings, runtime, skill, documentation,
-and test updates.
+Team rejection ledger: `docs/JOURNAL_HISTORY.md` (sync/check commands, thresholds in
+`settings.yaml#journal_target_policy.team_rejection_history`). Each team paper counts once per
+journal; conference rows and withdrawals do not count; a missing, invalid or stale ledger blocks
+new selection. Registry validation, unified preflight and handoff enforce the exclusion; an
+ongoing submission sourced from the management API may continue its existing revision. Keep the
+separate per-paper `journal_rejections` list as well.
 
-The 2026-09-28 user instruction adds a separate **target-specific editorial screen** for journal
-papers after repeated editor rejections despite positive generic CAS simulations. A generic
-`cas_zone_1_journal` accept/minor decision and score 5/10 are necessary but no longer sufficient
-for `writing_release.ready`. The screen is bound to the exact manuscript/PDF snapshot and selected
-journal, and the handoff rechecks it. See `docs/EDITORIAL_SCREEN.md`. Existing ready records that
-lack this screen are historical judgments, not current submission clearance; do not rewrite their
-review scores or invent a favorable screen. Scientific work requested by the screen must be
-completed and independently reassessed before clearance. A journal transfer alone cannot close a
-repeated concern about novelty, importance, evidence, or readership.
+Registry fields for a journal target checked on or after `venue_eligibility.effective_from`:
+`target_journal_tier` (the numeric 2025 CAS major-category zone), `target_journal_ranking_year:
+2025`, `target_journal_ranking_scope: major_category`, the category name, a dated source and
+check date; `target_journal_fee_policy: no_mandatory_author_fee`; `target_journal_indexing` with
+`journal`, `indexes` containing `SCIE`, an HTTP(S) `source` and `checked_at`. The canonical
+`manuscript/` must be marked and checked as the venue-specific edition; a side candidate alone
+is a blocker. Public Zenodo ZIP names and roots use the registered `display_id`.
 
-Before ranking or recommending targets, exclude every title and alias in
-`registry/settings.yaml#journal_target_policy.excluded_journals`. EPJC / The European Physical
-Journal C / Eur. Phys. J. C is excluded by the user's 2026-09-12 operational instruction.
-JHEP / Journal of High Energy Physics / J. High Energy Phys. is also excluded: its official
-author instructions and submission FAQ require an arXiv ID even for direct web uploads
-(verified 2026-09-12 at https://jhep.sissa.it/jhep/help/JHEP/JHEP_author.jsp).
-Keep truthful historical submissions and citations; do not replace the target with an alias or
-erase history. For replacement journals explicitly check whether prior arXiv posting is mandatory;
-permission to post a preprint is not a requirement to do so. Do not mark an unverified policy as
-compliant. Historical ranking dates do not waive an explicit current exclusion.
-
-### Query team rejection history before recommending a journal
-
-The user instruction of 2026-10-15 requires a shared team-wide rejection table. Before any
-new shortlist, recommendation or retarget, refresh it with guarded
-`python -m paper_writing journal-history sync --root <paper_root>`, then query **each** candidate
-with `python -m paper_writing journal-history check --root <paper_root> --journal <title>`.
-The canonical ledger is `<paper_root>/registry/journal-rejections.json`; its CSV is the generated
-single detailed table and its Markdown view summarizes journals. Do not maintain a campaign-local
-copy as the decision source. Refresh after registering new decisions as well.
-
-Thresholds live only in `registry/settings.yaml#journal_target_policy.team_rejection_history`:
-by default, 3 distinct rejected team papers at a journal exclude it from new recommendations,
-2 place it among cautious alternatives, and 0–1 require the ordinary scope/contribution checks.
-Normalize journal names and aliases; never merge JCTA/JCTB, Annals/JACO, or European/Electronic
-Journal of Combinatorics. Each team paper counts once per journal, even after repeated letters
-or attempts. Conference rows remain visible but do not contribute to journal exclusions.
-Missing decision reasons stay missing. Closed/withdrawn attempts and internal reviews are not
-rejections. A missing, invalid or stale ledger blocks new selection until refreshed.
-
-Registry target validation, unified-review preflight and handoff enforce the team exclusion.
-Historical rejected records remain readable; an actual ongoing submission in the API-sourced
-ledger can continue its existing revision. This does not authorize a new submission to that
-journal, alter current external statuses or erase historical reviews. An author-side claim of
-scientific improvement cannot override a team exclusion. Keep the separate **per-paper**
-rejection count for CAS transfer-zone eligibility; the team total does not relax that policy.
-
-For rejection handling, follow `docs/JOURNAL_HISTORY.md#handling-a-rejection`: reconcile the
-actual external attempt, diagnose the current scientific/target gap, then save a per-paper plan
-with an action, deliverable and completion condition before retargeting. Keep later ongoing
-submissions in their follow-up queue and use the existing review router; do not interpret an
-old internal ready record as reversal of an external rejection.
-
-For a journal manuscript beyond its basic draft in a domain configured by
-`journal_target_policy`, the registry must identify a verified eligible venue for every new
-recommendation or retarget. **User instruction 2026-11-07** (superseding the 2026-10-16 Zone-4-only
-rule): every paper targets an **SCIE** journal in the 2025 CAS major-category **Zones 1-4** with a
-fee-free route, or a **CCF-recommended conference ranked C or better** with no mandatory page or
-publication charge. Paid routes are never selected; ESCI-only journals are ineligible. Routine
-selections use Zones 3-4 / CCF B-C (`new_selection_tiers`). A strong result may target Zones 1-2 or
-CCF-A only through an approved `target_escalation` record (venue, approver, date, unified-review
-score at least `venue_eligibility.escalation.minimum_internal_score`, review source, strength
-evidence, routine fallback venue). The registry enforces this for targets checked on or after
-`venue_eligibility.effective_from`; see "Venue eligibility, escalation and cadence" below.
-Preserve historical targets and ongoing revisions/submissions. Classify using the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition,
-using its major-category partition, an official no-mandatory-author-fee publication route, and the
-official formatting source. The record must bind year `2025`, scope `major_category`, the
-major-category name, source, and check date. Never relabel a JCR/WOS/JCI quartile, a CAS
-subject-category result, or a XinRui tier as the CAS major-category zone. The canonical
-`manuscript/` must be marked and checked as the venue-specific edition. A side candidate alone is
-a blocker. Public Zenodo ZIP names and enclosing roots must use the registered `display_id`.
-
-The rejection-stage selection rule of 2026-09-19 and the Zone-4-only rule of 2026-10-16 are
-superseded by the 2026-11-07 venue eligibility above. Compatibility lists accept Zones 1-4 for
-historical validation. Before selecting a transfer target, reconcile management-site submission
-history with actual decision letters and record distinct external journal rejections in the paper's
-`journal_rejections` list. Each entry requires `journal` (canonical title), `manuscript_number`,
-`rejected_at` (YYYY-MM-DD, no later than target verification), and `source` (auditable local
-receipt or management event reference, without private access tokens). For example:
-
-```yaml
-journal_rejections:
-  - journal: Example Journal
-    manuscript_number: EXAMPLE-26-001
-    rejected_at: '2026-09-19'
-    source: maintenance/decision-audit/decision-receipt.json
-```
-
-Use the same canonical title and manuscript number across duplicate letters. Desk rejections
-and rejections after peer review both count; withdrawals, transfer recommendations alone,
-internal LLM decisions and unverified claims do not. Missing evidence retains the first-submission
-limit until reconciled. A transfer recommendation accompanying a rejection is not another
-rejection. Never overwrite historical decisions or infer a rejection count from revision numbers.
-The internal review threshold, fee-free route, fit checks and same-journal resubmission rules
-continue to apply at every stage. The tier policy does not itself authorize an actual submission.
-
-For targets checked on or after the configured fit-policy date, the registry must also contain an
-approved `target_journal_fit` record. It must separately justify scope, core readership, and
-contribution scale; cite the official scope and at least two recent topically adjacent journal
-articles; and record a shared-history check. A broad category or keyword match is insufficient.
-A prior rejection at the same target remains blocking until a material scientific revision is
-identified; reformatting, reframing, or a new cover letter is not such a revision.
-
-### Venue eligibility, escalation and cadence
-
-Registry fields for a journal target checked on or after the effective date: `target_journal_tier`
-(1-4), `target_journal_fee_policy: no_mandatory_author_fee`, and `target_journal_indexing` with
-`journal`, `indexes` containing `SCIE`, an HTTP(S) `source` and `checked_at`. For a conference:
+A conference target:
 
 ```yaml
 venue_type: conference
@@ -144,7 +45,7 @@ target_conference_fee_policy: no_mandatory_publication_fee
 target_conference_fee_source: https://example.org/registration
 ```
 
-Escalation (Zones 1-2 or CCF-A) additionally needs:
+An escalation target (Zones 1-2 or CCF-A) additionally needs:
 
 ```yaml
 target_escalation:
@@ -154,47 +55,53 @@ target_escalation:
   approved_at: '2026-11-07'
   internal_review_score: 7
   internal_review_source: reviews/unified/<record>.json
-  strength_evidence: why this result is broader than the routine venue (external validation, effect size, readership)
+  strength_evidence: why this result is broader than the routine venue
   fallback_venue: <eligible routine venue used after an escalation rejection>
 ```
 
-CCF ranks come from the latest list, 中国计算机学会推荐国际学术会议和期刊目录 2026年第七版（正式版）
-(`ccf_list_edition: '2026'`); journal zones come only from the 2025 CAS upgraded-edition major-category
-table.
+The unified review states its track: routine targets are judged at the venue's actual level,
+escalation targets at full selectivity (`quality_gate.review_standard`, user decision
+2026-11-07).
 
-The unified review is tiered by target (user decision 2026-11-07). The packet states the review
-track. Routine targets (Zones 3-4 / CCF B-C) are judged at the venue's actual level. Escalation
-targets (Zones 1-2 / CCF-A) are judged at full selectivity, and a ready outcome additionally needs
-every referee's overall score at or above `venue_eligibility.escalation.minimum_internal_score`
-with no low-confidence report; otherwise the outcome becomes `revision_required`. Conference
-targets use the same unified review with `target_conference` and the shared `target_journal_fit`
-venue-fit record.
+Escalate only after a result passed the routine gate with margin; after one escalation rejection
+return to the recorded fallback venue instead of descending venue by venue. Research-program
+topics admitted with `target_tier: escalation` in `research_state.json` are the exception:
+register the paper with `paper-writing program register-escalation --paper-id <id> --venue
+<escalation venue> --admission-task-id <admission_task_id> --admission-record
+<admission_record.path> --fallback-venue <first routine venue>`. This `provisional` record allows
+the escalation-track review; delivery at that target needs the ready review's score, after which
+the record becomes `approved`.
 
-Escalate only after a result passed the routine gate with margin. After one escalation rejection,
-return to the recorded fallback venue instead of descending venue by venue.
-Exception for research-program topics: when the campaign's `research_state.json` has
-`target_tier: escalation`, register the paper with `paper-writing program register-escalation
---paper-id <id> --venue <escalation venue> --admission-task-id <admission_task_id>
---admission-record <admission_record.path> --fallback-venue <first routine venue>`; this
-`provisional` record allows the escalation-track review, and delivery at that target needs the
-ready review's score (it then becomes `approved`).
+Distinct external rejections of this paper go in `journal_rejections`, reconciled with actual
+decision letters:
 
-Before every actual submission run `paper-writing cadence check --venue <venue> --paper-id <id>`
-after `journal-history sync`. It blocks a second concurrent team paper at one venue, the same venue
-within 30 days, more than three team submissions in seven days or one per day, and resubmitting a
-paper within seven days of its rejection (`registry/settings.yaml#submission_cadence`). Combine
+```yaml
+journal_rejections:
+  - journal: Example Journal
+    manuscript_number: EXAMPLE-26-001
+    rejected_at: '2026-09-19'
+    source: maintenance/decision-audit/decision-receipt.json
+```
+
+Desk rejections and rejections after review count; withdrawals, transfer suggestions, internal
+LLM decisions and unverified claims do not. Use one canonical title and manuscript number across
+duplicate letters; never infer a count from revision numbers or overwrite history.
+
+Targets checked after the fit-policy date also need an approved `target_journal_fit` record:
+scope, core readership and contribution scale, each justified; the official scope and at least
+two recent topically adjacent articles; a shared-history check. A prior rejection at the same
+target blocks reselection until a material scientific revision is identified; reformatting,
+reframing or a new cover letter is not one.
+
+Before every actual submission (a human action) run `paper-writing cadence check --venue <venue>
+--paper-id <id>` after `journal-history sync` (`settings.yaml#submission_cadence`). Combine
 closely related narrow results into one manuscript instead of parallel submissions.
 
-New empirical papers (`venue_eligibility.empirical_real_data.domains`) must list `data_sources`:
-each row has `name`, `kind` (public_dataset, experimental_measurement, observational_survey,
+New empirical papers (`venue_eligibility.empirical_real_data.domains`) list `data_sources`: each
+row has `name`, `kind` (public_dataset, experimental_measurement, observational_survey,
 clinical_or_cohort_registry, field_or_sensor_record, benchmark_with_real_samples; simulation,
-synthetic and derived_model_output are allowed only alongside real data), an HTTP(S) `source` or
-`doi`, `version` or `accessed_at`, and `license_or_access`. Also record `key_findings` (short
-reader-facing statements) so the monitoring dashboard can show them.
-
-`style-check` reports editorial-voice warnings (hedge density, repository vocabulary in the
-scientific body, stock generated phrasing, abstract length). Resolve them before review; with
-`quality_gate.editorial_voice.blocking: true` they become errors.
+synthetic and derived_model_output only alongside real data), an HTTP(S) `source` or `doi`,
+`version` or `accessed_at`, and `license_or_access`; plus short reader-facing `key_findings`.
 
 ## Editor-facing rewrite pass and cross-model review
 
@@ -202,354 +109,94 @@ User decision 2026-11-07 (blind experiment: rewriting the opening and closing he
 model; each model judge preferred its own model's text 4/5):
 
 - Before the unified review of a target checked on or after
-  `quality_gate.editorial_rewrite.required_from`, run
-  `paper-writing rewrite run <paper_id> [--apply]`. Every configured rewriter (GPT and Opus) rewrites
-  only the abstract, Introduction and closing section in a fresh empty process; judges of both
-  families rank the original and all candidates blind. A candidate is used only when it passes the
-  deterministic checks (no new citation keys, labels kept, references resolve, length within the
-  hard limit), no judge finds a major fidelity issue, and every judge ranks it above the original.
-  Every judge must additionally score naturalness, restraint, clarity and venue fit at least 7/10,
-  affirm `editorial_ready`, and report no located `editorial_blockers` for the complete manuscript
-  (candidate opening/closing plus unchanged body). Necessary scientific qualifications and truthful
-  disclosures must remain. A better ranking alone does not establish readiness. If no candidate
-  qualifies, keeping the original satisfies the gate only if it independently meets these same
-  absolute conditions and has no major fidelity issue; otherwise repair and rerun.
-  Approval binds all reachable TeX sources and bibliography files before application and at review
-  preflight. Any change, including body-only or bibliography changes, requires a fresh pass. The
-  latest failed run cannot fall back to an older success. Legacy records without explicit readiness
-  must be rerun for targets subject to this gate. Review the diff before committing.
-  Keyword-density checks remain diagnostic warnings: independent contextual assessment of the
-  complete manuscript is mandatory and blocking, not a word blacklist or an AI-detector score.
-- The review panel is two referees from different model families (`review.referee_roles`), and
-  `review.cross_model.required` blocks a panel in which every referee uses the drafting model
-  (`review.writer_model`, or a paper-level `writer_model`). Both referees must clear `ready`.
-- Never let the drafting model be the only judge of its own text in any ad-hoc comparison either.
+  `quality_gate.editorial_rewrite.required_from`, run `paper-writing rewrite run <paper_id>
+  [--apply]`. Each configured rewriter rewrites only the abstract, Introduction and closing
+  section in a fresh process; judges of both families rank the original and candidates blind.
+  A candidate is used only if it passes the deterministic checks (no new citation keys, labels
+  kept, references resolve, length within the hard limit), no judge finds a major fidelity
+  issue, and every judge ranks it above the original. Every judge must also score naturalness,
+  restraint, clarity and venue fit at least 7/10, affirm `editorial_ready`, and report no located
+  `editorial_blockers` for the complete manuscript. Keeping the original passes only if it meets
+  the same absolute conditions. Necessary qualifications and truthful disclosures stay.
+- Approval binds all reachable TeX and bibliography files; any later change needs a fresh pass,
+  and a failed latest run cannot fall back to an older success. Keyword densities are
+  diagnostics; the contextual judgment is blocking.
+- The panel is configured in `settings.yaml#review`; `review.cross_model.required` blocks a panel
+  in which every referee uses the drafting model. Both referees must clear `ready`. Never let
+  the drafting model be the only judge of its own text in an ad-hoc comparison either.
 
-## Route revisions before launching reviewers
+## AI-use disclosure
 
-Run `paper-writing review route --paper-id <paper_id>` under the resource guard before launching
-a scored reviewer. Follow `metadata_reuse`, `delta`, `full`, or `blocked` exactly. Incremental
-editorial review is enabled only by `quality_gate.incremental_review.enabled: true` with
-`scope: editorial_only`. Open the revision before editing to freeze a valid full-review baseline.
-It can be scientifically ready with remaining text-only requests, even when its release is not ready.
-The new fresh referee examines the complete cumulative diff, required issue list and affected
-context; it does not rescore unaffected science. See `openlabs-paper-review/SKILL.md` for the
-runner and validate/apply commands. Full baseline + all delta receipts are revalidated at release.
-Applied delta judgments consume the same total round budget; optional polishing does not block.
+Author default 2026-10-24: use the short tool/purpose template in the data repository's
+`registry/paper-declarations/templates.yaml` (selected by `default_ai_template_id`) unless the
+venue requires another format; heading "Declaration of generative AI and AI-assisted
+technologies in the manuscript preparation process". Fill it with the actual tool, evidenced
+model identifiers and purposes; never copy another paper's model list. The clause that authors
+reviewed and edited the output is a factual attestation: omit it when unsupported. Detailed
+provenance stays in private records.
 
-If a revision was opened from a current passing gate and is intended to change only author
-identity/contact/affiliation, an explicitly titled author-contribution/correspondence block, or
-release-envelope metadata, do not launch `$openlabs-paper-review`. Rebuild the canonical PDF,
-prepare any versioned support package, and first run:
+Register each use under `declarations.ai_use.model_usage` with `provider: openai-codex`, `tool:
+Codex` or `provider: anthropic`, `tool: Claude Code`, `model`, purpose, and `evidence: {path,
+sha256, json_pointer}` pointing to a bounded JSON runtime record under the data root. The
+checks compare identifiers with the statement and verify hash and pointer; an empty list,
+changed record or invented identifier blocks review. Papers before 2026-09-06 without
+structured metadata keep their legacy textual check; never rewrite an old model identity to a
+newer name. Model provenance does not attest that humans inspected or ran code; if human checks
+have not happened, say so and keep the blocker.
 
-```bash
-python -m paper_writing review reuse-metadata --paper-id <paper_id>
-```
+## Voice and readability
 
-Success means the old judgment and score were carried forward without an LLM call. Failure means
-the captured scientific/textual, registry, or support-source fingerprint changed (or no trustworthy
-baseline exists); only then follow the full review procedure below. Never classify the diff by
-inspection or rewrite a historical review hash.
+Apply `../openlabs-paper-readability/SKILL.md` for every domain: contribution, structure and
+argument before sentence polish, preserving meaning. The final manuscript is neutral and
+impersonal; revision negotiation, self-review responses and predictions about editorial
+interest stay in private revision records. Referees reconstruct problem, result, scope,
+literature difference and argument with locations (`openlabs-paper-review/references/`);
+substantial exposition problems are required changes, not minor revision. `style-check` is
+mechanical and does not assess readability, logic or novelty; with
+`quality_gate.editorial_voice.blocking: true` its voice warnings become errors.
 
-## Disclose the model actually used
+## style-check and support-check
 
-Author default, 2026-10-24: use the short journal tool/purpose template in the
-data repository's `registry/paper-declarations/templates.yaml`, selected by
-`default_ai_template_id`, for new manuscripts unless their venue requires another
-format. Its heading is "Declaration of generative AI and AI-assisted technologies
-in the manuscript preparation process". Fill the two sentences with the actual
-tool/service, evidenced model identifiers and actual purposes; do not copy the
-current JBI paper's model list or image service as facts for another paper.
-Keep detailed runtime and validation provenance in private records. Do not append
-long preparation or audit narratives merely to satisfy the legacy disclosure style.
-The short template's statement that authors reviewed and edited the output is a
-factual attestation, not mandatory boilerplate: omit that clause when it is not
-supported, retaining the actual tool, purposes and full author responsibility.
-This does not attest human scientific/code verification or waive independent
-review. A venue's Author declarations section may precede data availability and
-appendices; other scientific body sections must still precede the disclosure.
+`paper-writing style-check --paper-id <paper_id>` scans the compiled TeX tree and bibliography
+and rejects AI/tool narration outside the final declaration, orchestration and claim-routing
+terms, audit narration (including `audit`, `auditable`, `auditability`), internal paths and
+preparation chronology. A registered institutional name is allowed. A publisher-required image
+credit may appear in that image's caption through `artwork_disclosures` (hash-bound image and
+generation record, one occurrence). Lean work: disclose Lean-code preparation and attribute
+formal verification to the pinned toolchain.
 
-New AI-use declarations identify each tool actually used (OpenAI Codex or Anthropic Claude Code)
-and the exact model identifiers supported by the work's runtime records, not a globally preferred
-version. Register each use under `declarations.ai_use.model_usage` with `provider: openai-codex`,
-`tool: Codex` or `provider: anthropic`, `tool: Claude Code`, `model`, its actual purpose, and `evidence: {path, sha256, json_pointer}`. The evidence path is relative
-to the data root and points to a bounded JSON runtime record; the JSON pointer selects
-the model identifier. Keep this provenance in private metadata, not scientific prose.
+`paper-writing support-check --paper-id <paper_id>` checks formal TeX and standalone
+reproducibility/availability statements: the current Zenodo Version DOI is cited with current
+metadata and title; wording is version-stable with no draft/release history and no public-access
+claim for an unpublished draft; the licence resolves from the paper override, then
+`support_publication.default_license` (a standing human choice; surface real conflicts). It
+inspects the exact registered ZIP: source label, package version, packaged claim map/README and
+DOI agree; every printed path exists at its declared archive base; nested payloads carrying this
+paper's metadata match the current record; integrity prose matches the actual inventories.
+Counts of commands, checkers, tests or certificate groups come from the exact package. Every
+failure is projected into `unresolved_review_blockers`.
 
-The style and declaration checks compare registered identifiers with the statement and
-verify the evidence hash and selected JSON value. An empty new-use list, changed record,
-wrong model, or invented identifier blocks review. Multiple recorded models must all be
-disclosed with their actual purposes. Paper records predating 2026-09-06 without structured
-model-use metadata retain their legacy textual checks; new papers, deleted new-use fields,
-and explicit null usage cannot take this legacy route. Never rewrite an old model identity merely
-to use a newer model name. The scaffold does not guess a model or attest completed human
-verification; fill its empty model-use record from actual evidence before final review.
-These checks establish consistency with the identified local record, not cryptographic
-authentication of a provider or proof that an arbitrary local JSON file describes a real run.
-The preparer must select and inspect genuine runtime provenance; missing data-root access
-does not count as verified evidence.
+## Lean evidence
 
-Model provenance does not attest that authors inspected or executed code. All existing
-purpose, human-verification, accountability, single-final-declaration and publication
-requirements remain in force. If the human checks have not occurred, disclose honestly
-and retain the blocker rather than writing an untrue completion statement.
+When a Lean project is in scope, run one resource-capped audit per frozen snapshot before review
+and give the receipt to every reviewer; reviewers never rebuild Lean or mathlib. Choose the mode
+from the Lean-input delta (`settings.yaml#lean_audit_policy`): unchanged Lean sources, toolchain,
+Lake configuration and lock reuse the PASS receipt (`--reuse-pass-receipt` or
+`--reuse-build-report`) even if the manuscript, DOI or support archive changed; a local source
+change uses `--build-mode incremental` then the axiom audit; only toolchain, dependency,
+configuration or foundational-interface changes use `--build-mode full`. A diagnosed
+interruption may continue the same build with a hash-linked receipt; axiom validation runs at
+most once over the chain. Disclose whether validation was reused, incremental or full.
 
-## Scientific readability before review
+## Publication stays outside the gate
 
-Apply `skills/openlabs-paper-readability/SKILL.md` as a mandatory shared writing overlay
-for every domain, within the existing profile roles. Diagnose contribution, structure and
-argument before sentence polishing, then verify that edits preserve scientific meaning.
-Retain a private version-bound revision record. Do not feed the author's readability verdict
-or private checklist to a fresh full reviewer.
-
-The final manuscript must use neutral, objective, impersonal scientific prose. Repeated
-revision must not leave internal dialogue, revision negotiations, self-review responses,
-or predictions about reader interest and editorial acceptance in the abstract or scientific
-body. Describe the actual result and evidence; keep what changed in this revision and which
-review item it answers in private revision records or response letters. Apply the final-voice
-check in the shared readability skill to the entire current manuscript before freezing it,
-while preserving necessary scientific methods, reproducibility information and truthful
-disclosures. Both independent editorial screening and refereeing must require repair of
-located violations; a keyword scan alone cannot establish this condition.
-
-The configured referee must independently reconstruct the problem, principal result,
-scope, literature difference and argument from the manuscript, with locations, as specified
-in `openlabs-paper-review/references/rubrics.md`. Substantial exposition problems belong in
-`required_changes` and `unresolved_blockers`, with `text_ready: false`; a need for structural
-rewriting cannot qualify as journal `minor_revision` just because it needs no new experiments
-or theorems. This uses the existing readiness fields, panel and round budget. Keep the CAS
-Zone 1 gate and numeric threshold unchanged. A mechanical `style-check` pass does not assess
-readability, logic, novelty, or whether prose was AI-generated.
-
-## Produce a review record
-
-After drafting, first run
-`python -m paper_writing style-check --paper-id <paper_id>`. It scans the compiled TeX tree and its
-referenced bibliography metadata and must reject AI/tool narration outside the final AI-use
-declaration, agent/reviewer orchestration, private repository and claim-routing terminology,
-internal source/audit narration (including `audit`, `auditable`, and `auditability`), internal
-audit/campaign filenames or paths, bibliography workflow notes, and preparation chronology that
-does not belong in scientific prose. A registered institutional name is allowed.
-Publisher-required provenance for an explanatory image may additionally appear in its actual caption through `artwork_disclosures`. This is a source-bound image credit, not an exception for preparation narration in scientific prose. The checker verifies the exact image hash, a hash-bound generation record, tool/model identity (or an explicitly unreported image model), and one occurrence in that image's caption. It does not replace the consolidated final declaration; unregistered captions and ordinary body narration remain blocked.
-
-Exactly one final AI-use declaration is required. It must identify the actual tool and purposes.
-For the complete two-sentence journal template, state actual code-development or
-analysis-code-preparation assistance in the purpose field when relevant; the
-author-review/responsibility sentence remains in its recommended form. Detailed
-completed checking belongs in the private evidence and applicable scientific methods,
-not an automatically appended declaration paragraph. Manuscripts reporting Codex-assisted Lean work must disclose
-Lean-code preparation/checking while attributing formal verification to the pinned Lean toolchain
-rather than to AI output. The check is non-scoring, but every failure is projected into
-`unresolved_review_blockers`; neither score nor decision can override it. It does not authorize
-concealing truthful AI use or deleting a disclosure required by the target venue.
-
-Then run
-`python -m paper_writing support-check --paper-id <paper_id>`. It must scan both formal TeX and any
-standalone reader-facing reproducibility, support, or availability statement and confirm that the
-manuscript cites the current Zenodo Version DOI and metadata, that the support-record title
-identifies the paper's current title rather than a prior title, uses objective version-stable prose,
-contains no draft/release or old/new-version history, and does not claim public access for an
-unpublished draft.
-Resolve the support license from the paper-level override first and
-`registry/settings.yaml#support_publication.default_license` otherwise. A configured default is a
-standing human choice and may be applied without asking again. If third-party terms or the actual
-public file set conflict with that license, stop and surface the conflict instead of silently
-changing the license or excluding files.
-For a standalone reproducibility statement, a heading that names the paper must match the current
-registry title, and every declared claim identifier must occur in the canonical claim--evidence map
-or the current public `CLAIMS.yaml`. Replay-command, checker, suite, test, and certificate-group
-counts must be read from the exact current package; a finite certificate group must not be described
-as though it were every scientific claim in the manuscript.
-It must also inspect the exact registered ZIP: the current `public-support-vX.Y.Z` source label,
-outer package version, reader-facing packaged claim map/README, and Version DOI must agree, and
-those shipped reader documents must not narrate release or version history. Every printed path
-must exist at its declared outer or nested archive base; merely finding the same basename somewhere
-inside a nested ZIP does not validate a claim that it is at the outer archive root. Any nested
-payload carrying this paper's CFF, release manifest, or reader-facing README must use the same
-current paper title, version, Version DOI, and creators as the outer current record.
-Reader-facing integrity prose must also match the exact inventories: it may not claim that
-`SHA256SUMS` covers every member when it omits itself, or that a manifest and checksum file cover
-the same paths when they do not.
-The quality-gate recorder repeats this check and projects every failure into
-`unresolved_review_blockers`; neither score nor decision can override it.
-
-Then explicitly invoke `$openlabs-paper-review`. Read the panel contract from
-`registry/settings.yaml#quality_gate`. The default contract launches exactly one blank, ephemeral
-Codex reviewer and forms a validated one-member panel without changing that reviewer's judgments.
-Only when the registry explicitly selects the supported two-reviewer contract may the coordinator
-add a new non-persistent Claude Code process through Packy with model `claude-opus-5`. Claude then
-receives the same frozen scientific inputs but no author session, prior review, or reviewer-1
-content; aggregation takes the lower integer scores and less favorable simulated decisions.
-Deterministic code may verify provider identities, sources, hashes, and aggregation but must not
-originate a scientific judgment. If any provider required by the active contract is unavailable,
-leave the quality gate pending.
-
-The full paper registry contains the projected result of earlier panels and is therefore not safe
-review input. The coordinator reads it, but every reviewer receives/reads only an in-memory view
-with top-level `ara_llm_self_review`, `writing_release`, and `review_file` removed. Exposure to the
-unredacted projection invalidates that reviewer context; replace it rather than asserting
-`prior_reviews_hidden: true`.
-The same rule applies to historical review/preflight files stored under a paper workspace or
-manuscript directory. Reviewers inspect only the canonical PDF, its explicit transitive TeX/Bib
-source set, the claim map, redacted-registry evidence, and the exact current support artifact;
-recursive searches over the whole paper directory are forbidden. Accidental exposure invalidates
-that context even if it came from a filename the coordinator did not intend as review input.
-
-Under the default one-reviewer contract, the same isolation rules apply: launch one fresh ephemeral
-Codex process, never resume the writer or coordinator context, mark the reviewer and panel records
-with the required isolated-process provenance, and form the validated one-member panel. A
-same-context self-review is not a weaker kind of valid review; it is invalid for readiness. The
-direct `quality-gate` command cannot substitute for `paper-writing review apply` with a validated
-panel record.
-
-Formal-tool reconstruction is objective evidence preparation, not a score-bearing review. When a
-Lean project is in scope, use one repository resource-capped Lean audit workflow for the frozen
-snapshot before starting the panel. Bind the receipt to the manuscript snapshot, support-package
-hash, toolchain, manifest, configuration, and Lean sources; give the same receipt to every
-configured reviewer. Reviewers must not independently rebuild Lean or mathlib. The single audit is serialized and
-must stay within the repository CPU, memory, process-count, disk-headroom, and timeout maxima. A
-matching PASS receipt is reused; a resource-limit failure is investigated outside the panel rather
-than duplicated across reviewer contexts. A diagnosed interruption may continue the same
-incremental build with a hash-linked receipt; the formal validation command may execute at most
-once over the complete receipt chain.
-
-Choose Lean validation from the Lean-input delta. When every Lean source, toolchain, Lake
-configuration, and dependency-lock hash is unchanged, bind the new manuscript snapshot and current
-support-package hash to the earlier PASS receipt with `--reuse-pass-receipt`, or to an exact-input
-successful full-build report with `--reuse-build-report`; do not execute Lean. A support archive,
-DOI, filename, author-metadata, or manuscript change alone does not invalidate Lean evidence. For a
-local Lean-source change with unchanged toolchain, lock file, configuration, and foundational
-interfaces, use `--build-mode incremental` so Lake reuses valid earlier build products, then run the
-axiom audit. Use `--build-mode full` only for a large Lean change such as a toolchain, dependency,
-configuration, or broad foundational/interface change. Supply the resulting receipt to every
-configured reviewer and disclose whether validation was reused, incremental, or full.
-
-Route the registry domain exactly as follows:
-
-- `ai`, `cs`, and `se`: ARA `cs_top_tier`, judged numerically as a top-tier computer-science
-  conference submission such as NeurIPS, ICML, or ACL; record both `top_conference` and
-  `cas_zone_1_journal` opinions;
-- `math`: the shared four-leading-journal benchmark represented by *Annals of Mathematics*,
-  *Inventiones Mathematicae*, *Journal of the American Mathematical Society*, and
-  *Acta Mathematica*; use rubric ID `ara.paper-writing.math-four-journals.v1` and record
-  `four_top_math_journals` plus `cas_zone_1_journal` opinions, with no conference opinion.
-- `materials`: a leading selective materials-journal benchmark using rubric ID
-  `openlabs.paper-writing.materials-leading-journals.v1`, with `leading_materials_journals` plus
-  `cas_zone_1_journal` opinions;
-- `physics`: the explicit highest-tier original-physics set *Physical Review Letters*,
-  *Physical Review X*, and *Nature Physics*, using rubric ID
-  `openlabs.paper-writing.physics-explicit-highest-tier-venues.v1`; record a score and simulated
-  decision for every named venue inside `leading_physics_journals`, plus the independent
-  `cas_zone_1_journal` opinion;
-- `quant`: a leading quantitative-finance/financial-econometrics journal benchmark using rubric ID
-  `openlabs.paper-writing.quant-finance-leading-journals.v1`, with
-  `leading_quant_finance_journals` plus `cas_zone_1_journal` opinions.
-
-The CAS Zone 1 view uses the configured 2025 major-category baseline and a lower selectivity bar than the
-domain's high-standard view, while preserving correctness and evidence requirements. Unless a
-particular journal's 2025 CAS major-category classification has been verified, use a generic Zone 1 standard and
-do not claim that the named target is actually Zone 1. These are internal reviewer recommendations,
-not actual venue decisions.
-
-Write the configured number of immutable individual JSON records and one immutable panel result
-under the same `reviews/<review_run_id>/<paper_id>/` directory. Include at least:
-
-- `scores.clarity`, `scores.soundness`, `scores.significance`, `scores.novelty`, and
-  `scores.overall`, each an integer from 1 to 10; do not use decimals;
-- strengths, weaknesses, required changes, unresolved blockers, and role-specific recommendations;
-- the two views configured in `skills/profiles.yaml`, each with decision, confidence, and rationale;
-- `review_metadata.score_kind: ara_llm_self_review` and
-  `review_metadata.not_external_peer_review: true`, plus
-  `review_metadata.simulated_venue_decisions: true`;
-- the role-specific `review_metadata.rubric_id` required by the review schema;
-- model, reasoning effort, UTC review time, paper ID, canonical main-TeX SHA-256, and whether the
-  manuscript tree stayed unchanged during review.
-
-Use the panel's configured `scores.overall` as the gate score. Under the default contract it is the
-unchanged isolated Codex reviewer's value. Under the optional two-reviewer contract it is the lower
-of two independent holistic judgments. It is not an arithmetic escape hatch: an unsupported
-central claim, unresolved scientific/proof flaw, stale build, or unverified critical artifact must
-also receive a decision below the configured review threshold or remain blocked.
-
-Validate the completed panel with the helper shipped inside `$openlabs-paper-review`. It checks
-domain routing, integer score fields, role-specific recommendation schemas, immutable reviewer
-hashes, common manuscript snapshots, and the exact configured aggregation. For a two-reviewer panel
-it also checks the frozen-peer binding. It never judges the paper or alters a score.
-
-## Apply the deterministic threshold
-
-Read the actual venue type and completed revision count from the paper record, then apply the
-validated review panel. `review apply` invokes the deterministic gate with the panel's CAS Zone 1
-journal decision:
-
-```bash
-python -m paper_writing review apply \
-  --paper-id <paper_id> --review reviews/<run>/<paper_id>/review.json \
-  --venue-type <conference|journal> \
-  --revision-rounds <completed_rounds>
-```
-
-The command requires both conditions:
-
-- score greater than or equal to `quality_gate.minimum_score` (currently 5.0); and
-- `cas_zone_1_journal` decision equal to `minor_revision` or `accept`.
-
-A score below 5.0 therefore fails even when the decision label is high enough. The actual
-`--venue-type` remains registry metadata and does not change which review view supplies the gate
-decision. Treat the command's nonzero exit on a failed gate as the expected blocked/revision
-outcome, not as a tooling error.
-Do not round a review score before applying the gate. Historical decimal records remain readable,
-but all new `$openlabs-paper-review` records use integers.
-
-Any subsequent change to a claim, proof, number, citation, figure, table, abstract, conclusion, or
-other score-bearing text invalidates the old review for the new snapshot. The scope router may
-use an independent cumulative editorial delta for eligible citation, wording or layout changes;
-scientific changes and unknown scope still require full review. Never rewrite the old full review.
-A revision that changes only author identity/contact/affiliation commands or release-envelope
-metadata does not need an LLM re-review. Start it from the current ready gate with `paper
-start-revision`; after rebuilding the PDF and preparing any versioned support package, use the
-metadata-only routing command above. The command compares the captured scientific/textual
-fingerprint, review-significant registry
-metadata, and exact support-source fingerprint, then repeats deterministic support/style checks. It
-never changes a score. Unknown syntax or any substantive difference fails closed and requires a
-fresh isolated review. The immutable full manuscript/PDF and ZIP hashes remain version-specific for
-provenance. `zenodo prepare` invokes this same deterministic reuse automatically when a captured
-baseline is present. Formatting outside the narrow metadata allowlist needs an eligible independent
-delta or a full review; passing a syntactic classifier alone cannot establish semantic equivalence.
-
-`writing_release.status=ready` is necessary before handoff or consideration for submission. Under
-the repository's standing author-confirmation policy, the current manuscript and journal package
-must already be free of pending-confirmation language and require no further author editing. This
-is still an internal LLM quality gate, not scientific proof, external peer review, or an editorial
-decision. Scientific, evidence, ethics, authorship, and license blockers cannot be converted into
-administrative checklist items.
-
-## Keep publication outside the gate
-
-Before new supporting-material uploads, enforce the code-first package policy in
-`docs/ZENODO_GUIDE.md` and `support_publication.package_policy`. Preserve large generated
-evidence locally; ship its generators, parameters and instructions, with small summaries.
-External original data need stable source/version/access references. A missing unique
-input is not a removable intermediate. A smaller public inventory requires truthful
-availability wording and a newly bound reviewed package, not a scientific waiver.
-
-The quality-gate command itself must never upload files, create external records, or publish a
-Zenodo draft. If the paper cites a reserved support-material DOI, run `paper-writing zenodo prepare`
-and `paper-writing zenodo verify-draft` before the final review, add the DOI with neutral wording
-that remains true after publication, rebuild, and then score the resulting snapshot. Keep every
-draft, reservation, release, and prior-version fact in registry/receipt history rather than the
-formal manuscript. When a prepared
-support package exists, the gate records its SHA-256 alongside the manuscript snapshot.
-
-The passing gate establishes eligibility for support-material publication. The repository records
-standing production-release authorization, so run `paper-writing zenodo release` as a separate
-non-interactive step with the production and exact-paper confirmations and do not ask the authors
-again. The command independently revalidates the gate and the
-exact local/remote package hashes, and refuses to publish when the gate is stale, failing, or
-unbound from the package. Neither readiness nor support publication authorizes a submission,
-journal event, or article-publication claim, all of which remain the accountable human's decision.
-
-Do not put author-approval reminders, upload-day tasks, or unchecked internal checklists in the
-manuscript or `journal-submissions/` tree. If an external portal or law genuinely requires a later
-human action, record it only in `papers/<paper_id>/production/human_action_checklist.md`; keep that
-file outside the upload package.
+The gate never uploads files or publishes. Prepare the Zenodo draft before final review
+(`zenodo prepare`, `zenodo verify-draft`), cite the reserved DOI neutrally, rebuild, then review
+that snapshot; the gate records the support package hash. Uploads are code-first
+(`docs/ZENODO_GUIDE.md`, `support_publication.package_policy`): a missing unique input is not a
+removable intermediate. After a passing gate, `zenodo release` runs under the standing
+production authorization with its production and exact-paper confirmations and revalidates
+every binding. Readiness or support publication never authorizes a submission, journal event or
+publication claim. Author-approval reminders and internal checklists stay out of the manuscript
+and `journal-submissions/`; a genuinely required later human action goes only in
+`papers/<paper_id>/production/human_action_checklist.md`, outside the upload package.

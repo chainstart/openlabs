@@ -1,57 +1,24 @@
 ---
 name: openlabs-physics-paper
-description: Write or revise an evidence-bound OpenLabs physics manuscript from validated analytical, numerical, simulation, or public-data results, with explicit regimes and conventions, current literature positioning, reproducible claim support, deterministic style checks, independent leading-journal review, and controlled supporting-material release. Use for physics paper creation and revision after a research result has passed its domain evidence and paper-readiness gates.
+description: OpenLabs physics manuscript entry skill for validated analytical, numerical, simulation or public-data results. It applies the shared openlabs-paper-writing workflow plus the physics evidence boundary below.
 ---
 
 # OpenLabs physics paper
 
-Write the strongest manuscript the frozen evidence supports. Do not perform a fresh research
-campaign inside the writing task, inflate a partial result into an open-problem solution, or treat
-AI text as evidence.
+Follow the shared workflow in `../openlabs-paper-writing/SKILL.md`
+(`workflows/paper/skills/openlabs-paper-writing/SKILL.md` in the code repository). Identifiers
+and public file names: [paper-identifiers.md](../references/paper-identifiers.md). Venue,
+review and author policy: `registry/settings.yaml`. This file adds only what differs for physics.
 
-1. Read the paper registry record, frozen research result, independent readiness audit, and
-   [physics-evidence-boundary.md](references/physics-evidence-boundary.md). Also read the shared
-   `workflows/paper/skills/overlays/quality-gate.md` and, when needed, `docs/ZENODO_GUIDE.md`.
-   When creating a workspace or naming a reader-facing file, also read
-   [paper-identifiers.md](../references/paper-identifiers.md).
-2. Invoke `$scientific-writing` for manuscript structure, source verification, citation practice,
-   and LaTeX. Invoke `$statistical-analysis` only when the result contains empirical inference or
-   uncertainty estimates. `$peer-review` belongs to the independent reviewer, not the writer.
-3. Build the claim–evidence map before drafting. For every central statement record its exact
-   regime, assumptions, conventions, evidence type, immutable artifact, and limitation.
-4. Verify the closest-work boundary from current primary sources. Distinguish a new theorem,
-   computation, constraint, conjecture, no-go result, and reproduction explicitly.
-5. Make the source tree canonical and reproducible. Include equations, definitions, error controls,
-   limiting checks, data provenance, and enough method detail to reproduce every claimed result.
-6. Resolve the configured support lifecycle before review. Unless explicitly `not_required` with a
-   reason, prepare the Zenodo record, cite its Version DOI in the required manuscript locations,
-   and run `python -m paper_writing support-check`, `python -m paper_writing style-check`, the
-   LaTeX build, unresolved-marker checks, and any artifact replay before freezing the manuscript.
-7. Hand the immutable manuscript and declared evidence to `$openlabs-paper-review`. The writer may
-   answer a `text_revision` request but may not score or approve the manuscript.
+## Physics specifics
 
-After the basic manuscript is complete, select and verify a target journal as major-category Zone 1–2 for a first submission, Zone 1–3 after one journal rejection, or Zone 1–4 after two or more journal rejections in the 2025 Chinese Academy of Sciences Journal Ranking Table upgraded edition, with a
-publication route carrying no mandatory author fee. Optional paid open access is compatible only
-when a fee-free subscription route remains available. Record the 2025 year, `major_category` scope,
-category name, ranking source and check date, plus dated official fee-policy, scope, article-type,
-and formatting sources, and adapt the canonical manuscript rather than only a side candidate. JCR
-Q1, WOS/JCI quartiles, CAS subject-category partitions, and XinRui tiers are not substitutes for the
-2025 CAS major-category partition.
-
-Publication-level completion requires a current novelty audit, no unsupported central claim, and a
-fresh isolated review under the configured one- or two-reviewer contract for the latest
-score-bearing content. A later author/release-metadata-only edition may use the deterministic
-carry-forward procedure in the quality-gate overlay; it is not a new scientific review. The physics high-standard
-rubric separately simulates *Physical Review Letters*, *Physical Review X*, and *Nature Physics*;
-these explicit venues operationalize the exceptional selectivity comparison with the
-four-leading-mathematics-journal benchmark. A merely sound specialist result must not receive a
-top-tier score. Require conservative scores of at least soundness 8, novelty 7, significance 7,
-and overall 7, a positive CAS
-major-category Zone 1 view, and no scientific blocker. A named
-journal's classification and scope must be verified at review time; do not infer them from a stale
-list. After a passing gate, use the repository's standing authorization and run `paper-writing
-zenodo release` without asking the authors again, for the exact prepared, hash-bound support draft
-with the required production confirmations. Submission-facing files must contain no pending author
-confirmation or internal gate language; unavoidable human portal actions belong only in
-`production/human_action_checklist.md` outside the journal package. Internal readiness never authorizes submission, spending, authorship changes,
-journal events, or a publication fact.
+- Read [physics-evidence-boundary.md](references/physics-evidence-boundary.md). Components:
+  `scientific-writing`; `sympy` (the profile's domain component) only for explicit symbolic
+  checks; `peer-review` only as an assigned reviewer.
+- Write the strongest paper the frozen evidence supports; do not run a fresh research campaign
+  inside the writing task or present a partial result as an open-problem solution.
+- For every central statement record its regime, assumptions, conventions, evidence type,
+  artifact and limitation.
+- Say explicitly whether a result is a new theorem, computation, constraint, conjecture, no-go
+  result or reproduction, checked against current primary sources.
+- Include equations, definitions, error controls and limiting checks needed to reproduce it.

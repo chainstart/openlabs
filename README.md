@@ -24,8 +24,8 @@ OpenLabs 是一个面向个人使用、可恢复、可连续运行的轻量科�
 - matfactory 的材料协议、仿真、分析、队列、审计、隐藏有序/软模发现代码及小型冻结输入；
 - 两个材料接续状态：暂停的 LLZTO 长周期 campaign，以及 CPU 校准完成、仍受模型/新颖性
   门约束的隐藏有序/软模试点；旧 23 GiB 运行证据没有混入代码或 openlabs-data Git；
-- ara-paper-writing 当前工作树中的 45 篇论文、registry、reviews、确定性工作流和六套
-  OpenLabs 领域写作 Skill；
+- ara-paper-writing 当前工作树中的 45 篇论文、registry、reviews、确定性工作流和 OpenLabs
+  论文写作 Skill（现为一个通用写作 Skill 加六个领域入口）；
 - 旧 ARA 中经审计的文献/数据库查询 Skill，以及其 manifest、租约、bundle、阶段限制等
   思路的精简重写。旧 ARA 巨型固定流水线没有整体复制。
 

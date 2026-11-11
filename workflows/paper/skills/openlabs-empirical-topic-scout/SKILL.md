@@ -54,9 +54,10 @@ Each field is there because the gate needs it to decide:
 - `data_sources[]` — each with `doi` or `url`, `version`, `license`. These identify the topic in
   the ledger.
 - `computational_only: true` and `computational_only_rationale`.
-- `venues` — `routine`: two eligible routine venues (CAS 2025 major-category Zones 3-4 or CCF
-  B/C, fee-free route, team-ledger status checked); optional `escalation` with what result would
-  justify it. The routine pair is the fallback the campaign keeps.
+- `venues` — `routine`: two venues in the routine tiers of
+  `settings.yaml#journal_target_policy.venue_eligibility` (fee-free route, team-ledger status
+  checked); optional `escalation` with what result would justify it. The routine pair is the
+  fallback the campaign keeps.
 - `cost_estimate` — `agent_seconds`, `tokens`, `gpu_hours`, `calendar_days`, and `basis`: what
   the estimate rests on (a reusable pipeline, a comparable past campaign, a dry run). The gate
   weighs cost against the tier the result can reach; an expensive topic with an uncertain payoff
