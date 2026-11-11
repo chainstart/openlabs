@@ -27,7 +27,9 @@ quota and slots may stay empty.
    comes back only as a reopening (`reopens` + `reopen_basis`) that answers the recorded reopen
    condition. Re-proposing it unchanged is rejected as a duplicate.
 3. Check the asset index. A topic that reuses an existing pipeline, dataset loader or SOP is
-   cheaper and better tested; name what you reuse.
+   cheaper and better tested; name what you reuse. When the packet has `reusable_assets_summary`
+   (active assets ranked for this domain, one line each), put the `asset_id`s you rely on in
+   `reusable_assets[]`; an id that is unknown or archived makes the card invalid.
 4. Keep to work done entirely on a computer: existing public databases and datasets, applied or
    interdisciplinary questions. Nothing that needs a wet lab, field work, human subjects or
    other real-world interaction, because the program cannot carry it out.

@@ -1036,3 +1036,115 @@ def artifact_digests(payload: Mapping[str, Any]) -> dict[str, str]:
         if artifact_id and digest:
             result[artifact_id] = digest
     return result
+
+
+# ---------------------------------------------------------------- reusable assets
+
+TOOL_ASSET_KINDS = ("data_loader", "analysis", "figure", "pipeline")
+TEXT_ASSET_KINDS = ("lesson", "negative_result")
+ASSET_KINDS = TOOL_ASSET_KINDS + TEXT_ASSET_KINDS
+ASSET_TEXT_LIMITS = {"title": 120, "summary": 240, "entrypoint": 240, "usage": 400}
+ASSET_BODY_MAX_CHARS = 1_500
+
+
+def _short_text(value: Any, name: str, errors: list[str], *, required: bool = True) -> None:
+    text = _text(value)
+    if not text:
+        if required:
+            errors.append(f"{name} must be a non-empty string")
+        return
+    limit = ASSET_TEXT_LIMITS.get(name)
+    if limit and len(text) > limit:
+        errors.append(f"{name} is longer than {limit} characters")
+    if name in {"title", "summary"} and "\n" in text:
+        errors.append(f"{name} must be one line")
+
+
+def _string_list(value: Any, name: str, errors: list[str], *, required: bool) -> None:
+    if value is None and not required:
+        return
+    if not isinstance(value, list) or any(not _text(item) for item in value):
+        errors.append(f"{name} must be an array of non-empty strings")
+    elif required and not value:
+        errors.append(f"{name} must not be empty")
+
+
+def validate_asset_proposal(value: Any) -> ValidationResult:
+    """Structure of one ``asset_proposals[]`` entry of a topic retrospective.
+
+    Tool kinds (data_loader, analysis, figure, pipeline) need ``source_paths``,
+    ``entrypoint``, ``usage`` and a ``verification`` block naming the minimal
+    command that was run and its hash-bound receipt. ``lesson`` needs a short
+    ``body``; ``negative_result`` needs ``negative`` {question, attempted,
+    why_failed, retry_when[]}. Whether the files are where they claim to be is
+    checked at registration, not here.
+    """
+
+    if not isinstance(value, Mapping):
+        return ValidationResult(False, ("asset proposal must be an object",))
+    errors: list[str] = []
+    kind = _text(value.get("kind"))
+    if kind not in ASSET_KINDS:
+        errors.append(f"kind must be one of {list(ASSET_KINDS)}")
+    for name in ("title", "summary"):
+        _short_text(value.get(name), name, errors)
+    _string_list(value.get("domains"), "domains", errors, required=True)
+    for name in ("data_sources", "methods"):
+        _string_list(value.get(name), name, errors, required=False)
+    requirements = value.get("requirements")
+    if requirements is not None and not isinstance(requirements, (str, Mapping)):
+        errors.append("requirements must be a string or an object")
+    body = value.get("body")
+    if body is not None and (not isinstance(body, str) or len(body) > ASSET_BODY_MAX_CHARS):
+        errors.append(f"body must be a string of at most {ASSET_BODY_MAX_CHARS} characters")
+    if kind in TOOL_ASSET_KINDS:
+        _string_list(value.get("source_paths"), "source_paths", errors, required=True)
+        for name in ("entrypoint", "usage"):
+            _short_text(value.get(name), name, errors)
+        verification = value.get("verification")
+        if not isinstance(verification, Mapping):
+            errors.append("verification is required for a tool asset (command and receipt)")
+        else:
+            if not _text(verification.get("command")):
+                errors.append("verification.command must be a non-empty string")
+            receipt = verification.get("receipt")
+            if (
+                not isinstance(receipt, Mapping)
+                or not _text(receipt.get("path"))
+                or not SHA256.fullmatch(_text(receipt.get("sha256")))
+            ):
+                errors.append("verification.receipt needs a path and a sha256")
+    elif kind == "lesson":
+        if not _text(body):
+            errors.append("body is required for a lesson")
+    elif kind == "negative_result":
+        negative = value.get("negative")
+        if not isinstance(negative, Mapping):
+            errors.append("negative is required for a negative_result")
+        else:
+            for name in ("question", "attempted", "why_failed"):
+                text = _text(negative.get(name))
+                if not text:
+                    errors.append(f"negative.{name} must be a non-empty string")
+                elif len(text) > ASSET_BODY_MAX_CHARS:
+                    errors.append(f"negative.{name} is longer than {ASSET_BODY_MAX_CHARS}")
+            retry = negative.get("retry_when")
+            if not isinstance(retry, list) or not retry:
+                errors.append("negative.retry_when must name at least one condition")
+            else:
+                for index, item in enumerate(retry):
+                    if (
+                        not isinstance(item, Mapping)
+                        or _text(item.get("type")) not in REOPEN_BASIS_TYPES
+                        or not _text(item.get("description"))
+                    ):
+                        errors.append(
+                            f"negative.retry_when[{index}] needs a type "
+                            f"({', '.join(sorted(REOPEN_BASIS_TYPES))}) and a description"
+                        )
+    if kind in TEXT_ASSET_KINDS and value.get("source_paths"):
+        _string_list(value.get("source_paths"), "source_paths", errors, required=False)
+    supersedes = value.get("supersedes")
+    if supersedes is not None and not _text(supersedes):
+        errors.append("supersedes must be null or an asset_id")
+    return ValidationResult(not errors, tuple(errors))

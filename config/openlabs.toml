@@ -120,6 +120,30 @@ message = "{action}: {paper_id} v{version}"
 targeted_core_analysis = 1
 retarget_or_short_format = 2
 
+# Reusable-asset library (index at [program].asset_index_path). Both switches
+# off: packets, task specs and the tick are unchanged. Only acts while
+# [program].enabled is true. docs/operations.zh.md ("可复用资产库").
+[program.assets]
+# Ranked one-line asset summaries in scout/admission/direction/research inputs,
+# the admission check of a card's reusable_assets, assets_used/assets_broken
+# counting and the periodic archive.
+enabled = false
+# One light-tier topic_retrospective task per topic entering ready_queue or
+# frozen (topics that got there before the switch was turned on are skipped).
+retrospective_enabled = false
+# Asset bodies, relative to the data repository (archive in <root>/archive).
+root = "assets"
+summary_limit = 40
+summary_max_chars = 12000
+maintenance_interval_hours = 24
+# Tools never used this many days after registration are archived.
+unused_archive_days = 120
+max_lessons = 200
+# Consecutive assets_broken reports that archive an asset.
+broken_reports_to_archive = 2
+# Code-repository globs scanned by `python -m openlabs program assets seed`.
+seed_paths = ["labs/*/tools", "packages/research-core"]
+
 [budget]
 # Provider token-quota / rate-limit handling. Quota failures never consume
 # max_attempts; they back off the affected runner tier and halve agent

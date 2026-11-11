@@ -94,7 +94,10 @@ next action. Other admitted workers are independent processes; their existence i
 terminate.
 
 - Prefer a decisive test over producing more prose or files.
-- Reuse registered tools before creating a new implementation.
+- Reuse registered tools before creating a new implementation. A program research task may carry
+  a `reusable-asset-summary` read resource (and `reusable-asset:<id>` bodies the topic card named);
+  list what you used in the result's `assets_used[]` and anything that no longer works in
+  `assets_broken[]` (`{asset_id, reason}`).
 - Keep genuinely independent epistemic branches in separate tasks with frozen, non-conflicting
   inputs and outputs; ordinary substeps remain inside the current episode.
 - Give every branch a budget, expected artifact, kill condition, and merge rule.

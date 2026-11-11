@@ -10,7 +10,8 @@
     {"skill_id": "openlabs-paper-review", "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"},
     {"skill_id": "openlabs-empirical-topic-scout", "path": "../../workflows/paper/skills/openlabs-empirical-topic-scout/SKILL.md"},
     {"skill_id": "openlabs-topic-admission", "path": "../../workflows/paper/skills/openlabs-topic-admission/SKILL.md"},
-    {"skill_id": "openlabs-direction-decision", "path": "../../workflows/paper/skills/openlabs-direction-decision/SKILL.md"}
+    {"skill_id": "openlabs-direction-decision", "path": "../../workflows/paper/skills/openlabs-direction-decision/SKILL.md"},
+    {"skill_id": "openlabs-asset-retrospective", "path": "../../workflows/paper/skills/openlabs-asset-retrospective/SKILL.md"}
   ],
   "protocols": [{
     "protocol_id": "biomed-public-data-pilot",
