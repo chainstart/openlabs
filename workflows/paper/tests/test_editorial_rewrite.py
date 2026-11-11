@@ -224,7 +224,9 @@ def test_run_select_apply_and_preflight_gate(tmp_path):
     record = er.run_rewrite("p", root=root, runner=fake_runner({"judge_gpt": "GPT", "judge_opus": "OPUS"}))
     assert record["outcome"] == "candidate_selected"
     assert set(record["blind_keys"]["gpt"].values()) == {"original", "gpt", "opus"}
-    assert "Apply" in er.preflight_blockers(metadata, root, "p")[0]
+    # A completed pass satisfies preflight; an unapplied candidate is advice only.
+    assert er.preflight_blockers(metadata, root, "p") == []
+    assert any("not applied" in note for note in er.advisory(metadata, root, "p")["notes"])
     applied = er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
     man = root / "papers/p/manuscript"
     main, concl = (man / "main.tex").read_text(), (man / "concl.tex").read_text()
@@ -343,10 +345,12 @@ def test_full_sources_bound_before_apply_and_after_approval(tmp_path, filename):
     er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
     assert er.preflight_blockers(metadata, root, "p") == []
     path.write_text(old + "\nchanged\n")
-    assert "changed since" in er.preflight_blockers(metadata, root, "p")[0]
+    # Later source edits no longer force a rerun; they are reported with the review.
+    assert er.preflight_blockers(metadata, root, "p") == []
+    assert any("changed since" in note for note in er.advisory(metadata, root, "p")["notes"])
 
 
-def test_original_kept_requires_current_sources_and_latest_failed_run_blocks(tmp_path):
+def test_completed_pass_stays_valid_after_edits_and_later_technical_failures(tmp_path):
     root, metadata = required_root(tmp_path)
     record = er.run_rewrite("p", root=root, runner=fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"}))
     run = root / record["run_dir"]
@@ -354,14 +358,16 @@ def test_original_kept_requires_current_sources_and_latest_failed_run_blocks(tmp
     (run / "record.json").write_text(json.dumps(record))
     assert er.preflight_blockers(metadata, root, "p") == []
     (root / "papers/p/manuscript/refs.bib").write_text("changed")
-    assert er.preflight_blockers(metadata, root, "p")
+    assert er.preflight_blockers(metadata, root, "p") == []
     newer = run.parent / "99991231T235959Z"
     newer.mkdir()
     (newer / "record.json").write_text(json.dumps({"target": "J Widgets", "outcome": "rewrite_failed"}))
-    assert "has not passed" in er.preflight_blockers(metadata, root, "p")[0]
+    assert er.preflight_blockers(metadata, root, "p") == []
+    advice = er.advisory(metadata, root, "p")
+    assert advice["run_dir"] == record["run_dir"] and advice["blocking"] is False
 
 
-def test_failed_full_manuscript_assessment_cannot_satisfy_gate(tmp_path):
+def test_failed_full_manuscript_assessment_is_advisory(tmp_path):
     root, metadata = required_root(tmp_path)
     base_runner = fake_runner({"judge_gpt": "GPT", "judge_opus": "GPT"})
 
@@ -375,7 +381,11 @@ def test_failed_full_manuscript_assessment_cannot_satisfy_gate(tmp_path):
 
     record = er.run_rewrite("p", root=root, runner=runner)
     assert record["outcome"] == "editorial_failed"
-    assert er.preflight_blockers(metadata, root, "p")
+    # The judges' verdict is advice for the review, not a preflight blocker.
+    assert er.preflight_blockers(metadata, root, "p") == []
+    advice = er.advisory(metadata, root, "p")
+    assert advice["editorial_ready"] is False
+    assert any("repeated defensive qualifications" in note for note in advice["notes"])
     with pytest.raises(ValueError, match="No candidate"):
         er.apply_rewrite("p", root=root, run_dir=record["run_dir"])
 

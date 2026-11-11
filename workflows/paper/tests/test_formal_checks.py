@@ -295,25 +295,68 @@ def test_incomplete_or_false_evidence_never_passes(tmp_path, monkeypatch, mutati
         pass
 
 
-@pytest.mark.parametrize("mutation", ["evidence_body", "evidence_text", "output", "prompt", "receipt", "source_plan", "version", "policy", "report", "different_role"])
+@pytest.mark.parametrize("mutation", ["evidence_body", "evidence_text", "output", "prompt", "system", "receipt", "source_plan", "version", "policy", "report", "different_role"])
 def test_changed_accepted_inputs_refuse_at_release(tmp_path, monkeypatch, mutation):
     metadata, binding, result = run_fixture(tmp_path, monkeypatch)
     if mutation.startswith("evidence_"):
         source = result["sources"][0]
         (tmp_path / source[mutation.removeprefix("evidence_") + "_path"]).write_text("changed")
-    elif mutation in {"output", "prompt", "receipt"}:
-        (tmp_path / result["receipts"][0]["workdir"] / (mutation + (".txt" if mutation == "prompt" else ".json"))).write_text("changed")
+    elif mutation in {"output", "prompt", "system", "receipt"}:
+        suffix = ".txt" if mutation in {"prompt", "system"} else ".json"
+        (tmp_path / result["receipts"][0]["workdir"] / (mutation + suffix)).write_text("changed")
     elif mutation == "source_plan": metadata["formal_check"]["sources"][0]["url"] += "/changed"
     elif mutation == "version": metadata["version"] = "2.0"
     elif mutation == "different_role":
         assert formal.validate_binding(binding, metadata, tmp_path, dict(ROLE, model="another-model"))
         return
     else:
-        if mutation == "policy": result["policy"]["implementation_sha256"] = "0" * 64
+        if mutation == "policy": result["policy"]["policy_version"] = formal.POLICY_VERSION - 1
         elif mutation == "report": result["report"]["passages"][0]["coverage_rationale"] = "Forged aggregate"
         path = tmp_path / binding["path"]
         path.write_text(json.dumps(result)); binding["sha256"] = formal.sha(path.read_bytes())
     assert formal.validate_binding(binding, metadata, tmp_path, ROLE)
+
+
+def test_policy_is_an_explicit_version_not_file_hashes(monkeypatch, tmp_path):
+    current = formal.policy()
+    assert current == {"schema": formal.VERSION, "mandatory": True, "policy_version": formal.POLICY_VERSION}
+    # Implementation, launcher and prompt bytes no longer enter the policy.
+    changed_prompt = tmp_path / "formal.md"
+    changed_prompt.write_text("an edited prompt")
+    monkeypatch.setattr(formal, "PROMPT", changed_prompt)
+    assert formal.policy() == current
+    monkeypatch.setattr(formal, "POLICY_VERSION", formal.POLICY_VERSION + 1)
+    assert formal.policy() != current and not formal.policy_accepted(current)
+
+
+def test_legacy_file_hash_policy_is_accepted_only_until_the_version_is_bumped(monkeypatch):
+    legacy = {"schema": formal.VERSION, "mandatory": True, "implementation_sha256": "1" * 64,
+              "launcher_sha256": "2" * 64, "prompt_sha256": "3" * 64, "schema_sha256": "4" * 64}
+    assert formal.policy_accepted(legacy)
+    assert not formal.policy_accepted(dict(legacy, schema="openlabs.formal_check.v1"))
+    assert not formal.policy_accepted(dict(legacy, mandatory=False))
+    assert not formal.policy_accepted(dict(legacy, extra="x"))
+    monkeypatch.setattr(formal, "POLICY_VERSION", formal.POLICY_VERSION + 1)
+    assert not formal.policy_accepted(legacy)
+
+
+def test_prompt_file_edit_does_not_invalidate_a_passed_check(tmp_path, monkeypatch):
+    metadata, binding, _ = run_fixture(tmp_path, monkeypatch)
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
+    edited = tmp_path / "edited-formal.md"
+    edited.write_text(formal.PROMPT.read_text() + "\nA clarified instruction.\n")
+    monkeypatch.setattr(formal, "PROMPT", edited)
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
+
+
+def test_legacy_policy_report_still_validates(tmp_path, monkeypatch):
+    metadata, binding, result = run_fixture(tmp_path, monkeypatch)
+    result["policy"] = {"schema": formal.VERSION, "mandatory": True, "implementation_sha256": "1" * 64,
+                        "launcher_sha256": "2" * 64, "prompt_sha256": "3" * 64, "schema_sha256": "4" * 64}
+    path = tmp_path / binding["path"]
+    path.write_text(json.dumps(result)); binding["sha256"] = formal.sha(path.read_bytes())
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
+    assert formal.recorded_policy(binding, tmp_path) == result["policy"]
 
 
 def test_provider_outage_retained_and_blocks_without_primary(tmp_path, monkeypatch):

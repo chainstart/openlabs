@@ -39,12 +39,39 @@ def digest(value: Any) -> str:
     return sha(json.dumps(value, sort_keys=True, ensure_ascii=False).encode())
 
 
+# Explicit policy version of the mandatory reference/core verification. Increment
+# it by hand when a change must invalidate earlier passing checks (for example a
+# stricter verification rule). Ordinary code, launcher or prompt edits no longer
+# invalidate every passed manuscript, as the former file-hash policy did.
+POLICY_VERSION = 1
+# The file-hash policy used before POLICY_VERSION existed; such records are
+# treated as POLICY_VERSION 1 and expire when the version is incremented.
+_LEGACY_POLICY_KEYS = frozenset({"schema", "mandatory", "implementation_sha256", "launcher_sha256",
+                                 "prompt_sha256", "schema_sha256"})
+_LEGACY_EQUIVALENT_VERSION = 1
+
+
 def policy() -> dict[str, Any]:
-    # A changed implementation or prompt requires a fresh gate, even if an old
-    # decision happens to have the same manuscript/source hashes.
-    return {"schema": VERSION, "mandatory": True, "implementation_sha256": sha(Path(__file__).read_bytes()),
-            "launcher_sha256": sha(Path(__file__).with_name("review_launcher.py").read_bytes()),
-            "prompt_sha256": sha(PROMPT.read_bytes()), "schema_sha256": digest(REPORT_SCHEMA)}
+    return {"schema": VERSION, "mandatory": True, "policy_version": POLICY_VERSION}
+
+
+def policy_accepted(recorded: Any) -> bool:
+    """The current policy, or the legacy file-hash policy while it is still equivalent."""
+    if recorded == policy():
+        return True
+    return (POLICY_VERSION == _LEGACY_EQUIVALENT_VERSION and isinstance(recorded, Mapping)
+            and set(recorded) == _LEGACY_POLICY_KEYS and recorded.get("schema") == VERSION
+            and recorded.get("mandatory") is True)
+
+
+def recorded_policy(binding: Any, root: Path) -> dict[str, Any] | None:
+    """The policy stored in a bound formal report, without validating anything else."""
+    try:
+        result = json.loads(_safe_file(root, binding["path"]).read_text())
+        value = result["policy"]
+    except (KeyError, TypeError, ValueError, OSError):
+        return None
+    return dict(value) if isinstance(value, Mapping) else None
 
 
 def object_schema(fields: Mapping[str, Any]) -> dict[str, Any]:
@@ -1028,7 +1055,7 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
         result = json.loads(path.read_text())
         if result.get("paper_id") != metadata.get("paper_id") or result.get("manuscript_version") != str(metadata.get("version") or ""):
             raise ValueError("Formal-check paper/version identity mismatch")
-        if result["policy"] != policy() or result["valid"] is not True or result["blockers"]:
+        if not policy_accepted(result["policy"]) or result["valid"] is not True or result["blockers"]:
             raise ValueError("Formal-check policy changed or verification is incomplete")
         if expected_role is not None and result.get("role") != dict(expected_role):
             raise ValueError("Formal verification used a different configured role")
@@ -1066,8 +1093,7 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             if (receipt.get("independent_context") is not True or receipt.get("provider") != "openai-codex"
                     or receipt.get("model") != result["role"].get("model")
                     or receipt.get("model") not in receipt.get("runtime_reported_models", [])
-                    or receipt.get("schema_sha256") != sha(json.dumps(schema, sort_keys=True).encode())
-                    or receipt.get("system_prompt_sha256") != sha(PROMPT.read_bytes())):
+                    or receipt.get("schema_sha256") != sha(json.dumps(schema, sort_keys=True).encode())):
                 raise ValueError("Formal verification lacks matching independent actual-model receipts")
             for filename, expected in (("output.json", receipt["output_sha256"]),
                                        ("prompt.txt", receipt["prompt_sha256"]),
@@ -1077,7 +1103,11 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             actual_receipt = json.loads(_safe_file(root, workdir + "/receipt.json").read_text())
             if actual_receipt != receipt:
                 raise ValueError("Formal role receipt changed")
-            expected_prompt = PROMPT.read_text() + "\n\n" + batch_packet(group, batch, documents, result["inventory"], result["sources"], root=root, artifacts=result['artifact_inventory'])
+            # The stored system prompt is bound by its receipt hash above. It is
+            # not compared with today's prompt file: prompt edits are governed by
+            # POLICY_VERSION, while the manuscript batch must still match exactly.
+            system_text = _safe_file(root, workdir + "/system.txt").read_text()
+            expected_prompt = system_text + "\n\n" + batch_packet(group, batch, documents, result["inventory"], result["sources"], root=root, artifacts=result['artifact_inventory'])
             if _safe_file(root, workdir + "/prompt.txt").read_text() != expected_prompt:
                 raise ValueError("Formal role did not inspect the exact bound manuscript, batch and source evidence")
             output = json.loads(_safe_file(root, workdir + "/output.json").read_text())

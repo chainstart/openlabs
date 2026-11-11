@@ -19,6 +19,11 @@ order unknown to them.  A candidate replaces the original only when
 Keeping the original is a pass only when it also clears the absolute checks. Approvals
 bind every reachable TeX source and bibliography file, not just the three edited parts.
 
+Since the review-convergence change the pass runs once per target before the first
+unified review. Its selection and editorial floors are advice recorded with the review
+(``advisory``); they no longer block preflight, and later source edits do not force a
+rerun. Commands and run records are unchanged.
+
 and among the surviving candidates the lowest summed rank wins (self-preference is
 symmetric when both families judge), then fewer fidelity issues, then the higher mean
 overall score.  Nothing here edits the manuscript unless ``apply`` is called on a run
@@ -688,43 +693,74 @@ def apply_rewrite(paper_id: str, *, root: str | Path, run_dir: str | Path) -> di
     return applied
 
 
-def latest_record(root: Path, paper_id: str, target: str) -> dict[str, Any] | None:
+COMPLETED_OUTCOMES = ("candidate_selected", "original_kept", "editorial_failed")
+
+
+def latest_record(root: Path, paper_id: str, target: str, *,
+                  completed_only: bool = False) -> dict[str, Any] | None:
     base = runs_dir(root, paper_id)
     for path in sorted(base.glob("*/record.json"), reverse=True) if base.is_dir() else []:
         record = json.loads(path.read_text())
-        if record.get("target") == target:
+        if record.get("target") == target and (not completed_only or record.get("outcome") in COMPLETED_OUTCOMES):
             record["_applied"] = (path.parent / "applied.json").is_file()
             record["_run_dir"] = path.parent.relative_to(root).as_posix()
             return record
     return None
 
 
-def preflight_blockers(metadata: Mapping[str, Any], root: Path, paper_id: str) -> list[str]:
-    """Unified-review preflight: new targets need a finished rewrite pass for that target."""
+def _gate_applies(metadata: Mapping[str, Any], root: Path) -> tuple[bool, list[str]]:
     try:
         config = rewrite_config(root)
     except ValueError as exc:
-        return [f"Editorial rewrite configuration: {exc}"]
+        return False, [f"Editorial rewrite configuration: {exc}"]
     if not (config["enabled"] and config["required"]):
-        return []
+        return False, []
     checked = _target_checked(metadata)
     if config["required_from"] and (checked is None or checked < config["required_from"]):
-        return []
-    target = target_of(metadata)
-    record = latest_record(root, paper_id, target)
+        return False, []
+    return True, []
+
+
+def advisory(metadata: Mapping[str, Any], root: Path, paper_id: str) -> dict[str, Any] | None:
+    """The latest completed rewrite pass for the target, reported as advice only."""
+    record = latest_record(root, paper_id, target_of(metadata), completed_only=True)
     if record is None:
-        return [f"Run the editor-facing rewrite pass for {target} first (`paper-writing rewrite run {paper_id}`)"]
-    if record.get("outcome") not in {"candidate_selected", "original_kept"} or not (
-            record.get("selection") or {}).get("editorial_ready"):
-        return ["Editorial rewrite has not passed absolute, complete-manuscript presentation checks; rerun after repair"]
+        return None
+    selection = record.get("selection") or {}
+    notes = []
+    if not selection.get("editorial_ready"):
+        table = selection.get("table") or {}
+        problems = (table.get(selection.get("selected")) or {}).get("editorial_problems") or {}
+        notes.append("judges reported presentation problems: "
+                     + "; ".join(f"{judge}: {p}" for judge, rows in problems.items() for p in rows)[:2000]
+                     if problems else "the absolute editorial floors were not all met")
     if record["outcome"] == "candidate_selected" and not record["_applied"]:
-        return [f"Apply or supersede the selected rewrite in {record['_run_dir']} before the unified review"]
+        notes.append(f"the selected rewrite in {record['_run_dir']} was not applied")
     run = root / record["_run_dir"]
     expected = (json.loads((run / "applied.json").read_text()).get("files")
-                if record["outcome"] == "candidate_selected" else record.get("source_sha256"))
+                if record["outcome"] == "candidate_selected" and record["_applied"] else record.get("source_sha256"))
     manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
-    if not expected or manuscript_sources(manuscript) != expected:
-        return ["Manuscript sources changed since editorial approval; rerun the editor-facing rewrite pass"]
+    if expected and manuscript_sources(manuscript) != expected:
+        notes.append("manuscript sources changed since the pass; it is not rerun")
+    return {"run_dir": record["_run_dir"], "outcome": record["outcome"],
+            "editorial_ready": bool(selection.get("editorial_ready")), "notes": notes, "blocking": False}
+
+
+def preflight_blockers(metadata: Mapping[str, Any], root: Path, paper_id: str) -> list[str]:
+    """Unified-review preflight: run the rewrite pass once per target before the first review.
+
+    Its verdict is advice recorded with the review (see ``advisory``); editorial
+    floors, unapplied candidates and later source changes no longer block. Only a
+    missing completed pass and the verified venue abstract limits do.
+    """
+    applies, problems = _gate_applies(metadata, root)
+    if not applies:
+        return problems
+    target = target_of(metadata)
+    if latest_record(root, paper_id, target, completed_only=True) is None:
+        return [f"Run the editor-facing rewrite pass for {target} once before the unified review "
+                f"(`paper-writing rewrite run {paper_id}`); its result is advisory"]
+    manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
     try:
         return _abstract_problems(locate_parts(manuscript)["abstract"].body, metadata)
     except ValueError as exc:

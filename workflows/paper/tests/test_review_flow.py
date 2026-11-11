@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import os
@@ -104,17 +105,51 @@ def mock_formal_stage(monkeypatch):
     ("desk_reject", "presentation", "text_revision"),
     ("desk_reject", "scope", "retarget_required"),
     ("desk_reject", "readership", "retarget_required"),
-    ("desk_reject", "significance", "evidence_remediation"),
-    ("desk_reject", "incremental", "evidence_remediation"),
+    # Polishing cannot answer an insufficient advance: the orchestrator chooses a direction.
+    ("desk_reject", "significance", "direction_decision"),
+    ("desk_reject", "incremental", "direction_decision"),
+    ("desk_reject", "novelty_unclear", "evidence_remediation"),
 ])
 def test_editor_screen_stops_before_referees(decision, category, action):
     merged = flow.merge(editor(decision, category), {})
     assert merged["outcome"] == decision and merged["next_action"] == action
 
 
-def test_more_cautious_referee_prevails():
+def test_unsubstantiated_stricter_recommendation_does_not_prevail():
+    # The stricter referee listed no scientific blocker, evidence change or
+    # main-claim narrowing, so the more favourable recommendation is used.
     merged = flow.merge(editor(), {"referee_a": referee("accept"), "referee_b": referee("major_revision")})
+    assert merged["recommendation"] == "accept" and merged["outcome"] == "ready"
+    assert merged["referee_recommendations"] == {"referee_a": "accept", "referee_b": "major_revision"}
+
+
+def test_substantiated_stricter_recommendation_prevails():
+    evidence = flow.merge(editor(), {"referee_a": referee("accept"),
+                                     "referee_b": referee("major_revision", changes=[("add a baseline", "evidence")])})
+    assert evidence["recommendation"] == "major_revision" and evidence["outcome"] == "revision_required"
+    assert evidence["next_action"] == "evidence_remediation"
+    blocked = flow.merge(editor(), {"referee_a": referee("reject", blockers=["Lemma 2 is false"]),
+                                    "referee_b": referee("accept")})
+    assert blocked["recommendation"] == "reject" and blocked["outcome"] == "revision_required"
+
+
+def test_both_referees_strict_without_items_still_not_ready():
+    merged = flow.merge(editor(), {"referee_a": referee("major_revision"), "referee_b": referee("reject")})
     assert merged["recommendation"] == "major_revision" and merged["outcome"] == "revision_required"
+
+
+def test_significance_desk_reject_carries_direction_context():
+    screen = editor("desk_reject", "significance") | {
+        "strongest_desk_reject_reason": "Only a re-run of Smith (2024) on a new county sample.",
+        "closest_prior_work": [{"work": "Smith 2024", "source": "reference_list", "known_result": "Same estimator"}],
+        "advance_over_prior_work": "A new sample."}
+    merged = flow.merge(screen, {})
+    assert merged["next_action"] == "direction_decision"
+    context = merged["direction_context"]
+    assert context["strongest_desk_reject_reason"].startswith("Only a re-run")
+    assert context["closest_prior_work"][0]["work"] == "Smith 2024"
+    assert context["options"] == list(flow.DIRECTION_OPTIONS)
+    assert "direction_context" not in flow.merge(editor("desk_reject", "scope"), {})
 
 
 def test_editor_revision_requests_remain_mandatory_but_desk_suggestions_do_not():
@@ -125,24 +160,56 @@ def test_editor_revision_requests_remain_mandatory_but_desk_suggestions_do_not()
     assert flow.merge(rejected, {})["required_changes"] == []
 
 
-def test_previous_editor_revision_recovers_legacy_missing_mandatory_items(tmp_path):
+def test_previous_editor_presentation_requests_are_not_tracked(tmp_path):
+    # Editor presentation requests are text; they stay in the letter but are not
+    # forced mandatory items, and no response letter is needed for them alone.
     run = tmp_path / "reviews/unified/example/20260101T000000Z"
     run.mkdir(parents=True)
     (run / "manuscript-expanded.tex").write_text("old text")
     record = {"stage_reached": "decision", "target_journal": "Journal", "merged": {"required_changes": []},
+              "letter": "Please define X.",
               "editor_screen": {"decision": "revise_before_submission", "presentation_problems": ["Define X."]}}
     (run / "decision.json").write_text(json.dumps(record))
     previous = flow._previous_round(tmp_path, "example", "Journal", "new text", "X is now defined.")
-    assert previous["items"] == ["[text] Define X. (Editor screen: manuscript presentation)"]
-    record["editor_screen"]["decision"] = "desk_reject"
+    assert previous["items"] == [] and previous["letter"] == "Please define X."
+    assert flow._previous_round(tmp_path, "example", "Journal", "new text", None)["items"] == []
+
+
+def test_only_scientific_and_evidence_items_enter_next_round_tracking(tmp_path):
+    run = tmp_path / "reviews/unified/example/20260101T000000Z"
+    run.mkdir(parents=True)
+    (run / "manuscript-expanded.tex").write_text("old text")
+    changes = [{"type": "text", "change": "Fix the abstract tense", "location": "Abstract"},
+               {"type": "evidence", "change": "Add a placebo test", "location": "Sec. 4", "main_claim": False},
+               {"type": "claim_narrowing", "change": "Limit Fig. 3 wording", "location": "Sec. 5", "main_claim": False},
+               {"type": "claim_narrowing", "change": "Narrow the headline effect", "location": "Abstract", "main_claim": True}]
+    record = {"stage_reached": "decision", "target_journal": "Journal",
+              "merged": {"scientific_blockers": ["Identification fails without the placebo"],
+                         "required_changes": changes,
+                         "unresolved_previous_items": [{"item": "[text] Old wording", "resolved": False},
+                                                       {"item": "[evidence] Old robustness", "resolved": False}]},
+              "editor_screen": {"decision": "send_to_review"}}
     (run / "decision.json").write_text(json.dumps(record))
-    assert flow._previous_round(tmp_path, "example", "Journal", "new text", "response")["items"] == []
+    items = flow._previous_round(tmp_path, "example", "Journal", "new", "response")["items"]
+    assert items == ["Identification fails without the placebo",
+                     "[evidence] Add a placebo test (Sec. 4)",
+                     "[claim_narrowing] Narrow the headline effect (Abstract)"]
+    policy_items = flow.previous_tracked_items(record | {"merged": record["merged"]}, history_policy={})
+    assert "[evidence] Old robustness" in policy_items and "[text] Old wording" not in policy_items
+    with pytest.raises(ValueError, match="response letter"):
+        flow._previous_round(tmp_path, "example", "Journal", "new", None)
+    # The referee schema then constrains previous_items to exactly these items.
+    schema = flow.referee_schema_for_previous({"items": items})["properties"]["previous_items"]
+    assert schema["items"]["properties"]["item"]["enum"] == items
 
 
 def test_ready_only_with_text_changes_and_no_blockers():
     ready = flow.merge(editor(), {"referee_a": referee("accept"),
                                   "referee_b": referee("minor_revision", changes=[("typo", "text")])})
     assert ready["outcome"] == "ready" and ready["next_action"] is None
+    assert ready["required_changes"] == [{"change": "typo", "type": "text", "location": "S1",
+                                          "referee": "referee_b", "advisory": True}]
+    # A claim_narrowing without the main_claim field (older reports) still blocks.
     narrowing = flow.merge(editor(), {"referee_a": referee("accept"),
                                       "referee_b": referee("minor_revision", changes=[("weaken", "claim_narrowing")])})
     assert narrowing["outcome"] == "revision_required" and narrowing["next_action"] == "text_revision"
@@ -150,6 +217,31 @@ def test_ready_only_with_text_changes_and_no_blockers():
                                     "referee_b": referee("accept")})
     assert blocked["outcome"] == "revision_required" and blocked["next_action"] == "evidence_remediation"
     assert blocked["scientific_blockers"] == ["gap in Lemma 2"]
+
+
+def test_text_only_requests_from_a_major_revision_referee_are_advisory():
+    # Even a referee asking for many text changes cannot hold back a sound paper
+    # when the other referee accepts and nobody reports a substantive item.
+    text = [("tighten the introduction", "text"), ("abstract tense", "text")]
+    merged = flow.merge(editor(), {"referee_a": referee("accept"),
+                                   "referee_b": referee("major_revision", changes=text)})
+    assert merged["outcome"] == "ready" and all(c["advisory"] for c in merged["required_changes"])
+
+
+@pytest.mark.parametrize("main_claim,ready", [(False, True), (True, False)])
+def test_claim_narrowing_blocks_only_for_main_claims(main_claim, ready):
+    report = referee("minor_revision")
+    report["required_changes"] = [{"change": "soften", "type": "claim_narrowing", "location": "Sec. 5",
+                                   "main_claim": main_claim}]
+    merged = flow.merge(editor(), {"referee_a": referee("accept"), "referee_b": report})
+    assert (merged["outcome"] == "ready") is ready
+    assert merged["required_changes"][0]["advisory"] is ready
+
+
+def test_unresolved_previous_text_item_from_older_records_is_advisory():
+    item = {"item": "[text] Fix the abstract tense (Abstract)", "resolved": False, "evidence": "still past tense"}
+    merged = flow.merge(editor(), {"referee_a": referee("accept", previous=[item]), "referee_b": referee("accept")})
+    assert merged["outcome"] == "ready" and merged["unresolved_previous_items"][0]["advisory"] is True
 
 
 def test_unresolved_previous_item_blocks_ready():
@@ -850,3 +942,231 @@ def test_preflight_records_selected_map_failure_before_roles(tmp_path, monkeypat
     # bibliography that the mandatory reference verifier receives.
     assert 'mainref' in pre['bibliography']
     assert 'siref' in pre['bibliography']
+
+
+# --------------------------------------------------------------------------- convergence changes
+
+def scored(significance, novelty, rec="minor_revision", changes=()):
+    report = referee(rec, changes=changes)
+    report["scores"] = {"overall": 6, "clarity": 6, "soundness": 6,
+                        "significance": significance, "novelty": novelty}
+    return report
+
+
+def refereed_round(significance, novelty):
+    return {"referee_reports": {"referee_a": scored(significance, novelty),
+                                "referee_b": scored(significance, novelty)}}
+
+
+def test_stalled_flag_when_significance_and_novelty_do_not_rise():
+    rounds = [refereed_round(5, 5), refereed_round(5, 4)]
+    referees = {"referee_a": scored(5, 4), "referee_b": scored(4, 4)}
+    merged = flow.merge(editor(), referees)
+    signal = flow.stalled_signal(rounds, referees, merged)
+    assert signal["stalled"] is True
+    # Only a flag: the readiness decision is unchanged.
+    assert merged["outcome"] == "ready"
+
+
+@pytest.mark.parametrize("case", ["rising_novelty", "evidence_requested", "too_few_rounds", "desk_round"])
+def test_stalled_flag_is_not_set(case):
+    rounds = [refereed_round(5, 5), refereed_round(5, 5)]
+    referees = {"referee_a": scored(5, 5), "referee_b": scored(5, 5)}
+    if case == "rising_novelty":
+        referees = {"referee_a": scored(5, 6), "referee_b": scored(5, 6)}
+    elif case == "evidence_requested":
+        referees["referee_b"] = scored(5, 5, "major_revision", changes=[("add an ablation", "evidence")])
+    elif case == "too_few_rounds":
+        rounds = rounds[:1]
+    elif case == "desk_round":
+        referees = {}
+    merged = flow.merge(editor(), referees) if referees else flow.merge(editor("desk_reject", "scope"), {})
+    assert flow.stalled_signal(rounds, referees, merged)["stalled"] is False
+
+
+def test_rounds_without_referees_do_not_count_toward_stall_window():
+    rounds = [refereed_round(5, 5), {"editor_screen": {"decision": "desk_reject"}}, refereed_round(5, 5)]
+    referees = {"referee_a": scored(5, 5), "referee_b": scored(5, 5)}
+    assert flow.stalled_signal(rounds, referees, flow.merge(editor(), referees))["stalled"] is True
+
+
+def test_review_policy_hash_ignores_code_and_prompt_files(tmp_path, monkeypatch):
+    config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
+              'rejection_clearance_required': True}
+    before = flow.review_policy_sha256(config)
+    edited = tmp_path / "formal.md"
+    edited.write_text("edited prompt")
+    monkeypatch.setattr(flow.formal_checks, "PROMPT", edited)
+    assert flow.review_policy_sha256(config) == before
+    monkeypatch.setattr(flow.formal_checks, "POLICY_VERSION", flow.formal_checks.POLICY_VERSION + 1)
+    assert flow.review_policy_sha256(config) != before
+
+
+def test_legacy_review_policy_record_still_matches(tmp_path, monkeypatch):
+    config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
+              'rejection_clearance_required': True}
+    legacy = {"schema": flow.formal_checks.VERSION, "mandatory": True, "implementation_sha256": "1" * 64,
+              "launcher_sha256": "2" * 64, "prompt_sha256": "3" * 64, "schema_sha256": "4" * 64}
+    (tmp_path / "report.json").write_text(json.dumps({"policy": legacy}))
+    record = {"review_policy_sha256": flow.review_policy_sha256(config, formal_policy=legacy),
+              "formal_check": {"path": "report.json"}}
+    assert flow.review_policy_matches(record, config, tmp_path)
+    changed = dict(config, referee_roles=['referee_a'])
+    assert not flow.review_policy_matches(record, changed, tmp_path)
+    monkeypatch.setattr(flow.formal_checks, "POLICY_VERSION", flow.formal_checks.POLICY_VERSION + 1)
+    assert not flow.review_policy_matches(record, config, tmp_path)
+
+
+MANUSCRIPT = r"""\documentclass{article}
+\newcommand{\effect}{0.42}
+\begin{document}
+\title{County water prices}
+\begin{abstract}Prices fell by \effect{} after reform.\end{abstract}
+\section{Introduction}
+We study water prices.
+\section{Data and methods}
+We use 120 counties. The estimator follows a standard design.
+\begin{figure}\includegraphics[width=0.8\textwidth]{fig1.png}\caption{Prices over time.}\end{figure}
+\section{Results}
+The effect is \effect{}.
+\begin{table}\begin{tabular}{cc}a & 1.5\\\end{tabular}\end{table}
+\section{Conclusion}
+Prices fell.
+\end{document}
+"""
+
+
+@pytest.mark.parametrize("edit,unchanged", [
+    (("The estimator follows a standard design.", "The estimator follows the standard two-way design."), True),
+    (("width=0.8", "width=0.6"), True),
+    (("Prices over time.}", "Prices over time.}% checked 2026-11-11, 3 panels"), True),
+    (("\\newcommand{\\effect}{0.42}", "\\newcommand{\\effect}{0.40}"), False),
+    (("We use 120 counties.", "We use 118 counties."), False),
+    (("We use 120 counties.", "We use 120 in total."), True),
+    (("We use 120 counties.", "We use 118 in total."), False),
+    (("a & 1.5", "a & 1.6"), False),
+    (("Prices fell.\n\\end", "Prices fell sharply.\n\\end"), False),
+    (("We study water prices.", "We study water prices in arid regions."), False),
+    (("County water prices", "Urban water prices"), False),
+])
+def test_substantive_delta_rule(edit, unchanged):
+    old, new = edit
+    assert old in MANUSCRIPT
+    result = flow.substantive_delta(MANUSCRIPT, MANUSCRIPT.replace(old, new))
+    assert result["substantive_unchanged"] is unchanged, result["reasons"]
+    if unchanged and old != new:
+        assert result["summary"]["lines_added"] >= 1
+
+
+def test_substantive_delta_rejects_large_rewrites():
+    filler = "".join(f"Method sentence {chr(97 + i % 26)}.\n" for i in range(10))
+    old = MANUSCRIPT.replace("We use 120 counties.", "We use 120 counties.\n" + filler)
+    new = old.replace(filler, filler.replace("Method sentence", "Method clause"))
+    result = flow.substantive_delta(old, new)
+    assert not result["substantive_unchanged"] and "lines changed" in result["reasons"][-1]
+
+
+def _delta_fixture(tmp_path, monkeypatch, expanded):
+    mock_formal_stage(monkeypatch)
+    config = {'process': flow.PROCESS, 'roles': {'editor': {'provider': 'openai-codex'},
+              'referee_a': {'provider': 'anthropic', 'model': 'opus'},
+              'referee_b': {'provider': 'openai-codex', 'model': 'gpt'}},
+              'referee_roles': ['referee_a', 'referee_b'], 'rejection_clearance_required': True,
+              'timeout_seconds': 1, 'max_rounds_per_target': 10}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    base = tmp_path / "reviews/unified/p/20200101T000000Z"
+    base.mkdir(parents=True)
+    (base / "manuscript-expanded.tex").write_text(MANUSCRIPT)
+    record = {"stage_reached": "decision", "target_journal": "J", "run_id": "20200101T000000Z",
+              "review_policy_sha256": flow.review_policy_sha256(config), "review_track": {"track": "routine"},
+              "editor_screen": editor() | {"prior_rejections_addressed": []},
+              "referee_reports": {"referee_a": referee("accept"), "referee_b": referee("minor_revision")},
+              "merged": {"outcome": "ready", "scientific_blockers": [], "required_changes": []},
+              "prior_decisions": [], "letter": "Accepted with minor wording suggestions.",
+              "receipts": {"editor": {"model": "gpt"}}}
+    (base / "decision.json").write_text(json.dumps(record))
+    pre = {'metadata': {'version': '1.0', 'target_journal': 'J'}, 'target': 'J', 'blockers': [],
+           'fingerprints': {}, 'expanded': expanded, 'bibliography': ''}
+    monkeypatch.setattr(flow, 'preflight', lambda *args: pre)
+    monkeypatch.setattr(flow, 'prior_decisions', lambda *args: [])
+    calls = []
+
+    def role(**kw):
+        calls.append(kw['role_name'])
+        if kw['role_name'] == 'editor':
+            return editor() | {'prior_rejections_addressed': []}, {}
+        if kw['role_name'] == 'decision_letter':
+            return {'letter': 'fresh letter'}, {}
+        return referee('accept'), {}
+    monkeypatch.setattr(flow, 'run_role', role)
+    return calls
+
+
+def test_text_only_change_after_ready_reuses_the_review(tmp_path, monkeypatch):
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace(
+        "The estimator follows a standard design.", "The estimator follows the standard two-way design."))
+    formal_runs = []
+    monkeypatch.setattr(flow.formal_checks, 'run_checks', lambda *args: formal_runs.append(1) or {'valid': True, 'blockers': []})
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert calls == []  # no editor, referee or letter model was started
+    assert formal_runs == [1]  # the mandatory reference/core verification still reran
+    assert record["review_mode"] == "delta" and record["merged"]["outcome"] == "ready"
+    assert record["consumes_scientific_round"] is False
+    assert record["delta_review"]["basis_run_id"] == "20200101T000000Z"
+    assert record["delta_review"]["summary"]["sections_touched"] == ["Data and methods"]
+    assert record["letter"] == "Accepted with minor wording suggestions."
+
+
+def test_numeric_change_after_ready_requires_full_review(tmp_path, monkeypatch):
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace("120 counties", "118 counties"))
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert 'editor' in calls and 'referee_a' in calls and 'referee_b' in calls
+    assert record.get("review_mode") != "delta"
+    assert any("numbers changed" in r for r in record["delta_review_refused"]["reasons"])
+    assert record["merged"]["outcome"] == "ready" and record["merged"]["stalled"] is False
+
+
+def test_policy_change_after_ready_requires_full_review(tmp_path, monkeypatch):
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace("width=0.8", "width=0.6"))
+    monkeypatch.setattr(flow.formal_checks, "POLICY_VERSION", flow.formal_checks.POLICY_VERSION + 1)
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert 'referee_a' in calls
+    assert "review policy changed since the ready review" in record["delta_review_refused"]["reasons"]
+
+
+def _apply_fixture(tmp_path, monkeypatch):
+    from paper_writing import operations
+    mock_formal_stage(monkeypatch)
+    meta = {'paper_id': 'p', 'version': '1.0', 'target_journal': 'J'}
+    written = []
+    monkeypatch.setattr(flow, 'load_paper_metadata', lambda *args: meta)
+    monkeypatch.setattr(flow, 'write_paper_metadata', lambda pid, value, root: written.append(copy.deepcopy(value)))
+    monkeypatch.setattr(operations, '_review_workspace_fingerprints', lambda *args: {})
+    return meta, written
+
+
+def test_direction_decision_is_applied_as_a_machine_readable_block(tmp_path, monkeypatch):
+    meta, written = _apply_fixture(tmp_path, monkeypatch)
+    config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
+              'rejection_clearance_required': True, 'max_rounds_per_target': 10, 'previous_panels': []}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    screen = editor("desk_reject", "incremental") | {"strongest_desk_reject_reason": "Same as Lee 2023.",
+                                                     "closest_prior_work": []}
+    record = {"paper_id": "p", "target_journal": "J", "manuscript_version": "1.0", "finished_at": "2026-11-11T00:00:00Z",
+              "round_for_target": 1, "review_policy_sha256": flow.review_policy_sha256(config),
+              "prior_decisions": [], "editor_screen": screen, "referee_reports": {},
+              "merged": flow.merge(screen, {}), "fingerprints": {}}
+    path = tmp_path / "decision.json"; path.write_text(json.dumps(record))
+    release = flow.apply_decision('p', root=tmp_path, decision_path=path, digest=flow._sha256(path.read_bytes()))
+    assert release["status"] == "blocked" and release["next_action"] == "direction_decision"
+    assert release["direction_context"]["strongest_desk_reject_reason"] == "Same as Lee 2023."
+
+
+def test_delta_review_record_passes_apply_revalidation(tmp_path, monkeypatch):
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace("width=0.8", "width=0.6"))
+    meta, written = _apply_fixture(tmp_path, monkeypatch)
+    record = flow.run_review('p', root=tmp_path, apply=True)
+    assert calls == [] and record["review_mode"] == "delta"
+    release = written[-1]["writing_release"]
+    assert release["status"] == "ready" and release["review_mode"] == "delta"
+    assert release["delta_basis_run_id"] == "20200101T000000Z"

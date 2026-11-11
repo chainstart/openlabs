@@ -592,6 +592,10 @@ def main(argv: list[str] | None = None) -> int:
         summary["next_action"] = result["merged"].get("next_action")
         summary["editor_decision"] = (result.get("editor_screen") or {}).get("decision")
         summary["recommendation"] = result["merged"].get("recommendation")
+        summary["review_mode"] = result.get("review_mode", "full")
+        summary["stalled"] = bool(result["merged"].get("stalled"))
+        if result["merged"].get("direction_context"):
+            summary["direction_context"] = result["merged"]["direction_context"]
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
     if args.command == "review" and args.review_command == "calibration":
