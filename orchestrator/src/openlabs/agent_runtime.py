@@ -1,8 +1,10 @@
-"""Prepare the small, trusted Codex runtime surface for one private attempt.
+"""Prepare the small, trusted agent runtime surface for one private attempt.
 
 The research agent owns scientific analysis and decisions.  This module only
 exposes selected Skills and installs lifecycle hooks that restate the transaction
-boundary and validate the result envelope before Codex stops.
+boundary and validate the result envelope before the agent stops.  The same
+Skills, context and Stop gate are generated for Codex (``.agents``/``.codex``)
+and Claude Code (``.claude``); the lab runner picks the one its adapter reads.
 """
 
 from __future__ import annotations
@@ -19,6 +21,13 @@ from typing import Any
 from .contracts import RESULT_SCHEMA, atomic_write_json
 
 RUNTIME_POLICY_SCHEMA = "openlabs.codex_runtime.v1"
+# Agent CLIs whose attempts run behind the generated result-gate hooks.  The
+# engine requires a passing Stop receipt from every one of them.
+HOOK_GATED_ADAPTERS = frozenset({"codex", "claude"})
+# Claude Code reads hooks from a settings file passed with ``--settings``; the
+# file lives in the attempt-private ``.claude`` runtime directory so the
+# operator's user-level settings are never modified.
+CLAUDE_SETTINGS_NAME = "openlabs-settings.json"
 _SKILL_NAME = re.compile(r"^name:\s*([^\s]+)\s*$", re.MULTILINE)
 
 
@@ -68,13 +77,17 @@ def configure_codex_runtime(
 
     agents_root = workspace / ".agents"
     codex_root = workspace / ".codex"
+    claude_root = workspace / ".claude"
     _replace_runtime_directory(agents_root)
     _replace_runtime_directory(codex_root)
+    _replace_runtime_directory(claude_root)
     skills_root = agents_root / "skills"
     optional_root = agents_root / "optional-methods"
+    claude_skills_root = claude_root / "skills"
     skills_root.mkdir(parents=True)
     optional_root.mkdir(parents=True)
     codex_root.mkdir(parents=True)
+    claude_skills_root.mkdir(parents=True)
 
     active_sources = tuple(raw_path.expanduser().resolve() for raw_path in skill_dirs)
     active_source_set = set(active_sources)
@@ -90,6 +103,8 @@ def configure_codex_runtime(
             raise ValueError(f"Conflicting Skill name {name!r}: {prior} and {skill_dir}")
         if prior is None:
             (skills_root / name).symlink_to(skill_dir, target_is_directory=True)
+            # Claude Code discovers project Skills under ``.claude/skills``.
+            (claude_skills_root / name).symlink_to(skill_dir, target_is_directory=True)
             installed[name] = str(skill_dir)
         if name not in active_names:
             active_names.append(name)
@@ -151,6 +166,7 @@ def configure_codex_runtime(
         "skills": skill_invocations,
         "optional_methods": optional_methods,
         "skill_source_root": str(skills_root),
+        "claude_skill_source_root": str(claude_skills_root),
         "hook_receipt_path": str(hook_receipt_path),
     }
     context_path = atomic_write_json(codex_root / "openlabs-context.json", context)
@@ -170,18 +186,21 @@ def configure_codex_runtime(
         str(context_path),
     ]
 
-    def command(event: str) -> str:
-        return shlex.join(event if item == "{event}" else item for item in hook_command)
+    def command(event: str, adapter: str = "codex") -> str:
+        argv = [event if item == "{event}" else item for item in hook_command]
+        if adapter != "codex":
+            argv.extend(["--adapter", adapter])
+        return shlex.join(argv)
 
-    hooks = {
-        "hooks": {
+    def lifecycle_hooks(adapter: str) -> dict[str, Any]:
+        return {
             "SessionStart": [
                 {
                     "matcher": "startup|resume|clear|compact",
                     "hooks": [
                         {
                             "type": "command",
-                            "command": command("session-start"),
+                            "command": command("session-start", adapter),
                             "timeout": 10,
                         }
                     ],
@@ -192,19 +211,27 @@ def configure_codex_runtime(
                     "hooks": [
                         {
                             "type": "command",
-                            "command": command("stop"),
+                            "command": command("stop", adapter),
                             "timeout": 330,
                         }
                     ]
                 }
             ],
         }
-    }
+
+    hooks = {"hooks": lifecycle_hooks("codex")}
     hooks_path = atomic_write_json(codex_root / "hooks.json", hooks)
+    # The same result gate and receipt file serve a Claude Code attempt.  Claude
+    # silently ignores a settings file that fails validation, so this file holds
+    # nothing but the two hooks; the engine fails closed without a Stop receipt.
+    claude_settings_path = atomic_write_json(
+        claude_root / CLAUDE_SETTINGS_NAME, {"hooks": lifecycle_hooks("claude")}
+    )
     return {
         "schema_version": RUNTIME_POLICY_SCHEMA,
         "sandbox": "danger-full-access",
         "hooks": str(hooks_path),
+        "claude_settings": str(claude_settings_path),
         "hook_trust": "orchestrator-generated",
         "hook_receipts": str(hook_receipt_path),
         "skills": skill_invocations,

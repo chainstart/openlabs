@@ -28,6 +28,10 @@ RESULT_SCHEMA = "openlabs.result_bundle.v1"
 HOOK_RECEIPT_SCHEMA = "openlabs.codex_hook_receipt.v1"
 HOOK_RUNTIME_SCHEMA = "openlabs.hook_runtime.v1"
 LAB_RUNTIME_SCHEMA = "openlabs.lab_runtime_setup.v1"
+# Agent CLIs that receive the trusted lab runtime, the generated result-gate hooks
+# and the hook-receipt check.  Any other executable is a deterministic transport
+# test double.
+RUNTIME_ADAPTERS = frozenset({"codex", "claude"})
 
 
 def sha256_file(path: Path) -> str:
@@ -121,7 +125,12 @@ def _smoke(task: dict[str, Any], manifest: dict[str, Any], output: Path) -> None
     )
 
 
-def _agent_request(task: dict[str, Any], manifest: dict[str, Any], output: Path) -> str:
+def _agent_request(
+    task: dict[str, Any],
+    manifest: dict[str, Any],
+    output: Path,
+    adapter: str | None = None,
+) -> str:
     factory_skill = (
         Path(str(task["lab_manifest"])).resolve().parents[2]
         / "orchestrator"
@@ -161,16 +170,26 @@ automatically. Never copy staged changes to the canonical campaign yourself.
     )
     configured_skills = runtime_policy.get("skills")
     optional_methods = runtime_policy.get("optional_methods")
-    skill_instruction = (
-        "Invoke and follow "
-        + ", ".join(str(item) for item in configured_skills)
-        + "; read their trusted project copies under `.agents/skills/`."
-        if isinstance(configured_skills, list) and configured_skills
-        else (
-            f"Read and follow the factory coordinator at `{factory_skill}` and the domain Skill "
-            f"at `{task.get('skill_path')}`."
+    if adapter == "claude" and isinstance(configured_skills, list) and configured_skills:
+        # Claude Code invokes project Skills by bare name with its Skill tool.
+        skill_instruction = (
+            "Invoke and follow the Skills "
+            + ", ".join(str(item).removeprefix("$") for item in configured_skills)
+            + " with the Skill tool; their trusted project copies are under `.claude/skills/` "
+            "(the same sources as `.agents/skills/`), so read a SKILL.md directly if the tool "
+            "does not list one."
         )
-    )
+    else:
+        skill_instruction = (
+            "Invoke and follow "
+            + ", ".join(str(item) for item in configured_skills)
+            + "; read their trusted project copies under `.agents/skills/`."
+            if isinstance(configured_skills, list) and configured_skills
+            else (
+                f"Read and follow the factory coordinator at `{factory_skill}` and the domain "
+                f"Skill at `{task.get('skill_path')}`."
+            )
+        )
     optional_skill_instruction = (
         " Other laboratory method guides are readable but not registered as active Skills: "
         + json.dumps(optional_methods, ensure_ascii=False, sort_keys=True)
@@ -180,13 +199,13 @@ automatically. Never copy staged changes to the canonical campaign yourself.
         else ""
     )
     continuity_notice = """
-Continue inside this Codex process across as many same-role protocol phases and ordinary
+Continue inside this {process} process across as many same-role protocol phases and ordinary
 checkpoints as the scientific work and wall budget allow. Protocol phases are durable state
 records, not process boundaries. Do not stop merely because a phase advanced. Stop only at an
 epistemic-role boundary, an explicitly fresh boundary, a terminal scientific result, a genuine
 blocker, or when the remaining wall budget is needed to persist a safe result bundle. Other
 workers run independently; do not terminate this process merely to make room for them.
-"""
+""".replace("{process}", "Claude Code" if adapter == "claude" else "Codex")
     project = task.get("project") if isinstance(task.get("project"), Mapping) else {}
     read_resources = project.get("read_resources", [])
     read_resource_notice = ""
@@ -1016,6 +1035,15 @@ def _agent_quota_snapshot(
         return None
 
 
+_TRANSPORT_FAILURE_MARKERS = (
+    "connection failed",
+    "error sending request",
+    "waiting for network",
+    "connection reset",
+    "connection refused",
+)
+
+
 def _jsonl_startup_health(path: Path) -> tuple[int, bool]:
     """Count transport failures and detect any meaningful Codex progress."""
 
@@ -1031,16 +1059,7 @@ def _jsonl_startup_health(path: Path) -> tuple[int, bool]:
         if not isinstance(event, Mapping):
             continue
         serialized = json.dumps(event, ensure_ascii=False).lower()
-        if any(
-            marker in serialized
-            for marker in (
-                "connection failed",
-                "error sending request",
-                "waiting for network",
-                "connection reset",
-                "connection refused",
-            )
-        ):
+        if any(marker in serialized for marker in _TRANSPORT_FAILURE_MARKERS):
             failures += 1
         event_type = str(event.get("type") or "")
         item = event.get("item") if isinstance(event.get("item"), Mapping) else {}
@@ -1050,6 +1069,36 @@ def _jsonl_startup_health(path: Path) -> tuple[int, bool]:
         ):
             meaningful_progress = True
     return failures, meaningful_progress
+
+
+def _claude_startup_health(path: Path) -> tuple[int, bool, bool]:
+    """Count Claude transport retries, detect model progress and any stream event.
+
+    ``claude -p --output-format stream-json --verbose`` writes a ``system``/``init``
+    event before its first API request, ``system``/``api_retry`` events while a
+    request is being retried, and ``assistant``/``user``/``result`` events once the
+    model answers.  A retry without an HTTP status (``error_status`` null) or with a
+    network error text is a transport failure; 429/529 retries are quota/capacity
+    and are left to the quota classifier.
+    """
+
+    failures = 0
+    meaningful_progress = False
+    any_event = False
+    if not path.is_file():
+        return failures, meaningful_progress, any_event
+    for event in _jsonl_events(path.read_text(encoding="utf-8", errors="replace")):
+        any_event = True
+        event_type = str(event.get("type") or "")
+        if event_type in {"assistant", "user", "result"}:
+            meaningful_progress = True
+        elif event_type == "system" and event.get("subtype") == "api_retry":
+            error_text = str(event.get("error") or "").lower()
+            if event.get("error_status") is None or any(
+                marker in error_text for marker in _TRANSPORT_FAILURE_MARKERS
+            ):
+                failures += 1
+    return failures, meaningful_progress, any_event
 
 
 def _jsonl_runtime(path: Path) -> dict[str, Any]:
@@ -1131,7 +1180,7 @@ def _hook_runtime(path: Path, *, agent_workspace: Path) -> dict[str, Any]:
 
 
 def _adapter_version(command: list[str]) -> str | None:
-    if Path(command[0]).name != "codex":
+    if Path(command[0]).name not in RUNTIME_ADAPTERS:
         return None
     try:
         completed = subprocess.run(
@@ -1311,19 +1360,183 @@ def _prepare_codex_command(
     return [command[0], "exec", *policy, *tail]
 
 
+# Claude Code tool permissions for unattended research.  ``dontAsk`` denies every
+# call that is not pre-approved (no prompt can hang a headless run) and the list
+# below pre-approves the ordinary research tools.  The filesystem boundary is the
+# bubblewrap transaction sandbox, not this list; ``--dangerously-skip-permissions``
+# / ``bypassPermissions`` are refused because they are not needed for that.
+CLAUDE_PERMISSION_MODE = "dontAsk"
+CLAUDE_ALLOWED_TOOLS = (
+    "Bash",
+    "Read",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "Glob",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+    "Skill",
+    "TodoWrite",
+    "Task",
+    "Agent",
+)
+# Project sources only: the attempt workspace's own ``.claude`` (generated, never
+# promoted).  The operator's user-level settings -- which may carry another default
+# permission mode, model, hooks or a relay endpoint -- are not loaded; the factory
+# hooks arrive through ``--settings``.
+CLAUDE_SETTING_SOURCES = "project"
+
+
+def _remove_variadic_options(command: list[str], names: set[str]) -> list[str]:
+    """Remove options whose values run until the next ``-`` token (Claude's ``<x...>``)."""
+
+    filtered: list[str] = []
+    skipping = False
+    for token in command:
+        if skipping and not token.startswith("-"):
+            continue
+        skipping = False
+        if token in names:
+            skipping = True
+            continue
+        if any(token.startswith(f"{name}=") for name in names):
+            continue
+        filtered.append(token)
+    return filtered
+
+
+def _prepare_claude_command(
+    command: list[str],
+    *,
+    settings_path: Path,
+    attempt_root: Path,
+) -> list[str]:
+    """Apply the factory's invariant Claude Code policy to a configured argv."""
+
+    if Path(command[0]).name != "claude":
+        return command
+    forbidden = {
+        "--dangerously-skip-permissions",
+        "--allow-dangerously-skip-permissions",
+        # These disable the generated result-gate hooks or the project Skills.
+        "--bare",
+        "--safe-mode",
+        "--disable-slash-commands",
+    }
+    if any(
+        token in forbidden or any(token.startswith(f"{name}=") for name in forbidden)
+        for token in command
+    ):
+        raise ValueError("The Claude adapter may not bypass the factory permission or hook policy")
+    configured_mode = _command_option(command, "--permission-mode")
+    if configured_mode not in {None, CLAUDE_PERMISSION_MODE}:
+        raise ValueError(
+            f"OpenLabs Claude tasks require --permission-mode {CLAUDE_PERMISSION_MODE}"
+        )
+    if any(token in {"--settings", "--setting-sources"} or token.startswith(
+        ("--settings=", "--setting-sources=")
+    ) for token in command):
+        raise ValueError("The Claude adapter may not override the factory settings")
+    output_format = _command_option(command, "--output-format")
+    if output_format not in {None, "stream-json"}:
+        raise ValueError("OpenLabs Claude tasks require --output-format stream-json")
+    if any(token in {"--input-format"} or token.startswith("--input-format=") for token in command):
+        raise ValueError("OpenLabs Claude tasks read a plain-text request from stdin")
+    if not settings_path.is_file():
+        raise ValueError("Generated Claude settings with the result-gate hooks are missing")
+
+    tail = _remove_value_options(
+        command[1:], {"--permission-mode", "--output-format"}
+    )
+    tail = _remove_variadic_options(
+        tail, {"--allowedTools", "--allowed-tools", "--add-dir"}
+    )
+    tail = _remove_flags(tail, {"-p", "--print", "--verbose"})
+    policy = [
+        "-p",
+        # Variadic options are each followed by another option so they cannot
+        # swallow a later argv token.
+        "--add-dir",
+        str(attempt_root),
+        "--allowedTools",
+        ",".join(CLAUDE_ALLOWED_TOOLS),
+        "--permission-mode",
+        CLAUDE_PERMISSION_MODE,
+        "--setting-sources",
+        CLAUDE_SETTING_SOURCES,
+        "--settings",
+        str(settings_path),
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ]
+    return [command[0], *policy, *tail]
+
+
+def _apply_claude_policy(
+    command: list[str],
+    *,
+    task: Mapping[str, Any],
+    runtime_policy: Mapping[str, Any],
+    agent_workspace: Path,
+) -> list[str]:
+    """Bind a Claude argv to this attempt's generated settings and transaction root."""
+
+    # The Claude analogue of Codex's trusted ``.codex/hooks.json``: the generated
+    # settings file that carries the same SessionStart/Stop result-gate hooks.
+    raw_settings = str(runtime_policy.get("claude_settings") or "").strip()
+    settings_path = Path(raw_settings).expanduser()
+    expected = (agent_workspace / ".claude" / "openlabs-settings.json").resolve()
+    if (
+        runtime_policy.get("schema_version") != "openlabs.codex_runtime.v1"
+        or runtime_policy.get("hook_trust") != "orchestrator-generated"
+        or not raw_settings
+        or settings_path.resolve() != expected
+    ):
+        raise ValueError("Claude research tasks require the generated result-gate settings")
+    transaction = task.get("transaction")
+    attempt_root = (
+        transaction.get("attempt_root") if isinstance(transaction, Mapping) else None
+    )
+    if not attempt_root:
+        raise ValueError("Claude research tasks require an isolated attempt transaction")
+    return _prepare_claude_command(
+        command,
+        settings_path=settings_path,
+        attempt_root=Path(str(attempt_root)).expanduser().resolve(),
+    )
+
+
+def _claude_endpoint() -> dict[str, Any]:
+    """Describe (never reveal) the Anthropic endpoint/credential the run inherits."""
+
+    base_url = os.environ.get("ANTHROPIC_BASE_URL", "").strip()
+    host = urllib.parse.urlsplit(base_url).hostname if base_url else None
+    return {
+        "mode": "custom_base_url" if base_url else "default_login",
+        "host": host,
+        "api_key_env": bool(
+            os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        ),
+    }
+
+
 def _validate_codex_transaction(
     task: Mapping[str, Any],
     *,
     workspace: Path,
     agent_workspace: Path,
+    agent_label: str = "Codex",
 ) -> None:
-    """Validate the staged transaction layout before an unrestricted Codex run."""
+    """Validate the staged transaction layout before an unrestricted agent run."""
 
     transaction = task.get("transaction")
     if not isinstance(transaction, Mapping) or transaction.get("mode") != (
         "isolated_attempt_workspace"
     ):
-        raise ValueError("Codex research tasks require an isolated attempt transaction")
+        raise ValueError(f"{agent_label} research tasks require an isolated attempt transaction")
     attempt_root = Path(str(transaction.get("attempt_root") or "")).expanduser().resolve()
     staged = Path(str(transaction.get("staged_campaign_workspace") or "")).expanduser().resolve()
     canonical = (
@@ -1470,9 +1683,11 @@ def _run_agent(
     raw_command = raw_command or os.environ.get(f"OPENLABS_AGENT_{command_kind}_JSON", "").strip()
     output.parent.mkdir(parents=True, exist_ok=True)
     request_path = output.parent / "agent-request.md"
-    request = _agent_request(task, manifest, output)
+    template = _command_template(raw_command) if raw_command else None
+    adapter_name = Path(template[0]).name if template else None
+    request = _agent_request(task, manifest, output, adapter=adapter_name)
     request_path.write_text(request, encoding="utf-8")
-    if not raw_command:
+    if template is None:
         label = "resume command" if session_id else "command"
         _configuration_result(
             task,
@@ -1481,14 +1696,13 @@ def _run_agent(
             f"No approved Agent {label} is configured for the {runner!r} runner tier.",
         )
         return {"adapter": "unconfigured", "runner": runner}
-    template = _command_template(raw_command)
     if session_id and "{session_id}" not in template:
         raise ValueError("Agent resume command must contain a {session_id} argv token")
     if (
         not session_id
         and agent["session_mode"] == "resume"
         and agent["role"] != "reviewer"
-        and "--ephemeral" in template
+        and ("--ephemeral" in template or "--no-session-persistence" in template)
     ):
         _configuration_result(
             task,
@@ -1520,11 +1734,12 @@ def _run_agent(
         "{session_id}": session_id,
     }
     agent_command = [replacements.get(token, token) for token in template]
-    if Path(agent_command[0]).name == "codex":
+    if adapter_name in RUNTIME_ADAPTERS:
         _validate_codex_transaction(
             task,
             workspace=workspace,
             agent_workspace=agent_workspace,
+            agent_label="Claude Code" if adapter_name == "claude" else "Codex",
         )
     runtime_policy = (
         task.get("runtime_policy") if isinstance(task.get("runtime_policy"), Mapping) else {}
@@ -1541,6 +1756,13 @@ def _run_agent(
         agent_workspace=agent_workspace,
         trust_generated_hooks=trust_generated_hooks,
     )
+    if adapter_name == "claude":
+        agent_command = _apply_claude_policy(
+            agent_command,
+            task=task,
+            runtime_policy=runtime_policy,
+            agent_workspace=agent_workspace,
+        )
     preflight_error = _agent_connectivity_preflight(agent_command)
     if preflight_error is not None:
         _configuration_result(
@@ -1619,7 +1841,8 @@ def _run_agent(
                 ),
             )
             process_started = time.monotonic()
-            startup_monitoring = Path(agent_command[0]).name == "codex"
+            startup_monitoring = adapter_name in RUNTIME_ADAPTERS
+            stream_started = True
             while process.poll() is None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -1632,14 +1855,20 @@ def _run_agent(
                     pass
                 if startup_monitoring:
                     stdout_handle.flush()
-                    transport_failure_count, meaningful_progress = _jsonl_startup_health(
-                        stdout_path
-                    )
+                    if adapter_name == "claude":
+                        transport_failure_count, meaningful_progress, stream_started = (
+                            _claude_startup_health(stdout_path)
+                        )
+                    else:
+                        transport_failure_count, meaningful_progress = _jsonl_startup_health(
+                            stdout_path
+                        )
                     startup_elapsed = time.monotonic() - process_started
                     if output.is_file() or meaningful_progress:
                         startup_monitoring = False
                     elif transport_failure_count >= failure_threshold or (
-                        transport_failure_count > 0 and startup_elapsed >= startup_grace
+                        (transport_failure_count > 0 or not stream_started)
+                        and startup_elapsed >= startup_grace
                     ):
                         transport_failed = True
                         _terminate_process_group(process, grace_seconds=1)
@@ -1675,6 +1904,7 @@ def _run_agent(
             "timed_out": timed_out,
             "transport_watchdog_triggered": transport_failed,
             "startup_transport_failure_count": transport_failure_count,
+            "startup_stream_silent": transport_failed and not stream_started,
             "agent_exit_code": process.returncode,
             "interrupted": termination_signal is not None,
             "termination_signal": termination_signal,
@@ -1682,7 +1912,14 @@ def _run_agent(
             "agent_request_sha256": sha256_file(request_path),
         }
     )
-    adapter_name = Path(agent_command[0]).name
+    if adapter_name == "claude":
+        runtime["claude_endpoint"] = _claude_endpoint()
+        if session_id and not output.is_file() and "No conversation found with session ID" in (
+            _read_tail(stdout_path) + _read_tail(stderr_path)
+        ):
+            # Claude stores transcripts per working directory; surface a failed
+            # lookup instead of an anonymous process failure.
+            runtime["resume_error"] = "session_not_found"
     if adapter_name in ADAPTER_PROVIDERS:
         runtime["provider_family"] = ADAPTER_PROVIDERS[adapter_name]
         snapshot = _agent_quota_snapshot(
@@ -1811,9 +2048,10 @@ def main() -> int:
             }
             _smoke(task, manifest, output)
             runtime: dict[str, Any] = {"adapter": "deterministic", "runner": "none"}
-        elif adapter != "codex":
-            # Non-Codex commands are retained solely for deterministic transport tests. Production
-            # research uses the native Codex adapter and receives every trusted lab runtime.
+        elif adapter not in RUNTIME_ADAPTERS:
+            # Other commands are retained solely for deterministic transport tests. Production
+            # research uses a native agent adapter (Codex or Claude Code) and receives every
+            # trusted lab runtime.
             lab_runtime = {
                 "schema_version": LAB_RUNTIME_SCHEMA,
                 "setups": [],

@@ -115,7 +115,10 @@ anthropic = ["claude", "-p", "ok", "--model", "claude-haiku-5-5", "--output-form
 # orchestrator/src/openlabs/config.py (DEFAULT_TASK_TIERS, DEFAULT_CLAIM_RANKS).
 
 # Enable routing by declaring runners; argv comes from
-# OPENLABS_AGENT_COMMAND_<NAME>_JSON (see openlabs.env.example).
+# OPENLABS_AGENT_COMMAND_<NAME>_JSON / OPENLABS_AGENT_RESUME_COMMAND_<NAME>_JSON
+# (see openlabs.env.example). Uncomment all six together: the GPT runners use
+# Codex, the Claude runners use Claude Code with the same lab runtime, result-gate
+# hooks and receipt check (docs/operations.zh.md, "Claude Code 研究执行者").
 # [runners.lead_gpt]
 # provider = "openai-codex"
 # tier = "lead"

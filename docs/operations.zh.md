@@ -162,6 +162,67 @@ Agent-time 耗尽、真实外部阻塞、明确的独立角色边界，或协议
 示例、prompt 和审阅产物都不得保存 Packy key。第一位 Codex 审阅结果先冻结；适配器只计算其
 SHA-256 绑定，不把内容发给 Claude。
 
+### Claude Code 研究执行者与六个 runner
+
+Claude Code 与 Codex 走同一条研究执行路径：可信实验室运行时准备（lab `runtime_setup`）、
+同一份结果门禁 Stop hook 与 hook 回执、启动看门狗、按 session 恢复，以及事务隔离。差异只在
+lab runner 的适配层：
+
+- 控制面为每个 attempt 同时生成 `.codex/hooks.json` 与
+  `.claude/openlabs-settings.json`（只含 SessionStart/Stop 两个 hook，命令都是
+  `python -m openlabs.codex_hook ... --context .codex/openlabs-context.json`，Claude 加
+  `--adapter claude`）。回执写入同一个 `.codex/hook-receipts.jsonl`，引擎对 `adapter` 为
+  `codex` 或 `claude` 的完成结果一律要求最终 Stop 回执通过，缺失即 `needs_replan`。
+  `.claude/` 与 `.agents/`、`.codex/` 一样是 attempt 运行时目录，不复制、不晋升。
+- 激活的 Skill 同时链接到 `.agents/skills/<name>`（Codex）和 `.claude/skills/<name>`
+  （Claude Code 的项目 Skill 目录）；Claude 的请求改为“用 Skill 工具调用 `<name>`”，并给出
+  可直接阅读的 SKILL.md 位置。
+- lab runner 强制加入 `-p --add-dir <attempt_root> --allowedTools <研究工具清单>
+  --permission-mode dontAsk --setting-sources project --settings <生成的设置文件>
+  --output-format stream-json --verbose`，拒绝 `--dangerously-skip-permissions`、
+  `--allow-dangerously-skip-permissions`、其他 `--permission-mode`、`--bare`、`--safe-mode`、
+  `--disable-slash-commands` 以及自带的 `--settings`/`--setting-sources`。`dontAsk` 拒绝一切未
+  预先批准的调用，无人值守时不会卡在权限提示上；真正的文件边界是 bubblewrap（attempt root
+  可写，`openlabs`、`openlabs-data`、`openlabs-artifacts`、`openlabs-database` 只读），因此
+  Claude 执行者要求本机已安装 `bwrap`，缺失时 fail closed。资源护栏与 Codex 相同（worker 的
+  systemd/cgroup）。
+- 启动看门狗读取 stream-json：在 `OPENLABS_AGENT_STARTUP_GRACE_SECONDS` 内一个事件都没有、
+  或只有无 HTTP 状态的 `api_retry`（连接错误）达到 `OPENLABS_AGENT_TRANSPORT_FAILURE_THRESHOLD`
+  时停止进程并写 `needs_human`；429/529 重试交给额度分类处理。
+- 研究执行者使用本机已登录的 Claude 订阅（`~/.claude/.credentials.json`），不要为这些 runner
+  设置 `ANTHROPIC_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`，否则额度读数不再
+  对应订阅；`run-metadata.json` 的 `runtime.claude_endpoint` 记录实际继承的是默认登录还是
+  自定义端点（只记主机名，不记凭据）。也不要设置 `CLAUDE_CODE_RETRY_WATCHDOG`：它让 Claude 在
+  进程内等待限额重置，而控制面已按 `[budget]` 退避重排。
+
+配置六个 runner：把 `config/openlabs.env.example` 中三条 GPT 与三条 Claude 的
+`OPENLABS_AGENT_COMMAND_<NAME>_JSON`、`OPENLABS_AGENT_RESUME_COMMAND_<NAME>_JSON`
+（`LEAD/WORKER/LIGHT` × `GPT/CLAUDE`）复制到 `~/.config/openlabs/env`，再取消
+`config/openlabs.toml` 中六个 `[runners.<name>]` 表的注释（模型：`lead_claude` 为
+`claude-fable-5-2`、`worker_claude` 为 `claude-opus-5-5`、`light_claude` 为
+`claude-haiku-5-5`；GPT 三条按本机 Codex profile 填写）。存在 `[runners]` 表即启用额度路由；
+`[routing]` 的保留比例与 `[routing.probe_commands]` 无需改动。只想先试 Claude 时，也可以只在当前
+shell 里把 `OPENLABS_AGENT_COMMAND_BALANCED_JSON` 设为 worker_claude 的命令（进程环境优先于
+env 文件），用一个有界 `enqueue --runner balanced` 任务走完整链路。
+
+验证 Claude 执行者（操作者在有额度时自己运行，会消耗一次最便宜模型的调用）：
+
+```bash
+cd "$(mktemp -d)" && printf 'Reply with the single word ok.' | claude -p \
+  --output-format stream-json --verbose --permission-mode dontAsk --setting-sources project \
+  --settings '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"cat > stop-event.json"}]}]}}' \
+  --model claude-haiku-5-5 --max-turns 1 > stream.jsonl; \
+python3 -c 'import json; ev=[json.loads(l) for l in open("stream.jsonl") if l.strip()]; \
+print(sorted({e["type"] for e in ev}), ev[-1].get("subtype"), ev[-1].get("is_error")); \
+print("stop hook:", json.load(open("stop-event.json")).get("hook_event_name"))'
+```
+
+期望看到 `system`、`assistant`、`result`（`success`、`is_error` 为 `False`）、通常还有
+`rate_limit_event`，并且 `stop hook: Stop`，说明订阅登录、stream-json、`--settings` 注入的
+Stop hook 与 `dontAsk` 在本机都可用。之后再用一个有界任务检查 `run-metadata.json`：
+`runtime.adapter == "claude"`、`runtime.hooks.stop_passed == true`、`runtime.session_id`、
+`runtime.quota_snapshot` 与 `runtime.filesystem_sandbox == "bubblewrap"`。
+
 ## 研究计划：自动选题与立项关口
 
 研究计划默认关闭（`config/openlabs.toml` 的 `[program] enabled = false`），关闭时 tick 与以前
