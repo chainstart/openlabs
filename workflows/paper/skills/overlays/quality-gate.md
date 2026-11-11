@@ -126,8 +126,10 @@ model; each model judge preferred its own model's text 4/5):
   receives as advice. Necessary qualifications and truthful disclosures stay. Later source
   changes do not trigger a rerun; keyword densities are diagnostics.
 - The panel is configured in `settings.yaml#review`; `review.cross_model.required` blocks a panel
-  in which every referee uses the drafting model. Never let the drafting model be the only
-  judge of its own text in an ad-hoc comparison either.
+  in which every referee is of the drafting model's family (another version of the same family
+  does not count). The drafting model is the paper record's `writer_model`; without it the
+  review falls back to `review.writer_model` and notes that it was not registered. Never let the
+  drafting model's family be the only judge of its own text in an ad-hoc comparison either.
 
 ## AI-use disclosure
 

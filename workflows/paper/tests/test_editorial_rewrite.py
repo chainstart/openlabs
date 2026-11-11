@@ -462,3 +462,48 @@ def test_run_review_blocks_self_review_panel(tmp_path, monkeypatch):
     assert record["merged"]["outcome"] == "preflight_failed"
     assert any("differs from the writer" in b for b in record["merged"]["preflight_blockers"])
     assert record["writer_model"] == "gpt" and record["cross_model_referees"] == []
+
+
+def test_cross_model_rule_compares_model_families():
+    roles_by_family = {"editor": {"provider": "openai-codex", "model": "gpt-6-astra"},
+                       "referee_a": {"provider": "openai-codex", "model": "gpt-6-astra"},
+                       "referee_b": {"provider": "openai-codex", "model": "gpt-6.1-luna"}}
+    config = {"roles": roles_by_family, "referee_roles": ["referee_a", "referee_b"],
+              "cross_model_required": True}
+    # Another version of the drafting model's family is not an independent judge.
+    blockers = flow.cross_model_blockers(config, "gpt-6.1-sol")
+    assert blockers and "model family differs" in blockers[0] and "(openai)" in blockers[0]
+    roles_by_family["referee_a"] = {"provider": "anthropic", "model": "claude-fable-5-2"}
+    assert flow.cross_model_blockers(config, "gpt-6.1-sol") == []
+    assert flow.cross_model_referees(config, "openai") == ["referee_a"]
+    assert flow.cross_model_blockers(config, "claude-opus-5-5") == []
+    assert flow.model_family("claude-opus-5-5") == flow.model_family("claude-fable-5-2") == "anthropic"
+    assert flow.model_family("unlisted-model", "anthropic") == "anthropic"
+    assert flow.model_family("unlisted-model") == "unlisted-model"
+
+
+def test_writer_identity_prefers_the_paper_record_and_notes_the_fallback():
+    registered = flow.writer_identity({"writer_model": "claude-opus-5-5", "writer_provider": "anthropic"},
+                                      {"writer_model": "gpt-6.1-sol"})
+    assert registered == {"model": "claude-opus-5-5", "provider": "anthropic", "family": "anthropic",
+                          "source": "paper_registry"}
+    fallback = flow.writer_identity({}, {"writer_model": "gpt-6.1-sol"})
+    assert fallback["model"] == "gpt-6.1-sol" and fallback["source"] == "settings_review_writer_model"
+    assert fallback["note"] == flow.WRITER_MODEL_UNREGISTERED and "not registered" in fallback["note"]
+
+
+def test_review_record_names_the_writer_family_and_the_unregistered_fallback(tmp_path, monkeypatch):
+    config = {"process": flow.PROCESS, "roles": roles(), "referee_roles": ["referee_b"],
+              "rejection_clearance_required": True, "timeout_seconds": 1, "max_rounds_per_target": 10,
+              "writer_model": "gpt-6.1-sol", "cross_model_required": True, "previous_panels": []}
+    monkeypatch.setattr(flow, "review_config", lambda root: config)
+    pre = {"metadata": {"version": "1", "target_journal": "J"}, "target": "J", "blockers": [],
+           "fingerprints": {}, "expanded": "x", "bibliography": ""}
+    monkeypatch.setattr(flow, "preflight", lambda *a: pre)
+    monkeypatch.setattr(flow, "run_role", lambda **kw: pytest.fail("no model may start"))
+    record = flow.run_review("p", root=tmp_path, apply=False)
+    assert record["merged"]["outcome"] == "preflight_failed"
+    assert record["writer_model_family"] == "openai" and record["cross_model_basis"] == "model_family"
+    assert record["writer_model_source"] == "settings_review_writer_model"
+    assert record["writer_model_note"] == flow.WRITER_MODEL_UNREGISTERED
+    assert record["cross_model_referees"] == []

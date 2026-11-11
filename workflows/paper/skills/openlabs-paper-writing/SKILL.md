@@ -47,7 +47,10 @@ assigned reviewer role. Repository rules override vendored instructions.
    tools and model identifiers that runtime records show (registered under
    `declarations.ai_use.model_usage` with hash-bound evidence) and their actual purposes, such as
    code development or Lean preparation; formal verification is credited to the pinned Lean
-   toolchain, not to AI output. Never weaken a truthful disclosure.
+   toolchain, not to AI output. Never weaken a truthful disclosure. When you register or first
+   draft the paper, also record the drafting model the runtime reports as `writer_model` (exact
+   identifier, e.g. `gpt-6.1-sol`) and `writer_provider` (`openai-codex` or `anthropic`) in the
+   paper record: the unified review needs a referee from another model family than this one.
 7. Authors, CRediT roles, competing interests and funding use the standing defaults in
    `settings.yaml#defaults` (user instruction 2026-11-09) unless the paper record says otherwise;
    do not ask for routine reconfirmation, and do not treat the defaults as attestation of human

@@ -622,6 +622,8 @@ def main(argv: list[str] | None = None) -> int:
         summary["stalled"] = bool(result["merged"].get("stalled"))
         if result["merged"].get("full_review_reasons"):
             summary["full_review_reasons"] = result["merged"]["full_review_reasons"]
+        if result.get("writer_model_note"):
+            summary["writer_model_note"] = result["writer_model_note"]
         if result["merged"].get("direction_context"):
             summary["direction_context"] = result["merged"]["direction_context"]
         # Formal findings deferred to delivery; details are in the decision record.

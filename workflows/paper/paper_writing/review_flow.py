@@ -200,24 +200,72 @@ def _parse_time(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+WRITER_MODEL_UNREGISTERED = ("drafting model not registered in the paper record (writer_model); "
+                             "review.writer_model from settings.yaml was used")
+# Model families by identifier prefix, then by provider. The cross-model rule
+# compares families: another version of the drafting model's family is not an
+# independent judge (each family preferred its own text 4 times out of 5).
+MODEL_FAMILY_PREFIXES = (
+    ("claude", "anthropic"), ("opus", "anthropic"), ("sonnet", "anthropic"), ("haiku", "anthropic"),
+    ("fable", "anthropic"), ("gpt", "openai"), ("codex", "openai"), ("o1", "openai"), ("o3", "openai"),
+    ("o4", "openai"), ("gemini", "google"), ("deepseek", "deepseek"), ("qwen", "alibaba"),
+    ("glm", "zhipu"), ("kimi", "moonshot"), ("llama", "meta"), ("mistral", "mistral"),
+)
+PROVIDER_FAMILIES = {"anthropic": "anthropic", "openai-codex": "openai", "openai": "openai",
+                     "google": "google"}
+
+
+def model_family(model: Any, provider: Any = None) -> str:
+    """Family of a model: identifier prefix first, then the provider; unknown -> the id itself."""
+    name = str(model or "").strip().lower()
+    for prefix, family in MODEL_FAMILY_PREFIXES:
+        if name == prefix or name.startswith((prefix + "-", prefix + ".", prefix + "_")) or (
+                prefix in {"gpt", "claude"} and name.startswith(prefix)):
+            return family
+    if str(provider or "").strip() in PROVIDER_FAMILIES:
+        return PROVIDER_FAMILIES[str(provider).strip()]
+    return name
+
+
 def writer_model(metadata: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     """The model that drafted the manuscript: paper-level record first, then the team default."""
-    return str(metadata.get("writer_model") or config.get("writer_model") or "")
+    return writer_identity(metadata, config)["model"]
 
 
-def cross_model_blockers(config: Mapping[str, Any], writer: str) -> list[str]:
-    """User decision 2026-11-07: the same model must not be the only judge of its own text."""
+def writer_identity(metadata: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
+    """The drafting model as registered by the writing task (``writer_model``, optionally
+    ``writer_provider``), else ``review.writer_model`` with a note that it was not registered."""
+    registered = str(metadata.get("writer_model") or "").strip()
+    model = registered or str(config.get("writer_model") or "")
+    provider = str(metadata.get("writer_provider") or "").strip() if registered else ""
+    identity = {"model": model, "provider": provider or None, "family": model_family(model, provider),
+                "source": "paper_registry" if registered else "settings_review_writer_model"}
+    if not registered:
+        identity["note"] = WRITER_MODEL_UNREGISTERED
+    return identity
+
+
+def cross_model_blockers(config: Mapping[str, Any], writer: str | Mapping[str, Any]) -> list[str]:
+    """User decision 2026-11-07: the drafting model's family must not be the only judge of its text."""
     if not config.get("cross_model_required"):
         return []
-    if not writer:
+    identity = writer if isinstance(writer, Mapping) else {"model": writer, "family": model_family(writer)}
+    model = str(identity.get("model") or "")
+    if not model:
         return ["review.writer_model (or the paper's writer_model) must name the drafting model"]
-    roles = config["roles"]
-    independent = [n for n in config["referee_roles"] if roles.get(n, {}).get("model") != writer]
-    if not independent:
-        return [f"Cross-model review requires an active referee whose model differs from the writer {writer}"]
+    family = str(identity.get("family") or model_family(model))
+    if not cross_model_referees(config, family):
+        return [f"Cross-model review requires an active referee whose model family differs from the "
+                f"writer {model} ({family})"]
     if len(config["referee_roles"]) < 2:
         return ["Cross-model review requires two active referees from different model families"]
     return []
+
+
+def cross_model_referees(config: Mapping[str, Any], writer_family: str) -> list[str]:
+    roles = config["roles"]
+    return [n for n in config["referee_roles"]
+            if model_family(roles.get(n, {}).get("model"), roles.get(n, {}).get("provider")) != writer_family]
 
 
 def policy_for_record(record: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
@@ -1852,9 +1900,10 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     if round_limit is not None:
         config = dict(config, max_rounds_per_target=round_limit["max_rounds_per_target"])
     track = review_track(metadata, root)
-    writer = writer_model(metadata, config)
+    writer_record = writer_identity(metadata, config)
+    writer = writer_record["model"]
     pre = dict(pre, history_policy=history_policy, review_track=track["track"])
-    pre["blockers"] = [*pre["blockers"], *cross_model_blockers(config, writer)]
+    pre["blockers"] = [*pre["blockers"], *cross_model_blockers(config, writer_record)]
     (run / "manuscript-expanded.tex").write_text(pre["expanded"])
     record: dict[str, Any] = {"schema_version": "openlabs.review.decision.v1", "process": PROCESS,
                               "paper_id": paper_id, "run_id": run_id, "target_journal": target,
@@ -1866,7 +1915,12 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     record |= {"review_policy_sha256": review_policy_sha256(config, history_policy, round_limit), "active_referee_roles": panel,
                "formal_verifier_role": formal_role_name(roles),
                "single_referee_panel": len(panel) == 1, "writer_model": writer,
-               "cross_model_referees": [n for n in panel if roles[n].get("model") != writer]}
+               "writer_model_family": writer_record["family"],
+               "writer_model_source": writer_record["source"],
+               "cross_model_basis": "model_family",
+               "cross_model_referees": cross_model_referees(config, writer_record["family"])}
+    if writer_record.get("note"):
+        record["writer_model_note"] = writer_record["note"]
     if pre.get('active_revision_context') is not None:
         record['active_revision_context'] = pre['active_revision_context']
     if history_policy is not None:
