@@ -1815,7 +1815,14 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
 
 
 def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path | None = None,
-               apply: bool = True) -> dict[str, Any]:
+               apply: bool = True, delta_only: bool = False) -> dict[str, Any]:
+    """Run the unified review; ``delta_only`` never starts the editor or the referees.
+
+    With ``delta_only`` (the release pipeline after post-ready text, DOI or support
+    changes) a change that the delta rule does not cover is recorded as
+    ``full_review_required`` (stage ``delta_check``, no round consumed, registry
+    untouched) instead of starting a full review.
+    """
     root = Path(root).resolve()
     config = review_config(root)
     if config["process"] != PROCESS:
@@ -1885,6 +1892,14 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     if delta is not None:
         record["delta_review_refused"] = {"basis_run_id": delta["base"].get("run_id"),
                                           "reasons": delta["reasons"], "summary": delta["summary"]}
+    if delta_only:
+        reasons = delta["reasons"] if delta is not None else ["no earlier ready full review to carry over"]
+        record |= {"stage_reached": "delta_check", "review_mode": "delta_check",
+                   "consumes_scientific_round": False,
+                   "merged": {"outcome": "full_review_required", "next_action": "full_review",
+                              "full_review_reasons": reasons}, "finished_at": _now()}
+        _json_dump(run / "decision.json", record)
+        return record | {"run_dir": str(run.relative_to(root))}
     if len(rounds) >= config["max_rounds_per_target"]:
         raise ValueError(f"{paper_id} has used all {config['max_rounds_per_target']} review rounds for {target}; "
                          "no further round starts: under the research program the orchestrator takes a "
@@ -2038,6 +2053,13 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
 def delivery_blockers(paper_id: str, metadata: Mapping[str, Any], root: Path,
                       record: Mapping[str, Any] | None = None, *,
                       notes: list[dict[str, Any]] | None = None) -> list[str]:
+    """The delivery-exit problems as stable strings (see ``delivery_issues``)."""
+    return [item["text"] for item in delivery_issues(paper_id, metadata, root, record, notes=notes)]
+
+
+def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
+                    record: Mapping[str, Any] | None = None, *,
+                    notes: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """The formal checks moved from the review entry to the delivery exit.
 
     Everything the unified preflight reports as a preparation advisory is a hard
@@ -2050,24 +2072,41 @@ def delivery_blockers(paper_id: str, metadata: Mapping[str, Any], root: Path,
     appended to ``notes`` together with references that could not be verified for
     lack of source access and with registered passage selectors / local evidence
     files that no longer match (nothing uses them; see ``stale_route_notes``).
+
+    Each item is ``{"source", "code", "location", "message", "text"}``; ``text`` is
+    the stable blocker string that ``delivery_blockers`` reports.
     """
     from paper_writing.editorial_rewrite import abstract_findings
     from paper_writing.manuscript_style import audit_manuscript_style, manuscript_style_blockers
     from paper_writing.registry import load_registry_settings
     from paper_writing.support_citations import audit_manuscript_support, support_audit_blockers
 
+    def audit_items(source: str, result: Mapping[str, Any], render) -> list[dict[str, Any]]:
+        items = []
+        for issue in result.get("errors", []):
+            if isinstance(issue, Mapping):
+                location = str(issue.get("path") or "")
+                if issue.get("line") is not None:
+                    location = f"{location}:{issue['line']}"
+                items.append({"source": source, "code": str(issue.get("code") or ""), "location": location,
+                              "message": str(issue.get("message") or ""), "text": render({"errors": [issue]})[0]})
+        return items
+
     gate = load_registry_settings(root).get("quality_gate") or {}
     style = audit_manuscript_style(
         paper_id, root=root, require_ai_declaration=bool(gate.get("require_ai_use_declaration", True)))
-    problems = manuscript_style_blockers(style)
+    problems = audit_items("manuscript_style", style, manuscript_style_blockers)
     if notes is not None:
         notes.extend({"kind": "internal_vocabulary", **dict(item)} for item in style.get("blacklist_findings", []))
         access = ((record or {}).get("formal_check") or {}).get("unverifiable_source_access")
         if access:
             notes.append({"kind": "unverifiable_source_access", **dict(access)})
         notes.extend(stale_route_notes(metadata, root))
-    problems += support_audit_blockers(audit_manuscript_support(paper_id, root=root))
-    problems += [f"Venue abstract format: {p}" for p in abstract_findings(metadata, root, paper_id)]
+    problems += audit_items("support_citations", audit_manuscript_support(paper_id, root=root),
+                            support_audit_blockers)
+    problems += [{"source": "editorial_rewrite", "code": "ABSTRACT-VENUE-FORMAT", "location": "",
+                  "message": str(p), "text": f"Venue abstract format: {p}"}
+                 for p in abstract_findings(metadata, root, paper_id)]
     if record is not None:
         used = record.get("build_inputs")
         manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
@@ -2076,8 +2115,11 @@ def delivery_blockers(paper_id: str, metadata: Mapping[str, Any], root: Path,
             # inputs are still the current build's inputs.
             unused = unused_source_files(manuscript, {str(u) for u in used})
             if unused:
-                problems.append("Source files not read by the build would enter the journal package: "
-                                + ", ".join(unused[:12]))
+                text = ("Source files not read by the build would enter the journal package: "
+                        + ", ".join(unused[:12]))
+                problems.append({"source": "review_flow", "code": "UNUSED-SOURCE-FILES",
+                                 "location": manuscript.relative_to(root).as_posix(), "message": text,
+                                 "files": unused, "text": text})
         # Decisions written before build_inputs existed were made by a preflight that
         # still rejected unused source files, and their snapshot is bound: nothing to add.
     return problems

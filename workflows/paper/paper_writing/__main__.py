@@ -194,6 +194,9 @@ def build_parser() -> argparse.ArgumentParser:
     unified.add_argument("--paper-id", required=True)
     unified.add_argument("--response", help="Authors' response letter for a re-review round.")
     unified.add_argument("--no-apply", action="store_true", help="Record the decision without updating the registry.")
+    unified.add_argument("--delta-only", action="store_true",
+                         help="Only the post-ready delta review; report full_review_required instead of "
+                              "starting the editor and referees.")
     unified.add_argument("--root", default=str(default_repo_root()))
     calibration = review_commands.add_parser(
         "calibration",
@@ -375,7 +378,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     program_assign.add_argument("--paper-id", required=True)
     program_assign.add_argument("--handler", default="second_author")
-    for command in (program_escalation, program_confirm, program_deliver, program_assign):
+    program_status = program_commands.add_parser(
+        "release-status",
+        help="Read-only: what is left between review ready and delivery (release pipeline).",
+    )
+    program_status.add_argument("--paper-id", required=True)
+    for command in (program_escalation, program_confirm, program_deliver, program_assign,
+                    program_status):
         command.add_argument("--root", default=str(default_repo_root()))
         command.add_argument("--json", action="store_true", help="Print one JSON object.")
     return parser
@@ -602,7 +611,7 @@ def main(argv: list[str] | None = None) -> int:
         from paper_writing.review_flow import run_review
 
         result = run_review(args.paper_id, root=args.root, response_letter=args.response,
-                            apply=not args.no_apply)
+                            apply=not args.no_apply, delta_only=args.delta_only)
         summary = {key: result.get(key) for key in ("paper_id", "run_dir", "target_journal", "stage_reached",
                                                     "round_for_target", "decision_sha256")}
         summary["outcome"] = result["merged"]["outcome"]
@@ -611,6 +620,8 @@ def main(argv: list[str] | None = None) -> int:
         summary["recommendation"] = result["merged"].get("recommendation")
         summary["review_mode"] = result.get("review_mode", "full")
         summary["stalled"] = bool(result["merged"].get("stalled"))
+        if result["merged"].get("full_review_reasons"):
+            summary["full_review_reasons"] = result["merged"]["full_review_reasons"]
         if result["merged"].get("direction_context"):
             summary["direction_context"] = result["merged"]["direction_context"]
         # Formal findings deferred to delivery; details are in the decision record.
@@ -652,6 +663,10 @@ def _run_program(args: argparse.Namespace) -> int:
                 admission_task_id=args.admission_task_id,
                 admission_record=args.admission_record, fallback_venue=args.fallback_venue,
             )
+        elif args.program_command == "release-status":
+            from paper_writing.release_pipeline import release_status
+
+            result = release_status(args.paper_id, root=args.root)
         elif args.program_command == "confirm-escalation":
             result = program_delivery.confirm_escalation(args.paper_id, root=args.root)
         elif args.program_command == "deliver":
