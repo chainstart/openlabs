@@ -693,8 +693,18 @@ def test_ready_paper_is_queued_releases_its_slot_and_the_next_topic_starts(
     assert db.campaign(first["campaign_id"])["status"] == "production_paused"
 
 
+def _deliverable(monkeypatch) -> None:
+    """The release pipeline finds nothing left to do before delivery (see test_release_pipeline)."""
+
+    monkeypatch.setattr(program_autonomy, "run_release_status", lambda _p, _s, paper_id: {
+        "paper_id": paper_id, "version": "1.0.0", "review": {"ready": True, "current": True},
+        "support": {"required": False}, "issues": [], "commit_paths": [], "delivered": False})
+    monkeypatch.setattr(program_autonomy, "commit_paper_paths", lambda *_a, **_k: None)
+
+
 def test_auto_handoff_without_handler_retries_a_failure(tmp_path, monkeypatch):
     paths, db, settings, (topic,) = _program(tmp_path, monkeypatch, auto_handoff=True)
+    _deliverable(monkeypatch)
     monkeypatch.setenv("ARA_PAPER_MANAGE_API_URL", "https://manage.invalid")
     monkeypatch.setenv("ARA_PAPER_MANAGE_API_KEY", "test-key")
     calls: list[str] = []
@@ -724,6 +734,7 @@ def test_auto_handoff_without_handler_retries_a_failure(tmp_path, monkeypatch):
 def test_delivery_attempts_are_bounded(tmp_path, monkeypatch):
     paths, db, settings, (topic,) = _program(tmp_path, monkeypatch, auto_handoff=True,
                                              handoff_max_attempts=2)
+    _deliverable(monkeypatch)
     monkeypatch.setenv("ARA_PAPER_MANAGE_API_URL", "https://manage.invalid")
     monkeypatch.setenv("ARA_PAPER_MANAGE_API_KEY", "test-key")
 
@@ -764,6 +775,7 @@ def test_assign_handler_command_after_owner_review(tmp_path, monkeypatch):
     args = _parser().parse_args(["program", "assign-handler", "--paper-id", "p"])
     assert args.handler == "second_author"
     paths, db, settings, (topic,) = _program(tmp_path, monkeypatch, auto_handoff=True)
+    _deliverable(monkeypatch)
     monkeypatch.setenv("ARA_PAPER_MANAGE_API_URL", "https://manage.invalid")
     monkeypatch.setenv("ARA_PAPER_MANAGE_API_KEY", "test-key")
     monkeypatch.setattr(program_autonomy, "run_paper_delivery", lambda *_a: {

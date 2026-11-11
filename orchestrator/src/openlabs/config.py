@@ -59,6 +59,10 @@ DEFAULT_TOPIC_LEDGER_PATH = "registry/topic-ledger.json"
 DEFAULT_ASSET_INDEX_PATH = "registry/reusable-assets.json"
 
 
+DEFAULT_GIT_MESSAGE = "{action}: {paper_id} v{version}"
+GIT_MESSAGE_FIELDS = ("action", "paper_id", "version", "topic_id")
+
+
 @dataclass(frozen=True)
 class ProgramSettings:
     """Research-program controller switches (``[program]`` in openlabs.toml).
@@ -105,6 +109,22 @@ class ProgramSettings:
     paper_writing_command: tuple[str, ...] = ("paper-writing",)
     # Delivery attempts per ready paper (one per tick) before it waits for a human.
     handoff_max_attempts: int = 3
+    # Release pipeline (runs while auto_handoff is on): publish the Zenodo support
+    # material (prepare/release) on the standing production authorization of
+    # registry/settings.yaml#support_publication. False: stop before the first
+    # Zenodo write and wait for a human.
+    auto_release: bool = False
+    # Failures per release stage, and writer rounds for formal fixes, before the
+    # pipeline stops for a human.
+    release_max_attempts: int = 3
+    # Upper bound for one `review unified-run --delta-only` (formal stage included).
+    release_review_timeout_seconds: int = 7_200
+    # [program.git]: identity and message of the local data-repository commits the
+    # pipeline makes (never pushed). Unset identity: the repository's own
+    # user.name/user.email; neither set: the commit step fails and waits.
+    git_user_name: str | None = None
+    git_user_email: str | None = None
+    git_message: str = DEFAULT_GIT_MESSAGE
 
 
 DEFAULT_DIRECTION_LIMITS: dict[str, int] = {
@@ -496,7 +516,30 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         auto_handoff=program.get("auto_handoff", False) is True,
         paper_writing_command=_command(program.get("paper_writing_command"), ("paper-writing",)),
         handoff_max_attempts=_positive_int(program.get("handoff_max_attempts"), 3),
+        auto_release=program.get("auto_release", False) is True,
+        release_max_attempts=_positive_int(program.get("release_max_attempts"), 3),
+        release_review_timeout_seconds=_positive_int(
+            program.get("release_review_timeout_seconds"), 7_200
+        ),
+        **_git_settings(program.get("git")),
     )
+
+
+def _git_settings(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("[program.git] must be a table")
+    name = str(value.get("user_name") or "").strip() or None
+    email = str(value.get("user_email") or "").strip() or None
+    message = str(value.get("message") or "").strip() or DEFAULT_GIT_MESSAGE
+    try:
+        message.format(**{field: "x" for field in GIT_MESSAGE_FIELDS})
+    except (KeyError, IndexError, ValueError) as exc:
+        raise ValueError(
+            f"[program.git].message may only use {{{'}, {'.join(GIT_MESSAGE_FIELDS)}}}"
+        ) from exc
+    return {"git_user_name": name, "git_user_email": email, "git_message": message}
 
 
 def _positive_float(value: Any, default: float) -> float:

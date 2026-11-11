@@ -16,6 +16,8 @@ Lifecycle::
 
     proposed -> rejected | admitted -> active -> in_review -> ready_queue -> submitted
                                        active | in_review -> frozen
+                                       ready_queue -> in_review   (release pipeline: a post-ready
+                                                                   change needs a full review)
 
 Reopening a frozen topic, or one the admission gate rejected or held, is a new
 proposal with a new ``topic_id`` whose card declares ``reopens``; the new topic
@@ -59,7 +61,9 @@ TRANSITIONS: dict[str | None, frozenset[str]] = {
     "admitted": frozenset({"active"}),
     "active": frozenset({"in_review", "frozen"}),
     "in_review": frozenset({"ready_queue", "frozen"}),
-    "ready_queue": frozenset({"submitted"}),
+    # ready_queue -> in_review: the release pipeline found that a post-ready change
+    # (formal fix, support citation) is beyond the delta review and needs a full one.
+    "ready_queue": frozenset({"submitted", "in_review"}),
     "submitted": frozenset(),
     "rejected": frozenset(),
     "frozen": frozenset(),
@@ -116,6 +120,8 @@ TOPIC_FIELDS = (
     # Autonomous back half (absent from ledgers written before it).
     "awaiting_owner_review",
     "handoff",
+    # Release pipeline state between ready and delivery (stage, attempts, last error).
+    "release",
     "history",
 )
 # Rejections that judged the topic on its merits. A card with the same
@@ -591,7 +597,7 @@ def transition_topic(
 
 
 # Fields an automatic decision may set on a topic without changing its status.
-NOTE_FIELDS = frozenset({"awaiting_owner_review", "handoff", "paper_id"})
+NOTE_FIELDS = frozenset({"awaiting_owner_review", "handoff", "paper_id", "release"})
 
 
 def record_topic_note(
@@ -1061,6 +1067,23 @@ def mark_topic_ready(
     updates = {"paper_id": paper_id} if paper_id else {}
     return transition_topic(
         ledger, topic_id, "ready_queue", db=db, reason="review_passed",
+        decided_by=decided_by, evidence=evidence, updates=updates,
+    )
+
+
+def return_topic_to_review(
+    ledger: TopicLedger,
+    topic_id: str,
+    *,
+    db: FactoryDB,
+    decided_by: str,
+    evidence: Any = None,
+    updates: Mapping[str, Any] | None = None,
+) -> TopicDecision:
+    """``ready_queue -> in_review``: a post-ready change needs a full unified review."""
+
+    return transition_topic(
+        ledger, topic_id, "in_review", db=db, reason="release_full_review_required",
         decided_by=decided_by, evidence=evidence, updates=updates,
     )
 

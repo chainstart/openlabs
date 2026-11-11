@@ -863,6 +863,32 @@ class FactoryDB:
                 )
         return tuple(cancelled)
 
+    def resume_paused_campaign(self, campaign_id: str, *, reason: str) -> bool:
+        """``production_paused -> active`` so one explicit task can be enqueued again.
+
+        Used when a ready-queued research-program topic returns to a full review.
+        Continuous renewal is not restored here (project synchronization owns it);
+        any other status is left unchanged. Returns True when the status changed.
+        """
+
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status FROM campaigns WHERE campaign_id=?", (campaign_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(campaign_id)
+            if str(row["status"]) != "production_paused":
+                return False
+            connection.execute(
+                "UPDATE campaigns SET status='active', updated_at=? WHERE campaign_id=?",
+                (now, campaign_id),
+            )
+            self._event(connection, "campaign", campaign_id, "campaign_resumed",
+                        {"reason": reason, "prior_status": "production_paused"})
+        return True
+
     def freeze_campaign(
         self,
         campaign_id: str,

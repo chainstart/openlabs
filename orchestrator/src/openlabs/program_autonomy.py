@@ -56,6 +56,7 @@ from .program import (
     mark_topic_ready,
     open_topic_ledger,
     record_topic_note,
+    return_topic_to_review,
     topic_for_campaign,
     topics_by_status,
 )
@@ -651,6 +652,8 @@ def on_result(
     if not settings.program.enabled:
         return None
     task_type = str(task.get("task_type") or "")
+    if str(task.get("routing_reason") or "") == RELEASE_FIX_ROUTING:
+        return "handled"  # the release pipeline re-checks the paper itself
     if task_type == DIRECTION_TASK_TYPE:
         apply_direction_decision(
             db, paths, settings, report, task=task, payload=payload,
@@ -830,7 +833,9 @@ def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payl
         decided_by=task_id,
         detail={"paper_id": paper_id, "auto_handoff": settings.program.auto_handoff},
         updates={"handoff": {"status": "queued", "attempts": 0, "paper_id": paper_id,
-                             "queued_at": utc_now()}},
+                             "queued_at": utc_now(), "review_task_id": task_id},
+                 "release": {"status": "pending", "stage": "check", "attempts": {},
+                             "writer_rounds": 0, "seq": 0}},
         key=f"handoff_queued:{task_id}",
     )
     _info(report, "ready_queued").append(
@@ -1308,18 +1313,27 @@ def run_handler_assignment(
 
 def _run_paper_command(paths: WorkspacePaths, settings: FactorySettings,
                        arguments: list[str],
-                       environment: Mapping[str, str] | None = None) -> dict[str, Any]:
-    command = [*settings.program.paper_writing_command, *arguments, "--root", str(paths.data),
-               "--json"]
+                       environment: Mapping[str, str] | None = None, *,
+                       json_flag: bool = True, timeout: int = 1_800,
+                       accept: tuple[int, ...] = (0,)) -> dict[str, Any]:
+    """Run one paper-writing command and return its JSON object.
+
+    ``environment`` is added for this child process only. Commands without a
+    ``--json`` option (``zenodo``, ``review unified-run``) print JSON anyway.
+    """
+
+    command = [*settings.program.paper_writing_command, *arguments, "--root", str(paths.data)]
+    if json_flag:
+        command.append("--json")
     try:
         completed = subprocess.run(
             command, cwd=str(paths.data), env={**os.environ, **dict(environment or {})},
             capture_output=True,
-            text=True, timeout=1_800, check=False,
+            text=True, timeout=timeout, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise DeliveryError(f"{' '.join(command[:3])} could not run: {exc}") from exc
-    if completed.returncode != 0:
+    if completed.returncode not in accept:
         detail = (completed.stderr or completed.stdout or "").strip()[-800:]
         raise DeliveryError(f"exit {completed.returncode}: {detail}")
     try:
@@ -1343,7 +1357,8 @@ def _deliver_ready(db, paths, settings, report) -> None:
         status = str(state.get("status") or "queued")
         paper_id = str(state.get("paper_id") or topic.get("paper_id") or "").strip()
         entry = {"topic_id": topic_id, "paper_id": paper_id or None}
-        if status in {"delivered", "exhausted"}:
+        release_status = str((topic.get("release") or {}).get("status") or "")
+        if status == "exhausted" or (status == "delivered" and release_status != "commit_pending"):
             continue
         if not program.auto_handoff:
             _info(report, "handoffs").append({**entry, "outcome": "queued_auto_handoff_off"})
@@ -1353,47 +1368,599 @@ def _deliver_ready(db, paths, settings, report) -> None:
             db.record_event_once("topic", topic_id, "handoff_blocked",
                                  {"reason": "paper_id_unknown"}, event_key="paper_id_unknown")
             continue
+        _ReleasePipeline(db, paths, settings, report, ledger, topic, paper_id).advance()
+
+
+# --------------------------------------------------------------------------- release pipeline
+#
+# Between review ``ready`` and the delivery to the management site the paper still
+# needs its delivery-exit formal problems fixed, its Zenodo support material
+# published and cited, a review binding to the final manuscript and a clean Git
+# tree. With ``auto_handoff`` on, the controller drives these steps itself. Every
+# step re-reads the paper's state (``paper-writing program release-status``), so
+# a step that crashed or failed is simply taken again on the next tick; every
+# step writes a topic-history note and an event; failures per stage and writer
+# rounds are bounded by ``release_max_attempts`` and delivery attempts by
+# ``handoff_max_attempts``.
+
+RELEASE_FIX_ROUTING = "release_format_fix"
+RELEASE_FIX_TASK_TYPE = "format_fix"
+RELEASE_REVIEW_ROUTING = "release_full_review"
+RELEASE_DECIDER = "orchestrator:release_pipeline"
+# Bound on pipeline steps within one tick (each step is a short command, except
+# the delta review); the remainder continues on the next tick.
+RELEASE_STEPS_PER_TICK = 8
+ZENODO_TOKEN_ENVIRONMENT = "ZENODO_ACCESS_TOKEN"
+
+
+class ReleaseError(RuntimeError):
+    """One release-pipeline step failed (counts against ``release_max_attempts``)."""
+
+
+class ReleaseWait(Exception):
+    """The pipeline waits for something outside it (no attempt is consumed)."""
+
+    def __init__(self, stage: str, reason: str, detail: Mapping[str, Any] | None = None):
+        super().__init__(reason)
+        self.stage, self.reason, self.detail = stage, reason, dict(detail or {})
+
+
+def run_release_status(paths: WorkspacePaths, settings: FactorySettings,
+                       paper_id: str) -> dict[str, Any]:
+    return _run_paper_command(paths, settings,
+                              ["program", "release-status", "--paper-id", paper_id])
+
+
+def run_zenodo_step(paths: WorkspacePaths, settings: FactorySettings, action: str,
+                    paper_id: str) -> dict[str, Any]:
+    """``zenodo prepare`` / ``zenodo release`` on production; the write switch is for this call only."""
+
+    arguments = ["zenodo", action, "--paper-id", paper_id, "--environment", "production",
+                 "--confirm-production"]
+    if action == "release":
+        arguments += ["--confirm-paper-id", paper_id]
+    return _run_paper_command(paths, settings, arguments,
+                              environment={"OPENLABS_ENABLE_EXTERNAL_WRITES": "1"},
+                              json_flag=False)
+
+
+def run_support_check(paths: WorkspacePaths, settings: FactorySettings,
+                      paper_id: str) -> dict[str, Any]:
+    return _run_paper_command(paths, settings, ["support-check", "--paper-id", paper_id],
+                              accept=(0, 1))
+
+
+def run_delta_review(paths: WorkspacePaths, settings: FactorySettings,
+                     paper_id: str) -> dict[str, Any]:
+    """``review unified-run --delta-only``: never starts the editor or the referees."""
+
+    return _run_paper_command(
+        paths, settings, ["review", "unified-run", "--paper-id", paper_id, "--delta-only"],
+        json_flag=False, timeout=settings.program.release_review_timeout_seconds,
+    )
+
+
+def _git(root: Path, *arguments: str, identity: tuple[str, str] | None = None,
+         check: bool = True) -> str:
+    command = ["git"]
+    if identity is not None:
+        command += ["-c", f"user.name={identity[0]}", "-c", f"user.email={identity[1]}"]
+    try:
+        completed = subprocess.run([*command, *arguments], cwd=str(root), capture_output=True,
+                                   text=True, timeout=300, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ReleaseError(f"git {arguments[0]} could not run: {exc}") from exc
+    if check and completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()[-400:]
+        raise ReleaseError(f"git {arguments[0]} failed: {detail}")
+    return completed.stdout
+
+
+def git_identity(paths: WorkspacePaths, settings: FactorySettings) -> tuple[str, str]:
+    """``[program.git]`` identity, else the data repository's own; neither: wait."""
+
+    program = settings.program
+    name = program.git_user_name or _git(paths.data, "config", "user.name", check=False).strip()
+    email = program.git_user_email or _git(paths.data, "config", "user.email",
+                                           check=False).strip()
+    if not name or not email:
+        raise ReleaseWait("commit", "git_identity_missing", {
+            "hint": "set [program.git] user_name and user_email in config/openlabs.toml, or "
+                    "user.name/user.email in the data repository"})
+    return name, email
+
+
+def commit_paper_paths(paths: WorkspacePaths, settings: FactorySettings, *, paper_id: str,
+                       version: str, action: str, topic_id: str,
+                       commit_paths: list[str]) -> str | None:
+    """One local commit of exactly this paper's paths (plus the topic ledger); never pushed.
+
+    Only the listed paths are staged (``git add -A -- <paths>``) and committed
+    (``git commit --only``), so changes elsewhere in the work tree, staged or not,
+    are left exactly as they were. Returns the new commit, or None when the
+    paper's paths are already clean.
+    """
+
+    root = paths.data
+    scope: list[str] = []
+    for raw in commit_paths:
+        relative = str(raw).strip().strip("/")
+        if not relative or relative.startswith("..") or Path(relative).is_absolute():
+            raise ReleaseError(f"refusing to commit a path outside the data repository: {raw}")
+        if relative not in scope:
+            scope.append(relative)
+    present = [item for item in scope if (root / item).exists()
+               or _git(root, "ls-files", "--", item).strip()]
+    if not present:
+        return None
+    if not _git(root, "status", "--porcelain=v1", "--untracked-files=all", "--",
+                *present).strip():
+        return None
+    identity = git_identity(paths, settings)
+    ledger_path = (paths.data / settings.program.ledger_path).resolve()
+    try:
+        ledger_relative = ledger_path.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        ledger_relative = None
+    if ledger_relative and ledger_path.is_file() and ledger_relative not in present:
+        present.append(ledger_relative)
+    fields = {"action": action, "paper_id": paper_id, "version": version or "?",
+              "topic_id": topic_id}
+    message = settings.program.git_message.format(**fields) + (
+        "\n\nLocal commit by the OpenLabs release pipeline (not pushed).\n"
+        f"Paper: {paper_id}\nVersion: {version or '?'}\nAction: {action}\nTopic: {topic_id}\n"
+    )
+    _git(root, "add", "-A", "--", *present)
+    _git(root, "commit", "-q", "--only", "-m", message, "--", *present, identity=identity)
+    return _git(root, "rev-parse", "HEAD").strip()
+
+
+def _release_campaign(db: FactoryDB, settings: FactorySettings, domain: str) -> str:
+    """Per-domain campaign for formal-fix writers (governance overhead, like decisions)."""
+
+    campaign_id = f"{domain}-program-release"
+    campaign = db.campaign(campaign_id)
+    budget = settings.max_campaign_agent_seconds
+    if campaign is not None:
+        used = float(campaign.get("agent_seconds_used") or 0)
+        current = int(campaign.get("max_agent_seconds") or 0)
+        status = str(campaign.get("status") or "")
+        if status not in {"active", "budget_exhausted"} or (
+            status == "active" and used + settings.max_task_wall_seconds + 1 <= current
+        ):
+            return campaign_id
+        budget = max(current, int(used) + settings.max_campaign_agent_seconds)
+    db.register_campaign(
+        campaign_id, domain=domain, title=f"{domain} research-program release fixes",
+        priority=5, source="program:release_pipeline", max_agent_seconds=budget,
+    )
+    return campaign_id
+
+
+class _ReleasePipeline:
+    """One ready-queued topic's way from review ``ready`` to delivery."""
+
+    def __init__(self, db, paths, settings, report, ledger, topic, paper_id):
+        self.db, self.paths, self.settings, self.report = db, paths, settings, report
+        self.ledger, self.topic, self.paper_id = ledger, topic, paper_id
+        self.topic_id = str(topic["topic_id"])
+        self.state = dict(topic.get("release") or {})
+        self.state.setdefault("status", "pending")
+        self.state["attempts"] = dict(self.state.get("attempts") or {})
+        self.handoff = dict(topic.get("handoff") or {})
+        self.stage = str(self.state.get("stage") or "check")
+        self.version = ""
+
+    # ------------------------------------------------------------------ bookkeeping
+
+    def entry(self, outcome: str, **extra: Any) -> dict[str, Any]:
+        item = {"topic_id": self.topic_id, "paper_id": self.paper_id, "stage": self.stage,
+                "outcome": outcome, **extra}
+        _info(self.report, "releases").append(item)
+        return item
+
+    def save(self, event: str | None, reason: str, *, detail: Mapping[str, Any] | None = None,
+             evidence: Any = None, **changes: Any) -> None:
+        new = {**self.state, **changes}
+        quiet = {k: v for k, v in new.items() if k not in {"seq", "updated_at"}}
+        if event is None:
+            current = {k: v for k, v in self.state.items() if k not in {"seq", "updated_at"}}
+            if quiet == current:
+                return  # waiting in the same place: no new history entry per tick
+            event = "release_waiting"
+        new["seq"] = int(self.state.get("seq") or 0) + 1
+        new["updated_at"] = utc_now()
+        record_topic_note(
+            self.ledger, self.topic_id, db=self.db, event_type=event, reason=reason,
+            decided_by=RELEASE_DECIDER, detail={"paper_id": self.paper_id, **dict(detail or {})},
+            evidence=evidence, updates={"release": new},
+            key=f"{event}:{self.topic_id}:{new['seq']}",
+        )
+        self.state = new
+
+    def failure(self, exc: BaseException) -> None:
+        attempts = dict(self.state.get("attempts") or {})
+        attempts[self.stage] = int(attempts.get(self.stage) or 0) + 1
+        final = attempts[self.stage] >= self.settings.program.release_max_attempts
+        error = str(exc)[:800]
+        self.save("release_exhausted" if final else "release_failed", f"{self.stage}_failed",
+                  detail={"stage": self.stage, "attempt": attempts[self.stage], "error": error,
+                          "final": final},
+                  attempts=attempts, last_error=error, stage=self.stage,
+                  status="exhausted" if final else "failed")
+        self.entry("exhausted" if final else "failed", attempt=attempts[self.stage],
+                   error=error[:300])
+        if final:
+            self.exhausted_report(error)
+
+    def exhausted_report(self, error: str) -> None:
+        _info(self.report, "release_exhausted").append(
+            {"topic_id": self.topic_id, "paper_id": self.paper_id, "stage": self.stage,
+             "error": error[:300]})
+        self.report.errors.append(
+            f"Release pipeline for {self.paper_id} (topic {self.topic_id}) stopped at "
+            f"{self.stage} after {self.settings.program.release_max_attempts} attempts; "
+            f"a human must resolve: {error[:300]}"
+        )
+
+    def wait(self, wait: ReleaseWait) -> None:
+        self.stage = wait.stage
+        self.save(None, wait.reason, detail={"stage": wait.stage, **wait.detail},
+                  status="waiting", stage=wait.stage, waiting_for=wait.reason)
+        self.entry(f"waiting_{wait.reason}", **wait.detail)
+
+    def commit(self, status: Mapping[str, Any], action: str) -> str | None:
+        previous, self.stage = self.stage, "commit"
+        sha = commit_paper_paths(
+            self.paths, self.settings, paper_id=self.paper_id,
+            version=str(status.get("version") or self.version), action=action,
+            topic_id=self.topic_id, commit_paths=list(status.get("commit_paths") or []),
+        )
+        if sha:
+            commits = [*list(self.state.get("commits") or []), {"sha": sha, "action": action}]
+            self.save("release_committed", action, detail={"commit": sha, "action": action},
+                      commits=commits[-10:])
+            self.entry("committed", commit=sha, action=action)
+        self.stage = previous
+        return sha
+
+    # ------------------------------------------------------------------ driver
+
+    def advance(self) -> None:
+        if self.state.get("status") == "exhausted":
+            self.entry("exhausted", error=str(self.state.get("last_error") or "")[:300])
+            _info(self.report, "release_exhausted").append(
+                {"topic_id": self.topic_id, "paper_id": self.paper_id,
+                 "stage": self.stage, "error": str(self.state.get("last_error") or "")[:300]})
+            return
+        for _ in range(RELEASE_STEPS_PER_TICK):
+            try:
+                if not self.step():
+                    return
+            except ReleaseWait as wait:
+                self.wait(wait)
+                return
+            except (ReleaseError, DeliveryError) as exc:
+                self.failure(exc)
+                return
+        self.entry("continues_next_tick")
+
+    def step(self) -> bool:
+        """Take the next step; True: continue within this tick."""
+
+        if self.writer_pending():
+            return False
+        self.stage = "check"
+        status = run_release_status(self.paths, self.settings, self.paper_id)
+        self.version = str(status.get("version") or "")
+        if status.get("delivered"):
+            self.finish_delivered(status)
+            return False
+        review = dict(status.get("review") or {})
+        support = dict(status.get("support") or {})
+        issues = [item for item in status.get("issues") or [] if isinstance(item, Mapping)]
+        if not review.get("ready"):
+            self.return_to_review(status, {"reason": "writing_release is no longer ready",
+                                           "problems": review.get("problems") or []})
+            return False
+        human = [item for item in issues if item.get("remedy") == "human"]
+        if human:
+            raise ReleaseWait("form_fix", "needs_owner",
+                              {"issues": [str(item.get("text") or "")[:300] for item in human]})
+        prepare = support.get("prepare_needed") or any(
+            item.get("remedy") == "zenodo_prepare" for item in issues)
+        if prepare:
+            self.stage = "support_prepare"
+            self.require_zenodo(support)
+            self.commit(status, "commit-before-zenodo-prepare")
+            result = run_zenodo_step(self.paths, self.settings, "prepare", self.paper_id)
+            self.save("release_support_prepared", "zenodo_prepare", stage=self.stage,
+                      status="running",
+                      detail={"reserved_version_doi": result.get("reserved_version_doi"),
+                              "archive_sha256": result.get("archive_sha256")})
+            self.entry("support_prepared", version_doi=result.get("reserved_version_doi"))
+            return True
+        writer = [item for item in issues if item.get("remedy") == "writer"]
+        if writer:
+            self.schedule_writer(status, writer)
+            return False
+        if not review.get("current"):
+            self.stage = "delta_review"
+            result = run_delta_review(self.paths, self.settings, self.paper_id)
+            if result.get("outcome") == "ready" and result.get("review_mode") == "delta":
+                self.save("release_delta_review", "delta_review_ready", stage=self.stage,
+                          status="running",
+                          detail={"run_dir": result.get("run_dir"),
+                                  "decision_sha256": result.get("decision_sha256")})
+                self.entry("delta_review_ready", run_dir=result.get("run_dir"))
+                return True
+            self.return_to_review(status, {
+                "reason": "the post-ready change needs a full review",
+                "outcome": result.get("outcome"), "review_mode": result.get("review_mode"),
+                "run_dir": result.get("run_dir"),
+                "full_review_reasons": result.get("full_review_reasons") or []})
+            return False
+        if support.get("release_needed"):
+            self.stage = "support_release"
+            self.require_zenodo(support)
+            check = run_support_check(self.paths, self.settings, self.paper_id)
+            if not check.get("valid"):
+                first = next(iter(check.get("errors") or []), {})
+                raise ReleaseError(f"support-check failed: {first.get('code')}: "
+                                   f"{first.get('message')}")
+            self.commit(status, "commit-before-zenodo-release")
+            result = run_zenodo_step(self.paths, self.settings, "release", self.paper_id)
+            self.save("release_support_published", "zenodo_release", stage=self.stage,
+                      status="running",
+                      detail={"version_doi": result.get("version_doi"),
+                              "concept_doi": result.get("concept_doi"),
+                              "receipt": result.get("receipt")})
+            self.entry("support_published", version_doi=result.get("version_doi"))
+            # The DOI/receipt registry update is committed by the next step.
+            return True
+        self.commit(status, "release-ready")
+        self.deliver(status)
+        return False
+
+    # ------------------------------------------------------------------ steps
+
+    def require_zenodo(self, support: Mapping[str, Any]) -> None:
+        if not self.settings.program.auto_release:
+            raise ReleaseWait(self.stage, "auto_release_off",
+                              {"hint": "[program] auto_release = false: run the Zenodo step by hand"})
+        if support.get("standing_production_release_authorization") is not True:
+            raise ReleaseWait(self.stage, "no_standing_authorization", {
+                "hint": "registry/settings.yaml#support_publication."
+                        "standing_production_release_authorization is not true"})
+        if not os.environ.get(ZENODO_TOKEN_ENVIRONMENT, "").strip():
+            raise ReleaseWait(self.stage, "waiting_credentials",
+                              {"missing": [ZENODO_TOKEN_ENVIRONMENT]})
+
+    def writer_pending(self) -> bool:
+        task_id = str(self.state.get("writer_task_id") or "")
+        if not task_id:
+            return False
+        task = self.db.task(task_id)
+        status = str(task.get("status")) if task else "missing"
+        if status in IN_FLIGHT:
+            self.stage = "form_fix_writer"
+            self.entry("waiting_writer", task_id=task_id)
+            return True
+        self.stage = "form_fix_writer"
+        self.save("release_writer_finished", status, stage=self.stage, writer_task_id=None,
+                  detail={"task_id": task_id, "status": status})
+        if status != "succeeded":
+            self.failure(ReleaseError(f"formal-fix writer {task_id} ended {status}"))
+            return True  # this tick stops; the next one re-checks and may retry
+        return False
+
+    def schedule_writer(self, status: Mapping[str, Any], issues: list[Mapping[str, Any]]) -> None:
+        self.stage = "form_fix_writer"
+        rounds = int(self.state.get("writer_rounds") or 0)
+        texts = [str(item.get("text") or item.get("message") or "") for item in issues]
+        if rounds >= self.settings.program.release_max_attempts:
+            error = (f"{len(issues)} formal problem(s) remain after {rounds} writer round(s): "
+                     + "; ".join(texts[:3]))
+            attempts = {**dict(self.state.get("attempts") or {}),
+                        self.stage: self.settings.program.release_max_attempts}
+            self.save("release_exhausted", "writer_rounds_exhausted", stage=self.stage,
+                      status="exhausted", attempts=attempts, last_error=error[:800],
+                      detail={"issues": texts[:20]})
+            self.entry("exhausted", error=error[:300])
+            self.exhausted_report(error)
+            return
+        domain = str(self.topic.get("domain") or "")
+        packet = {
+            "schema_version": "openlabs.release_fix_packet.v1",
+            "topic_id": self.topic_id, "paper_id": self.paper_id,
+            "version": status.get("version"), "round": rounds + 1,
+            "scope": status.get("writer_scope"),
+            "issues": [{key: item.get(key) for key in ("code", "location", "message", "text",
+                                                       "files") if item.get(key) is not None}
+                       for item in issues],
+            "notes_not_blocking": status.get("notes") or [],
+            "support": {key: (status.get("support") or {}).get(key)
+                        for key in ("status", "version_doi", "mode")},
+            "created_at": utc_now(),
+        }
+        digest = hashlib.sha256(canonical_json_bytes(
+            {k: v for k, v in packet.items() if k != "created_at"})).hexdigest()
+        packet_path = (_control_root(self.paths) / "release-packets" / _token(self.topic_id)
+                       / f"round-{rounds + 1}-{digest[:12]}.json")
+        atomic_write_json(packet_path, packet)
+        task_id = f"release-fix:{_digest(self.topic_id, self.paper_id, rounds + 1, digest)[:32]}"
+        if self.db.task(task_id) is None:
+            campaign = _release_campaign(self.db, self.settings, domain)
+            from .engine import _paper_skill
+
+            self.db.enqueue_task(
+                task_id=task_id, campaign_id=campaign, domain=domain,
+                task_type=RELEASE_FIX_TASK_TYPE,
+                objective=(
+                    f"Paper {self.paper_id} passed the unified review. Fix only the "
+                    f"{len(issues)} delivery-exit formal problem(s) listed in the packet at the "
+                    "input path, in the data repository's paper files. Do not change any number, "
+                    "table, figure content, result, claim or conclusion, nor the title. Do not run "
+                    "the review, Zenodo or delivery commands and do not commit; the orchestrator "
+                    "re-checks, re-reviews the change (delta review) and commits. Return a result "
+                    "bundle that lists, per problem, what you changed."
+                ),
+                input_path=str(packet_path),
+                skill_path=_paper_skill(domain) or "openlabs-paper-writing",
+                runner="cheap", routing_reason=RELEASE_FIX_ROUTING, agent_role="writer",
+                session_mode="fresh",
+                priority=int(self.topic.get("priority") or 0) + 1,
+                max_attempts=self.settings.max_attempts,
+                max_wall_seconds=min(7_200, self.settings.max_task_wall_seconds),
+                **default_task_resources(self.settings).to_dict(),
+            )
+            self.report.enqueued.append(task_id)
+        self.save("release_writer_scheduled", "formal_fixes_need_text", stage=self.stage,
+                  status="waiting", writer_task_id=task_id, writer_rounds=rounds + 1,
+                  detail={"task_id": task_id, "issues": texts[:20],
+                          "packet": str(packet_path)},
+                  evidence=[_evidence(packet_path)])
+        self.entry("writer_scheduled", task_id=task_id, issues=len(issues))
+
+    def return_to_review(self, status: Mapping[str, Any], detail: Mapping[str, Any]) -> None:
+        """``ready_queue -> in_review`` and one full unified review in the topic's campaign."""
+
+        self.stage = "full_review"
+        campaign_id = str(self.topic.get("campaign_id") or "")
+        evidence = [_write_evidence(self.paths, self.topic_id, "release-full-review",
+                                    {"paper_id": self.paper_id, **dict(detail)})]
+        marker = _digest(self.topic_id, self.paper_id, json.dumps(dict(detail), sort_keys=True,
+                                                                  default=str))
+        state = {**self.state, "status": "returned_to_review", "stage": self.stage,
+                 "seq": int(self.state.get("seq") or 0) + 1, "updated_at": utc_now()}
+        return_topic_to_review(
+            self.ledger, self.topic_id, db=self.db, decided_by=f"{RELEASE_DECIDER}:{marker[:16]}",
+            evidence=evidence,
+            updates={"release": state,
+                     "handoff": {**self.handoff, "status": "returned_to_review"}},
+        )
+        self.state = state
+        task_id = None
+        campaign = self.db.campaign(campaign_id) if campaign_id else None
+        if campaign is not None:
+            self.db.resume_paused_campaign(campaign_id, reason="release_full_review_required")
+            task_id = f"release-review:{marker[:32]}"
+            if self.db.task(task_id) is None:
+                parent = str(self.handoff.get("review_task_id") or "")
+                self.db.enqueue_task(
+                    task_id=task_id, campaign_id=campaign_id, domain=str(campaign["domain"]),
+                    task_type="paper_review",
+                    objective=(
+                        "A change after the ready review (formal fixes or the support-material "
+                        "citation) is beyond the delta review; the packet at the input path names "
+                        "why. Run `paper-writing review unified-run --paper-id "
+                        f"{self.paper_id}` as an ordinary full review and do not edit the "
+                        "manuscript. Return paper_candidate=true only for outcome ready, and copy "
+                        "the paper's registered writing_release into `review_outcome` (next_action, "
+                        "status, review_stalled, rounds_for_target, max_rounds_per_target, "
+                        "direction_context, decision_record, decision_record_sha256, paper_id)."
+                    ),
+                    input_path=evidence[0]["path"], skill_path="openlabs-paper-review",
+                    runner="frontier", routing_reason=RELEASE_REVIEW_ROUTING,
+                    parent_task_id=parent if parent and self.db.task(parent) else None,
+                    agent_role="reviewer", session_mode="fresh",
+                    priority=int(campaign.get("priority") or 0) + 1,
+                    max_attempts=self.settings.max_attempts,
+                    max_wall_seconds=self.settings.max_task_wall_seconds,
+                    **default_task_resources(self.settings).to_dict(),
+                )
+                self.report.enqueued.append(task_id)
+        record_topic_note(
+            self.ledger, self.topic_id, db=self.db, event_type="release_returned_to_review",
+            reason="full_review_required", decided_by=RELEASE_DECIDER,
+            detail={"paper_id": self.paper_id, "review_task_id": task_id, **dict(detail)},
+            evidence=evidence, key=f"release_returned_to_review:{marker}",
+        )
+        self.entry("returned_to_review", review_task_id=task_id,
+                   reasons=list(detail.get("full_review_reasons") or [])[:5])
+
+    def deliver(self, status: Mapping[str, Any]) -> None:
+        self.stage = "deliver"
         missing = [name for name in DELIVERY_ENVIRONMENT if not os.environ.get(name, "").strip()]
         if missing:
-            _info(report, "handoffs").append({**entry, "outcome": "waiting_credentials",
-                                               "missing": missing})
-            db.record_event_once("topic", topic_id, "handoff_blocked",
-                                 {"reason": "credentials_missing", "missing": missing},
-                                 event_key="credentials_missing")
-            continue
+            _info(self.report, "handoffs").append(
+                {"topic_id": self.topic_id, "paper_id": self.paper_id,
+                 "outcome": "waiting_credentials", "missing": missing})
+            self.db.record_event_once("topic", self.topic_id, "handoff_blocked",
+                                      {"reason": "credentials_missing", "missing": missing},
+                                      event_key="credentials_missing")
+            raise ReleaseWait("deliver", "waiting_credentials", {"missing": missing})
+        state = self.handoff
         attempts = int(state.get("attempts") or 0) + 1
+        entry = {"topic_id": self.topic_id, "paper_id": self.paper_id}
         try:
-            result = run_paper_delivery(paths, settings, paper_id)
+            result = run_paper_delivery(self.paths, self.settings, self.paper_id)
             if result.get("submission_handler") not in (None, ""):
                 raise DeliveryError("delivery reported a submission handler; refusing it")
         except DeliveryError as exc:
-            final = attempts >= program.handoff_max_attempts
+            final = attempts >= self.settings.program.handoff_max_attempts
             new_state = {**state, "status": "exhausted" if final else "failed",
                          "attempts": attempts, "last_error": str(exc)[:800],
-                         "last_attempt_at": utc_now(), "paper_id": paper_id}
+                         "last_attempt_at": utc_now(), "paper_id": self.paper_id}
             record_topic_note(
-                ledger, topic_id, db=db, event_type="handoff_failed", reason="delivery_failed",
-                decided_by="orchestrator:auto_handoff",
+                self.ledger, self.topic_id, db=self.db, event_type="handoff_failed",
+                reason="delivery_failed", decided_by="orchestrator:auto_handoff",
                 detail={"attempt": attempts, "error": str(exc)[:800], "final": final},
                 updates={"handoff": new_state}, key=f"handoff_failed:{attempts}",
             )
-            _info(report, "handoffs").append({**entry, "outcome": "failed", "attempt": attempts,
-                                               "final": final, "error": str(exc)[:300]})
-            continue
-        new_state = {**state, "status": "delivered", "attempts": attempts,
-                     "delivered_at": utc_now(), "paper_id": paper_id,
+            self.handoff = new_state
+            _info(self.report, "handoffs").append({**entry, "outcome": "failed",
+                                                    "attempt": attempts, "final": final,
+                                                    "error": str(exc)[:300]})
+            if final:
+                self.exhausted_report(f"delivery failed {attempts} times: {exc}")
+            return
+        self.mark_delivered(result, attempts)
+        # The registry's new ``delivery`` block (and an approved escalation) is
+        # committed at once, so a later ``handoff sync`` finds a clean tree.
+        self.commit_after_delivery(status)
+
+    def mark_delivered(self, result: Mapping[str, Any], attempts: int) -> None:
+        new_state = {**self.handoff, "status": "delivered", "attempts": attempts,
+                     "delivered_at": utc_now(), "paper_id": self.paper_id,
                      "package_id": result.get("package_id"), "submission_handler": None,
                      "receipt": result.get("receipt")}
         record_topic_note(
-            ledger, topic_id, db=db, event_type="handoff_delivered", reason="auto_handoff",
-            decided_by="orchestrator:auto_handoff",
-            detail={"paper_id": paper_id, "package_id": result.get("package_id"),
+            self.ledger, self.topic_id, db=self.db, event_type="handoff_delivered",
+            reason="auto_handoff", decided_by="orchestrator:auto_handoff",
+            detail={"paper_id": self.paper_id, "package_id": result.get("package_id"),
                     "awaiting_owner_review": True, "submission_handler": None},
             updates={"handoff": new_state, "awaiting_owner_review": True},
-            key=f"handoff_delivered:{paper_id}:{result.get('package_id')}",
+            key=f"handoff_delivered:{self.paper_id}:{result.get('package_id')}",
         )
-        _info(report, "handoffs").append({**entry, "outcome": "delivered",
-                                           "package_id": result.get("package_id")})
+        self.handoff = new_state
+        _info(self.report, "handoffs").append({"topic_id": self.topic_id,
+                                                "paper_id": self.paper_id,
+                                                "outcome": "delivered",
+                                                "package_id": result.get("package_id")})
+
+    def commit_after_delivery(self, status: Mapping[str, Any]) -> None:
+        self.stage = "commit_after_delivery"
+        try:
+            self.commit(status, "record-delivery")
+        except (ReleaseWait, ReleaseError) as exc:
+            # Delivered either way; the commit is retried on the next tick.
+            self.save("release_commit_pending", "commit_after_delivery_failed",
+                      stage=self.stage, status="commit_pending",
+                      detail={"error": str(exc)[:400]}, last_error=str(exc)[:800])
+            self.entry("commit_pending", error=str(exc)[:300])
+            return
+        self.save("release_done", "delivered", stage="done", status="done",
+                  detail={"package_id": self.handoff.get("package_id")})
+        self.entry("done", package_id=self.handoff.get("package_id"))
+
+    def finish_delivered(self, status: Mapping[str, Any]) -> None:
+        """The current version is already delivered (e.g. a crash after delivery)."""
+
+        delivery = dict(status.get("delivery") or {})
+        if self.handoff.get("status") != "delivered":
+            self.mark_delivered(delivery, int(self.handoff.get("attempts") or 0) + 1)
+        self.commit_after_delivery(status)
 
 
 def assign_submission_handler(
@@ -1442,5 +2009,6 @@ def run_program_autonomy(
         except (OSError, TopicLedgerError, KeyError, TypeError, ValueError,
                 json.JSONDecodeError) as exc:
             report.errors.append(f"program autonomy ({name}): {exc}")
-    for key in ("direction_decisions", "topics_frozen", "ready_queued", "handoffs"):
+    for key in ("direction_decisions", "topics_frozen", "ready_queued", "handoffs", "releases",
+                "release_exhausted"):
         report.program.setdefault(key, [])
