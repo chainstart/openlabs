@@ -37,12 +37,17 @@ it: `docs/operations.zh.md` ("研究计划").
 
 ## Safety and resources
 
-Every process that can use substantial CPU or memory runs inside the aggregate resource
-guard (`bin/openlabs-codex`, or `bin/openlabs-resource-guard -- <command>`); GPU work also
-declares its budget. If the guard is unavailable, do not run the command unguarded; only
-small bounded inspection (`rg`, `ls`, `git status`) runs directly. The full list, the limits
-and the GPU rules are in `RESOURCE_GUARD.md` ("What must run inside the guard"). Never
-commit credentials, tokens or private keys.
+The launcher, not each command, keeps research inside the aggregate resource guard: factory
+workers start in `openlabs-workers.slice` or in a container whose limits
+`container_guard.py` has verified, and the launcher refuses to start an agent it cannot
+place there. Inside such a session run commands directly; every child inherits the same
+cgroup, so wrapping each call adds nothing. GPU work still reserves its device explicitly
+(`bin/openlabs-resource-guard --task-type gpu ...`), because the cgroup does not arbitrate
+GPUs. In an ad-hoc session outside the guard, small scripts and inspection run directly;
+parallel, multi-process, large-memory, long-running, build and install work goes through
+`bin/openlabs-codex` or `bin/openlabs-resource-guard -- <command>`. Details and limits:
+`RESOURCE_GUARD.md` ("What must run inside the guard"). Never commit credentials, tokens or
+private keys.
 
 ## Actions that need a human
 

@@ -46,39 +46,42 @@ CPU policy and applies it at the aggregate slice as well as scheduler admission.
 
 ## What must run inside the guard
 
-This is a hard requirement. When resource use is uncertain, treat the command as
-resource-intensive and use the guard.
+The guard is placed once, by the launcher, around the whole agent session; it is
+not re-applied per command.
 
-- Launch interactive Codex research with `bin/openlabs-codex` so every child
-  process inherits the guard. Otherwise launch each potentially heavy command
-  with `bin/openlabs-resource-guard -- <command> [args...]` (from the data
-  repository: `../openlabs/bin/openlabs-resource-guard`).
-- Always guard interpreters and runtimes that execute repository or generated
-  code (Python, R, Julia, Java, Node.js, Bun, Deno), including inline scripts
-  and small probes; tests, benchmarks, fuzzers, solvers, symbolic or exact
-  computation, model inference or training, compilers, linkers, documentation
-  and PDF builds, package installation or synchronization, browser or Electron
-  automation, container builds, archive or dataset processing, and nested
-  Codex invocations.
-- Put the whole pipeline inside one guard, e.g.
-  `bin/openlabs-resource-guard -- bash -lc '<producer> | <consumer>'`.
-- Background jobs, asynchronous sessions, `nohup`, `tmux`, `timeout`, resumed
-  campaigns, workers, subagents and child processes must not bypass the guard.
-- Only inherently small, bounded commands may run directly: `pwd`, `ls`,
-  bounded `find`, `rg`, `sed`, `head`, `tail`, `stat`, `git status`, `git diff`,
-  `systemctl status` and bounded `journalctl`. A command that reads an
-  unbounded file or tree, loads project code, or can fan out is not exempt.
-- Before relying on inherited protection, verify that `/proc/self/cgroup`
-  contains `openlabs-workers.slice`; another guarded job elsewhere proves nothing.
-- Declare CPU work with `--task-type cpu`. Every GPU workload explicitly
-  reserves its device with `--task-type gpu --gpu-memory-mib N --gpu-device N`,
-  even inside an inherited worker cgroup; a CPU label never authorizes CUDA
-  work. Do not unset the allocator cap, launch parallel GPU children inside one
-  lease, or bypass the supervisor. Solve GPU pressure by reducing
-  batch/context/model memory, offloading or queueing, never by disabling CUDA
-  or raising ceilings.
-- If the guard, the systemd user manager or cgroup v2 controllers are
-  unavailable, fail closed: repair or install the guard first.
+- **Launcher responsibility (hard rule).** Factory workers start inside
+  `openlabs-workers.slice` (systemd) or, in Docker, inside a container whose
+  CPU, memory, swap and task limits `container_guard.py` has verified; math
+  workers additionally need the 16/18 GiB no-swap math budget. When it cannot
+  do either, the launcher refuses to start the worker (and therefore the
+  agent) instead of running it unbounded.
+- **Inside a guarded session** (factory worker, `bin/openlabs-codex`, verified
+  container) run commands directly. Every child inherits the session's cgroup,
+  so wrapping each interpreter call adds no protection, only friction. To
+  check, `/proc/self/cgroup` contains `openlabs-workers.slice`, or
+  `/.dockerenv` exists and `python3 orchestrator/src/openlabs/container_guard.py`
+  exits 0.
+- **GPU work always reserves its device explicitly**, even inside a guarded
+  session: `bin/openlabs-resource-guard --task-type gpu --gpu-memory-mib N
+  --gpu-device N -- <command>`. The cgroup does not arbitrate GPUs; the shared
+  GPU lease does, and a CPU label never authorizes CUDA work. Do not unset the
+  allocator cap, launch parallel GPU children inside one lease, or bypass the
+  supervisor. Solve GPU pressure by reducing batch/context/model memory,
+  offloading or queueing, never by disabling CUDA or raising ceilings.
+- **Ad-hoc sessions outside the guard** (an operator shell, an unguarded
+  assistant session): small scripts, probes and inspection run directly.
+  Parallel or multi-process work, large-memory jobs, long-running jobs, test
+  suites that fan out, builds, package installation, model inference or
+  training, and nested agent invocations go through `bin/openlabs-codex` or
+  `bin/openlabs-resource-guard -- <command>`; put a whole pipeline inside one
+  guard (`bin/openlabs-resource-guard -- bash -lc '<producer> | <consumer>'`).
+  When resource use is uncertain, use the guard.
+- Background jobs, `nohup`, `tmux`, resumed campaigns and child processes
+  started from an unguarded shell do not become guarded later; start them
+  inside the guard.
+- If the guard, the systemd user manager or cgroup v2 controllers (or, in a
+  container, the verified cgroup limits) are unavailable, heavy work fails
+  closed: repair or install the guard first.
 
 ## Install and verify
 
