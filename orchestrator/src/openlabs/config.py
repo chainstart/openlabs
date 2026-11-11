@@ -73,6 +73,30 @@ class ProgramSettings:
     ledger_path: str = DEFAULT_TOPIC_LEDGER_PATH
 
 
+DEFAULT_QUOTA_BACKOFF_MINUTES: tuple[int, ...] = (15, 30, 60, 120, 300)
+
+
+@dataclass(frozen=True)
+class BudgetSettings:
+    """Provider-quota backoff and agent parallelism (``[budget]`` in openlabs.toml).
+
+    The defaults keep scheduling unchanged until a real ``agent_quota`` failure is
+    seen: ``max_parallel_agents=None`` means "same as ``max_worker_processes``"
+    and no backoff state exists before the first quota hit.
+    """
+
+    max_parallel_agents: int | None = None
+    quota_backoff_minutes: tuple[int, ...] = DEFAULT_QUOTA_BACKOFF_MINUTES
+    quota_backoff_cap_minutes: int = 300
+    restore_step: int = 1
+    # Consecutive agent_quota results one task may defer before ordinary failure
+    # handling takes over (guards against a misclassified real failure).
+    quota_retry_limit: int = 8
+    # Automatic retries of a needs_human/quarantined task whose last attempt
+    # failed for an infrastructure reason before it blocks or freezes its topic.
+    infrastructure_retry_limit: int = 3
+
+
 @dataclass(frozen=True)
 class FactorySettings:
     # Resource admission is the primary concurrency control. This is only a
@@ -98,6 +122,7 @@ class FactorySettings:
     default_task_memory_mib: int = 4_096
     default_task_scratch_mib: int = 4_096
     program: ProgramSettings = field(default_factory=ProgramSettings)
+    budget: BudgetSettings = field(default_factory=BudgetSettings)
 
 
 def _default_workspace() -> Path:
@@ -253,6 +278,32 @@ def load_program_settings(payload: Any) -> ProgramSettings:
     )
 
 
+def _minutes_sequence(value: Any) -> tuple[int, ...]:
+    if not isinstance(value, (list, tuple)):
+        return DEFAULT_QUOTA_BACKOFF_MINUTES
+    parsed = tuple(_positive_int(item, 0) for item in value)
+    if not parsed or any(item <= 0 for item in parsed):
+        return DEFAULT_QUOTA_BACKOFF_MINUTES
+    return parsed
+
+
+def load_budget_settings(payload: Any) -> BudgetSettings:
+    budget = payload if isinstance(payload, dict) else {}
+    raw_parallel = budget.get("max_parallel_agents")
+    return BudgetSettings(
+        max_parallel_agents=(
+            None if raw_parallel is None else _positive_int(raw_parallel, 0) or None
+        ),
+        quota_backoff_minutes=_minutes_sequence(budget.get("quota_backoff_minutes")),
+        quota_backoff_cap_minutes=_positive_int(budget.get("quota_backoff_cap_minutes"), 300),
+        restore_step=_positive_int(budget.get("restore_step"), 1),
+        quota_retry_limit=_positive_int(budget.get("quota_retry_limit"), 8),
+        infrastructure_retry_limit=_nonnegative_int(
+            budget.get("infrastructure_retry_limit"), 3
+        ),
+    )
+
+
 def load_settings(paths: WorkspacePaths) -> FactorySettings:
     path = paths.code / "config" / "openlabs.toml"
     payload: dict[str, Any] = {}
@@ -290,4 +341,5 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
         default_task_memory_mib=_positive_int(resources.get("default_task_memory_mib"), 4_096),
         default_task_scratch_mib=_positive_int(resources.get("default_task_scratch_mib"), 4_096),
         program=load_program_settings(payload.get("program")),
+        budget=load_budget_settings(payload.get("budget")),
     )

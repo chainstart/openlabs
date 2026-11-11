@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from . import budget as budget_control
 from .agent_runtime import configure_codex_runtime
 from .attempts import (
     AttemptWorkspace,
@@ -42,7 +43,13 @@ from .contracts import (
     validate_receipt,
     validate_task,
 )
-from .db import AttemptDisposition, FactoryDB
+from .db import (
+    QUOTA_FAILURE_CLASS,
+    AttemptDisposition,
+    FactoryDB,
+    normalize_runner,
+    retry_not_before,
+)
 from .gates import evaluate_result_bundle
 from .labs import LabManifest, ProtocolManifest, discover_labs, lab_for_domain
 from .locking import factory_operation_lock
@@ -53,7 +60,14 @@ from .portfolio import (
     schedule_portfolio_review,
     spawn_candidate_workstreams,
 )
-from .program import run_program_controller
+from .program import (
+    FREEZABLE_STATUSES,
+    TopicLedgerError,
+    freeze_topic,
+    open_topic_ledger,
+    run_program_controller,
+    topic_for_campaign,
+)
 from .projects import (
     EPISTEMIC_FRESH_BOUNDARIES,
     ExecutionPolicy,
@@ -250,6 +264,104 @@ def _missing_agent_bundle(
     )
 
 
+def _quota_failure(
+    payload: Mapping[str, Any],
+    runtime: Mapping[str, Any],
+) -> bool:
+    """A provider quota/rate-limit stop before any scientific output existed."""
+
+    return (
+        str(runtime.get("failure_class") or "") == QUOTA_FAILURE_CLASS
+        and str(payload.get("status") or "") in {"needs_replan", "failed", "needs_human"}
+        and not payload.get("artifacts")
+        and not payload.get("claims")
+    )
+
+
+def _defer_quota_failure(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    report: TickReport,
+    *,
+    task: Mapping[str, Any],
+    attempt_id: str,
+    runtime: dict[str, Any],
+    result_path: Path,
+    result_sha256: str,
+) -> bool:
+    """Requeue a quota-failed attempt; False once the consecutive limit is exceeded."""
+
+    task_id = str(task["task_id"])
+    runner = normalize_runner(task.get("runner"))
+    consecutive = db.consecutive_quota_failures(task_id) + 1
+    runtime["consecutive_quota_failures"] = consecutive
+    quota = runtime.get("quota") if isinstance(runtime.get("quota"), Mapping) else {}
+    if consecutive > settings.budget.quota_retry_limit:
+        runtime["quota_retry_exhausted"] = True
+        db.update_meta(
+            {},
+            events=[
+                (
+                    "task",
+                    task_id,
+                    "quota_retry_exhausted",
+                    {
+                        "attempt_id": attempt_id,
+                        "runner": runner,
+                        "consecutive_quota_failures": consecutive,
+                        "quota_retry_limit": settings.budget.quota_retry_limit,
+                        "handling": "ordinary_failure",
+                        "quota": dict(quota),
+                    },
+                )
+            ],
+        )
+        return False
+    backoff = budget_control.record_quota_failure(
+        db,
+        settings,
+        runner=runner,
+        reset_at=runtime.get("quota_reset_at"),
+        task_id=task_id,
+    )
+    runtime["quota_backoff"] = backoff.to_dict()
+    attempt_workspace = find_attempt_workspace(
+        paths,
+        campaign_id=str(task["campaign_id"]),
+        attempt_id=attempt_id,
+    )
+    if attempt_workspace is not None:
+        _quarantine_attempt(
+            paths,
+            report,
+            task_id=task_id,
+            campaign_id=str(task["campaign_id"]),
+            attempt_id=attempt_id,
+            reason=f"{QUOTA_FAILURE_CLASS}:{quota.get('kind') or 'unknown'}",
+        )
+    db.defer_quota_attempt(
+        task_id,
+        attempt_id=attempt_id,
+        not_before=backoff.until,
+        result_path=str(result_path),
+        result_sha256=result_sha256,
+        run_seconds=float(runtime.get("duration_seconds") or 0.0),
+        runtime=runtime,
+        error=f"{QUOTA_FAILURE_CLASS}:{quota.get('kind') or 'unknown'}",
+        consecutive=consecutive,
+    )
+    report.quota_deferred.append(
+        {
+            "task_id": task_id,
+            "runner": runner,
+            "not_before": backoff.until,
+            "consecutive_quota_failures": consecutive,
+        }
+    )
+    return True
+
+
 def _infrastructure_retry_objective(
     db: FactoryDB,
     task: Mapping[str, Any],
@@ -381,6 +493,11 @@ class TickReport:
     resource_reserved: dict[str, int] = field(default_factory=dict)
     # Research-program controller summary; empty while [program] is disabled.
     program: dict[str, Any] = field(default_factory=dict)
+    # Provider-quota budget: current launch ceiling and per-runner backoff ends.
+    effective_parallel: int | None = None
+    provider_backoff_until: dict[str, str] = field(default_factory=dict)
+    quota_deferred: list[dict[str, Any]] = field(default_factory=list)
+    infrastructure_retried: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -405,6 +522,10 @@ class TickReport:
             "resource_capacity": self.resource_capacity,
             "resource_reserved": self.resource_reserved,
             "program": self.program,
+            "effective_parallel": self.effective_parallel,
+            "provider_backoff_until": self.provider_backoff_until,
+            "quota_deferred": self.quota_deferred,
+            "infrastructure_retried": self.infrastructure_retried,
         }
 
 
@@ -1303,6 +1424,134 @@ def _verified_result_payload(
     return _read_json_object(result_path)
 
 
+# Runner-level failure classes that say nothing about the science and are safe to
+# retry unchanged. "launch_failed" is the attempt status of a failed worker launch.
+INFRASTRUCTURE_FAILURE_CLASSES = frozenset(
+    {
+        "agent_transport",
+        QUOTA_FAILURE_CLASS,
+        "agent_connectivity_preflight",
+        "agent_interrupted",
+        "launch_failed",
+    }
+)
+
+
+def _infrastructure_failure(
+    db: FactoryDB,
+    task: Mapping[str, Any],
+) -> tuple[str | None, list[dict[str, str]]]:
+    """Classify a blocked task's last attempt; return (class or None, evidence).
+
+    Only classes the runner records explicitly count; anything else (scientific,
+    contract, continuity, budget, lease expiry, unknown) returns None so the
+    existing needs_human behaviour is kept.
+    """
+
+    attempts = db.task_attempts(str(task["task_id"]))
+    if not attempts:
+        return None, []
+    evidence = [
+        {"path": str(item["result_path"]), "sha256": str(item["result_sha256"])}
+        for item in attempts
+        if item.get("result_path") and item.get("result_sha256")
+    ][-1:]
+    last = attempts[-1]
+    if str(last.get("status") or "") == "launch_failed":
+        return "launch_failed", evidence
+    runtime = last.get("runtime") if isinstance(last.get("runtime"), Mapping) else {}
+    failure_class = str(runtime.get("failure_class") or "")
+    if failure_class not in INFRASTRUCTURE_FAILURE_CLASSES:
+        return None, evidence
+    result_path = str(last.get("result_path") or "")
+    if result_path:
+        try:
+            payload = _read_json_object(Path(result_path))
+        except (OSError, TypeError, ValueError):
+            payload = {}
+        if payload.get("artifacts") or payload.get("claims"):
+            # The agent produced scientific output; this is not a pure runner miss.
+            return None, evidence
+    return failure_class, evidence
+
+
+def _triage_infrastructure_block(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    report: TickReport,
+    campaign_id: str,
+    latest: Mapping[str, Any],
+) -> bool:
+    """Retry or freeze a needs_human/quarantined task blocked by infrastructure.
+
+    Returns True when handled (requeued or topic frozen); False keeps the
+    existing needs_human behaviour.
+    """
+
+    task_id = str(latest["task_id"])
+    failure_class, evidence = _infrastructure_failure(db, latest)
+    if failure_class is None:
+        return False
+    retries = db.count_events("task", task_id, "infrastructure_retry")
+    limit = settings.budget.infrastructure_retry_limit
+    if retries < limit:
+        retry = retries + 1
+        not_before = retry_not_before(retry, settings.retry_backoff_seconds)
+        if db.requeue_infrastructure_task(
+            task_id,
+            failure_class=failure_class,
+            retry_count=retry,
+            not_before=not_before,
+        ):
+            report.infrastructure_retried.append(
+                {
+                    "task_id": task_id,
+                    "campaign_id": campaign_id,
+                    "failure_class": failure_class,
+                    "retry": retry,
+                    "limit": limit,
+                }
+            )
+            return True
+        return False
+    db.record_event_once(
+        "task",
+        task_id,
+        "infrastructure_retry_exhausted",
+        {"failure_class": failure_class, "retries": retries, "limit": limit},
+        event_key=f"infrastructure_retry_exhausted:{retries}",
+    )
+    if not settings.program.enabled:
+        return False
+    try:
+        ledger = open_topic_ledger(paths, settings.program)
+        topic = topic_for_campaign(ledger.read(), campaign_id)
+        if topic is None or str(topic.get("status") or "") not in FREEZABLE_STATUSES:
+            return False
+        if not evidence:
+            report.errors.append(
+                f"Cannot freeze topic {topic.get('topic_id')} for infrastructure: "
+                f"task {task_id} has no result evidence"
+            )
+            return False
+        freeze_topic(
+            ledger,
+            str(topic["topic_id"]),
+            db=db,
+            reason_class="infrastructure",
+            evidence=evidence,
+            decided_by="orchestrator:infrastructure_retry_limit",
+        )
+    except (OSError, TopicLedgerError, KeyError, ValueError) as exc:
+        report.errors.append(f"Infrastructure freeze of {campaign_id} failed: {exc}")
+        return False
+    report.production_blocked.append(
+        {"campaign_id": campaign_id, "reason": f"topic_frozen:infrastructure:{failure_class}"}
+    )
+    return True
+
+
 def _replenish_continuous_campaign(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -1315,6 +1564,8 @@ def _replenish_continuous_campaign(
         return
     latest = db.latest_task(campaign_id)
     if latest and str(latest.get("status")) in {"needs_human", "quarantined"}:
+        if _triage_infrastructure_block(db, paths, settings, report, campaign_id, latest):
+            return
         report.production_blocked.append(
             {"campaign_id": campaign_id, "reason": str(latest.get("status"))}
         )
@@ -1817,6 +2068,22 @@ def ingest_results(
                 _archive_receipt(receipt_path, paths, keep=settings.archive_result_receipts)
                 continue
             assert actual_sha is not None
+            quota_exhausted = False
+            if _quota_failure(payload, runtime):
+                if _defer_quota_failure(
+                    db,
+                    paths,
+                    settings,
+                    report,
+                    task=task,
+                    attempt_id=attempt_id,
+                    runtime=runtime,
+                    result_path=result_path,
+                    result_sha256=actual_sha,
+                ):
+                    _archive_receipt(receipt_path, paths, keep=settings.archive_result_receipts)
+                    continue
+                quota_exhausted = True
             gate = evaluate_result_bundle(payload, allowed_roots=roots)
             attempt_workspace = find_attempt_workspace(
                 paths,
@@ -1831,6 +2098,13 @@ def ingest_results(
             elif int(runtime["exit_code"]) != 0:
                 result_status = "failed"
                 runtime_error = f"Lab runner exited with code {runtime['exit_code']}"
+            if quota_exhausted:
+                # Past quota_retry_limit the run is treated as an ordinary failure.
+                result_status = "failed"
+                runtime_error = runtime_error or (
+                    f"agent_quota repeated {runtime.get('consecutive_quota_failures')} times; "
+                    "quota retry limit exhausted"
+                )
             next_actions = payload.get("next_actions", [])
             current_role = str(task.get("agent_role") or "researcher")
             next_plan = (
@@ -1996,6 +2270,13 @@ def ingest_results(
                         reason=f"database_ingest_failed:{exc}",
                     )
                 raise
+            if budget_control.is_healthy_result(runtime):
+                budget_control.record_healthy_completion(
+                    db,
+                    settings,
+                    runner=task.get("runner"),
+                    task_id=task_id,
+                )
             if promotion_pending and attempt_workspace is not None:
                 if final_status not in {"succeeded", "needs_replan"}:
                     rollback_attempt_promotion(
@@ -2763,15 +3044,23 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     resource_capacity = effective_capacity(paths.workspace, settings, reserved)
     report.resource_capacity = resource_capacity.to_dict()
 
+    budget_now = budget_control.current_time()
+    launch_limit = budget_control.launch_limit(db, settings)
+    backoffs = budget_control.runner_backoffs(db, now=budget_now)
+    report.effective_parallel = launch_limit
+    report.provider_backoff_until = backoffs
     if settings.launch_jobs:
-        capacity = max(0, settings.max_worker_processes - db.active_count())
+        capacity = max(0, launch_limit - db.active_count())
         owner = f"tick:{socket.gethostname()}:{os.getpid()}"
+        probes = budget_control.probe_limits(db, now=budget_now)
         for _ in range(capacity):
             task = db.claim_next_task(
                 owner=owner,
                 lease_seconds=settings.lease_seconds,
-                max_active=settings.max_worker_processes,
+                max_active=launch_limit,
                 resource_capacity=resource_capacity.to_dict(),
+                excluded_runners=tuple(backoffs),
+                runner_active_limits=probes,
             )
             if task is None:
                 break

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import json
 import os
 import shlex
@@ -18,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 
@@ -460,6 +462,247 @@ def _agent_connectivity_preflight(command: list[str]) -> str | None:
         # Treat this lightweight HEAD failure as advisory by default and let
         # the bounded JSONL startup watchdog judge the real Agent process.
         return None
+
+
+# --------------------------------------------------------------------------
+# Provider quota / rate-limit classification (failure_class "agent_quota").
+#
+# One table, easy to extend. Each entry is (kind, regex, provenance). Matching is
+# applied ONLY to provider-error channels -- Codex ``error``/``turn.failed`` JSONL
+# events, Claude ``result`` events with ``is_error`` or an ``apiError`` field, and
+# the tail of non-JSON stdout/stderr -- never to the agent's own tool output or
+# research prose, which routinely mention "rate-limited" third-party APIs.
+# Provenance: "sample" = seen verbatim in a local run log/transcript;
+# "cli-string" = message template embedded in the installed CLI binary;
+# "unverified" = conservative rule without a local sample.
+AGENT_QUOTA_MARKERS: tuple[tuple[str, str, str], ...] = (
+    # Claude Code: "You've hit your 5-hour limit · resets 12:40am (Asia/Singapore)";
+    # Codex: "You've hit your usage limit. ... try again at 3:05 PM."
+    ("usage_limit", r"you(?:'|’)?ve hit your (?:[\w-]+ )?limit", "sample"),
+    ("usage_limit", r"\busage_limit_(?:reached|exceeded)\b", "sample"),
+    ("usage_limit", r"\b(?:workspace_(?:owner|member)_)?usage_limit_reached\b", "cli-string"),
+    ("usage_limit", r"\bworkspace_member_credits_depleted\b", "cli-string"),
+    ("usage_limit", r"quota exceeded\. check your plan and billing", "cli-string"),
+    ("usage_limit", r"\bquota_exceeded\b", "cli-string"),
+    ("usage_limit", r"\binsufficient_quota\b", "unverified"),
+    ("usage_limit", r"\bclaude ai usage limit reached\b", "unverified"),
+    ("rate_limit", r"error type rate_limit\b", "sample"),
+    ("rate_limit", r"\brate_limit_(?:exceeded|reached|error)\b", "cli-string"),
+    ("rate_limit", r"exceeded retry limit, last status: 429\b", "cli-string"),
+    ("rate_limit", r"unexpected status 429\b", "unverified"),
+    ("rate_limit", r"\bAPI Error: 429\b", "unverified"),
+    ("capacity", r"selected model is at capacity", "sample"),
+    ("capacity", r"\bserver_overloaded\b", "cli-string"),
+    ("capacity", r"\boverloaded_error\b", "unverified"),
+    ("capacity", r"\bAPI Error: 529\b", "unverified"),
+)
+_QUOTA_PATTERNS = tuple(
+    (kind, re.compile(pattern, re.IGNORECASE), provenance)
+    for kind, pattern, provenance in AGENT_QUOTA_MARKERS
+)
+_PROVIDER_ERROR_EVENT_TYPES = frozenset({"error", "turn.failed", "stream_error"})
+_QUOTA_TAIL_BYTES = 64 * 1024
+_MONTHS = {
+    name: index
+    for index, names in enumerate(
+        (
+            ("jan", "january"), ("feb", "february"), ("mar", "march"), ("apr", "april"),
+            ("may",), ("jun", "june"), ("jul", "july"), ("aug", "august"),
+            ("sep", "sept", "september"), ("oct", "october"), ("nov", "november"),
+            ("dec", "december"),
+        ),
+        start=1,
+    )
+    for name in names
+}
+_RESET_CLOCK = re.compile(
+    r"(?:resets?(?: at)?|try again at)\s+"
+    r"(?:(?P<month>[a-z]{3,9})\.?\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?,?\s+"
+    r"(?:(?P<year>\d{4}),?\s+)?(?:at\s+)?)?"
+    r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<ampm>[ap]\.?m\.?)?"
+    r"(?:\s*\((?P<zone>[A-Za-z_]+(?:/[A-Za-z_+-]+)*)\))?",
+    re.IGNORECASE,
+)
+_RESET_DURATION = re.compile(
+    r"(?:resets?|try again) in\s+(?P<spec>(?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|"
+    r"seconds?|secs?|s)\b[\s,]*(?:and\s+)?)+)",
+    re.IGNORECASE,
+)
+_DURATION_PART = re.compile(
+    r"(\d+)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b", re.IGNORECASE
+)
+_EPOCH_RESET_KEYS = ("resetsAt", "resets_at", "reset_at", "resetAt")
+
+
+def _local_zone() -> tzinfo:
+    return datetime.now().astimezone().tzinfo or UTC
+
+
+def _named_zone(name: str | None) -> tzinfo | None:
+    if not name:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(name)
+    except Exception:  # noqa: BLE001 - unknown zone names fall back to local time
+        return None
+
+
+def _iso_z(moment: datetime) -> str:
+    return moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def parse_quota_reset(
+    text: str,
+    *,
+    now: datetime | None = None,
+    local_zone: tzinfo | None = None,
+) -> str | None:
+    """Return the provider's quota reset time as an ISO UTC string, if stated.
+
+    Understands "resets 12:40am (Asia/Singapore)", "try again at 3:05 PM",
+    "try again at Nov 12th, 2026 3:05 PM", "resets in 2h 5m" and epoch-second
+    ``resetsAt`` fields. Clock times without a zone use ``local_zone`` (default:
+    this host's zone) and roll to the next occurrence after ``now``.
+    """
+
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    for key in _EPOCH_RESET_KEYS:
+        match = re.search(rf'"{key}"\s*:\s*(\d{{9,13}})', text)
+        if match:
+            value = int(match.group(1))
+            if value > 10**11:
+                value //= 1000
+            return _iso_z(datetime.fromtimestamp(value, UTC))
+    match = _RESET_DURATION.search(text)
+    if match:
+        seconds = 0
+        for amount, unit in _DURATION_PART.findall(match.group("spec")):
+            unit = unit.lower()
+            factor = (
+                86_400 if unit.startswith("d")
+                else 3_600 if unit.startswith("h")
+                else 60 if unit.startswith("m")
+                else 1
+            )
+            seconds += int(amount) * factor
+        if seconds > 0:
+            return _iso_z(current + timedelta(seconds=seconds))
+    match = _RESET_CLOCK.search(text)
+    if match:
+        hour = int(match.group("hour"))
+        minute = int(match.group("minute") or 0)
+        ampm = (match.group("ampm") or "").replace(".", "").lower()
+        if not ampm and match.group("minute") is None:
+            return None  # a bare number is too ambiguous to be a clock time
+        if ampm:
+            if not 1 <= hour <= 12:
+                return None
+            hour = hour % 12 + (12 if ampm == "pm" else 0)
+        if hour > 23 or minute > 59:
+            return None
+        zone = _named_zone(match.group("zone")) or local_zone or _local_zone()
+        local_now = current.astimezone(zone)
+        month_name = (match.group("month") or "").lower()
+        if month_name:
+            month = _MONTHS.get(month_name)
+            if month is None:
+                return None
+            year = int(match.group("year") or local_now.year)
+            try:
+                day = int(match.group("day"))
+                candidate = datetime(year, month, day, hour, minute, tzinfo=zone)
+            except ValueError:
+                return None
+            if match.group("year") is None and candidate < local_now - timedelta(days=1):
+                candidate = candidate.replace(year=year + 1)
+            return _iso_z(candidate)
+        candidate = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= local_now:
+            candidate += timedelta(days=1)
+        return _iso_z(candidate)
+    return None
+
+
+def _read_tail(path: Path | None, limit: int = _QUOTA_TAIL_BYTES) -> str:
+    if path is None or not path.is_file():
+        return ""
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - limit))
+        return handle.read().decode("utf-8", errors="replace")
+
+
+def _provider_error_texts(event: Mapping[str, Any]) -> list[str]:
+    """Extract provider/CLI error text from one JSONL event (never tool output)."""
+
+    texts: list[str] = []
+    event_type = str(event.get("type") or "")
+    if event_type in _PROVIDER_ERROR_EVENT_TYPES:
+        texts.append(json.dumps(event, ensure_ascii=False))
+    elif event_type == "result" and event.get("is_error") is True:
+        texts.append(json.dumps(event, ensure_ascii=False))
+    elif "apiError" in event or isinstance(event.get("error"), (str, Mapping)):
+        # Claude transcripts/stream events mark failed API turns with apiError/error.
+        texts.append(json.dumps(event, ensure_ascii=False))
+    return texts
+
+
+def classify_agent_quota(
+    *,
+    stdout_text: str = "",
+    stderr_text: str = "",
+    now: datetime | None = None,
+    local_zone: tzinfo | None = None,
+) -> dict[str, Any] | None:
+    """Detect provider quota exhaustion or rate limiting in agent process output.
+
+    Returns ``{"kind", "marker", "provenance", "source", "excerpt",
+    "quota_reset_at"}`` for the first match, or None. Only provider-error
+    channels are inspected (see ``AGENT_QUOTA_MARKERS``).
+    """
+
+    candidates: list[tuple[str, str]] = []
+    for line in stdout_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            candidates.append(("stdout", stripped))
+            continue
+        if isinstance(event, Mapping):
+            candidates.extend(("stdout_jsonl", text) for text in _provider_error_texts(event))
+    for line in stderr_text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            candidates.append(("stderr", stripped))
+    # Later messages are the decisive ones; scan newest first.
+    for source, text in reversed(candidates):
+        for kind, pattern, provenance in _QUOTA_PATTERNS:
+            match = pattern.search(text)
+            if match is None:
+                continue
+            start = max(0, match.start() - 120)
+            return {
+                "kind": kind,
+                "marker": pattern.pattern,
+                "provenance": provenance,
+                "source": source,
+                "excerpt": text[start : match.end() + 180],
+                "quota_reset_at": parse_quota_reset(text, now=now, local_zone=local_zone),
+            }
+    return None
+
+
+def _agent_quota_failure(stdout_path: Path, stderr_path: Path) -> dict[str, Any] | None:
+    return classify_agent_quota(
+        stdout_text=_read_tail(stdout_path),
+        stderr_text=_read_tail(stderr_path),
+    )
 
 
 def _jsonl_startup_health(path: Path) -> tuple[int, bool]:
@@ -1111,6 +1354,14 @@ def _run_agent(
             "agent_request_sha256": sha256_file(request_path),
         }
     )
+    quota = (
+        None
+        if termination_signal is not None or output.is_file()
+        else _agent_quota_failure(stdout_path, stderr_path)
+    )
+    if quota is not None:
+        runtime["quota"] = {key: value for key, value in quota.items() if key != "quota_reset_at"}
+        runtime["quota_reset_at"] = quota.get("quota_reset_at")
     if termination_signal is not None:
         runtime["failure_class"] = "agent_interrupted"
     elif transport_failed:
@@ -1127,8 +1378,26 @@ def _run_agent(
             runtime["failure_class"] = "result_contract"
             _replace_rejected_result(task, manifest, output, envelope_error)
         return runtime
-    runtime["failure_class"] = "agent_transport"
-    if termination_signal is not None:
+    runtime["failure_class"] = "agent_quota" if quota is not None else "agent_transport"
+    if quota is not None:
+        reset_note = (
+            f" Provider reset time: {quota['quota_reset_at']}."
+            if quota.get("quota_reset_at")
+            else ""
+        )
+        summary = (
+            f"Agent provider quota or rate limit ({quota['kind']}) stopped the run before a "
+            f"result bundle was written.{reset_note}"
+        )
+        # Keep the status the timeout/exit-code branches below would produce, so the
+        # orchestrator's ordinary handling applies once quota retries are exhausted.
+        # (The transport watchdog's needs_human is deliberately not reproduced.)
+        status = "needs_replan" if timed_out or process.returncode == 0 else "failed"
+        next_action = (
+            "Wait for the provider quota to reset; the orchestrator requeues this "
+            "unchanged task automatically."
+        )
+    elif termination_signal is not None:
         summary = (
             f"Agent was interrupted by signal {termination_signal} before writing a result bundle."
         )

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -44,6 +44,17 @@ def retry_not_before(attempt: int, base_seconds: int) -> str | None:
         return None
     delay = min(86_400, int(base_seconds) * (2 ** max(0, int(attempt) - 1)))
     return utc_after(delay)
+
+
+DEFAULT_RUNNER = "balanced"
+# SQL twin of ``normalize_runner`` (the lab runner treats a missing tier as balanced).
+RUNNER_SQL = f"COALESCE(NULLIF(TRIM(runner), ''), '{DEFAULT_RUNNER}')"
+QUOTA_FAILURE_CLASS = "agent_quota"
+
+
+def normalize_runner(value: Any) -> str:
+    text = str(value or "").strip()
+    return text or DEFAULT_RUNNER
 
 
 def bounded_elapsed(started_at: str | None, finished_at: str, limit: int) -> float:
@@ -964,6 +975,214 @@ class FactoryDB:
             result.append(item)
         return result
 
+    def count_events(self, entity_type: str, entity_id: str, event_type: str) -> int:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS n FROM events
+                WHERE entity_type=? AND entity_id=? AND event_type=?
+                """,
+                (entity_type, entity_id, event_type),
+            ).fetchone()
+        return int(row["n"])
+
+    # ------------------------------------------------------------------ meta state
+
+    def meta_get(self, key: str) -> str | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return None if row is None else str(row["value"])
+
+    def meta_items(self, prefix: str) -> dict[str, str]:
+        """Return ``{suffix: value}`` for every meta key starting with ``prefix``."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT key, value FROM meta WHERE substr(key, 1, ?)=? ORDER BY key",
+                (len(prefix), prefix),
+            ).fetchall()
+        return {str(row["key"])[len(prefix) :]: str(row["value"]) for row in rows}
+
+    def update_meta(
+        self,
+        updates: Mapping[str, str | None],
+        *,
+        events: Iterable[tuple[str, str, str, Mapping[str, Any]]] = (),
+    ) -> None:
+        """Atomically set (or, for ``None``, delete) meta keys and write events."""
+
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for key, value in updates.items():
+                if key == "schema_version":
+                    raise ValueError("schema_version is owned by initialize()")
+                if value is None:
+                    connection.execute("DELETE FROM meta WHERE key=?", (key,))
+                else:
+                    connection.execute(
+                        "INSERT INTO meta(key, value) VALUES(?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (key, str(value)),
+                    )
+            for entity_type, entity_id, event_type, payload in events:
+                self._event(connection, entity_type, entity_id, event_type, payload)
+
+    # ------------------------------------------------------- quota/infra retries
+
+    def consecutive_quota_failures(self, task_id: str) -> int:
+        """Count the task's most recent finished attempts classified ``agent_quota``."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT status, runtime_json FROM task_attempts
+                WHERE task_id=? AND status NOT IN ('leased', 'running')
+                ORDER BY attempt_number DESC
+                """,
+                (task_id,),
+            ).fetchall()
+        count = 0
+        for row in rows:
+            try:
+                runtime = json.loads(str(row["runtime_json"] or "{}"))
+            except json.JSONDecodeError:
+                runtime = {}
+            if not isinstance(runtime, dict) or runtime.get("failure_class") != (
+                QUOTA_FAILURE_CLASS
+            ):
+                break
+            count += 1
+        return count
+
+    def defer_quota_attempt(
+        self,
+        task_id: str,
+        *,
+        attempt_id: str,
+        not_before: str | None,
+        result_path: str | None,
+        result_sha256: str | None,
+        run_seconds: float,
+        runtime: Mapping[str, Any],
+        error: str,
+        consecutive: int,
+    ) -> None:
+        """Close a quota-failed attempt and requeue the unchanged task.
+
+        The attempt does not consume ``max_attempts`` (the ceiling is raised by
+        one), the task never enters needs_human, and ``not_before`` holds it
+        until the provider backoff ends. Agent seconds are still charged.
+        """
+
+        now = utc_now()
+        bounded_seconds = max(0.0, float(run_seconds))
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT campaign_id, runner FROM tasks
+                WHERE task_id=? AND status='running' AND current_attempt_id=?
+                """,
+                (task_id, attempt_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Task {task_id} is not running for current attempt {attempt_id}")
+            connection.execute(
+                """
+                UPDATE tasks SET status='queued', max_attempts=max_attempts+1,
+                    not_before=?, last_error=?, lease_owner=NULL, lease_expires_at=NULL,
+                    worker_pid=NULL, current_attempt_id=NULL, output_path=NULL, updated_at=?
+                WHERE task_id=?
+                """,
+                (not_before, error, now, task_id),
+            )
+            connection.execute(
+                """
+                UPDATE task_attempts
+                SET status='quota_deferred', finished_at=?, result_path=?, result_sha256=?,
+                    run_seconds=?, runtime_json=?, error=?
+                WHERE attempt_id=? AND task_id=?
+                """,
+                (
+                    now,
+                    result_path,
+                    result_sha256,
+                    bounded_seconds,
+                    json.dumps(dict(runtime), ensure_ascii=False, sort_keys=True),
+                    error,
+                    attempt_id,
+                    task_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE campaigns
+                SET agent_seconds_used=agent_seconds_used+?,
+                    epoch_agent_seconds_used=epoch_agent_seconds_used+?,
+                    updated_at=?
+                WHERE campaign_id=?
+                """,
+                (bounded_seconds, bounded_seconds, now, str(row["campaign_id"])),
+            )
+            self._event(
+                connection,
+                "task",
+                task_id,
+                "quota_deferred",
+                {
+                    "attempt_id": attempt_id,
+                    "runner": normalize_runner(row["runner"]),
+                    "not_before": not_before,
+                    "consecutive_quota_failures": int(consecutive),
+                    "quota": runtime.get("quota"),
+                    "quota_reset_at": runtime.get("quota_reset_at"),
+                    "run_seconds": bounded_seconds,
+                },
+            )
+
+    def requeue_infrastructure_task(
+        self,
+        task_id: str,
+        *,
+        failure_class: str,
+        retry_count: int,
+        not_before: str | None,
+    ) -> bool:
+        """Requeue a needs_human/quarantined task after an infrastructure failure."""
+
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, attempt FROM tasks WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if row is None or str(row["status"]) not in {"needs_human", "quarantined"}:
+                return False
+            connection.execute(
+                """
+                UPDATE tasks SET status='queued',
+                    max_attempts=MAX(max_attempts, attempt+1), not_before=?,
+                    last_error=?, lease_owner=NULL, lease_expires_at=NULL, worker_pid=NULL,
+                    current_attempt_id=NULL, output_path=NULL, updated_at=?
+                WHERE task_id=?
+                """,
+                (not_before, f"infrastructure_retry:{failure_class}", now, task_id),
+            )
+            self._event(
+                connection,
+                "task",
+                task_id,
+                "infrastructure_retry",
+                {
+                    "failure_class": failure_class,
+                    "prior_status": str(row["status"]),
+                    "retry": int(retry_count),
+                    "not_before": not_before,
+                },
+            )
+        return True
+
     def cancel_queued_tasks_for_inactive_campaigns(self) -> tuple[str, ...]:
         """Remove stale queue entries that can never be admitted by the scheduler."""
 
@@ -1538,9 +1757,21 @@ class FactoryDB:
         lease_seconds: int,
         max_active: int | None = None,
         resource_capacity: Mapping[str, int] | None = None,
+        excluded_runners: Collection[str] = (),
+        runner_active_limits: Mapping[str, int] | None = None,
     ) -> dict[str, Any] | None:
+        """Lease the highest-priority ready task.
+
+        ``excluded_runners`` (runner tiers in provider backoff) are skipped;
+        ``runner_active_limits`` caps leased/running tasks per runner tier (used
+        for the single probe task after a backoff ends). Runner names are
+        normalized like the lab runner does (missing -> ``balanced``).
+        """
+
         now = utc_now()
         expires = utc_after(lease_seconds)
+        excluded = {str(runner) for runner in excluded_runners}
+        runner_limits = dict(runner_active_limits or {})
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             if max_active is not None:
@@ -1574,6 +1805,26 @@ class FactoryDB:
                 """,
                 (now,),
             ).fetchall()
+            if excluded or runner_limits:
+                active_by_runner = {
+                    str(item["runner"]): int(item["n"])
+                    for item in connection.execute(
+                        f"""
+                        SELECT {RUNNER_SQL} AS runner, COUNT(*) AS n FROM tasks
+                        WHERE status IN ('leased', 'running') GROUP BY 1
+                        """  # noqa: S608 - constant expression
+                    ).fetchall()
+                }
+                rows = [
+                    candidate
+                    for candidate in rows
+                    if normalize_runner(candidate["runner"]) not in excluded
+                    and (
+                        normalize_runner(candidate["runner"]) not in runner_limits
+                        or active_by_runner.get(normalize_runner(candidate["runner"]), 0)
+                        < int(runner_limits[normalize_runner(candidate["runner"])])
+                    )
+                ]
             row = None
             if resource_capacity is None:
                 row = rows[0] if rows else None

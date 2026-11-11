@@ -44,3 +44,20 @@ max_active_topics = 5
 max_ready_unsubmitted = 6
 # Relative to the data repository root.
 ledger_path = "registry/topic-ledger.json"
+
+[budget]
+# Provider token-quota / rate-limit handling. Quota failures never consume
+# max_attempts; they back off the affected runner tier and halve agent
+# parallelism, which then recovers by restore_step per healthy completion.
+# Upper bound on concurrently launched agents (also bounded by max_worker_processes).
+max_parallel_agents = 3
+# Exponential backoff per consecutive quota hit on one runner; a parsed provider
+# reset time wins when it is later. Both are capped by quota_backoff_cap_minutes.
+quota_backoff_minutes = [15, 30, 60, 120, 300]
+quota_backoff_cap_minutes = 300
+restore_step = 1
+# Consecutive quota deferrals of one task before ordinary failure handling.
+quota_retry_limit = 8
+# Automatic retries of needs_human/quarantined tasks that failed for an
+# infrastructure reason (transport, quota, launch, missing result bundle).
+infrastructure_retry_limit = 3

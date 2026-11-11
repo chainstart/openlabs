@@ -472,7 +472,12 @@ def test_disabled_program_creates_no_ledger_and_keeps_tick_unchanged(tmp_path) -
         "production_reseeded", "production_blocked", "rollovers", "attempts_committed",
         "attempts_quarantined", "attempts_recovered", "errors", "status_counts",
         "resource_capacity", "resource_reserved", "program",
+        "effective_parallel", "provider_backoff_until", "quota_deferred",
+        "infrastructure_retried",
     }
+    # No quota failure seen: full ceiling, no backoff (scheduling unchanged).
+    assert report["effective_parallel"] == settings.max_worker_processes
+    assert report["provider_backoff_until"] == {}
     assert report["errors"] == []
     assert db.task("t")["status"] == "queued"
 
