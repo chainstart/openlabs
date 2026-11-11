@@ -1166,6 +1166,11 @@ def validate_metadata_sync_preconditions(
     }
 
 
+LEGACY_RELEASE_CHAINS = frozenset({
+    "minor_revision_closeout", "targeted_review_closeout", "editorial_closeout", "review_delta",
+})
+
+
 def _release_paths(
     paper_id: str,
     repo_root: Path,
@@ -1188,28 +1193,16 @@ def _release_paths(
         if not review_path.is_file():
             raise HandoffError(f"Registered quality review is missing: {review_path}")
         files.append(review_path)
-    from paper_writing.minor_closeout import validate_release_minor_closeout
-    try:
-        files.extend(validate_release_minor_closeout(paper_id, metadata, root=repo_root))
-    except (ValueError, OSError) as exc:
-        raise HandoffError(f"Minor-revision closeout is invalid: {exc}") from exc
-    from paper_writing.review_delta import validate_state
-    from paper_writing.editorial_closeout import validate_release as validate_editorial_closeout
-    try:
-        files.extend(validate_editorial_closeout(paper_id, metadata, repo_root))
-    except (ValueError, OSError, KeyError, TypeError) as exc:
-        raise HandoffError(f"Editorial closeout chain is invalid: {exc}") from exc
-    from paper_writing.targeted_closeout import validate_release as validate_targeted_closeout
-    try:
-        files.extend(validate_targeted_closeout(paper_id, metadata, repo_root))
-    except (ValueError, OSError, KeyError, TypeError) as exc:
-        raise HandoffError(f"Targeted-review closeout is invalid: {exc}") from exc
-    if "review_delta" in metadata.get("writing_release", {}):
-        try:
-            files.extend(validate_state(paper_id, metadata["writing_release"]["review_delta"],
-                metadata, repo_root, require_ready=True))
-        except (ValueError, OSError, KeyError, TypeError) as exc:
-            raise HandoffError(f"Incremental review chain is invalid: {exc}") from exc
+    # The legacy minor/targeted/editorial closeouts and the incremental (delta)
+    # review were removed with the unified review. Their replay validators no
+    # longer exist, so a release that still rests on one of those chains is
+    # refused rather than accepted unreplayed; rerun `review unified-run`.
+    legacy = sorted(LEGACY_RELEASE_CHAINS & set(metadata.get("writing_release") or {}))
+    if legacy:
+        raise HandoffError(
+            "The release rests on a removed legacy review chain (" + ", ".join(legacy)
+            + "); rerun `paper-writing review unified-run`"
+        )
     try:
         for path in files:
             path.resolve().relative_to(repo_root)
@@ -1353,6 +1346,7 @@ def validate_release_preconditions(
                     f"{first.get('message') or 'unknown support-material error'}"
                 )
     unified_review = configured_gate.get("review_process") == "unified_v1"
+    delivery_notes: list[dict[str, Any]] = []
     revision_exception = None
     venue_type = str(release.get("venue_type") or "")
     if not unified_review:
@@ -1491,6 +1485,19 @@ def validate_release_preconditions(
         unified_problems = validate_unified_release(paper_id, metadata, repo_root, current_snapshot)
         if unified_problems:
             raise HandoffError(unified_problems[0])
+        # The formal checks that are only advice at the review entry are enforced
+        # here, directly, rather than relying on the review having checked them.
+        from paper_writing.review_flow import delivery_blockers
+
+        decision_path = repo_root / str(release.get("decision_record") or "")
+        decision_record = (json.loads(decision_path.read_text())
+                           if release.get("decision_record") and decision_path.is_file() else None)
+        preparation = delivery_blockers(paper_id, metadata, repo_root, decision_record, notes=delivery_notes)
+        if preparation:
+            raise HandoffError(
+                "Delivery formal check failed (" + str(len(preparation)) + " problem(s)): "
+                + "; ".join(preparation[:5])
+            )
         # Scores are informational under the unified review; report what was recorded.
         score, target_score = release.get("score"), None
         release_standard = str(release.get("review_process") or "unified_v1")
@@ -1538,7 +1545,7 @@ def validate_release_preconditions(
     if status:
         sample = "; ".join(status.splitlines()[:5])
         raise HandoffError(f"Release files differ from Git HEAD: {sample}")
-    return {
+    result = {
         "paper_id": paper_id,
         "origin_commit": origin_commit,
         "manuscript_snapshot_sha256": current_snapshot,
@@ -1547,6 +1554,11 @@ def validate_release_preconditions(
         "decision_standard": release_standard,
         "decision": decision,
     }
+    if unified_review and delivery_notes:
+        # For the human delivery decision: possible internal-vocabulary leaks with
+        # their sentences, and references verified by no reachable source.
+        result["delivery_notes"] = delivery_notes
+    return result
 
 
 class ManageApiClient:

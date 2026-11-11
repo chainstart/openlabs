@@ -10,6 +10,8 @@ import os
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -131,6 +133,26 @@ def _result(data: Mapping[str, Any], name: str, config: Mapping[str, Any]) -> di
             "ledger_updated_at": data["updated_at"], "rejections": rows}
 
 
+# Set only inside ``tolerate_stale_ledger``: the internal unified review. Journal
+# selection, retargeting and delivery never set it and keep the hard freshness rule.
+_STALE_TOLERANCE: ContextVar[list[str] | None] = ContextVar("stale_ledger_tolerance", default=None)
+
+
+@contextmanager
+def tolerate_stale_ledger():
+    """Within the block a stale ledger is a recorded warning instead of an error.
+
+    Used by the internal review preflight. A missing, corrupt or future-dated ledger
+    still fails, and exclusions found in the (stale) ledger still apply.
+    """
+    warnings: list[str] = []
+    token = _STALE_TOLERANCE.set(warnings)
+    try:
+        yield warnings
+    finally:
+        _STALE_TOLERANCE.reset(token)
+
+
 def check_journal(root: Path, name: str, *, policy: Mapping[str, Any] | None = None,
                   now: datetime | None = None) -> dict[str, Any]:
     config = _policy(root, policy)
@@ -140,9 +162,18 @@ def check_journal(root: Path, name: str, *, policy: Mapping[str, Any] | None = N
     if updated.tzinfo is None:
         raise ValueError("Team rejection ledger updated_at must include timezone")
     elapsed = ((now or datetime.now(timezone.utc)) - updated).total_seconds()
-    if elapsed < -300 or elapsed > config["max_age_days"] * 86400:
+    stale = elapsed > config["max_age_days"] * 86400
+    tolerance = _STALE_TOLERANCE.get()
+    if elapsed < -300 or (stale and tolerance is None):
         raise ValueError("Team rejection ledger is stale or future-dated; run journal-history sync")
     result = _result(data, name, config)
+    if stale:
+        warning = (f"Team rejection ledger was last synchronized {data['updated_at']} "
+                   f"(older than {config['max_age_days']} days); internal review continues, but run "
+                   "journal-history sync before journal selection, retargeting or delivery")
+        if warning not in tolerance:
+            tolerance.append(warning)
+        result["ledger_stale"] = True
     result["ledger_path"] = path.relative_to(root.resolve()).as_posix()
     result["ledger_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result

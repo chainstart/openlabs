@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import os
@@ -104,17 +105,51 @@ def mock_formal_stage(monkeypatch):
     ("desk_reject", "presentation", "text_revision"),
     ("desk_reject", "scope", "retarget_required"),
     ("desk_reject", "readership", "retarget_required"),
-    ("desk_reject", "significance", "evidence_remediation"),
-    ("desk_reject", "incremental", "evidence_remediation"),
+    # Polishing cannot answer an insufficient advance: the orchestrator chooses a direction.
+    ("desk_reject", "significance", "direction_decision"),
+    ("desk_reject", "incremental", "direction_decision"),
+    ("desk_reject", "novelty_unclear", "evidence_remediation"),
 ])
 def test_editor_screen_stops_before_referees(decision, category, action):
     merged = flow.merge(editor(decision, category), {})
     assert merged["outcome"] == decision and merged["next_action"] == action
 
 
-def test_more_cautious_referee_prevails():
+def test_unsubstantiated_stricter_recommendation_does_not_prevail():
+    # The stricter referee listed no scientific blocker, evidence change or
+    # main-claim narrowing, so the more favourable recommendation is used.
     merged = flow.merge(editor(), {"referee_a": referee("accept"), "referee_b": referee("major_revision")})
+    assert merged["recommendation"] == "accept" and merged["outcome"] == "ready"
+    assert merged["referee_recommendations"] == {"referee_a": "accept", "referee_b": "major_revision"}
+
+
+def test_substantiated_stricter_recommendation_prevails():
+    evidence = flow.merge(editor(), {"referee_a": referee("accept"),
+                                     "referee_b": referee("major_revision", changes=[("add a baseline", "evidence")])})
+    assert evidence["recommendation"] == "major_revision" and evidence["outcome"] == "revision_required"
+    assert evidence["next_action"] == "evidence_remediation"
+    blocked = flow.merge(editor(), {"referee_a": referee("reject", blockers=["Lemma 2 is false"]),
+                                    "referee_b": referee("accept")})
+    assert blocked["recommendation"] == "reject" and blocked["outcome"] == "revision_required"
+
+
+def test_both_referees_strict_without_items_still_not_ready():
+    merged = flow.merge(editor(), {"referee_a": referee("major_revision"), "referee_b": referee("reject")})
     assert merged["recommendation"] == "major_revision" and merged["outcome"] == "revision_required"
+
+
+def test_significance_desk_reject_carries_direction_context():
+    screen = editor("desk_reject", "significance") | {
+        "strongest_desk_reject_reason": "Only a re-run of Smith (2024) on a new county sample.",
+        "closest_prior_work": [{"work": "Smith 2024", "source": "reference_list", "known_result": "Same estimator"}],
+        "advance_over_prior_work": "A new sample."}
+    merged = flow.merge(screen, {})
+    assert merged["next_action"] == "direction_decision"
+    context = merged["direction_context"]
+    assert context["strongest_desk_reject_reason"].startswith("Only a re-run")
+    assert context["closest_prior_work"][0]["work"] == "Smith 2024"
+    assert context["options"] == list(flow.DIRECTION_OPTIONS)
+    assert "direction_context" not in flow.merge(editor("desk_reject", "scope"), {})
 
 
 def test_editor_revision_requests_remain_mandatory_but_desk_suggestions_do_not():
@@ -125,24 +160,56 @@ def test_editor_revision_requests_remain_mandatory_but_desk_suggestions_do_not()
     assert flow.merge(rejected, {})["required_changes"] == []
 
 
-def test_previous_editor_revision_recovers_legacy_missing_mandatory_items(tmp_path):
+def test_previous_editor_presentation_requests_are_not_tracked(tmp_path):
+    # Editor presentation requests are text; they stay in the letter but are not
+    # forced mandatory items, and no response letter is needed for them alone.
     run = tmp_path / "reviews/unified/example/20260101T000000Z"
     run.mkdir(parents=True)
     (run / "manuscript-expanded.tex").write_text("old text")
     record = {"stage_reached": "decision", "target_journal": "Journal", "merged": {"required_changes": []},
+              "letter": "Please define X.",
               "editor_screen": {"decision": "revise_before_submission", "presentation_problems": ["Define X."]}}
     (run / "decision.json").write_text(json.dumps(record))
     previous = flow._previous_round(tmp_path, "example", "Journal", "new text", "X is now defined.")
-    assert previous["items"] == ["[text] Define X. (Editor screen: manuscript presentation)"]
-    record["editor_screen"]["decision"] = "desk_reject"
+    assert previous["items"] == [] and previous["letter"] == "Please define X."
+    assert flow._previous_round(tmp_path, "example", "Journal", "new text", None)["items"] == []
+
+
+def test_only_scientific_and_evidence_items_enter_next_round_tracking(tmp_path):
+    run = tmp_path / "reviews/unified/example/20260101T000000Z"
+    run.mkdir(parents=True)
+    (run / "manuscript-expanded.tex").write_text("old text")
+    changes = [{"type": "text", "change": "Fix the abstract tense", "location": "Abstract"},
+               {"type": "evidence", "change": "Add a placebo test", "location": "Sec. 4", "main_claim": False},
+               {"type": "claim_narrowing", "change": "Limit Fig. 3 wording", "location": "Sec. 5", "main_claim": False},
+               {"type": "claim_narrowing", "change": "Narrow the headline effect", "location": "Abstract", "main_claim": True}]
+    record = {"stage_reached": "decision", "target_journal": "Journal",
+              "merged": {"scientific_blockers": ["Identification fails without the placebo"],
+                         "required_changes": changes,
+                         "unresolved_previous_items": [{"item": "[text] Old wording", "resolved": False},
+                                                       {"item": "[evidence] Old robustness", "resolved": False}]},
+              "editor_screen": {"decision": "send_to_review"}}
     (run / "decision.json").write_text(json.dumps(record))
-    assert flow._previous_round(tmp_path, "example", "Journal", "new text", "response")["items"] == []
+    items = flow._previous_round(tmp_path, "example", "Journal", "new", "response")["items"]
+    assert items == ["Identification fails without the placebo",
+                     "[evidence] Add a placebo test (Sec. 4)",
+                     "[claim_narrowing] Narrow the headline effect (Abstract)"]
+    policy_items = flow.previous_tracked_items(record | {"merged": record["merged"]}, history_policy={})
+    assert "[evidence] Old robustness" in policy_items and "[text] Old wording" not in policy_items
+    with pytest.raises(ValueError, match="response letter"):
+        flow._previous_round(tmp_path, "example", "Journal", "new", None)
+    # The referee schema then constrains previous_items to exactly these items.
+    schema = flow.referee_schema_for_previous({"items": items})["properties"]["previous_items"]
+    assert schema["items"]["properties"]["item"]["enum"] == items
 
 
 def test_ready_only_with_text_changes_and_no_blockers():
     ready = flow.merge(editor(), {"referee_a": referee("accept"),
                                   "referee_b": referee("minor_revision", changes=[("typo", "text")])})
     assert ready["outcome"] == "ready" and ready["next_action"] is None
+    assert ready["required_changes"] == [{"change": "typo", "type": "text", "location": "S1",
+                                          "referee": "referee_b", "advisory": True}]
+    # A claim_narrowing without the main_claim field (older reports) still blocks.
     narrowing = flow.merge(editor(), {"referee_a": referee("accept"),
                                       "referee_b": referee("minor_revision", changes=[("weaken", "claim_narrowing")])})
     assert narrowing["outcome"] == "revision_required" and narrowing["next_action"] == "text_revision"
@@ -150,6 +217,31 @@ def test_ready_only_with_text_changes_and_no_blockers():
                                     "referee_b": referee("accept")})
     assert blocked["outcome"] == "revision_required" and blocked["next_action"] == "evidence_remediation"
     assert blocked["scientific_blockers"] == ["gap in Lemma 2"]
+
+
+def test_text_only_requests_from_a_major_revision_referee_are_advisory():
+    # Even a referee asking for many text changes cannot hold back a sound paper
+    # when the other referee accepts and nobody reports a substantive item.
+    text = [("tighten the introduction", "text"), ("abstract tense", "text")]
+    merged = flow.merge(editor(), {"referee_a": referee("accept"),
+                                   "referee_b": referee("major_revision", changes=text)})
+    assert merged["outcome"] == "ready" and all(c["advisory"] for c in merged["required_changes"])
+
+
+@pytest.mark.parametrize("main_claim,ready", [(False, True), (True, False)])
+def test_claim_narrowing_blocks_only_for_main_claims(main_claim, ready):
+    report = referee("minor_revision")
+    report["required_changes"] = [{"change": "soften", "type": "claim_narrowing", "location": "Sec. 5",
+                                   "main_claim": main_claim}]
+    merged = flow.merge(editor(), {"referee_a": referee("accept"), "referee_b": report})
+    assert (merged["outcome"] == "ready") is ready
+    assert merged["required_changes"][0]["advisory"] is ready
+
+
+def test_unresolved_previous_text_item_from_older_records_is_advisory():
+    item = {"item": "[text] Fix the abstract tense (Abstract)", "resolved": False, "evidence": "still past tense"}
+    merged = flow.merge(editor(), {"referee_a": referee("accept", previous=[item]), "referee_b": referee("accept")})
+    assert merged["outcome"] == "ready" and merged["unresolved_previous_items"][0]["advisory"] is True
 
 
 def test_unresolved_previous_item_blocks_ready():
@@ -850,3 +942,638 @@ def test_preflight_records_selected_map_failure_before_roles(tmp_path, monkeypat
     # bibliography that the mandatory reference verifier receives.
     assert 'mainref' in pre['bibliography']
     assert 'siref' in pre['bibliography']
+
+
+# --------------------------------------------------------------------------- convergence changes
+
+def scored(significance, novelty, rec="minor_revision", changes=()):
+    report = referee(rec, changes=changes)
+    report["scores"] = {"overall": 6, "clarity": 6, "soundness": 6,
+                        "significance": significance, "novelty": novelty}
+    return report
+
+
+def refereed_round(significance, novelty):
+    return {"referee_reports": {"referee_a": scored(significance, novelty),
+                                "referee_b": scored(significance, novelty)}}
+
+
+def test_stalled_flag_when_significance_and_novelty_do_not_rise():
+    rounds = [refereed_round(5, 5), refereed_round(5, 4)]
+    referees = {"referee_a": scored(5, 4), "referee_b": scored(4, 4)}
+    merged = flow.merge(editor(), referees)
+    signal = flow.stalled_signal(rounds, referees, merged)
+    assert signal["stalled"] is True
+    # Only a flag: the readiness decision is unchanged.
+    assert merged["outcome"] == "ready"
+
+
+@pytest.mark.parametrize("case", ["rising_novelty", "evidence_requested", "too_few_rounds", "desk_round"])
+def test_stalled_flag_is_not_set(case):
+    rounds = [refereed_round(5, 5), refereed_round(5, 5)]
+    referees = {"referee_a": scored(5, 5), "referee_b": scored(5, 5)}
+    if case == "rising_novelty":
+        referees = {"referee_a": scored(5, 6), "referee_b": scored(5, 6)}
+    elif case == "evidence_requested":
+        referees["referee_b"] = scored(5, 5, "major_revision", changes=[("add an ablation", "evidence")])
+    elif case == "too_few_rounds":
+        rounds = rounds[:1]
+    elif case == "desk_round":
+        referees = {}
+    merged = flow.merge(editor(), referees) if referees else flow.merge(editor("desk_reject", "scope"), {})
+    assert flow.stalled_signal(rounds, referees, merged)["stalled"] is False
+
+
+def test_rounds_without_referees_do_not_count_toward_stall_window():
+    rounds = [refereed_round(5, 5), {"editor_screen": {"decision": "desk_reject"}}, refereed_round(5, 5)]
+    referees = {"referee_a": scored(5, 5), "referee_b": scored(5, 5)}
+    assert flow.stalled_signal(rounds, referees, flow.merge(editor(), referees))["stalled"] is True
+
+
+def test_review_policy_hash_ignores_code_and_prompt_files(tmp_path, monkeypatch):
+    config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
+              'rejection_clearance_required': True}
+    before = flow.review_policy_sha256(config)
+    edited = tmp_path / "formal.md"
+    edited.write_text("edited prompt")
+    monkeypatch.setattr(flow.formal_checks, "PROMPT", edited)
+    assert flow.review_policy_sha256(config) == before
+    monkeypatch.setattr(flow.formal_checks, "POLICY_VERSION", flow.formal_checks.POLICY_VERSION + 1)
+    assert flow.review_policy_sha256(config) != before
+
+
+def test_legacy_review_policy_record_still_matches(tmp_path, monkeypatch):
+    config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
+              'rejection_clearance_required': True}
+    legacy = {"schema": flow.formal_checks.VERSION, "mandatory": True, "implementation_sha256": "1" * 64,
+              "launcher_sha256": "2" * 64, "prompt_sha256": "3" * 64, "schema_sha256": "4" * 64}
+    (tmp_path / "report.json").write_text(json.dumps({"policy": legacy}))
+    record = {"review_policy_sha256": flow.review_policy_sha256(config, formal_policy=legacy),
+              "formal_check": {"path": "report.json"}}
+    assert flow.review_policy_matches(record, config, tmp_path)
+    changed = dict(config, referee_roles=['referee_a'])
+    assert not flow.review_policy_matches(record, changed, tmp_path)
+    monkeypatch.setattr(flow.formal_checks, "POLICY_VERSION", flow.formal_checks.POLICY_VERSION + 1)
+    assert not flow.review_policy_matches(record, config, tmp_path)
+
+
+MANUSCRIPT = r"""\documentclass{article}
+\newcommand{\effect}{0.42}
+\begin{document}
+\title{County water prices}
+\begin{abstract}Prices fell by \effect{} after reform.\end{abstract}
+\section{Introduction}
+We study water prices.
+\section{Data and methods}
+We use 120 counties. The estimator follows a standard design.
+\begin{figure}\includegraphics[width=0.8\textwidth]{fig1.png}\caption{Prices over time.}\end{figure}
+\section{Results}
+The effect is \effect{}.
+\begin{table}\begin{tabular}{cc}a & 1.5\\\end{tabular}\end{table}
+\section{Conclusion}
+Prices fell.
+\end{document}
+"""
+
+
+@pytest.mark.parametrize("edit,unchanged", [
+    (("The estimator follows a standard design.", "The estimator follows the standard two-way design."), True),
+    (("width=0.8", "width=0.6"), True),
+    (("Prices over time.}", "Prices over time.}% checked 2026-11-11, 3 panels"), True),
+    (("\\newcommand{\\effect}{0.42}", "\\newcommand{\\effect}{0.40}"), False),
+    (("We use 120 counties.", "We use 118 counties."), False),
+    (("We use 120 counties.", "We use 120 in total."), True),
+    (("We use 120 counties.", "We use 118 in total."), False),
+    (("a & 1.5", "a & 1.6"), False),
+    (("Prices fell.\n\\end", "Prices fell sharply.\n\\end"), False),
+    (("We study water prices.", "We study water prices in arid regions."), False),
+    (("County water prices", "Urban water prices"), False),
+])
+def test_substantive_delta_rule(edit, unchanged):
+    old, new = edit
+    assert old in MANUSCRIPT
+    result = flow.substantive_delta(MANUSCRIPT, MANUSCRIPT.replace(old, new))
+    assert result["substantive_unchanged"] is unchanged, result["reasons"]
+    if unchanged and old != new:
+        assert result["summary"]["lines_added"] >= 1
+
+
+def test_substantive_delta_rejects_large_rewrites():
+    filler = "".join(f"Method sentence {chr(97 + i % 26)}.\n" for i in range(10))
+    old = MANUSCRIPT.replace("We use 120 counties.", "We use 120 counties.\n" + filler)
+    new = old.replace(filler, filler.replace("Method sentence", "Method clause"))
+    result = flow.substantive_delta(old, new)
+    assert not result["substantive_unchanged"] and "lines changed" in result["reasons"][-1]
+
+
+def _delta_fixture(tmp_path, monkeypatch, expanded):
+    mock_formal_stage(monkeypatch)
+    config = {'process': flow.PROCESS, 'roles': {'editor': {'provider': 'openai-codex'},
+              'referee_a': {'provider': 'anthropic', 'model': 'opus'},
+              'referee_b': {'provider': 'openai-codex', 'model': 'gpt'}},
+              'referee_roles': ['referee_a', 'referee_b'], 'rejection_clearance_required': True,
+              'timeout_seconds': 1, 'max_rounds_per_target': 10}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    base = tmp_path / "reviews/unified/p/20200101T000000Z"
+    base.mkdir(parents=True)
+    (base / "manuscript-expanded.tex").write_text(MANUSCRIPT)
+    record = {"stage_reached": "decision", "target_journal": "J", "run_id": "20200101T000000Z",
+              "review_policy_sha256": flow.review_policy_sha256(config), "review_track": {"track": "routine"},
+              "editor_screen": editor() | {"prior_rejections_addressed": []},
+              "referee_reports": {"referee_a": referee("accept"), "referee_b": referee("minor_revision")},
+              "merged": {"outcome": "ready", "scientific_blockers": [], "required_changes": []},
+              "prior_decisions": [], "letter": "Accepted with minor wording suggestions.",
+              "receipts": {"editor": {"model": "gpt"}}}
+    (base / "decision.json").write_text(json.dumps(record))
+    pre = {'metadata': {'version': '1.0', 'target_journal': 'J'}, 'target': 'J', 'blockers': [],
+           'fingerprints': {}, 'expanded': expanded, 'bibliography': ''}
+    monkeypatch.setattr(flow, 'preflight', lambda *args: pre)
+    monkeypatch.setattr(flow, 'prior_decisions', lambda *args: [])
+    calls = []
+
+    def role(**kw):
+        calls.append(kw['role_name'])
+        if kw['role_name'] == 'editor':
+            return editor() | {'prior_rejections_addressed': []}, {}
+        if kw['role_name'] == 'decision_letter':
+            return {'letter': 'fresh letter'}, {}
+        return referee('accept'), {}
+    monkeypatch.setattr(flow, 'run_role', role)
+    return calls
+
+
+def test_text_only_change_after_ready_reuses_the_review(tmp_path, monkeypatch):
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace(
+        "The estimator follows a standard design.", "The estimator follows the standard two-way design."))
+    formal_runs = []
+    monkeypatch.setattr(flow.formal_checks, 'run_checks', lambda *args: formal_runs.append(1) or {'valid': True, 'blockers': []})
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert calls == []  # no editor, referee or letter model was started
+    assert formal_runs == [1]  # the mandatory reference/core verification still reran
+    assert record["review_mode"] == "delta" and record["merged"]["outcome"] == "ready"
+    assert record["consumes_scientific_round"] is False
+    assert record["delta_review"]["basis_run_id"] == "20200101T000000Z"
+    assert record["delta_review"]["summary"]["sections_touched"] == ["Data and methods"]
+    assert record["letter"] == "Accepted with minor wording suggestions."
+
+
+def test_numeric_change_after_ready_requires_full_review(tmp_path, monkeypatch):
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace("120 counties", "118 counties"))
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert 'editor' in calls and 'referee_a' in calls and 'referee_b' in calls
+    assert record.get("review_mode") != "delta"
+    assert any("numbers changed" in r for r in record["delta_review_refused"]["reasons"])
+    assert record["merged"]["outcome"] == "ready" and record["merged"]["stalled"] is False
+
+
+def test_policy_change_after_ready_requires_full_review(tmp_path, monkeypatch):
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace("width=0.8", "width=0.6"))
+    monkeypatch.setattr(flow.formal_checks, "POLICY_VERSION", flow.formal_checks.POLICY_VERSION + 1)
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert 'referee_a' in calls
+    assert "review policy changed since the ready review" in record["delta_review_refused"]["reasons"]
+
+
+def _apply_fixture(tmp_path, monkeypatch):
+    from paper_writing import operations
+    mock_formal_stage(monkeypatch)
+    meta = {'paper_id': 'p', 'version': '1.0', 'target_journal': 'J'}
+    written = []
+    monkeypatch.setattr(flow, 'load_paper_metadata', lambda *args: meta)
+    monkeypatch.setattr(flow, 'write_paper_metadata', lambda pid, value, root: written.append(copy.deepcopy(value)))
+    monkeypatch.setattr(operations, '_review_workspace_fingerprints', lambda *args: {})
+    return meta, written
+
+
+def test_direction_decision_is_applied_as_a_machine_readable_block(tmp_path, monkeypatch):
+    meta, written = _apply_fixture(tmp_path, monkeypatch)
+    config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_b'],
+              'rejection_clearance_required': True, 'max_rounds_per_target': 10, 'previous_panels': []}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    screen = editor("desk_reject", "incremental") | {"strongest_desk_reject_reason": "Same as Lee 2023.",
+                                                     "closest_prior_work": []}
+    record = {"paper_id": "p", "target_journal": "J", "manuscript_version": "1.0", "finished_at": "2026-11-11T00:00:00Z",
+              "round_for_target": 1, "review_policy_sha256": flow.review_policy_sha256(config),
+              "prior_decisions": [], "editor_screen": screen, "referee_reports": {},
+              "merged": flow.merge(screen, {}), "fingerprints": {}}
+    path = tmp_path / "decision.json"; path.write_text(json.dumps(record))
+    release = flow.apply_decision('p', root=tmp_path, decision_path=path, digest=flow._sha256(path.read_bytes()))
+    assert release["status"] == "blocked" and release["next_action"] == "direction_decision"
+    assert release["direction_context"]["strongest_desk_reject_reason"] == "Same as Lee 2023."
+
+
+def test_delta_review_record_passes_apply_revalidation(tmp_path, monkeypatch):
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace("width=0.8", "width=0.6"))
+    meta, written = _apply_fixture(tmp_path, monkeypatch)
+    record = flow.run_review('p', root=tmp_path, apply=True)
+    assert calls == [] and record["review_mode"] == "delta"
+    release = written[-1]["writing_release"]
+    assert release["status"] == "ready" and release["review_mode"] == "delta"
+    assert release["delta_basis_run_id"] == "20200101T000000Z"
+
+
+# --------------------------------------------------------------------------- formal checks: entry vs exit (2026-11)
+
+def _formal_problem_preflight(tmp_path, monkeypatch, style_errors, support_errors, ledger=None):
+    from paper_writing import manuscript_style, operations, support_citations
+
+    metadata = {'paper_id': 'p', 'version': '1.0', 'target_journal': 'J',
+                'target_journal_fit': {'status': 'approved'}}
+    manuscript = tmp_path / 'papers/p/manuscript'
+    manuscript.mkdir(parents=True)
+    (manuscript / 'main.tex').write_text(
+        '\\begin{document}\n\nFor real $x$, $x^2\\ge0$ by \\cite{mainref}.\n\n'
+        r'\begin{thebibliography}{9}\bibitem{mainref}Main reference.\end{thebibliography}\end{document}')
+    (manuscript / 'leftover.tex').write_text('not read by the build')
+    pdf = tmp_path / 'built.pdf'
+    pdf.write_bytes(b'%PDF-1.4 fixture')
+    monkeypatch.setattr(flow, 'load_registry', lambda *args, **kwargs: None)
+    monkeypatch.setattr(flow, 'load_paper_metadata', lambda *args, **kwargs: metadata)
+    monkeypatch.setattr(flow, '_build', lambda *args, **kwargs: (pdf, {'main.tex'}))
+    style = {'errors': style_errors, 'blacklist_findings': [
+        {'code': 'STYLE-INTERNAL-AUDIT', 'message': 'internal vocabulary', 'path': 'main.tex', 'line': 3,
+         'context': 'We audit every smart-contract transfer on chain.'}], 'notes': []}
+    monkeypatch.setattr(manuscript_style, 'audit_manuscript_style', lambda *args, **kwargs: style)
+    monkeypatch.setattr(support_citations, 'audit_manuscript_support',
+                        lambda *args, **kwargs: {'errors': support_errors})
+    monkeypatch.setattr(operations, '_review_workspace_fingerprints', lambda *args: {})
+    from paper_writing import journal_history
+    if ledger is None:
+        monkeypatch.setattr(journal_history, 'guard_target', lambda *args, **kwargs: None)
+    return flow.preflight('p', tmp_path, tmp_path / 'build')
+
+
+FORMAL_STYLE_PROBLEMS = [
+    {'code': 'STYLE-AI-DECLARATION-MISSING', 'message': 'add one AI-use declaration', 'path': 'main.tex'},
+    {'code': 'STYLE-AI-DISCLOSURE-TOOL', 'message': 'name the recorded tool Codex', 'path': 'main.tex'},
+    {'code': 'STYLE-UNRESOLVED-MARKER', 'message': 'remove TODO', 'path': 'main.tex', 'line': 9},
+]
+FORMAL_SUPPORT_PROBLEMS = [
+    {'code': 'SUPPORT-DOI-MISSING', 'message': 'no current Zenodo Version DOI'},
+    {'code': 'SUPPORT-STATUS-BEFORE-REVIEW', 'message': 'no draft before review'},
+    {'code': 'SUPPORT-BIB-VERSION', 'message': 'version differs', 'path': 'references.bib'},
+]
+
+
+def test_formal_problems_become_preparation_advisories_not_preflight_blockers(tmp_path, monkeypatch):
+    pre = _formal_problem_preflight(tmp_path, monkeypatch, FORMAL_STYLE_PROBLEMS, FORMAL_SUPPORT_PROBLEMS)
+    assert pre['blockers'] == []
+    codes = {a['code'] for a in pre['preparation_advisories']}
+    assert {'STYLE-AI-DECLARATION-MISSING', 'STYLE-AI-DISCLOSURE-TOOL', 'STYLE-UNRESOLVED-MARKER',
+            'STYLE-INTERNAL-AUDIT', 'SUPPORT-DOI-MISSING', 'SUPPORT-STATUS-BEFORE-REVIEW',
+            'SUPPORT-BIB-VERSION', 'UNUSED-SOURCE-FILES'} <= codes
+    audit = next(a for a in pre['preparation_advisories'] if a['code'] == 'STYLE-INTERNAL-AUDIT')
+    assert audit['kind'] == 'internal_vocabulary' and 'smart-contract' in audit['context']
+    assert pre['build_inputs'] == ['main.tex']
+
+
+def test_evidence_hash_and_unreviewable_problems_still_block(tmp_path, monkeypatch):
+    pre = _formal_problem_preflight(
+        tmp_path, monkeypatch,
+        [{'code': 'STYLE-MANUSCRIPT-MISSING', 'message': 'canonical manuscript source is missing'}],
+        [{'code': 'SUPPORT-PACKAGE-HASH', 'message': 'support archive SHA-256 does not match the registry'},
+         {'code': 'SUPPORT-SOMETHING-NEW', 'message': 'an unclassified future check'}])
+    assert any(b.startswith('STYLE-MANUSCRIPT-MISSING') for b in pre['blockers'])
+    assert any(b.startswith('SUPPORT-PACKAGE-HASH') for b in pre['blockers'])
+    # Unknown codes are conservatively blocking.
+    assert any(b.startswith('SUPPORT-SOMETHING-NEW') for b in pre['blockers'])
+
+
+def test_run_review_records_advisories_without_preflight_failure(tmp_path, monkeypatch):
+    mock_formal_stage(monkeypatch)
+    config = {'process': flow.PROCESS, 'roles': {'editor': {'provider': 'openai-codex'},
+              'referee_a': {'provider': 'anthropic'}, 'referee_b': {'provider': 'openai-codex', 'model': 'g'}},
+              'referee_roles': ['referee_b'], 'rejection_clearance_required': True,
+              'timeout_seconds': 1, 'max_rounds_per_target': 10}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    advisories = [{'source': 'manuscript_style', 'kind': 'preparation', 'code': 'STYLE-AI-DECLARATION-MISSING',
+                   'location': 'main.tex', 'message': 'add one AI-use declaration'}]
+    pre = {'metadata': {'version': '1.0', 'target_journal': 'J'}, 'target': 'J', 'blockers': [],
+           'fingerprints': {}, 'expanded': 'x', 'bibliography': '', 'preparation_advisories': advisories,
+           'build_inputs': ['main.tex']}
+    monkeypatch.setattr(flow, 'preflight', lambda *args: pre)
+    monkeypatch.setattr(flow, 'prior_decisions', lambda *args: [])
+    monkeypatch.setattr(flow, 'run_role', lambda **kw: (
+        (editor(), {}) if kw['role_name'] == 'editor' else
+        ({'letter': 'fixed'}, {}) if kw['role_name'] == 'decision_letter' else (referee('accept'), {})))
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert record['merged']['outcome'] == 'ready'
+    assert record['preparation_advisories'] == advisories and record['build_inputs'] == ['main.tex']
+
+
+def test_delivery_exit_enforces_the_same_formal_problems(tmp_path, monkeypatch):
+    from paper_writing import editorial_rewrite, manuscript_style, registry, support_citations
+
+    manuscript = tmp_path / 'papers/p/manuscript'
+    manuscript.mkdir(parents=True)
+    (manuscript / 'main.tex').write_text('x')
+    (manuscript / 'leftover.tex').write_text('not read by the build')
+    monkeypatch.setattr(registry, 'load_registry_settings', lambda *args, **kwargs: {})
+    monkeypatch.setattr(manuscript_style, 'audit_manuscript_style',
+                        lambda *args, **kwargs: {'errors': FORMAL_STYLE_PROBLEMS, 'blacklist_findings': [
+                            {'code': 'STYLE-INTERNAL-AUDIT', 'message': 'internal vocabulary'}]})
+    monkeypatch.setattr(support_citations, 'audit_manuscript_support',
+                        lambda *args, **kwargs: {'errors': FORMAL_SUPPORT_PROBLEMS})
+    monkeypatch.setattr(editorial_rewrite, 'abstract_findings', lambda *args: ['abstract has 300 words'])
+    notes = []
+    access = {'references': {'u': ['https://api.crossref.org/works/u: ConnectTimeout']}, 'items': []}
+    problems = flow.delivery_blockers('p', {'paper_id': 'p'}, tmp_path,
+                                      {'build_inputs': ['main.tex'],
+                                       'formal_check': {'unverifiable_source_access': access}}, notes=notes)
+    assert {n['kind'] for n in notes} == {'internal_vocabulary', 'unverifiable_source_access'}
+    joined = '\n'.join(problems)
+    for code in ('STYLE-AI-DECLARATION-MISSING', 'STYLE-AI-DISCLOSURE-TOOL', 'STYLE-UNRESOLVED-MARKER',
+                 'SUPPORT-DOI-MISSING', 'SUPPORT-STATUS-BEFORE-REVIEW', 'SUPPORT-BIB-VERSION'):
+        assert code in joined
+    assert 'leftover.tex' in joined and 'abstract has 300 words' in joined
+    # Internal vocabulary is for a human decision, never a hard stop.
+    assert 'STYLE-INTERNAL-AUDIT' not in joined
+
+
+def test_stale_ledger_only_warns_in_internal_review(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from paper_writing import journal_history
+
+    ledger = tmp_path / 'registry/journal-rejections.json'
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text(json.dumps({'schema_version': journal_history.SCHEMA,
+                                  'updated_at': (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
+                                  'rejections': [], 'active_submissions': []}))
+    monkeypatch.setattr(journal_history, '_policy', lambda root, policy=None: {
+        'enabled': True, 'exclude_after_distinct_papers': 3, 'caution_after_distinct_papers': 2,
+        'max_age_days': 7})
+    paper = {'paper_id': 'p', 'target_journal': 'J'}
+    with pytest.raises(ValueError, match='stale'):
+        journal_history.guard_target(tmp_path, paper)
+    pre = _formal_problem_preflight(tmp_path, monkeypatch, [], [], ledger=True)
+    assert pre['blockers'] == []
+    warning = next(a for a in pre['preparation_advisories'] if a['code'] == 'LEDGER-STALE')
+    assert warning['kind'] == 'warning' and 'journal-history sync' in warning['message']
+    # Outside the internal review (selection, retargeting, delivery) it is still an error.
+    with pytest.raises(ValueError, match='stale'):
+        journal_history.check_journal(tmp_path, 'J')
+
+
+
+# --------------------------------------------------------------------------- formal verifier role (2026-11-11)
+
+EDITOR_MODEL = {'provider': 'openai-codex', 'tool': 'Codex', 'model': 'gpt-6-astra'}
+VERIFIER_MODEL = {'provider': 'openai-codex', 'tool': 'Codex', 'model': 'gpt-6.1-sol'}
+REFEREE_MODEL = {'provider': 'anthropic', 'tool': 'Claude Code', 'model': 'claude-fable-5-2'}
+
+
+@pytest.mark.parametrize('configured', [True, False])
+def test_formal_stage_runs_on_formal_verifier_or_falls_back_to_editor(tmp_path, monkeypatch, configured):
+    roles = {'editor': EDITOR_MODEL, 'referee_b': REFEREE_MODEL}
+    if configured:
+        roles['formal_verifier'] = VERIFIER_MODEL
+    config = {'process': flow.PROCESS, 'roles': roles, 'referee_roles': ['referee_b'],
+              'rejection_clearance_required': True, 'timeout_seconds': 1, 'max_rounds_per_target': 10}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    monkeypatch.setattr(flow, 'preflight', lambda *args: {
+        'metadata': {'version': '1.0', 'target_journal': 'J'}, 'target': 'J', 'blockers': [],
+        'fingerprints': {}, 'expanded': 'x', 'bibliography': ''})
+    monkeypatch.setattr(flow, 'prior_decisions', lambda *args: [])
+    used, model_roles = [], {}
+    monkeypatch.setattr(flow.formal_checks, 'run_checks', lambda pre, root, run, role, timeout, runner:
+                        used.append(('run', role)) or {'valid': True, 'blockers': []})
+    monkeypatch.setattr(flow.formal_checks, 'validate_binding', lambda binding, metadata, root, role:
+                        used.append(('validate', role)) or [])
+
+    def run_role(**kw):
+        model_roles[kw['role_name']] = kw['role']
+        return ((editor(), {}) if kw['role_name'] == 'editor' else
+                ({'letter': 'fixed'}, {}) if kw['role_name'] == 'decision_letter' else (referee('accept'), {}))
+    monkeypatch.setattr(flow, 'run_role', run_role)
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    expected = VERIFIER_MODEL if configured else EDITOR_MODEL
+    assert used == [('run', expected), ('validate', expected)]
+    assert record['formal_verifier_role'] == ('formal_verifier' if configured else 'editor')
+    # The editorial screen and the decision letter stay on the editor's model.
+    assert model_roles['editor'] == model_roles['decision_letter'] == EDITOR_MODEL
+
+
+def test_formal_verifier_config_is_validated(monkeypatch):
+    settings = {'review': {'roles': {'editor': EDITOR_MODEL, 'formal_verifier': dict(VERIFIER_MODEL)}}}
+    monkeypatch.setattr(flow, 'load_registry_settings', lambda root: settings)
+    assert flow.review_config('x')['roles']['formal_verifier'] == VERIFIER_MODEL
+    settings['review']['roles']['formal_verifier'] = dict(REFEREE_MODEL)
+    with pytest.raises(ValueError, match='Codex'):
+        flow.review_config('x')
+    settings['review']['roles']['formal_verifier'] = {'provider': 'openai-codex', 'model': 'gpt-6.1-sol'}
+    with pytest.raises(ValueError, match='provider, tool and model'):
+        flow.review_config('x')
+    settings['review']['roles']['formal_verifier'] = dict(VERIFIER_MODEL, model='gpt 6.1 sol')
+    with pytest.raises(ValueError, match='exact model identifier'):
+        flow.review_config('x')
+
+
+def _panel_config(roles, previous=()):
+    return {'process': flow.PROCESS, 'roles': roles, 'referee_roles': ['referee_b'],
+            'rejection_clearance_required': True, 'max_rounds_per_target': 10, 'timeout_seconds': 1,
+            'previous_panels': list(previous)}
+
+
+def test_records_without_formal_verifier_keep_editor_binding_and_policy_hash():
+    old_roles = {'editor': EDITOR_MODEL, 'referee_b': REFEREE_MODEL}
+    old = _panel_config(old_roles)
+    old_hash = flow.review_policy_sha256(old)
+    # Without the optional role, the policy and the bound role are what they were.
+    assert flow.formal_role(old_roles) == EDITOR_MODEL and flow.formal_role_name(old_roles) == 'editor'
+    new = _panel_config(dict(old_roles, formal_verifier=VERIFIER_MODEL), previous=[{
+        'roles': old_roles, 'referee_roles': ['referee_b'],
+        'valid_for_reviews_started_before': '2026-11-12T00:00:00+00:00'}])
+    assert flow.review_policy_sha256(new) != old_hash
+    earlier = {'started_at': '2026-11-10T08:00:00+00:00', 'active_referee_roles': ['referee_b']}
+    policy = flow.policy_for_record(earlier, new)
+    assert flow.review_policy_sha256(policy) == old_hash
+    assert flow.formal_role(policy['roles']) == EDITOR_MODEL
+    later = {'started_at': '2026-11-13T08:00:00+00:00', 'active_referee_roles': ['referee_b']}
+    assert flow.formal_role(flow.policy_for_record(later, new)['roles']) == VERIFIER_MODEL
+
+
+@pytest.mark.parametrize('started,expected', [('2026-11-10T08:00:00+00:00', 'editor'),
+                                              ('2026-11-13T08:00:00+00:00', 'verifier')])
+def test_apply_revalidates_formal_report_against_the_record_policy_role(tmp_path, monkeypatch, started, expected):
+    meta, written = _apply_fixture(tmp_path, monkeypatch)
+    old_roles = {'editor': EDITOR_MODEL, 'referee_b': REFEREE_MODEL}
+    config = _panel_config(dict(old_roles, formal_verifier=VERIFIER_MODEL), previous=[{
+        'roles': old_roles, 'referee_roles': ['referee_b'],
+        'valid_for_reviews_started_before': '2026-11-12T00:00:00+00:00'}])
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    seen = []
+    monkeypatch.setattr(flow.formal_checks, 'validate_binding',
+                        lambda binding, metadata, root, role: seen.append(role) or [])
+    record = {'paper_id': 'p', 'target_journal': 'J', 'manuscript_version': '1.0', 'started_at': started,
+              'finished_at': started, 'active_referee_roles': ['referee_b'], 'round_for_target': 1,
+              'review_policy_sha256': flow.review_policy_sha256(flow.policy_for_record(
+                  {'started_at': started, 'active_referee_roles': ['referee_b']}, config)),
+              'prior_decisions': [], 'editor_screen': editor(), 'referee_reports': {'referee_b': referee('accept')},
+              'merged': flow.merge(editor(), {'referee_b': referee('accept')}), 'fingerprints': {},
+              'formal_check': {'valid': True}}
+    path = tmp_path / 'decision.json'
+    path.write_text(json.dumps(record))
+    release = flow.apply_decision('p', root=tmp_path, decision_path=path, digest=flow._sha256(path.read_bytes()))
+    assert release['status'] == 'ready'
+    assert seen == [EDITOR_MODEL if expected == 'editor' else VERIFIER_MODEL]
+
+
+# --------------------------------------------------------------------------- unanimous referee reject (2026-11-11)
+
+def _rejecting(blockers=(), significance=6, novelty=5, text='The advance over Lee (2023) is a new sample only.'):
+    report = referee('reject', blockers=blockers)
+    report['scores'] = {'clarity': 7, 'soundness': 6, 'significance': significance, 'novelty': novelty, 'overall': 4}
+    report['significance'] = text
+    report['novelty_and_context'] = 'Close to Lee (2023).'
+    return report
+
+
+@pytest.mark.parametrize('blockers_a,blockers_b', [((), ()), (('Lemma 2 is false',), ())])
+def test_both_referees_reject_routes_to_direction_decision(blockers_a, blockers_b):
+    screen = editor() | {'closest_prior_work': [{'work': 'Lee 2023', 'source': 'reference_list',
+                                                 'known_result': 'Same estimator'}],
+                         'advance_over_prior_work': 'A new county sample.'}
+    merged = flow.merge(screen, {'referee_a': _rejecting(blockers_a, significance=3, novelty=2),
+                                 'referee_b': _rejecting(blockers_b, significance=4, novelty=3)})
+    assert merged['next_action'] == 'direction_decision'
+    assert merged['outcome'] == 'revision_required' and merged['recommendation'] == 'reject'
+    assert merged['recommendation_basis'] == 'all referees recommend reject'
+    context = merged['direction_context']
+    assert context['trigger'] == 'all_referees_reject'
+    assert context['options'] == list(flow.DIRECTION_OPTIONS)
+    assert context['closest_prior_work'][0]['work'] == 'Lee 2023'
+    assert context['mean_significance_score'] == 3.5 and context['mean_novelty_score'] == 2.5
+    rows = {r['referee']: r for r in context['referee_rejections']}
+    assert rows['referee_a']['significance_score'] == 3 and rows['referee_b']['novelty_score'] == 3
+    if blockers_a:
+        assert rows['referee_a']['principal_reason'] == 'Lemma 2 is false'
+        assert rows['referee_a']['principal_reason_source'] == 'scientific_blocker'
+        assert merged['scientific_blockers'] == ['Lemma 2 is false']
+    assert rows['referee_b']['principal_reason'].startswith('The advance over Lee')
+    assert rows['referee_b']['principal_reason_source'] == 'significance_assessment'
+
+
+def test_single_reject_keeps_the_existing_rule():
+    split = flow.merge(editor(), {'referee_a': _rejecting(), 'referee_b': referee('minor_revision')})
+    # An unsubstantiated lone reject: the more favourable recommendation stands.
+    assert split['outcome'] == 'ready' and split['next_action'] is None and 'direction_context' not in split
+    substantiated = flow.merge(editor(), {'referee_a': _rejecting(['Lemma 2 is false']),
+                                          'referee_b': referee('accept')})
+    assert substantiated['next_action'] == 'evidence_remediation' and 'direction_context' not in substantiated
+    # A single-referee panel keeps the ordinary rule as well.
+    alone = flow.merge(editor(), {'referee_b': _rejecting()})
+    assert alone['next_action'] == 'evidence_remediation' and 'direction_context' not in alone
+
+
+def test_unanimous_reject_is_applied_like_a_significance_desk_reject(tmp_path, monkeypatch):
+    meta, written = _apply_fixture(tmp_path, monkeypatch)
+    config = {'process': flow.PROCESS, 'roles': {}, 'referee_roles': ['referee_a', 'referee_b'],
+              'rejection_clearance_required': True, 'max_rounds_per_target': 10, 'previous_panels': []}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    referees = {'referee_a': _rejecting(), 'referee_b': _rejecting()}
+    record = {'paper_id': 'p', 'target_journal': 'J', 'manuscript_version': '1.0',
+              'finished_at': '2026-11-11T00:00:00Z', 'round_for_target': 1,
+              'review_policy_sha256': flow.review_policy_sha256(config), 'prior_decisions': [],
+              'editor_screen': editor(), 'referee_reports': referees,
+              'merged': flow.merge(editor(), referees), 'fingerprints': {}}
+    path = tmp_path / 'decision.json'
+    path.write_text(json.dumps(record))
+    release = flow.apply_decision('p', root=tmp_path, decision_path=path, digest=flow._sha256(path.read_bytes()))
+    assert release['status'] == 'blocked' and release['next_action'] == 'direction_decision'
+    assert release['direction_context']['trigger'] == 'all_referees_reject'
+    assert release['decision'] == 'reject'
+
+
+# --------------------------------------------------------------------------- unused declared routes (2026-11-11)
+
+ROUTE_BODY = ('\\begin{document}\n\nFor real $x$, $x^2\\ge0$ by \\cite{mainref}.\n\n'
+              r'\begin{thebibliography}{9}\bibitem{mainref}Main reference.\end{thebibliography}\end{document}')
+
+
+def _route_workspace(tmp_path, formal_check):
+    manuscript = tmp_path / 'papers/p/manuscript'
+    manuscript.mkdir(parents=True)
+    (manuscript / 'main.tex').write_text(ROUTE_BODY)
+    evidence = tmp_path / 'papers/p/evidence/result.json'
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text('{"graphs": 12}')
+    return {'paper_id': 'p', 'version': '1.0', 'manuscript_dir': 'papers/p/manuscript', 'target_journal': 'J',
+            'target_journal_fit': {'status': 'approved'}, 'formal_check': formal_check}
+
+
+STALE_ROUTES = {
+    'sources': [{'reference_keys': ['mainref'], 'url': 'https://publisher.example/original',
+                 'kind': 'primary_text', 'passage_patterns': ['Old selector text', 'For real']}],
+    'local_evidence': [{'path': 'papers/p/evidence/result.json', 'sha256': '0' * 64,
+                        'kind': 'execution_record', 'passage_patterns': ['Another old selector']}]}
+
+
+def _route_preflight(tmp_path, monkeypatch, formal_check):
+    from paper_writing import journal_history, manuscript_style, operations, support_citations
+
+    metadata = _route_workspace(tmp_path, formal_check)
+    pdf = tmp_path / 'built.pdf'
+    pdf.write_bytes(b'%PDF-1.4 fixture')
+    monkeypatch.setattr(flow, 'load_registry', lambda *args, **kwargs: None)
+    monkeypatch.setattr(flow, 'load_paper_metadata', lambda *args, **kwargs: copy.deepcopy(metadata))
+    monkeypatch.setattr(flow, '_build', lambda *args, **kwargs: (pdf, {'main.tex'}))
+    monkeypatch.setattr(manuscript_style, 'audit_manuscript_style',
+                        lambda *args, **kwargs: {'errors': [], 'blacklist_findings': [], 'notes': []})
+    monkeypatch.setattr(support_citations, 'audit_manuscript_support', lambda *args, **kwargs: {'errors': []})
+    monkeypatch.setattr(operations, '_review_workspace_fingerprints', lambda *args: {})
+    monkeypatch.setattr(journal_history, 'guard_target', lambda *args, **kwargs: None)
+    return metadata
+
+
+def test_stale_selectors_and_local_evidence_are_advisories_and_the_review_continues(tmp_path, monkeypatch):
+    _route_preflight(tmp_path, monkeypatch, copy.deepcopy(STALE_ROUTES))
+    pre = flow.preflight('p', tmp_path, tmp_path / 'build')
+    assert pre['blockers'] == []
+    stale = [a for a in pre['preparation_advisories'] if a['code'] == 'SOURCE-SELECTOR-STALE']
+    assert {a['location'] for a in stale} == {'https://publisher.example/original', 'papers/p/evidence/result.json'}
+    message = next(a['message'] for a in stale if a['location'].startswith('https://'))
+    assert "'Old selector text'" in message and 'https://publisher.example/original' in message
+    assert all(a['kind'] == 'preparation' and a['source'] == 'formal_checks' for a in stale)
+    unbound = next(a for a in pre['preparation_advisories'] if a['code'] == 'LOCAL-EVIDENCE-UNBOUND')
+    assert 'hash mismatch' in unbound['message'] and unbound['location'] == 'papers/p/evidence/result.json'
+    # The whole review proceeds: editor, referee, formal stage and a ready decision.
+    mock_formal_stage(monkeypatch)
+    config = {'process': flow.PROCESS, 'roles': {'editor': EDITOR_MODEL, 'referee_b': REFEREE_MODEL},
+              'referee_roles': ['referee_b'], 'rejection_clearance_required': True,
+              'timeout_seconds': 1, 'max_rounds_per_target': 10}
+    monkeypatch.setattr(flow, 'review_config', lambda root: config)
+    monkeypatch.setattr(flow, 'prior_decisions', lambda *args: [])
+    monkeypatch.setattr(flow, 'run_role', lambda **kw: (
+        (editor(), {}) if kw['role_name'] == 'editor' else
+        ({'letter': 'fixed'}, {}) if kw['role_name'] == 'decision_letter' else (referee('accept'), {})))
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert record['merged']['outcome'] == 'ready'
+    assert {'SOURCE-SELECTOR-STALE', 'LOCAL-EVIDENCE-UNBOUND'} <= {a['code'] for a in record['preparation_advisories']}
+
+
+def test_absent_bibliography_key_still_blocks_the_preflight(tmp_path, monkeypatch):
+    routes = {'sources': [{'reference_keys': ['missingref'], 'url': 'https://publisher.example/original',
+                           'kind': 'primary_text'}]}
+    _route_preflight(tmp_path, monkeypatch, routes)
+    pre = flow.preflight('p', tmp_path, tmp_path / 'build')
+    assert pre['blockers'] == ['Source routing: https://publisher.example/original: absent bibliography key']
+    assert not any(a['code'] == 'SOURCE-SELECTOR-STALE' for a in pre['preparation_advisories'])
+
+
+def test_delivery_exit_only_notes_unused_routes(tmp_path, monkeypatch):
+    from paper_writing import editorial_rewrite, manuscript_style, registry, support_citations
+
+    metadata = _route_workspace(tmp_path, copy.deepcopy(STALE_ROUTES))
+    monkeypatch.setattr(registry, 'load_registry_settings', lambda *args, **kwargs: {})
+    monkeypatch.setattr(manuscript_style, 'audit_manuscript_style',
+                        lambda *args, **kwargs: {'errors': [], 'blacklist_findings': []})
+    monkeypatch.setattr(support_citations, 'audit_manuscript_support', lambda *args, **kwargs: {'errors': []})
+    monkeypatch.setattr(editorial_rewrite, 'abstract_findings', lambda *args: [])
+    notes = []
+    assert flow.delivery_blockers('p', metadata, tmp_path, {'build_inputs': ['main.tex']}, notes=notes) == []
+    stale = [n for n in notes if n['kind'] == 'stale_registration_route']
+    assert {(n['code'], n['route']) for n in stale} == {
+        ('SOURCE-SELECTOR-STALE', 'https://publisher.example/original'),
+        ('SOURCE-SELECTOR-STALE', 'papers/p/evidence/result.json'),
+        ('LOCAL-EVIDENCE-UNBOUND', 'papers/p/evidence/result.json')}
+    assert next(n for n in stale if n.get('selector') == 'Old selector text')['route_kind'] == 'stale_selector'

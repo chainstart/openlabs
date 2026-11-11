@@ -295,25 +295,68 @@ def test_incomplete_or_false_evidence_never_passes(tmp_path, monkeypatch, mutati
         pass
 
 
-@pytest.mark.parametrize("mutation", ["evidence_body", "evidence_text", "output", "prompt", "receipt", "source_plan", "version", "policy", "report", "different_role"])
+@pytest.mark.parametrize("mutation", ["evidence_body", "evidence_text", "output", "prompt", "system", "receipt", "source_plan", "version", "policy", "report", "different_role"])
 def test_changed_accepted_inputs_refuse_at_release(tmp_path, monkeypatch, mutation):
     metadata, binding, result = run_fixture(tmp_path, monkeypatch)
     if mutation.startswith("evidence_"):
         source = result["sources"][0]
         (tmp_path / source[mutation.removeprefix("evidence_") + "_path"]).write_text("changed")
-    elif mutation in {"output", "prompt", "receipt"}:
-        (tmp_path / result["receipts"][0]["workdir"] / (mutation + (".txt" if mutation == "prompt" else ".json"))).write_text("changed")
+    elif mutation in {"output", "prompt", "system", "receipt"}:
+        suffix = ".txt" if mutation in {"prompt", "system"} else ".json"
+        (tmp_path / result["receipts"][0]["workdir"] / (mutation + suffix)).write_text("changed")
     elif mutation == "source_plan": metadata["formal_check"]["sources"][0]["url"] += "/changed"
     elif mutation == "version": metadata["version"] = "2.0"
     elif mutation == "different_role":
         assert formal.validate_binding(binding, metadata, tmp_path, dict(ROLE, model="another-model"))
         return
     else:
-        if mutation == "policy": result["policy"]["implementation_sha256"] = "0" * 64
+        if mutation == "policy": result["policy"]["policy_version"] = formal.POLICY_VERSION - 1
         elif mutation == "report": result["report"]["passages"][0]["coverage_rationale"] = "Forged aggregate"
         path = tmp_path / binding["path"]
         path.write_text(json.dumps(result)); binding["sha256"] = formal.sha(path.read_bytes())
     assert formal.validate_binding(binding, metadata, tmp_path, ROLE)
+
+
+def test_policy_is_an_explicit_version_not_file_hashes(monkeypatch, tmp_path):
+    current = formal.policy()
+    assert current == {"schema": formal.VERSION, "mandatory": True, "policy_version": formal.POLICY_VERSION}
+    # Implementation, launcher and prompt bytes no longer enter the policy.
+    changed_prompt = tmp_path / "formal.md"
+    changed_prompt.write_text("an edited prompt")
+    monkeypatch.setattr(formal, "PROMPT", changed_prompt)
+    assert formal.policy() == current
+    monkeypatch.setattr(formal, "POLICY_VERSION", formal.POLICY_VERSION + 1)
+    assert formal.policy() != current and not formal.policy_accepted(current)
+
+
+def test_legacy_file_hash_policy_is_accepted_only_until_the_version_is_bumped(monkeypatch):
+    legacy = {"schema": formal.VERSION, "mandatory": True, "implementation_sha256": "1" * 64,
+              "launcher_sha256": "2" * 64, "prompt_sha256": "3" * 64, "schema_sha256": "4" * 64}
+    assert formal.policy_accepted(legacy)
+    assert not formal.policy_accepted(dict(legacy, schema="openlabs.formal_check.v1"))
+    assert not formal.policy_accepted(dict(legacy, mandatory=False))
+    assert not formal.policy_accepted(dict(legacy, extra="x"))
+    monkeypatch.setattr(formal, "POLICY_VERSION", formal.POLICY_VERSION + 1)
+    assert not formal.policy_accepted(legacy)
+
+
+def test_prompt_file_edit_does_not_invalidate_a_passed_check(tmp_path, monkeypatch):
+    metadata, binding, _ = run_fixture(tmp_path, monkeypatch)
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
+    edited = tmp_path / "edited-formal.md"
+    edited.write_text(formal.PROMPT.read_text() + "\nA clarified instruction.\n")
+    monkeypatch.setattr(formal, "PROMPT", edited)
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
+
+
+def test_legacy_policy_report_still_validates(tmp_path, monkeypatch):
+    metadata, binding, result = run_fixture(tmp_path, monkeypatch)
+    result["policy"] = {"schema": formal.VERSION, "mandatory": True, "implementation_sha256": "1" * 64,
+                        "launcher_sha256": "2" * 64, "prompt_sha256": "3" * 64, "schema_sha256": "4" * 64}
+    path = tmp_path / binding["path"]
+    path.write_text(json.dumps(result)); binding["sha256"] = formal.sha(path.read_bytes())
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
+    assert formal.recorded_policy(binding, tmp_path) == result["policy"]
 
 
 def test_provider_outage_retained_and_blocks_without_primary(tmp_path, monkeypatch):
@@ -322,7 +365,11 @@ def test_provider_outage_retained_and_blocks_without_primary(tmp_path, monkeypat
     run = tmp_path / "review"; run.mkdir()
     def unexpected(**kwargs): raise AssertionError("A model must not be asked to invent missing evidence")
     binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, unexpected)
-    assert binding["valid"] is False and any("lookup unresolved" in b for b in binding["blockers"])
+    # A total outage is an environment failure (technical retry), not a set of
+    # individually unverifiable references; it still blocks before any model call.
+    assert binding["valid"] is False and any("No external bibliographic service was reachable" in b
+                                             for b in binding["blockers"])
+    assert binding["unverifiable_source_access"]["references"]
     assert (run / "formal-check/evidence/retrieval-failures.json").is_file()
 
 
@@ -806,3 +853,105 @@ def test_incomplete_scientific_coverage_still_blocks():
     result = flow.merge(editor, {"referee_b": report})
     assert result["outcome"] != "ready"
     assert "scientific argument coverage" in result["scientific_blockers"][0]
+
+
+# --------------------------------------------------------------------------- unreachable sources (2026-11)
+
+def _two_reference_workspace(root):
+    metadata = fixture_workspace(root)
+    bbl = root / metadata["manuscript_dir"] / "main.bbl"
+    bbl.write_text(r"\begin{thebibliography}{2}\bibitem{s}Smith. Exact positivity. 2020. DOI:10.1234/example."
+                   + "\n" + r"\bibitem{u}Unreached. Remote record. 2021. DOI:10.9999/remote.\end{thebibliography}")
+    return metadata
+
+
+def _handler(remote):
+    def handle(request):
+        if "10.9999" in str(request.url):
+            return remote(request)
+        return transport(request)
+    return handle
+
+
+def _runner_unchecked_for(key):
+    def runner(**kwargs):
+        packet = json.loads(kwargs["user_prompt"])
+        output = simulated_output(packet)
+        for row in output["references"]:
+            if row["key"] == key:
+                row.update(status="unchecked", evidence=[])
+        workdir = kwargs["workdir"]
+        workdir.mkdir(parents=True)
+        prompt = kwargs["system_prompt"] + "\n\n" + kwargs["user_prompt"]
+        (workdir / "prompt.txt").write_text(prompt)
+        (workdir / "system.txt").write_text(kwargs["system_prompt"])
+        (workdir / "output.json").write_text(json.dumps(output))
+        receipt = {"provider": ROLE["provider"], "model": ROLE["model"], "runtime_reported_models": [ROLE["model"]],
+                   "independent_context": True, "output_sha256": formal.sha((workdir / "output.json").read_bytes()),
+                   "prompt_sha256": formal.sha(prompt.encode()),
+                   "system_prompt_sha256": formal.sha(kwargs["system_prompt"].encode()),
+                   "schema_sha256": formal.sha(json.dumps(kwargs["schema"], sort_keys=True).encode())}
+        (workdir / "receipt.json").write_text(json.dumps(receipt))
+        return output, receipt
+    return runner
+
+
+@pytest.mark.parametrize("remote", [
+    lambda request: (_ for _ in ()).throw(httpx.ConnectTimeout("timed out", request=request)),
+    lambda request: httpx.Response(403),
+    lambda request: (_ for _ in ()).throw(httpx.ConnectError("[Errno -3] name resolution", request=request)),
+], ids=["timeout", "http403", "dns"])
+def test_network_failure_is_unverifiable_source_access_not_a_defect(tmp_path, monkeypatch, remote):
+    metadata = _two_reference_workspace(tmp_path)
+    mock_http(monkeypatch, _handler(remote))
+    run = tmp_path / "review"; run.mkdir()
+    binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, _runner_unchecked_for("u"))
+    assert binding["valid"] is True and binding["blockers"] == []
+    access = binding["unverifiable_source_access"]
+    assert set(access["references"]) == {"u"}
+    assert access["items"] == [{"item": "u", "reference_key": "u", "status": "unchecked",
+                                "classification": "unverifiable_source_access"}]
+    # The release-time replay accepts the same classification and nothing else.
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE) == []
+
+
+def test_obtained_but_mismatching_record_still_blocks(tmp_path, monkeypatch):
+    metadata = _two_reference_workspace(tmp_path)
+    wrong = lambda request: httpx.Response(200, json={"message": {"DOI": "10.9999/other", "title": ["Other"],
+                                                                  "author": [{"family": "Else"}]}})
+    mock_http(monkeypatch, _handler(wrong))
+    run = tmp_path / "review"; run.mkdir()
+    binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, _runner_unchecked_for("u"))
+    assert binding["valid"] is False
+    assert any(b.startswith("u: authoritative identifier lookup unresolved") for b in binding["blockers"])
+    assert "unverifiable_source_access" not in binding
+
+
+def test_unknown_identifier_is_not_unverifiable(tmp_path, monkeypatch):
+    metadata = _two_reference_workspace(tmp_path)
+    mock_http(monkeypatch, _handler(lambda request: httpx.Response(404)))
+    run = tmp_path / "review"; run.mkdir()
+    binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, _runner_unchecked_for("u"))
+    assert binding["valid"] is False and "unverifiable_source_access" not in binding
+
+
+def test_unverifiable_reference_with_error_verdict_still_blocks(tmp_path, monkeypatch):
+    metadata = _two_reference_workspace(tmp_path)
+    mock_http(monkeypatch, _handler(lambda request: httpx.Response(503)))
+    run = tmp_path / "review"; run.mkdir()
+    base = _runner_unchecked_for("u")
+
+    def runner(**kwargs):
+        output, receipt = base(**kwargs)
+        changed = [row for row in output["references"] if row["key"] == "u"]
+        if not changed:
+            return output, receipt
+        changed[0]["status"] = "error"
+        workdir = kwargs["workdir"]
+        (workdir / "output.json").write_text(json.dumps(output))
+        receipt["output_sha256"] = formal.sha((workdir / "output.json").read_bytes())
+        (workdir / "receipt.json").write_text(json.dumps(receipt))
+        return output, receipt
+
+    binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, runner)
+    assert binding["valid"] is False and any(b == "u: error" for b in binding["blockers"])

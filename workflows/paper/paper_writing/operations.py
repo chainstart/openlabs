@@ -285,12 +285,9 @@ def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str,
     repo_root = Path(root).resolve()
     payload = load_paper_metadata(paper_id, repo_root)
     carry_forward = _review_carry_forward_candidate(paper_id, payload, repo_root)
-    from paper_writing.review_delta import capture_baseline
-    delta_state, delta_reason = None, None
-    try:
-        delta_state = capture_baseline(paper_id, payload, repo_root)
-    except (ValueError, OSError, KeyError, TypeError, SupportPackageError) as exc:
-        delta_reason = str(exc)
+    # The legacy incremental (delta) review was removed with the unified review,
+    # which decides its own delta re-review from the last ready decision record.
+    delta_reason = "legacy incremental review removed; the unified review handles re-review"
     revision_root = repo_root / "papers" / paper_id / "revisions"
     revision_root.mkdir(parents=True, exist_ok=True)
     existing = [
@@ -320,9 +317,7 @@ def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str,
         "invalidated_reason": "revision_started",
         "revision_rounds_completed": payload.get("writing_release", {}).get("revision_rounds_completed", 0),
     }
-    if delta_state is not None:
-        draft_release["review_delta"] = delta_state
-    if delta_state is not None or payload.get("writing_release", {}).get("review_delta"):
+    if payload.get("writing_release", {}).get("review_delta"):
         draft_release["minimum_next_review_round"] = draft_release["revision_rounds_completed"] + 1
     if carry_forward is not None:
         draft_release["review_carry_forward"] = carry_forward
@@ -335,7 +330,7 @@ def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str,
         "version": new_version,
         "file": str(path.relative_to(repo_root)),
         "review_carry_forward_available": carry_forward is not None,
-        "delta_baseline_available": delta_state is not None,
+        "delta_baseline_available": False,
         "delta_baseline_reason": delta_reason,
     }
 

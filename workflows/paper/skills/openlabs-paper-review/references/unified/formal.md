@@ -16,6 +16,9 @@ not literal quotation, is the requirement. Never invent a record or report an un
 verified. A current_support_draft establishes only its actual reserved DOI,
 creators/title/year/version from the authenticated receipt, not prior publication;
 public resolver absence before authorized publication is not a reference error.
+When no source record was retrieved for a reference (the lookup could not reach the
+service), mark it `unchecked`, not `error`: missing access is not a discrepancy.
+Use `error` only for a discrepancy you can actually show.
 
 CORE MATHEMATICS: The supplied scope contains theorem/lemma/proposition/corollary,
 definition and proof environments, displayed mathematical statements and inline

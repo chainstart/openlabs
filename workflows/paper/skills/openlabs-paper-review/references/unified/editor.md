@@ -45,7 +45,8 @@ journal would decline the paper.
    tool and model actually used. Do not ask to remove or shorten that list; judge only that the
    declaration is factual and free of preparation chronology.
    In `presentation_problems`, list only concrete, actionable defects present in this
-   current manuscript. Positive observations belong in the contribution or rationale
+   current manuscript. Before naming a countable or checkable defect (title or abstract length,
+   tense, a missing statement), check it in the supplied text and quote what you counted. Positive observations belong in the contribution or rationale
    fields, not in a list that becomes mandatory revision requests. Do not repeat a
    repaired defect from an earlier version without identifying what still fails in
    the supplied current text. Preserve necessary hypotheses, negative results,
@@ -77,10 +78,15 @@ journal would decline the paper.
    letters, authenticated expert reports, substantive concerns and scientific standards
    remain binding; do not use the instruction to excuse an actual unaddressed rejection.
 6. Give the single strongest reason an editor at this journal would decline without review,
-   even if you would send it out.
+   even if you would send it out. Make it specific enough to act on: name the closest work it
+   rests on and, where one exists, the single analysis or result that would change your view.
+   After a `significance` or `incremental` desk rejection the research system decides between
+   adding that core analysis, moving to a different venue or article format, and stopping the
+   paper; it relies on this reason and on `closest_prior_work` to choose.
 7. Decide: `send_to_review` only if you would really send it to referees today;
    `revise_before_submission` if the science is adequate for this journal but the presentation
-   would cause a desk rejection; `desk_reject` if the contribution is too narrow, too
-   incremental, unclear in novelty, or outside scope for this journal.
+   would cause a desk rejection (reserve it for that; polish that an editor would overlook
+   belongs to the referees' advisory comments); `desk_reject` if the contribution is too narrow,
+   too incremental, unclear in novelty, or outside scope for this journal.
 
 Return only the JSON object required by the schema.

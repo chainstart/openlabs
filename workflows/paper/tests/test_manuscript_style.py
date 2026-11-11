@@ -52,11 +52,14 @@ def test_journal_template_still_requires_code_purpose(tmp_path: Path) -> None:
     assert "STYLE-AI-DISCLOSURE-CODE" in codes
 
 
-def test_journal_template_still_requires_actual_model(tmp_path: Path) -> None:
+def test_unrecorded_model_list_is_reported_not_enforced(tmp_path: Path) -> None:
+    # Rule change 2026-11: without a model-usage record nothing can be compared, so
+    # only presence and responsibility are required and the tool list is a note.
     main = _write(tmp_path, "We study a classification problem.",
                   JOURNAL_DECLARATION.replace(" (gpt-5.6-sol and gpt-6.1-sol)", ""))
-    codes = {e["code"] for e in audit_tex_tree(main)["errors"]}
-    assert "STYLE-AI-DISCLOSURE-MODEL-MISSING" in codes
+    result = audit_tex_tree(main)
+    assert result["valid"]
+    assert "STYLE-AI-DISCLOSURE-TOOLS-UNVERIFIABLE" in {e["code"] for e in result["notes"]}
 
 
 def test_journal_template_requires_review_and_responsibility(tmp_path: Path) -> None:
@@ -176,11 +179,13 @@ def test_style_check_rejects_internal_workflow_and_ai_narration_in_body(
 
     result = audit_tex_tree(main)
     codes = {item["code"] for item in result["errors"]}
+    reported = {item["code"]: item for item in result["blacklist_findings"]}
 
-    assert "STYLE-INTERNAL-AUDIT" in codes
     assert "STYLE-AI-WORKFLOW-IN-BODY" in codes
-    assert "STYLE-READER-FACING" in codes
-    assert "STYLE-REPOSITORY-WORKFLOW" in codes
+    # Internal vocabulary is reported with its sentence, never an error.
+    assert {"STYLE-INTERNAL-AUDIT", "STYLE-READER-FACING", "STYLE-REPOSITORY-WORKFLOW"} <= set(reported)
+    assert not codes & set(reported)
+    assert reported["STYLE-INTERNAL-AUDIT"]["context"].startswith("Our bounded source audit used Codex")
 
 
 def test_style_check_rejects_unconfirmed_submission_language(tmp_path: Path) -> None:
@@ -258,7 +263,7 @@ def test_style_check_rejects_auditability_and_internal_literal_paths(
     result = audit_tex_tree(main)
     codes = {item["code"] for item in result["errors"]}
 
-    assert "STYLE-INTERNAL-AUDIT" in codes
+    assert "STYLE-INTERNAL-AUDIT" in {item["code"] for item in result["blacklist_findings"]}
     assert "STYLE-INTERNAL-PATH" in codes
 
 
@@ -271,9 +276,11 @@ def test_style_check_rejects_workflow_notes_in_bibliography(tmp_path: Path) -> N
     )
 
     result = audit_tex_tree(main)
-    codes = {item["code"] for item in result["errors"]}
+    findings = {item["code"]: item for item in result["blacklist_findings"]}
 
-    assert "STYLE-BIBLIOGRAPHY-WORKFLOW" in codes
+    assert "STYLE-BIBLIOGRAPHY-WORKFLOW" in findings
+    assert "used in the audit" in findings["STYLE-BIBLIOGRAPHY-WORKFLOW"]["context"]
+    assert result["valid"]
 
 
 def test_style_check_requires_one_final_ai_use_declaration(tmp_path: Path) -> None:

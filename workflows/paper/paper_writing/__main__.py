@@ -201,25 +201,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     calibration.add_argument("--root", default=str(default_repo_root()))
 
-    for command in ("route", "prepare-delta", "validate-delta", "apply-delta"):
-        delta = review_commands.add_parser(command, help="Route or validate cumulative editorial re-review.")
-        delta.add_argument("--paper-id", required=True)
-        delta.add_argument("--root", default=str(default_repo_root()))
-        if command in {"validate-delta", "apply-delta"}:
-            delta.add_argument("--receipt", required=True, help="Immutable runner receipt, relative to data root.")
-
-    minor_prepare = review_commands.add_parser("prepare-minor-closeout", help="Inspect immutable evidence and emit an unsigned author-side closeout template.")
-    minor_prepare.add_argument("--paper-id", required=True)
-    minor_prepare.add_argument("--authorization", required=True)
-    minor_prepare.add_argument("--source-run", required=True, help="Run/paper directory relative to sibling openlabs-artifacts.")
-    minor_prepare.add_argument("--support-archive", required=True)
-    minor_prepare.add_argument("--root", default=str(default_repo_root()))
-    for command in ("validate-minor-closeout", "closeout-minor"):
-        minor = review_commands.add_parser(command, help="Validate/apply an explicitly authorized text-only closeout, without a new review round.")
-        minor.add_argument("--paper-id", required=True)
-        minor.add_argument("--certificate", required=True)
-        minor.add_argument("--root", default=str(default_repo_root()))
-
     zenodo = subparsers.add_parser(
         "zenodo",
         help=(
@@ -520,7 +501,7 @@ def main(argv: list[str] | None = None) -> int:
         from datetime import UTC, datetime
         from paper_writing import formal_checks
         from paper_writing.registry import load_paper_metadata
-        from paper_writing.review_flow import review_config
+        from paper_writing.review_flow import formal_role, review_config
         from paper_writing.review_launcher import run_role
         root = Path(args.root).resolve()
         metadata = load_paper_metadata(args.paper_id, root)
@@ -530,8 +511,8 @@ def main(argv: list[str] | None = None) -> int:
                               "source_plan": formal_checks.source_plan(metadata)}, ensure_ascii=False, indent=2))
             return 0
         config = review_config(root)
-        role = config["roles"]["editor"]
-        if role.get("provider") != "openai-codex":
+        role = formal_role(config["roles"])
+        if not role or role.get("provider") != "openai-codex":
             raise ValueError("Formal verification requires an independent Codex process")
         run = root / "reviews/formal-check" / args.paper_id / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         run.mkdir(parents=True, exist_ok=False)
@@ -628,6 +609,15 @@ def main(argv: list[str] | None = None) -> int:
         summary["next_action"] = result["merged"].get("next_action")
         summary["editor_decision"] = (result.get("editor_screen") or {}).get("decision")
         summary["recommendation"] = result["merged"].get("recommendation")
+        summary["review_mode"] = result.get("review_mode", "full")
+        summary["stalled"] = bool(result["merged"].get("stalled"))
+        if result["merged"].get("direction_context"):
+            summary["direction_context"] = result["merged"]["direction_context"]
+        # Formal findings deferred to delivery; details are in the decision record.
+        summary["preparation_advisories"] = len(result.get("preparation_advisories") or [])
+        access = (result.get("formal_check") or {}).get("unverifiable_source_access")
+        if access:
+            summary["unverifiable_source_access"] = sorted((access.get("references") or {}))
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
     if args.command == "review" and args.review_command == "calibration":
@@ -640,35 +630,6 @@ def main(argv: list[str] | None = None) -> int:
             args.paper_id,
             root=args.root,
         )
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
-    if args.command == "review" and args.review_command in {"route", "prepare-delta", "validate-delta", "apply-delta"}:
-        from paper_writing.review_delta import (apply_delta, binding, prepare_delta,
-            route_review, safe_path, validate_receipt, require)
-        root = Path(args.root).resolve()
-        if args.review_command == "route":
-            result = route_review(args.paper_id, root=root)
-        elif args.review_command == "prepare-delta":
-            result = prepare_delta(args.paper_id, root=root)
-        elif args.review_command == "apply-delta":
-            result = apply_delta(args.paper_id, receipt=args.receipt, root=root)
-        else:
-            checked = validate_receipt(binding(safe_path(root, args.receipt), root), root)
-            require(checked["packet"] == prepare_delta(args.paper_id, root=root)["packet"], "stale or incomplete packet")
-            result = {"valid": True, "verdict": checked["result"]["verdict"]}
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 1 if result.get("passed") is False else 0
-    if args.command == "review" and args.review_command in {"prepare-minor-closeout", "validate-minor-closeout", "closeout-minor"}:
-        from paper_writing.minor_closeout import inspect_minor_closeout, validate_minor_closeout, apply_minor_closeout
-        if args.review_command == "prepare-minor-closeout":
-            result = inspect_minor_closeout(args.paper_id, authorization=args.authorization,
-                source_run=args.source_run, support_archive=args.support_archive, root=args.root)
-        elif args.review_command == "closeout-minor":
-            result = apply_minor_closeout(args.paper_id, certificate=args.certificate, root=args.root)
-        else:
-            checked = validate_minor_closeout(args.paper_id, args.certificate, root=args.root)
-            result = {"paper_id": args.paper_id, "valid": True, "certificate": checked["certificate_binding"],
-                      "new_independent_review": False, "rounds_added": 0}
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command == "zenodo":

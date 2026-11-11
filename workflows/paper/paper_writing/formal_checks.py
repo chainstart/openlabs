@@ -39,12 +39,39 @@ def digest(value: Any) -> str:
     return sha(json.dumps(value, sort_keys=True, ensure_ascii=False).encode())
 
 
+# Explicit policy version of the mandatory reference/core verification. Increment
+# it by hand when a change must invalidate earlier passing checks (for example a
+# stricter verification rule). Ordinary code, launcher or prompt edits no longer
+# invalidate every passed manuscript, as the former file-hash policy did.
+POLICY_VERSION = 1
+# The file-hash policy used before POLICY_VERSION existed; such records are
+# treated as POLICY_VERSION 1 and expire when the version is incremented.
+_LEGACY_POLICY_KEYS = frozenset({"schema", "mandatory", "implementation_sha256", "launcher_sha256",
+                                 "prompt_sha256", "schema_sha256"})
+_LEGACY_EQUIVALENT_VERSION = 1
+
+
 def policy() -> dict[str, Any]:
-    # A changed implementation or prompt requires a fresh gate, even if an old
-    # decision happens to have the same manuscript/source hashes.
-    return {"schema": VERSION, "mandatory": True, "implementation_sha256": sha(Path(__file__).read_bytes()),
-            "launcher_sha256": sha(Path(__file__).with_name("review_launcher.py").read_bytes()),
-            "prompt_sha256": sha(PROMPT.read_bytes()), "schema_sha256": digest(REPORT_SCHEMA)}
+    return {"schema": VERSION, "mandatory": True, "policy_version": POLICY_VERSION}
+
+
+def policy_accepted(recorded: Any) -> bool:
+    """The current policy, or the legacy file-hash policy while it is still equivalent."""
+    if recorded == policy():
+        return True
+    return (POLICY_VERSION == _LEGACY_EQUIVALENT_VERSION and isinstance(recorded, Mapping)
+            and set(recorded) == _LEGACY_POLICY_KEYS and recorded.get("schema") == VERSION
+            and recorded.get("mandatory") is True)
+
+
+def recorded_policy(binding: Any, root: Path) -> dict[str, Any] | None:
+    """The policy stored in a bound formal report, without validating anything else."""
+    try:
+        result = json.loads(_safe_file(root, binding["path"]).read_text())
+        value = result["policy"]
+    except (KeyError, TypeError, ValueError, OSError):
+        return None
+    return dict(value) if isinstance(value, Mapping) else None
 
 
 def object_schema(fields: Mapping[str, Any]) -> dict[str, Any]:
@@ -393,18 +420,31 @@ def _whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
-def local_route_preflight(metadata: Mapping[str, Any], inv: Mapping[str, Any], root: Path) -> list[str]:
-    """Check declared routes before paying for any independent model call."""
-    errors = []
+# Route findings that no verification or delivery path consumes any more. Since the
+# formal gate was narrowed to bibliography and core mathematics (2026-10-12),
+# ``verification_source_metadata`` strips ``passage_patterns`` and drops
+# ``local_evidence`` before ``run_checks``/``validate_binding``; a stale selector
+# or a changed local evidence file therefore binds nothing. They are reported as
+# preparation advisories (review) and delivery notes (handoff), never blockers.
+# An absent bibliography key still blocks: a declared source routed to a key the
+# manuscript does not print stops the reference verification.
+ADVISORY_ROUTE_KINDS = frozenset({"stale_selector", "local_evidence_file"})
+
+
+def route_findings(metadata: Mapping[str, Any], inv: Mapping[str, Any], root: Path) -> list[dict[str, str]]:
+    """Declared-route problems as {kind, route, message[, selector]}; see ADVISORY_ROUTE_KINDS."""
+    findings = []
     plan = source_plan(metadata)
     keys = {r['key'] for r in inv['references']}
     for item in plan.get('sources', []) + plan.get('local_evidence', []):
         label = item.get('path') or item.get('url')
         if set(item.get('reference_keys', [])) - keys:
-            errors.append(f"Source routing: {label}: absent bibliography key")
+            findings.append({'kind': 'absent_key', 'route': label,
+                             'message': f"Source routing: {label}: absent bibliography key"})
         for pattern in item.get('passage_patterns', []):
             if not any(pattern in p['text'] for p in inv['passages']):
-                errors.append(f"Source routing: {label}: selector matches no current passage: {pattern}")
+                findings.append({'kind': 'stale_selector', 'route': label, 'selector': pattern,
+                                 'message': f"Source routing: {label}: selector matches no current passage: {pattern}"})
     for item in plan.get('local_evidence', []):
         try:
             body = _safe_file(root, item['path']).read_bytes()
@@ -414,8 +454,14 @@ def local_route_preflight(metadata: Mapping[str, Any], inv: Mapping[str, Any], r
             if not text.strip() or '\x00' in text:
                 raise ValueError('not nonempty UTF-8 evidence')
         except (ValueError, OSError) as exc:
-            errors.append(f"Source routing: {item['path']}: {exc}")
-    return errors
+            findings.append({'kind': 'local_evidence_file', 'route': item['path'],
+                             'message': f"Source routing: {item['path']}: {exc}"})
+    return findings
+
+
+def local_route_preflight(metadata: Mapping[str, Any], inv: Mapping[str, Any], root: Path) -> list[str]:
+    """Every declared-route problem (the formal stage passes route-free source metadata)."""
+    return [f['message'] for f in route_findings(metadata, inv, root)]
 
 
 def artifact_inventory(metadata: Mapping[str, Any], root: Path) -> dict[str, Any]:
@@ -488,9 +534,43 @@ def _local_records(plan: Mapping[str, Any], inv: Mapping[str, Any], root: Path,
     return records
 
 
+class SourceAccessError(ValueError):
+    """The provider answered with an access/challenge page instead of the record."""
+
+
+# HTTP statuses that say nothing about the record itself: authentication,
+# blocking, rate limiting, timeouts and server failures.
+ACCESS_STATUSES = frozenset({401, 403, 407, 408, 425, 429})
+ABSENT_STATUSES = frozenset({404, 410})
+
+
+def failure_kind(exc: BaseException) -> str:
+    """Classify a failed lookup: ``access`` (could not obtain the record),
+    ``absent`` (the service answered that no such record exists) or
+    ``mismatch`` (a record was obtained but does not identify the cited work)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status in ACCESS_STATUSES or status >= 500:
+            return "access"
+        return "absent" if status in ABSENT_STATUSES else "mismatch"
+    if isinstance(exc, (httpx.TransportError, SourceAccessError)):
+        return "access"  # timeouts, DNS/connect/proxy failures, challenge pages
+    return "mismatch"
+
+
 def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: Path,
-                    directory: Path, client: httpx.Client) -> tuple[list[dict[str, Any]], list[str]]:
-    """Fetch public primary records. Failure is retained as unknown, never success."""
+                    directory: Path, client: httpx.Client,
+                    unverifiable: dict[str, list[str]] | None = None) -> tuple[list[dict[str, Any]], list[str]]:
+    """Fetch public primary records. Failure is retained as unknown, never success.
+
+    A reference whose every identifier lookup failed for network/access reasons
+    (and none returned a different record) is not a manuscript defect: it is put in
+    ``unverifiable`` (key -> failed lookups) instead of ``errors``, for manual review
+    or a run from another environment. A lookup that returned a different or
+    malformed record, or that no service knows, still yields an error.
+    """
+    unverifiable = {} if unverifiable is None else unverifiable
+    access_log: list[str] = []
     directory.mkdir(parents=True, exist_ok=True)
     sources, errors, seen = [], [], {}
     plan = source_plan(metadata)
@@ -529,7 +609,7 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
         if urlsplit(url).path.lower().endswith(".pdf") and not body.startswith(b"%PDF-"):
             raise ValueError("An original PDF endpoint returned a non-PDF response")
         if re.search(rb"<title[^>]*>\s*(?:Client Challenge|Access Denied|Just a moment|Security Check)", body[:20_000], re.I):
-            raise ValueError("Provider returned a challenge or access page, not the requested source")
+            raise SourceAccessError("Provider returned a challenge or access page, not the requested source")
         text = _text_document(body, content_type, directory, sid, pages, method)
         if not text.strip():
             raise ValueError("Empty or unextractable primary document")
@@ -573,10 +653,12 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
         doi = re.search(r"10\.\d{4,9}/[^\s{}<>\"]+", raw, re.I)
         arxiv = re.search(r"(?:arxiv(?:\.org/(?:abs|pdf)/|\s*:\s*))((?:\d{4}\.\d{4,5}|[a-z-]+/\d{7})(?:v\d+)?)", raw, re.I)
         if key == support_key and publication.get("status") != "published":
-            from paper_writing.support_citations import audit_manuscript_support
+            from paper_writing.support_citations import audit_manuscript_support, support_review_findings
             audit = audit_manuscript_support(str(metadata["paper_id"]), root=root)
             receipt_name = publication.get("draft_receipt")
-            if not audit["valid"] or not receipt_name:
+            # Identifier-presentation findings are preparation advisories at review
+            # time; the authenticated draft evidence itself must still be intact.
+            if support_review_findings(audit)[0] or not receipt_name:
                 errors.append(f"{key}: current prepublication support has no valid authenticated draft evidence")
                 continue
             receipt = _safe_file(root, receipt_name)
@@ -605,7 +687,7 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
         elif arxiv:
             value = arxiv.group(1)
             candidates = [("https://export.arxiv.org/api/query?id_list=" + quote(value), "bibliographic_metadata")]
-        failures = []
+        failures, kinds = [], []
         for url, kind in candidates:
             try:
                 document = fetch(url, kind, [key])
@@ -614,9 +696,15 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
                 # explicitly declared aids; do not automatically fetch PDFs.
                 break
             except (ValueError, httpx.HTTPError, OSError, subprocess.SubprocessError) as exc:
-                failures.append(f"{url}: {type(exc).__name__}")
+                kinds.append(failure_kind(exc))
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                failures.append(f"{url}: {type(exc).__name__}" + (f" {status}" if status else ""))
         else:
-            if candidates:
+            if candidates and "access" in kinds and "mismatch" not in kinds:
+                unverifiable[key] = failures
+                access_log.append(f"{key}: authoritative identifier lookup unresolved ({'; '.join(failures)}) "
+                                  "[unverifiable_source_access]")
+            elif candidates:
                 errors.append(f"{key}: authoritative identifier lookup unresolved ({'; '.join(failures)})")
     for item in plan.get("sources", []):
         try:
@@ -643,14 +731,27 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
             except (ValueError, httpx.HTTPError, OSError, subprocess.SubprocessError):
                 pass
     # A publisher's catalog/primary text can also establish a work without DOI.
+    for key in list(unverifiable):
+        if any(key in s["reference_keys"] for s in sources):
+            del unverifiable[key]  # another route obtained the record
     for ref in inv["references"]:
+        if ref["key"] in unverifiable:
+            continue
         if not any(ref["key"] in s["reference_keys"] for s in sources):
             errors.append(f"{ref['key']}: no queryable authoritative bibliographic evidence; register an official catalog URL")
+    if unverifiable and not any(s["kind"] in {"bibliographic_metadata", "publisher_catalog", "primary_text"}
+                                for s in sources):
+        # Nothing at all was reachable: that is an environment outage, not a set of
+        # individually unverifiable references. Fail as a technical retry instead of
+        # passing a verification that checked no external record.
+        errors.append("No external bibliographic service was reachable from this environment "
+                      f"({len(unverifiable)} lookups failed on access); rerun the verification "
+                      "where the services are reachable")
     # Another authoritative primary record may resolve a provider outage. Keep
     # all failed lookups in a separate, immutable attempt log; never silently
     # invent success for those requests.
     attempts_path = directory / "retrieval-failures.json"
-    attempts_path.write_text(json.dumps(errors, ensure_ascii=False, indent=2) + "\n")
+    attempts_path.write_text(json.dumps(access_log + errors, ensure_ascii=False, indent=2) + "\n")
     errors = [e for e in errors if not e.startswith("Declared primary source unavailable:") and not ("authoritative identifier lookup unresolved" in e
         and any(e.split(":", 1)[0] in s["reference_keys"] and s["kind"] in {"primary_text", "publisher_catalog"}
                 for s in sources))]
@@ -680,8 +781,28 @@ def _exact(rows: list[dict[str, Any]], field: str, expected: set[str], name: str
 
 def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: list[dict[str, Any]],
                     *, findings: list[dict[str, Any]] | None = None,
-                    artifacts: Mapping[str, Any] | None = None) -> list[str]:
-    """Check exact coverage and whitespace-equivalent evidence without changing raw text."""
+                    artifacts: Mapping[str, Any] | None = None,
+                    unverifiable_keys: Any = (),
+                    unverifiable_out: list[dict[str, Any]] | None = None) -> list[str]:
+    """Check exact coverage and whitespace-equivalent evidence without changing raw text.
+
+    ``unverifiable_keys`` are references whose authoritative record could not be
+    obtained for network/access reasons. An ``unchecked`` verdict on such a
+    reference or on a citation of it (and a ``verified`` verdict that therefore has
+    no evidence) is recorded in ``unverifiable_out`` instead of blocking. ``error``
+    and ``gap`` verdicts, and every other item, are judged as before.
+    """
+    unverifiable_keys = frozenset(unverifiable_keys or ())
+    unverifiable_out = [] if unverifiable_out is None else unverifiable_out
+
+    def unverifiable(row: Mapping[str, Any], label: str, key: str) -> bool:
+        if key not in unverifiable_keys or row.get("status") not in {"unchecked", "verified"}:
+            return False
+        if row["status"] == "verified" and row.get("evidence"):
+            return False
+        unverifiable_out.append({"item": label, "reference_key": key, "status": row["status"],
+                                 "classification": "unverifiable_source_access"})
+        return True
     _validate_against_schema(report, REPORT_SCHEMA)
     _exact(report["references"], "key", {r["key"] for r in inv["references"]}, "References")
     _exact(report["passages"], "passage_id", {p["id"] for p in inv["passages"]}, "Passages")
@@ -733,6 +854,8 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
 
     for row in report["references"]:
         context['root'] = row['key']
+        if unverifiable(row, row["key"], row["key"]):
+            continue
         if checked(row, row["key"], ("authors_check", "title_check", "year_check", "venue_identifier_locator_check",
                                     "primary_source_check", "publication_status_check")):
             evidence(row["evidence"], {row["key"]}, kinds={"primary_text", "publisher_catalog", "bibliographic_metadata", "current_support_draft"})
@@ -740,7 +863,19 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
     for row in report["passages"]:
         context['root'] = row['passage_id']
         unit = inv_passages[row["passage_id"]]
-        checked(row, row["passage_id"], ("coverage_rationale",))
+        # A passage left unchecked only because some of its citations point to
+        # unreachable records is unverifiable, not defective.
+        pending = [item for group in ("formulas", "prerequisites", "citations") for item in row[group]
+                   if item.get("status") != "verified"
+                   and not (group == "citations" and _nonmathematical_unchecked_citation(item))]
+        if (row["status"] == "unchecked" and pending
+                and all(item.get("key") in unverifiable_keys and item.get("status") == "unchecked"
+                        and "citation_id" in item for item in pending)):
+            unverifiable_out.append({"item": row["passage_id"], "reference_key": ", ".join(
+                sorted({item["key"] for item in pending})), "status": "unchecked",
+                "classification": "unverifiable_source_access"})
+        else:
+            checked(row, row["passage_id"], ("coverage_rationale",))
         _exact(row["formulas"], "formula_id", {f["id"] for f in unit["formulas"]}, "Formulas")
         _exact(row["citations"], "citation_id", {c["id"] for c in unit["citations"]}, "Citation uses")
         cites = {c["id"]: c["key"] for c in unit["citations"]}
@@ -753,6 +888,8 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
             # report. Reference identity, mathematical prerequisites, and any
             # actual error/gap are still checked without this exception.
             if _nonmathematical_unchecked_citation(item):
+                continue
+            if unverifiable(item, item["citation_id"], item["key"]):
                 continue
             if checked(item, item["citation_id"], ("manuscript_claim", "support_check")):
                 if item["evidence"]:
@@ -939,7 +1076,9 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
     # PDF/ZIP identity is enforced by preflight/release, not a mathematical premise.
     artifacts = {}
     with httpx.Client(timeout=httpx.Timeout(30, connect=15), follow_redirects=True) as client:
-        sources, errors = ([], routes) if routes else collect_sources(inv, source_metadata, root, directory / "evidence", client)
+        unreachable: dict[str, list[str]] = {}
+        sources, errors = ([], routes) if routes else collect_sources(inv, source_metadata, root, directory / "evidence",
+                                                                     client, unreachable)
     for message in errors:
         findings.append({'category': 'source_routing', 'root': '', 'location': '', 'message': message,
                          'aggregate': False, 'reason': message, 'status': None})
@@ -979,8 +1118,10 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
                 workdir = directory / f"{group}-{batch_number}"
                 receipts.append({"receipt": receipt, "group": group,
                     "workdir": workdir.relative_to(root).as_posix()})
+    unverifiable_items: list[dict[str, Any]] = []
     try:
-        errors.extend(report_blockers(report, inv, sources, findings=findings, artifacts=artifacts))
+        errors.extend(report_blockers(report, inv, sources, findings=findings, artifacts=artifacts,
+                                      unverifiable_keys=unreachable, unverifiable_out=unverifiable_items))
     except (ValueError, LaunchError) as exc:
         message = f"Coverage/evidence verification failed: {exc}"
         errors.append(message)
@@ -1008,12 +1149,20 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
         "source_plan_sha256": digest(source_plan(metadata)), "sources": sources,
         "report": report, "receipts": receipts, "blockers": errors, "valid": not errors,
         "issue_summary": summary, "artifact_inventory": artifacts,
+        # Not manuscript defects: records that could not be obtained here. They do
+        # not block readiness or consume a review round; verify them manually or
+        # from another environment before delivery.
+        "unverifiable_source_access": {"references": dict(sorted(unreachable.items())),
+                                       "items": unverifiable_items},
         "machine_proof_of_whole_manuscript": False, "verified_at": datetime.now(UTC).isoformat()}
     path = directory / "report.json"
     path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
-    return {"path": path.relative_to(root).as_posix(), "sha256": sha(path.read_bytes()),
-            "valid": result["valid"], "blockers": errors, "schema": VERSION,
-            "issue_summary": summary}
+    binding = {"path": path.relative_to(root).as_posix(), "sha256": sha(path.read_bytes()),
+               "valid": result["valid"], "blockers": errors, "schema": VERSION,
+               "issue_summary": summary}
+    if unreachable or unverifiable_items:
+        binding["unverifiable_source_access"] = result["unverifiable_source_access"]
+    return binding
 
 
 def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
@@ -1028,7 +1177,7 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
         result = json.loads(path.read_text())
         if result.get("paper_id") != metadata.get("paper_id") or result.get("manuscript_version") != str(metadata.get("version") or ""):
             raise ValueError("Formal-check paper/version identity mismatch")
-        if result["policy"] != policy() or result["valid"] is not True or result["blockers"]:
+        if not policy_accepted(result["policy"]) or result["valid"] is not True or result["blockers"]:
             raise ValueError("Formal-check policy changed or verification is incomplete")
         if expected_role is not None and result.get("role") != dict(expected_role):
             raise ValueError("Formal verification used a different configured role")
@@ -1066,8 +1215,7 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             if (receipt.get("independent_context") is not True or receipt.get("provider") != "openai-codex"
                     or receipt.get("model") != result["role"].get("model")
                     or receipt.get("model") not in receipt.get("runtime_reported_models", [])
-                    or receipt.get("schema_sha256") != sha(json.dumps(schema, sort_keys=True).encode())
-                    or receipt.get("system_prompt_sha256") != sha(PROMPT.read_bytes())):
+                    or receipt.get("schema_sha256") != sha(json.dumps(schema, sort_keys=True).encode())):
                 raise ValueError("Formal verification lacks matching independent actual-model receipts")
             for filename, expected in (("output.json", receipt["output_sha256"]),
                                        ("prompt.txt", receipt["prompt_sha256"]),
@@ -1077,7 +1225,11 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             actual_receipt = json.loads(_safe_file(root, workdir + "/receipt.json").read_text())
             if actual_receipt != receipt:
                 raise ValueError("Formal role receipt changed")
-            expected_prompt = PROMPT.read_text() + "\n\n" + batch_packet(group, batch, documents, result["inventory"], result["sources"], root=root, artifacts=result['artifact_inventory'])
+            # The stored system prompt is bound by its receipt hash above. It is
+            # not compared with today's prompt file: prompt edits are governed by
+            # POLICY_VERSION, while the manuscript batch must still match exactly.
+            system_text = _safe_file(root, workdir + "/system.txt").read_text()
+            expected_prompt = system_text + "\n\n" + batch_packet(group, batch, documents, result["inventory"], result["sources"], root=root, artifacts=result['artifact_inventory'])
             if _safe_file(root, workdir + "/prompt.txt").read_text() != expected_prompt:
                 raise ValueError("Formal role did not inspect the exact bound manuscript, batch and source evidence")
             output = json.loads(_safe_file(root, workdir + "/output.json").read_text())
@@ -1087,8 +1239,17 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
         if reconstructed != result["report"]:
             raise ValueError("Formal report differs from the actual independent outputs")
         findings = []
+        access = result.get("unverifiable_source_access") or {}
+        if not isinstance(access, Mapping) or not isinstance(access.get("references", {}), Mapping):
+            raise ValueError("Malformed unverifiable-source record")
+        if access and binding.get("unverifiable_source_access", access) != access:
+            raise ValueError("Formal binding misreports unverifiable sources")
+        keys = set(access.get("references", {}))
+        if keys & {k for s in result["sources"] for k in s["reference_keys"]}:
+            raise ValueError("A reference is recorded both as retrieved and as unverifiable")
         blockers = report_blockers(result["report"], result["inventory"], result["sources"],
-                                   findings=findings, artifacts=result['artifact_inventory'])
+                                   findings=findings, artifacts=result['artifact_inventory'],
+                                   unverifiable_keys=keys)
         if result.get('issue_summary') != issue_summary(findings):
             raise ValueError('Formal issue summary differs from actual raw findings')
         return blockers

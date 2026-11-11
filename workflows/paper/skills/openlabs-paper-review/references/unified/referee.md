@@ -65,10 +65,34 @@ Check, in this order:
 
 Recommend in the journal's vocabulary: `accept`, `minor_revision`, `major_revision`, `reject`.
 `minor_revision` means only local text changes are needed and no new argument, computation or
-claim is required. Every item in `required_changes` must say what to change and where, and must
-be typed: `text` (wording, organization, citation presentation), `claim_narrowing` (a claim must
-be weakened or restated), or `evidence` (a new proof step, computation, experiment or comparison
-is needed). Anything that makes a main claim unsupported goes in `scientific_blockers`.
+claim is required.
+When you recommend `reject`, put your most important reason first: as the first
+`scientific_blocker` when it concerns correctness or support, otherwise as the opening
+sentence of `significance`.
+
+Separate what decides whether the conclusions hold from what would merely improve the paper.
+The two kinds are treated differently: the first keeps the paper in revision, the second is
+passed to the authors as advice and does not hold the paper back. A stricter recommendation
+only takes effect when you substantiate it with an item of the first kind, so state that item.
+
+- Affects whether the conclusions hold: put an unsupported main claim, an essential proof gap or
+  an error in `scientific_blockers`. In `required_changes`, type a needed new proof step,
+  computation, experiment or comparison as `evidence`, and a claim that must be weakened or
+  restated as `claim_narrowing`. Set `main_claim: true` when the item concerns a headline
+  conclusion (title, abstract, a stated main result); otherwise `false`.
+- Advisory: wording, organization, tense, length, citation presentation and similar requests are
+  `text` items (`main_claim: false`). Optional ideas go in `optional_suggestions`.
+
+Every item in `required_changes` must say what to change and where.
+
+Before you raise a factual point about the text, such as a word count, a title or abstract length,
+the tense used, or whether a sentence, number or citation is present, check it in the supplied
+current manuscript and quote the passage you counted or read. Referees who misread these details
+cost the authors a round and erode trust in the rest of the report. Raise only problems that exist
+in the current text; an issue repaired since an earlier version is not a finding, even if the
+previous letter mentioned it. Where a convention is a matter of house style (for example the
+tense of an abstract), state it as advice, not as a defect.
+
 If the packet contains the authors' response to an earlier round, check each previous item
 against the current text and the response; an item answered only by adding a disclaimer is not
 resolved.
@@ -88,8 +112,10 @@ reason in previous_items without claiming recovery or substantive resolution. Co
 proof/evidence concerns, actual unresolved original-letter objections and all ordinary
 scientific requirements still need an evidenced response.
 Track only the exact mandatory strings in the packet's "Items to check" list in
-`previous_items`, once each, without paraphrasing the item string. Optional suggestions
-in the previous letter are not mandatory items. If that list is empty (or there is no
+`previous_items`, once each, without paraphrasing the item string. That list holds the previous
+round's scientific blockers and its evidence and main-claim items. The previous letter's text
+requests and optional suggestions are not on it: they were advice, and an unimplemented piece of
+advice is not an unresolved item. If that list is empty (or there is no
 previous round), return `previous_items: []`. You may identify a new substantive issue
 in required_changes or scientific_blockers, but do not promote a past optional suggestion
 into an unresolved mandatory item merely because the author did not implement it.
