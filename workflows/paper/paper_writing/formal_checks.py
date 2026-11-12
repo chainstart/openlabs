@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
 import re
 import subprocess
 import zipfile
@@ -538,6 +539,91 @@ class SourceAccessError(ValueError):
     """The provider answered with an access/challenge page instead of the record."""
 
 
+# Retrieval fallback through the host-side download bridge. When this environment
+# cannot reach a public source (access failure: 401/403/429/5xx, timeout,
+# connection error or challenge page), the same URL is fetched by the bridge
+# worker on the host and the returned bytes go through exactly the same checks.
+# A bridge that is absent, times out or fails leaves the original failure in
+# place: obtaining nothing is never treated as verification.
+DEFAULT_BRIDGE = "/workspace/.download-bridge/download-submit"
+BRIDGE_ENV = "OPENLABS_FORMAL_BRIDGE"
+BRIDGE_TIMEOUT_ENV = "OPENLABS_FORMAL_BRIDGE_TIMEOUT"
+DEFAULT_BRIDGE_TIMEOUT = 300
+_CHALLENGE = re.compile(rb"<title[^>]*>\s*(?:Client Challenge|Access Denied|Just a moment|Security Check)", re.I)
+
+
+def bridge_command() -> str | None:
+    """The bridge executable, or ``None`` when the fallback is disabled or unavailable.
+
+    ``OPENLABS_FORMAL_BRIDGE`` = ``off``/``0``/``false`` disables it; another value names the
+    executable. Unset: the default bridge, only if it exists and is executable."""
+    value = os.environ.get(BRIDGE_ENV)
+    if value is not None and value.strip().lower() in {"", "0", "off", "false", "no", "disabled"}:
+        return None
+    path = Path(value.strip()) if value else Path(DEFAULT_BRIDGE)
+    return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+
+
+def bridge_timeout() -> int:
+    try:
+        value = int(os.environ.get(BRIDGE_TIMEOUT_ENV, DEFAULT_BRIDGE_TIMEOUT))
+    except ValueError:
+        return DEFAULT_BRIDGE_TIMEOUT
+    return max(10, min(value, 3600))
+
+
+def _sniff_content_type(body: bytes) -> str:
+    head = body[:2048].lstrip().lower()
+    if body.startswith(b"%PDF-"):
+        return "application/pdf"
+    if head.startswith((b"<!doctype html", b"<html")) or b"<html" in head[:512]:
+        return "text/html"
+    if head.startswith((b"{", b"[")):
+        return "application/json"
+    if head.startswith(b"<?xml") or head.startswith(b"<feed"):
+        return "application/xml"
+    return "text/plain"
+
+
+def bridge_fetch(url: str, directory: Path, root: Path, sid: str) -> tuple[bytes, dict[str, Any]]:
+    """Fetch a public HTTPS URL through the download bridge; raise SourceAccessError on failure."""
+    command = bridge_command()
+    if command is None:
+        raise SourceAccessError("Download bridge unavailable")
+    target_dir = directory / "bridge"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    target = target_dir / f"{sid}-{stamp}.download"
+    timeout = bridge_timeout()
+    try:
+        completed = subprocess.run([command, "--url", url, "--output", str(target.resolve()), "--wait",
+                                    "--timeout", str(timeout)], capture_output=True, text=True,
+                                   timeout=timeout + 60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SourceAccessError(f"Download bridge failed: {type(exc).__name__}") from exc
+    status: dict[str, Any] = {}
+    for line in reversed(completed.stdout.splitlines()):
+        try:
+            candidate = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(candidate, dict):
+            status = candidate
+            break
+    if completed.returncode != 0 or status.get("state") != "completed" or not target.is_file():
+        raise SourceAccessError(f"Download bridge did not obtain the source (state {status.get('state')!r}, "
+                                f"exit {completed.returncode}; {str(status.get('error') or '')[:200]})")
+    if target.stat().st_size > MAX_DOWNLOAD:
+        raise ValueError("Primary evidence exceeds the download limit; supply a precise official chapter/page endpoint")
+    body = target.read_bytes()
+    record = {"method": "download_bridge", "bridge_job_id": status.get("id"),
+              "bridge_route": status.get("route"), "bridge_routes_attempted": status.get("routes_attempted"),
+              "bridge_fallback_reason": status.get("fallback_reason"),
+              "bridge_file": target.relative_to(root).as_posix(), "bridge_file_sha256": sha(body),
+              "retrieved_at": datetime.now(UTC).isoformat()}
+    return body, record
+
+
 # HTTP statuses that say nothing about the record itself: authentication,
 # blocking, rate limiting, timeouts and server failures.
 ACCESS_STATUSES = frozenset({401, 403, 407, 408, 425, 429})
@@ -589,26 +675,46 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
             source = seen[identity]
             source["reference_keys"] = sorted(set(source["reference_keys"]) | set(keys))
             return source
-        with client.stream("GET", url, headers={"User-Agent": "OpenLabs-formal-check/1.0"}) as response:
-            response.raise_for_status()
-            final_url = _url(str(response.url))
-            host = urlsplit(final_url).hostname
-            if host in {"api.crossref.org", "api.datacite.org", "export.arxiv.org"}:
-                kind = "bibliographic_metadata"
-            record_url = url if initial_host in {"api.crossref.org", "api.datacite.org", "export.arxiv.org"} else final_url
-            record_host = host if host in {"api.crossref.org", "api.datacite.org", "export.arxiv.org"} else initial_host
-            chunks, size = [], 0
-            for chunk in response.iter_bytes():
-                size += len(chunk)
-                if size > MAX_DOWNLOAD:
-                    raise ValueError("Primary evidence exceeds the download limit; supply a precise official chapter/page endpoint")
-                chunks.append(chunk)
-            body = b"".join(chunks)
-            content_type = response.headers.get("content-type", "")
         sid = "S" + sha(json.dumps(identity).encode())[:20]
+        try:
+            with client.stream("GET", url, headers={"User-Agent": "OpenLabs-formal-check/1.0"}) as response:
+                response.raise_for_status()
+                final_url = _url(str(response.url))
+                chunks, size = [], 0
+                for chunk in response.iter_bytes():
+                    size += len(chunk)
+                    if size > MAX_DOWNLOAD:
+                        raise ValueError("Primary evidence exceeds the download limit; supply a precise official chapter/page endpoint")
+                    chunks.append(chunk)
+                body = b"".join(chunks)
+                content_type = response.headers.get("content-type", "")
+            if _CHALLENGE.search(body[:20_000]):
+                raise SourceAccessError("Provider returned a challenge or access page, not the requested source")
+            retrieval: dict[str, Any] = {"method": "direct"}
+        except (httpx.HTTPError, SourceAccessError) as direct_exc:
+            # Only access failures fall back; an absent record (404/410) or any
+            # content problem keeps its original classification.
+            if failure_kind(direct_exc) != "access" or bridge_command() is None:
+                raise
+            try:
+                body, retrieval = bridge_fetch(url, directory, root, sid)
+            except SourceAccessError as bridge_exc:
+                access_log.append(f"{url}: direct {type(direct_exc).__name__}"
+                                  + (f" {direct_exc.response.status_code}" if isinstance(direct_exc, httpx.HTTPStatusError) else "")
+                                  + f"; bridge fallback failed: {bridge_exc}")
+                raise direct_exc from bridge_exc
+            retrieval["direct_failure"] = type(direct_exc).__name__ + (
+                f" {direct_exc.response.status_code}" if isinstance(direct_exc, httpx.HTTPStatusError) else "")
+            # The bridge returns the bytes of the requested URL; redirects are not reported.
+            final_url, content_type = url, _sniff_content_type(body)
+        host = urlsplit(final_url).hostname
+        if host in {"api.crossref.org", "api.datacite.org", "export.arxiv.org"}:
+            kind = "bibliographic_metadata"
+        record_url = url if initial_host in {"api.crossref.org", "api.datacite.org", "export.arxiv.org"} else final_url
+        record_host = host if host in {"api.crossref.org", "api.datacite.org", "export.arxiv.org"} else initial_host
         if urlsplit(url).path.lower().endswith(".pdf") and not body.startswith(b"%PDF-"):
             raise ValueError("An original PDF endpoint returned a non-PDF response")
-        if re.search(rb"<title[^>]*>\s*(?:Client Challenge|Access Denied|Just a moment|Security Check)", body[:20_000], re.I):
+        if _CHALLENGE.search(body[:20_000]):
             raise SourceAccessError("Provider returned a challenge or access page, not the requested source")
         text = _text_document(body, content_type, directory, sid, pages, method)
         if not text.strip():
@@ -640,7 +746,7 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
             "reference_keys": keys, "retrieved_at": datetime.now(UTC).isoformat(),
             "body_path": body_path.relative_to(root).as_posix(), "body_sha256": sha(body),
             "text_path": text_path.relative_to(root).as_posix(), "text_sha256": sha(text.encode()),
-            "extraction_pages": pages, "extraction_method": method, "text": text}
+            "extraction_pages": pages, "extraction_method": method, "retrieval": retrieval, "text": text}
         sources.append(source); seen[identity] = source
         return source
 
@@ -1195,6 +1301,12 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
                 evidence_path = _safe_file(root, source[field + "_path"])
                 if sha(evidence_path.read_bytes()) != source[field + "_sha256"]:
                     raise ValueError("Retrieved primary evidence changed or is missing")
+            retrieval = source.get("retrieval")
+            if isinstance(retrieval, Mapping) and retrieval.get("method") == "download_bridge":
+                bridged = _safe_file(root, str(retrieval.get("bridge_file") or ""))
+                if (sha(bridged.read_bytes()) != retrieval.get("bridge_file_sha256")
+                        or retrieval.get("bridge_file_sha256") != source["body_sha256"]):
+                    raise ValueError("Bridge-retrieved evidence changed or differs from the bound body")
             # Publisher text may contain CRLF/CR. Preserve the same UTF-8
             # bytes whose SHA was just checked; read_text translates newlines.
             if _safe_file(root, source["text_path"]).read_bytes().decode("utf-8") != source["text"]:
