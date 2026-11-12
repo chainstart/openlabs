@@ -1089,15 +1089,21 @@ def _enqueue_retarget(db, settings, *, topic, campaign, decision, decision_task_
     fallback_note = (
         f" This topic was admitted on the escalation track; unless the decision names another "
         f"eligible routine venue or a short format, retarget to its registered fallback venue "
-        f"{routine[0]!r} and mark target_escalation as superseded by the fallback."
+        f"{routine[0]!r} and mark target_escalation as superseded by the fallback. Before "
+        f"switching to it run `paper-writing program check-fallback --paper-id <id>` (add "
+        f"`--fallback-evidence <file>` to complete an older record); it must pass."
         if str(topic.get("target_tier") or "") == "escalation" and routine else ""
     )
     objective = (
         f"handoff_kind=retarget. Retarget the manuscript to {target} "
         f"(direction decision: {retarget['why_fits']}). Refresh and check the team rejection "
         "history (`paper-writing journal-history sync`/`check`) and the venue policy before "
-        "changing the target, convert the canonical manuscript to the new venue or format, and "
-        "keep every claim inside the frozen evidence." + fallback_note
+        "changing the target. Verify item by item and record, with sources, the new target's "
+        "indexing (SCIE), its 2025 CAS major-category zone and every mandatory author charge "
+        "(APC, page charges, colour charges, submission fees) before registering it; \"no APC\" "
+        "on an open-access page does not rule out a page charge. Convert the canonical "
+        "manuscript to the new venue or format, and keep every claim inside the frozen "
+        "evidence." + fallback_note
     )
     domain = str(campaign["domain"])
     writer_source = db.nearest_session_source(source_task_id, agent_role="writer") if (

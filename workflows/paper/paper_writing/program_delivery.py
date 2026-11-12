@@ -5,9 +5,14 @@ The orchestrator (stdlib only) calls these through ``paper-writing program ...``
 * ``register-escalation`` -- a writer registering the paper of a topic the admission
   gate judged ``escalation`` records ``target_escalation`` as ``provisional``
   (approved by the admission task, strength evidence = admission record path and
-  hash, fallback = the card's routine venue). It may be reviewed on the escalation
+  hash, fallback = the card's routine venue, whose eligibility evidence -- SCIE, 2025
+  CAS major-category zone, fee-free route covering page/colour/submission charges --
+  is checked before it is recorded). It may be reviewed on the escalation
   track but not delivered at that target until the unified review's score meets
   ``venue_eligibility.escalation.minimum_internal_score``.
+* ``check-fallback`` -- before a paper falls back to its registered fallback venue,
+  complete (``--fallback-evidence``) and re-check that venue's eligibility evidence;
+  older records registered without it must pass this before the fallback is used.
 * ``deliver`` -- the ordinary immutable handoff to the paper-management site. It
   never sends or records a submission handler; after a successful release the
   registry records ``delivery.awaiting_owner_review: true`` and a qualifying
@@ -24,6 +29,8 @@ from collections.abc import Mapping
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+import yaml
 
 from paper_writing import venue_policy
 from paper_writing.registry import (
@@ -55,6 +62,31 @@ def _policy(root: Path) -> Mapping[str, Any]:
     return policy if isinstance(policy, Mapping) else {}
 
 
+def _load_fallback_evidence(evidence: Mapping[str, Any] | str | Path | None,
+                            repo_root: Path) -> Mapping[str, Any] | None:
+    if evidence is None or isinstance(evidence, Mapping):
+        return evidence
+    path = Path(evidence)
+    if not path.is_absolute():
+        path = repo_root / path
+    if not path.is_file():
+        raise ProgramDeliveryError(f"fallback evidence file is missing: {path}")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, Mapping):
+        raise ProgramDeliveryError(f"fallback evidence must be a JSON/YAML object: {path}")
+    return data
+
+
+def _check_fallback(evidence: Any, *, fallback_venue: str, repo_root: Path) -> None:
+    problems = venue_policy.fallback_eligibility_problems(
+        evidence, fallback_venue=fallback_venue, policy=_policy(repo_root)
+    )
+    if problems:
+        raise ProgramDeliveryError(
+            "fallback venue eligibility check failed: " + "; ".join(problems)
+        )
+
+
 def register_provisional_escalation(
     paper_id: str,
     *,
@@ -63,8 +95,13 @@ def register_provisional_escalation(
     admission_task_id: str,
     admission_record: str | Path,
     fallback_venue: str,
+    fallback_evidence: Mapping[str, Any] | str | Path | None = None,
 ) -> dict[str, Any]:
-    """Record ``target_escalation: provisional`` from an admission-gate escalation verdict."""
+    """Record ``target_escalation: provisional`` from an admission-gate escalation verdict.
+
+    The fallback venue must carry the same eligibility evidence as a registered target
+    (``venue_policy.fallback_eligibility_problems``); without it nothing is recorded.
+    """
 
     repo_root = Path(root).resolve()
     record_path = Path(admission_record)
@@ -76,6 +113,8 @@ def register_provisional_escalation(
                         ("fallback_venue", fallback_venue)):
         if not str(value or "").strip():
             raise ProgramDeliveryError(f"{name} is required")
+    evidence = _load_fallback_evidence(fallback_evidence, repo_root)
+    _check_fallback(evidence, fallback_venue=fallback_venue.strip(), repo_root=repo_root)
     digest = hashlib.sha256(record_path.read_bytes()).hexdigest()
     metadata = load_paper_metadata(paper_id, repo_root)
     existing = metadata.get("target_escalation")
@@ -90,9 +129,44 @@ def register_provisional_escalation(
         "strength_evidence_sha256": digest,
         "fallback_venue": fallback_venue.strip(),
     }
+    if evidence:
+        record["fallback_eligibility"] = dict(evidence)
     metadata["target_escalation"] = record
     write_paper_metadata(paper_id, metadata, repo_root)
     return {"paper_id": paper_id, "target_escalation": record}
+
+
+def check_fallback(
+    paper_id: str,
+    *,
+    root: str | Path,
+    fallback_evidence: Mapping[str, Any] | str | Path | None = None,
+) -> dict[str, Any]:
+    """Gate the fall-back step: the registered fallback venue must be eligible now.
+
+    ``fallback_evidence`` completes or refreshes ``target_escalation.fallback_eligibility``
+    (required for records registered before the evidence existed). Only evidence that
+    passes is written; the target itself is changed by the retarget step afterwards.
+    """
+
+    repo_root = Path(root).resolve()
+    metadata = load_paper_metadata(paper_id, repo_root)
+    record = metadata.get("target_escalation")
+    if not isinstance(record, Mapping) or not str(record.get("fallback_venue") or "").strip():
+        raise ProgramDeliveryError(f"{paper_id} has no target_escalation with a fallback_venue")
+    fallback = str(record["fallback_venue"]).strip()
+    evidence = _load_fallback_evidence(fallback_evidence, repo_root)
+    if evidence is None:
+        evidence = record.get("fallback_eligibility")
+    _check_fallback(evidence, fallback_venue=fallback, repo_root=repo_root)
+    changed = evidence != record.get("fallback_eligibility")
+    if changed:
+        updated = dict(record)
+        updated["fallback_eligibility"] = dict(evidence)
+        metadata["target_escalation"] = updated
+        write_paper_metadata(paper_id, metadata, repo_root)
+    return {"paper_id": paper_id, "fallback_venue": fallback, "eligible": True,
+            "evidence_updated": changed}
 
 
 def confirm_escalation(paper_id: str, *, root: str | Path) -> dict[str, Any]:

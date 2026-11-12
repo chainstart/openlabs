@@ -151,3 +151,22 @@ def test_target_block_states_track_and_supports_conferences() -> None:
                               "escalation")
     assert "Conference: Example Conf 2027" in text and "class A" in text and "Review track: escalation" in text
     assert "Review track: routine" in flow._target_block({"target_journal": "J", "target_journal_tier": 4})
+
+
+def test_conference_fallback_evidence_follows_the_conference_rules() -> None:
+    policy = {"venue_eligibility": {**POLICY["venue_eligibility"],
+                                    "conference": {"allowed_ccf_ranks": ["A", "B", "C"],
+                                                   "ccf_list_edition": "2026"}}}
+    evidence = {"venue": "Example Conference", "venue_type": "conference", "checked_at": "2026-11-12",
+                "ccf": {"rank": "B", "category": "人工智能", "edition": "2026",
+                        "source": "https://www.ccf.org.cn/x", "checked_at": "2026-11-12"},
+                "fee_policy": "no_mandatory_publication_fee", "fee_source": "https://example.org/reg",
+                "fee_charges_checked": ["page_charge", "colour_charge", "submission_fee"],
+                "fee_evidence": "No page charges; registration only."}
+    assert venue_policy.fallback_eligibility_problems(
+        evidence, fallback_venue="Example Conference", policy=policy) == []
+    problems = venue_policy.fallback_eligibility_problems(
+        {**evidence, "ccf": {**evidence["ccf"], "rank": "A"}, "fee_charges_checked": []},
+        fallback_venue="Example Conference", policy=policy)
+    assert any("routine CCF rank" in p for p in problems)
+    assert any("missing page_charge" in p for p in problems)

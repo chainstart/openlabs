@@ -360,6 +360,17 @@ def build_parser() -> argparse.ArgumentParser:
     program_escalation.add_argument("--admission-task-id", required=True)
     program_escalation.add_argument("--admission-record", required=True)
     program_escalation.add_argument("--fallback-venue", required=True)
+    program_escalation.add_argument(
+        "--fallback-evidence", required=True,
+        help="JSON/YAML eligibility evidence for the fallback venue (SCIE, 2025 CAS major-category "
+             "zone, fee policy covering page/colour/submission charges, with sources).",
+    )
+    program_fallback = program_commands.add_parser(
+        "check-fallback",
+        help="Before falling back, complete and verify the registered fallback venue's eligibility.",
+    )
+    program_fallback.add_argument("--paper-id", required=True)
+    program_fallback.add_argument("--fallback-evidence")
     program_confirm = program_commands.add_parser(
         "confirm-escalation",
         help="Approve a provisional escalation whose ready unified review meets the score bar.",
@@ -383,8 +394,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read-only: what is left between review ready and delivery (release pipeline).",
     )
     program_status.add_argument("--paper-id", required=True)
-    for command in (program_escalation, program_confirm, program_deliver, program_assign,
-                    program_status):
+    for command in (program_escalation, program_fallback, program_confirm, program_deliver,
+                    program_assign, program_status):
         command.add_argument("--root", default=str(default_repo_root()))
         command.add_argument("--json", action="store_true", help="Print one JSON object.")
     return parser
@@ -675,6 +686,11 @@ def _run_program(args: argparse.Namespace) -> int:
                 args.paper_id, root=args.root, venue=args.venue,
                 admission_task_id=args.admission_task_id,
                 admission_record=args.admission_record, fallback_venue=args.fallback_venue,
+                fallback_evidence=args.fallback_evidence,
+            )
+        elif args.program_command == "check-fallback":
+            result = program_delivery.check_fallback(
+                args.paper_id, root=args.root, fallback_evidence=args.fallback_evidence,
             )
         elif args.program_command == "release-status":
             from paper_writing.release_pipeline import release_status

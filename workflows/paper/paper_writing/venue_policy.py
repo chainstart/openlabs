@@ -32,6 +32,12 @@ NON_REAL_DATA_KINDS = {"simulation", "synthetic", "derived_model_output"}
 # admission:<task_id>``). It allows review on the escalation track without an
 # internal score yet; delivery at that target needs the score (then ``approved``).
 ESCALATION_STATUSES = {"approved", "provisional"}
+# A fallback venue must carry the same eligibility evidence as a registered target, and
+# its fee evidence must name every mandatory author charge it ruled out -- not only the
+# APC.  Lesson 2026-11-12: a journal's open-access page said "no APC charges apply" on
+# the subscription route while its separate costs page levied a page charge per typeset
+# page, so it had been registered as a fallback that was never fee-free.
+FALLBACK_REQUIRED_CHARGES = ("page_charge", "colour_charge", "submission_fee")
 
 
 def _date(value: Any) -> date | None:
@@ -173,6 +179,9 @@ def validate_journal_eligibility(paper: Mapping[str, Any], *, paper_id: str,
         raise ValueError(f"target_journal must have a fee-free publication route for {paper_id}")
     if tier in config["escalation"]["journal_tiers"]:
         _validate_escalation(paper, paper_id=paper_id, venue=str(paper["target_journal"]), config=config)
+    else:
+        _validate_executed_fallback(paper, paper_id=paper_id, venue=str(paper["target_journal"]),
+                                    policy=policy)
 
 
 def validate_conference_eligibility(paper: Mapping[str, Any], *, paper_id: str,
@@ -211,6 +220,139 @@ def validate_conference_eligibility(paper: Mapping[str, Any], *, paper_id: str,
             raise ValueError(f"target_conference_fee_source must be an HTTP(S) source for {paper_id}")
     if rank in config["escalation"]["ccf_ranks"]:
         _validate_escalation(paper, paper_id=paper_id, venue=str(paper["target_conference"]), config=config)
+    else:
+        _validate_executed_fallback(paper, paper_id=paper_id, venue=str(paper["target_conference"]),
+                                    policy=policy)
+
+
+def fallback_eligibility_problems(evidence: Any, *, fallback_venue: str,
+                                  policy: Mapping[str, Any] | None) -> list[str]:
+    """Why ``evidence`` does not show that ``fallback_venue`` is eligible (``[]``: it does).
+
+    The record mirrors a registered target: dated SCIE indexing, the 2025 CAS upgraded
+    major-category zone (a routine tier) with its category and source -- or, for a
+    conference, the CCF rank of the configured edition -- and a fee-free route whose
+    sourced evidence explicitly covers page, colour and submission charges.
+    """
+
+    config = eligibility_config(policy)
+    prefix = f"fallback venue {fallback_venue!r}"
+    if not config:
+        return []
+    if not isinstance(evidence, Mapping):
+        return [
+            f"{prefix} has no eligibility evidence (fallback_eligibility): record SCIE indexing, the "
+            "2025 CAS major-category zone with its source, and the fee policy with its source "
+            f"covering {', '.join(FALLBACK_REQUIRED_CHARGES)}"
+        ]
+    problems: list[str] = []
+    if str(evidence.get("venue") or "").strip().casefold() != fallback_venue.strip().casefold():
+        problems.append(f"{prefix}: fallback_eligibility.venue must name the fallback venue")
+    if not _date(evidence.get("checked_at")):
+        problems.append(f"{prefix}: fallback_eligibility.checked_at must be YYYY-MM-DD")
+    kind = str(evidence.get("venue_type") or "journal")
+    if kind == "journal":
+        rules = config["journal"]
+        indexing = evidence.get("indexing")
+        indexes = set()
+        if isinstance(indexing, Mapping) and isinstance(indexing.get("indexes"), list):
+            indexes = {str(x).strip().upper() for x in indexing["indexes"]}
+        if not set(rules["required_indexes"]).issubset(indexes):
+            problems.append(
+                f"{prefix}: fallback_eligibility.indexing.indexes must include "
+                f"{rules['required_indexes']} (ESCI-only journals are not eligible)"
+            )
+        if not isinstance(indexing, Mapping) or not _http(indexing.get("source")) \
+                or not _date(indexing.get("checked_at")):
+            problems.append(f"{prefix}: fallback_eligibility.indexing needs an HTTP(S) source and checked_at")
+        year = (policy or {}).get("classification_year", 2025)
+        if evidence.get("ranking_year") != year or evidence.get("ranking_scope") != "major_category":
+            problems.append(
+                f"{prefix}: the zone must come from the {year} CAS upgraded-edition major-category "
+                "table (ranking_year, ranking_scope: major_category)"
+            )
+        tier = evidence.get("tier")
+        if type(tier) is not int or tier not in rules["routine_tiers"]:
+            problems.append(
+                f"{prefix}: fallback_eligibility.tier must be a routine CAS zone "
+                f"{sorted(rules['routine_tiers'])}"
+            )
+        if not _filled(evidence.get("ranking_category")) or not _http(evidence.get("ranking_source")):
+            problems.append(f"{prefix}: fallback_eligibility needs ranking_category and an HTTP(S) ranking_source")
+        expected_fee = "no_mandatory_author_fee"
+        fee_required = rules["require_no_mandatory_author_fee"]
+    elif kind == "conference":
+        rules = config["conference"]
+        ccf = evidence.get("ccf")
+        ccf = ccf if isinstance(ccf, Mapping) else {}
+        if str(ccf.get("rank") or "").upper() not in rules["routine_ccf_ranks"]:
+            problems.append(
+                f"{prefix}: fallback_eligibility.ccf.rank must be a routine CCF rank "
+                f"{sorted(rules['routine_ccf_ranks'])}"
+            )
+        if rules["ccf_list_edition"] and str(ccf.get("edition") or "") != rules["ccf_list_edition"]:
+            problems.append(f"{prefix}: fallback_eligibility.ccf.edition must be {rules['ccf_list_edition']!r}")
+        if not _filled(ccf.get("category")) or not _http(ccf.get("source")) or not _date(ccf.get("checked_at")):
+            problems.append(f"{prefix}: fallback_eligibility.ccf needs category, an HTTP(S) source and checked_at")
+        expected_fee = "no_mandatory_publication_fee"
+        fee_required = rules["require_no_mandatory_publication_fee"]
+    else:
+        return [*problems, f"{prefix}: fallback_eligibility.venue_type must be journal or conference"]
+    if fee_required:
+        if evidence.get("fee_policy") != expected_fee:
+            problems.append(
+                f"{prefix} is not eligible: fallback_eligibility.fee_policy must be {expected_fee} "
+                "(a mandatory page, colour or submission charge disqualifies it even without an APC)"
+            )
+        if not _http(evidence.get("fee_source")):
+            problems.append(f"{prefix}: fallback_eligibility.fee_source must be an HTTP(S) source")
+        checked = evidence.get("fee_charges_checked")
+        checked = {str(x).strip().casefold() for x in checked} if isinstance(checked, list) else set()
+        missing = [charge for charge in FALLBACK_REQUIRED_CHARGES if charge not in checked]
+        if missing:
+            problems.append(
+                f"{prefix}: fallback_eligibility.fee_charges_checked must cover "
+                f"{', '.join(FALLBACK_REQUIRED_CHARGES)} (missing {', '.join(missing)}); "
+                "\"no APC\" alone does not rule out page or colour charges"
+            )
+        if not _filled(evidence.get("fee_evidence")):
+            problems.append(
+                f"{prefix}: fallback_eligibility.fee_evidence must quote the publisher text on charges"
+            )
+    return problems
+
+
+def validate_fallback_eligibility(evidence: Any, *, fallback_venue: str,
+                                  policy: Mapping[str, Any] | None) -> None:
+    problems = fallback_eligibility_problems(evidence, fallback_venue=fallback_venue, policy=policy)
+    if problems:
+        raise ValueError("; ".join(problems))
+
+
+def _validate_executed_fallback(paper: Mapping[str, Any], *, paper_id: str, venue: str,
+                                policy: Mapping[str, Any] | None) -> None:
+    """A paper now targeting its registered fallback venue must have passed the fallback check.
+
+    Older escalation records without ``fallback_eligibility`` stay loadable while the
+    escalation target is current; the evidence is required when the fallback is used.
+    """
+
+    record = paper.get("target_escalation")
+    if not isinstance(record, Mapping):
+        return
+    fallback = str(record.get("fallback_venue") or "").strip()
+    if not fallback or fallback.casefold() != venue.strip().casefold():
+        return
+    if str(record.get("venue") or "").strip().casefold() == fallback.casefold():
+        return
+    problems = fallback_eligibility_problems(
+        record.get("fallback_eligibility"), fallback_venue=fallback, policy=policy
+    )
+    if problems:
+        raise ValueError(
+            f"{paper_id} targets its registered fallback venue without passing the fallback "
+            f"eligibility check: {'; '.join(problems)}"
+        )
 
 
 def validate_empirical_data_sources(paper: Mapping[str, Any], *, paper_id: str,

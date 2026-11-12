@@ -33,7 +33,10 @@ separate per-paper `journal_rejections` list as well.
 Registry fields for a journal target checked on or after `venue_eligibility.effective_from`:
 `target_journal_tier` (the numeric 2025 CAS major-category zone), `target_journal_ranking_year:
 2025`, `target_journal_ranking_scope: major_category`, the category name, a dated source and
-check date; `target_journal_fee_policy: no_mandatory_author_fee`; `target_journal_indexing` with
+check date; `target_journal_fee_policy: no_mandatory_author_fee` (no mandatory author fee of any
+kind: page charges, colour charges and submission fees are checked and sourced as well as the
+APC -- 2026-11-12, an open-access page said "no APC" while the journal's costs page levied a
+page charge per typeset page); `target_journal_indexing` with
 `journal`, `indexes` containing `SCIE`, an HTTP(S) `source` and `checked_at`. The canonical
 `manuscript/` must be marked and checked as the venue-specific edition; a side candidate alone
 is a blocker. Public Zenodo ZIP names and roots use the registered `display_id`.
@@ -73,9 +76,33 @@ return to the recorded fallback venue instead of descending venue by venue. Rese
 topics admitted with `target_tier: escalation` in `research_state.json` are the exception:
 register the paper with `paper-writing program register-escalation --paper-id <id> --venue
 <escalation venue> --admission-task-id <admission_task_id> --admission-record
-<admission_record.path> --fallback-venue <first routine venue>`. This `provisional` record allows
-the escalation-track review; delivery at that target needs the ready review's score, after which
-the record becomes `approved`.
+<admission_record.path> --fallback-venue <first routine venue> --fallback-evidence <file>`. This
+`provisional` record allows the escalation-track review; delivery at that target needs the ready
+review's score, after which the record becomes `approved`.
+
+The fallback venue is verified like a target before it is recorded; the evidence file (stored as
+`target_escalation.fallback_eligibility`) is:
+
+```yaml
+venue: <fallback venue>
+venue_type: journal          # or conference with ccf: {rank, category, edition, source, checked_at}
+checked_at: '2026-11-12'
+indexing: {indexes: [SCIE], source: 'https://...', checked_at: '2026-11-12'}
+tier: 3                      # a routine 2025 CAS major-category zone
+ranking_year: 2025
+ranking_scope: major_category
+ranking_category: 医学
+ranking_source: 'https://...'
+fee_policy: no_mandatory_author_fee   # conference: no_mandatory_publication_fee
+fee_source: 'https://...'
+fee_charges_checked: [apc, page_charge, colour_charge, submission_fee]
+fee_evidence: <quoted publisher text on charges>
+```
+
+Registration is refused when this is missing or ineligible. Before falling back, run
+`paper-writing program check-fallback --paper-id <id>` (with `--fallback-evidence <file>` to
+complete a record registered without it); a paper whose target is its registered fallback venue
+fails registry validation until that evidence passes.
 
 Distinct external rejections of this paper go in `journal_rejections`, reconciled with actual
 decision letters:

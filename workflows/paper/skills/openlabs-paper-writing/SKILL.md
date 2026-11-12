@@ -61,7 +61,10 @@ assigned reviewer role. Repository rules override vendored instructions.
 
 Eligibility, routine versus escalation tiers, the ranking system and fees are defined in
 `settings.yaml#journal_target_policy` and `#submission_cadence`; do not restate them from
-memory. Before any shortlist or retarget run `paper-writing journal-history sync` and
+memory. A fee-free route means no mandatory author fee of any kind: check and source page
+charges, colour charges and submission fees as well as the APC (2026-11-12: a journal's
+open-access page said "no APC" on the subscription route while its costs page levied a page
+charge per typeset page). Before any shortlist or retarget run `paper-writing journal-history sync` and
 `journal-history check --journal <title>` for every candidate. Record an evidence-backed
 `target_journal_fit` (scope, core readership, contribution scale, two recent adjacent articles
 from that venue, same-target history), the dated ranking source, the fee-free route and the

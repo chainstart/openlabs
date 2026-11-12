@@ -99,14 +99,32 @@ def test_provisional_escalation_is_not_deliverable_until_the_score_meets_the_bar
     assert venue_policy.provisional_escalation_blockers(routine, POLICY, paper_id=PAPER) == []
 
 
+def _fallback_evidence(**overrides) -> dict:
+    evidence = {
+        "venue": "Journal of Biomedical Informatics", "venue_type": "journal",
+        "checked_at": "2026-11-12",
+        "indexing": {"indexes": ["SCIE"], "source": "https://mjl.clarivate.com/y",
+                     "checked_at": "2026-11-12"},
+        "tier": 3, "ranking_year": 2025, "ranking_scope": "major_category",
+        "ranking_category": "医学", "ranking_source": "https://www.letpub.com.cn/y",
+        "fee_policy": "no_mandatory_author_fee", "fee_source": "https://example.org/costs",
+        "fee_charges_checked": ["apc", "page_charge", "colour_charge", "submission_fee"],
+        "fee_evidence": "There are no page or colour charges and no submission fee.",
+    }
+    evidence.update(overrides)
+    return evidence
+
+
 def test_register_and_confirm_escalation(repo: Path) -> None:
     record = repo / "admission.json"
     record.write_text("{}", encoding="utf-8")
     registered = program_delivery.register_provisional_escalation(
         PAPER, root=repo, venue="Example Top Journal", admission_task_id="portfolio:abc",
         admission_record=record, fallback_venue="Journal of Biomedical Informatics",
+        fallback_evidence=_fallback_evidence(),
     )["target_escalation"]
     assert registered["status"] == "provisional"
+    assert registered["fallback_eligibility"]["tier"] == 3
     assert registered["approved_by"] == "admission:portfolio:abc"
     assert len(registered["strength_evidence_sha256"]) == 64
     with pytest.raises(program_delivery.ProgramDeliveryError):
@@ -203,3 +221,79 @@ def test_handoff_refuses_a_provisional_escalation_below_the_bar(repo: Path) -> N
     write_paper_metadata(PAPER, metadata, repo)
     with pytest.raises(HandoffError, match="provisional"):
         validate_release_preconditions(PAPER, root=repo)
+
+
+def test_register_escalation_refuses_an_unverified_or_paid_fallback(repo: Path) -> None:
+    record = repo / "admission.json"
+    record.write_text("{}", encoding="utf-8")
+
+    def register(evidence):
+        return program_delivery.register_provisional_escalation(
+            PAPER, root=repo, venue="Example Top Journal", admission_task_id="portfolio:abc",
+            admission_record=record, fallback_venue="Journal of Biomedical Informatics",
+            fallback_evidence=evidence,
+        )
+
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="no eligibility evidence"):
+        register(None)
+    # "No APC" evidence that never looked at page or colour charges is not enough.
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="page_charge, colour_charge"):
+        register(_fallback_evidence(fee_charges_checked=["apc"]))
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="not eligible"):
+        register(_fallback_evidence(fee_policy="mandatory_author_fee"))
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="SCIE"):
+        register(_fallback_evidence(indexing={"indexes": ["ESCI"], "source": "https://x",
+                                              "checked_at": "2026-11-12"}))
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="major-category"):
+        register(_fallback_evidence(ranking_scope="subcategory"))
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="routine CAS zone"):
+        register(_fallback_evidence(tier=2))
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="name the fallback venue"):
+        register(_fallback_evidence(venue="Another Journal"))
+    assert "target_escalation" not in load_paper_metadata(PAPER, repo)
+
+
+def test_register_escalation_cli_reads_the_fallback_evidence_file(repo: Path) -> None:
+    from paper_writing.__main__ import main
+
+    record = repo / "admission.json"
+    record.write_text("{}", encoding="utf-8")
+    evidence = repo / "fallback.json"
+    evidence.write_text(json.dumps(_fallback_evidence()), encoding="utf-8")
+    base = ["program", "register-escalation", "--paper-id", PAPER, "--venue",
+            "Example Top Journal", "--admission-task-id", "portfolio:abc", "--admission-record",
+            str(record), "--fallback-venue", "Journal of Biomedical Informatics", "--root",
+            str(repo), "--json"]
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(base)  # the evidence is required
+    assert main([*base, "--fallback-evidence", str(evidence)]) == 0
+    stored = load_paper_metadata(PAPER, repo)["target_escalation"]
+    assert stored["fallback_eligibility"]["fee_source"] == "https://example.org/costs"
+
+
+def test_legacy_fallback_loads_but_must_pass_before_it_is_used(repo: Path) -> None:
+    # An older record without fallback evidence stays valid while the escalation target holds.
+    legacy = _paper(target_escalation=_provisional())
+    venue_policy.validate_journal_eligibility(legacy, paper_id=PAPER, policy=POLICY)
+    metadata = load_paper_metadata(PAPER, repo)
+    metadata["target_escalation"] = _provisional()
+    write_paper_metadata(PAPER, metadata, repo)
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="no eligibility evidence"):
+        program_delivery.check_fallback(PAPER, root=repo)
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="page_charge"):
+        program_delivery.check_fallback(
+            PAPER, root=repo, fallback_evidence=_fallback_evidence(fee_charges_checked=["apc"]))
+    assert "fallback_eligibility" not in load_paper_metadata(PAPER, repo)["target_escalation"]
+    # Falling back to the venue without the evidence fails registry validation.
+    fallen = _paper(target_journal="Journal of Biomedical Informatics", target_journal_tier=3,
+                    target_escalation=_provisional(status="superseded"))
+    with pytest.raises(ValueError, match="fallback eligibility check"):
+        venue_policy.validate_journal_eligibility(fallen, paper_id=PAPER, policy=POLICY)
+    result = program_delivery.check_fallback(PAPER, root=repo,
+                                             fallback_evidence=_fallback_evidence())
+    assert result["eligible"] and result["evidence_updated"]
+    completed = load_paper_metadata(PAPER, repo)["target_escalation"]
+    assert completed["fallback_eligibility"]["tier"] == 3
+    assert program_delivery.check_fallback(PAPER, root=repo)["evidence_updated"] is False
+    fallen["target_escalation"] = completed
+    venue_policy.validate_journal_eligibility(fallen, paper_id=PAPER, policy=POLICY)

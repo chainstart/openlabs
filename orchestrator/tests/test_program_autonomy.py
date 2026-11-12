@@ -598,6 +598,10 @@ def test_retarget_resumes_the_writer_and_escalation_defaults_to_the_fallback(
     assert revision["session_mode"] == "resume"
     assert "handoff_kind=retarget" in revision["objective"]
     assert "Journal of Biomedical Informatics" in revision["objective"]
+    # The new target's indexing, zone and every mandatory charge are verified first.
+    assert "page charges" in revision["objective"]
+    assert "2025 CAS major-category zone" in revision["objective"]
+    assert "program check-fallback" in revision["objective"]
 
 
 def test_freeze_decision_freezes_and_limits_force_a_freeze(tmp_path, monkeypatch):
