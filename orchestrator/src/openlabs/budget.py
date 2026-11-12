@@ -450,9 +450,16 @@ class WindowReading:
     observed_at: datetime
     model: str | None = None
     task_id: str | None = None
+    # Set on an extrapolated reading (``estimate_stale_readings``): when the
+    # real reading it starts from was observed. Never stored.
+    estimated_from: datetime | None = None
+
+    @property
+    def estimated(self) -> bool:
+        return self.estimated_from is not None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "name": self.name,
             "used_fraction": round(self.used_fraction, 4),
             "window_minutes": self.window_minutes,
@@ -461,6 +468,9 @@ class WindowReading:
             "model": self.model,
             "task_id": self.task_id,
         }
+        if self.estimated_from is not None:
+            payload["estimated_from"] = _iso(self.estimated_from)
+        return payload
 
 
 def _reading_from_json(provider: str, name: str, raw: str) -> WindowReading | None:
@@ -660,6 +670,136 @@ def is_overspeed(
     return projected is not None and projected >= 1.0
 
 
+# Below this share of its window left, a window counts as about to reset; the
+# floor keeps relative abundance finite in the last minutes.
+MIN_REMAINING_FRACTION = 0.01
+
+
+def remaining_fraction(reading: WindowReading, *, now: datetime) -> float | None:
+    """Share of the window still to run before it resets (None without its shape)."""
+
+    if reading.window_minutes is None or reading.resets_at is None:
+        return None
+    window = timedelta(minutes=reading.window_minutes).total_seconds()
+    remaining = (reading.resets_at - now).total_seconds()
+    return max(0.0, min(1.0, remaining / window))
+
+
+def window_abundance(
+    reading: WindowReading,
+    ceiling: float,
+    *,
+    now: datetime,
+) -> float | None:
+    """Relative abundance: ``(ceiling - used) / share of the window left``.
+
+    The pace, relative to an even spend over one whole window, at which the
+    quota left under ``ceiling`` would be used up exactly at the reset. Above 1
+    the window holds more than an even pace would use (spend it before it
+    resets); below 1 it must be spent more slowly than average. A window about
+    to reset with quota left therefore ranks high, a freshly reset one low.
+    """
+
+    left = remaining_fraction(reading, now=now)
+    if left is None:
+        return None
+    return (ceiling - reading.used_fraction) / max(left, MIN_REMAINING_FRACTION)
+
+
+def _attempt_agent_seconds(
+    db: FactoryDB,
+    settings: FactorySettings,
+    *,
+    since: datetime,
+    now: datetime,
+) -> dict[str, float]:
+    """Agent-seconds of this instance's attempts per provider since ``since``."""
+
+    with db.connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT task_attempts.started_at, task_attempts.finished_at,
+                   task_attempts.run_seconds, tasks.runner
+            FROM task_attempts JOIN tasks USING(task_id)
+            WHERE task_attempts.started_at IS NOT NULL
+              AND (task_attempts.finished_at IS NULL OR task_attempts.finished_at >= ?)
+            """,
+            (_iso(since),),
+        ).fetchall()
+    totals: dict[str, float] = {}
+    for row in rows:
+        started = parse_time(row["started_at"])
+        if started is None:
+            continue
+        finished = parse_time(row["finished_at"]) or now
+        seconds = (finished - max(started, since)).total_seconds()
+        if seconds <= 0:
+            continue
+        provider = provider_of(settings, row["runner"])
+        totals[provider] = totals.get(provider, 0.0) + seconds
+    return totals
+
+
+def estimate_stale_readings(
+    db: FactoryDB,
+    settings: FactorySettings,
+    readings: Mapping[str, Mapping[str, WindowReading]],
+    *,
+    now: datetime,
+) -> dict[str, dict[str, WindowReading]]:
+    """Replace stale-but-recent readings with a conservative extrapolation.
+
+    ``used + window average pace x age + own agent-hours x
+    estimate_fraction_per_agent_hour`` (the per-hour cost is stated for a
+    7-day window and scaled to the window's length). Only readings younger than
+    ``stale_estimate_hours`` whose window has not reset are extrapolated;
+    everything else is returned unchanged.
+    """
+
+    routing = settings.routing
+    result = {provider: dict(windows) for provider, windows in readings.items()}
+    if routing.stale_estimate_hours <= 0:
+        return result
+    usage_cache: dict[datetime, dict[str, float]] = {}
+    for provider, windows in result.items():
+        for name, reading in list(windows.items()):
+            if reading_is_fresh(reading, now=now, stale_hours=routing.snapshot_stale_hours):
+                continue
+            age = now - reading.observed_at
+            if (
+                age > timedelta(hours=routing.stale_estimate_hours)
+                or reading.window_minutes is None
+                or reading.resets_at is None
+                or reading.resets_at <= now
+            ):
+                continue
+            window = timedelta(minutes=reading.window_minutes)
+            elapsed = window - min(window, max(timedelta(0), reading.resets_at - reading.observed_at))
+            elapsed = max(elapsed, window * routing.pace_min_elapsed_fraction,
+                          timedelta(seconds=1))
+            others = reading.used_fraction / elapsed.total_seconds() * age.total_seconds()
+            if reading.observed_at not in usage_cache:
+                usage_cache[reading.observed_at] = _attempt_agent_seconds(
+                    db, settings, since=reading.observed_at, now=now
+                )
+            hours = usage_cache[reading.observed_at].get(provider, 0.0) / 3600.0
+            own = hours * routing.estimate_fraction_per_agent_hour * (
+                10_080 / reading.window_minutes
+            )
+            windows[name] = WindowReading(
+                provider=reading.provider,
+                name=reading.name,
+                used_fraction=max(0.0, min(1.0, reading.used_fraction + others + own)),
+                window_minutes=reading.window_minutes,
+                resets_at=reading.resets_at,
+                observed_at=now,
+                model=reading.model,
+                task_id=reading.task_id,
+                estimated_from=reading.observed_at,
+            )
+    return result
+
+
 # --------------------------------------------------------------- availability
 
 
@@ -724,7 +864,10 @@ def window_ceiling(
     * on windows the protected lead (Fable) depends on, ``lead_decision_reserve``
       (default 25%) is kept for decision tasks only -- reviews may not use it;
     * on the protected lead itself, review and ordinary work stop at
-      ``lead_review_ceiling`` used (default 60%).
+      ``lead_review_ceiling`` used (default 60%);
+    * with ``utilization_target`` set, ordinary work also stops at that share:
+      what is left above it is kept for review and decision tasks (the
+      stricter of the target and the reserves applies).
     """
 
     decision_reserve = routing.lead_decision_reserve if protected_window else 0.0
@@ -734,6 +877,8 @@ def window_ceiling(
         ceiling = 1.0 - decision_reserve
     else:
         ceiling = 1.0 - max(routing.review_reserve, decision_reserve)
+        if routing.utilization_target > 0:
+            ceiling = min(ceiling, routing.utilization_target)
     if protected_runner:
         ceiling = min(ceiling, routing.lead_review_ceiling)
     return ceiling
@@ -758,6 +903,10 @@ class Availability:
     reason: str | None = None
     # Protected lead only: some window has entered the decision reserve.
     in_lead_reserve: bool = False
+    # Lowest relative abundance over the constraining windows (None unknown).
+    abundance: float | None = None
+    # Some constraining window is an extrapolated, not a measured, reading.
+    estimated: bool = False
 
     @property
     def usable(self) -> bool:
@@ -776,6 +925,8 @@ class Availability:
             "unknown_windows": list(self.unknown_windows),
             "reason": self.reason,
             "in_lead_reserve": self.in_lead_reserve,
+            "abundance": None if self.abundance is None else round(self.abundance, 4),
+            "estimated": self.estimated,
             "windows": list(self.windows),
         }
 
@@ -801,6 +952,8 @@ def runner_availability(
     guarded = protected_windows(spec.provider, runners, readings)
     headroom: float | None = None
     binding: str | None = None
+    abundance: float | None = None
+    estimated = False
     overspeed = False
     in_reserve = False
     unknown: list[str] = []
@@ -819,16 +972,28 @@ def runner_availability(
             protected_runner=spec.protected,
         )
         room = ceiling - reading.used_fraction
+        # Overspeed means the hard limit (100%) is reached before the reset at
+        # the window's average pace; the target is enforced by the ceiling, so
+        # a window close to its reset with quota left is never overspeed.
         fast = is_overspeed(
             reading, now=now, min_elapsed_fraction=routing.pace_min_elapsed_fraction
         )
         overspeed = overspeed or fast
+        estimated = estimated or reading.estimated
         if spec.protected and reading.used_fraction >= 1.0 - routing.lead_decision_reserve:
             in_reserve = True
+        rich = window_abundance(reading, ceiling, now=now)
+        projected = projected_fraction_at_reset(
+            reading, now=now, min_elapsed_fraction=routing.pace_min_elapsed_fraction
+        )
         details.append(
             {**reading.to_dict(), "ceiling": round(ceiling, 4), "headroom": round(room, 4),
-             "overspeed": fast}
+             "overspeed": fast,
+             "abundance": None if rich is None else round(rich, 4),
+             "projected_at_reset": None if projected is None else round(projected, 4)}
         )
+        if rich is not None and (abundance is None or rich < abundance):
+            abundance = rich
         if headroom is None or room < headroom:
             headroom, binding = room, name
     below = headroom is not None and headroom <= 0
@@ -870,6 +1035,8 @@ def runner_availability(
         unknown_scope=(None if state != "unknown" else "runner" if shared_known else "provider"),
         reason=reason,
         in_lead_reserve=in_reserve,
+        abundance=abundance,
+        estimated=estimated,
     )
 
 
@@ -948,7 +1115,7 @@ class QuotaRouter:
             db=db,
             settings=settings,
             now=moment,
-            readings=quota_readings(db),
+            readings=estimate_stale_readings(db, settings, quota_readings(db), now=moment),
             backoffs=runner_backoffs(db, now=moment, settings=settings),
             probes=probe_limits(db, now=moment, settings=settings),
         )
@@ -975,6 +1142,18 @@ class QuotaRouter:
 
     def usable(self, spec: RunnerSpec, klass: str) -> bool:
         return spec.provider not in self.backoffs and self.availability(spec, klass).usable
+
+    @property
+    def utilization_enabled(self) -> bool:
+        return self.settings.routing.utilization_target > 0
+
+    def _abundance(self, state: Availability) -> float:
+        """Abundance used for ranking; unknown readings assume ``unknown_headroom``."""
+
+        if state.abundance is not None and state.state != "unknown":
+            return state.abundance
+        assumed = self.settings.routing.unknown_headroom
+        return assumed if state.abundance is None else min(state.abundance, assumed)
 
     def required_tier(self, task: Mapping[str, Any]) -> str:
         routing = self.settings.routing
@@ -1099,7 +1278,46 @@ class QuotaRouter:
                 key=lambda item: (preference(item), -(item[1].headroom or 0.0), item[0].name)
             )
             return usable[0]
+        if self.utilization_enabled:
+            return self._spread(usable, active_by_runner)
         usable.sort(key=lambda item: (-(item[1].headroom or 0.0), item[0].name))
+        return usable[0]
+
+    def _spread(
+        self,
+        usable: list[tuple[RunnerSpec, Availability]],
+        active_by_runner: Mapping[str, int],
+    ) -> tuple[RunnerSpec, Availability]:
+        """Utilization strategy: share agents between providers by relative abundance.
+
+        Each provider's share of the in-flight agents is proportional to its
+        abundance; the task goes to the provider furthest below its share after
+        taking it, ties to the more abundant one. With nothing running, the most
+        abundant provider wins; as it fills up, the next one gets work too, so a
+        provider whose quota resets soon is not starved by a larger one.
+        """
+
+        weights: dict[str, float] = {}
+        for spec, state in usable:
+            weight = max(self._abundance(state), 0.01)
+            weights[spec.provider] = max(weights.get(spec.provider, 0.0), weight)
+        total = sum(weights.values())
+        active: dict[str, int] = {}
+        for name, count in active_by_runner.items():
+            provider = provider_of(self.settings, name)
+            active[provider] = active.get(provider, 0) + int(count)
+
+        def key(item: tuple[RunnerSpec, Availability]) -> tuple[float, float, float, str]:
+            spec, state = item
+            share = weights[spec.provider] / total
+            return (
+                (active.get(spec.provider, 0) + 1) / share,
+                -self._abundance(state),
+                -(state.headroom or 0.0),
+                spec.name,
+            )
+
+        usable.sort(key=key)
         return usable[0]
 
     def route(
@@ -1217,6 +1435,12 @@ class QuotaRouter:
             "headroom": None if state.headroom is None else round(state.headroom, 4),
             "pinned": pinned,
         }
+        if self.utilization_enabled:
+            decision["abundance"] = (
+                None if state.abundance is None else round(state.abundance, 4)
+            )
+        if state.estimated:
+            decision["estimated_reading"] = True
         if excluded:
             decision["excluded_provider"] = excluded
         if sticky:
@@ -1246,11 +1470,20 @@ class QuotaRouter:
             summary[provider] = {
                 "state": state.state,
                 "headroom": None if state.headroom is None else round(state.headroom, 4),
+                "abundance": None if state.abundance is None else round(state.abundance, 4),
+                "estimated": state.estimated,
                 "overspeed": state.overspeed,
                 "below_reserve": state.below_reserve,
                 "binding_window": state.binding_window,
                 "backoff_until": self.backoffs.get(provider),
                 "windows": {name: item.to_dict() for name, item in sorted(readings.items())},
+                "window_pace": {
+                    str(item["name"]): {
+                        key: item.get(key)
+                        for key in ("ceiling", "abundance", "projected_at_reset", "overspeed")
+                    }
+                    for item in state.windows
+                } if self.utilization_enabled else {},
                 "runners": {
                     spec.name: {
                         klass: self.availability(spec, klass).state for klass in TASK_CLASSES
@@ -1412,7 +1645,9 @@ def probe_stale_providers(
     """Probe providers whose readings went stale, at most once per ``probe_idle_minutes``.
 
     Meant for resuming after a long idle period; a tick calls it, but the
-    per-provider rate limit means it does not probe on every tick.
+    per-provider rate limit means it does not probe on every tick. The free
+    Codex refresh (newest session file) uses ``stale_refresh_minutes`` instead
+    when that is set.
     """
 
     if not routing_enabled(settings):
@@ -1433,7 +1668,11 @@ def probe_stale_providers(
         if fresh:
             continue
         last = parse_time(db.meta_get(QUOTA_PROBE_AT_PREFIX + provider))
-        if last is not None and moment - last < timedelta(minutes=routing.probe_idle_minutes):
+        interval = routing.probe_idle_minutes
+        if provider not in routing.probe_commands and routing.stale_refresh_minutes:
+            # Reading the newest Codex session file costs nothing: refresh often.
+            interval = routing.stale_refresh_minutes
+        if last is not None and moment - last < timedelta(minutes=interval):
             continue
         db.update_meta({QUOTA_PROBE_AT_PREFIX + provider: _iso(moment)})
         snapshot = probe_quota(settings, provider, run=run)
