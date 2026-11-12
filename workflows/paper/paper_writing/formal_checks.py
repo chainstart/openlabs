@@ -388,7 +388,7 @@ def source_plan(metadata: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(sources, list):
         raise ValueError("formal_check.sources must be a list")
     for source in sources:
-        if (not isinstance(source, Mapping) or set(source) - {"reference_keys", "url", "kind", "pages", "passage_patterns", "extraction_method"}
+        if (not isinstance(source, Mapping) or set(source) - {"reference_keys", "url", "kind", "pages", "passage_patterns", "extraction_method", "transcript"}
                 or not {"reference_keys", "url", "kind"} <= set(source)
                 or source["kind"] not in {"primary_text", "publisher_catalog"}
                 or not isinstance(source["reference_keys"], list)
@@ -400,8 +400,24 @@ def source_plan(metadata: Mapping[str, Any]) -> dict[str, Any]:
                 or source["pages"][0] < 1 or source["pages"][1] < source["pages"][0]):
             raise ValueError("pages must be inclusive PDF page numbers [first, last]")
         _patterns(source)
-        if source.get("extraction_method", "text") not in {"text", "ocr"}:
+        if source.get("extraction_method", "text") not in {"text", "ocr", "ocr_transcript"}:
             raise ValueError("Unknown primary document extraction method")
+        if ("transcript" in source) != (source.get("extraction_method") == "ocr_transcript"):
+            raise ValueError("A transcript is declared only with extraction_method ocr_transcript")
+        if source.get("extraction_method") == "ocr_transcript":
+            # A registered OCR transcription of a scanned original PDF: the original
+            # is still retrieved and must match original_sha256; the transcript is a
+            # hash-bound file whose first line declares it an OCR transcription.
+            t = source["transcript"]
+            if (source["kind"] != "primary_text" or not source.get("pages")
+                    or source["pages"][1] - source["pages"][0] >= 30
+                    or not isinstance(t, Mapping)
+                    or set(t) != {"path", "sha256", "original_sha256", "tool", "tool_version"}
+                    or not isinstance(t["path"], str) or not t["path"].startswith(f"papers/{metadata.get('paper_id')}/")
+                    or any(not isinstance(t[k], str) or not re.fullmatch(r"[0-9a-f]{64}", t[k])
+                           for k in ("sha256", "original_sha256"))
+                    or any(not isinstance(t[k], str) or not t[k].strip() for k in ("tool", "tool_version"))):
+                raise ValueError("Invalid OCR transcript declaration")
         if source.get("extraction_method") == "ocr" and (not source.get("pages") or source["pages"][1] - source["pages"][0] >= 30):
             raise ValueError("OCR requires an explicit range of at most 30 original PDF pages")
     local = value.get("local_evidence", [])
@@ -676,6 +692,8 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
     by_url: dict[tuple[str, tuple[int, ...], str], dict[str, Any]] = {}
     failed_urls: dict[tuple[str, tuple[int, ...], str], BaseException] = {}
     plan = source_plan(metadata)
+    transcripts = {(_normalized_url(item["url"]), tuple(item.get("pages") or [])): item["transcript"]
+                   for item in plan.get("sources", []) if item.get("extraction_method") == "ocr_transcript"}
     reference_keys = {r["key"] for r in inv["references"]}
     for item in plan.get("sources", []):
         if set(item["reference_keys"]) - reference_keys:
@@ -748,7 +766,21 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
             raise ValueError("An original PDF endpoint returned a non-PDF response")
         if _CHALLENGE.search(body[:20_000]):
             raise SourceAccessError("Provider returned a challenge or access page, not the requested source")
-        text = _text_document(body, content_type, directory, sid, pages, method)
+        transcript = None
+        if method == "ocr_transcript":
+            transcript = transcripts.get((url_identity[0], url_identity[1]))
+            if transcript is None or not body.startswith(b"%PDF-") or sha(body) != transcript["original_sha256"]:
+                raise ValueError("OCR transcript is not bound to the retrieved original PDF")
+            transcript_bytes = _safe_file(root, transcript["path"]).read_bytes()
+            if sha(transcript_bytes) != transcript["sha256"]:
+                raise ValueError("OCR transcript missing or changed")
+            text = transcript_bytes.decode("utf-8", errors="strict")
+            if not text or "OCR transcription" not in text.splitlines()[0]:
+                raise ValueError("An OCR transcript must declare itself in its first line")
+            pdf_copy = directory / (sid + ".pdf")
+            pdf_copy.write_bytes(body)
+        else:
+            text = _text_document(body, content_type, directory, sid, pages, method)
         if not text.strip():
             raise ValueError("Empty or unextractable primary document")
         if record_host == "api.crossref.org":
@@ -779,6 +811,8 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
             "body_path": body_path.relative_to(root).as_posix(), "body_sha256": sha(body),
             "text_path": text_path.relative_to(root).as_posix(), "text_sha256": sha(text.encode()),
             "extraction_pages": pages, "extraction_method": method, "retrieval": retrieval, "text": text}
+        if transcript is not None:
+            source["ocr_transcript"] = dict(transcript)
         sources.append(source); seen[identity] = source
         by_url[url_identity] = source
         final_identity = (_normalized_url(final_url), tuple(pages or []), method)
