@@ -667,6 +667,7 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
     from paper_writing.journal_history import guard_target
     from paper_writing.manuscript_style import audit_manuscript_style, manuscript_style_review_findings
     from paper_writing.operations import _review_workspace_fingerprints
+    from paper_writing.support import SupportPackageError
     from paper_writing.support_citations import audit_manuscript_support, support_review_findings
 
     load_registry(root, include_local_repositories=False, paper_ids=[paper_id])  # target-policy validation
@@ -717,7 +718,13 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
     except ValueError as exc:
         blockers.append(f"Selected support claim-evidence map: {exc}")
         claim_maps = []
-    fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
+    try:
+        fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
+    except SupportPackageError as exc:
+        # An invalid declared support source (e.g. a log or cache file) is a
+        # registration problem to report, not a crash before the decision record.
+        blockers.append(f"Support sources (support.publication.source_files): {exc}")
+        fingerprints = {}
     expanded = expanded_review_documents(manuscript)
     bibliography = bibliography_text(manuscript)
     try:

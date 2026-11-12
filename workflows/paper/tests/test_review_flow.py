@@ -1560,6 +1560,24 @@ def test_absent_bibliography_key_still_blocks_the_preflight(tmp_path, monkeypatc
     assert not any(a['code'] == 'SOURCE-SELECTOR-STALE' for a in pre['preparation_advisories'])
 
 
+def test_invalid_support_source_is_a_preflight_blocker_not_a_crash(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from paper_writing import operations, support
+
+    _route_preflight(tmp_path, monkeypatch, {'sources': []})
+
+    def fingerprints(*args):
+        log = 'papers/p/support-materials/public/results/analysis.log'
+        support._validate_source_name(Path(log), log)
+
+    monkeypatch.setattr(operations, '_review_workspace_fingerprints', fingerprints)
+    pre = flow.preflight('p', tmp_path, tmp_path / 'build')
+    assert pre['fingerprints'] == {}
+    assert any(b.startswith('Support sources (support.publication.source_files): Generated/cache file')
+               and b.endswith('results/analysis.log') for b in pre['blockers'])
+
+
 def test_delivery_exit_only_notes_unused_routes(tmp_path, monkeypatch):
     from paper_writing import editorial_rewrite, manuscript_style, registry, support_citations
 
