@@ -30,6 +30,35 @@ of somebody else's benchmark or published numbers (a leaderboard re-check, a "do
 value hold" study) are the exception, not the default: they fail most often on prior work that
 already did the check and on endpoints that cannot separate the claim from measurement error.
 
+## Paper templates first
+
+When the packet's `research_line_summary.paper_templates` is non-empty, start there. Each
+template in `registry/research-lines.yaml` (`lines[].paper_templates`) is a classic routine
+paradigm anchored on one family of systems, with its variable dimensions (system family x
+property or application), minimum content, hard gates, per-paper compute and agent time,
+venues and how its novelty is judged. The owner wants these papers; they are the default
+proposal of a line, ahead of re-audits.
+
+1. Pick a template and a concrete system x property combination from its dimensions.
+2. Run the occupancy search before anything else: is this exact combination already reported?
+   Search the databases the template names (Crossref, arXiv, Google Scholar or Semantic Scholar,
+   and the property databases it lists, such as C2DB or VSX/SIMBAD/ADS) with the system names,
+   formulas and aliases plus the property. Record it in the card as `occupancy_search`:
+   `queries` (the exact strings), `databases`, `searched_at` (date), `findings` (the closest hits
+   and why they do not cover the combination). An unreported combination is enough novelty for
+   a templated paper; one already reported is not, so pick another member.
+3. Set `paper_template` to the template id. To reuse one set of scripts, a card may cover a
+   `series`: `members` (two or more adjacent systems: the same host with several ions, one
+   support with a row of metals, a few targets of one class) and `shared_pipeline`. A series is
+   one paper; do not split one analysis into several cards.
+4. Put two papers of the same paradigm from the last two years in your routine venues into
+   `audience.citations`; the gate looks for them.
+5. When the asset index has an SOP, script or loader for the template (`reusable_assets_summary`),
+   list its `asset_id`s in `reusable_assets` (the gate sees them as `asset_reuse`) and lower the
+   cost estimate to what remains; say so in `cost_estimate.basis`.
+6. Meet the template's hard gates in the plan and in `feasibility_precheck` (for example the
+   host's phonon stability as the precheck of an anode paper), and keep to its compute budget.
+
 ## How the gate decides (policy v2)
 
 The gate admits a routine card when a stated incremental difference survives the closest prior
@@ -157,6 +186,9 @@ Each field is there because the gate needs it to decide:
     unverified) needs the alternative it names.
 - `reusable_assets[]` — index entries you rely on (may be empty).
 - `ledger_check.compared_topic_ids` — the ledger topics you compared against.
+- templated cards: `paper_template` (a template id of the line), `occupancy_search`
+  (`queries`, `databases`, `searched_at`, `findings`), optional `series` (`members` with at least
+  two systems, `shared_pipeline`).
 - optional `target_tier` (`routine`/`escalation`), `reopens`, `reopen_basis` (`type`,
   `description`). In a revision task the control plane sets `revises`; add
   `condition_responses[]` (`condition`: index into the packet's `target.reopen_conditions`,

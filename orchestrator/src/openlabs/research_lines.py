@@ -91,4 +91,29 @@ def line_summary(document: Mapping[str, Any] | None, line_id: str) -> dict[str, 
         "environment_status": environment_status(document, line_id),
         "sop": environment.get("sop"),
         "known_line": bool(entry),
+        "paper_templates": template_summaries(entry),
     }
+
+
+TEMPLATE_SUMMARY_FIELDS = ("id", "name", "paradigm", "feasible", "per_paper_cost")
+
+
+def line_templates(document: Mapping[str, Any] | None, line_id: str) -> list[dict[str, Any]]:
+    """The line's ``paper_templates`` (templated paper series), ``[]`` when none."""
+
+    entry = line_entry(document, line_id) or {}
+    templates = entry.get("paper_templates")
+    return [dict(item) for item in templates if isinstance(item, Mapping)] if isinstance(
+        templates, list) else []
+
+
+def template_summaries(entry: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """One compact item per paper template (the full entries are in the direction file)."""
+
+    templates = entry.get("paper_templates")
+    if not isinstance(templates, list):
+        return []
+    return [
+        {key: item.get(key) for key in TEMPLATE_SUMMARY_FIELDS if item.get(key) is not None}
+        for item in templates if isinstance(item, Mapping) and item.get("id")
+    ]

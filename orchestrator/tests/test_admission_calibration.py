@@ -56,10 +56,23 @@ def _tasks(db, task_type: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def _open_admission(db) -> dict:
+    """The admission task still to be decided (several can share one creation second)."""
+
+    with db.connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM tasks WHERE routing_reason='topic_admission' "
+            "AND status IN ('queued','leased','running') ORDER BY created_at DESC, task_id DESC "
+            "LIMIT 1"
+        ).fetchone()
+    assert row is not None
+    return dict(row)
+
+
 def _judge(paths, db, settings, monkeypatch, branches_for):
     """Complete the latest admission task with ``branches_for(entries)`` and tick."""
 
-    admission = flow._admission_task(db)
+    admission = _open_admission(db)
     entries = flow._packet(admission)["topic_cards"]
     flow._complete(db, paths, admission["task_id"],
                    extra={"candidate_branches": branches_for(entries)})
@@ -322,7 +335,7 @@ def test_gate_hold_on_the_environment_alone_goes_back_to_the_gate(tmp_path, monk
     assert report.program["holds_released"][0]["outcome"] == "returned_to_gate"
     topic = ledger.topic(topic_id)
     assert topic["status"] == "proposed"
-    admission = flow._admission_task(db)
+    admission = _open_admission(db)
     entry = flow._packet(admission)["topic_cards"][0]
     assert entry["topic_id"] == topic_id and "released_from_hold" in entry
     flow._complete(db, paths, admission["task_id"],
@@ -384,7 +397,7 @@ def test_hold_gets_one_revision_task_and_the_gate_checks_only_its_conditions(
     new = ledger.topic(new_id)
     assert new["revision_of"] == held_id and new["supersedes"] == held_id
     assert not revision_eligible(new)  # a revision is not revised again
-    admission = flow._admission_task(db)
+    admission = _open_admission(db)
     entry = next(e for e in flow._packet(admission)["topic_cards"] if e["topic_id"] == new_id)
     assert entry["revision_of"]["topic_id"] == held_id
     assert len(entry["revision_of"]["reopen_conditions"]) == 2

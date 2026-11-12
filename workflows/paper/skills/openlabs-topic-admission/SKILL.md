@@ -41,13 +41,40 @@ Admit a routine card when all four hold:
    item of `license_check` allowed and not blacklisted. A card without a line (an older domain
    project) should make clear why it is worth doing outside the lines.
 
+## Templated series papers
+
+Each research line lists `paper_templates` in `registry/research-lines.yaml`: classic routine
+paradigms anchored on one family of systems (for example "a 2D monolayer as an alkali-ion anode",
+"single-atom catalysts on one 2D support", "the photometric solution of one contact binary"). The
+owner wants this kind of paper explicitly. Covering a family by a fixed recipe, a parameter sweep
+across members, or one more member of a well-known paradigm is the expected form of these papers,
+not a defect, and it is no reason to reject. A card with `paper_template` (and possibly `series`,
+several adjacent systems sharing one pipeline) is admitted at the routine tier when:
+
+1. **the concrete combination is unreported**: no paper reports the same system (or series
+   members) for the same property; check its `occupancy_search` (queries, databases, date,
+   findings) and repeat the key query yourself;
+2. **it meets the template's minimum content and hard gates** (for example phonon and AIMD
+   stability, hybrid-functional gaps or an explicit statement of the PBE limitation, NEB barriers,
+   a reproduced published solution) at the template's stated cost;
+3. **the target venue publishes the paradigm**: the card's audience cites two papers of the same
+   paradigm from the last two years in its routine venues.
+
+Still reject a templated card when the same system and property are already reported, when the
+plan falls below the template's minimum validation, or when one result is split into several
+papers (salami slicing: members that share one analysis and one conclusion belong in one paper,
+which is what `series` is for). The usual data, licence, fee and line checks apply. Conditions
+cover the rest as for any card.
+
 ## Reject only for a fatal problem
 
 - prior work already made the same comparison (the difference disappears once it is read);
 - the decisive data cannot be obtained;
 - the design cannot identify the claim in principle and no revision of the card could fix it;
 - a blacklisted or unread `to_verify` licence the topic cannot do without;
-- work beyond the system (wet lab, field work, human subjects, real-world interaction).
+- work beyond the system (wet lab, field work, human subjects, real-world interaction);
+- for a templated card: the same system and property already reported, validation below the
+  template minimum, or one result split into several papers.
 
 Write the strongest reason against the topic first (`strongest_rejection_reason`), then decide
 whether it is one of these. If it is not, it does not justify a rejection. When a rejection's

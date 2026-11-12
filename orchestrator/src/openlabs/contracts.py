@@ -833,6 +833,7 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
             or not _text(basis.get("description"))
         ):
             errors.append("reopen_basis needs a type and a description")
+    errors.extend(paper_template_errors(card))
     if card.get("revises") is not None:
         # A revision card answers the reopen conditions of the held or fixably
         # rejected topic it revises (the control plane sets ``revises``).
@@ -855,6 +856,53 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
                     "topic's reopen_conditions) and response"
                 )
     return ValidationResult(not errors, tuple(errors))
+
+
+SERIES_MIN_MEMBERS = 2
+
+
+def paper_template_errors(card: Mapping[str, Any]) -> list[str]:
+    """Optional ``paper_template`` / ``series`` fields of a templated card.
+
+    ``paper_template`` names a ``paper_templates[].id`` of the card's research line;
+    such a card records the occupancy search that shows its system x property
+    combination is unreported (``occupancy_search``). ``series`` lists the adjacent
+    systems one card covers with one pipeline (one paper per card).
+    """
+
+    errors: list[str] = []
+    template = card.get("paper_template")
+    if template is not None:
+        if not _text(template):
+            errors.append("paper_template must name a paper_templates id of the research line")
+        if not _text(card.get("research_line")):
+            errors.append("paper_template needs research_line")
+        search = card.get("occupancy_search")
+        if not isinstance(search, Mapping):
+            errors.append(
+                "occupancy_search is missing (queries, databases, searched_at, findings) for a "
+                "paper_template card"
+            )
+        else:
+            for name in ("queries", "databases"):
+                value = search.get(name)
+                if not isinstance(value, list) or not any(_text(item) for item in value):
+                    errors.append(f"occupancy_search.{name} must be a non-empty array")
+            for name in ("searched_at", "findings"):
+                if not _text(search.get(name)):
+                    errors.append(f"occupancy_search.{name} is missing")
+    series = card.get("series")
+    if series is not None:
+        members = series.get("members") if isinstance(series, Mapping) else None
+        if not isinstance(members, list) or len(
+            [item for item in members if _text(item) or isinstance(item, Mapping)]
+        ) < SERIES_MIN_MEMBERS:
+            errors.append(
+                f"series.members must list at least {SERIES_MIN_MEMBERS} adjacent systems"
+            )
+        if isinstance(series, Mapping) and not _text(series.get("shared_pipeline")):
+            errors.append("series.shared_pipeline is missing (what the members share)")
+    return errors
 
 
 def research_line_card_errors(card: Mapping[str, Any], venues: Mapping[str, Any]) -> list[str]:

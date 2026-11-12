@@ -90,6 +90,7 @@ from .research_lines import (
     ENVIRONMENT_READY,
     environment_status,
     line_summary,
+    line_templates,
     read_lines_or_none,
 )
 from .resources import ResourceVector, default_task_resources
@@ -520,6 +521,17 @@ def _schedule_one_scout(
                 "first: positioning, minimum validation, venues with fee evidence, licence "
                 "lists, avoided directions; each card needs research-line fields: "
                 "feasibility_precheck, license_check, fee_check)"
+                + (
+                    ". Start from the line's paper_templates (packet research_line_summary."
+                    "paper_templates; full entries in the direction file): pick a template, run "
+                    "the occupancy search for a concrete system x property combination and record "
+                    "it in `occupancy_search`; an unreported combination that meets the "
+                    "template's minimum content is a valid card. Set `paper_template` to the "
+                    "template id, and use `series` for a few adjacent systems sharing one "
+                    "pipeline (one paper per card). Cite reusable assets of the template in "
+                    "`reusable_assets` and lower the cost estimate accordingly"
+                    if line_templates(research_lines_document(paths, settings), line) else ""
+                )
                 if line else ""
             )
             + ". Read the packet at the input path: the topic ledger "
@@ -773,6 +785,16 @@ def card_problems(
     """
 
     errors = list(validate_topic_card(card).errors)
+    template = str(card.get("paper_template") or "").strip()
+    line = str(card.get("research_line") or "").strip()
+    if template and line:
+        known = {str(item.get("id")) for item in line_templates(
+            research_lines_document(paths, settings), line)}
+        if template not in known:
+            errors.append(
+                f"paper_template {template!r} is not a paper_templates id of research line {line}"
+                + (f" (known: {', '.join(sorted(known))})" if known else " (the line has none)")
+            )
     if card.get("revises") and ledger_document is not None:
         from .program import _revision_problem
 
@@ -1756,7 +1778,14 @@ def schedule_topic_admission(
                 "and pass criterion, fee and licence evidence, avoided directions, the "
                 "ledger's earlier rejections). Judge a card of a line whose environment is not "
                 "ready on its merits: the control plane holds an admitted one and admits it with "
-                "your decision once the line is ready."
+                "your decision once the line is ready. A card with `paper_template` is a templated "
+                "series paper (the line's paper_templates): admit it when its system x property "
+                "combination is unreported (check its occupancy_search yourself), it meets the "
+                "template's minimum content and validation, and the target venue published the "
+                "same paradigm in the last two years (two examples); a parameter sweep across a "
+                "family is the expected form, not a defect. Reject it only for an existing report "
+                "of the same system and property, validation below the template's minimum, or "
+                "one result split into several papers."
                 if line_ids else ""
             )
         ),
