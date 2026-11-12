@@ -330,6 +330,14 @@ def _url(url: str) -> str:
     return url
 
 
+def _normalized_url(url: str) -> str:
+    """Scheme/host case and default port do not change the record a URL names."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    port = f":{parts.port}" if parts.port and parts.port != 443 else ""
+    return f"{parts.scheme.lower()}://{host}{port}{parts.path or '/'}" + (f"?{parts.query}" if parts.query else "")
+
+
 def _text_document(body: bytes, content_type: str, directory: Path, sid: str,
                    pages: list[int] | None = None, method: str = "text") -> str:
     if body.startswith(b"%PDF-") or "application/pdf" in content_type:
@@ -659,6 +667,11 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
     access_log: list[str] = []
     directory.mkdir(parents=True, exist_ok=True)
     sources, errors, seen = [], [], {}
+    # One retrieval per URL in a run: a URL already obtained (for example as a
+    # registered primary source) is reused, with its bytes and hashes, when the
+    # same URL is requested again under another kind; a failure is not retried.
+    by_url: dict[tuple[str, tuple[int, ...], str], dict[str, Any]] = {}
+    failed_urls: dict[tuple[str, tuple[int, ...], str], BaseException] = {}
     plan = source_plan(metadata)
     reference_keys = {r["key"] for r in inv["references"]}
     for item in plan.get("sources", []):
@@ -675,6 +688,22 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
             source = seen[identity]
             source["reference_keys"] = sorted(set(source["reference_keys"]) | set(keys))
             return source
+        url_identity = (_normalized_url(url), tuple(pages or []), method)
+        if url_identity in by_url:
+            source = by_url[url_identity]
+            source["reference_keys"] = sorted(set(source["reference_keys"]) | set(keys))
+            return source
+        if url_identity in failed_urls:
+            raise failed_urls[url_identity]
+        try:
+            return _fetch_new(url, kind, keys, pages, method, identity, url_identity, initial_host)
+        except Exception as exc:
+            failed_urls[url_identity] = exc
+            raise
+
+    def _fetch_new(url: str, kind: str, keys: list[str], pages: list[int] | None, method: str,
+                   identity: tuple[Any, ...], url_identity: tuple[str, tuple[int, ...], str],
+                   initial_host: str | None) -> dict[str, Any]:
         sid = "S" + sha(json.dumps(identity).encode())[:20]
         try:
             with client.stream("GET", url, headers={"User-Agent": "OpenLabs-formal-check/1.0"}) as response:
@@ -748,6 +777,9 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
             "text_path": text_path.relative_to(root).as_posix(), "text_sha256": sha(text.encode()),
             "extraction_pages": pages, "extraction_method": method, "retrieval": retrieval, "text": text}
         sources.append(source); seen[identity] = source
+        by_url[url_identity] = source
+        final_identity = (_normalized_url(final_url), tuple(pages or []), method)
+        by_url.setdefault(final_identity, source)
         return source
 
     # The exact current support record may be an authenticated draft until the
@@ -1075,12 +1107,45 @@ def packet_batches(group: str, documents: list[dict[str, str]], inv: Mapping[str
     fails closed with the existing source-routing error. Validation reconstructs
     the same deterministic partition rather than trusting recorded batch sizes.
     """
+    def size(batch: list[dict[str, Any]]) -> int:
+        return len(batch_packet(group, batch, documents, inv, sources, root=root, artifacts=artifacts).encode())
+
     def split(batch: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-        packet = batch_packet(group, batch, documents, inv, sources, root=root, artifacts=artifacts)
-        if len(packet.encode()) <= MAX_PACKET or len(batch) == 1:
+        if size(batch) <= MAX_PACKET:
             return [batch]
+        if len(batch) == 1:
+            return evidence_parts(batch[0]) if group == "passages" else [batch]
         middle = len(batch) // 2
         return split(batch[:middle]) + split(batch[middle:])
+
+    def evidence_parts(unit: dict[str, Any]) -> list[list[dict[str, Any]]]:
+        """One passage whose cited evidence exceeds the budget: verify it in parts.
+
+        Each part carries the whole passage text, all its formulas and the
+        citation uses of a subset of cited keys (all uses of a key stay together),
+        with exactly those keys' sources. The passage verdict is the conjunction
+        of the parts (merge_evidence_parts). A key whose evidence alone exceeds
+        the budget stays an oversized part, so the run fails closed as before.
+        """
+        keys = list(dict.fromkeys(c["key"] for c in unit["citations"]))
+        if len(keys) < 2:
+            return [[unit]]
+        def part(selected: list[str]) -> dict[str, Any]:
+            return dict(unit, citations=[c for c in unit["citations"] if c["key"] in selected])
+        groups: list[list[str]] = []
+        current: list[str] = []
+        for key in keys:
+            if current and size([part(current + [key])]) > MAX_PACKET:
+                groups.append(current)
+                current = [key]
+            else:
+                current = current + [key]
+        groups.append(current)
+        if len(groups) == 1:
+            return [[unit]]
+        return [[dict(part(selected), evidence_part={"part": number, "of": len(groups),
+                                                    "citation_keys": selected})]
+                for number, selected in enumerate(groups, 1)]
 
     units = inv[group]
     return [batch for start in range(0, len(units), BATCH_SIZE)
@@ -1152,6 +1217,69 @@ def batch_schema(group: str, batch: list[dict[str, Any]], inv: Mapping[str, Any]
     return schema
 
 
+_STATUS_ORDER = {"error": 0, "gap": 1, "unchecked": 2, "verified": 3}
+
+
+def evidence_splits(batches: list[list[dict[str, Any]]],
+                    sources: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Record which passages were verified in evidence parts and with which sources."""
+    splits: dict[str, list[dict[str, Any]]] = {}
+    for batch in batches:
+        for unit in batch:
+            info = unit.get("evidence_part")
+            if info:
+                keys = set(info["citation_keys"])
+                splits.setdefault(unit["id"], []).append({
+                    "part": info["part"], "of": info["of"], "citation_keys": list(info["citation_keys"]),
+                    "source_ids": [s["id"] for s in sources if set(s["reference_keys"]) & keys]})
+    return splits
+
+
+def merge_evidence_parts(rows: list[dict[str, Any]], splits: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Combine the part rows of a split passage into one row; the verdict is their conjunction.
+
+    Citation uses are disjoint across parts and are concatenated; every formula is
+    judged in every part and keeps its least favourable verdict; prerequisites are
+    concatenated. A missing part leaves its citation uses absent, which the exact
+    coverage check then refuses.
+    """
+    merged: list[dict[str, Any]] = []
+    index: dict[str, int] = {}
+    for row in rows:
+        pid = row.get("passage_id")
+        if pid not in splits or pid not in index:
+            if pid in splits:
+                index[pid] = len(merged)
+                merged.append(dict(row, coverage_rationale=f"[evidence part 1] {row.get('coverage_rationale', '')}",
+                                   formulas=list(row.get("formulas", [])),
+                                   citations=list(row.get("citations", [])),
+                                   prerequisites=list(row.get("prerequisites", []))))
+                merged[-1]["_parts"] = 1
+            else:
+                merged.append(row)
+            continue
+        target = merged[index[pid]]
+        target["_parts"] += 1
+        if _STATUS_ORDER.get(row.get("status"), 0) < _STATUS_ORDER.get(target.get("status"), 0):
+            target["status"] = row.get("status")
+        target["coverage_rationale"] += f"\n[evidence part {target['_parts']}] {row.get('coverage_rationale', '')}"
+        target["citations"].extend(row.get("citations", []))
+        target["prerequisites"].extend(row.get("prerequisites", []))
+        formulas = {f.get("formula_id"): i for i, f in enumerate(target["formulas"])}
+        for formula in row.get("formulas", []):
+            i = formulas.get(formula.get("formula_id"))
+            if i is None:
+                target["formulas"].append(formula)
+            elif _STATUS_ORDER.get(formula.get("status"), 0) < _STATUS_ORDER.get(target["formulas"][i].get("status"), 0):
+                target["formulas"][i] = formula
+    for row in merged:
+        parts = row.pop("_parts", None)
+        if parts is not None and parts != len(splits[row["passage_id"]]):
+            # A part produced no row: never report the passage as verified.
+            row["status"] = "unchecked" if row.get("status") == "verified" else row.get("status")
+    return merged
+
+
 def batch_coverage(output: Mapping[str, Any], group: str, batch: list[dict[str, Any]]) -> None:
     """Refuse malformed nested IDs before accepting a provider's batch."""
     _validate_against_schema(output, REPORT_SCHEMA)
@@ -1190,11 +1318,14 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
                          'aggregate': False, 'reason': message, 'status': None})
     report = {"references": [], "passages": []}
     receipts = []
+    splits: dict[str, list[dict[str, Any]]] = {}
     if not errors:
         # Small output batches, full manuscript context, no truncated source.
         for group in ("references", "passages"):
-            for batch_number, batch in enumerate(packet_batches(
-                    group, documents, inv, sources, root=root, artifacts=artifacts), 1):
+            batches = packet_batches(group, documents, inv, sources, root=root, artifacts=artifacts)
+            if group == "passages":
+                splits = evidence_splits(batches, sources)
+            for batch_number, batch in enumerate(batches, 1):
                 packet = batch_packet(group, batch, documents, inv, sources, root=root, artifacts=artifacts)
                 if len(packet.encode()) > MAX_PACKET:
                     message = "Formal-check packet exceeds the context budget; register precise primary chapter/page sources, never truncate evidence"
@@ -1224,6 +1355,7 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
                 workdir = directory / f"{group}-{batch_number}"
                 receipts.append({"receipt": receipt, "group": group,
                     "workdir": workdir.relative_to(root).as_posix()})
+    report["passages"] = merge_evidence_parts(report["passages"], splits)
     unverifiable_items: list[dict[str, Any]] = []
     try:
         errors.extend(report_blockers(report, inv, sources, findings=findings, artifacts=artifacts,
@@ -1253,7 +1385,7 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
     result = {"schema": VERSION, "paper_id": metadata["paper_id"], "manuscript_version": str(metadata.get("version") or ""),
         "policy": policy(), "role": dict(role), "inventory": inv,
         "source_plan_sha256": digest(source_plan(metadata)), "sources": sources,
-        "report": report, "receipts": receipts, "blockers": errors, "valid": not errors,
+        "evidence_splits": splits, "report": report, "receipts": receipts, "blockers": errors, "valid": not errors,
         "issue_summary": summary, "artifact_inventory": artifacts,
         # Not manuscript defects: records that could not be obtained here. They do
         # not block readiness or consume a review round; verify them manually or
@@ -1348,6 +1480,11 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             _validate_against_schema(output, schema)
             batch_coverage(output, group, batch)
             reconstructed[group].extend(output[group])
+        expected_splits = evidence_splits([batch for group, batch in expected_batches if group == "passages"],
+                                          result["sources"])
+        if result.get("evidence_splits", {}) != expected_splits:
+            raise ValueError("Formal evidence parts differ from the deterministic partition")
+        reconstructed["passages"] = merge_evidence_parts(reconstructed["passages"], expected_splits)
         if reconstructed != result["report"]:
             raise ValueError("Formal report differs from the actual independent outputs")
         findings = []
