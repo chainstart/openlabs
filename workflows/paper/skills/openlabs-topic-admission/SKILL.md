@@ -36,7 +36,29 @@ Read it as the editor of the card's routine venue would read the eventual paper'
    Judge token cost and compute cost separately: CPU hours that run in parallel on ailab, a
    dedicated host that is otherwise idle, cost calendar time rather than model budget, so a
    long ailab plan alone does not make a topic too expensive.
-5. **Fix the primary endpoint.** For an admitted topic, copy or tighten the card's endpoint into
+5. **Check the research line** (cards with `research_line`; the packet's `research_lines` and
+   `registry/research-lines.yaml` in `read_resources`). The card must fit its line's
+   `positioning`, meet its `minimum_validation` and add at least its `minimum_novelty_per_paper`,
+   and avoid the file's `avoid` list. Judge `feasibility_precheck` as the decisive analysis moved
+   to the front: it must be cheap, run first, and have a numeric `pass_criterion` that would
+   really kill the topic (a precheck that cannot fail is no precheck). Check `fee_check` covers
+   page, colour and submission charges of every routine venue with the evidence level the
+   direction file gives (or a cited newer first-hand source), and `license_check` against the
+   whitelist and blacklist (a blacklisted item or an unread `to_verify` licence is a reject or
+   hold). A card whose line environment is not `ready` gets `hold` with a
+   `line_environment_ready` reopen condition: the control plane enforces this even after an
+   admit, because the first research task could not run. A card without a line (an older
+   domain project) is judged as before, but readers of the direction file should be able to see
+   why it is worth doing outside the lines.
+6. **Compare with the ledger's earlier rejections.** The packet's `ledger_snapshot` carries each
+   rejected topic's reason, and the topic ledger the gate's full records. The rejections so far
+   share three defects: prior work the scout missed that already did the comparison (preprints,
+   code repositories and dataset papers included); an endpoint that could not identify the claim
+   (two changes confounded, a statistic that cannot separate the claimed effect from measurement
+   error, inputs that do not match the stated information set); and a token or agent-time
+   estimate out of proportion to an incremental result, without a measured probe or reused
+   pipeline. Check each card for the same three before admitting it.
+7. **Fix the primary endpoint.** For an admitted topic, copy or tighten the card's endpoint into
    `preregistration.primary_endpoint` (`metric`, `matched_baseline`, `split`, `decision_rule`,
    `stop_rule`) and put the SHA-256 of its canonical JSON (sorted keys, no spaces, UTF-8) in
    `preregistration.sha256`. The campaign is held to this block.
@@ -55,9 +77,9 @@ understanding, not just a number; and the cost estimate leaves room for the extr
 
 - `admit` — worth a slot now. Needs `target_tier`, `tier_rationale`, the pre-registration and
   `data_access_confirmed: true`.
-- `hold` — plausible but blocked by something specific (data not yet released, method missing).
-  List `reopen_conditions` (`type`: new_data_source, new_method, venue_policy_change,
-  external_result; `description`). The topic returns only as a new card that cites one of them.
+- `hold` — plausible but blocked by something specific (data not yet released, method missing,
+  the line's environment not ready). List `reopen_conditions` (`type`: new_data_source,
+  new_method, venue_policy_change, external_result, line_environment_ready; `description`). The topic returns only as a new card that cites one of them.
 - `reject` — not worth doing as proposed. The reason is recorded so the same idea is not
   proposed again unchanged.
 

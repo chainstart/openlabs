@@ -277,6 +277,27 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
 开关与上限只在 `config/openlabs.toml` 的 `[program]` 里配置，编排器不读
 `settings.yaml#research_portfolio.autonomy`（那里只记业主的决定及日期）。
 
+### 研究产线
+
+选题按研究产线组织（2026-11-12 方向）。方向文件在数据仓库 `registry/research-lines.yaml`
+（`[program].research_lines_path`，摘要 `research-lines.md`）：每条产线的定位、流水线骨架、最低验证
+要求、每篇最小新意、目标期刊及费用证据等级、许可证白名单/黑名单、环境状态与回避方向。
+
+- 计划项目的 `project.json` 带 `"research_line": "<id>"`；一个学科可有多条产线，各自出题、计数。
+  学科只决定任务落在哪个 lab（技能与协议），产线自带环境，不依赖 lab 的 `uv sync`（physics、quant
+  的 `research-program` 协议因此 `runtime_setup_ids: []`）。
+- `[program].research_lines` 非空时只轮转这些产线的项目（每条产线一个 scout、间隔与在研计数按产线），
+  没有产线的旧学科项目不再出题，但已有的立项审查和研究 campaign 照常进行。为空时仍按学科轮转。
+- 产线卡片多三个字段：`feasibility_precheck`（低成本决定性预检、数值通过标准、`on_failure: freeze`）、
+  `license_check`、`fee_check`（每本 routine 期刊的版面费/彩图费/投稿费与证据等级，至少一本已核实的
+  免费途径）。例：`packages/contracts/examples/research-program/topic-card.research-line.example.json`。
+- 立项后第一项研究任务就是预检；不通过时研究者返回 `freeze_reason_class: feasibility_precheck_failed`。
+- 产线的 `environment.status` 不是 `ready` 时，立项关口的 admit 会被控制面改为 hold，复开条件类型
+  `line_environment_ready`；环境就绪后可用 `reopens` 重新提交。
+- 现有实例迁移：`python -m openlabs program init-instance --instance-dir <dir> --set-research-lines`
+  先看 dry-run，再加 `--write`。它只新增缺少的产线项目，并在实例 TOML 的 `[program]` 里写入
+  `research_lines`（其余键与注释不动，旧文件留 `.bak`），不改题目台账。回滚：恢复 `.bak`。
+
 ### 发布流水线（评审 ready → 交付）
 
 每个 tick 对每篇 ready 论文先运行 `paper-writing program release-status`（只读），再走下一步；

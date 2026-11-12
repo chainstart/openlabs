@@ -61,6 +61,7 @@
     {
       "protocol_id": "research-program",
       "primary_skill": "quant-research-loop",
+      "runtime_setup_ids": [],
       "runtime_skills": ["quant-research-loop", "openlabs-empirical-topic-scout", "openlabs-topic-admission", "openlabs-direction-decision"],
       "validator": {
         "command": [

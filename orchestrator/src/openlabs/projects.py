@@ -120,6 +120,13 @@ class ProjectConfig:
 
         return self.raw.get("program") is True
 
+    @property
+    def research_line(self) -> str | None:
+        """The research line a program project scouts for (``registry/research-lines.yaml``)."""
+
+        value = self.raw.get("research_line")
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
 
 def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
@@ -174,6 +181,8 @@ def load_project(path: str | Path) -> ProjectConfig:
         raise ValueError("project protocol must be an object")
     protocol_id = _identifier(protocol.get("id"), "protocol.id")
     primary_skill = _identifier(protocol.get("primary_skill"), "protocol.primary_skill")
+    if payload.get("research_line") is not None:
+        _identifier(payload.get("research_line"), "research_line")
 
     execution_value = payload.get("execution", {})
     if not isinstance(execution_value, Mapping):

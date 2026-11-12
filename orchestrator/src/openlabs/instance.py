@@ -11,14 +11,23 @@ creates (``--write``) everything one named instance needs:
   ``OPENLABS_DATABASE_ROOT``, ``OPENLABS_CONFIG_FILE`` (read by
   ``bin/openlabs-container-loop``);
 - ``<instance-dir>/state/``: loop lock, pid and logs;
-- in the shared data repository, one research-program project per domain under
+- in the shared data repository, one research-program project per domain and
+  one per research line (``RESEARCH_LINES``, defined in the data repository's
+  ``registry/research-lines.yaml``) under
   ``workspaces/<domain>/instances/<name>/projects/`` (never scanned by the
   default instance), plus an empty topic ledger and asset index under
-  ``registry/instances/<name>/``.
+  ``registry/instances/<name>/``. ``[program].research_lines`` makes the line
+  projects the only ones scouted; domain projects keep their admissions and
+  campaigns.
 
 Idempotent: an existing file is never overwritten (it is reported as
 ``unchanged`` or ``differs``), except the instance TOML with ``--update-config``,
-which keeps the previous file as ``openlabs.toml.<timestamp>.bak``.
+which keeps the previous file as ``openlabs.toml.<timestamp>.bak``, or with
+``--set-research-lines``, which only sets ``[program].research_lines`` in the
+existing TOML (other keys and comments kept, backup kept as with
+``--update-config``). Running ``--write --set-research-lines`` on an existing
+instance is the migration to research lines: it adds the missing line projects
+and switches scouting to them without touching the topic ledger.
 """
 
 from __future__ import annotations
@@ -42,6 +51,17 @@ SCHEMA = "openlabs.instance_init.v1"
 # refuses it, so a container instance gets no mathematics project.
 PROGRAM_DOMAINS = ("ai", "biology", "materials", "physics", "quant")
 CONTAINER_COMPUTE_LOCATIONS = ("container_cpu", "container_gpu", "ailab")
+# Research lines (registry/research-lines.yaml, in rank order) and the domain
+# whose lab hosts each line's tasks. Lines carry their own environments, so the
+# host lab only supplies skills and the protocol.
+RESEARCH_LINES: tuple[tuple[str, str], ...] = (
+    ("materials-mlip-dft", "materials"),
+    ("astro-survey-photometry", "physics"),
+    ("engineering-simulation-vvuq", "physics"),
+    ("microbial-genomics-gem", "biology"),
+    ("ml-evaluation-protocols", "ai"),
+    ("molecular-property-screening", "materials"),
+)
 
 RUNNERS: dict[str, dict[str, str]] = {
     "lead_gpt": {"provider": "openai-codex", "tier": "lead", "model": "gpt-6-astra"},
@@ -175,6 +195,7 @@ def instance_settings(
             "asset_index_path": f"registry/instances/{name}/reusable-assets.json",
             "enforce_admission": flags["program.enforce_admission"],
             "domains": list(PROGRAM_DOMAINS),
+            "research_lines": [line for line, _ in RESEARCH_LINES],
             "compute_locations": list(CONTAINER_COMPUTE_LOCATIONS),
             "auto_handoff": flags["program.auto_handoff"],
             "auto_release": flags["program.auto_release"],
@@ -204,20 +225,29 @@ def instance_settings(
     return document
 
 
-def _project_files(name: str, domain: str, primary_skill: str) -> dict[str, dict[str, Any]]:
-    project_id = f"{name}-{domain}-research-program"
-    scout_id = f"{name}-{domain}-program-scout"
-    admission_id = f"{name}-{domain}-program-admission"
+def _project_files(
+    name: str, domain: str, primary_skill: str, line: str | None = None
+) -> dict[str, dict[str, Any]]:
+    unit = line or domain
+    project_id = f"{name}-{unit}-research-program"
+    scout_id = f"{name}-{unit}-program-scout"
+    admission_id = f"{name}-{unit}-program-admission"
     project = {
         "schema_version": "openlabs.project.v1",
         "project_id": project_id,
         "domain": domain,
+        **({"research_line": line} if line else {}),
         "status": "active",
         "program": True,
         "objective": (
-            f"Propose, admit and run computational, real-data {domain} research topics under "
-            f"the research program's slot limit and independent admission gate ({name} "
-            "instance)."
+            (
+                f"Propose, admit and run topics of the research line {line} "
+                "(registry/research-lines.yaml) "
+                if line else
+                f"Propose, admit and run computational, real-data {domain} research topics "
+            )
+            + "under the research program's slot limit and independent admission gate "
+            f"({name} instance)."
         ),
         "protocol": {"id": "research-program", "primary_skill": primary_skill},
         "execution": {
@@ -244,7 +274,7 @@ def _project_files(name: str, domain: str, primary_skill: str) -> dict[str, dict
         "workstreams": [
             {
                 "workstream_id": scout_id,
-                "title": f"{domain} topic scout ({name})",
+                "title": f"{unit} topic scout ({name})",
                 "state_path": "scout_state.json",
                 "agent_role": "researcher",
                 "session_mode": "fresh",
@@ -253,7 +283,7 @@ def _project_files(name: str, domain: str, primary_skill: str) -> dict[str, dict
             },
             {
                 "workstream_id": admission_id,
-                "title": f"{domain} admission gate ({name})",
+                "title": f"{unit} admission gate ({name})",
                 "state_path": "admission_state.json",
                 "agent_role": "reviewer",
                 "session_mode": "fresh",
@@ -278,6 +308,36 @@ def _project_files(name: str, domain: str, primary_skill: str) -> dict[str, dict
         "scout_state.json": state(scout_id, "scout"),
         "admission_state.json": state(admission_id, "admission"),
     }
+
+
+def with_research_lines(text: str, lines: list[str]) -> str:
+    """``text`` (an instance TOML) with ``[program].research_lines`` set to ``lines``.
+
+    Only that key changes: an existing ``research_lines`` line in ``[program]`` is
+    replaced, otherwise one is inserted after ``domains`` (or after the table
+    header). Comments and every other key stay as they are.
+    """
+
+    rendered = f"research_lines = {_toml_value(list(lines))}"
+    rows = text.splitlines()
+    start = next((i for i, row in enumerate(rows) if row.strip() == "[program]"), None)
+    if start is None:
+        raise InstanceInitError("instance TOML has no [program] table")
+    end = next(
+        (i for i in range(start + 1, len(rows)) if rows[i].lstrip().startswith("[")),
+        len(rows),
+    )
+    body = range(start + 1, end)
+    existing = next(
+        (i for i in body if re.match(r"\s*research_lines\s*=", rows[i])), None
+    )
+    if existing is not None:
+        rows[existing] = rendered
+    else:
+        anchor = next((i for i in body if re.match(r"\s*domains\s*=", rows[i])), start)
+        rows.insert(anchor + 1, rendered)
+    tomllib.loads("\n".join(rows))  # still valid TOML
+    return "\n".join(rows) + ("\n" if text.endswith("\n") else "")
 
 
 def _json_text(payload: Any) -> str:
@@ -351,12 +411,14 @@ def plan_instance(
     ]
     labs = discover_labs(paths.code)
     projects: list[str] = []
-    for domain in PROGRAM_DOMAINS:
+    units = [(domain, None) for domain in PROGRAM_DOMAINS]
+    units += [(domain, line) for line, domain in RESEARCH_LINES]
+    for domain, line in units:
         lab = lab_for_domain(labs, domain)
         protocol = lab.protocol("research-program")
         if protocol is None:
             raise InstanceInitError(f"lab {lab.lab_id} does not register research-program")
-        files = _project_files(name, domain, protocol.primary_skill)
+        files = _project_files(name, domain, protocol.primary_skill, line)
         root = (
             paths.data / "workspaces" / domain / "instances" / name / "projects"
             / files["project.json"]["project_id"]
@@ -375,6 +437,7 @@ def plan_instance(
         "database_root": str(database),
         "config_file": str(config_file),
         "projects": projects,
+        "research_lines": settings["program"]["research_lines"],
         "ledger_path": settings["program"]["ledger_path"],
         "asset_index_path": settings["program"]["asset_index_path"],
         "attempt_workspaces": str(paths.artifacts / "instances" / name / "attempt-workspaces"),
@@ -391,10 +454,13 @@ def init_instance(
     preset: str = "observe",
     write: bool = False,
     update_config: bool = False,
+    set_research_lines: bool = False,
     paper_writing_command: list[str] | None = None,
     git_user_name: str | None = None,
     git_user_email: str | None = None,
 ) -> dict[str, Any]:
+    if update_config and set_research_lines:
+        raise InstanceInitError("choose --update-config or --set-research-lines, not both")
     actions, summary = plan_instance(
         paths,
         name=name,
@@ -405,6 +471,12 @@ def init_instance(
         git_user_email=git_user_email,
     )
     config_file = Path(summary["config_file"])
+    if set_research_lines and config_file.is_file():
+        for action in actions:
+            if action.path == config_file:
+                action.content = with_research_lines(
+                    config_file.read_text(encoding="utf-8"), summary["research_lines"]
+                )
     for action in actions:
         if action.kind == "directory":
             action.status = "exists" if action.path.is_dir() else "create"
@@ -416,7 +488,7 @@ def init_instance(
             action.status = "create"
         elif action.path.read_text(encoding="utf-8") == action.content:
             action.status = "unchanged"
-        elif action.path == config_file and update_config:
+        elif action.path == config_file and (update_config or set_research_lines):
             action.status = "update"
         else:
             action.status = "differs"  # kept as is; never overwritten

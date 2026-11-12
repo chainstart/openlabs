@@ -203,6 +203,12 @@ def _parser() -> argparse.ArgumentParser:
         help="Rewrite an existing instance TOML (the old one is kept as a .bak)",
     )
     instance.add_argument(
+        "--set-research-lines", action="store_true",
+        help="Set only [program].research_lines in an existing instance TOML (other keys and "
+        "comments kept, old file kept as a .bak); with --write this migrates an existing "
+        "instance to research-line scouting",
+    )
+    instance.add_argument(
         "--paper-writing-command", nargs="+", default=None, metavar="ARG",
         help="[program].paper_writing_command for the instance",
     )
@@ -273,6 +279,7 @@ def _init_instance(args: argparse.Namespace) -> int:
             preset=args.preset,
             write=args.write,
             update_config=args.update_config,
+            set_research_lines=args.set_research_lines,
             paper_writing_command=args.paper_writing_command,
             git_user_name=args.git_user_name,
             git_user_email=args.git_user_email,

@@ -70,6 +70,12 @@ from .program import (
 )
 from .program_autonomy import topic_budget_seconds
 from .projects import ProjectConfig, load_project, workstream_policy
+from .research_lines import (
+    ENVIRONMENT_READY,
+    environment_status,
+    line_summary,
+    read_lines_or_none,
+)
 from .resources import ResourceVector, default_task_resources
 
 SCOUT_TASK_TYPE = "topic_scout"
@@ -146,6 +152,24 @@ def admission_workstream_id(project: ProjectConfig) -> str | None:
     return None
 
 
+def scout_key(project: ProjectConfig) -> str:
+    """Rotation key of a program project: its research line, else its domain."""
+
+    return project.research_line or project.domain
+
+
+def _topic_key(topic: Mapping[str, Any]) -> str:
+    return str(topic.get("research_line") or topic.get("domain") or "")
+
+
+def research_lines_document(
+    paths: WorkspacePaths, settings: FactorySettings
+) -> dict[str, Any] | None:
+    """The parsed direction file, or ``None`` when absent or unreadable."""
+
+    return read_lines_or_none(paths.data / settings.program.research_lines_path)
+
+
 def program_projects(paths: WorkspacePaths) -> list[ProjectConfig]:
     """Active research-program projects (invalid configs are reported elsewhere)."""
 
@@ -179,6 +203,11 @@ def program_read_resources(
         _resource("settings.yaml#research_portfolio", registry / "settings.yaml"),
         _resource("team-rejection-ledger", registry / "journal-rejections.json"),
         _resource("reusable-asset-index", paths.data / settings.program.asset_index_path),
+        _resource("research-lines", paths.data / settings.program.research_lines_path),
+        _resource(
+            "research-lines-summary",
+            (paths.data / settings.program.research_lines_path).with_suffix(".md"),
+        ),
     ]
     return [item for item in items if item is not None]
 
@@ -192,6 +221,7 @@ def _ledger_snapshot(document: Mapping[str, Any]) -> list[dict[str, Any]]:
             {
                 "topic_id": topic.get("topic_id"),
                 "domain": topic.get("domain"),
+                "research_line": topic.get("research_line"),
                 "question": topic.get("question"),
                 "fingerprint": topic.get("fingerprint"),
                 "status": topic.get("status"),
@@ -267,6 +297,7 @@ class ScoutDecision:
     task_id: str | None = None
     domain: str | None = None
     reason: str | None = None
+    research_line: str | None = None
 
 
 def _proposed_pool(document: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -307,19 +338,24 @@ def _choose_scout_project(
     *,
     exclude: frozenset[str] = frozenset(),
 ) -> tuple[ProjectConfig, str] | None:
-    """Domain with the fewest topics in flight; ties go to the least recently scouted.
+    """Line (or domain) with the fewest topics in flight; ties go to the least recently scouted.
 
-    ``[program].domains`` restricts the rotation and breaks remaining ties by
-    its order. Domains in ``exclude`` (a scout in flight, or scouted too
-    recently) are skipped.
+    With ``[program].research_lines`` set, only projects of those lines rotate,
+    keyed by line and ordered by that list; otherwise ``[program].domains``
+    restricts the rotation by domain and breaks remaining ties by its order.
+    Keys in ``exclude`` (a scout in flight, or scouted too recently) are skipped.
     """
 
+    lines = list(settings.program.research_lines)
     configured = list(settings.program.domains)
     usable: list[tuple[ProjectConfig, str]] = []
     for project in projects:
-        if configured and project.domain not in configured:
+        if lines:
+            if project.research_line not in lines:
+                continue
+        elif configured and project.domain not in configured:
             continue
-        if project.domain in exclude:
+        if scout_key(project) in exclude:
             continue
         scout_id = scout_workstream_id(project)
         campaign = db.campaign(scout_id) if scout_id else None
@@ -330,15 +366,18 @@ def _choose_scout_project(
         return None
     load: dict[str, int] = {}
     for topic in topics_by_status(document, *DOMAIN_LOAD_STATUSES):
-        domain = str(topic.get("domain") or "")
-        load[domain] = load.get(domain, 0) + 1
+        topic_key = _topic_key(topic)
+        load[topic_key] = load.get(topic_key, 0) + 1
     last = db.meta_items(LAST_SCOUT_KEY + ":")
 
     def key(item: tuple[ProjectConfig, str]) -> tuple[int, str, int, str]:
         project = item[0]
-        order = configured.index(project.domain) if project.domain in configured else 0
-        return (load.get(project.domain, 0), last.get(project.domain, ""), order,
-                project.project_id)
+        rotation = scout_key(project)
+        if lines:
+            order = lines.index(project.research_line) if project.research_line in lines else 0
+        else:
+            order = configured.index(project.domain) if project.domain in configured else 0
+        return (load.get(rotation, 0), last.get(rotation, ""), order, project.project_id)
 
     return min(usable, key=key)
 
@@ -389,6 +428,14 @@ def _schedule_one_scout(
 ) -> ScoutDecision:
     campaign = db.campaign(campaign_id) or {}
     stamp = _iso(moment)
+    rotation = scout_key(project)
+    line = project.research_line
+    line_fields: dict[str, Any] = {}
+    if line:
+        line_fields = {
+            "research_line": line,
+            "research_line_summary": line_summary(research_lines_document(paths, settings), line),
+        }
     # The campaign's task count keeps two scouts of one domain scheduled within
     # the same second apart.
     sequence = db.task_count(campaign_id)
@@ -406,6 +453,7 @@ def _schedule_one_scout(
             "project_id": project.project_id,
             "domain": project.domain,
             "card_schema": "openlabs.topic_card.v1",
+            **line_fields,
             "max_cards": max_cards,
             "free_slots": status.free_slots,
             "candidate_pool": len(_proposed_pool(document)),
@@ -431,7 +479,15 @@ def _schedule_one_scout(
         task_type=SCOUT_TASK_TYPE,
         objective=(
             f"Scout research topics for the {project.domain} research program "
-            f"({project.project_id}). Read the packet at the input path: the topic ledger "
+            f"({project.project_id})"
+            + (
+                f" within the research line `{line}` of registry/research-lines.yaml (read it "
+                "first: positioning, minimum validation, venues with fee evidence, licence "
+                "lists, avoided directions; each card needs research-line fields: "
+                "feasibility_precheck, license_check, fee_check)"
+                if line else ""
+            )
+            + ". Read the packet at the input path: the topic ledger "
             "snapshot, the research-portfolio requirements, the team rejection ledger and the "
             "reusable-asset index when present. Return up to "
             f"{max_cards} topic cards in the result bundle field `topic_cards`, each following "
@@ -455,18 +511,18 @@ def _schedule_one_scout(
         **resources.to_dict(),
     )
     db.update_meta(
-        {LAST_SCOUT_KEY: stamp, f"{LAST_SCOUT_KEY}:{project.domain}": stamp},
+        {LAST_SCOUT_KEY: stamp, f"{LAST_SCOUT_KEY}:{rotation}": stamp},
         events=[
             (
                 "program",
                 project.project_id,
                 "topic_scout_scheduled",
-                {"task_id": task_id, "domain": project.domain, "max_cards": max_cards,
-                 "free_slots": status.free_slots},
+                {"task_id": task_id, "domain": project.domain, "research_line": line,
+                 "max_cards": max_cards, "free_slots": status.free_slots},
             )
         ],
     )
-    return ScoutDecision(task_id=task_id, domain=project.domain)
+    return ScoutDecision(task_id=task_id, domain=project.domain, research_line=line)
 
 
 def schedule_scouts(
@@ -529,7 +585,14 @@ def schedule_scouts(
         )
         return [decision], None
     expected = expected_cards_per_scout(db, settings, document)
-    busy = {str(task.get("domain") or "") for task in in_flight}
+    keys_by_campaign = {
+        scout_workstream_id(project): scout_key(project) for project in projects
+    }
+    busy = {
+        keys_by_campaign.get(str(task.get("campaign_id") or ""))
+        or str(task.get("domain") or "")
+        for task in in_flight
+    }
     recent = {
         domain
         for domain, stamp in db.meta_items(LAST_SCOUT_KEY + ":").items()
@@ -563,7 +626,7 @@ def schedule_scouts(
             project=project, campaign_id=campaign_id, max_cards=max_cards, moment=moment,
         )
         scheduled.append(decision)
-        busy.add(project.domain)
+        busy.add(scout_key(project))
     if reason is None and len(scheduled) == wanted:
         reason = (
             "max_concurrent_scouts" if wanted == room
@@ -599,7 +662,9 @@ def _card_metadata(
     provider: str,
 ) -> dict[str, Any]:
     venues = card.get("venues") if isinstance(card.get("venues"), Mapping) else {}
+    line = str(card.get("research_line") or "").strip()
     return {
+        **({"research_line": line} if line else {}),
         "program_project_id": project.project_id,
         "source_task_id": source_task_id,
         "proposer_provider": provider,
@@ -671,6 +736,9 @@ def intake_card(
     # Topic identity is the control plane's (card hash), never agent-chosen.
     card.pop("topic_id", None)
     card["domain"] = project.domain
+    if project.research_line:
+        # A line project's cards belong to its line, never an agent-chosen one.
+        card["research_line"] = project.research_line
     errors = list(validate_topic_card(card).errors)
     errors.extend(asset_library.card_reference_errors(paths, settings, card))
     location_problem = compute_location_problem(settings, card)
@@ -878,6 +946,11 @@ def schedule_topic_admission(
             }
         )
     asset_library.annotate_admission_entries(paths, settings, entries)
+    line_ids = sorted({
+        str(entry["card"].get("research_line"))
+        for entry in entries if str(entry["card"].get("research_line") or "").strip()
+    })
+    lines_document = research_lines_document(paths, settings) if line_ids else None
     topic_ids = [str(entry["topic_id"]) for entry in entries]
     result_ids = sorted({str(entry["source_result_id"]) for entry in entries})
     digest = hashlib.sha256("\0".join(topic_ids + result_ids).encode()).hexdigest()
@@ -900,6 +973,11 @@ def schedule_topic_admission(
             "topic_cards": entries,
             "proposer_provider": provider,
             "exclude_provider": exclude,
+            **(
+                {"research_lines": {line: line_summary(lines_document, line)
+                                    for line in line_ids}}
+                if line_ids else {}
+            ),
             "ledger_snapshot": _ledger_snapshot(ledger.read()),
             "read_resources": program_read_resources(paths, settings, ledger),
             **asset_library.packet_fields(
@@ -930,6 +1008,14 @@ def schedule_topic_admission(
             "strongest_rejection_reason, closest_prior_work_checked, data_access_confirmed, "
             "cost_judgement, preregistration with its sha256, reopen_conditions). Rejecting "
             "every card is a valid outcome. Do not start the research."
+            + (
+                " Research-line cards: read registry/research-lines.yaml (read_resources) and "
+                "check the card against its line (minimum validation, feasibility precheck "
+                "and pass criterion, fee and licence evidence, avoided directions, the "
+                "ledger's earlier rejections); a card of a line whose environment is not "
+                "ready gets hold."
+                if line_ids else ""
+            )
         ),
         input_path=str(packet_path),
         skill_path=ADMISSION_SKILL,
@@ -1156,6 +1242,29 @@ def materialize_admission_decisions(
                 problem = "cost_not_proportionate"
             else:
                 problem = compute_location_problem(settings, card) or ""
+            line = str(card.get("research_line") or "").strip()
+            if not problem and line:
+                environment = environment_status(research_lines_document(paths, settings), line)
+                if environment != ENVIRONMENT_READY:
+                    # Its first research task (the feasibility precheck) could not run:
+                    # hold until the line's environment is ready, whatever the verdict.
+                    reason = f"research_line_environment_not_ready:{line}:{environment}"
+                    if status == "proposed":
+                        reject_topic(
+                            ledger, topic_id, db=db, reason="admission_hold",
+                            decided_by=review_task_id, evidence=evidence,
+                            reopen_conditions=[
+                                *(admission.get("reopen_conditions") or []),
+                                {"type": "line_environment_ready",
+                                 "description": (
+                                     f"research line {line} has environment status ready in "
+                                     f"registry/research-lines.yaml (was {environment})"
+                                 )},
+                            ],
+                            admission={**summary, "control_plane_hold": reason},
+                        )
+                    note("held", reason)
+                    continue
             if problem:
                 if status == "proposed":
                     reject_topic(ledger, topic_id, db=db, reason=problem,
@@ -1252,6 +1361,11 @@ def _research_state(
         "card_sha256": record.get("card_sha256"),
         "reusable_assets": card.get("reusable_assets") or [],
         "question": card.get("question"),
+        **{
+            key: card.get(key)
+            for key in ("research_line", "feasibility_precheck", "license_check", "fee_check")
+            if card.get(key) is not None
+        },
     }
 
 
@@ -1296,6 +1410,14 @@ def materialize_waiting_topics(
             + " The admitted topic, its pre-registered primary endpoint (hash-bound), target "
             "tier, routine fallback venues and cost budget are in research_state.json; run the "
             "pre-registered analysis first and apply its stop rule honestly."
+            + (
+                " Before that, run the card's feasibility_precheck (research_state.json) as the "
+                "first task and nothing else; if it misses its pass criterion, return gate_result "
+                "{promotion_decision: freeze, freeze_reason_class: feasibility_precheck_failed} "
+                "with the precheck evidence. Follow the research line's SOP and environment "
+                "in registry/research-lines.yaml."
+                if isinstance(card.get("feasibility_precheck"), Mapping) else ""
+            )
         ).strip()
         campaign_id, first_task = materialize_candidate(
             db,
@@ -1444,7 +1566,9 @@ def run_program_pipeline(
         )
         report.enqueued.extend(str(item.task_id) for item in scheduled)
         info["scouts_scheduled"] = [
-            {"task_id": item.task_id, "domain": item.domain} for item in scheduled
+            {"task_id": item.task_id, "domain": item.domain,
+             **({"research_line": item.research_line} if item.research_line else {})}
+            for item in scheduled
         ]
         info["scout_blocked"] = blocked
         info["scouts_in_flight"] = len(_program_tasks(

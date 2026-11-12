@@ -113,6 +113,7 @@ class WorkspacePaths:
 
 DEFAULT_TOPIC_LEDGER_PATH = "registry/topic-ledger.json"
 DEFAULT_ASSET_INDEX_PATH = "registry/reusable-assets.json"
+DEFAULT_RESEARCH_LINES_PATH = "registry/research-lines.yaml"
 
 
 DEFAULT_GIT_MESSAGE = "{action}: {paper_id} v{version}"
@@ -162,6 +163,14 @@ class ProgramSettings:
     # Domains taking part in scout rotation, in preference order; empty means
     # every domain that has an active program project.
     domains: tuple[str, ...] = ()
+    # Research lines taking part in scout rotation, in preference order. When set,
+    # only program projects whose ``research_line`` is listed are scouted (rotation,
+    # per-line interval and load are kept per line); projects without a line keep
+    # their admissions and campaigns but get no new scouts. Empty: rotate by domain.
+    research_lines: tuple[str, ...] = ()
+    # Direction file (relative to the data repository root): line definitions read
+    # by scouts and the admission gate, and each line's environment status.
+    research_lines_path: str = DEFAULT_RESEARCH_LINES_PATH
     # Calendar limit from admission to review ``ready``; past it the topic gets
     # one direction decision (it is not frozen outright).
     max_days_from_admission_to_ready: float = 28.0
@@ -687,16 +696,16 @@ def _nonnegative_float(value: Any, default: float) -> float:
     return parsed if parsed >= 0 else default
 
 
-def _domain_list(value: Any) -> tuple[str, ...]:
+def _domain_list(value: Any, key: str = "domains") -> tuple[str, ...]:
     if value is None:
         return ()
     if not isinstance(value, (list, tuple)):
-        raise ValueError("[program].domains must be an array of domain names")
+        raise ValueError(f"[program].{key} must be an array of names")
     result: list[str] = []
     for item in value:
         text = str(item or "").strip()
         if not text:
-            raise ValueError("[program].domains entries must be non-empty strings")
+            raise ValueError(f"[program].{key} entries must be non-empty strings")
         if text not in result:
             result.append(text)
     return tuple(result)
@@ -724,6 +733,11 @@ def load_program_settings(payload: Any) -> ProgramSettings:
             program.get("asset_index_path"), DEFAULT_ASSET_INDEX_PATH, "asset_index_path"
         ),
         domains=_domain_list(program.get("domains")),
+        research_lines=_domain_list(program.get("research_lines"), "research_lines"),
+        research_lines_path=_relative_data_path(
+            program.get("research_lines_path"), DEFAULT_RESEARCH_LINES_PATH,
+            "research_lines_path",
+        ),
         max_days_from_admission_to_ready=_positive_float(
             program.get("max_days_from_admission_to_ready"), 28.0
         ),

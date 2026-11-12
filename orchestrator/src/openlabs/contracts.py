@@ -588,13 +588,27 @@ TOPIC_CARD_SCHEMA = "openlabs.topic_card.v1"
 TOPIC_TIERS = frozenset({"routine", "escalation"})
 ADMISSION_VERDICTS = frozenset({"admit", "reject", "hold"})
 REOPEN_BASIS_TYPES = frozenset(
-    {"new_data_source", "new_method", "venue_policy_change", "external_result"}
+    {
+        "new_data_source",
+        "new_method",
+        "venue_policy_change",
+        "external_result",
+        # The card's research line got a ready environment (registry/research-lines.yaml).
+        "line_environment_ready",
+    }
 )
 PRIMARY_ENDPOINT_FIELDS = ("metric", "matched_baseline", "split", "decision_rule", "stop_rule")
 COST_ESTIMATE_FIELDS = ("agent_seconds", "tokens", "gpu_hours", "calendar_days")
 # Where a topic's experiments run (AGENTS.md, "Where computation runs").
 COMPUTE_LOCATIONS = ("container_cpu", "container_gpu", "ailab", "wsl_math")
 AUDIENCE_RECENT_YEARS = 3
+# Research-line cards (``research_line`` set): fee evidence levels as in
+# registry/research-lines.yaml, and what a licence item may be.
+FEE_EVIDENCE_LEVELS = ("verified_journal", "verified_publisher", "secondary", "unverified")
+VERIFIED_FEE_LEVELS = frozenset({"verified_journal", "verified_publisher"})
+FEE_CHARGE_FIELDS = ("page_charges", "colour_charges", "submission_fee")
+LICENSE_ITEM_KINDS = ("software", "weights", "data")
+PRECHECK_FIELDS = ("description", "pass_criterion", "budget")
 
 
 def _normalized_name(value: Any) -> str:
@@ -779,6 +793,9 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
     ):
         errors.append("ledger_check.compared_topic_ids must be an array")
 
+    if card.get("research_line") is not None:
+        errors.extend(research_line_card_errors(card, venues))
+
     tier = card.get("target_tier")
     if tier is not None and tier not in TOPIC_TIERS:
         errors.append("target_tier must be routine or escalation")
@@ -793,6 +810,95 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
         ):
             errors.append("reopen_basis needs a type and a description")
     return ValidationResult(not errors, tuple(errors))
+
+
+def research_line_card_errors(card: Mapping[str, Any], venues: Mapping[str, Any]) -> list[str]:
+    """Fields a research-line card adds: the decisive precheck, licences and fees.
+
+    ``feasibility_precheck`` is the cheap decisive analysis run first after
+    admission (failure freezes the topic); ``license_check`` covers every
+    software package, model weight and dataset; ``fee_check`` covers page,
+    colour and submission charges of every routine venue, and at least one
+    routine venue must have a verified fee-free route.
+    """
+
+    errors: list[str] = []
+    if not _text(card.get("research_line")):
+        errors.append("research_line must name a line of registry/research-lines.yaml")
+    precheck = card.get("feasibility_precheck")
+    if not isinstance(precheck, Mapping):
+        errors.append(
+            "feasibility_precheck is missing (description, pass_criterion, budget, "
+            "on_failure: freeze)"
+        )
+    else:
+        for name in PRECHECK_FIELDS:
+            if not _text(precheck.get(name)):
+                errors.append(f"feasibility_precheck.{name} is missing")
+        if _text(precheck.get("on_failure")) != "freeze":
+            errors.append("feasibility_precheck.on_failure must be freeze")
+    licenses = card.get("license_check")
+    if not isinstance(licenses, Mapping):
+        errors.append("license_check is missing (items, blacklist_checked)")
+    else:
+        items = licenses.get("items")
+        if not isinstance(items, list) or not items:
+            errors.append("license_check.items must list every software, weight and dataset used")
+            items = []
+        for index, item in enumerate(items):
+            prefix = f"license_check.items[{index}]"
+            if not isinstance(item, Mapping):
+                errors.append(f"{prefix} must be an object")
+                continue
+            for name in ("name", "license", "evidence"):
+                if not _text(item.get(name)):
+                    errors.append(f"{prefix}.{name} is missing")
+            if _text(item.get("kind")) not in LICENSE_ITEM_KINDS:
+                errors.append(f"{prefix}.kind must be one of {', '.join(LICENSE_ITEM_KINDS)}")
+            if item.get("allowed") is not True:
+                errors.append(f"{prefix}.allowed must be true (a blocked item cannot be used)")
+        if licenses.get("blacklist_checked") is not True:
+            errors.append("license_check.blacklist_checked must be true")
+    fees = card.get("fee_check")
+    routine = {
+        _normalized_name(item.get("name"))
+        for item in (venues.get("routine") or [])
+        if isinstance(item, Mapping) and _text(item.get("name"))
+    }
+    if not isinstance(fees, list) or not fees:
+        errors.append("fee_check must cover every routine venue")
+        return errors
+    covered: set[str] = set()
+    verified_free = False
+    for index, item in enumerate(fees):
+        prefix = f"fee_check[{index}]"
+        if not isinstance(item, Mapping) or not _text(item.get("venue")):
+            errors.append(f"{prefix}.venue is missing")
+            continue
+        name = _normalized_name(item.get("venue"))
+        covered.add(name)
+        for field_name in (*FEE_CHARGE_FIELDS, "evidence"):
+            if not _text(item.get(field_name)):
+                errors.append(f"{prefix}.{field_name} is missing")
+        level = _text(item.get("evidence_level"))
+        if level not in FEE_EVIDENCE_LEVELS:
+            errors.append(f"{prefix}.evidence_level must be one of {', '.join(FEE_EVIDENCE_LEVELS)}")
+        free = item.get("fee_free_route")
+        if free is False:
+            errors.append(f"{prefix}: a venue with a mandatory fee cannot be a candidate")
+        elif free is not True and free != "unverified":
+            errors.append(f"{prefix}.fee_free_route must be true or \"unverified\"")
+        if free is True and level in VERIFIED_FEE_LEVELS and name in routine:
+            verified_free = True
+    missing = sorted(routine - covered)
+    if missing:
+        errors.append("fee_check does not cover routine venue(s): " + ", ".join(missing))
+    if routine and not verified_free:
+        errors.append(
+            "fee_check needs at least one routine venue with fee_free_route true and "
+            "evidence_level verified_journal or verified_publisher"
+        )
+    return errors
 
 
 def compute_plan_locations(cost_estimate: Any) -> tuple[str, ...]:
@@ -942,6 +1048,8 @@ FREEZE_REASON_CLASSES = frozenset(
         "infrastructure",
         # The hard per-topic Agent-time ceiling was reached.
         "budget_exhausted",
+        # A research-line card's feasibility precheck missed its pass criterion.
+        "feasibility_precheck_failed",
     }
 )
 REVIEW_NEXT_ACTIONS = frozenset(

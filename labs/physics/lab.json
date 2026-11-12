@@ -65,6 +65,7 @@
     {
       "protocol_id": "research-program",
       "primary_skill": "physics-research-loop",
+      "runtime_setup_ids": [],
       "runtime_skills": ["physics-research-loop", "openlabs-empirical-topic-scout", "openlabs-topic-admission", "openlabs-direction-decision"],
       "validator": {
         "command": [

@@ -40,6 +40,7 @@ from typing import Any
 
 from .config import ProgramSettings, WorkspacePaths
 from .contracts import FREEZE_REASON_CLASSES as CONTRACT_FREEZE_REASON_CLASSES
+from .contracts import REOPEN_BASIS_TYPES as CONTRACT_REOPEN_BASIS_TYPES
 from .contracts import atomic_write_json, canonical_json_bytes
 from .db import FactoryDB, utc_now
 
@@ -75,9 +76,8 @@ SLOT_STATUSES = ("admitted", "active", "in_review")
 FREEZABLE_STATUSES = ("active", "in_review")
 # Shared with the direction-decision contract (``contracts.FREEZE_REASON_CLASSES``).
 FREEZE_REASON_CLASSES = CONTRACT_FREEZE_REASON_CLASSES
-REOPEN_CONDITION_TYPES = frozenset(
-    {"new_data_source", "new_method", "venue_policy_change", "external_result"}
-)
+# Shared with the topic-card and admission contracts (``contracts.REOPEN_BASIS_TYPES``).
+REOPEN_CONDITION_TYPES = CONTRACT_REOPEN_BASIS_TYPES
 TOPIC_EVENT_TYPES = {
     "proposed": "topic_proposed",
     "rejected": "topic_rejected",
@@ -796,6 +796,7 @@ def propose_topic(
 _METADATA_FIELDS = frozenset(
     {
         "program_project_id",
+        "research_line",
         "source_task_id",
         "proposer_provider",
         "card_path",

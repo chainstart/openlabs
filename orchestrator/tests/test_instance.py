@@ -11,9 +11,18 @@ from openlabs import engine
 from openlabs.__main__ import main
 from openlabs.config import load_settings, workspace_paths
 from openlabs.db import FactoryDB
-from openlabs.instance import PRESETS, init_instance, render_toml
+from openlabs.instance import (
+    PRESETS,
+    RESEARCH_LINES,
+    InstanceInitError,
+    init_instance,
+    render_toml,
+    with_research_lines,
+)
+from openlabs.projects import load_project
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
+DOMAINS = ["ai", "biology", "materials", "physics", "quant"]
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -45,9 +54,13 @@ def test_dry_run_writes_nothing_and_write_is_idempotent(tmp_path) -> None:
     again = init_instance(paths, name="cc-sg", instance_dir=instance_dir, write=True)
     assert {a["status"] for a in again["actions"]} <= {"exists", "unchanged"}
 
-    # Five program projects (no mathematics), all where only this instance looks.
-    domains = sorted(Path(p).parts[-6] for p in written["projects"])
-    assert domains == ["ai", "biology", "materials", "physics", "quant"]
+    # Five domain projects (no mathematics) and one project per research line, all
+    # where only this instance looks.
+    by_name = {Path(p).parts[-2]: Path(p).parts[-6] for p in written["projects"]}
+    expected = {f"cc-sg-{d}-research-program": d for d in DOMAINS}
+    expected.update({f"cc-sg-{line}-research-program": d for line, d in RESEARCH_LINES})
+    assert by_name == expected
+    assert written["research_lines"] == [line for line, _ in RESEARCH_LINES]
     # A full preset does not overwrite the existing TOML without --update-config.
     full = init_instance(paths, name="cc-sg", instance_dir=instance_dir, preset="full",
                          write=True)
@@ -95,7 +108,10 @@ def test_generated_instance_is_self_consistent_and_isolated(tmp_path, monkeypatc
     report = engine.TickReport()
     bindings = engine._active_project_workstreams(paths, report)
     assert report.errors == []
-    assert len(bindings) == 10 and all(b.project_id.startswith("cc-sg-") for b in bindings)
+    projects = 5 + len(RESEARCH_LINES)
+    assert len(bindings) == 2 * projects
+    assert all(b.project_id.startswith("cc-sg-") for b in bindings)
+    assert settings.program.research_lines == tuple(line for line, _ in RESEARCH_LINES)
     # The default instance (any orchestrator without OPENLABS_INSTANCE) sees none of them.
     for name in environment:
         monkeypatch.delenv(name)
@@ -138,3 +154,63 @@ def test_render_toml_round_trips_nested_tables() -> None:
     document = {"a": 1, "b": {"c": [1, 2], "d": {"e": "x y", "claude-fable-5-2": ["w"]}},
                 "f": {"g": {"h": True}}}
     assert tomllib.loads(render_toml(document, "# header")) == document
+
+
+def test_set_research_lines_migrates_an_existing_instance_in_place(tmp_path) -> None:
+    workspace = _workspace(tmp_path)
+    instance_dir = tmp_path / "instances" / "cc-sg"
+    paths = workspace_paths(workspace)
+    init_instance(paths, name="cc-sg", instance_dir=instance_dir, write=True)
+    config = instance_dir / "openlabs.toml"
+    # An older instance: hand-tuned values, a comment, no research_lines, no line projects.
+    text = config.read_text(encoding="utf-8")
+    text = text.replace("research_lines = ", "# research_lines removed = ")
+    text = text.replace("max_active_topics = 5", "max_active_topics = 8  # tuned")
+    config.write_text(text, encoding="utf-8")
+    for line, domain in RESEARCH_LINES:
+        project = (paths.data / "workspaces" / domain / "instances" / "cc-sg" / "projects"
+                   / f"cc-sg-{line}-research-program")
+        for child in project.iterdir():
+            child.unlink()
+        project.rmdir()
+    ledger = paths.data / "registry" / "instances" / "cc-sg" / "topic-ledger.json"
+    ledger.write_text('{"schema_version": "x", "topics": [{"topic_id": "keep"}]}\n')
+    before = ledger.read_bytes()
+
+    dry = init_instance(paths, name="cc-sg", instance_dir=instance_dir, set_research_lines=True)
+    statuses = {Path(a["path"]).name: a["status"] for a in dry["actions"]}
+    assert statuses["openlabs.toml"] == "update" and statuses["topic-ledger.json"] == "differs"
+    assert config.read_text(encoding="utf-8") == text  # dry run
+
+    done = init_instance(paths, name="cc-sg", instance_dir=instance_dir, write=True,
+                         set_research_lines=True)
+    created = [a["path"] for a in done["actions"] if a["status"] == "create"]
+    assert len([p for p in created if p.endswith("project.json")]) == len(RESEARCH_LINES)
+    migrated = config.read_text(encoding="utf-8")
+    assert "max_active_topics = 8  # tuned" in migrated
+    assert tomllib.loads(migrated)["program"]["research_lines"] == [
+        line for line, _ in RESEARCH_LINES]
+    assert list(instance_dir.glob("openlabs.toml.*.bak"))
+    assert ledger.read_bytes() == before
+    project = load_project(
+        paths.data / "workspaces" / "physics" / "instances" / "cc-sg" / "projects"
+        / "cc-sg-astro-survey-photometry-research-program" / "project.json")
+    assert project.research_line == "astro-survey-photometry" and project.program
+    again = init_instance(paths, name="cc-sg", instance_dir=instance_dir, write=True,
+                          set_research_lines=True)
+    assert {Path(a["path"]).name: a["status"] for a in again["actions"]}["openlabs.toml"] == (
+        "unchanged")
+    with pytest.raises(InstanceInitError):
+        init_instance(paths, name="cc-sg", instance_dir=instance_dir, update_config=True,
+                      set_research_lines=True)
+
+
+def test_with_research_lines_replaces_only_that_key() -> None:
+    text = "[program]\nenabled = true\ndomains = [\"ai\"]\n\n[budget]\nx = 1\n"
+    once = with_research_lines(text, ["a"])
+    assert once.splitlines()[3] == 'research_lines = ["a"]'
+    twice = with_research_lines(once, ["b", "c"])
+    assert tomllib.loads(twice)["program"]["research_lines"] == ["b", "c"]
+    assert tomllib.loads(twice)["budget"] == {"x": 1}
+    with pytest.raises(InstanceInitError):
+        with_research_lines("[budget]\nx = 1\n", ["a"])

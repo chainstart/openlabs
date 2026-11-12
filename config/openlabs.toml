@@ -81,6 +81,14 @@ asset_index_path = "registry/reusable-assets.json"
 # Domains in scout rotation, in preference order; empty = every domain with an
 # active program project (project.json with "program": true).
 domains = []
+# Research lines in scout rotation, in preference order (owner direction
+# 2026-11-12: scout by research line, not by lab). When set, only program
+# projects with a matching "research_line" are scouted, keyed per line; domain
+# projects keep their admissions and campaigns. Empty = rotate by domain.
+research_lines = []
+# Direction file read by scouts and the admission gate; an admitted card of a
+# line whose environment.status is not "ready" is held until it is.
+research_lines_path = "registry/research-lines.yaml"
 # Calendar limit from admission to a review-ready manuscript. Past it the topic
 # gets one direction decision (lead tier, other model family); it is not frozen
 # outright.

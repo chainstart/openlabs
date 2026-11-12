@@ -1,0 +1,130 @@
+{
+  "schema_version": "openlabs.topic_card.v1",
+  "research_line": "astro-survey-photometry",
+  "question": "Example: what are the mass-ratio and fill-out distributions of a homogeneous sample of totally eclipsing contact binaries without published light-curve solutions?",
+  "audience": {
+    "who": "Observers and modellers of W UMa-type contact binaries.",
+    "citations": [
+      {
+        "citation": "Example A et al. Photometric solutions of contact binaries.",
+        "year": 2025,
+        "venue": "New Astronomy"
+      },
+      {
+        "citation": "Example B et al. Low-mass-ratio contact binaries from TESS.",
+        "year": 2025,
+        "venue": "Research in Astronomy and Astrophysics"
+      }
+    ]
+  },
+  "closest_prior_work": [
+    {
+      "citation": "Example A et al. (2025).",
+      "what_it_shows": "Solutions for a different sample of nine systems.",
+      "our_difference": "A homogeneous, larger sample with one pipeline, MCMC uncertainties and a Gaia luminosity check."
+    }
+  ],
+  "decisive_analysis": {
+    "description": "Light-curve solutions of the sample with posterior uncertainties.",
+    "data_access_verified": true,
+    "access_receipt": {
+      "path": "receipts/data-access.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "feasibility_precheck": {
+    "description": "Reproduce the published solution (q, i, fill-out) of one comparable totally eclipsing system from the same public TESS light curve with the line's pipeline.",
+    "pass_criterion": "q, i and fill-out each within the published 1-sigma uncertainties (or within 2 sigma of the combined uncertainty)",
+    "budget": "4 agent hours, 2 container CPU hours",
+    "on_failure": "freeze"
+  },
+  "primary_endpoint": {
+    "metric": "posterior median q and fill-out per target with 68% intervals",
+    "matched_baseline": "published solutions of overlapping targets",
+    "split": "targets with published solutions held out as a check",
+    "decision_rule": "sample statistics reported only if all held-out checks agree within 2 sigma",
+    "stop_rule": "stop if more than one held-out check disagrees"
+  },
+  "data_sources": [
+    {
+      "url": "https://archive.stsci.edu/missions-and-data/tess",
+      "version": "TESS sectors as retrieved (record in receipt)",
+      "license": "public archive data; cite per MAST acknowledgement"
+    }
+  ],
+  "computational_only": true,
+  "computational_only_rationale": "Re-analysis of public survey photometry; no observing time or real-world interaction.",
+  "venues": {
+    "routine": [
+      {
+        "name": "Research in Astronomy and Astrophysics"
+      },
+      {
+        "name": "New Astronomy"
+      }
+    ],
+    "escalation": null
+  },
+  "fee_check": [
+    {
+      "venue": "Research in Astronomy and Astrophysics",
+      "page_charges": "unverified",
+      "colour_charges": "unverified",
+      "submission_fee": "unverified",
+      "fee_free_route": "unverified",
+      "evidence_level": "unverified",
+      "evidence": "registry/research-lines.yaml (survey 1.9, 8.5)"
+    },
+    {
+      "venue": "New Astronomy",
+      "page_charges": "none on the subscription route",
+      "colour_charges": "none online",
+      "submission_fee": "none",
+      "fee_free_route": true,
+      "evidence_level": "verified_publisher",
+      "evidence": "registry/research-lines.yaml (Elsevier hybrid policy, survey F3)"
+    }
+  ],
+  "license_check": {
+    "items": [
+      {
+        "name": "PHOEBE 2",
+        "kind": "software",
+        "license": "record from the installed package",
+        "evidence": "registry/research-lines.yaml",
+        "allowed": true
+      },
+      {
+        "name": "TESS light curves (MAST)",
+        "kind": "data",
+        "license": "public; MAST acknowledgement",
+        "evidence": "registry/research-lines.yaml",
+        "allowed": true
+      }
+    ],
+    "blacklist_checked": true
+  },
+  "cost_estimate": {
+    "agent_seconds": 21600,
+    "tokens": 1500000,
+    "gpu_hours": 0,
+    "calendar_days": 5,
+    "basis": "Example: per-target solve measured in the line's validation baseline.",
+    "compute_plan": {
+      "locations": [
+        "container_cpu",
+        "ailab"
+      ],
+      "ailab": {
+        "cpus": 8,
+        "memory_mib": 16000,
+        "hours": 6
+      }
+    }
+  },
+  "reusable_assets": [],
+  "ledger_check": {
+    "compared_topic_ids": []
+  },
+  "target_tier": "routine"
+}
