@@ -27,7 +27,8 @@ keep internal review negotiation and claims about editor approval outside the pa
    manuscript does not build, the registration or an evidence/data hash binding is broken, the
    target violates the venue policy, a declared source points at a missing bibliography key, or
    the editor-facing rewrite pass has not run once for this target. Style, AI-declaration,
-   abstract-format, unused-source and support-record findings are recorded as
+   abstract-format, unused-source, support-record and unpackaged claim-evidence-map
+   (no Zenodo draft of the current version yet) findings are recorded as
    `preparation_advisories`; they are enforced at the delivery exit (handoff and Zenodo
    release), not here, so a formal slip never costs a scientific round.
 2. Independent target-venue editor: contribution, closest prior work, readership, strongest

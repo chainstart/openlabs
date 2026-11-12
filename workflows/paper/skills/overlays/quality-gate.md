@@ -196,9 +196,13 @@ most once over the chain. Disclose whether validation was reused, incremental or
 
 ## Publication stays outside the gate
 
-The gate never uploads files or publishes. Prepare the Zenodo draft before final review
-(`zenodo prepare`, `zenodo verify-draft`), cite the reserved DOI neutrally, rebuild, then review
-that snapshot; the gate records the support package hash. Uploads are code-first
+The gate never uploads files or publishes. A review does not need a Zenodo draft of the current
+version: a selected claim-evidence map in `support.publication.source_files` is read from the
+registered source (bound by `support_sources_sha256`; `SUPPORT-CLAIM-MAP-UNPACKAGED` advisory
+when it is not yet in the current-version ZIP), and the delivery exit requires it packaged. Before
+delivery run `zenodo prepare` (`zenodo verify-draft`), cite the reserved DOI neutrally (through
+`references.bib` or `\url{https://doi.org/...}`), rebuild and rerun the review (a DOI/version-only
+change is a delta review); the decision records the support package hash. Uploads are code-first
 (`docs/ZENODO_GUIDE.md`, `support_publication.package_policy`): a missing unique input is not a
 removable intermediate. After a passing gate, `zenodo release` runs under the standing
 production authorization with its production and exact-paper confirmations and revalidates

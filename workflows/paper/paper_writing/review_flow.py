@@ -649,7 +649,8 @@ def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
     eligibility) and a declared source routed to an absent bibliography key.
     Presentation and preparation findings (internal vocabulary, AI-declaration
     wording, abstract length/person, TODO markers, unused source files,
-    support-record identifiers and the pre-review Zenodo draft) are returned as
+    support-record identifiers, the pre-review Zenodo draft and a selected
+    claim-evidence map not yet in the current-version support ZIP) are returned as
     ``preparation_advisories``: they never fail the preflight, and the delivery exit
     enforces them (see ``delivery_blockers``). Registered passage selectors and
     local evidence files that no longer match are advisories too; nothing uses them
@@ -714,7 +715,7 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
     blockers.extend(support_blockers)
     advisories.extend(support_advice)
     try:
-        claim_maps = selected_claim_evidence_maps(metadata, root)
+        claim_maps = selected_claim_evidence_maps(metadata, root, advisories)
     except ValueError as exc:
         blockers.append(f"Selected support claim-evidence map: {exc}")
         claim_maps = []
@@ -1238,9 +1239,40 @@ def editor_schema_for_policy(history_policy: Mapping[str, Any] | None) -> dict[s
     return schema
 
 
-def selected_claim_evidence_maps(metadata: Mapping[str, Any], root: Path) -> list[dict[str, Any]]:
-    """Use only explicitly selected sources bound to the current verified archive."""
-    from paper_writing.support import SupportPackageError, _archive_relative_path, verify_support_archive
+CLAIM_MAP_UNPACKAGED_CODE = "SUPPORT-CLAIM-MAP-UNPACKAGED"
+CLAIM_MAP_PACKAGE_MISMATCH_CODE = "SUPPORT-CLAIM-MAP-PACKAGE-MISMATCH"
+
+
+class ClaimMapUnpackaged(ValueError):
+    """A selected claim map is not (yet) in a support ZIP built for the current version.
+
+    At the review entry this is a preparation advisory: the map's bytes are bound by
+    ``support_sources_sha256`` instead. The delivery exit requires the package.
+    """
+
+
+class ClaimMapPackageMismatch(ValueError):
+    """The current-version support ZIP holds different bytes for a selected claim map."""
+
+
+def selected_claim_evidence_maps(metadata: Mapping[str, Any], root: Path,
+                                 advisories: list[dict[str, Any]] | None = None, *,
+                                 require_package: bool = False) -> list[dict[str, Any]]:
+    """Read the explicitly selected claim-evidence maps of the registered support sources.
+
+    A map must be listed in ``support.publication.source_files``; that list's file
+    names and bytes are hashed into ``support_sources_sha256``, which the decision
+    record binds and ``apply_decision`` re-checks, so the review needs no packaged
+    copy. When the one registered support ZIP was built for the current version,
+    the map must be in it byte for byte (otherwise the review stops). When no ZIP
+    is registered, the registered ZIP was built for another version, or the
+    current ZIP lacks the map, the review reads the registered source file and an
+    ``SUPPORT-CLAIM-MAP-UNPACKAGED`` preparation advisory is appended to
+    ``advisories``; with ``require_package`` (the delivery exit) this raises
+    :class:`ClaimMapUnpackaged` instead.
+    """
+    from paper_writing.support import (SupportPackageError, _archive_relative_path, _record_version,
+                                       resolve_support_sources, verify_support_archive)
 
     publication = ((metadata.get('support') or {}).get('publication') or {})
     files = publication.get('source_files') or []
@@ -1266,40 +1298,96 @@ def selected_claim_evidence_maps(metadata: Mapping[str, Any], root: Path) -> lis
             raise ValueError(f'Registered claim-map source or archive is missing: {value}')
         return path
 
+    def read_map(value: str, path: Path) -> bytes:
+        if path.stat().st_size > 2_000_000:
+            raise ValueError('Selected claim-evidence map exceeds the text input size limit')
+        return path.read_bytes()
+
     paths = [(value, safe_file(value)) for value in selected]
     packages = [*(publication.get('package_files') or []), *(publication.get('verification_files') or [])]
     archives = [value for value in packages if isinstance(value, str) and Path(value).suffix.casefold() == '.zip']
-    if len(archives) != 1:
+    if len(archives) > 1:
         raise ValueError('Selected claim map requires the one registered current support ZIP')
-    archive = safe_file(archives[0])
-    expected = publication.get('package_sha256')
-    if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected):
-        raise ValueError('Selected claim map requires the current support ZIP SHA256 binding')
-    try:
-        verified = verify_support_archive(archive)
-    except SupportPackageError as exc:
-        raise ValueError(f'Current support archive verification failed: {exc}') from exc
-    if verified['archive_sha256'] != expected:
-        raise ValueError('Current support archive SHA256 changed')
-    if verified['paper_id'] != metadata.get('paper_id'):
-        raise ValueError('Current support archive belongs to another paper')
+    current_version = _record_version(metadata)
+    verified = None
+    expected = None
+    if archives:
+        archive = safe_file(archives[0])
+        expected = publication.get('package_sha256')
+        if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected):
+            raise ValueError('Selected claim map requires the current support ZIP SHA256 binding')
+        try:
+            verified = verify_support_archive(archive)
+        except SupportPackageError as exc:
+            raise ValueError(f'Current support archive verification failed: {exc}') from exc
+        if verified['archive_sha256'] != expected:
+            raise ValueError('Current support archive SHA256 changed')
+        if verified['paper_id'] != metadata.get('paper_id'):
+            raise ValueError('Current support archive belongs to another paper')
+        if str(verified.get('paper_version') or '') != current_version:
+            stale = (f"the registered support ZIP was built for version "
+                     f"{verified.get('paper_version')!r}, not the current {current_version!r}")
+            verified = None
+        else:
+            stale = 'the current support ZIP does not contain this file'
+    else:
+        stale = 'no support ZIP is registered (support.publication.package_files)'
+
+    covered: set[str] | None = None
     result = []
     for value, path in paths:
-        member_relative = _archive_relative_path(path, base, str(metadata['paper_id']))
-        entries = [entry for entry in verified['files']
-                   if str(entry.get('archive_path') or '').endswith('/' + member_relative)]
-        if len(entries) != 1:
-            raise ValueError(f'Selected claim map lacks a unique current archive binding: {value}')
-        entry = entries[0]
-        if path.stat().st_size > 2_000_000:
-            raise ValueError('Selected claim-evidence map exceeds the text input size limit')
-        content = path.read_bytes()
-        if entry['size'] != len(content) or entry['sha256'] != _sha256(content):
-            raise ValueError(f'Selected claim map bytes differ from the current support ZIP: {value}')
-        result.append({'source': value, 'sha256': entry['sha256'],
-                       'archive': archives[0], 'archive_sha256': expected,
-                       'archive_member': entry['archive_path'], 'text': content.decode('utf-8', errors='replace')})
+        entries = []
+        if verified is not None:
+            member_relative = _archive_relative_path(path, base, str(metadata['paper_id']))
+            entries = [entry for entry in verified['files']
+                       if str(entry.get('archive_path') or '').endswith('/' + member_relative)]
+            if len(entries) > 1:
+                raise ValueError(f'Selected claim map lacks a unique current archive binding: {value}')
+        if entries:
+            entry = entries[0]
+            content = read_map(value, path)
+            if entry['size'] != len(content) or entry['sha256'] != _sha256(content):
+                raise ClaimMapPackageMismatch(
+                    f'Selected claim map bytes differ from the current support ZIP: {value}')
+            result.append({'source': value, 'sha256': entry['sha256'],
+                           'archive': archives[0], 'archive_sha256': expected,
+                           'archive_member': entry['archive_path'],
+                           'text': content.decode('utf-8', errors='replace')})
+            continue
+        if require_package:
+            raise ClaimMapUnpackaged(f'Selected claim map {value} is not in the current support package: '
+                                     f'{stale}; run `zenodo prepare`')
+        # Unpackaged: the map is bound through the registered source set instead,
+        # so it must be one of the files that support_sources_sha256 covers.
+        if covered is None:
+            try:
+                covered = {item.relative_to(base).as_posix()
+                           for item in resolve_support_sources(metadata, repo_root=base)}
+            except (SupportPackageError, ValueError) as exc:
+                raise ValueError(f'Selected claim map {value} cannot be bound to the registered support '
+                                 f'sources (support.publication.source_files): {exc}') from exc
+        if value not in covered:
+            raise ValueError(f'Selected claim map {value} is not among the registered support sources '
+                             '(support.publication.source_files) covered by support_sources_sha256; '
+                             'without a current support ZIP it would be unbound')
+        content = read_map(value, path)
+        digest = _sha256(content)
+        result.append({'source': value, 'sha256': digest, 'archive': None, 'archive_sha256': None,
+                       'archive_member': None, 'binding': 'support_sources_sha256',
+                       'text': content.decode('utf-8', errors='replace')})
+        if advisories is not None:
+            advisories.append(_preparation_advisory(
+                "review_flow", CLAIM_MAP_UNPACKAGED_CODE,
+                f"Claim-evidence map {value} is not yet packaged in the support ZIP of the current version "
+                f"({stale}). The review reads the registered source file (sha256 {digest}), bound by "
+                "support_sources_sha256; run `zenodo prepare` before delivery.",
+                location=value))
     return result
+
+
+def claim_map_provenance(maps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """What the decision record keeps about each reviewed claim map (no text)."""
+    return [{key: value for key, value in item.items() if key != 'text'} for item in maps]
 
 
 def _claim_map_text(maps: list[dict[str, Any]]) -> str:
@@ -1689,8 +1777,8 @@ def stalled_signal(rounds: list[Mapping[str, Any]], referees: Mapping[str, Mappi
 # A manuscript that already passed may change afterwards only in ways that leave
 # its scientific content where the referees saw it. The rule is deliberately
 # simple and conservative; any doubt sends the paper to a full review.
-DELTA_RULE = ("Reuse the last ready full review only when, after removing comments and layout "
-              "commands, the title, abstract, introduction, theorem-like statements, every table, every "
+DELTA_RULE = ("Reuse the last ready full review only when, after removing comments, layout "
+              "commands and DOI/version identifiers inside an inline reference list, the title, abstract, introduction, theorem-like statements, every table, every "
               "results/evaluation/discussion/conclusion section and the multiset of numbers in the "
               "document bodies are identical, and at most {fraction:.0%} of lines changed. Figure image "
               "files are not compared. The mandatory reference/core verification always reruns.")
@@ -1707,6 +1795,13 @@ _DELTA_LAYOUT = re.compile(r"\\(?:includegraphics|label|ref|cref|Cref|eqref|auto
 _DELTA_DIMENSION = re.compile(r"(?<==)\s*[-+]?\d*\.?\d+\s*(?:pt|mm|cm|in|em|ex|bp|\\(?:text|line|column)width|"
                               r"\\(?:text|paper)height)\b")
 _DELTA_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+# After `zenodo prepare` an inline reference list (thebibliography) gains the new
+# support Version DOI and version; such identifiers are not scientific content
+# (the mandatory reference verification reruns). Everything else in it still counts.
+_DELTA_BIBLIOGRAPHY = re.compile(r"\\begin\{thebibliography\}.*?\\end\{thebibliography\}", re.S)
+_DELTA_REFERENCE_IDENTIFIER = re.compile(
+    r"(?:\bdoi:\s*|https?://(?:dx\.)?doi\.org/)?\b10\.\d{4,9}/[^\s{}]+"
+    r"|\b[Vv]ersion\s*v?\d+(?:\.\d+)*\b|\bv\d+(?:\.\d+)+\b")
 
 
 def _norm(text: str) -> str:
@@ -1716,6 +1811,7 @@ def _norm(text: str) -> str:
 def substantive_parts(expanded: str) -> dict[str, Any]:
     """The parts of an expanded manuscript whose change requires a full review."""
     text = re.sub(r"(?<!\\)%[^\n]*", "", expanded)
+    text = _DELTA_BIBLIOGRAPHY.sub(lambda m: _DELTA_REFERENCE_IDENTIFIER.sub(" ", m.group(0)), text)
     numeric = dict(re.findall(r"\\(?:newcommand|renewcommand|providecommand)\s*\{\\([A-Za-z]+)\}"
                               r"\s*\{([-+0-9.,]+)\}", text))
     head = front_matter(text)
@@ -1944,6 +2040,9 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     # Presentation/preparation findings: reported with the review, never a reason
     # for preflight_failed, enforced at the delivery exit (``delivery_blockers``).
     record["preparation_advisories"] = list(pre.get("preparation_advisories", []))
+    if pre.get("support_claim_evidence_maps"):
+        # Unpackaged maps are bound by fingerprints.support_sources_sha256 only.
+        record["support_claim_evidence_maps"] = claim_map_provenance(pre["support_claim_evidence_maps"])
     record["build_inputs"] = list(pre.get("build_inputs", []))
     if pre["blockers"]:
         record |= {"stage_reached": "preflight", "merged": {"outcome": "preflight_failed",
@@ -2173,6 +2272,7 @@ def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
     problems += [{"source": "editorial_rewrite", "code": "ABSTRACT-VENUE-FORMAT", "location": "",
                   "message": str(p), "text": f"Venue abstract format: {p}"}
                  for p in abstract_findings(metadata, root, paper_id)]
+    problems += claim_map_delivery_issues(metadata, root)
     if record is not None:
         used = record.get("build_inputs")
         manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
@@ -2189,6 +2289,38 @@ def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
         # Decisions written before build_inputs existed were made by a preflight that
         # still rejected unused source files, and their snapshot is bound: nothing to add.
     return problems
+
+
+def claim_map_delivery_issues(metadata: Mapping[str, Any], root: Path) -> list[dict[str, Any]]:
+    """Delivery exit: every selected claim map must be in the current-version support ZIP.
+
+    The review may read an unpackaged map (``SUPPORT-CLAIM-MAP-UNPACKAGED`` advisory);
+    a delivered paper may not, unless support publication is not required.
+    """
+    from paper_writing import registry
+    from paper_writing.support_policy import effective_publication_mode, publication_policy
+
+    publication = ((metadata.get("support") or {}).get("publication") or {})
+    if not isinstance(publication, Mapping) or not publication.get("source_files"):
+        return []  # no registered support sources, so no selected claim map
+    mode = effective_publication_mode(publication, publication_policy(registry.load_registry_settings(root)))
+    if mode == "not_required":
+        return []
+    try:
+        selected_claim_evidence_maps(metadata, root, require_package=True)
+    except ClaimMapUnpackaged as exc:
+        code = CLAIM_MAP_UNPACKAGED_CODE
+        message = str(exc)
+    except ClaimMapPackageMismatch as exc:
+        code = CLAIM_MAP_PACKAGE_MISMATCH_CODE
+        message = f"{exc}; run `zenodo prepare`"
+    except ValueError as exc:
+        code = "SUPPORT-CLAIM-MAP-INVALID"
+        message = str(exc)
+    else:
+        return []
+    return [{"source": "review_flow", "code": code, "location": "support.publication.source_files",
+             "message": message, "text": f"Support claim-evidence map: {message}"}]
 
 
 def stale_route_notes(metadata: Mapping[str, Any], root: Path) -> list[dict[str, Any]]:

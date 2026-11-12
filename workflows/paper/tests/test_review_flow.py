@@ -843,7 +843,7 @@ def _current_claim_map_package(tmp_path):
         for name, content in payload.items():
             package.writestr(name, content)
         package.writestr('p-support-v2/SHA256SUMS', sums)
-    metadata = {'paper_id': 'p', 'support': {'publication': {'source_files': [source],
+    metadata = {'paper_id': 'p', 'version': '2', 'support': {'publication': {'source_files': [source],
                 'package_files': ['current-support.zip'],
                 'package_sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}}}
     canonical = tmp_path / 'papers/p/evidence/claim_evidence_map.md'
@@ -942,6 +942,169 @@ def test_preflight_records_selected_map_failure_before_roles(tmp_path, monkeypat
     # bibliography that the mandatory reference verifier receives.
     assert 'mainref' in pre['bibliography']
     assert 'siref' in pre['bibliography']
+
+
+def _claim_map_preflight(tmp_path, monkeypatch, metadata):
+    from paper_writing import manuscript_style, operations, support_citations, journal_history
+
+    metadata.update(target_journal='J', target_journal_fit={'status': 'approved'})
+    manuscript = tmp_path / 'papers/p/manuscript'
+    manuscript.mkdir(parents=True, exist_ok=True)
+    (manuscript / 'main.tex').write_text(
+        r'\begin{thebibliography}{9}\bibitem{mainref}Main reference.\end{thebibliography}')
+    pdf = tmp_path / 'built.pdf'
+    pdf.write_bytes(b'fixture PDF')
+    monkeypatch.setattr(flow, 'load_registry', lambda *args, **kwargs: None)
+    monkeypatch.setattr(journal_history, 'guard_target', lambda *args, **kwargs: None)
+    monkeypatch.setattr(flow, 'load_paper_metadata', lambda *args, **kwargs: metadata)
+    monkeypatch.setattr(flow, '_build', lambda *args, **kwargs: (pdf, {'main.tex'}))
+    monkeypatch.setattr(manuscript_style, 'audit_manuscript_style', lambda *args, **kwargs: {})
+    monkeypatch.setattr(support_citations, 'audit_manuscript_support', lambda *args, **kwargs: {})
+    monkeypatch.setattr(operations, '_review_workspace_fingerprints', lambda *args: {})
+    return flow.preflight('p', tmp_path, tmp_path / 'build')
+
+
+def _unpackaged_advisories(pre):
+    return [a for a in pre['preparation_advisories'] if a['code'] == 'SUPPORT-CLAIM-MAP-UNPACKAGED']
+
+
+def test_review_reads_unpackaged_claim_map_from_registered_source(tmp_path, monkeypatch):
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    publication = metadata['support']['publication']
+    del publication['package_files'], publication['package_sha256']  # no Zenodo draft yet
+    path.write_text('Revised map for the new manuscript version.\n')
+    pre = _claim_map_preflight(tmp_path, monkeypatch, metadata)
+    assert not any('claim-evidence map' in b for b in pre['blockers'])
+    [item] = pre['support_claim_evidence_maps']
+    assert item['archive'] is None and item['archive_member'] is None
+    assert item['sha256'] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert item['binding'] == 'support_sources_sha256'
+    [advice] = _unpackaged_advisories(pre)
+    assert advice['kind'] == 'preparation' and advice['location'] == item['source']
+    assert 'zenodo prepare' in advice['message'] and 'no support ZIP is registered' in advice['message']
+    # Role packets work with an unpackaged map and embed the current source text.
+    for packet in (flow.editor_packet(pre, []), flow.referee_packet(pre, tmp_path, None)):
+        assert 'Revised map for the new manuscript version.' in packet
+        assert canonical.read_text() not in packet and item['sha256'] in packet
+    assert flow.claim_map_provenance(pre['support_claim_evidence_maps']) == [
+        {k: v for k, v in item.items() if k != 'text'}]
+
+
+def test_claim_map_in_zip_of_another_version_is_advisory(tmp_path, monkeypatch):
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    metadata['version'] = '3'  # manuscript moved on; the registered ZIP is for version 2
+    path.write_text('Map revised for version 3.\n')
+    pre = _claim_map_preflight(tmp_path, monkeypatch, metadata)
+    assert not any('claim-evidence map' in b for b in pre['blockers'])
+    assert pre['support_claim_evidence_maps'][0]['archive'] is None
+    [advice] = _unpackaged_advisories(pre)
+    assert "built for version '2'" in advice['message']
+
+
+def test_current_zip_without_the_map_is_advisory(tmp_path, monkeypatch):
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    moved = 'papers/p/support-materials/code-first-v3/CLAIM-EVIDENCE.md'
+    (tmp_path / moved).parent.mkdir(parents=True)
+    (tmp_path / moved).write_text(path.read_text())
+    metadata['support']['publication']['source_files'] = [moved]
+    advisories = []
+    [item] = flow.selected_claim_evidence_maps(metadata, tmp_path, advisories)
+    assert item['source'] == moved and item['archive'] is None
+    assert 'does not contain this file' in advisories[0]['message']
+
+
+def test_current_version_zip_with_different_bytes_still_blocks(tmp_path, monkeypatch):
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    path.write_text('Changed after the current-version ZIP was prepared.\n')
+    pre = _claim_map_preflight(tmp_path, monkeypatch, metadata)
+    assert any('Selected support claim-evidence map' in b and 'bytes differ' in b for b in pre['blockers'])
+    assert not _unpackaged_advisories(pre)
+
+
+def test_packaged_claim_map_keeps_archive_binding_without_advisory(tmp_path):
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    advisories = []
+    [item] = flow.selected_claim_evidence_maps(metadata, tmp_path, advisories)
+    assert item['archive'] == 'current-support.zip' and item['archive_member'].endswith('CLAIM-EVIDENCE.md')
+    assert advisories == []
+
+
+def test_unpackaged_claim_map_outside_registered_sources_blocks(tmp_path, monkeypatch):
+    from paper_writing import support
+
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    publication = metadata['support']['publication']
+    del publication['package_files'], publication['package_sha256']
+    other = tmp_path / 'papers/p/support-materials/code-first-v2/README.md'
+    other.write_text('readme')
+    # The hashed source set (support_sources_sha256) does not cover the map.
+    monkeypatch.setattr(support, 'resolve_support_sources', lambda *args, **kwargs: [other])
+    pre = _claim_map_preflight(tmp_path, monkeypatch, metadata)
+    assert any('not among the registered support sources' in b for b in pre['blockers'])
+    assert pre['support_claim_evidence_maps'] == []
+
+
+def test_unpackaged_claim_map_with_unresolvable_sources_blocks(tmp_path):
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    publication = metadata['support']['publication']
+    del publication['package_files'], publication['package_sha256']
+    publication['source_files'].append('papers/p/support-materials/missing-dir')
+    with pytest.raises(ValueError, match='cannot be bound to the registered support sources'):
+        flow.selected_claim_evidence_maps(metadata, tmp_path, [])
+
+
+@pytest.mark.parametrize('state,code', [
+    ('packaged', None), ('no_zip', 'SUPPORT-CLAIM-MAP-UNPACKAGED'),
+    ('other_version', 'SUPPORT-CLAIM-MAP-UNPACKAGED'), ('bytes_differ', 'SUPPORT-CLAIM-MAP-PACKAGE-MISMATCH'),
+    ('unsafe', 'SUPPORT-CLAIM-MAP-INVALID')])
+def test_delivery_exit_requires_the_claim_map_in_the_current_package(tmp_path, monkeypatch, state, code):
+    from paper_writing import registry, release_pipeline
+
+    monkeypatch.setattr(registry, 'load_registry_settings', lambda *args, **kwargs: {})
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    publication = metadata['support']['publication']
+    if state == 'no_zip':
+        del publication['package_files'], publication['package_sha256']
+    elif state == 'other_version':
+        metadata['version'] = '3'
+    elif state == 'bytes_differ':
+        path.write_text('Changed after preparation.\n')
+    elif state == 'unsafe':
+        publication['source_files'] = ['../outside/CLAIM-EVIDENCE.md']
+    issues = flow.claim_map_delivery_issues(metadata, tmp_path)
+    assert [i['code'] for i in issues] == ([code] if code else [])
+    if code in {'SUPPORT-CLAIM-MAP-UNPACKAGED', 'SUPPORT-CLAIM-MAP-PACKAGE-MISMATCH'}:
+        assert code in release_pipeline.PREPARE_CODES and 'zenodo prepare' in issues[0]['text']
+    # Exempt support publication needs no package.
+    publication['mode'] = 'not_required'
+    assert flow.claim_map_delivery_issues(metadata, tmp_path) == []
+
+
+def test_delivery_blockers_include_an_unpackaged_claim_map(tmp_path, monkeypatch):
+    from paper_writing import editorial_rewrite, manuscript_style, registry, support_citations
+
+    metadata, path, archive, canonical = _current_claim_map_package(tmp_path)
+    publication = metadata['support']['publication']
+    del publication['package_files'], publication['package_sha256']
+    monkeypatch.setattr(registry, 'load_registry_settings', lambda *args, **kwargs: {})
+    monkeypatch.setattr(manuscript_style, 'audit_manuscript_style', lambda *args, **kwargs: {'errors': []})
+    monkeypatch.setattr(support_citations, 'audit_manuscript_support', lambda *args, **kwargs: {'errors': []})
+    monkeypatch.setattr(editorial_rewrite, 'abstract_findings', lambda *args: [])
+    blockers = flow.delivery_blockers('p', metadata, tmp_path)
+    assert len(blockers) == 1 and 'not in the current support package' in blockers[0]
+
+
+def test_decision_record_keeps_claim_map_provenance(tmp_path, monkeypatch):
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT)
+    pre = flow.preflight('p', tmp_path, tmp_path / 'build')
+    pre['support_claim_evidence_maps'] = [{'source': 's/CLAIM-EVIDENCE.md', 'sha256': 'a' * 64, 'archive': None,
+                                           'archive_sha256': None, 'archive_member': None,
+                                           'binding': 'support_sources_sha256', 'text': 'map text'}]
+    record = flow.run_review('p', root=tmp_path, apply=False)
+    assert calls == [] and record['review_mode'] == 'delta'
+    assert record['support_claim_evidence_maps'] == [{'source': 's/CLAIM-EVIDENCE.md', 'sha256': 'a' * 64,
+                                                      'archive': None, 'archive_sha256': None,
+                                                      'archive_member': None, 'binding': 'support_sources_sha256'}]
 
 
 # --------------------------------------------------------------------------- convergence changes
@@ -1170,6 +1333,42 @@ def test_delta_review_record_passes_apply_revalidation(tmp_path, monkeypatch):
     release = written[-1]["writing_release"]
     assert release["status"] == "ready" and release["review_mode"] == "delta"
     assert release["delta_basis_run_id"] == "20200101T000000Z"
+
+
+def test_support_doi_and_version_in_references_bib_keep_the_delta_rule(tmp_path):
+    """After `zenodo prepare` only references.bib gains the new Version DOI and version."""
+    manuscript = tmp_path / 'm'
+    manuscript.mkdir()
+    (manuscript / 'main.tex').write_text(MANUSCRIPT.replace(
+        'Prices fell.\n', 'Prices fell. Code and data: \\cite{support}.\n\\bibliography{references}\n'))
+    bib = manuscript / 'references.bib'
+    bib.write_text('@software{support, title={Support}, version={1.0.0}, doi={10.5281/zenodo.100}}\n')
+    before = flow.expanded_review_documents(manuscript)
+    bib.write_text('@software{support, title={Support}, version={1.1.0}, doi={10.5281/zenodo.200}}\n')
+    after = flow.expanded_review_documents(manuscript)
+    assert before == after and flow.substantive_delta(before, after)['substantive_unchanged']
+
+
+INLINE_REFERENCES = MANUSCRIPT.replace('Prices fell.\n', 'Prices fell.\n\\begin{thebibliography}{9}'
+                                       '\\bibitem{a}A. Author. Water. 2019.\n'
+                                       '\\bibitem{s}Support materials. Version 1.0.0. '
+                                       '\\url{https://doi.org/10.5281/zenodo.100}\n\\end{thebibliography}\n')
+
+
+@pytest.mark.parametrize('old,new,unchanged', [
+    (('Version 1.0.0', 'Version 1.1.0'), ('zenodo.100', 'zenodo.200'), True),
+    (('Water. 2019.', 'Water. 2021.'), ('', ''), False),  # other reference content still counts
+    (('Support materials.', 'Support materials, extended.'), ('', ''), False),
+])
+def test_inline_reference_list_ignores_only_support_doi_and_version(old, new, unchanged):
+    changed = INLINE_REFERENCES.replace(*old).replace(*new) if new[0] else INLINE_REFERENCES.replace(*old)
+    assert changed != INLINE_REFERENCES
+    assert flow.substantive_delta(INLINE_REFERENCES, changed)['substantive_unchanged'] is unchanged
+
+
+def test_doi_outside_the_reference_list_still_counts_as_numbers():
+    new = MANUSCRIPT.replace('Prices fell.', 'Prices fell (doi:10.5281/zenodo.200).')
+    assert not flow.substantive_delta(MANUSCRIPT, new)['substantive_unchanged']
 
 
 # --------------------------------------------------------------------------- formal checks: entry vs exit (2026-11)

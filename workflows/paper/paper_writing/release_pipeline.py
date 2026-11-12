@@ -45,6 +45,8 @@ PREPARE_CODES = frozenset({
     "SUPPORT-RECEIPT-ZENODO-VERSION", "SUPPORT-RECEIPT-DOI", "SUPPORT-PACKAGE-MISSING",
     "SUPPORT-PACKAGE-VERSION", "SUPPORT-PACKAGE-HASH", "SUPPORT-PACKAGE-SIDECAR",
     "SUPPORT-RECORD-PAPER-TITLE",
+    # A selected claim-evidence map not (or not identically) in the current-version ZIP.
+    "SUPPORT-CLAIM-MAP-UNPACKAGED", "SUPPORT-CLAIM-MAP-PACKAGE-MISMATCH",
 })
 # What the writer is told it may touch for each class of problem.
 WRITER_SCOPE = (
