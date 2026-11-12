@@ -27,6 +27,7 @@ from paper_writing.registry import (
     load_registry,
     load_registry_settings,
     paper_metadata_path,
+    require_not_frozen,
     write_paper_metadata,
 )
 from paper_writing.review import (
@@ -284,6 +285,7 @@ def canonical_public_manuscript_filename(
 def start_revision(paper_id: str, reason: str, *, root: str | Path) -> dict[str, Any]:
     repo_root = Path(root).resolve()
     payload = load_paper_metadata(paper_id, repo_root)
+    require_not_frozen(payload, paper_id)
     carry_forward = _review_carry_forward_candidate(paper_id, payload, repo_root)
     # The legacy incremental (delta) review was removed with the unified review,
     # which decides its own delta re-review from the last ready decision record.

@@ -42,7 +42,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
-from paper_writing.registry import load_paper_metadata, load_registry_settings, settings_path
+from paper_writing.registry import load_paper_metadata, load_registry_settings, require_not_frozen, settings_path
 from paper_writing.review_launcher import LaunchError, run_role
 
 PARTS = ("abstract", "introduction", "closing")
@@ -546,10 +546,11 @@ def run_rewrite(paper_id: str, *, root: str | Path, rewriters: list[str] | None 
     from paper_writing.review_flow import expanded_review_documents
 
     root = Path(root).resolve()
+    metadata = load_paper_metadata(paper_id, root)
+    require_not_frozen(metadata, paper_id)
     config = rewrite_config(root)
     if not config["enabled"]:
         raise ValueError("quality_gate.editorial_rewrite is disabled")
-    metadata = load_paper_metadata(paper_id, root)
     abstract_bounds = _abstract_bounds(metadata)
     venue = target_of(metadata)
     if not venue:
@@ -666,6 +667,7 @@ def apply_rewrite(paper_id: str, *, root: str | Path, run_dir: str | Path) -> di
     if record.get("outcome") != "candidate_selected":
         raise ValueError("No candidate was selected; the original stays")
     metadata = load_paper_metadata(paper_id, root)
+    require_not_frozen(metadata, paper_id)
     if target_of(metadata) != record["target"]:
         raise ValueError("Target venue changed since the rewrite run")
     manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")

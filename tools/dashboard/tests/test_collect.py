@@ -60,3 +60,14 @@ key_findings: [Effect replicates in an external cohort.]
     assert proj["campaigns"] == [{"id": "c1", "status": "active", "agent_hours": 2.0}]
     assert "https://example.org/data" in proj["data_links"]
     assert state["monitor"]["active_submissions"] == 1
+
+
+def test_frozen_paper_is_shown_as_stopped() -> None:
+    from openlabs_dashboard.collect import paper_stage
+
+    writing = {"record_status": "paper_workspace", "writing_release": {"status": "revision_required"}}
+    assert paper_stage(writing, [], None) == "写作中"
+    frozen = {"record_status": "frozen", "freeze_decision": {"status": "frozen"},
+              "writing_release": {"status": "blocked"}}
+    assert paper_stage(frozen, [], None) == "已停止"
+    assert paper_stage({"freeze_decision": {"status": "frozen"}}, [], None) == "已停止"

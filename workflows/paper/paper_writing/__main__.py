@@ -580,7 +580,13 @@ def main(argv: list[str] | None = None) -> int:
         print(path)
         return 0
     if args.command == "paper" and args.paper_command == "start-revision":
-        result = start_revision(args.paper_id, args.reason, root=args.root)
+        from paper_writing.registry import PaperFrozenError
+
+        try:
+            result = start_revision(args.paper_id, args.reason, root=args.root)
+        except PaperFrozenError as exc:
+            print(json.dumps({"valid": False, "frozen": True, "error": str(exc)}, ensure_ascii=False))
+            return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command == "paper" and args.paper_command == "public-name":
@@ -608,10 +614,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command == "review" and args.review_command == "unified-run":
+        from paper_writing.registry import PaperFrozenError
         from paper_writing.review_flow import run_review
 
-        result = run_review(args.paper_id, root=args.root, response_letter=args.response,
-                            apply=not args.no_apply, delta_only=args.delta_only)
+        try:
+            result = run_review(args.paper_id, root=args.root, response_letter=args.response,
+                                apply=not args.no_apply, delta_only=args.delta_only)
+        except PaperFrozenError as exc:
+            print(json.dumps({"valid": False, "frozen": True, "error": str(exc)}, ensure_ascii=False))
+            return 2
         summary = {key: result.get(key) for key in ("paper_id", "run_dir", "target_journal", "stage_reached",
                                                     "round_for_target", "decision_sha256")}
         summary["outcome"] = result["merged"]["outcome"]
@@ -724,6 +735,11 @@ def _run_zenodo(args: argparse.Namespace) -> int:
             "release",
             "publish",
         }:
+            from paper_writing.registry import freeze_block_reason, load_paper_metadata
+
+            frozen = freeze_block_reason(load_paper_metadata(args.paper_id, args.root), args.paper_id)
+            if frozen:
+                raise ZenodoError(frozen)
             if os.environ.get("OPENLABS_ENABLE_EXTERNAL_WRITES") != "1":
                 raise ZenodoError(
                     "External writes are disabled. An administrator must explicitly set "

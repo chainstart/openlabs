@@ -196,7 +196,8 @@ def paper_stage(paper: dict[str, Any], attempts: list[dict[str, Any]], lifecycle
     if any(s in {"submitted", "under_review", "resubmitted", "editorial_check"} for s in statuses):
         return "在审"
     release = (paper.get("writing_release") or {}).get("status") if isinstance(paper.get("writing_release"), dict) else None
-    if lifecycle == "closed":
+    freeze = paper.get("freeze_decision") if isinstance(paper.get("freeze_decision"), dict) else {}
+    if lifecycle == "closed" or paper.get("record_status") == "frozen" or freeze.get("status") == "frozen":
         return "已停止"
     if "rejected" in statuses:
         return "被拒待处理"

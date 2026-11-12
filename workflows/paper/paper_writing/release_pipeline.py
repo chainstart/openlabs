@@ -30,7 +30,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from paper_writing.registry import load_paper_metadata, load_registry_settings, paper_metadata_path
+from paper_writing.registry import freeze_block_reason, load_paper_metadata, load_registry_settings, paper_metadata_path
 from paper_writing.support_policy import effective_publication_mode, publication_policy
 
 STATUS_SCHEMA = "openlabs.release_status.v1"
@@ -229,6 +229,8 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "paper_id": paper_id,
         "version": version,
         "title": metadata.get("title"),
+        # Non-null for a frozen paper: the pipeline must take no step for it.
+        "frozen": freeze_block_reason(metadata, paper_id),
         "review": review,
         "support": support,
         "issues": issues,

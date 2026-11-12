@@ -25,7 +25,7 @@ from paper_writing.review import (
     decision_meets_standard_threshold,
     decisions_for_standard,
 )
-from paper_writing.registry import load_paper_metadata, load_registry, paper_metadata_path
+from paper_writing.registry import freeze_block_reason, load_paper_metadata, load_registry, paper_metadata_path
 from paper_writing.revision_policy import validate_release_revision_policy
 from paper_writing.support_citations import audit_manuscript_support
 from paper_writing.support_policy import (
@@ -848,6 +848,9 @@ def build_handoff_package(
 ) -> dict[str, Any]:
     repo_root = Path(root).resolve()
     metadata = load_paper_metadata(paper_id, repo_root)
+    frozen = freeze_block_reason(metadata, paper_id)
+    if frozen:
+        raise HandoffError(frozen)
     manuscript = repo_root / str(
         metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript"
     )
@@ -1282,6 +1285,9 @@ def validate_release_preconditions(
         raise HandoffError(f"Unsupported release support gate: {support_gate_name}")
     repo_root = Path(root).resolve()
     metadata = load_paper_metadata(paper_id, repo_root)
+    frozen = freeze_block_reason(metadata, paper_id)
+    if frozen:
+        raise HandoffError(frozen)
     release = metadata.get("writing_release")
     if not isinstance(release, Mapping) or release.get("status") != "ready":
         raise HandoffError(
@@ -2192,6 +2198,9 @@ def plan_ready_handoffs(
             release = metadata.get("writing_release")
             release = release if isinstance(release, Mapping) else {}
             status = str(release.get("status") or "draft")
+            if freeze_block_reason(metadata, paper_id):
+                skipped.append({"paper_id": paper_id, "reason": "frozen", "status": status})
+                continue
             if status != "ready":
                 skipped.append(
                     {"paper_id": paper_id, "reason": "not_ready", "status": status}

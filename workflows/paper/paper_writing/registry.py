@@ -39,6 +39,56 @@ SCIENTIFIC_VALIDATION_STATUSES = {
 }
 JOURNAL_FIT_ASSESSMENTS = {"strong_fit", "fit"}
 JOURNAL_HISTORY_CLEAR_STATUSES = {"clear", "material_scientific_revision"}
+# A frozen paper keeps every file and record but is not advanced (review, rewrite,
+# revision, Zenodo, handoff). The vocabularies mirror the orchestrator topic ledger
+# (``openlabs.contracts.FREEZE_REASON_CLASSES`` and ``program.REOPEN_CONDITION_TYPES``)
+# so a paper-level freeze can later be imported there unchanged.
+FREEZE_REASON_CLASSES = {
+    "primary_endpoint_failed",
+    "decisive_data_unavailable",
+    "overdue",
+    "contribution_insufficient",
+    "no_eligible_venue",
+    "review_stalled",
+    "infrastructure",
+    "budget_exhausted",
+}
+REOPEN_CONDITION_TYPES = {"new_data_source", "new_method", "venue_policy_change", "external_result"}
+
+
+class PaperFrozenError(ValueError):
+    """Raised when a pipeline step would advance a frozen paper."""
+
+
+def freeze_block_reason(paper: Mapping[str, Any], paper_id: str | None = None) -> str | None:
+    """Return why ``paper`` must not be advanced, or ``None`` when it is not frozen.
+
+    A paper is frozen when ``record_status`` is ``frozen`` or its ``freeze_decision``
+    has ``status: frozen``. ``discovery_scheduling: frozen`` alone only stops new
+    research and does not block writing.
+    """
+
+    decision = paper.get("freeze_decision")
+    decision = decision if isinstance(decision, Mapping) else {}
+    if paper.get("record_status") != "frozen" and decision.get("status") != "frozen":
+        return None
+    label = paper_id or str(paper.get("paper_id") or "paper")
+    details = [
+        f"{key}={decision[key]}"
+        for key in ("freeze_reason_class", "decided_at", "record")
+        if decision.get(key)
+    ]
+    reason = f"{label} is frozen" + (f" ({', '.join(details)})" if details else "")
+    reason += "; it is not advanced by review, rewrite, revision, Zenodo or handoff"
+    if decision.get("reopen_conditions"):
+        reason += "; reopening needs a recorded decision that a registered reopen condition is met"
+    return reason
+
+
+def require_not_frozen(paper: Mapping[str, Any], paper_id: str | None = None) -> None:
+    reason = freeze_block_reason(paper, paper_id)
+    if reason:
+        raise PaperFrozenError(reason)
 
 
 def repository_root() -> Path:
@@ -213,7 +263,8 @@ def load_registry(
             venue_policy.validate_conference_eligibility(paper, paper_id=paper_id, policy=target_policy)
             venue_policy.validate_empirical_data_sources(paper, paper_id=paper_id, policy=target_policy)
         _validate_research_outcomes(paper, paper_id=paper_id)
-        workspace = str(paper.pop("workspace", f"papers/{paper_id}")).strip("/")
+        _validate_freeze_decision(paper, paper_id=paper_id)
+        workspace =str(paper.pop("workspace", f"papers/{paper_id}")).strip("/")
         paper.setdefault("manuscript_dir", f"{workspace}/manuscript")
         source = repo_root / paper["manuscript_dir"] / "main.tex"
         pdf = repo_root / paper["manuscript_dir"] / "main.pdf"
@@ -285,6 +336,61 @@ def _validate_research_outcomes(paper: Mapping[str, Any], *, paper_id: str) -> N
         blocker = scientific_validation.get("promotion_blocker")
         if not isinstance(blocker, str) or not blocker.strip():
             raise ValueError(f"scientific_validation needs a promotion_blocker for {paper_id}")
+
+
+def _validate_freeze_decision(paper: Mapping[str, Any], *, paper_id: str) -> None:
+    """Validate a recorded freeze; earlier minimal records (status and reason) stay valid."""
+
+    decision = paper.get("freeze_decision")
+    if decision is None:
+        if paper.get("record_status") == "frozen":
+            raise ValueError(f"record_status frozen needs a freeze_decision for {paper_id}")
+        return
+    if not isinstance(decision, Mapping):
+        raise ValueError(f"freeze_decision must be an object for {paper_id}")
+    if decision.get("status") != "frozen":
+        raise ValueError(f"freeze_decision.status must be frozen for {paper_id}")
+    reason = decision.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError(f"freeze_decision.reason is required for {paper_id}")
+    reason_class = decision.get("freeze_reason_class")
+    if reason_class is not None and reason_class not in FREEZE_REASON_CLASSES:
+        raise ValueError(f"invalid freeze_decision.freeze_reason_class for {paper_id}: {reason_class!r}")
+    decided_at = decision.get("decided_at")
+    if decided_at is not None and not _iso_date(str(decided_at)):
+        raise ValueError(f"freeze_decision.decided_at must be YYYY-MM-DD for {paper_id}")
+    evidence = decision.get("freeze_evidence")
+    if evidence is not None:
+        if not isinstance(evidence, list) or not evidence:
+            raise ValueError(f"freeze_decision.freeze_evidence must be a nonempty list for {paper_id}")
+        for item in evidence:
+            digest = str(item.get("sha256") or "") if isinstance(item, Mapping) else ""
+            if (
+                not isinstance(item, Mapping)
+                or not str(item.get("path") or "").strip()
+                or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+            ):
+                raise ValueError(
+                    f"freeze_decision.freeze_evidence items need a path and a 64-hex sha256 for {paper_id}"
+                )
+    conditions = decision.get("reopen_conditions")
+    if conditions is not None:
+        if not isinstance(conditions, list) or not conditions:
+            raise ValueError(f"freeze_decision.reopen_conditions must be a nonempty list for {paper_id}")
+        for item in conditions:
+            if (
+                not isinstance(item, Mapping)
+                or item.get("type") not in REOPEN_CONDITION_TYPES
+                or not str(item.get("description") or "").strip()
+            ):
+                raise ValueError(
+                    f"freeze_decision.reopen_conditions items need a type in "
+                    f"{sorted(REOPEN_CONDITION_TYPES)} and a description for {paper_id}"
+                )
+    release = paper.get("writing_release")
+    if isinstance(release, Mapping) and release.get("status") == "ready":
+        raise ValueError(f"a frozen paper cannot keep writing_release.status ready for {paper_id}")
 
 
 def _validate_journal_target_policy(

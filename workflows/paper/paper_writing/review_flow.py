@@ -24,7 +24,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
-from paper_writing.registry import load_paper_metadata, load_registry, load_registry_settings, write_paper_metadata
+from paper_writing.registry import (load_paper_metadata, load_registry, load_registry_settings, paper_metadata_path,
+                                     require_not_frozen, write_paper_metadata)
 from paper_writing.review_launcher import LaunchError, role_runtime, run_role
 from paper_writing import formal_checks
 
@@ -1872,6 +1873,10 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     untouched) instead of starting a full review.
     """
     root = Path(root).resolve()
+    # A frozen paper is not reviewed: no run directory, no model, no round consumed.
+    # (A missing registry record is reported by the preflight.)
+    if paper_metadata_path(paper_id, root).is_file():
+        require_not_frozen(load_paper_metadata(paper_id, root), paper_id)
     config = review_config(root)
     if config["process"] != PROCESS:
         raise ValueError(f"quality_gate.review_process must be {PROCESS}")
