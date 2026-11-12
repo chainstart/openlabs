@@ -1,5 +1,6 @@
 """URL reuse within a run and evidence parts for one oversized passage."""
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -145,3 +146,18 @@ def test_single_source_over_budget_without_locator_stays_blocked(tmp_path, monke
     binding = run(tmp_path, metadata, unexpected)
     assert binding["valid"] is False
     assert any("exceeds the context budget" in b for b in binding["blockers"])
+
+
+def test_pdf_text_is_extracted_in_reading_order(tmp_path, monkeypatch):
+    calls = []
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        Path(command[-1]).write_text("Column one sentence continues here. Column two.")
+        class Done:
+            returncode = 0
+        return Done()
+    from pathlib import Path
+    monkeypatch.setattr(formal.subprocess, "run", fake_run)
+    text = formal._text_document(b"%PDF-1.4 fixture", "application/pdf", tmp_path, "S1")
+    assert calls and "-layout" not in calls[0] and calls[0][0] == "pdftotext"
+    assert "Column one sentence continues here." in text

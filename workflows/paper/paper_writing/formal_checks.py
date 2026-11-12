@@ -360,7 +360,10 @@ def _text_document(body: bytes, content_type: str, directory: Path, sid: str,
                 output.append(f"\n[Original PDF page {int(page.stem.split('-')[-1])}; OCR transcription]\n"
                               + result.stdout.decode("utf-8", errors="strict"))
             return "\n".join(output)
-        command = ["pdftotext", "-layout"]
+        # Reading order, not -layout: -layout interleaves the lines of multi-column
+        # pages, so a sentence the verifier reads and quotes verbatim would not be
+        # contiguous in the bound text and the verbatim-quote check would fail.
+        command = ["pdftotext"]
         if pages:
             command += ["-f", str(pages[0]), "-l", str(pages[1])]
         subprocess.run([*command, str(pdf), str(text)], check=True,
