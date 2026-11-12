@@ -138,8 +138,21 @@ class ProgramSettings:
     # A topic scout is scheduled only while fewer proposed (undecided) topics
     # than this wait for the admission gate.
     candidate_pool_low_water: int = 3
-    # Minimum time between two scheduled topic scouts (whole program).
+    # Minimum time between two scheduled topic scouts: program-wide while
+    # ``max_concurrent_scouts`` is 1, per domain when scouts may run in parallel.
     scout_min_interval_hours: float = 12.0
+    # Topic scouts in flight at once (at most one per domain). 1 keeps the
+    # original single-scout front end.
+    max_concurrent_scouts: int = 1
+    # Cards one scout is expected to register; an in-flight scout counts this
+    # much toward ``candidate_pool_low_water`` (replaced by this instance's own
+    # average once a few scouts have finished).
+    scout_expected_cards: float = 2.0
+    # Admission reviews of one domain in flight at once (different batches of
+    # its proposed topics); 1 keeps one review per domain.
+    max_admissions_per_domain: int = 1
+    # Admission reviews in flight across all domains; 0 means no global cap.
+    max_concurrent_admissions: int = 0
     # When true, a new research workstream of a non-program project is only
     # activated if the topic ledger links it to an admitted topic.
     enforce_admission: bool = False
@@ -215,6 +228,18 @@ class BudgetSettings:
     quota_backoff_minutes: tuple[int, ...] = DEFAULT_QUOTA_BACKOFF_MINUTES
     quota_backoff_cap_minutes: int = 300
     restore_step: int = 1
+    # Adaptive launch ceiling (off by default: the static ceiling applies). Each
+    # tick moves the ceiling by at most ``adaptive_step`` toward what demand,
+    # measured host load and the providers' quota pace allow; the static
+    # ceiling and the quota-failure halving stay hard limits.
+    adaptive_parallel: bool = False
+    adaptive_step: int = 2
+    # Measured container CPU/memory fraction (cgroup, page cache excluded)
+    # above which the adaptive ceiling stops growing / shrinks.
+    host_utilization_target: float = 0.8
+    # Declared ailab load the agents are encouraged to fill (reported only;
+    # the bridge does the admission).
+    ailab_utilization_target: float = 0.9
     # Consecutive agent_quota results one task may defer before ordinary failure
     # handling takes over (guards against a misclassified real failure).
     quota_retry_limit: int = 8
@@ -365,6 +390,22 @@ class RoutingSettings:
     probe_idle_minutes: int = 360
     # Codex probe: read the newest session file here (None disables it).
     codex_sessions_dir: str | None = None
+    # Share of each quota window to have used when it resets, reserves
+    # included (0 disables the strategy: routing compares plain headroom).
+    # Ordinary work stops at min(this, the reserve ceilings); routing then
+    # spreads work by relative abundance, (ceiling - used) / time-to-reset
+    # fraction, so a provider whose window resets soon with quota left is
+    # used first and a freshly reset one is saved.
+    utilization_target: float = 0.0
+    # Minimum minutes between free refreshes (Codex session file) of a stale
+    # reading; None: ``probe_idle_minutes`` like the paid probe.
+    stale_refresh_minutes: int | None = None
+    # A stale reading younger than this many hours is extrapolated instead of
+    # treated as unknown: used + the window's average pace since then + this
+    # instance's agent-hours on the provider x ``estimate_fraction_per_agent_hour``
+    # (of a 7-day window; scaled for shorter windows). 0 disables it.
+    stale_estimate_hours: float = 0.0
+    estimate_fraction_per_agent_hour: float = 0.01
 
 
 @dataclass(frozen=True)
@@ -672,6 +713,12 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         scout_min_interval_hours=_nonnegative_float(
             program.get("scout_min_interval_hours"), 12.0
         ),
+        max_concurrent_scouts=_positive_int(program.get("max_concurrent_scouts"), 1),
+        scout_expected_cards=_positive_float(program.get("scout_expected_cards"), 2.0),
+        max_admissions_per_domain=_positive_int(program.get("max_admissions_per_domain"), 1),
+        max_concurrent_admissions=_nonnegative_int(
+            program.get("max_concurrent_admissions"), 0
+        ),
         enforce_admission=program.get("enforce_admission", False) is True,
         asset_index_path=_relative_data_path(
             program.get("asset_index_path"), DEFAULT_ASSET_INDEX_PATH, "asset_index_path"
@@ -779,6 +826,10 @@ def load_budget_settings(payload: Any) -> BudgetSettings:
         infrastructure_retry_limit=_nonnegative_int(
             budget.get("infrastructure_retry_limit"), 3
         ),
+        adaptive_parallel=budget.get("adaptive_parallel", False) is True,
+        adaptive_step=_positive_int(budget.get("adaptive_step"), 2),
+        host_utilization_target=_fraction(budget.get("host_utilization_target"), 0.8),
+        ailab_utilization_target=_fraction(budget.get("ailab_utilization_target"), 0.9),
     )
 
 
@@ -920,6 +971,20 @@ def load_routing_settings(payload: Any) -> RoutingSettings:
             routing.get("probe_idle_minutes"), defaults.probe_idle_minutes
         ),
         codex_sessions_dir=str(routing.get("codex_sessions_dir") or "").strip() or None,
+        utilization_target=_unit_fraction(
+            routing.get("utilization_target"), defaults.utilization_target
+        ),
+        stale_refresh_minutes=(
+            None if routing.get("stale_refresh_minutes") is None
+            else _positive_int(routing.get("stale_refresh_minutes"), defaults.probe_idle_minutes)
+        ),
+        stale_estimate_hours=_nonnegative_float(
+            routing.get("stale_estimate_hours"), defaults.stale_estimate_hours
+        ),
+        estimate_fraction_per_agent_hour=_unit_fraction(
+            routing.get("estimate_fraction_per_agent_hour"),
+            defaults.estimate_fraction_per_agent_hour,
+        ),
     )
 
 

@@ -1867,8 +1867,14 @@ class FactoryDB:
         route: Callable[[Mapping[str, Any], Mapping[str, int]], Mapping[str, Any] | None]
         | None = None,
         rank: Callable[[Mapping[str, Any]], int] | None = None,
+        parallel_routing_reasons: Collection[str] = (),
     ) -> dict[str, Any] | None:
         """Lease the highest-priority ready task.
+
+        A campaign normally runs one task at a time. A task whose
+        ``routing_reason`` is in ``parallel_routing_reasons`` may also start
+        while siblings with the same routing reason (and only those) run in its
+        campaign: the scheduler bounds how many it queues.
 
         ``excluded_runners`` (runner tiers in provider backoff) are skipped;
         ``runner_active_limits`` caps leased/running tasks per runner tier (used
@@ -1884,6 +1890,14 @@ class FactoryDB:
 
         now = utc_now()
         expires = utc_after(lease_seconds)
+        parallel_reasons = tuple(sorted({str(item) for item in parallel_routing_reasons}))
+        sibling_exemption = ""
+        if parallel_reasons:
+            marks = ",".join("?" for _ in parallel_reasons)
+            sibling_exemption = (
+                f"AND NOT (tasks.routing_reason IN ({marks}) "
+                "AND active.routing_reason = tasks.routing_reason)"
+            )
         excluded = {str(runner) for runner in excluded_runners}
         runner_limits = dict(runner_active_limits or {})
         with self.connect() as connection:
@@ -1914,10 +1928,11 @@ class FactoryDB:
                       SELECT 1 FROM tasks active
                       WHERE active.campaign_id=tasks.campaign_id
                         AND active.status IN ('leased', 'running')
+                        {sibling_exemption}
                 )
                 ORDER BY tasks.priority DESC, tasks.created_at, tasks.task_id
-                """,
-                (now,),
+                """.format(sibling_exemption=sibling_exemption),  # noqa: S608 - placeholders only
+                (now, *parallel_reasons),
             ).fetchall()
             if rank is not None:
                 rows = sorted(

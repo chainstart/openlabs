@@ -74,6 +74,8 @@ from .program_autonomy import DIRECTION_TASK_TYPE, EVIDENCE_REMEDIATION_ROUTINGS
 from .program_flow import (
     SCOUT_TASK_TYPE,
     packet_read_resources,
+    parallel_admission_room,
+    parallel_routing_reasons,
     record_admission_deferral,
     run_program_pipeline,
     workstream_admitted,
@@ -1782,7 +1784,10 @@ def _replenish_continuous_campaign(
     campaign: Mapping[str, Any],
 ) -> None:
     campaign_id = str(campaign["campaign_id"])
-    if db.has_active_tasks(campaign_id):
+    # A program admission campaign may review several batches at once
+    # ([program].max_admissions_per_domain); every other campaign runs one task.
+    admission_room = parallel_admission_room(db, settings, campaign)
+    if db.has_active_tasks(campaign_id) and not admission_room:
         return
     latest = db.latest_task(campaign_id)
     if latest and str(latest.get("status")) in {"needs_human", "quarantined"}:
@@ -1824,7 +1829,7 @@ def _replenish_continuous_campaign(
             {"campaign_id": campaign_id, "reason": "production_window_exhausted"}
         )
         return
-    if db.has_queued_tasks(campaign_id):
+    if db.has_queued_tasks(campaign_id) and not admission_room:
         return
     if stream_policy.get("continuation") == "review_on_new_results":
         reconciled = reconcile_pending_portfolio_review(
@@ -3533,6 +3538,7 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
                     resource_capacity=resource_capacity.to_dict(),
                     route=router.route,
                     rank=rank,
+                    parallel_routing_reasons=parallel_routing_reasons(settings),
                 )
             else:
                 task = db.claim_next_task(

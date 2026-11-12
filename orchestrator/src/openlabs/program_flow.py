@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -303,17 +304,22 @@ def _choose_scout_project(
     settings: FactorySettings,
     projects: list[ProjectConfig],
     document: Mapping[str, Any],
+    *,
+    exclude: frozenset[str] = frozenset(),
 ) -> tuple[ProjectConfig, str] | None:
     """Domain with the fewest topics in flight; ties go to the least recently scouted.
 
     ``[program].domains`` restricts the rotation and breaks remaining ties by
-    its order.
+    its order. Domains in ``exclude`` (a scout in flight, or scouted too
+    recently) are skipped.
     """
 
     configured = list(settings.program.domains)
     usable: list[tuple[ProjectConfig, str]] = []
     for project in projects:
         if configured and project.domain not in configured:
+            continue
+        if project.domain in exclude:
             continue
         scout_id = scout_workstream_id(project)
         campaign = db.campaign(scout_id) if scout_id else None
@@ -337,48 +343,59 @@ def _choose_scout_project(
     return min(usable, key=key)
 
 
-def maybe_schedule_scout(
+# Finished scouts whose registered cards calibrate ``expected_cards_per_scout``.
+SCOUT_CALIBRATION_WINDOW = 10
+SCOUT_CALIBRATION_MINIMUM = 3
+
+
+def expected_cards_per_scout(
+    db: FactoryDB,
+    settings: FactorySettings,
+    document: Mapping[str, Any],
+) -> float:
+    """Cards one scout is expected to register.
+
+    The mean over this instance's last finished scouts (cards of every status,
+    rejected ones included) once a few have finished, else
+    ``[program].scout_expected_cards``. Floored at 0.5 so a run of empty scouts
+    does not open the floodgates.
+    """
+
+    finished = _program_tasks(
+        db, statuses=("succeeded",), where="AND task_type=?", parameters=(SCOUT_TASK_TYPE,)
+    )[-SCOUT_CALIBRATION_WINDOW:]
+    if len(finished) < SCOUT_CALIBRATION_MINIMUM:
+        return settings.program.scout_expected_cards
+    ids = {str(task["task_id"]) for task in finished}
+    cards = sum(
+        1 for topic in document.get("topics") or []
+        if str(topic.get("source_task_id") or "") in ids
+    )
+    return max(0.5, cards / len(finished))
+
+
+def _schedule_one_scout(
     db: FactoryDB,
     paths: WorkspacePaths,
     settings: FactorySettings,
     *,
-    lead_short: bool,
-    now: datetime | None = None,
+    document: Mapping[str, Any],
+    ledger: TopicLedger,
+    status: Any,
+    project: ProjectConfig,
+    campaign_id: str,
+    max_cards: int,
+    moment: datetime,
 ) -> ScoutDecision:
-    program = settings.program
-    if not program.enabled:
-        return ScoutDecision(reason="program_disabled")
-    if not budget_control.routing_enabled(settings):
-        # Without provider routing the proposer and judge families cannot be
-        # told apart, so the gate could not be independent.
-        return ScoutDecision(reason="provider_routing_not_configured")
-    ledger = open_topic_ledger(paths, program)
-    document = ledger.read()
-    status = slot_status(document, program)
-    if status.admission_paused:
-        return ScoutDecision(reason="admission_paused")
-    if status.free_slots <= 0:
-        return ScoutDecision(reason="no_free_slot")
-    if len(_proposed_pool(document)) >= program.candidate_pool_low_water:
-        return ScoutDecision(reason="candidate_pool_at_low_water")
-    if lead_short:
-        return ScoutDecision(reason="lead_quota_short")
-    if _program_tasks(db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?",
-                      parameters=(SCOUT_TASK_TYPE,)):
-        return ScoutDecision(reason="scout_in_flight")
-    moment = now or _now_moment()
-    last = budget_control.parse_time(db.meta_get(LAST_SCOUT_KEY))
-    if last is not None and moment - last < timedelta(hours=program.scout_min_interval_hours):
-        return ScoutDecision(reason="scout_min_interval")
-    chosen = _choose_scout_project(db, settings, program_projects(paths), document)
-    if chosen is None:
-        return ScoutDecision(reason="no_program_project")
-    project, campaign_id = chosen
     campaign = db.campaign(campaign_id) or {}
     stamp = _iso(moment)
-    digest = hashlib.sha256(f"{campaign_id}\0{stamp}".encode()).hexdigest()
+    # The campaign's task count keeps two scouts of one domain scheduled within
+    # the same second apart.
+    sequence = db.task_count(campaign_id)
+    digest = hashlib.sha256(
+        (f"{campaign_id}\0{stamp}" + (f"\0{sequence}" if sequence else "")).encode()
+    ).hexdigest()
     task_id = f"topic-scout:{digest[:32]}"
-    max_cards = max(1, program.candidate_pool_low_water - len(_proposed_pool(document)))
     packet_path = (
         _control_root(paths) / _token(project.project_id) / "scout-packets"
         / f"{stamp.replace(':', '')}-{digest[:12]}.json"
@@ -450,6 +467,125 @@ def maybe_schedule_scout(
         ],
     )
     return ScoutDecision(task_id=task_id, domain=project.domain)
+
+
+def schedule_scouts(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    *,
+    lead_short: bool,
+    now: datetime | None = None,
+) -> tuple[list[ScoutDecision], str | None]:
+    """Schedule as many topic scouts as the program allows this tick.
+
+    Returns the scheduled scouts and the reason no (further) scout was
+    scheduled. With ``max_concurrent_scouts = 1`` this is the original single
+    scout with a program-wide minimum interval. Above 1, at most one scout per
+    domain runs, the interval applies per domain, and scouts are added only
+    while ``candidate pool + in-flight scouts x expected cards`` stays below
+    ``candidate_pool_low_water``; each new scout asks for its share of what is
+    still missing.
+    """
+
+    program = settings.program
+    if not program.enabled:
+        return [], "program_disabled"
+    if not budget_control.routing_enabled(settings):
+        # Without provider routing the proposer and judge families cannot be
+        # told apart, so the gate could not be independent.
+        return [], "provider_routing_not_configured"
+    ledger = open_topic_ledger(paths, program)
+    document = ledger.read()
+    status = slot_status(document, program)
+    if status.admission_paused:
+        return [], "admission_paused"
+    if status.free_slots <= 0:
+        return [], "no_free_slot"
+    pool = len(_proposed_pool(document))
+    if pool >= program.candidate_pool_low_water:
+        return [], "candidate_pool_at_low_water"
+    if lead_short:
+        return [], "lead_quota_short"
+    in_flight = _program_tasks(db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?",
+                               parameters=(SCOUT_TASK_TYPE,))
+    moment = now or _now_moment()
+    interval = timedelta(hours=program.scout_min_interval_hours)
+    projects = program_projects(paths)
+    if program.max_concurrent_scouts <= 1:
+        if in_flight:
+            return [], "scout_in_flight"
+        last = budget_control.parse_time(db.meta_get(LAST_SCOUT_KEY))
+        if last is not None and moment - last < interval:
+            return [], "scout_min_interval"
+        chosen = _choose_scout_project(db, settings, projects, document)
+        if chosen is None:
+            return [], "no_program_project"
+        project, campaign_id = chosen
+        decision = _schedule_one_scout(
+            db, paths, settings, document=document, ledger=ledger, status=status,
+            project=project, campaign_id=campaign_id,
+            max_cards=max(1, program.candidate_pool_low_water - pool), moment=moment,
+        )
+        return [decision], None
+    expected = expected_cards_per_scout(db, settings, document)
+    busy = {str(task.get("domain") or "") for task in in_flight}
+    recent = {
+        domain
+        for domain, stamp in db.meta_items(LAST_SCOUT_KEY + ":").items()
+        if (at := budget_control.parse_time(stamp)) is not None and moment - at < interval
+    }
+    missing = program.candidate_pool_low_water - pool - len(in_flight) * expected
+    if missing <= 0:
+        return [], "candidate_pool_covered_by_scouts"
+    room = program.max_concurrent_scouts - len(in_flight)
+    if room <= 0:
+        return [], "max_concurrent_scouts"
+    wanted = min(room, math.ceil(missing / expected))
+    max_cards = max(1, math.ceil(missing / wanted))
+    scheduled: list[ScoutDecision] = []
+    reason: str | None = None
+    while len(scheduled) < wanted:
+        chosen = _choose_scout_project(
+            db, settings, projects, document, exclude=frozenset(busy | recent)
+        )
+        if chosen is None:
+            if not projects:
+                reason = "no_program_project"
+            elif busy and not (recent - busy):
+                reason = "scout_in_flight"
+            else:
+                reason = "scout_min_interval"
+            break
+        project, campaign_id = chosen
+        decision = _schedule_one_scout(
+            db, paths, settings, document=document, ledger=ledger, status=status,
+            project=project, campaign_id=campaign_id, max_cards=max_cards, moment=moment,
+        )
+        scheduled.append(decision)
+        busy.add(project.domain)
+    if reason is None and len(scheduled) == wanted:
+        reason = (
+            "max_concurrent_scouts" if wanted == room
+            else "candidate_pool_covered_by_scouts"
+        )
+    return scheduled, reason
+
+
+def maybe_schedule_scout(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    *,
+    lead_short: bool,
+    now: datetime | None = None,
+) -> ScoutDecision:
+    """The first scout scheduled this call, or the reason none was."""
+
+    scheduled, reason = schedule_scouts(db, paths, settings, lead_short=lead_short, now=now)
+    if scheduled:
+        return scheduled[0]
+    return ScoutDecision(reason=reason)
 
 
 # --------------------------------------------------------------------------- card intake
@@ -690,9 +826,20 @@ def schedule_topic_admission(
         for topic in topics_by_status(ledger.read(), "proposed")
         if topic.get("program_project_id") == project.project_id
     ]
+    in_flight = {
+        str(task["task_id"]): task
+        for task in _program_tasks(db, statuses=IN_FLIGHT_STATUSES,
+                                   where="AND routing_reason=?",
+                                   parameters=(ADMISSION_ROUTING_REASON,))
+    }
     pending: list[dict[str, Any]] = []
+    reviewing = 0
     for topic in proposed:
-        if len(topic.get("admission_attempts") or []) >= MAX_ADMISSION_ATTEMPTS:
+        attempts = list(topic.get("admission_attempts") or [])
+        if attempts and _attempt_task_id(attempts[-1]) in in_flight:
+            reviewing += 1  # already in a review that has not finished
+            continue
+        if len(attempts) >= MAX_ADMISSION_ATTEMPTS:
             reject_topic(
                 ledger, str(topic["topic_id"]), db=db, reason="admission_undecided",
                 decided_by=f"program:{campaign_id}",
@@ -700,7 +847,12 @@ def schedule_topic_admission(
             continue
         pending.append(topic)
     if not pending:
-        return ReviewSchedule(reason="awaiting_topic_cards")
+        return ReviewSchedule(
+            reason="admission_batches_in_flight" if reviewing else "awaiting_topic_cards"
+        )
+    cap = settings.program.max_concurrent_admissions
+    if cap > 0 and len(in_flight) >= cap:
+        return ReviewSchedule(reason="max_concurrent_admissions")
     pending.sort(key=lambda item: (_proposal_time(item), str(item["topic_id"])))
     provider = str(pending[0].get("proposer_provider") or HUMAN_PROVIDER)
     batch_size = max(1, int(workstream_policy(campaign).get("review_batch_size") or 8))
@@ -801,6 +953,52 @@ def schedule_topic_admission(
         event_key=task_id,
     )
     return ReviewSchedule(task_id=task_id)
+
+
+def _attempt_task_id(attempt: Any) -> str:
+    if isinstance(attempt, Mapping):
+        return str(attempt.get("task_id") or "")
+    return str(attempt or "")
+
+
+def parallel_admission_room(
+    db: FactoryDB,
+    settings: FactorySettings,
+    campaign: Mapping[str, Any],
+) -> bool:
+    """Whether a program admission campaign may queue another batch beside its in-flight ones.
+
+    Only with ``[program].max_admissions_per_domain`` above 1, and only while
+    the campaign has fewer admission reviews queued or running than that.
+    """
+
+    limit = settings.program.max_admissions_per_domain
+    if not settings.program.enabled or limit <= 1:
+        return False
+    if workstream_policy(campaign).get("continuation") != "review_on_new_results":
+        return False
+    project = campaign_project(campaign)
+    if project is None or not project.program:
+        return False
+    campaign_id = str(campaign.get("campaign_id") or "")
+    flights = _program_tasks(
+        db, statuses=IN_FLIGHT_STATUSES, where="AND campaign_id=? AND routing_reason=?",
+        parameters=(campaign_id, ADMISSION_ROUTING_REASON),
+    )
+    others = _program_tasks(
+        db, statuses=IN_FLIGHT_STATUSES,
+        where="AND campaign_id=? AND COALESCE(routing_reason, '')<>?",
+        parameters=(campaign_id, ADMISSION_ROUTING_REASON),
+    )
+    return not others and len(flights) < limit
+
+
+def parallel_routing_reasons(settings: FactorySettings) -> tuple[str, ...]:
+    """Routing reasons whose tasks may run beside a sibling of the same campaign."""
+
+    if settings.program.enabled and settings.program.max_admissions_per_domain > 1:
+        return (ADMISSION_ROUTING_REASON,)
+    return ()
 
 
 def record_admission_deferral(
@@ -1241,16 +1439,18 @@ def run_program_pipeline(
         report.enqueued.extend(spawned.task_ids)
         report.production_synced.extend(spawned.campaign_ids)
         info["materialized"] = list(spawned.campaign_ids)
-        decision = maybe_schedule_scout(
+        scheduled, blocked = schedule_scouts(
             db, paths, settings, lead_short=lead_quota_short(db, settings)
         )
-        if decision.task_id is not None:
-            report.enqueued.append(decision.task_id)
-        info["scouts_scheduled"] = (
-            [{"task_id": decision.task_id, "domain": decision.domain}]
-            if decision.task_id else []
-        )
-        info["scout_blocked"] = decision.reason
+        report.enqueued.extend(str(item.task_id) for item in scheduled)
+        info["scouts_scheduled"] = [
+            {"task_id": item.task_id, "domain": item.domain} for item in scheduled
+        ]
+        info["scout_blocked"] = blocked
+        info["scouts_in_flight"] = len(_program_tasks(
+            db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?",
+            parameters=(SCOUT_TASK_TYPE,),
+        ))
         document = open_topic_ledger(paths, settings.program).read()
         info["candidate_pool"] = len(_proposed_pool(document))
         info["candidate_pool_topics"] = [str(t["topic_id"]) for t in _proposed_pool(document)]
