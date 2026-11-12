@@ -33,6 +33,9 @@ Read it as the editor of the card's routine venue would read the eventual paper'
    `cost_estimate.compute_plan` fits the work: GPU memory for GPU training, ailab cores, memory
    and hours for heavy CPU work, nothing heavier than minutes in `container_cpu`. A location
    this instance cannot serve is rejected by the control plane regardless of your verdict.
+   Judge token cost and compute cost separately: CPU hours that run in parallel on ailab, a
+   dedicated host that is otherwise idle, cost calendar time rather than model budget, so a
+   long ailab plan alone does not make a topic too expensive.
 5. **Fix the primary endpoint.** For an admitted topic, copy or tighten the card's endpoint into
    `preregistration.primary_endpoint` (`metric`, `matched_baseline`, `split`, `decision_rule`,
    `stop_rule`) and put the SHA-256 of its canonical JSON (sorted keys, no spaces, UTF-8) in

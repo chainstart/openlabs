@@ -54,8 +54,24 @@ ledger_path = "registry/topic-ledger.json"
 # paused and the lead tier has quota. Scouts and the gate need a [runners]
 # table: the gate must run on a different model family than the scout.
 candidate_pool_low_water = 3
-# Minimum hours between two scheduled scouts (whole program).
+# Minimum hours between two scheduled scouts: program-wide while
+# max_concurrent_scouts = 1, per domain when scouts run in parallel.
 scout_min_interval_hours = 12
+# Scouts in flight at once, at most one per domain (1 = the original single
+# scout). Above 1, a scout is added only while candidate pool + in-flight scouts
+# x expected cards stays below candidate_pool_low_water, and each new scout asks
+# for its share of what is missing. Instance presets use the number of domains.
+max_concurrent_scouts = 1
+# Cards one scout is expected to register (replaced by this instance's own mean
+# once three scouts have finished).
+scout_expected_cards = 2.0
+# Admission reviews of one domain in flight at once, each on a different batch
+# of its proposed topics (1 = one review per domain). The batches share the
+# admission campaign; reviewers do not edit campaign state, so they do not
+# collide on promotion.
+max_admissions_per_domain = 1
+# Admission reviews in flight across all domains (0 = no global cap).
+max_concurrent_admissions = 0
 # true: a new researcher/experimenter workstream of an ordinary (non-program)
 # project is not activated unless the ledger links it to an admitted topic.
 enforce_admission = false
@@ -160,13 +176,30 @@ quota_retry_limit = 8
 # Automatic retries of needs_human/quarantined tasks that failed for an
 # infrastructure reason (transport, quota, launch, missing result bundle).
 infrastructure_retry_limit = 3
+# Adaptive launch ceiling. false: max_parallel_agents applies as is. true: each
+# tick moves the ceiling by at most adaptive_step toward what runnable tasks,
+# measured container load and quota pace allow (up while some provider would
+# end its window below its ceiling at the current pace and the container is
+# below host_utilization_target; down by one when it is above it or every
+# provider is over-paced). max_parallel_agents and the quota halving stay hard
+# limits. The tick report's parallel_limit says which limit binds.
+adaptive_parallel = false
+adaptive_step = 2
+# Measured container CPU (cgroup, since the previous tick) and memory (page
+# cache excluded). Agents mostly wait on model responses, so low CPU alone never
+# raises the agent count past what quota pace and the hard ceiling allow.
+host_utilization_target = 0.8
+# Declared ailab load that agents are encouraged to fill; reported against its
+# target in the tick report and `program utilization` (the bridge admits jobs).
+ailab_utilization_target = 0.9
 
 [routing]
 # Quota-aware runner selection. INERT until a [runners] table exists: without
 # one, every runner is its own quota key and scheduling is exactly as before.
 # Fraction of every provider window kept for review and decision tasks.
 review_reserve = 0.15
-# Readings older than this are "unknown": dispatch allowed, one task in flight.
+# Readings older than this are "unknown": dispatch allowed, one task in flight
+# (unless stale_estimate_hours extrapolates them).
 snapshot_stale_hours = 6
 unknown_headroom = 0.5
 # Protected lead (Fable): of every window it depends on, keep this much for
@@ -185,6 +218,25 @@ protected_models = ["claude-fable-5-2"]
 # Read once every probe_idle_minutes at most, and only while readings are stale.
 probe_idle_minutes = 360
 codex_sessions_dir = "~/.codex/sessions"
+# Use-it-before-it-resets strategy. Share of every quota window to have used
+# when it resets, reserves included; 0 turns the strategy off (routing compares
+# plain headroom, as before). Ordinary work stops at min(this, the reserve
+# ceilings): what is left is kept for reviews and decisions. Work is then
+# spread over providers in proportion to relative abundance, (ceiling - used) /
+# share of the window still to run, so a provider whose window resets soon
+# with quota left gets more work and a freshly reset one is saved. A runner's
+# abundance is that of its tightest window (Claude: 5-hour, weekly and Fable's
+# own), so the 5-hour window throttles it before the quota backoff has to.
+utilization_target = 0
+# Minutes between free refreshes of a stale Codex reading (newest session
+# file); unset: probe_idle_minutes, like the paid Claude probe.
+# stale_refresh_minutes = 10
+# A stale reading younger than this many hours is extrapolated (used + the
+# window's average pace since + this instance's agent-hours on the provider x
+# estimate_fraction_per_agent_hour of a 7-day window) instead of limiting the
+# provider to one task. 0 = off.
+stale_estimate_hours = 0
+estimate_fraction_per_agent_hour = 0.01
 
 [routing.model_windows]
 # Extra windows a model's calls report (measured 2026-11-11; name not documented).

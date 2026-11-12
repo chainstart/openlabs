@@ -62,7 +62,11 @@ so admission can weigh it:
   two jobs from colliding.
 - Many cores, large memory or hours of CPU time: package it for the ailab host through the
   remote compute queue (`bin/openlabs-remote`, `docs/REMOTE_COMPUTE.md`). ailab has CPU and
-  memory only, and sending heavy work there keeps the container free for the agents.
+  memory only, and sending heavy work there keeps the container free for the agents. It is a
+  dedicated experiment host that sits idle unless agents use it, so split parallelisable
+  work (sweeps, resampling, cross-validation folds, seeds) into several jobs submitted
+  together, up to about nine tenths of its capacity; the task instructions show its
+  current load.
 - Mathematics that needs the dedicated memory cap runs on the WSL host, not in the container;
   the container instance rejects a topic whose plan names `wsl_math`.
 

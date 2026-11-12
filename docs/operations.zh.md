@@ -474,7 +474,8 @@ PYTHONPATH=orchestrator/src python3 -m openlabs program init-instance --write   
 | `[program.assets] retrospective_enabled`（沉淀） | 关 | 开 |
 | `[program] auto_handoff`、`auto_release` | 关 | 开 |
 
-两档都是 `max_active_topics = 5`、`max_parallel_agents = 3`、`compute_locations` 不含 `wsl_math`。
+两档都是 `max_active_topics = 5`、`max_parallel_agents = 3`、`compute_locations` 不含 `wsl_math`，
+并带有下文“并行度与额度利用”的推荐值。
 full 还需要 `--paper-writing-command`、`[program.git]` 身份（`--git-user-name/--git-user-email`）
 和管理网站凭据，见“发布流水线”。
 
@@ -503,6 +504,51 @@ bin/openlabs-container-loop cli -- status    # 以本实例身份执行任意 py
   CPU/内存准入，但不分实例、不限排队长度）、数据仓库的 Git 提交（两边同时提交时一边会因
   `index.lock` 失败后重试）。
 - 新实例不认识旧实例的 13 个在研项目，旧实例跑完它们；不要把新实例的设置写进仓库 TOML。
+
+### 并行度与额度利用
+
+仓库 TOML 的默认值保持原行为（单个选题任务、静态并行上限、按余量选 provider）；两档预设都给出
+下面的推荐值，已有实例按需把新键加进自己的 `openlabs.toml`（只加新键，下一轮 tick 生效）：
+
+| 键 | 默认 | 推荐 | 含义 |
+| --- | --- | --- | --- |
+| `[program] max_concurrent_scouts` | 1 | 学科数（5） | 同时在跑的选题任务，每个学科至多一个；>1 时最小间隔按学科计 |
+| `[program] scout_expected_cards` | 2.0 | 2.0 | 一个选题任务预期登记的卡片数；跑完三个后改用本实例的实测均值 |
+| `[program] max_admissions_per_domain` | 1 | 2 | 一个学科同时审的立项批次（不同批次、不同出题模型族可并行） |
+| `[program] max_concurrent_admissions` | 0（不限） | 0 | 全部学科同时审的立项任务上限 |
+| `[routing] utilization_target` | 0（关） | 0.9 | 每个额度窗口到重置时希望用掉的比例（含各类保留）；普通任务用到它（或更严的保留线）为止，余下只接评审与决策 |
+| `[routing] stale_refresh_minutes` | 未设 | 10 | 过期的 Codex 读数多久免费重读一次会话文件（Claude 探测仍按 `probe_idle_minutes`） |
+| `[routing] stale_estimate_hours` | 0（关） | 48 | 这么久以内的过期读数做保守外推（上次读数 + 窗口平均速度 × 经过时间 + 本实例在该 provider 的智能体时长 × `estimate_fraction_per_agent_hour`），不再把该 provider 限为 1 个任务 |
+| `[budget] adaptive_parallel` | false | true | 每轮按可运行任务、实测负载和额度配速调整并行上限，每轮最多变 `adaptive_step`（2）；`max_parallel_agents` 仍是硬顶 |
+| `[budget] host_utilization_target` | 0.8 | 0.8 | 容器实测 CPU（cgroup，按上一轮以来）与内存（不含页缓存）的目标；达到即不再加并行 |
+| `[budget] ailab_utilization_target` | 0.9 | 0.9 | ailab 已声明占用的目标，只用于报告和给智能体的指引 |
+
+怎么理解：
+
+- 相对充裕度 = （该类任务的上限 − 已用）÷ 窗口剩余时间占窗口的比例。大于 1 表示按平均速度用不完、
+  应该多用；小于 1 表示要省着用。一个 runner 取它所有约束窗口里最小的（Claude 的 5 小时、每周、
+  Fable 专属窗口都算），所以 5 小时窗口快满时会先被让开，撞到限额后已有的退避照常生效。
+- 打开 `utilization_target` 后，普通任务按相对充裕度的比例分给两家：没有在跑任务时给最充裕的一家，
+  它的在跑数超过自己份额后下一个任务给另一家，临近重置而剩余多的一家份额更大。评审、决策的
+  独立性（与产出方不同模型族）、保留线和 Fable 的偏好不变。
+- “超速”仍指按窗口平均速度会在重置前用到 100%，与目标线分开；临近重置而余量多的窗口不会被判超速。
+- 自适应上限：有可运行任务、某一家按当前速度到重置时会低于目标、容器实测负载低于目标减 0.1 时
+  上调；负载达到目标或所有可用的 provider 都超出配速时每轮降 1；没有可运行任务时保持不动。
+  智能体进程大多在等模型响应，CPU 空闲本身不会让上限越过额度配速和硬顶。
+
+观察：打开 `adaptive_parallel` 或 `utilization_target` 后，每轮报告里多出 `parallel_limit`（本轮上限、上一轮、硬顶、`limited_by` 与原因）、`host_usage`、
+`ailab`（共享队列只读统计）、`balance`（每一项的当前值 / 目标、是否低于目标、被什么限制：
+`topic_slots` 名额、`candidate_pool` 候选池、`admission_pass_rate` 立项通过率、`quota_pacing`
+额度配速、`hard_ceiling` 硬顶、`demand` 没有可运行任务等），`provider_quota` 里每家的
+`abundance` 和各窗口的 `window_pace`。随时可以只读地看汇总：
+
+```bash
+bin/openlabs-container-loop cli -- program utilization            # --history N、--no-gpu
+```
+
+它列出在跑/排队任务按档位与 provider 的分布、各窗口已用比例、相对充裕度、按当前速度到重置时
+的预计用量（对照目标）、容器 CPU/内存/GPU、ailab 占用（对照 0.9）和最近几轮的上限及原因；
+运行库以只读方式打开。
 
 ## 台式机与笔记本交接
 

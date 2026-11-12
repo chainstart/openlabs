@@ -67,7 +67,10 @@ Each field is there because the gate needs it to decide:
   `container_gpu`, `ailab`, `wsl_math`; chosen as in AGENTS.md "Where computation runs"), with
   `gpu_memory_mib` when the GPU is used and `ailab: {cpus, memory_mib, hours}` for the ailab
   queue (1-8 CPUs, at most 62961 MiB). The container instance cannot run `wsl_math` and rejects
-  such a card outright; propose mathematics only where the packet's instance runs it.
+  such a card outright; propose mathematics only where the packet's instance runs it. Keep
+  token cost and compute cost apart: heavy computation that parallelises across ailab jobs
+  costs calendar hours on an otherwise idle host, not model budget, so do not drop a strong
+  question only because its CPU time is long; plan the split and state it here.
 - `reusable_assets[]` — index entries you rely on (may be empty).
 - `ledger_check.compared_topic_ids` — the ledger topics you compared against.
 - optional `target_tier` (`routine`/`escalation`), `reopens`, `reopen_basis` (`type`,
