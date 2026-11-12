@@ -1299,7 +1299,7 @@ def validate_release_preconditions(
     guard_target(repo_root, metadata)
     from paper_writing.venue_policy import provisional_escalation_blockers
     escalation_blockers = provisional_escalation_blockers(
-        metadata, settings.get("journal_target_policy"), paper_id=paper_id
+        metadata, settings.get("journal_target_policy"), paper_id=paper_id, root=repo_root
     )
     if escalation_blockers:
         raise HandoffError(escalation_blockers[0])

@@ -1145,8 +1145,16 @@ def review_track(metadata: Mapping[str, Any], root: Path | None = None) -> dict[
     policy = settings.get("journal_target_policy") or {}
     config = venue_policy.eligibility_config(policy)
     escalation = bool(config) and venue_policy.is_escalation_venue(metadata, policy)
-    return {"track": "escalation" if escalation else "routine",
-            "minimum_overall_score": config["escalation"]["minimum_internal_score"] if escalation else None}
+    if not escalation:
+        return {"track": "routine", "minimum_overall_score": None}
+    # A valid owner score waiver (target_escalation.score_waiver) lowers the bar for this
+    # paper and venue only; an invalid one stops the review instead of being ignored.
+    minimum = venue_policy.escalation_minimum(metadata, policy, paper_id=str(metadata.get("paper_id") or ""),
+                                              root=root)
+    track = {"track": "escalation", "minimum_overall_score": minimum}
+    if minimum < config["escalation"]["minimum_internal_score"]:
+        track["score_waiver"] = True
+    return track
 
 
 def apply_review_track(merged: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],

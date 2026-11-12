@@ -259,7 +259,8 @@ def load_registry(
                 )
         if enforce_target_policy:
             target_policy = global_settings.get("journal_target_policy")
-            venue_policy.validate_journal_eligibility(paper, paper_id=paper_id, policy=target_policy)
+            venue_policy.validate_journal_eligibility(paper, paper_id=paper_id, policy=target_policy,
+                                                     root=repo_root)
             venue_policy.validate_conference_eligibility(paper, paper_id=paper_id, policy=target_policy)
             venue_policy.validate_empirical_data_sources(paper, paper_id=paper_id, policy=target_policy)
         _validate_research_outcomes(paper, paper_id=paper_id)

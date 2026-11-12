@@ -14,8 +14,12 @@ created on or after it, so historical targets and ongoing submissions remain tru
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from collections.abc import Mapping
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 CCF_RANKS = ("A", "B", "C")
@@ -38,6 +42,14 @@ ESCALATION_STATUSES = {"approved", "provisional"}
 # the subscription route while its separate costs page levied a page charge per typeset
 # page, so it had been registered as a fallback that was never fee-free.
 FALLBACK_REQUIRED_CHARGES = ("page_charge", "colour_charge", "submission_fee")
+# ``target_escalation.score_waiver``: the owner explicitly keeps an escalation target although
+# the internal review score is below ``minimum_internal_score``. It names the lowest score
+# the owner accepted (the score of the review the owner saw, bound by path and hash) and a
+# hash-bound receipt of the owner's own words. It only lowers the score bar for this paper
+# and venue; the review must still be ready (no blockers, no low-confidence referee).
+SCORE_WAIVER_KIND = "escalation_score_waiver"
+_USER_RECEIPT_SCHEMA = "openlabs.actual_author_instruction.v1"
+_USER_RECEIPT_SOURCE = "actual user message in this session"
 
 
 def _date(value: Any) -> date | None:
@@ -109,8 +121,108 @@ def _applies(checked_at: Any, config: Mapping[str, Any]) -> bool:
     return checked is not None and checked >= config["effective_from"]
 
 
+def _safe_file(root: Path, source: Any, digest: Any, label: str) -> Path:
+    if (not isinstance(source, str) or not source or "\\" in source
+            or Path(source).is_absolute() or ".." in Path(source).parts
+            or Path(source).as_posix() != source
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+        raise ValueError(f"Unsafe or unbound {label}")
+    base = Path(root).resolve()
+    component = base
+    for part in Path(source).parts:
+        component /= part
+        if component.is_symlink():
+            raise ValueError(f"Unsafe {label}: symlink")
+    path = base / source
+    if (not path.is_file() or path.stat().st_size > 2_000_000
+            or hashlib.sha256(path.read_bytes()).hexdigest() != digest):
+        raise ValueError(f"{label} missing or changed")
+    return path
+
+
+def score_waiver_problems(record: Mapping[str, Any], *, paper_id: str, venue: str,
+                          root: str | Path | None = None) -> list[str]:
+    """Why ``record['score_waiver']`` is not a valid owner waiver (``[]``: it is).
+
+    Without ``root`` only the structure is checked; with ``root`` the receipt and the basis
+    review are re-hashed and the receipt's grant must cover this paper, venue and score.
+    """
+
+    waiver = record.get("score_waiver")
+    prefix = f"target_escalation.score_waiver for {paper_id}"
+    if not isinstance(waiver, Mapping):
+        return [f"{prefix} must be an object"]
+    problems = []
+    if str(waiver.get("venue") or "").strip().casefold() != venue.strip().casefold():
+        problems.append(f"{prefix} names a different venue")
+    for key in ("authorized_by", "user_text"):
+        if not _filled(waiver.get(key)):
+            problems.append(f"{prefix}.{key} is required")
+    if not _date(waiver.get("authorized_at")):
+        problems.append(f"{prefix}.authorized_at must be YYYY-MM-DD")
+    floor = waiver.get("minimum_accepted_score")
+    if isinstance(floor, bool) or not isinstance(floor, (int, float)):
+        problems.append(f"{prefix}.minimum_accepted_score must be a number")
+    basis = waiver.get("basis_review")
+    auth = waiver.get("authorization")
+    if not isinstance(basis, Mapping) or not _filled(basis.get("path")) or not _filled(basis.get("sha256")):
+        problems.append(f"{prefix}.basis_review needs the reviewed decision record path and sha256")
+    if (not isinstance(auth, Mapping) or not _filled(auth.get("summary"))
+            or not _filled(auth.get("path")) or not _filled(auth.get("sha256"))
+            or not str(auth.get("json_pointer") or "").startswith("/")):
+        problems.append(f"{prefix}.authorization needs a hash-bound user receipt "
+                        "(path, sha256, json_pointer, summary)")
+    if problems or root is None:
+        return problems
+    try:
+        _safe_file(Path(root), basis["path"], basis["sha256"], f"{prefix} basis review")
+        path = _safe_file(Path(root), auth["path"], auth["sha256"], f"{prefix} authorization")
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [str(exc)]
+    if (not isinstance(receipt, Mapping) or receipt.get("schema") != _USER_RECEIPT_SCHEMA
+            or receipt.get("source") != _USER_RECEIPT_SOURCE
+            or receipt.get("user_text") != waiver.get("user_text")):
+        return [f"{prefix} requires an actual user instruction receipt with the same user_text"]
+    grant: Any = receipt
+    try:
+        for token in str(auth["json_pointer"])[1:].split("/"):
+            token = token.replace("~1", "/").replace("~0", "~")
+            grant = grant[int(token)] if isinstance(grant, list) else grant[token]
+    except (KeyError, IndexError, ValueError, TypeError):
+        return [f"{prefix} authorization pointer does not resolve"]
+    if (not isinstance(grant, Mapping) or grant.get("kind") != SCORE_WAIVER_KIND
+            or grant.get("paper_id") != paper_id
+            or str(grant.get("target_journal") or grant.get("venue") or "").strip().casefold()
+            != venue.strip().casefold()
+            or grant.get("minimum_accepted_score") != floor
+            or grant.get("authorization") != auth.get("summary")):
+        return [f"{prefix}: the user receipt does not cover this paper, venue and score"]
+    return []
+
+
+def escalation_minimum(paper: Mapping[str, Any], policy: Mapping[str, Any] | None, *,
+                       paper_id: str, root: str | Path | None = None) -> float | None:
+    """The score bar for this paper's escalation target: the configured minimum, or the
+    lower floor of a valid owner ``score_waiver``. ``None`` when not on the escalation track.
+    An invalid waiver raises ``ValueError`` rather than silently falling back."""
+
+    config = eligibility_config(policy)
+    if not config or not is_escalation_venue(paper, policy):
+        return None
+    minimum = config["escalation"]["minimum_internal_score"]
+    record = paper.get("target_escalation")
+    if not isinstance(record, Mapping) or record.get("score_waiver") is None:
+        return minimum
+    venue = str(paper.get("target_conference") or paper.get("target_journal") or "")
+    problems = score_waiver_problems(record, paper_id=paper_id, venue=venue, root=root)
+    if problems:
+        raise ValueError(problems[0])
+    return min(minimum, float(record["score_waiver"]["minimum_accepted_score"]))
+
+
 def _validate_escalation(paper: Mapping[str, Any], *, paper_id: str, venue: str,
-                         config: Mapping[str, Any]) -> None:
+                         config: Mapping[str, Any], root: str | Path | None = None) -> None:
     record = paper.get("target_escalation")
     prefix = f"target_escalation for {paper_id}"
     if not isinstance(record, Mapping):
@@ -136,17 +248,23 @@ def _validate_escalation(paper: Mapping[str, Any], *, paper_id: str, venue: str,
             return  # reviewed on the escalation track; scored before delivery
     if isinstance(score, bool) or not isinstance(score, (int, float)):
         raise ValueError(f"{prefix}.internal_review_score must be a number")
-    if float(score) < config["escalation"]["minimum_internal_score"]:
+    minimum = config["escalation"]["minimum_internal_score"]
+    if record.get("score_waiver") is not None:
+        problems = score_waiver_problems(record, paper_id=paper_id, venue=venue, root=root)
+        if problems:
+            raise ValueError(problems[0])
+        minimum = min(minimum, float(record["score_waiver"]["minimum_accepted_score"]))
+    if float(score) < minimum:
         raise ValueError(
-            f"{prefix}.internal_review_score {score} is below the escalation minimum "
-            f"{config['escalation']['minimum_internal_score']}"
+            f"{prefix}.internal_review_score {score} is below the escalation minimum {minimum}"
         )
     if not _filled(record.get("internal_review_source")):
         raise ValueError(f"{prefix}.internal_review_source is required")
 
 
 def validate_journal_eligibility(paper: Mapping[str, Any], *, paper_id: str,
-                                 policy: Mapping[str, Any] | None) -> None:
+                                 policy: Mapping[str, Any] | None,
+                                 root: str | Path | None = None) -> None:
     config = eligibility_config(policy)
     if not config or str(paper.get("venue_type") or "journal") != "journal":
         return
@@ -178,7 +296,8 @@ def validate_journal_eligibility(paper: Mapping[str, Any], *, paper_id: str,
     if rules["require_no_mandatory_author_fee"] and paper.get("target_journal_fee_policy") != "no_mandatory_author_fee":
         raise ValueError(f"target_journal must have a fee-free publication route for {paper_id}")
     if tier in config["escalation"]["journal_tiers"]:
-        _validate_escalation(paper, paper_id=paper_id, venue=str(paper["target_journal"]), config=config)
+        _validate_escalation(paper, paper_id=paper_id, venue=str(paper["target_journal"]), config=config,
+                             root=root)
     else:
         _validate_executed_fallback(paper, paper_id=paper_id, venue=str(paper["target_journal"]),
                                     policy=policy)
@@ -401,11 +520,12 @@ def _validate_sources(sources: Any, *, paper_id: str, require_real: bool) -> Non
 
 
 def provisional_escalation_blockers(paper: Mapping[str, Any], policy: Mapping[str, Any] | None,
-                                    *, paper_id: str) -> list[str]:
+                                    *, paper_id: str, root: str | Path | None = None) -> list[str]:
     """Why a provisional escalation target cannot be delivered yet (``[]``: it can).
 
     Delivery needs a ready unified review whose score (the lowest referee overall
-    score) meets ``venue_eligibility.escalation.minimum_internal_score``.
+    score) meets ``venue_eligibility.escalation.minimum_internal_score``, or the lower
+    floor of a valid owner ``score_waiver`` (the review must still be ready).
     """
 
     record = paper.get("target_escalation")
@@ -414,7 +534,10 @@ def provisional_escalation_blockers(paper: Mapping[str, Any], policy: Mapping[st
     config = eligibility_config(policy)
     if not config or not is_escalation_venue(paper, policy):
         return []
-    minimum = config["escalation"]["minimum_internal_score"]
+    try:
+        minimum = escalation_minimum(paper, policy, paper_id=paper_id, root=root)
+    except ValueError as exc:
+        return [str(exc)]
     release = paper.get("writing_release")
     release = release if isinstance(release, Mapping) else {}
     score = release.get("score")

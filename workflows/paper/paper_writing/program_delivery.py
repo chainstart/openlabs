@@ -178,8 +178,9 @@ def confirm_escalation(paper_id: str, *, root: str | Path) -> dict[str, Any]:
     if not isinstance(record, Mapping) or record.get("status") != "provisional":
         return {"paper_id": paper_id, "changed": False,
                 "status": record.get("status") if isinstance(record, Mapping) else None}
+    policy = _policy(repo_root)
     problems = venue_policy.provisional_escalation_blockers(
-        metadata, _policy(repo_root), paper_id=paper_id
+        metadata, policy, paper_id=paper_id, root=repo_root
     )
     if problems:
         raise ProgramDeliveryError(problems[0])
@@ -192,6 +193,14 @@ def confirm_escalation(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "internal_review_source": str(release.get("decision_record") or ""),
         "provisional_approved_by": record.get("approved_by"),
     })
+    config = venue_policy.eligibility_config(policy)
+    configured = config["escalation"]["minimum_internal_score"] if config else None
+    score = release.get("score")
+    if (configured is not None and isinstance(score, (int, float)) and not isinstance(score, bool)
+            and float(score) < configured and isinstance(record.get("score_waiver"), Mapping)):
+        # Approved under the owner's score waiver, not by meeting the configured bar.
+        approved["score_waiver_applied"] = {"configured_minimum": configured,
+                                            "minimum_accepted_score": record["score_waiver"]["minimum_accepted_score"]}
     metadata["target_escalation"] = approved
     write_paper_metadata(paper_id, metadata, repo_root)
     return {"paper_id": paper_id, "changed": True, "target_escalation": approved}
