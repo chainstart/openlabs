@@ -284,6 +284,10 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
     # Topic scouting verifies data access and estimates cost, not just
     # literature screening, so it runs on the worker tier.
     "topic_scout": "worker",
+    # Revising a held topic against its reopen conditions is scout work; fixing
+    # a card's format errors is light.
+    "topic_revision": "worker",
+    "topic_card_repair": "light",
     # Distilling a finished topic into reusable assets is bookkeeping-sized work.
     "topic_retrospective": "light",
     "paper_revision": "worker",
@@ -325,6 +329,8 @@ DEFAULT_CLAIM_RANKS: dict[str, int] = {
     "paper_readiness": 3,
     "paper_writing": 3,
     "topic_admission": 1,
+    "topic_card_repair": 1,
+    "topic_revision": 0,
     "topic_scout": 0,
     "literature_scan": 0,
     "literature_search": 0,
@@ -334,6 +340,8 @@ DEFAULT_CLAIM_RANKS: dict[str, int] = {
 DEFAULT_LEAD_SHORTAGE_PAUSED: tuple[str, ...] = (
     "topic_admission",
     "topic_scout",
+    "topic_revision",
+    "topic_card_repair",
     "literature_scan",
     "literature_search",
     "literature_screening",

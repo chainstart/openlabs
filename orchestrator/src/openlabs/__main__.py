@@ -185,6 +185,18 @@ def _parser() -> argparse.ArgumentParser:
         help="second_author (default) or an author name from the paper's byline",
     )
     assign.add_argument("--by", default="owner", help="Who completed the review (provenance)")
+    assign.add_argument(
+        "--conditions-met", action="store_true",
+        help="Confirm that the admission conditions due before submission are met",
+    )
+    revisable = program_commands.add_parser(
+        "mark-revisable",
+        help="Record that a judged rejection's defect is fixable, so the program schedules one "
+        "revision card against its reopen conditions",
+    )
+    revisable.add_argument("--topic-id", required=True)
+    revisable.add_argument("--reason", required=True, help="Why the defect is fixable")
+    revisable.add_argument("--by", default="operator", help="Who decided (provenance)")
     instance = program_commands.add_parser(
         "init-instance",
         help="Create a separate orchestrator instance (own database, settings and projects; "
@@ -457,11 +469,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 1
         elif args.program_command == "backfill":
             payload = backfill_grandfathered(db, paths, settings, write=args.write)
+        elif args.program_command == "mark-revisable":
+            from .program_flow import mark_revisable
+
+            payload = {
+                "schema_version": "openlabs.program_mark_revisable.v1",
+                "topic_id": args.topic_id,
+                "written": mark_revisable(db, paths, settings, args.topic_id,
+                                          decided_by=f"manual:{args.by}", reason=args.reason),
+            }
         elif args.program_command == "assign-handler":
             try:
                 payload = assign_submission_handler(
                     db, paths, settings, paper_id=args.paper_id, handler=args.handler,
-                    assigned_by=args.by,
+                    assigned_by=args.by, conditions_met=args.conditions_met,
                 )
             except DeliveryError as exc:
                 print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False),

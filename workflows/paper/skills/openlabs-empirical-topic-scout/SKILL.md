@@ -15,8 +15,38 @@ Of 113 submissions, 4 were accepted; most rejections were editorial ("contributi
 insufficient", "limited readership"), usually within two weeks. The recent papers came from a
 batch campaign whose topic cards were written after the analysis. Cards written first, checked
 against the ledger and against the closest prior work, are the cheapest place to stop a weak
-paper. Proposing nothing is a good outcome when nothing clears the bar; the program has no paper
-quota and slots may stay empty.
+paper. The owner wants a steady, regular flow of routine papers (CAS 2025 Zones 3-4) at a sensible
+token and compute cost, not breakthroughs, and idle slots and quota are a cost too. Propose
+nothing only when nothing in the line clears the routine bar; a sound routine card is worth
+more than a clever one that is fragile.
+
+## What to propose
+
+Prefer routine production topics inside the line's positioning: a screening of a new set of
+systems with a validated method, the line's standard analysis applied to a new or newly released
+dataset, cohort or material family, a simulation case with verification and validation against
+published measurements. These are what the lines exist for, and their cost is predictable. Re-audits
+of somebody else's benchmark or published numbers (a leaderboard re-check, a "does the reported
+value hold" study) are the exception, not the default: they fail most often on prior work that
+already did the check and on endpoints that cannot separate the claim from measurement error.
+
+## How the gate decides (policy v2)
+
+The gate admits a routine card when a stated incremental difference survives the closest prior
+work, the decisive data is confirmed, the design can identify the claimed effect, and the card
+fits its line and the licence lists. It rejects only for fatal problems: the comparison already
+exists, the data cannot be had, the claim cannot be identified even after revision, a blacklisted
+licence, or work beyond a computer. Fixable gaps (pre-registration details, manifests,
+multiplicity, a baseline to add, an itemized cost, venue evidence still to verify) become
+admission conditions that the campaign meets at a stated stage (`before_precheck`,
+`before_decisive_analysis`, `before_submission`); they reach the campaign's first task. So write
+the card so the difference, the data and the identification are unmistakable; details can follow
+as conditions. A held topic, or one rejected as fixable, comes back once as a revision task: you
+get the earlier card and its numbered reopen conditions and return one card with
+`condition_responses` (`condition` index, `response`), which the gate checks against those
+conditions only. A card that fails the machine format checks gets one repair task with the error
+list. None of this changes what follows: receipts, citations, fee evidence and checks must be
+real.
 
 The admission gate's rejections on this instance so far share three causes, and each is cheaper
 to catch here. First, the claimed difference disappeared once the gate found closer work the
@@ -43,8 +73,9 @@ meet its `minimum_validation`; the line's `positioning` and `minimum_novelty_per
 a paper of that line has to add. If you think a question deserves a line that does not exist,
 do not write a card for it: explain in the result summary why the new line would be routine,
 stable and cheap, so the owner can add it. `research_line_summary.environment_status` tells you
-whether the line can run now; a card of a line that is not `ready` is held after admission until
-it is, so propose one or two strong cards there rather than many.
+whether the line can run now; a card of a line that is not `ready` is held after admission and
+admitted with the gate's decision once the line is ready, without a new card, so propose one or
+two strong cards there rather than many.
 
 ## Before writing a card
 
@@ -77,8 +108,9 @@ Each field is there because the gate needs it to decide:
 
 - `question` — one sentence a domain reader recognizes as open or contested.
 - `audience` — `who` cares, and `citations` with at least two papers from the last three years
-  published in your candidate venues (`citation`, `year`, `venue`). Without readers at the venue
-  the editor desk-rejects regardless of quality.
+  published in your candidate venues (`citation`, `year`, `venue`). Readers' papers in other
+  venues may be listed too; only those in the candidate venues count towards the two. Without
+  readers at the venue the editor desk-rejects regardless of quality.
 - `closest_prior_work[]` — `citation`, `what_it_shows`, `our_difference`. Be specific; the gate
   checks these one by one and "first to apply X to Y" rarely survives.
 - `decisive_analysis` — `description` of the one analysis or dataset the topic stands or falls
@@ -91,7 +123,8 @@ Each field is there because the gate needs it to decide:
 - `computational_only: true` and `computational_only_rationale`.
 - `venues` — `routine`: two venues in the routine tiers of
   `settings.yaml#journal_target_policy.venue_eligibility` (fee-free route, team-ledger status
-  checked); optional `escalation` with what result would justify it. The routine pair is the
+  checked); optional `escalation` (`name`, or `venues: [...]` for alternatives, with the
+  `condition` that would justify it). The routine pair is the
   fallback the campaign keeps.
 - `cost_estimate` — `agent_seconds`, `tokens`, `gpu_hours`, `calendar_days`, and `basis`: what
   the estimate rests on (a reusable pipeline, a comparable past campaign, a dry run). The gate
@@ -125,15 +158,19 @@ Each field is there because the gate needs it to decide:
 - `reusable_assets[]` — index entries you rely on (may be empty).
 - `ledger_check.compared_topic_ids` — the ledger topics you compared against.
 - optional `target_tier` (`routine`/`escalation`), `reopens`, `reopen_basis` (`type`,
-  `description`).
+  `description`). In a revision task the control plane sets `revises`; add
+  `condition_responses[]` (`condition`: index into the packet's `target.reopen_conditions`,
+  `response`) for every condition marked `answer_required`.
 
-The control plane checks the structure. A card missing a field is recorded as rejected with the
-missing fields listed, which costs a whole scout run; checking your own cards is cheaper.
+The control plane checks the structure. A card missing a field is recorded with the failed
+checks and gets one automatic repair task; a second failure is final. Checking your own cards is
+still cheaper.
 
 ## After admission
 
 The admitted campaign starts from `research_state.json`, which carries the pre-registered
-endpoint and its hash, the target tier, the routine fallback venues and the cost budget. For a
+endpoint and its hash, the target tier, the routine fallback venues, the cost budget and any
+`admission_conditions` with the stage each one is due. For a
 research-line topic the card's `feasibility_precheck` runs first, before anything else, in the
 line's environment (`registry/research-lines.yaml` `environment`, with its SOP); when it misses its
 pass criterion the campaign returns `gate_result` with `promotion_decision: freeze` and

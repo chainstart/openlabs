@@ -21,7 +21,15 @@ Lifecycle::
 
 Reopening a frozen topic, or one the admission gate rejected or held, is a new
 proposal with a new ``topic_id`` whose card declares ``reopens``; the new topic
-records ``supersedes``.
+records ``supersedes``. A held topic, or one rejected for a fixable reason, may
+instead come back once as a revision card (``revises``; the new topic records
+``revision_of`` and ``supersedes``) that the gate checks only against the
+recorded reopen conditions.
+
+Two guarded moves leave ``rejected`` (ledger schema v2): a hold whose only
+blocker was its research line's environment returns to ``proposed`` for the
+gate, or straight to ``admitted`` when the gate had already admitted it, once
+the line is ready (``release_held_topic``).
 """
 
 from __future__ import annotations
@@ -44,7 +52,10 @@ from .contracts import REOPEN_BASIS_TYPES as CONTRACT_REOPEN_BASIS_TYPES
 from .contracts import atomic_write_json, canonical_json_bytes
 from .db import FactoryDB, utc_now
 
-LEDGER_SCHEMA = "openlabs.topic_ledger.v1"
+LEDGER_SCHEMA = "openlabs.topic_ledger.v2"
+# v1 ledgers (no revision, repair or hold-release fields) are read unchanged and
+# written back as v2 on their next change.
+READABLE_LEDGER_SCHEMAS = frozenset({"openlabs.topic_ledger.v1", LEDGER_SCHEMA})
 
 TOPIC_STATUSES = (
     "proposed",
@@ -66,8 +77,16 @@ TRANSITIONS: dict[str | None, frozenset[str]] = {
     # (formal fix, support citation) is beyond the delta review and needs a full one.
     "ready_queue": frozenset({"submitted", "in_review"}),
     "submitted": frozenset(),
-    "rejected": frozenset(),
+    # Only the guarded hold releases below leave ``rejected``.
+    "rejected": frozenset({"proposed", "admitted"}),
     "frozen": frozenset(),
+}
+# Transitions allowed only with these reasons (see ``release_held_topic``).
+HOLD_RELEASE_FOR_REVIEW = "hold_released_for_review"
+HOLD_RELEASE_ADMITTED = "hold_released_admitted"
+GUARDED_TRANSITIONS: dict[tuple[str, str], frozenset[str]] = {
+    ("rejected", "proposed"): frozenset({HOLD_RELEASE_FOR_REVIEW}),
+    ("rejected", "admitted"): frozenset({HOLD_RELEASE_ADMITTED}),
 }
 # Statuses that hold one of the ``max_active_topics`` research slots.
 # ``admitted`` is a reservation: the topic passed the admission gate but its
@@ -122,6 +141,12 @@ TOPIC_FIELDS = (
     "handoff",
     # Release pipeline state between ready and delivery (stage, attempts, last error).
     "release",
+    # Admission policy v2 (absent from older ledgers): one automatic repair of a
+    # format-invalid card, and one revision of a held or fixably rejected topic.
+    "card_repair",
+    "repair_of",
+    "revision",
+    "revision_of",
     "history",
 )
 # Rejections that judged the topic on its merits. A card with the same
@@ -256,8 +281,10 @@ def empty_ledger() -> dict[str, Any]:
 def validate_ledger(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TopicLedgerError("topic ledger must be a JSON object")
-    if payload.get("schema_version") != LEDGER_SCHEMA:
-        raise TopicLedgerError(f"topic ledger schema_version must be {LEDGER_SCHEMA}")
+    if payload.get("schema_version") not in READABLE_LEDGER_SCHEMAS:
+        raise TopicLedgerError(
+            f"topic ledger schema_version must be one of {sorted(READABLE_LEDGER_SCHEMAS)}"
+        )
     topics = payload.get("topics")
     if not isinstance(topics, list):
         raise TopicLedgerError("topic ledger topics must be a list")
@@ -325,6 +352,7 @@ class TopicLedger:
                 before = copy.deepcopy(document)
                 yield document
                 if document != before:
+                    document["schema_version"] = LEDGER_SCHEMA
                     validate_ledger(document)
                     document["updated_at"] = utc_now()
                     atomic_write_json(self.path, document)
@@ -511,6 +539,11 @@ def _apply_transition(
         raise IllegalTopicTransition(
             f"topic {topic_id}: transition {from_status or '(new)'} -> {to_status} is not allowed"
         )
+    guarded = GUARDED_TRANSITIONS.get((str(from_status), to_status))
+    if guarded is not None and reason not in guarded:
+        raise IllegalTopicTransition(
+            f"topic {topic_id}: {from_status} -> {to_status} needs reason {sorted(guarded)}"
+        )
     entry = {
         "at": at,
         "from": from_status,
@@ -597,7 +630,9 @@ def transition_topic(
 
 
 # Fields an automatic decision may set on a topic without changing its status.
-NOTE_FIELDS = frozenset({"awaiting_owner_review", "handoff", "paper_id", "release"})
+NOTE_FIELDS = frozenset(
+    {"awaiting_owner_review", "handoff", "paper_id", "release", "card_repair", "revision"}
+)
 
 
 def record_topic_note(
@@ -702,6 +737,7 @@ def propose_topic(
     if not _TOPIC_ID.fullmatch(topic_id):
         raise TopicLedgerError(f"invalid topic_id {topic_id!r}")
     reopens = str(card.get("reopens") or "").strip() or None
+    revises = str(card.get("revises") or "").strip() or None
     now = utc_now()
     entries: list[dict[str, Any]] = []
     with ledger.transaction() as document:
@@ -720,13 +756,15 @@ def propose_topic(
             duplicates: list[str] = []
             if reopens is not None:
                 rejection = _reopen_problem(document, reopens, card.get("reopen_basis"))
+            if not rejection and revises is not None:
+                rejection = _revision_problem(document, revises, card.get("condition_responses"))
             if not rejection:
                 for other in document["topics"]:
                     if other.get("fingerprint") != fingerprint:
                         continue
                     if other.get("status") == "rejected" and not judged_rejection(other):
                         continue
-                    if other.get("topic_id") == reopens:
+                    if other.get("topic_id") in {reopens, revises}:
                         continue
                     if other.get("status") in {"frozen", "rejected"} and _superseded(
                         document, other
@@ -743,7 +781,8 @@ def propose_topic(
                     "fingerprint": fingerprint,
                     "target_tier": card.get("target_tier"),
                     "card_sha256": digest,
-                    "supersedes": reopens if not rejection else None,
+                    "supersedes": (reopens or revises) if not rejection else None,
+                    "revision_of": revises if not rejection else None,
                 }
             )
             topic.update(_metadata_fields(metadata))
@@ -804,6 +843,8 @@ _METADATA_FIELDS = frozenset(
         "routine_fallback",
         "cost_estimate",
         "admission",
+        "card_repair",
+        "repair_of",
     }
 )
 
@@ -939,6 +980,95 @@ def _reopen_problem(document: Mapping[str, Any], reopens: str, basis: Any) -> st
     if declared and kind not in declared:
         return "reopen_basis_not_declared_by_frozen_topic"
     return ""
+
+
+# Reopen-condition types that a revision card cannot answer: the control plane
+# releases these holds itself once the line's environment is ready.
+AUTOMATIC_REOPEN_TYPES = frozenset({"line_environment_ready"})
+
+
+def revision_eligible(topic: Mapping[str, Any]) -> bool:
+    """Whether a judged topic may come back once as a revision card (``revises``).
+
+    Holds qualify unless every recorded condition is one the control plane
+    releases itself; a rejection qualifies when the gate (``admission.revisable``)
+    or a recorded decision (``revision.eligible``) called its defect fixable. A
+    revision card's own hold or rejection does not open a second revision.
+    """
+
+    if topic.get("status") != "rejected" or topic.get("revision_of"):
+        return False
+    marker = topic.get("revision") if isinstance(topic.get("revision"), Mapping) else {}
+    if marker.get("eligible") is False:
+        return False
+    reason = last_rejection_reason(topic)
+    if reason == "admission_hold":
+        kinds = {str(item.get("type")) for item in topic.get("reopen_conditions") or []
+                 if isinstance(item, Mapping)}
+        return bool(kinds - AUTOMATIC_REOPEN_TYPES)
+    if reason in JUDGED_REJECTION_REASONS:
+        admission = topic.get("admission") if isinstance(topic.get("admission"), Mapping) else {}
+        return marker.get("eligible") is True or admission.get("revisable") is True
+    return False
+
+
+def _revision_problem(document: Mapping[str, Any], revises: str, responses: Any) -> str:
+    target = find_topic(document, revises)
+    if target is None:
+        return "revises_unknown_topic"
+    if not revision_eligible(target):
+        return "revises_topic_not_revisable"
+    for other in document.get("topics") or []:
+        if other.get("revision_of") == revises and other.get("topic_id") != revises:
+            return "revises_topic_already_revised"
+    conditions = list(target.get("reopen_conditions") or [])
+    answered = {
+        item.get("condition") for item in responses or [] if isinstance(item, Mapping)
+    }
+    wanted = {
+        index for index, item in enumerate(conditions)
+        if str((item or {}).get("type")) not in AUTOMATIC_REOPEN_TYPES
+    }
+    if wanted - answered:
+        return "revision_misses_conditions:" + ",".join(str(i) for i in sorted(wanted - answered))
+    return ""
+
+
+def release_held_topic(
+    ledger: TopicLedger,
+    topic_id: str,
+    *,
+    db: FactoryDB,
+    to_status: str,
+    decided_by: str,
+    evidence: Any = None,
+    updates: Mapping[str, Any] | None = None,
+) -> TopicDecision:
+    """``rejected (admission_hold) -> proposed | admitted`` once the hold's blocker is gone.
+
+    ``proposed`` sends the topic back to the gate (its attempts restart);
+    ``admitted`` applies an admission the gate had already made. Each topic is
+    released at most once.
+    """
+
+    topic = ledger.topic(topic_id)
+    if topic is None:
+        raise TopicLedgerError(f"unknown topic {topic_id}")
+    if last_rejection_reason(topic) != "admission_hold":
+        raise TopicLedgerError(f"topic {topic_id} is not held")
+    if any(entry.get("reason") in {HOLD_RELEASE_FOR_REVIEW, HOLD_RELEASE_ADMITTED}
+           for entry in topic.get("history") or []):
+        raise TopicLedgerError(f"topic {topic_id} was already released from a hold")
+    reason = HOLD_RELEASE_ADMITTED if to_status == "admitted" else HOLD_RELEASE_FOR_REVIEW
+    values = dict(updates or {})
+    if to_status == "proposed":
+        values.setdefault("admission_attempts", [])
+    else:
+        values.setdefault("admitted_at", utc_now())
+    return transition_topic(
+        ledger, topic_id, to_status, db=db, reason=reason, decided_by=decided_by,
+        evidence=evidence, updates=values,
+    )
 
 
 def admit_topic(

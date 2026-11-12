@@ -40,6 +40,7 @@ from .config import FactorySettings, WorkspacePaths
 from .contracts import (
     FREEZE_REASON_CLASSES,
     REOPEN_BASIS_TYPES,
+    admission_conditions,
     atomic_write_json,
     canonical_json_bytes,
     sha256_file,
@@ -813,6 +814,14 @@ def on_review_scheduled(
                          decided_by=review_task_id)
 
 
+def submission_conditions(topic: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Admission conditions due ``before_submission`` (open blockers of the handoff)."""
+
+    admission = topic.get("admission") if isinstance(topic.get("admission"), Mapping) else {}
+    return [item for item in admission_conditions(admission)
+            if item.get("due") == "before_submission"]
+
+
 def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payload, evidence):
     """Review ready: ``ready_queue``, pause the campaign (slot released), queue delivery."""
 
@@ -834,9 +843,12 @@ def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payl
     record_topic_note(
         ledger, topic_id, db=db, event_type="handoff_queued", reason="review_passed",
         decided_by=task_id,
-        detail={"paper_id": paper_id, "auto_handoff": settings.program.auto_handoff},
+        detail={"paper_id": paper_id, "auto_handoff": settings.program.auto_handoff,
+                "submission_conditions": submission_conditions(topic)},
         updates={"handoff": {"status": "queued", "attempts": 0, "paper_id": paper_id,
-                             "queued_at": utc_now(), "review_task_id": task_id},
+                             "queued_at": utc_now(), "review_task_id": task_id,
+                             # The owner confirms these before a submission handler is set.
+                             "submission_conditions": submission_conditions(topic)},
                  "release": {"status": "pending", "stage": "check", "attempts": {},
                              "writer_rounds": 0, "seq": 0}},
         key=f"handoff_queued:{task_id}",
@@ -1989,21 +2001,34 @@ def assign_submission_handler(
     paper_id: str,
     handler: str = "second_author",
     assigned_by: str = "owner",
+    conditions_met: bool = False,
 ) -> dict[str, Any]:
-    """After the owner's review: assign the paper's submission handler (default second author)."""
+    """After the owner's review: assign the paper's submission handler (default second author).
 
-    result = run_handler_assignment(paths, settings, paper_id, handler)
+    Admission conditions due ``before_submission`` block the assignment until the
+    owner states they are met (``conditions_met``).
+    """
+
     ledger = _ledger(paths, settings)
     document = ledger.read()
     topic = next((item for item in document.get("topics") or []
                   if str(item.get("paper_id") or "") == paper_id
                   or str((item.get("handoff") or {}).get("paper_id") or "") == paper_id), None)
+    blockers = submission_conditions(topic) if topic is not None else []
+    if blockers and not conditions_met:
+        raise DeliveryError(
+            f"{len(blockers)} admission condition(s) due before submission are open: "
+            + "; ".join(item["description"] for item in blockers)
+            + " (confirm with --conditions-met once they are met)"
+        )
+    result = run_handler_assignment(paths, settings, paper_id, handler)
     if topic is not None:
         record_topic_note(
             ledger, str(topic["topic_id"]), db=db, event_type="submission_handler_assigned",
             reason="owner_review_completed", decided_by=f"manual:{assigned_by}",
             detail={"paper_id": paper_id, "handler": handler,
-                    "assigned": result.get("submission_handler")},
+                    "assigned": result.get("submission_handler"),
+                    "submission_conditions_confirmed": blockers},
             updates={"awaiting_owner_review": False},
         )
     return {"schema_version": "openlabs.program_handler_assignment.v1",

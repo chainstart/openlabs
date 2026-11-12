@@ -251,11 +251,27 @@ Stop hook 与 `dontAsk` 在本机都可用。之后再用一个有界任务检�
 每个 tick：有空位、未暂停立项、候选池（proposed）低于 `candidate_pool_low_water`、距上次 scout
 超过 `scout_min_interval_hours`、负责人额度充足时，为在研题目最少的学科排一个 `topic_scout`
 （worker 档）。卡片按 `openlabs.topic_card.v1` 校验后登记为 proposed；不合格的记为 rejected 并
-在 `card_errors` 写明原因。立项审查是 `portfolio_review` 任务（路由原因 `topic_admission`、
+在 `card_errors` 写明原因，随后自动修正一次（`card_repair`）：先按现行校验重验原卡（规则放宽后可能
+直接通过，不花模型额度），否则排一个 light 档 `topic_card_repair` 任务带错误清单重交；修正卡仍不合格
+才是终态。立项审查是 `portfolio_review` 任务（路由原因 `topic_admission`、
 lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族可用时任务保持排队并写
 `topic_admission_waiting` 事件，不回落。admit 的题目在有研究名额时按立项顺序物化成 campaign，
 初始 `research_state.json` 带预注册主终点及其哈希、目标档位、routine 退路和成本预算。tick
-报告的 `program` 字段给出候选池、等位题目、本 tick 排的 scout/立项任务和被拒卡片。
+报告的 `program` 字段给出候选池、等位题目、本 tick 排的 scout/立项任务和被拒卡片
+（以及 `card_repairs`、`holds_released`、`revisions_scheduled`）。
+
+立项判据（`openlabs.topic_admission_policy.v2`，2026-11-12，技能 `openlabs-topic-admission`）：
+routine 档读过最近已有工作后仍有可陈述的增量差别、决定性数据已确认、设计原理上能识别所称效应、
+在产线定位内且不在回避清单与许可证黑名单上，即 admit。reject 只用于致命问题（已有工作做过同一比较、
+数据拿不到、原理上不可识别且无法修订修复、黑名单许可证、超出纯计算能力）。可修的缺口写成
+`admission.conditions`（`description`、`due`：`before_precheck` / `before_decisive_analysis` /
+`before_submission`）随 admit 一起下发：写入第一个研究任务说明与 `research_state.json` 的
+`admission_conditions`，`before_submission` 的条件进入交付记录，`program assign-handler` 在业主加
+`--conditions-met` 确认前拒绝指定投稿人。hold 与关口标 `revisable: true` 的 reject 会自动排一次
+`topic_revision` 任务（worker 档），返回带 `revises`、`condition_responses` 的修订卡，关口只复核
+这些复开条件；修订卡不再二次修订。人工认定某个 reject 可修时用
+`python -m openlabs program mark-revisable --topic-id <id> --reason <理由>`。题目台账升为
+`openlabs.topic_ledger.v2`（v1 照常读取，下次写入时升级）。
 
 立项之后由控制面闭环，决定不再等人确认，每一项都写入 events 与题目台账历史：
 
@@ -293,7 +309,10 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
   免费途径）。例：`packages/contracts/examples/research-program/topic-card.research-line.example.json`。
 - 立项后第一项研究任务就是预检；不通过时研究者返回 `freeze_reason_class: feasibility_precheck_failed`。
 - 产线的 `environment.status` 不是 `ready` 时，立项关口的 admit 会被控制面改为 hold，复开条件类型
-  `line_environment_ready`；环境就绪后可用 `reopens` 重新提交。
+  `line_environment_ready`，关口的完整决定保留在立项记录里；方向文件把该产线标为 `ready` 后，控制面
+  直接按原决定立项（`hold_released_admitted`），不需要新卡片。关口自己给出、只有
+  `line_environment_ready` 一个条件的 hold 则回到 proposed 重新送关口（`hold_released_for_review`）；
+  还有其他条件的 hold 走修订卡。每个题目只放行一次。
 - 现有实例迁移：`python -m openlabs program init-instance --instance-dir <dir> --set-research-lines`
   先看 dry-run，再加 `--write`。它只新增缺少的产线项目，并在实例 TOML 的 `[program]` 里写入
   `research_lines`（其余键与注释不动，旧文件留 `.bak`），不改题目台账。回滚：恢复 `.bak`。

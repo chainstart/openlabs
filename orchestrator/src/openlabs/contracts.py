@@ -587,6 +587,13 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
 TOPIC_CARD_SCHEMA = "openlabs.topic_card.v1"
 TOPIC_TIERS = frozenset({"routine", "escalation"})
 ADMISSION_VERDICTS = frozenset({"admit", "reject", "hold"})
+# Admission policy (skill ``openlabs-topic-admission``). v2 (2026-11-12): routine
+# topics are admitted on a stated increment, confirmed data, an identifying
+# design and line fit; fixable gaps become ``admission.conditions`` instead of a
+# rejection, and holds or fixable rejections return as one revision card.
+ADMISSION_POLICY_VERSION = "openlabs.topic_admission_policy.v2"
+# When an admission condition must be met (``admission.conditions[].due``).
+ADMISSION_CONDITION_DUES = ("before_precheck", "before_decisive_analysis", "before_submission")
 REOPEN_BASIS_TYPES = frozenset(
     {
         "new_data_source",
@@ -635,11 +642,26 @@ def _endpoint_errors(value: Any, label: str) -> list[str]:
     ]
 
 
+def escalation_venue_names(escalation: Any) -> list[str]:
+    """Venue names of ``venues.escalation``: its ``name``, or a ``venues`` list."""
+
+    if not isinstance(escalation, Mapping):
+        return []
+    names = [_text(escalation.get("name"))] if _text(escalation.get("name")) else []
+    listed = escalation.get("venues")
+    for item in listed if isinstance(listed, list) else []:
+        name = _text(item.get("name")) if isinstance(item, Mapping) else _text(item)
+        if name:
+            names.append(name)
+    return names
+
+
 def _venue_names(venues: Mapping[str, Any]) -> set[str]:
     names: set[str] = set()
-    for item in list(venues.get("routine") or []) + [venues.get("escalation")]:
+    for item in list(venues.get("routine") or []):
         if isinstance(item, Mapping) and _text(item.get("name")):
             names.add(_normalized_name(item.get("name")))
+    names.update(_normalized_name(name) for name in escalation_venue_names(venues.get("escalation")))
     return names
 
 
@@ -686,10 +708,11 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
                 if not isinstance(item, Mapping) or not _text(item.get("name")):
                     errors.append(f"venues.routine[{index}].name is missing")
         escalation = venues.get("escalation")
-        if escalation is not None and (
-            not isinstance(escalation, Mapping) or not _text(escalation.get("name"))
-        ):
-            errors.append("venues.escalation must be null or an object with a name")
+        # An escalation names its venue in ``name`` or, for alternatives, a ``venues`` list.
+        if escalation is not None and not escalation_venue_names(escalation):
+            errors.append(
+                "venues.escalation must be null or an object with a name (or a venues list)"
+            )
     venue_names = _venue_names(venues)
 
     audience = card.get("audience")
@@ -712,8 +735,9 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
             if not isinstance(published, int) or isinstance(published, bool):
                 errors.append(f"{prefix}.year must be an integer")
                 continue
+            # Readers' papers in other venues are ordinary evidence of the audience; only
+            # papers in the candidate venues count towards the venue-readership minimum.
             if _normalized_name(item.get("venue")) not in venue_names:
-                errors.append(f"{prefix}.venue must be one of the card's candidate venues")
                 continue
             if year - AUDIENCE_RECENT_YEARS <= published <= year:
                 recent += 1
@@ -809,6 +833,27 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
             or not _text(basis.get("description"))
         ):
             errors.append("reopen_basis needs a type and a description")
+    if card.get("revises") is not None:
+        # A revision card answers the reopen conditions of the held or fixably
+        # rejected topic it revises (the control plane sets ``revises``).
+        if not _text(card.get("revises")):
+            errors.append("revises must name the topic_id being revised")
+        responses = card.get("condition_responses")
+        if not isinstance(responses, list) or not responses:
+            errors.append("condition_responses must answer the revised topic's reopen conditions")
+            responses = []
+        for index, item in enumerate(responses):
+            condition = item.get("condition") if isinstance(item, Mapping) else None
+            if (
+                not isinstance(condition, int)
+                or isinstance(condition, bool)
+                or condition < 0
+                or not _text(item.get("response"))
+            ):
+                errors.append(
+                    f"condition_responses[{index}] needs condition (index into the revised "
+                    "topic's reopen_conditions) and response"
+                )
     return ValidationResult(not errors, tuple(errors))
 
 
@@ -1008,6 +1053,10 @@ def validate_topic_admission(admission: Any) -> ValidationResult:
             errors.append(f"admission.reopen_conditions[{index}] needs a type and description")
     if verdict == "hold" and not conditions:
         errors.append("admission.reopen_conditions is required for hold")
+    errors.extend(admission_condition_errors(admission.get("conditions")))
+    revisable = admission.get("revisable")
+    if revisable is not None and not isinstance(revisable, bool):
+        errors.append("admission.revisable must be a boolean when present")
     if verdict == "admit":
         if _text(admission.get("target_tier")) not in TOPIC_TIERS:
             errors.append("admission.target_tier must be escalation or routine")
@@ -1032,6 +1081,41 @@ def validate_topic_admission(admission: Any) -> ValidationResult:
                     "admission.preregistration.sha256 does not match the primary_endpoint block"
                 )
     return ValidationResult(not errors, tuple(errors))
+
+
+def admission_condition_errors(value: Any) -> list[str]:
+    """``admission.conditions``: fixable gaps an admit carries (``description``, ``due``)."""
+
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return ["admission.conditions must be an array"]
+    errors: list[str] = []
+    for index, item in enumerate(value):
+        if (
+            not isinstance(item, Mapping)
+            or not _text(item.get("description"))
+            or _text(item.get("due")) not in ADMISSION_CONDITION_DUES
+        ):
+            errors.append(
+                f"admission.conditions[{index}] needs a description and due "
+                f"({', '.join(ADMISSION_CONDITION_DUES)})"
+            )
+    return errors
+
+
+def admission_conditions(admission: Any) -> list[dict[str, str]]:
+    """Normalized conditions of an admit (``[]`` for other verdicts or none)."""
+
+    if not isinstance(admission, Mapping) or _text(admission.get("verdict")) not in ("admit", ""):
+        return []
+    items = admission.get("conditions")
+    return [
+        {"description": _text(item.get("description")), "due": _text(item.get("due"))}
+        for item in (items if isinstance(items, list) else [])
+        if isinstance(item, Mapping) and _text(item.get("description"))
+        and _text(item.get("due")) in ADMISSION_CONDITION_DUES
+    ]
 
 
 # ---------------------------------------------------------------- autonomous back half

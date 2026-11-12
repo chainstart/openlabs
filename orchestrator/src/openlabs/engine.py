@@ -73,7 +73,7 @@ from . import program_autonomy
 from . import utilization
 from .program_autonomy import DIRECTION_TASK_TYPE, EVIDENCE_REMEDIATION_ROUTINGS
 from .program_flow import (
-    SCOUT_TASK_TYPE,
+    CARD_TASK_TYPES,
     packet_read_resources,
     parallel_admission_room,
     parallel_routing_reasons,
@@ -2629,7 +2629,7 @@ def ingest_results(
             # what happens next (registration, admission), never the result.
             # A direction decision is applied by the program controller below.
             automatic_successors_allowed = task_type not in {
-                SCOUT_TASK_TYPE, DIRECTION_TASK_TYPE, asset_library.RETROSPECTIVE_TASK_TYPE
+                *CARD_TASK_TYPES, DIRECTION_TASK_TYPE, asset_library.RETROSPECTIVE_TASK_TYPE
             }
             if task_type == "portfolio_review" and payload.get("paper_candidate") is True:
                 report.errors.append(

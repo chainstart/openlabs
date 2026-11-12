@@ -7,7 +7,8 @@ The control plane reads only those fields: scouts and the admission gate read th
 
 A line whose environment is not ``ready`` may be scouted, but an admitted card of that
 line is held mechanically until the environment is ready (a ``line_environment_ready``
-reopen condition), because its first research task could not run.
+reopen condition), because its first research task could not run. The control plane
+then admits it with the gate's recorded decision (``program_flow.release_ready_holds``).
 """
 
 from __future__ import annotations

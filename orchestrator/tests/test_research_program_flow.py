@@ -32,6 +32,7 @@ from openlabs.program import (
     activate_topic,
     admit_topic,
     freeze_topic,
+    last_rejection_reason,
     mark_topic_in_review,
     mark_topic_ready,
     open_topic_ledger,
@@ -403,7 +404,9 @@ def test_invalid_cards_are_rejected_with_their_missing_fields(tmp_path, monkeypa
     ledger = open_topic_ledger(paths, settings.program).read()
     rejected_topics = [t for t in ledger["topics"] if t["status"] == "rejected"]
     assert all(t["card_errors"] for t in rejected_topics)
-    assert {t["history"][-1]["reason"] for t in rejected_topics} == {"card_invalid"}
+    assert {last_rejection_reason(t) for t in rejected_topics} == {"card_invalid"}
+    # Each invalid scout card gets its one automatic repair task.
+    assert {t["card_repair"]["status"] for t in rejected_topics} == {"scheduled"}
 
 
 # --------------------------------------------------------------------------- admission gate
@@ -547,8 +550,8 @@ def test_hold_and_reject_are_not_materialized_and_return_only_via_reopens(tmp_pa
     ledger = open_topic_ledger(paths, settings.program)
     rejected, held = (ledger.topic(e["topic_id"]) for e in entries)
     assert rejected["status"] == held["status"] == "rejected"
-    assert rejected["history"][-1]["reason"] == "admission_rejected"
-    assert held["history"][-1]["reason"] == "admission_hold"
+    assert last_rejection_reason(rejected) == "admission_rejected"
+    assert last_rejection_reason(held) == "admission_hold"
     assert held["reopen_conditions"][0]["type"] == "new_data_source"
     assert rejected["campaign_id"] is None and held["campaign_id"] is None
 

@@ -12,7 +12,14 @@ topic cards, an independent lead-tier reviewer judges them in a
   model family (``exclude_provider``), never falling back to the same family,
 * applies the gate's decisions with mechanical checks (slot, data access,
   computational-only, packet membership, pre-registration hash) and
-  materializes admitted topics, in admission order, as research campaigns.
+  materializes admitted topics, in admission order, as research campaigns,
+  carrying the gate's admission conditions into the first task,
+* gives a format-invalid scout card one automatic repair (a revalidation
+  under the current contract, else a light repair task); a second failure is
+  final,
+* releases holds whose research line became ready, and schedules one revision
+  task per held or fixably rejected topic (the gate then checks only the
+  recorded reopen conditions).
 
 Whether a topic is worth doing is never decided here.
 """
@@ -32,6 +39,8 @@ from . import assets as asset_library
 from . import budget as budget_control
 from .config import FactorySettings, WorkspacePaths
 from .contracts import (
+    ADMISSION_POLICY_VERSION,
+    admission_conditions,
     artifact_digests,
     atomic_write_json,
     canonical_json_bytes,
@@ -53,17 +62,24 @@ from .portfolio import (
     materialize_candidate,
 )
 from .program import (
+    AUTOMATIC_REOPEN_TYPES,
+    HOLD_RELEASE_ADMITTED,
+    HOLD_RELEASE_FOR_REVIEW,
     TopicLedger,
     TopicLedgerError,
     activate_topic,
     admit_topic,
     card_sha256,
     find_topic,
+    last_rejection_reason,
     note_admission_attempt,
     open_topic_ledger,
     propose_topic,
     record_rejected_card,
+    record_topic_note,
     reject_topic,
+    release_held_topic,
+    revision_eligible,
     slot_status,
     topic_for_campaign,
     topics_by_status,
@@ -79,10 +95,27 @@ from .research_lines import (
 from .resources import ResourceVector, default_task_resources
 
 SCOUT_TASK_TYPE = "topic_scout"
+# One light task that fixes a format-invalid card, and one worker task that
+# revises a held or fixably rejected topic against its reopen conditions. Both
+# return ``topic_cards`` like a scout and are registered the same way.
+REPAIR_TASK_TYPE = "topic_card_repair"
+REVISION_TASK_TYPE = "topic_revision"
+CARD_TASK_TYPES = (SCOUT_TASK_TYPE, REPAIR_TASK_TYPE, REVISION_TASK_TYPE)
 ADMISSION_ROUTING_REASON = "topic_admission"
 SCOUT_ROUTING_REASON = "program_slot_open"
+REPAIR_ROUTING_REASON = "topic_card_repair"
+REVISION_ROUTING_REASON = "topic_revision"
 SCOUT_PACKET_SCHEMA = "openlabs.topic_scout_packet.v1"
-ADMISSION_RECORD_SCHEMA = "openlabs.topic_admission_record.v1"
+REPAIR_PACKET_SCHEMA = "openlabs.topic_card_repair_packet.v1"
+REVISION_PACKET_SCHEMA = "openlabs.topic_revision_packet.v1"
+CARD_PACKET_SCHEMAS = (SCOUT_PACKET_SCHEMA, REPAIR_PACKET_SCHEMA, REVISION_PACKET_SCHEMA)
+# v2: the record also carries the gate's admission conditions and, for a
+# control-plane hold, the line it waits for (v1 records are read the same way).
+ADMISSION_RECORD_SCHEMA = "openlabs.topic_admission_record.v2"
+# Format-invalid cards recorded before automatic repair existed get one repair
+# when they are this recent.
+LEGACY_REPAIR_WINDOW = timedelta(days=14)
+TERMINAL_FAILED_STATUSES = ("failed", "needs_human", "needs_replan", "quarantined", "cancelled")
 SCOUT_SKILL = "openlabs-empirical-topic-scout"
 ADMISSION_SKILL = "openlabs-topic-admission"
 LAST_SCOUT_KEY = "program_last_scout_at"
@@ -231,6 +264,8 @@ def _ledger_snapshot(document: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "freeze_reason_class": topic.get("freeze_reason_class"),
                 "reopen_conditions": topic.get("reopen_conditions") or [],
                 "supersedes": topic.get("supersedes"),
+                "revision_of": topic.get("revision_of"),
+                "revision_open": revision_eligible(topic),
             }
         )
     return snapshot
@@ -255,7 +290,7 @@ def packet_read_resources(input_path: Any) -> list[dict[str, str]]:
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return []
     schema = packet.get("schema_version")
-    if schema != SCOUT_PACKET_SCHEMA and not (
+    if schema not in CARD_PACKET_SCHEMAS and not (
         schema == REVIEW_PACKET_SCHEMA and packet.get("program") is True
     ):
         return []
@@ -705,41 +740,49 @@ def compute_location_problem(settings: FactorySettings, card: Mapping[str, Any])
     )
 
 
-def _store_card(paths: WorkspacePaths, project: ProjectConfig, card: Mapping[str, Any]) -> Path:
-    """Content-addressed copy of a registered card (the ledger keeps its hash)."""
+def _store_card(
+    paths: WorkspacePaths, project: ProjectConfig, card: Mapping[str, Any], *, invalid: bool = False
+) -> Path:
+    """Content-addressed copy of a registered card (the ledger keeps its hash).
+
+    Format-invalid cards are kept too (``cards/invalid``) so their repair can read them.
+    """
 
     digest = card_sha256(card)
-    path = _control_root(paths) / _token(project.project_id) / "cards" / f"topic-{digest[:16]}.json"
+    folder = _control_root(paths) / _token(project.project_id) / "cards"
+    if invalid:
+        folder = folder / "invalid"
+    path = folder / f"topic-{digest[:16]}.json"
     if not path.is_file():
         atomic_write_json(path, dict(card))
     return path
 
 
-def intake_card(
-    db: FactoryDB,
+def card_problems(
     paths: WorkspacePaths,
     settings: FactorySettings,
-    project: ProjectConfig,
-    raw_card: Any,
+    card: Mapping[str, Any],
     *,
-    decided_by: str,
-    provider: str,
-    source_task_id: str | None,
     receipt_digests: set[str] | None,
-) -> dict[str, Any]:
-    """Validate one card and register it; return ``{topic_id, status, reason, errors}``."""
+    ledger_document: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Every machine check of a card: contract, asset references, compute plan, receipt.
 
-    ledger = open_topic_ledger(paths, settings.program)
-    card: dict[str, Any] = dict(raw_card) if isinstance(raw_card, Mapping) else {
-        "invalid_card": raw_card
-    }
-    # Topic identity is the control plane's (card hash), never agent-chosen.
-    card.pop("topic_id", None)
-    card["domain"] = project.domain
-    if project.research_line:
-        # A line project's cards belong to its line, never an agent-chosen one.
-        card["research_line"] = project.research_line
+    With the ledger, a revision card must also answer every reopen condition of
+    the topic it revises (a fixable format problem, so it goes to repair).
+    """
+
     errors = list(validate_topic_card(card).errors)
+    if card.get("revises") and ledger_document is not None:
+        from .program import _revision_problem
+
+        problem = _revision_problem(ledger_document, str(card["revises"]),
+                                    card.get("condition_responses"))
+        if problem.startswith("revision_misses_conditions:"):
+            errors.append(
+                "condition_responses must answer reopen condition(s) "
+                f"{problem.split(':', 1)[1]} of {card['revises']}"
+            )
     errors.extend(asset_library.card_reference_errors(paths, settings, card))
     location_problem = compute_location_problem(settings, card)
     if location_problem is not None:
@@ -758,22 +801,62 @@ def intake_card(
                 receipt_path = paths.data / receipt_path
             if not receipt_path.is_file() or sha256_file(receipt_path) != digest:
                 errors.append("decisive_analysis.access_receipt file is missing or differs")
+    return errors
+
+
+def intake_card(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    project: ProjectConfig,
+    raw_card: Any,
+    *,
+    decided_by: str,
+    provider: str,
+    source_task_id: str | None,
+    receipt_digests: set[str] | None,
+    repair_of: str | None = None,
+    revises: str | None = None,
+) -> dict[str, Any]:
+    """Validate one card and register it; return ``{topic_id, status, reason, errors}``.
+
+    A format-invalid card from a scout or revision task is recorded with
+    ``card_repair.status = pending`` (one automatic repair follows); a card that
+    is itself a repair (``repair_of``) or was submitted by hand is not repaired
+    again. ``repair_of`` and ``revises`` are set by the control plane, so they
+    are part of the card and give the repaired or revised card its own identity.
+    """
+
+    ledger = open_topic_ledger(paths, settings.program)
+    card: dict[str, Any] = dict(raw_card) if isinstance(raw_card, Mapping) else {
+        "invalid_card": raw_card
+    }
+    # Topic identity is the control plane's (card hash), never agent-chosen.
+    card.pop("topic_id", None)
+    card.pop("repair_of", None)
+    card["domain"] = project.domain
+    if project.research_line:
+        # A line project's cards belong to its line, never an agent-chosen one.
+        card["research_line"] = project.research_line
+    if repair_of:
+        card["repair_of"] = repair_of
+    if revises:
+        card["revises"] = revises
+    errors = card_problems(paths, settings, card, receipt_digests=receipt_digests,
+                           ledger_document=ledger.read())
     metadata = _card_metadata(project, card, source_task_id=source_task_id, provider=provider)
+    if repair_of:
+        metadata["repair_of"] = repair_of
+    repairable = source_task_id is not None and not repair_of
     if errors:
-        decision = record_rejected_card(
-            ledger, card, db=db, decided_by=decided_by, errors=errors, metadata=metadata
-        )
-        return {"topic_id": decision.topic_id, "status": "rejected", "reason": "card_invalid",
-                "errors": errors}
+        return _record_invalid(db, paths, ledger, project, card, errors=errors,
+                               decided_by=decided_by, metadata=metadata, repairable=repairable)
     metadata["card_path"] = str(_store_card(paths, project, card))
     try:
         decision = propose_topic(ledger, card, db=db, decided_by=decided_by, metadata=metadata)
     except TopicLedgerError as exc:
-        decision = record_rejected_card(
-            ledger, card, db=db, decided_by=decided_by, errors=[str(exc)], metadata=metadata
-        )
-        return {"topic_id": decision.topic_id, "status": "rejected", "reason": "card_invalid",
-                "errors": [str(exc)]}
+        return _record_invalid(db, paths, ledger, project, card, errors=[str(exc)],
+                               decided_by=decided_by, metadata=metadata, repairable=repairable)
     return {
         "topic_id": decision.topic_id,
         "status": decision.status,
@@ -781,6 +864,32 @@ def intake_card(
         "errors": [],
         "duplicate_of": list(decision.duplicate_of),
     }
+
+
+def _record_invalid(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    ledger: TopicLedger,
+    project: ProjectConfig,
+    card: Mapping[str, Any],
+    *,
+    errors: list[str],
+    decided_by: str,
+    metadata: dict[str, Any],
+    repairable: bool,
+) -> dict[str, Any]:
+    values = dict(metadata)
+    values["card_path"] = str(_store_card(paths, project, card, invalid=True))
+    values["card_repair"] = (
+        {"status": "pending", "errors": list(errors)} if repairable
+        else {"status": "not_repairable",
+              "reason": "repair_failed" if card.get("repair_of") else "manual_or_unbound_card"}
+    )
+    decision = record_rejected_card(
+        ledger, card, db=db, decided_by=decided_by, errors=errors, metadata=values
+    )
+    return {"topic_id": decision.topic_id, "status": "rejected", "reason": "card_invalid",
+            "errors": errors, "card_repair": values["card_repair"]["status"]}
 
 
 def register_scout_results(
@@ -792,8 +901,10 @@ def register_scout_results(
 
     outcomes: list[dict[str, Any]] = []
     done = db.meta_items(SCOUT_REGISTERED_PREFIX)
-    for task in _program_tasks(db, statuses=("succeeded",), where="AND task_type=?",
-                               parameters=(SCOUT_TASK_TYPE,)):
+    placeholders = ",".join("?" for _ in CARD_TASK_TYPES)
+    for task in _program_tasks(db, statuses=("succeeded",),
+                               where=f"AND task_type IN ({placeholders})",
+                               parameters=CARD_TASK_TYPES):
         task_id = str(task["task_id"])
         if task_id in done:
             continue
@@ -818,13 +929,27 @@ def register_scout_results(
         cards = cards if isinstance(cards, list) else []
         provider = budget_control.provider_of(settings, task.get("runner"))
         digests = set(artifact_digests(payload).values())
+        task_type = str(task.get("task_type") or "")
+        follow_up: dict[str, Any] = {}
+        if task_type != SCOUT_TASK_TYPE:
+            follow_up = _follow_up_packet(task)
+            # A repair or revision returns one card; it may reuse the original receipt.
+            cards = cards[:1]
+            digests |= {str(item) for item in follow_up.get("receipt_digests") or []}
         task_outcomes = [
             {"source_task_id": task_id, **intake_card(
                 db, paths, settings, project, card, decided_by=task_id, provider=provider,
                 source_task_id=task_id, receipt_digests=digests,
+                repair_of=follow_up.get("repair_of") if task_type == REPAIR_TASK_TYPE else None,
+                revises=(
+                    follow_up.get("revision_of") if task_type == REVISION_TASK_TYPE
+                    else follow_up.get("revises")
+                ),
             )}
             for card in cards
         ]
+        if task_type != SCOUT_TASK_TYPE:
+            _close_follow_up(db, paths, settings, task, follow_up, task_outcomes)
         outcomes.extend(task_outcomes)
         db.update_meta(
             {SCOUT_REGISTERED_PREFIX + task_id: utc_now()},
@@ -838,6 +963,60 @@ def register_scout_results(
             ],
         )
     return outcomes
+
+
+def _follow_up_packet(task: Mapping[str, Any]) -> dict[str, Any]:
+    path = Path(str(task.get("input_path") or ""))
+    try:
+        packet = _read_object(path)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if packet.get("schema_version") not in (REPAIR_PACKET_SCHEMA, REVISION_PACKET_SCHEMA):
+        return {}
+    return packet
+
+
+def _close_follow_up(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    task: Mapping[str, Any],
+    packet: Mapping[str, Any],
+    outcomes: list[dict[str, Any]],
+) -> None:
+    """Record on the original topic what its repair or revision task produced."""
+
+    task_id = str(task["task_id"])
+    repair = str(task.get("task_type")) == REPAIR_TASK_TYPE
+    original = str((packet.get("repair_of") if repair else packet.get("revision_of")) or "")
+    if not original:
+        return
+    ledger = open_topic_ledger(paths, settings.program)
+    if ledger.topic(original) is None:
+        return
+    outcome = outcomes[0] if outcomes else None
+    if outcome is None:
+        status = "failed" if repair else "declined"
+    elif outcome.get("status") == "proposed":
+        status = "resubmitted"
+    elif not repair and outcome.get("card_repair") == "pending":
+        status = "card_repair_pending"  # the revised card gets its own format repair
+    else:
+        status = "failed"
+    field = "card_repair" if repair else "revision"
+    current = dict((ledger.topic(original) or {}).get(field) or {})
+    state = {**current, "status": status, "task_id": task_id,
+             "topic_id": outcome.get("topic_id") if outcome else None,
+             "finished_at": utc_now()}
+    if outcome is not None and outcome.get("errors"):
+        state["errors"] = list(outcome["errors"])[:20]
+    record_topic_note(
+        ledger, original, db=db, event_type=f"topic_{field}_{status}",
+        reason=f"{field}_{status}", decided_by=task_id,
+        detail={"task_id": task_id, "topic_id": state["topic_id"],
+                "outcome_reason": outcome.get("reason") if outcome else "no_card_returned"},
+        updates={field: state}, key=f"{field}:{original}:{task_id}",
+    )
 
 
 def submit_topic_card(
@@ -858,6 +1037,536 @@ def submit_topic_card(
         db, paths, settings, project, card, decided_by=f"manual:{submitted_by}",
         provider=HUMAN_PROVIDER, source_task_id=None, receipt_digests=None,
     )
+
+
+# --------------------------------------------------------------------------- repair, revision
+
+
+def _digest_id(*parts: Any) -> str:
+    return hashlib.sha256("\0".join(str(part) for part in parts).encode()).hexdigest()
+
+
+def _project_of(paths: WorkspacePaths, topic: Mapping[str, Any]) -> ProjectConfig | None:
+    wanted = str(topic.get("program_project_id") or "")
+    for project in program_projects(paths):
+        if project.project_id == wanted:
+            return project
+    return None
+
+
+def _result_cards(db: FactoryDB, task_id: str) -> tuple[list[Any], set[str], dict[str, Any]]:
+    """Cards and artifact digests of a hash-verified card-task result (else empty)."""
+
+    task = db.task(task_id) if task_id else None
+    if task is None:
+        return [], set(), {}
+    result_path = Path(str(task.get("result_path") or ""))
+    expected = str(task.get("result_sha256") or "")
+    if not result_path.is_file() or not expected or sha256_file(result_path) != expected:
+        return [], set(), dict(task)
+    try:
+        payload = _read_object(result_path)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return [], set(), dict(task)
+    cards = payload.get("topic_cards")
+    return (cards if isinstance(cards, list) else [],
+            set(artifact_digests(payload).values()), dict(task))
+
+
+def _original_card(
+    db: FactoryDB, paths: WorkspacePaths, topic: Mapping[str, Any], project: ProjectConfig
+) -> tuple[dict[str, Any] | None, set[str]]:
+    """The topic's stored card (or the matching card of its source result) and receipt digests."""
+
+    cards, digests, task = _result_cards(db, str(topic.get("source_task_id") or ""))
+    packet = _follow_up_packet(task) if task else {}
+    digests |= {str(item) for item in packet.get("receipt_digests") or []}
+    card_path = Path(str(topic.get("card_path") or ""))
+    if card_path.is_file():
+        try:
+            stored = _read_object(card_path)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            stored = None
+        if stored is not None and card_sha256(stored) == topic.get("card_sha256"):
+            return stored, digests
+    for raw in cards:
+        if not isinstance(raw, Mapping):
+            continue
+        card = dict(raw)
+        card.pop("topic_id", None)
+        card.pop("repair_of", None)
+        card["domain"] = project.domain
+        if project.research_line:
+            card["research_line"] = project.research_line
+        if packet.get("revision_of"):
+            card["revises"] = packet["revision_of"]
+        if card_sha256(card) == topic.get("card_sha256"):
+            return card, digests
+    return None, digests
+
+
+def _note_state(
+    db: FactoryDB, ledger: TopicLedger, topic_id: str, field: str, state: Mapping[str, Any],
+    *, decided_by: str,
+) -> None:
+    status = str(state.get("status") or "")
+    record_topic_note(
+        ledger, topic_id, db=db, event_type=f"topic_{field}_{status}", reason=f"{field}_{status}",
+        decided_by=decided_by,
+        detail={key: state.get(key) for key in ("task_id", "topic_id", "mode", "reason")
+                if state.get(key) is not None},
+        updates={field: dict(state)},
+        key=f"{field}:{topic_id}:{status}:{state.get('task_id') or state.get('topic_id') or ''}",
+    )
+
+
+def _settle_task_state(
+    db: FactoryDB, ledger: TopicLedger, topic: Mapping[str, Any], field: str
+) -> bool:
+    """A scheduled repair/revision whose task ended without a result is recorded as failed.
+
+    Returns True while the task is still pending (queued, running or succeeded but
+    not yet registered).
+    """
+
+    state = dict(topic.get(field) or {})
+    task = db.task(str(state.get("task_id") or ""))
+    if task is not None and str(task.get("status")) not in TERMINAL_FAILED_STATUSES:
+        return True
+    _note_state(db, ledger, str(topic["topic_id"]), field,
+                {**state, "status": "failed",
+                 "reason": f"task_{task.get('status') if task else 'missing'}"},
+                decided_by=f"program:{field}")
+    return False
+
+
+def schedule_card_repairs(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    *,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Give each format-invalid scout or revision card one repair.
+
+    The card is first checked again under the current contract (a check that was
+    relaxed may now pass it, at no model cost); otherwise a light repair task gets
+    the card and its errors and returns one corrected card. A repaired card that is
+    still invalid is final (``card_repair.status = not_repairable``).
+    """
+
+    ledger = open_topic_ledger(paths, settings.program)
+    moment = now or _now_moment()
+    outcomes: list[dict[str, Any]] = []
+    for topic in topics_by_status(ledger.read(), "rejected"):
+        topic_id = str(topic["topic_id"])
+        if last_rejection_reason(topic) != "card_invalid" or topic.get("repair_of"):
+            continue
+        state = topic.get("card_repair")
+        if isinstance(state, Mapping):
+            if state.get("status") == "scheduled":
+                _settle_task_state(db, ledger, topic, "card_repair")
+                continue
+            if state.get("status") != "pending":
+                continue
+        else:
+            # Recorded before automatic repair existed: repair recent scout cards once.
+            proposed_at = budget_control.parse_time(_proposal_time(topic))
+            if (not topic.get("source_task_id") or proposed_at is None
+                    or moment - proposed_at > LEGACY_REPAIR_WINDOW):
+                continue
+        project = _project_of(paths, topic)
+        card, digests = (None, set()) if project is None else _original_card(
+            db, paths, topic, project)
+        if project is None or card is None:
+            _note_state(db, ledger, topic_id, "card_repair",
+                        {"status": "unrecoverable",
+                         "reason": "project_missing" if project is None else "card_not_found"},
+                        decided_by="program:card_repair")
+            outcomes.append({"topic_id": topic_id, "outcome": "unrecoverable"})
+            continue
+        provider = str(topic.get("proposer_provider") or HUMAN_PROVIDER)
+        source_task_id = str(topic.get("source_task_id") or "") or None
+        errors = card_problems(paths, settings, card, receipt_digests=digests,
+                               ledger_document=ledger.read())
+        if not errors:
+            # The card passes the current checks as it stands: register it again.
+            outcome = intake_card(
+                db, paths, settings, project, card, decided_by=f"card-repair:{topic_id}",
+                provider=provider, source_task_id=source_task_id, receipt_digests=digests,
+                repair_of=topic_id, revises=str(card.get("revises") or "") or None,
+            )
+            status = "resubmitted" if outcome["status"] == "proposed" else "failed"
+            _note_state(db, ledger, topic_id, "card_repair",
+                        {"status": status, "mode": "revalidated", "topic_id": outcome["topic_id"],
+                         "reason": outcome.get("reason")},
+                        decided_by=f"card-repair:{topic_id}")
+            outcomes.append({"topic_id": topic_id, "outcome": status, "mode": "revalidated",
+                             "new_topic_id": outcome["topic_id"]})
+            continue
+        task_id = _enqueue_card_repair(db, paths, settings, topic=topic, project=project,
+                                       card=card, errors=errors, digests=digests)
+        if task_id is None:
+            outcomes.append({"topic_id": topic_id, "outcome": "no_scout_campaign"})
+            continue
+        _note_state(db, ledger, topic_id, "card_repair",
+                    {"status": "scheduled", "mode": "task", "task_id": task_id,
+                     "errors": errors[:20]},
+                    decided_by="program:card_repair")
+        outcomes.append({"topic_id": topic_id, "outcome": "scheduled", "task_id": task_id})
+    return outcomes
+
+
+def _active_scout_campaign(db: FactoryDB, project: ProjectConfig) -> dict[str, Any] | None:
+    scout_id = scout_workstream_id(project)
+    campaign = db.campaign(scout_id) if scout_id else None
+    if campaign is None or str(campaign.get("status") or "") != "active":
+        return None
+    return dict(campaign)
+
+
+def _follow_up_policy(settings: FactorySettings, campaign: Mapping[str, Any]) -> dict[str, Any]:
+    policy = workstream_policy(campaign)
+    resources_value = policy.get("resources")
+    resources = (
+        ResourceVector.from_mapping(resources_value)
+        if isinstance(resources_value, Mapping)
+        else default_task_resources(settings)
+    )
+    return resources.to_dict()
+
+
+def _enqueue_card_repair(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    *,
+    topic: Mapping[str, Any],
+    project: ProjectConfig,
+    card: Mapping[str, Any],
+    errors: list[str],
+    digests: set[str],
+) -> str | None:
+    campaign = _active_scout_campaign(db, project)
+    if campaign is None:
+        return None
+    topic_id = str(topic["topic_id"])
+    task_id = f"card-repair:{_digest_id(topic_id)[:32]}"
+    if db.task(task_id) is not None:
+        return task_id
+    line = project.research_line
+    packet_path = (_control_root(paths) / _token(project.project_id) / "repair-packets"
+                   / f"{_token(topic_id)}.json")
+    ledger = open_topic_ledger(paths, settings.program)
+    packet = _signed({
+        "schema_version": REPAIR_PACKET_SCHEMA,
+        "project_id": project.project_id,
+        "domain": project.domain,
+        "card_schema": "openlabs.topic_card.v1",
+        **({"research_line": line,
+            "research_line_summary": line_summary(research_lines_document(paths, settings), line)}
+           if line else {}),
+        "repair_of": topic_id,
+        **({"revises": card.get("revises")} if card.get("revises") else {}),
+        "card": dict(card),
+        "errors": list(errors),
+        "receipt_digests": sorted(digests),
+        "read_resources": program_read_resources(paths, settings, ledger),
+        "created_at": utc_now(),
+    })
+    atomic_write_json(packet_path, packet)
+    db.enqueue_task(
+        task_id=task_id,
+        campaign_id=str(campaign["campaign_id"]),
+        domain=project.domain,
+        task_type=REPAIR_TASK_TYPE,
+        objective=(
+            f"A topic card returned by a scout of the {project.domain} research program failed "
+            f"the control plane's format checks ({len(errors)} problem(s)). The packet at the "
+            "input path has the card and the exact error list. Fix only those problems and "
+            "return exactly one corrected card in the result field `topic_cards` "
+            "(openlabs.topic_card.v1). Keep the question, data sources, primary endpoint and "
+            "claims unchanged unless an error requires otherwise; do not invent citations, fee "
+            "evidence or receipts (look them up, or drop the item an error points at when the "
+            "card stays valid without it). The original data-access receipt still counts; a new "
+            "one must be a hash-bound artifact of your result. If the card cannot be fixed "
+            "without changing the topic, return `topic_cards: []` and say why. This is the "
+            "card's only repair. Do not start the research."
+        ),
+        input_path=str(packet_path),
+        skill_path=SCOUT_SKILL,
+        runner="cheap",
+        routing_reason=REPAIR_ROUTING_REASON,
+        agent_role="researcher",
+        session_mode="fresh",
+        priority=int(campaign.get("priority") or 0) + 1,
+        max_attempts=settings.max_attempts,
+        max_wall_seconds=min(3_600, settings.max_task_wall_seconds),
+        **_follow_up_policy(settings, campaign),
+    )
+    db.record_event_once("topic", topic_id, "topic_card_repair_scheduled",
+                         {"task_id": task_id, "errors": errors[:20]}, event_key=task_id)
+    return task_id
+
+
+def schedule_revisions(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    *,
+    lead_short: bool,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Queue one revision task per held or fixably rejected topic, while slots are free.
+
+    At most ``max_concurrent_scouts`` revisions run at once. The revised card
+    answers the recorded reopen conditions and goes to the gate, which checks
+    only those conditions.
+    """
+
+    program = settings.program
+    if not program.enabled:
+        return [], "program_disabled"
+    if not budget_control.routing_enabled(settings):
+        return [], "provider_routing_not_configured"
+    ledger = open_topic_ledger(paths, program)
+    document = ledger.read()
+    pending: list[dict[str, Any]] = []
+    for topic in topics_by_status(document, "rejected"):
+        state = topic.get("revision") if isinstance(topic.get("revision"), Mapping) else {}
+        if state.get("status") == "scheduled":
+            _settle_task_state(db, ledger, topic, "revision")
+            continue
+        if state.get("status") not in (None, "eligible") or not revision_eligible(topic):
+            continue
+        pending.append(topic)
+    if not pending:
+        return [], "no_revisable_topic"
+    status = slot_status(document, program)
+    if status.admission_paused:
+        return [], "admission_paused"
+    if status.free_slots <= 0:
+        return [], "no_free_slot"
+    if lead_short:
+        return [], "lead_quota_short"
+    in_flight = _program_tasks(db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?",
+                               parameters=(REVISION_TASK_TYPE,))
+    room = max(1, program.max_concurrent_scouts) - len(in_flight)
+    if room <= 0:
+        return [], "max_concurrent_revisions"
+    pending.sort(key=lambda item: (_proposal_time(item), str(item["topic_id"])))
+    scheduled: list[dict[str, Any]] = []
+    reason: str | None = None
+    for topic in pending:
+        if len(scheduled) >= room:
+            reason = "max_concurrent_revisions"
+            break
+        project = _project_of(paths, topic)
+        card, digests = (None, set()) if project is None else _original_card(
+            db, paths, topic, project)
+        campaign = _active_scout_campaign(db, project) if project is not None else None
+        if project is None or card is None or campaign is None:
+            _note_state(db, ledger, str(topic["topic_id"]), "revision",
+                        {"status": "unavailable",
+                         "reason": ("project_missing" if project is None else
+                                    "card_not_found" if card is None else "no_scout_campaign")},
+                        decided_by="program:revision")
+            continue
+        task_id = _enqueue_revision(db, paths, settings, ledger=ledger, topic=topic,
+                                    project=project, campaign=campaign, card=card,
+                                    digests=digests)
+        _note_state(db, ledger, str(topic["topic_id"]), "revision",
+                    {"status": "scheduled", "task_id": task_id},
+                    decided_by="program:revision")
+        scheduled.append({"topic_id": topic["topic_id"], "task_id": task_id})
+    return scheduled, reason
+
+
+def _numbered_conditions(topic: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"condition": index, "type": item.get("type"), "description": item.get("description"),
+         "answer_required": str(item.get("type")) not in AUTOMATIC_REOPEN_TYPES}
+        for index, item in enumerate(topic.get("reopen_conditions") or [])
+        if isinstance(item, Mapping)
+    ]
+
+
+def _enqueue_revision(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    *,
+    ledger: TopicLedger,
+    topic: Mapping[str, Any],
+    project: ProjectConfig,
+    campaign: Mapping[str, Any],
+    card: Mapping[str, Any],
+    digests: set[str],
+) -> str:
+    topic_id = str(topic["topic_id"])
+    task_id = f"topic-revision:{_digest_id(topic_id)[:32]}"
+    if db.task(task_id) is not None:
+        return task_id
+    line = project.research_line
+    admission = topic.get("admission") if isinstance(topic.get("admission"), Mapping) else {}
+    packet_path = (_control_root(paths) / _token(project.project_id) / "revision-packets"
+                   / f"{_token(topic_id)}.json")
+    packet = _signed({
+        "schema_version": REVISION_PACKET_SCHEMA,
+        "project_id": project.project_id,
+        "domain": project.domain,
+        "card_schema": "openlabs.topic_card.v1",
+        "admission_policy": ADMISSION_POLICY_VERSION,
+        **({"research_line": line,
+            "research_line_summary": line_summary(research_lines_document(paths, settings), line)}
+           if line else {}),
+        "revision_of": topic_id,
+        "target": {
+            "topic_id": topic_id,
+            "question": topic.get("question"),
+            "rejection_reason": last_rejection_reason(topic),
+            "card": dict(card),
+            "reopen_conditions": _numbered_conditions(topic),
+            "admission": {
+                key: admission.get(key)
+                for key in ("verdict", "strongest_rejection_reason", "closest_prior_work_checked",
+                            "cost_judgement", "tier_rationale", "data_access_confirmed")
+            },
+            "revision_marker": topic.get("revision"),
+        },
+        "receipt_digests": sorted(digests),
+        "ledger_snapshot": _ledger_snapshot(ledger.read()),
+        "read_resources": program_read_resources(paths, settings, ledger),
+        **asset_library.packet_fields(paths, settings, domains=[project.domain]),
+        "created_at": utc_now(),
+    })
+    atomic_write_json(packet_path, packet)
+    db.enqueue_task(
+        task_id=task_id,
+        campaign_id=str(campaign["campaign_id"]),
+        domain=project.domain,
+        task_type=REVISION_TASK_TYPE,
+        objective=(
+            f"Revise the topic card of {topic_id} ({project.domain} research program). The "
+            "admission gate held it, or rejected it for a fixable reason, and recorded reopen "
+            "conditions (packet `target.reopen_conditions`, numbered from 0). Do the cheap, "
+            "outcome-blind work those conditions ask for (closest-work comparison, manifests, "
+            "timing probes, fixed definitions, fee or ranking evidence; never compute the primary "
+            "endpoint), then return exactly one revised card in `topic_cards` "
+            "(openlabs.topic_card.v1) with `condition_responses`: one {condition: <index>, "
+            "response: what changed and where the evidence is} for every condition whose "
+            "answer_required is true. Keep the topic's question unless a condition requires "
+            "narrowing it. The gate checks only whether these conditions are met, so answer each "
+            "one concretely. When a condition cannot be met now (data not yet released, an "
+            "external result pending), return `topic_cards: []` and say which and why. This is "
+            "the topic's only revision. Do not start the research."
+        ),
+        input_path=str(packet_path),
+        skill_path=SCOUT_SKILL,
+        runner="balanced",
+        routing_reason=REVISION_ROUTING_REASON,
+        agent_role="researcher",
+        session_mode="fresh",
+        priority=int(campaign.get("priority") or 0),
+        max_attempts=settings.max_attempts,
+        max_wall_seconds=settings.max_task_wall_seconds,
+        **_follow_up_policy(settings, campaign),
+    )
+    db.record_event_once("topic", topic_id, "topic_revision_scheduled",
+                         {"task_id": task_id}, event_key=task_id)
+    return task_id
+
+
+def mark_revisable(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    topic_id: str,
+    *,
+    decided_by: str,
+    reason: str,
+) -> bool:
+    """Record that a judged rejection's defect is fixable: the topic may be revised once."""
+
+    ledger = open_topic_ledger(paths, settings.program)
+    topic = ledger.topic(topic_id)
+    if topic is None:
+        raise TopicLedgerError(f"unknown topic {topic_id}")
+    if topic.get("status") != "rejected" or last_rejection_reason(topic) not in {
+        "admission_rejected", "admission_hold", "cost_not_proportionate",
+        "data_access_not_confirmed",
+    }:
+        raise TopicLedgerError(f"topic {topic_id} is not a judged rejection")
+    return record_topic_note(
+        ledger, topic_id, db=db, event_type="topic_marked_revisable", reason="fixable_defect",
+        decided_by=decided_by, detail={"reason": reason},
+        updates={"revision": {"eligible": True, "status": "eligible", "reason": reason,
+                              "marked_by": decided_by, "marked_at": utc_now()}},
+        key=f"marked_revisable:{topic_id}",
+    )
+
+
+def release_ready_holds(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+) -> list[dict[str, Any]]:
+    """Release holds whose research line is now ``ready`` (no new card needed).
+
+    A topic the gate admitted but the control plane held for the line's
+    environment is admitted with the gate's recorded decision; a gate hold whose
+    only reopen condition is the line's environment goes back to the gate. Holds
+    with other open conditions wait for their revision card.
+    """
+
+    ledger = open_topic_ledger(paths, settings.program)
+    lines_document = None
+    outcomes: list[dict[str, Any]] = []
+    for topic in topics_by_status(ledger.read(), "rejected"):
+        if last_rejection_reason(topic) != "admission_hold":
+            continue
+        line = str(topic.get("research_line") or "").strip()
+        if not line:
+            continue
+        if lines_document is None:
+            lines_document = research_lines_document(paths, settings) or {}
+        if environment_status(lines_document, line) != ENVIRONMENT_READY:
+            continue
+        if any(entry.get("reason") in {HOLD_RELEASE_ADMITTED, HOLD_RELEASE_FOR_REVIEW}
+               for entry in topic.get("history") or []):
+            continue
+        topic_id = str(topic["topic_id"])
+        admission = topic.get("admission") if isinstance(topic.get("admission"), Mapping) else {}
+        kinds = {str(item.get("type")) for item in topic.get("reopen_conditions") or []
+                 if isinstance(item, Mapping)}
+        record_path = _admission_record_path(paths, topic_id)
+        record = _read_object(record_path) if record_path.is_file() else {}
+        preregistration = record.get("preregistration") if isinstance(
+            record.get("preregistration"), Mapping) else {}
+        decided_by = f"program:line-ready:{line}"
+        gate_admitted = bool(admission.get("control_plane_hold")) and bool(
+            preregistration.get("sha256"))
+        own_conditions = kinds - AUTOMATIC_REOPEN_TYPES
+        if gate_admitted and not set(_gate_condition_types(record)) - AUTOMATIC_REOPEN_TYPES:
+            record_admission = record.get("admission") if isinstance(
+                record.get("admission"), Mapping) else {}
+            release_held_topic(
+                ledger, topic_id, db=db, to_status="admitted", decided_by=decided_by,
+                updates={"admission_task_id": record.get("review_task_id"),
+                         "preregistration_sha256": str(preregistration["sha256"]),
+                         "target_tier": record_admission.get("target_tier")},
+            )
+            outcomes.append({"topic_id": topic_id, "outcome": "admitted", "line": line})
+        elif not own_conditions or admission.get("control_plane_hold"):
+            release_held_topic(ledger, topic_id, db=db, to_status="proposed",
+                               decided_by=decided_by)
+            outcomes.append({"topic_id": topic_id, "outcome": "returned_to_gate", "line": line})
+    return outcomes
+
+
+def _gate_condition_types(record: Mapping[str, Any]) -> list[str]:
+    admission = record.get("admission") if isinstance(record.get("admission"), Mapping) else {}
+    return [str(item.get("type")) for item in admission.get("reopen_conditions") or []
+            if isinstance(item, Mapping)]
 
 
 # --------------------------------------------------------------------------- admission
@@ -929,6 +1638,7 @@ def schedule_topic_admission(
         if str(topic.get("proposer_provider") or HUMAN_PROVIDER) == provider
     ][:batch_size]
     entries: list[dict[str, Any]] = []
+    snapshot_document = ledger.read()
     for topic in batch:
         card_path = Path(str(topic.get("card_path") or ""))
         if not card_path.is_file():
@@ -936,15 +1646,35 @@ def schedule_topic_admission(
         card = _read_object(card_path)
         if card_sha256(card) != topic.get("card_sha256"):
             raise ValueError(f"topic {topic['topic_id']} card file differs from the ledger")
-        entries.append(
-            {
-                "topic_id": topic["topic_id"],
-                "source_result_id": _source_id(topic),
-                "card_sha256": topic["card_sha256"],
-                "proposer_provider": provider,
-                "card": card,
+        entry: dict[str, Any] = {
+            "topic_id": topic["topic_id"],
+            "source_result_id": _source_id(topic),
+            "card_sha256": topic["card_sha256"],
+            "proposer_provider": provider,
+            "card": card,
+        }
+        revised = find_topic(snapshot_document, str(topic.get("revision_of") or ""))
+        if revised is not None:
+            # A revision card is checked against these conditions only.
+            earlier = revised.get("admission") if isinstance(revised.get("admission"),
+                                                             Mapping) else {}
+            entry["revision_of"] = {
+                "topic_id": revised["topic_id"],
+                "rejection_reason": last_rejection_reason(revised),
+                "reopen_conditions": _numbered_conditions(revised),
+                "earlier_admission": {
+                    key: earlier.get(key)
+                    for key in ("verdict", "strongest_rejection_reason",
+                                "closest_prior_work_checked", "review_task_id")
+                },
             }
-        )
+        if any(item.get("reason") in {HOLD_RELEASE_FOR_REVIEW}
+               for item in topic.get("history") or []):
+            entry["released_from_hold"] = {
+                "reason": "research line environment became ready",
+                "earlier_admission": topic.get("admission"),
+            }
+        entries.append(entry)
     asset_library.annotate_admission_entries(paths, settings, entries)
     line_ids = sorted({
         str(entry["card"].get("research_line"))
@@ -973,6 +1703,7 @@ def schedule_topic_admission(
             "topic_cards": entries,
             "proposer_provider": provider,
             "exclude_provider": exclude,
+            "admission_policy": ADMISSION_POLICY_VERSION,
             **(
                 {"research_lines": {line: line_summary(lines_document, line)
                                     for line in line_ids}}
@@ -997,23 +1728,35 @@ def schedule_topic_admission(
         domain=project.domain,
         task_type="portfolio_review",
         objective=(
-            f"Act as the admission gate of the {project.domain} research program. Judge every "
-            f"topic card in the review packet ({len(entries)} card(s)) the way a journal editor "
-            "would: find the strongest reason to reject first, check each closest prior work "
-            "yourself, confirm the decisive data is really accessible, and weigh the estimated "
-            "cost against the tier the result could reach. Return exactly one "
-            "candidate_branches entry per card with candidate_id and topic_id set to the card's "
-            "topic_id, source_result_ids = [its source_result_id], title, objective, rationale "
-            "and an `admission` object (verdict admit/reject/hold, target_tier, tier_rationale, "
-            "strongest_rejection_reason, closest_prior_work_checked, data_access_confirmed, "
-            "cost_judgement, preregistration with its sha256, reopen_conditions). Rejecting "
-            "every card is a valid outcome. Do not start the research."
+            f"Act as the admission gate of the {project.domain} research program "
+            f"({ADMISSION_POLICY_VERSION}; follow the skill). Judge every topic card in the "
+            f"review packet ({len(entries)} card(s)) against the tier it targets. A routine "
+            "(Zones 3-4) card is admitted when, after you check the closest prior work "
+            "yourself, a stated incremental difference survives, the decisive data is confirmed "
+            "accessible, the design can identify the claimed effect, and it fits its research "
+            "line, avoid list and licence lists. Reject only for a fatal problem (prior work "
+            "already did the comparison, data unobtainable, unidentifiable and not fixable by "
+            "revision, blacklisted licence, beyond computational work); turn fixable gaps "
+            "(pre-registration details, manifests, multiplicity, a missing baseline, itemized "
+            "cost, venue fee or ranking evidence) into `admission.conditions` on an admit. "
+            "Return exactly one candidate_branches entry per card with candidate_id and topic_id "
+            "set to the card's topic_id, source_result_ids = [its source_result_id], title, "
+            "objective, rationale and an `admission` object (verdict admit/reject/hold, "
+            "target_tier, tier_rationale, strongest_rejection_reason, closest_prior_work_checked, "
+            "data_access_confirmed, cost_judgement, preregistration with its sha256, "
+            "conditions [{description, due: before_precheck|before_decisive_analysis|"
+            "before_submission}], reopen_conditions, and revisable true on a reject whose defect "
+            "a revision could fix). An entry with `revision_of` is a revision card: check only "
+            "whether its condition_responses meet the listed reopen conditions, not the whole "
+            "topic again. An idle slot has a cost; the feasibility precheck is the cheap stop. "
+            "Do not start the research."
             + (
                 " Research-line cards: read registry/research-lines.yaml (read_resources) and "
                 "check the card against its line (minimum validation, feasibility precheck "
                 "and pass criterion, fee and licence evidence, avoided directions, the "
-                "ledger's earlier rejections); a card of a line whose environment is not "
-                "ready gets hold."
+                "ledger's earlier rejections). Judge a card of a line whose environment is not "
+                "ready on its merits: the control plane holds an admitted one and admits it with "
+                "your decision once the line is ready."
                 if line_ids else ""
             )
         ),
@@ -1129,6 +1872,59 @@ def _admission_record_path(paths: WorkspacePaths, topic_id: str) -> Path:
     return _control_root(paths) / "admissions" / f"{_token(topic_id)}.json"
 
 
+def _write_admission_record(
+    paths: WorkspacePaths,
+    topic_id: str,
+    *,
+    project: ProjectConfig,
+    source_campaign: Mapping[str, Any],
+    review_task_id: str,
+    result_path: Path,
+    entry: Mapping[str, Any],
+    branch: Mapping[str, Any],
+    admission: Mapping[str, Any],
+    card: Mapping[str, Any],
+    held_for_line: str | None = None,
+) -> Path:
+    """The gate's admit with everything a campaign needs (written once per review)."""
+
+    record_path = _admission_record_path(paths, topic_id)
+    if record_path.is_file():
+        existing = _read_object(record_path)
+        if existing.get("review_task_id") == review_task_id or not existing.get("held_for_line"):
+            return record_path
+    preregistration = admission["preregistration"]
+    atomic_write_json(
+        record_path,
+        {
+            "schema_version": ADMISSION_RECORD_SCHEMA,
+            "topic_id": topic_id,
+            "project_path": str(project.path),
+            "project_id": project.project_id,
+            "source_campaign_id": str(source_campaign.get("campaign_id")),
+            "review_task_id": review_task_id,
+            "result_path": str(result_path),
+            "source_result_id": str(entry.get("source_result_id")),
+            "branch": {
+                key: branch.get(key)
+                for key in ("title", "objective", "rationale", "resources", "wall_seconds")
+                if branch.get(key) is not None
+            },
+            "admission": dict(admission),
+            "conditions": admission_conditions(admission),
+            "card": dict(card),
+            "card_sha256": entry.get("card_sha256"),
+            "preregistration": {
+                "primary_endpoint": preregistration["primary_endpoint"],
+                "sha256": preregistration["sha256"],
+            },
+            **({"held_for_line": held_for_line} if held_for_line else {}),
+            "created_at": utc_now(),
+        },
+    )
+    return record_path
+
+
 def _summary(admission: Mapping[str, Any], review_task_id: str) -> dict[str, Any]:
     preregistration = admission.get("preregistration")
     return {
@@ -1140,10 +1936,13 @@ def _summary(admission: Mapping[str, Any], review_task_id: str) -> dict[str, Any
         "cost_judgement": admission.get("cost_judgement"),
         "closest_prior_work_checked": admission.get("closest_prior_work_checked"),
         "reopen_conditions": admission.get("reopen_conditions") or [],
+        "conditions": admission_conditions(admission),
+        "revisable": admission.get("revisable") is True,
         "preregistration_sha256": (
             preregistration.get("sha256") if isinstance(preregistration, Mapping) else None
         ),
         "review_task_id": review_task_id,
+        "policy": ADMISSION_POLICY_VERSION,
     }
 
 
@@ -1248,8 +2047,16 @@ def materialize_admission_decisions(
                 if environment != ENVIRONMENT_READY:
                     # Its first research task (the feasibility precheck) could not run:
                     # hold until the line's environment is ready, whatever the verdict.
+                    # The gate's admission is kept, so the topic is admitted without a new
+                    # review once the line is ready (``release_ready_holds``).
                     reason = f"research_line_environment_not_ready:{line}:{environment}"
                     if status == "proposed":
+                        _write_admission_record(
+                            paths, topic_id, project=project, source_campaign=source_campaign,
+                            review_task_id=review_task_id, result_path=result_path,
+                            entry=entry, branch=branch, admission=admission, card=card,
+                            held_for_line=line,
+                        )
                         reject_topic(
                             ledger, topic_id, db=db, reason="admission_hold",
                             decided_by=review_task_id, evidence=evidence,
@@ -1273,35 +2080,11 @@ def materialize_admission_decisions(
                 continue
             if status == "proposed":
                 preregistration = admission["preregistration"]
-                record_path = _admission_record_path(paths, topic_id)
-                if not record_path.is_file():
-                    atomic_write_json(
-                        record_path,
-                        {
-                            "schema_version": ADMISSION_RECORD_SCHEMA,
-                            "topic_id": topic_id,
-                            "project_path": str(project.path),
-                            "project_id": project.project_id,
-                            "source_campaign_id": str(source_campaign.get("campaign_id")),
-                            "review_task_id": review_task_id,
-                            "result_path": str(result_path),
-                            "source_result_id": str(entry.get("source_result_id")),
-                            "branch": {
-                                key: branch.get(key)
-                                for key in ("title", "objective", "rationale", "resources",
-                                            "wall_seconds")
-                                if branch.get(key) is not None
-                            },
-                            "admission": dict(admission),
-                            "card": dict(card),
-                            "card_sha256": entry.get("card_sha256"),
-                            "preregistration": {
-                                "primary_endpoint": preregistration["primary_endpoint"],
-                                "sha256": preregistration["sha256"],
-                            },
-                            "created_at": utc_now(),
-                        },
-                    )
+                _write_admission_record(
+                    paths, topic_id, project=project, source_campaign=source_campaign,
+                    review_task_id=review_task_id, result_path=result_path, entry=entry,
+                    branch=branch, admission=admission, card=card,
+                )
                 admit_topic(
                     ledger, topic_id, db=db, settings=settings.program,
                     decided_by=review_task_id, admission_task_id=review_task_id,
@@ -1347,6 +2130,9 @@ def _research_state(
         extra["admission_record"] = {"path": str(record_path), "sha256": sha256_file(record_path)}
     if agent_seconds_budget is not None:
         extra["agent_seconds_budget"] = int(agent_seconds_budget)
+    conditions = record_conditions(record)
+    if conditions:
+        extra["admission_conditions"] = conditions
     return {
         **extra,
         "program_role": "research",
@@ -1367,6 +2153,39 @@ def _research_state(
             if card.get(key) is not None
         },
     }
+
+
+def record_conditions(record: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Admission conditions of an admission record (v1 records: from its admission)."""
+
+    if isinstance(record.get("conditions"), list):
+        return admission_conditions({"verdict": "admit", "conditions": record["conditions"]})
+    return admission_conditions(record.get("admission"))
+
+
+CONDITION_STAGE_TEXT = {
+    "before_precheck": "before the feasibility precheck (or, without one, before any analysis)",
+    "before_decisive_analysis": "before the pre-registered decisive analysis",
+    "before_submission": "before the paper can be handed for submission",
+}
+
+
+def conditions_instruction(conditions: list[Mapping[str, Any]]) -> str:
+    """Task-prompt text for the gate's admission conditions (``""`` when there are none)."""
+
+    if not conditions:
+        return ""
+    lines = "; ".join(
+        f"[{item.get('due')}] {item.get('description')}" for item in conditions
+    )
+    return (
+        f" The admission gate admitted this topic with {len(conditions)} condition(s) "
+        "(research_state.json `admission_conditions`): " + lines + ". Meet each one at its stage "
+        "(" + "; ".join(f"{due}: {text}" for due, text in CONDITION_STAGE_TEXT.items()) + "), "
+        "fix the details in the pre-registration notes without changing the hash-bound primary "
+        "endpoint, and report in the result bundle how each condition you reached was met. "
+        "Conditions due before_submission stay open blockers of the handoff."
+    )
 
 
 def materialize_waiting_topics(
@@ -1418,6 +2237,7 @@ def materialize_waiting_topics(
                 "in registry/research-lines.yaml."
                 if isinstance(card.get("feasibility_precheck"), Mapping) else ""
             )
+            + conditions_instruction(record_conditions(record))
         ).strip()
         campaign_id, first_task = materialize_candidate(
             db,
@@ -1557,6 +2377,11 @@ def run_program_pipeline(
         outcomes = register_scout_results(db, paths, settings)
         info["cards_registered"] = [item for item in outcomes if item["status"] == "proposed"]
         info["rejected_cards"] = [item for item in outcomes if item["status"] == "rejected"]
+        info["card_repairs"] = schedule_card_repairs(db, paths, settings)
+        report.enqueued.extend(
+            str(item["task_id"]) for item in info["card_repairs"] if item.get("task_id")
+        )
+        info["holds_released"] = release_ready_holds(db, paths, settings)
         spawned = materialize_waiting_topics(db, paths, settings)
         report.enqueued.extend(spawned.task_ids)
         report.production_synced.extend(spawned.campaign_ids)
@@ -1571,6 +2396,12 @@ def run_program_pipeline(
             for item in scheduled
         ]
         info["scout_blocked"] = blocked
+        revisions, revision_blocked = schedule_revisions(
+            db, paths, settings, lead_short=lead_quota_short(db, settings)
+        )
+        report.enqueued.extend(str(item["task_id"]) for item in revisions)
+        info["revisions_scheduled"] = revisions
+        info["revision_blocked"] = revision_blocked
         info["scouts_in_flight"] = len(_program_tasks(
             db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?",
             parameters=(SCOUT_TASK_TYPE,),
