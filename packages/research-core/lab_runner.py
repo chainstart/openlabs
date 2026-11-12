@@ -125,6 +125,91 @@ def _smoke(task: dict[str, Any], manifest: dict[str, Any], output: Path) -> None
     )
 
 
+REMOTE_ACTIVE_STATES = ("queued", "running")
+
+
+def remote_queue_root(environ: Mapping[str, str] | None = None) -> Path:
+    """The shared remote-compute queue (same rule as ``openlabs.remote_compute``)."""
+
+    env = os.environ if environ is None else environ
+    configured = str(env.get("OPENLABS_REMOTE_QUEUE") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    if Path("/.dockerenv").exists():
+        return Path("/workspace/.openlabs-remote")
+    home = env.get("HOME") or str(Path.home())
+    return Path(home) / "work" / "projects" / ".openlabs-remote"
+
+
+def remote_queue_summary(
+    queue_root: Path,
+    capabilities: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Read-only load of the ailab queue: jobs queued/running and their declared budgets.
+
+    Counts ``jobs/*/status.json`` states and sums the ``request.json``
+    resources of queued and running jobs, against the capacity in
+    ``config/remote-compute.json`` when given. None when the queue cannot be read.
+    """
+
+    jobs = Path(queue_root) / "jobs"
+    try:
+        directories = [item for item in jobs.iterdir() if item.is_dir()]
+    except OSError:
+        return None
+    counts = {state: 0 for state in REMOTE_ACTIVE_STATES}
+    cpu = memory = 0
+    for directory in directories:
+        try:
+            status = json.loads((directory / "status.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        state = status.get("state") if isinstance(status, Mapping) else None
+        if state not in counts:
+            continue
+        counts[state] += 1
+        try:
+            request = json.loads((directory / "request.json").read_text(encoding="utf-8"))
+            resources = request.get("resources") or {}
+            cpu += int(resources.get("cpu_threads") or 0)
+            memory += int(resources.get("memory_mib") or 0)
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    caps = capabilities or {}
+    capacity_cpu = caps.get("cpu_threads") if isinstance(caps.get("cpu_threads"), int) else None
+    capacity_memory = caps.get("memory_mib") if isinstance(caps.get("memory_mib"), int) else None
+    max_jobs = (
+        caps.get("max_concurrent_jobs") if isinstance(caps.get("max_concurrent_jobs"), int)
+        else None
+    )
+    return {
+        "queued": counts["queued"],
+        "running": counts["running"],
+        "declared_cpu_threads": cpu,
+        "declared_memory_mib": memory,
+        "capacity_cpu_threads": capacity_cpu,
+        "capacity_memory_mib": capacity_memory,
+        "max_concurrent_jobs": max_jobs,
+        "cpu_fraction": round(cpu / capacity_cpu, 4) if capacity_cpu else None,
+        "memory_fraction": round(memory / capacity_memory, 4) if capacity_memory else None,
+    }
+
+
+def _remote_load_line(summary: Mapping[str, Any] | None) -> str:
+    if not summary:
+        return ""
+    cpu = summary.get("capacity_cpu_threads")
+    memory = summary.get("capacity_memory_mib")
+    capacity = (
+        f" of {cpu} CPUs and {memory} MiB" if cpu and memory else ""
+    )
+    return (
+        f"Right now ailab has {summary['running']} job(s) running and {summary['queued']} "
+        f"queued, declaring {summary['declared_cpu_threads']} CPU(s) and "
+        f"{summary['declared_memory_mib']} MiB{capacity}.\n"
+    )
+
+
 def _remote_compute_notice(code_root: Path, domain: str) -> str:
     """Advertise configured compute transport without moving model calls or DB state."""
     path = code_root / "config" / "remote-compute.json"
@@ -135,6 +220,10 @@ def _remote_compute_notice(code_root: Path, domain: str) -> str:
         return ""
     command = code_root / "bin" / "openlabs-remote"
     kind = "math" if domain == "math" else "cpu"
+    try:
+        load = _remote_load_line(remote_queue_summary(remote_queue_root(), settings))
+    except Exception:  # noqa: BLE001 - the load line is advisory; omit it when unreadable.
+        load = ""
     return f"""
 Remote CPU compute is available through backend `ailab`, using a shared file queue.
 Model calls, scientific decisions and research database writes stay in this local process.
@@ -158,6 +247,11 @@ and retain the remote receipt and source hash. Do not send whole home directorie
 credentials, or model login state. Do not SSH directly, alter network routes, start model
 clients on ailab, or write the research database from the worker. If this backend is offline,
 preserve the queued job and report the infrastructure state instead of fabricating results.
+{load}ailab is a dedicated experiment host, and idle cores there are capacity nobody gets back.
+When it has room, split parallelisable computation (parameter sweeps, resampling, bootstrap,
+cross-validation folds, independent seeds) into several jobs submitted together, each with a
+realistic declared budget, up to about nine tenths of its CPUs and memory in total; the bridge
+admits jobs against the declared budgets, so the jobs queue rather than overload the host.
 """
 
 

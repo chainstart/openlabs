@@ -70,6 +70,7 @@ from .program import (
 )
 from . import assets as asset_library
 from . import program_autonomy
+from . import utilization
 from .program_autonomy import DIRECTION_TASK_TYPE, EVIDENCE_REMEDIATION_ROUTINGS
 from .program_flow import (
     SCOUT_TASK_TYPE,
@@ -535,9 +536,21 @@ class TickReport:
     routing_deferred: list[dict[str, Any]] = field(default_factory=list)
     escalated: list[dict[str, Any]] = field(default_factory=list)
     quota_probes: dict[str, str] = field(default_factory=dict)
+    # This tick's launch ceiling and why (static unless [budget].adaptive_parallel).
+    parallel_limit: dict[str, Any] = field(default_factory=dict)
+    # Measured container load (cgroup CPU since the last tick, memory without cache).
+    host_usage: dict[str, Any] = field(default_factory=dict)
+    # Read-only ailab queue load; empty when remote compute is off or unreadable.
+    ailab: dict[str, Any] = field(default_factory=dict)
+    # One row per supervised quantity: current vs target and what limits it.
+    balance: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         payload = self._base_dict()
+        for name in ("parallel_limit", "host_usage", "ailab", "balance"):
+            value = getattr(self, name)
+            if value:
+                payload[name] = value
         # Routing keys appear only with a [runners] table, so the default report
         # shape is unchanged.
         if self.provider_quota or self.lead_quota or self.routed or self.routing_deferred or (
@@ -3521,6 +3534,9 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
         report.provider_quota = router.provider_summary()
         report.lead_quota = router.lead_summary()
         budget_control.record_lead_shortage(db, router)
+    launch_limit = _supervise_throughput(
+        db, paths, settings, report, router, hard=launch_limit, now=budget_now
+    )
     if settings.launch_jobs:
         capacity = max(0, launch_limit - db.active_count())
         owner = f"tick:{socket.gethostname()}:{os.getpid()}"
@@ -3582,6 +3598,49 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     report.resource_reserved = db.active_resource_totals()
     report.status_counts = db.status_counts()
     return report
+
+
+def _supervise_throughput(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    report: TickReport,
+    router: budget_control.QuotaRouter | None,
+    *,
+    hard: int,
+    now: datetime,
+) -> int:
+    """Adaptive launch ceiling plus the load/balance view; never fails the tick.
+
+    Returns the ceiling to launch against: ``hard`` unless
+    ``[budget].adaptive_parallel`` is on (then at most ``hard``). With neither
+    the adaptive ceiling nor ``[routing].utilization_target`` configured it does
+    nothing, so the default tick and its report are unchanged.
+    """
+
+    if not (settings.budget.adaptive_parallel or settings.routing.utilization_target > 0):
+        return hard
+    try:
+        host = utilization.host_usage(db, now=now, record=True)
+        report.host_usage = host
+        entry = utilization.adaptive_launch_limit(
+            db, settings, router, hard=hard, active=db.active_count(),
+            runnable=utilization.runnable_count(db, now=now), host=host, now=now,
+        )
+        report.parallel_limit = entry
+        ailab = utilization.ailab_summary(paths)
+        report.ailab = ailab or {}
+        pace = utilization.provider_pace(router) if router is not None else {}
+        report.balance = utilization.balance_summary(
+            settings, parallel=entry, pace=pace, host=host, ailab=ailab,
+            program=report.program, admission=utilization._admission_pass_rate(db),
+        )
+        limit = max(1, min(hard, int(entry["limit"])))
+    except Exception as exc:  # noqa: BLE001 - supervision is advisory
+        report.errors.append(f"Throughput supervision failed: {exc}")
+        return hard
+    report.effective_parallel = limit
+    return limit
 
 
 def _record_routing_deferrals(

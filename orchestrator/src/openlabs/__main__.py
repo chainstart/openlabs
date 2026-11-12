@@ -208,6 +208,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     instance.add_argument("--git-user-name", help="[program.git].user_name")
     instance.add_argument("--git-user-email", help="[program.git].user_email")
+    utilization_parser = program_commands.add_parser(
+        "utilization",
+        help="Read-only throughput view: tasks by tier/provider, quota windows with relative "
+        "abundance and projected use at reset, host and ailab load against their targets, "
+        "recent launch ceilings and what limits them",
+    )
+    utilization_parser.add_argument(
+        "--history", type=int, default=10, help="Recent launch ceilings to show (default 10)"
+    )
+    utilization_parser.add_argument(
+        "--no-gpu", action="store_true", help="Skip the nvidia-smi query"
+    )
     assets = program_commands.add_parser(
         "assets", help="Reusable-asset index: seed drafts, register, list, show, archive"
     )
@@ -395,6 +407,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False),
                   file=sys.stderr)
             return 1
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "program" and args.program_command == "utilization":
+        # Read-only: the database is opened with mode=ro and nothing is created.
+        from .utilization import ReadOnlyFactoryDB, utilization_report
+
+        if not paths.database_file.is_file():
+            print(json.dumps({"status": "failed", "error": "no database at "
+                              f"{paths.database_file}"}, ensure_ascii=False), file=sys.stderr)
+            return 1
+        payload = utilization_report(
+            ReadOnlyFactoryDB(paths.database_file), paths, load_settings(paths),
+            history=args.history, include_gpu=not args.no_gpu,
+        )
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     paths.ensure_runtime_directories()

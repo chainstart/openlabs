@@ -76,6 +76,33 @@ PRESETS: dict[str, dict[str, bool]] = {
 }
 
 
+# Throughput settings both presets recommend (the repository defaults keep the
+# original single-scout, static-ceiling, headroom-ranked behaviour):
+# * one scout per domain may run at once, limited by the candidate pool;
+# * two admission batches per domain may be reviewed at once;
+# * each quota window should be ~90% used when it resets (the last tenth, and
+#   the stricter review/lead reserves, stay for reviews and decisions), work is
+#   spread by relative abundance, stale Codex readings are refreshed from the
+#   session file every 10 minutes and extrapolated for up to 48 hours;
+# * the launch ceiling adapts to demand, measured load (80% target) and quota
+#   pace below max_parallel_agents.
+THROUGHPUT_PROGRAM: dict[str, Any] = {
+    "max_concurrent_scouts": len(PROGRAM_DOMAINS),
+    "max_admissions_per_domain": 2,
+}
+THROUGHPUT_ROUTING: dict[str, Any] = {
+    "utilization_target": 0.9,
+    "stale_refresh_minutes": 10,
+    "stale_estimate_hours": 48,
+}
+THROUGHPUT_BUDGET: dict[str, Any] = {
+    "adaptive_parallel": True,
+    "adaptive_step": 2,
+    "host_utilization_target": 0.8,
+    "ailab_utilization_target": 0.9,
+}
+
+
 class InstanceInitError(ValueError):
     """The instance cannot be set up as requested."""
 
@@ -168,7 +195,11 @@ def instance_settings(
             "root": f"assets/instances/{name}",
         }
     )
-    document.setdefault("budget", {})["max_parallel_agents"] = 3
+    program.update(THROUGHPUT_PROGRAM)
+    budget = document.setdefault("budget", {})
+    budget["max_parallel_agents"] = 3
+    budget.update(THROUGHPUT_BUDGET)
+    document.setdefault("routing", {}).update(THROUGHPUT_ROUTING)
     document["runners"] = {runner: dict(spec) for runner, spec in RUNNERS.items()}
     return document
 
