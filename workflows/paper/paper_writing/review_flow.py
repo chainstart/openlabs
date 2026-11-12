@@ -1923,6 +1923,8 @@ def substantive_delta(old: str, new: str) -> dict[str, Any]:
     if fraction > DELTA_MAX_CHANGED_FRACTION:
         reasons.append(f"{fraction:.1%} of lines changed (limit {DELTA_MAX_CHANGED_FRACTION:.0%})")
     return {"substantive_unchanged": not reasons, "reasons": reasons,
+            "numbers_removed": sorted((old_numbers - new_numbers).elements()),
+            "numbers_added": sorted((new_numbers - old_numbers).elements()),
             "summary": {"identical": old == new, "lines_removed": removed_lines, "lines_added": added_lines,
                         "changed_fraction": round(fraction, 4), "sections_touched": touched}}
 
@@ -1956,9 +1958,75 @@ def delta_review_basis(root: Path, paper_id: str, target: str, pre: Mapping[str,
     if context:
         reasons.append("rejection history changed: " + context[0])
     delta = substantive_delta(old_path.read_text(), pre["expanded"])
-    reasons.extend(delta["reasons"])
-    return {"base": base, "eligible": not reasons, "reasons": reasons, "summary": delta["summary"],
-            "rule": DELTA_RULE.format(fraction=DELTA_MAX_CHANGED_FRACTION)}
+    owner = None
+    number_reasons = [r for r in delta["reasons"] if r.startswith("numbers changed")]
+    if (not reasons and number_reasons and len(number_reasons) == len(delta["reasons"])
+            and not delta["numbers_removed"]):
+        # Only numbers were added outside the conclusion-bearing sections, the title,
+        # abstract, introduction and tables. A hash-bound owner instruction for exactly
+        # this paper, version and basis review may carry the earlier judgment over.
+        owner = owner_directed_delta(pre["metadata"], root, paper_id, target,
+                                     base.get("run_id") or base["_path"].parent.name)
+    if owner is None:
+        reasons.extend(delta["reasons"])
+    result = {"base": base, "eligible": not reasons, "reasons": reasons, "summary": delta["summary"],
+              "rule": DELTA_RULE.format(fraction=DELTA_MAX_CHANGED_FRACTION)}
+    if owner is not None:
+        result["owner_directed"] = dict(owner, numbers_added=delta["numbers_added"],
+                                        waived_reasons=delta["reasons"])
+    return result
+
+
+OWNER_DIRECTED_DELTA_KIND = "owner_directed_revision_without_rereview"
+
+
+def owner_directed_delta(metadata: Mapping[str, Any], root: Path, paper_id: str, target: str,
+                         basis_run_id: str) -> dict[str, Any] | None:
+    """An owner's explicit instruction that a limited revision needs no new review.
+
+    It applies only to this paper, target, manuscript version and basis review, only when
+    the sole substantive difference is added numbers (no removed numbers; title,
+    abstract, introduction, tables and conclusion-bearing sections unchanged; the
+    changed-line limit still applies), and the formal verification still reruns.
+    """
+    policy = metadata.get("owner_directed_delta")
+    if policy is None:
+        return None
+    if (not isinstance(policy, Mapping) or policy.get("paper_id") != paper_id
+            or policy.get("target_journal") != target
+            or policy.get("manuscript_version") != str(metadata.get("version") or "")
+            or policy.get("basis_run_id") != basis_run_id):
+        return None
+    auth = policy.get("authorization")
+    if not isinstance(auth, Mapping) or not str(auth.get("summary") or "").strip():
+        raise ValueError("Owner-directed delta requires explicit owner authorization")
+    source, digest = auth.get("path"), auth.get("sha256")
+    if (not isinstance(source, str) or not source or "\\" in source
+            or Path(source).is_absolute() or ".." in Path(source).parts
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+        raise ValueError("Unsafe or unbound owner-directed delta authorization")
+    path = root.resolve() / source
+    if path.is_symlink() or not path.is_file() or _sha256(path.read_bytes()) != digest:
+        raise ValueError("Owner-directed delta authorization missing or changed")
+    receipt = json.loads(path.read_text())
+    if (not isinstance(receipt, Mapping) or receipt.get("schema") != "openlabs.actual_author_instruction.v1"
+            or receipt.get("source") != "actual user message in this session"
+            or not str(receipt.get("user_text") or "").strip()):
+        raise ValueError("Owner-directed delta requires an actual user instruction receipt")
+    grant: Any = receipt
+    try:
+        for token in str(auth.get("json_pointer") or "")[1:].split("/"):
+            grant = grant[int(token)] if isinstance(grant, list) else grant[token]
+    except (KeyError, IndexError, ValueError, TypeError) as exc:
+        raise ValueError("Owner-directed delta authorization pointer does not resolve") from exc
+    if (not isinstance(grant, Mapping) or grant.get("kind") != OWNER_DIRECTED_DELTA_KIND
+            or grant.get("paper_id") != paper_id or grant.get("target_journal") != target
+            or grant.get("manuscript_version") != policy["manuscript_version"]
+            or grant.get("basis_run_id") != basis_run_id
+            or grant.get("authorization") != auth["summary"]):
+        raise ValueError("Owner instruction does not cover this paper, version and basis review")
+    return {"authorization": dict(auth), "basis_run_id": basis_run_id,
+            "manuscript_version": policy["manuscript_version"]}
 
 
 def _formal_stage(pre: Mapping[str, Any], root: Path, run: Path, roles: Mapping[str, Any],
@@ -2009,7 +2077,8 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
                "delta_review": {"basis_run_id": base.get("run_id") or base_path.parent.name,
                                 "basis_decision": base_path.relative_to(root).as_posix(),
                                 "basis_decision_sha256": _sha256(base_path.read_bytes()),
-                                "rule": delta["rule"], "summary": delta["summary"]},
+                                "rule": delta["rule"], "summary": delta["summary"],
+                                **({"owner_directed": delta["owner_directed"]} if delta.get("owner_directed") else {})},
                "editor_screen": editor, "referee_reports": referees, "merged": merged,
                "letter": base.get("letter", ""), "receipts": copy.deepcopy(base.get("receipts", {})),
                "receipts_from_run": base.get("run_id") or base_path.parent.name,
