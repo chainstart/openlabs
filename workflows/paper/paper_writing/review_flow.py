@@ -395,7 +395,56 @@ def review_round_limit_override(metadata: Mapping[str, Any], root: Path,
             or grant["max_rounds_per_target"] != policy["max_rounds_per_target"]
             or grant.get("authorization") != auth["summary"]):
         raise ValueError("User authorization does not cover this paper, target and round limit")
-    return copy.deepcopy(dict(policy))
+    result = copy.deepcopy(dict(policy))
+    extension = policy.get("lead_extension")
+    if extension is not None:
+        extra = _lead_round_extension(extension, root, paper_id=paper_id, target=target, owner_auth=auth)
+        result["owner_max_rounds_per_target"] = policy["max_rounds_per_target"]
+        result["max_rounds_per_target"] = policy["max_rounds_per_target"] + extra
+    return result
+
+
+LEAD_EXTENSION_SCHEMA = "openlabs.lead_round_extension.v1"
+LEAD_EXTENSION_MAX_EXTRA = 1
+
+
+def _lead_round_extension(extension: Any, root: Path, *, paper_id: str, target: str,
+                          owner_auth: Mapping[str, Any]) -> int:
+    """At most one extra round granted by the research lead on top of an owner grant.
+
+    It is not a user decision: the record names the lead as authorizer, binds the
+    owner receipt it relies on (same path and hash as the owner grant), states its
+    reason, and is itself hash-bound. Without a valid owner grant it has no effect.
+    """
+    if not isinstance(extension, Mapping):
+        raise ValueError("Invalid lead round extension")
+    source, digest = extension.get("path"), extension.get("sha256")
+    if (not isinstance(source, str) or not source or "\\" in source
+            or Path(source).is_absolute() or ".." in Path(source).parts
+            or Path(source).as_posix() != source
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+        raise ValueError("Unsafe or unbound lead round extension")
+    base = root.resolve()
+    path, component = base / source, base
+    for part in Path(source).parts:
+        component /= part
+        if component.is_symlink():
+            raise ValueError("Unsafe lead round extension: symlink")
+    if not path.is_file() or path.stat().st_size > 2_000_000 or _sha256(path.read_bytes()) != digest:
+        raise ValueError("Lead round extension missing or changed")
+    record = json.loads(path.read_text())
+    extra = record.get("extra_rounds") if isinstance(record, Mapping) else None
+    basis = record.get("owner_receipt") if isinstance(record, Mapping) else None
+    if (not isinstance(record, Mapping) or record.get("schema") != LEAD_EXTENSION_SCHEMA
+            or not str(record.get("authorized_by") or "").startswith("lead")
+            or record.get("paper_id") != paper_id or record.get("target_journal") != target
+            or type(extra) is not int or not 1 <= extra <= LEAD_EXTENSION_MAX_EXTRA
+            or extension.get("extra_rounds") != extra
+            or not str(record.get("reason") or "").strip()
+            or not isinstance(basis, Mapping) or basis.get("path") != owner_auth.get("path")
+            or basis.get("sha256") != owner_auth.get("sha256")):
+        raise ValueError("Lead round extension does not cover this paper, target and owner grant")
+    return extra
 
 
 def review_policy_sha256(config: Mapping[str, Any], history_policy: Mapping[str, Any] | None = None,
