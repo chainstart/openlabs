@@ -529,7 +529,12 @@ bin/openlabs-container-loop stop --drain     # 同上，但先等在跑的 worke
 bin/openlabs-container-loop cli -- status    # 以本实例身份执行任意 python -m openlabs 子命令
 ```
 
-每次 tick 的报告追加到 `state/ticks.jsonl`，循环日志在 `state/loop.log`；有结果回执时提前唤醒。
+每次 tick 的报告追加到 `state/ticks.jsonl`，循环日志在 `state/loop.log`；tick 成功后有结果回执时提前唤醒
+（同一批没被消费的回执只提前一次）。tick 非 0 退出（如 69 = 智能体网络预检失败）时不因回执提前，
+而是指数退避：`OPENLABS_LOOP_BACKOFF_BASE_SECONDS`（30）起翻倍、上限 `OPENLABS_LOOP_BACKOFF_MAX_SECONDS`
+（900），成功一轮复位，退避中仍响应 stop/--drain。`loop.log`、`tick.err`、`ticks.jsonl` 超过
+`OPENLABS_LOOP_LOG_MAX_BYTES`（16 MiB）时轮转为 `*.1`。`OPENLABS_LOOP_AGENT_PROXY=http://HOST:PORT`
+（默认不设 = 沿用启动者的代理环境）让 `run`/`cli` 显式使用该代理入口，预检和它拉起的 worker 都继承。
 间隔等见脚本头部（`OPENLABS_LOOP_INTERVAL_SECONDS` 默认 180）。在容器环境文件里加
 `OPENLABS_REQUIRE_INSTANCE=1` 后，没有选实例的 `python -m openlabs tick` 会被拒绝。
 

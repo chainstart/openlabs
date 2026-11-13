@@ -23,13 +23,27 @@
 #   guard then stops in-flight agents; their attempts are retried after restart.
 #   `stop --drain` instead waits (no new ticks) until in-flight workers finished.
 # - Each tick's report is appended as one JSON line to state/ticks.jsonl.
-# - The sleep between ticks ends early when a result receipt arrives.
+# - After a successful tick the sleep ends early when a result receipt arrives
+#   (but not again for the same unconsumed receipts).
+# - After a failed tick (exit != 0, e.g. 69 = Agent network preflight failed)
+#   the loop backs off exponentially instead: BASE, 2*BASE, ... capped at MAX,
+#   ignoring receipts (a failed tick does not consume them); one successful
+#   tick resets it. stop/--drain still end the wait at the next poll.
+# - state/loop.log, state/tick.err and state/ticks.jsonl are rotated to *.1 once
+#   they exceed OPENLABS_LOOP_LOG_MAX_BYTES (one previous generation kept).
 #
 # Settings (environment or instance.env): OPENLABS_LOOP_INTERVAL_SECONDS (180),
 # OPENLABS_LOOP_TICK_TIMEOUT_SECONDS (10800), OPENLABS_LOOP_POLL_SECONDS (5),
+# OPENLABS_LOOP_BACKOFF_BASE_SECONDS (30), OPENLABS_LOOP_BACKOFF_MAX_SECONDS (900),
+# OPENLABS_LOOP_LOG_MAX_BYTES (16777216; 0 = never rotate),
 # OPENLABS_LOOP_PYTHON (python3), OPENLABS_TEXENV ($HOME/.local/opt/texenv.sh;
 # sourced for LaTeX if present, else a warning), OPENLABS_LOOP_MAX_TICKS (0 = no
 # limit; drills only).
+# OPENLABS_LOOP_AGENT_PROXY (unset = keep the inherited proxy environment): an
+# http(s):// proxy URL exported as HTTP(S)_PROXY/ALL_PROXY (both cases) for the
+# ticks of `run` and for `cli`, so the Agent preflight and the workers it starts
+# use that entrance regardless of who started the loop; NO_PROXY then becomes
+# OPENLABS_LOOP_AGENT_NO_PROXY (localhost,127.0.0.1,::1).
 set -euo pipefail
 SCRIPT=$(readlink -f -- "${BASH_SOURCE[0]}")
 CODE=$(cd -- "$(dirname -- "$SCRIPT")/.." && pwd)
@@ -86,6 +100,47 @@ loop_pid() {
   printf '%s\n' "$pid"
 }
 
+backoff_delay() {  # backoff_delay FAILURES BASE MAX -> seconds to wait after FAILURES failed ticks in a row
+  local failures=$1 base=$2 max=$3 delay
+  ((failures >= 1)) || { echo 0; return; }
+  delay=$base
+  while ((failures > 1 && delay < max)); do
+    delay=$((delay * 2))
+    failures=$((failures - 1))
+  done
+  ((delay > max)) && delay=$max
+  echo "$delay"
+}
+
+rotate_if_large() {  # rotate_if_large FILE MAX_BYTES: keep one previous generation as FILE.1
+  local file=$1 max=$2 size
+  ((max > 0)) && [[ -f $file ]] || return 0
+  size=$(stat -c %s -- "$file" 2>/dev/null) || return 0
+  ((size > max)) && mv -f -- "$file" "$file.1"
+  return 0
+}
+
+inbox_signature() {  # name, inode and mtime of each waiting result receipt (empty when none)
+  local files
+  mapfile -t files < <(compgen -G "$1/*.json" | LC_ALL=C sort || true)
+  ((${#files[@]})) || return 0
+  stat -c '%n %i %y' -- "${files[@]}" 2>/dev/null | tr '\n' ' ' || true
+}
+
+apply_agent_proxy() {
+  local proxy=${OPENLABS_LOOP_AGENT_PROXY-} no_proxy name label
+  [[ -n $proxy ]] || return 0
+  [[ $proxy =~ ^https?://[^[:space:]/]+/?$ ]] ||
+    die "OPENLABS_LOOP_AGENT_PROXY must be an http(s)://HOST:PORT proxy URL" 65
+  no_proxy=${OPENLABS_LOOP_AGENT_NO_PROXY:-localhost,127.0.0.1,::1}
+  for name in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+    export "$name=$proxy"
+  done
+  export NO_PROXY=$no_proxy no_proxy=$no_proxy
+  label=${proxy#*://}; label=${label##*@}; label=${label%/}
+  agent_proxy_label=$label  # never the credentials part of the URL
+}
+
 inflight_workers() {  # worker processes of this instance (reparented to the guard)
   local guard=$1
   pgrep -P "$guard" -f 'openlabs _worker' 2>/dev/null | wc -l
@@ -97,6 +152,11 @@ run_loop() {
   local poll=${OPENLABS_LOOP_POLL_SECONDS:-5}
   local python=${OPENLABS_LOOP_PYTHON:-python3}
   local max_ticks=${OPENLABS_LOOP_MAX_TICKS:-0}
+  local backoff_base=${OPENLABS_LOOP_BACKOFF_BASE_SECONDS:-30}
+  local backoff_max=${OPENLABS_LOOP_BACKOFF_MAX_SECONDS:-900}
+  local log_max=${OPENLABS_LOOP_LOG_MAX_BYTES:-16777216}
+  [[ $backoff_base =~ ^[1-9][0-9]*$ && $backoff_max =~ ^[1-9][0-9]*$ && $log_max =~ ^[0-9]+$ ]] ||
+    die "OPENLABS_LOOP_BACKOFF_BASE_SECONDS/_MAX_SECONDS must be positive integers and OPENLABS_LOOP_LOG_MAX_BYTES a non-negative integer" 65
   local texenv=${OPENLABS_TEXENV:-$HOME/.local/opt/texenv.sh}
   local inbox=$OPENLABS_DATABASE_ROOT/inbox/results
   local guard=$PPID
@@ -112,9 +172,13 @@ run_loop() {
   fi
   local stop=""
   trap 'stop=1' TERM INT
-  log "loop started pid=$$ guard=$guard instance=$OPENLABS_INSTANCE interval=${interval}s"
-  local count=0 started rc report tick_pid
+  log "loop started pid=$$ guard=$guard instance=$OPENLABS_INSTANCE interval=${interval}s" \
+    "backoff=${backoff_base}s..${backoff_max}s agent_proxy=${agent_proxy_label:-inherited}"
+  local count=0 started rc report tick_pid failures=0 delay woke_on="" pending
   while [[ -z $stop ]]; do
+    rotate_if_large "$state/loop.log" "$log_max"
+    rotate_if_large "$state/tick.err" "$log_max"
+    rotate_if_large "$state/ticks.jsonl" "$log_max"
     started=$(date -u +%FT%TZ)
     report=$state/last-tick.json
     set +e
@@ -142,14 +206,30 @@ except (OSError, ValueError):
 print(json.dumps({"started_at": started, "exit_code": rc, "report": report},
                  ensure_ascii=False, sort_keys=True))
 PY
-    log "tick started=$started rc=$rc"
     count=$((count + 1))
+    if ((rc == 0)); then
+      log "tick started=$started rc=$rc"
+      ((failures > 0)) && log "tick succeeded after $failures failed tick(s); backoff reset"
+      failures=0
+      delay=$interval
+    else
+      failures=$((failures + 1))
+      delay=$(backoff_delay "$failures" "$backoff_base" "$backoff_max")
+      # One line per failed tick; the backoff bounds how often that happens.
+      log "tick started=$started rc=$rc failures=$failures; backing off ${delay}s (see tick.err)"
+    fi
     if ((max_ticks > 0 && count >= max_ticks)); then break; fi
+    # Receipts the last early tick left unconsumed do not wake the loop again.
+    if [[ -n $woke_on && $(inbox_signature "$inbox") != "$woke_on" ]]; then woke_on=""; fi
     local waited=0
-    while [[ -z $stop ]] && ((waited < interval)); do
-      if compgen -G "$inbox/*.json" >/dev/null; then
-        log "result receipt waiting; ticking early"
-        break
+    while [[ -z $stop ]] && ((waited < delay)); do
+      if ((rc == 0)) && compgen -G "$inbox/*.json" >/dev/null; then
+        pending=$(inbox_signature "$inbox")
+        if [[ $pending != "$woke_on" ]]; then
+          woke_on=$pending
+          log "result receipt waiting; ticking early"
+          break
+        fi
       fi
       sleep "$poll" 9>&- &
       wait $! || true
@@ -171,6 +251,7 @@ case $command in
       exec env OPENLABS_LOOP_GUARDED=1 "$CODE/bin/openlabs-resource-guard" --task-type cpu -- \
         "$SCRIPT" --instance-dir "$instance_dir" run
     fi
+    apply_agent_proxy
     run_loop
     ;;
   start)
@@ -227,6 +308,7 @@ print("last tick:", row["started_at"], "exit", row["exit_code"], counts)
     ;;
   cli)
     load_instance_env
+    apply_agent_proxy
     [[ ${1-} == -- ]] && shift
     exec "${OPENLABS_LOOP_PYTHON:-python3}" -m openlabs "$@"
     ;;

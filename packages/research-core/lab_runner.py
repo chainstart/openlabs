@@ -141,6 +141,13 @@ def remote_queue_root(environ: Mapping[str, str] | None = None) -> Path:
     return Path(home) / "work" / "projects" / ".openlabs-remote"
 
 
+def _remote_job_withdrawn(directory: Path) -> bool:
+    try:
+        return any(directory.glob("WITHDRAWN*"))
+    except OSError:
+        return False
+
+
 def remote_queue_summary(
     queue_root: Path,
     capabilities: Mapping[str, Any] | None = None,
@@ -150,6 +157,12 @@ def remote_queue_summary(
     Counts ``jobs/*/status.json`` states and sums the ``request.json``
     resources of queued and running jobs, against the capacity in
     ``config/remote-compute.json`` when given. None when the queue cannot be read.
+
+    Only load the bridge can still carry counts: terminal states never do, a
+    job with a ``WITHDRAWN*`` marker (left by a submitter who abandoned it)
+    never does, and a ``queued`` job without ``READY`` is not dispatchable
+    (the bridge only picks up READY jobs). Skipped jobs are reported under
+    ``ignored`` so the exclusion stays visible.
     """
 
     jobs = Path(queue_root) / "jobs"
@@ -158,6 +171,7 @@ def remote_queue_summary(
     except OSError:
         return None
     counts = {state: 0 for state in REMOTE_ACTIVE_STATES}
+    ignored = {"withdrawn": 0, "not_dispatchable": 0}
     cpu = memory = 0
     for directory in directories:
         try:
@@ -166,6 +180,12 @@ def remote_queue_summary(
             continue
         state = status.get("state") if isinstance(status, Mapping) else None
         if state not in counts:
+            continue
+        if _remote_job_withdrawn(directory):
+            ignored["withdrawn"] += 1
+            continue
+        if state == "queued" and not (directory / "READY").is_file():
+            ignored["not_dispatchable"] += 1
             continue
         counts[state] += 1
         try:
@@ -185,6 +205,7 @@ def remote_queue_summary(
     return {
         "queued": counts["queued"],
         "running": counts["running"],
+        "ignored": ignored,
         "declared_cpu_threads": cpu,
         "declared_memory_mib": memory,
         "capacity_cpu_threads": capacity_cpu,

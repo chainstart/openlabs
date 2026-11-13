@@ -123,13 +123,19 @@ def test_host_usage_reads_cgroup_files_and_excludes_page_cache(tmp_path) -> None
 # --------------------------------------------------------------------------- ailab
 
 
-def _job(queue: Path, job_id: str, state: str, cpus: int, memory: int) -> None:
+def _job(queue: Path, job_id: str, state: str, cpus: int, memory: int, *,
+         ready: bool | None = None, withdrawn: bool = False) -> None:
     directory = queue / "jobs" / job_id
     directory.mkdir(parents=True)
     (directory / "status.json").write_text(json.dumps({"job_id": job_id, "state": state}))
     (directory / "request.json").write_text(json.dumps(
         {"resources": {"cpu_threads": cpus, "memory_mib": memory, "wall_seconds": 60}}
     ))
+    # The bridge keeps READY while a job is queued or running and drops it at the end.
+    if ready if ready is not None else state in {"queued", "running"}:
+        (directory / "READY").write_text(job_id + "\n")
+    if withdrawn:
+        (directory / "WITHDRAWN.by-submitter").write_text(job_id + "\n")
 
 
 def test_ailab_summary_counts_active_jobs_and_their_budgets(tmp_path) -> None:
@@ -144,6 +150,26 @@ def test_ailab_summary_counts_active_jobs_and_their_budgets(tmp_path) -> None:
     assert summary["declared_cpu_threads"] == 6 and summary["declared_memory_mib"] == 24_000
     assert summary["cpu_fraction"] == 0.75
     assert runner.remote_queue_summary(tmp_path / "missing", {}) is None
+
+
+def test_ailab_summary_ignores_withdrawn_undispatchable_and_terminal_jobs(tmp_path) -> None:
+    runner = budget_control._lab_runner_module()
+    queue = tmp_path / "queue"
+    _job(queue, "live", "running", 8, 32_768)
+    # Withdrawn by the submitter: still "queued" in status.json, READY gone or not.
+    _job(queue, "w1", "queued", 4, 8_192, ready=False, withdrawn=True)
+    _job(queue, "w2", "queued", 1, 4_096, ready=True, withdrawn=True)
+    _job(queue, "w3", "running", 4, 16_384, withdrawn=True)
+    # Queued without READY: the bridge never dispatches it.
+    _job(queue, "orphan", "queued", 2, 2_048, ready=False)
+    for state in ("succeeded", "failed"):
+        _job(queue, f"done-{state}", state, 8, 60_000, ready=False)
+        _job(queue, f"ready-{state}", state, 8, 60_000, ready=True)
+    summary = runner.remote_queue_summary(queue, {"cpu_threads": 8, "memory_mib": 62_961})
+    assert summary["running"] == 1 and summary["queued"] == 0
+    assert summary["declared_cpu_threads"] == 8 and summary["declared_memory_mib"] == 32_768
+    assert summary["cpu_fraction"] == 1.0
+    assert summary["ignored"] == {"withdrawn": 3, "not_dispatchable": 1}
 
 
 def test_task_notice_shows_ailab_load_and_omits_it_when_unreadable(tmp_path, monkeypatch):
