@@ -407,6 +407,8 @@ class SlotStatus:
     in_review: int
     ready_unsubmitted: int
     status_counts: dict[str, int] = field(default_factory=dict)
+    # Admitted/active/in-review topics of paused program projects (not counted above).
+    parked: int = 0
 
     @property
     def occupied(self) -> int:
@@ -453,15 +455,33 @@ class SlotStatus:
             "can_admit": self.can_admit,
             "research_free_slots": self.research_free_slots,
             "status_counts": dict(self.status_counts),
+            "parked_topics": self.parked,
         }
 
 
-def slot_status(ledger: Mapping[str, Any], settings: ProgramSettings) -> SlotStatus:
-    """Count research slots from a ledger document (pure; no I/O)."""
+SLOT_STATUSES = ("admitted", "active", "in_review")
 
+
+def slot_status(
+    ledger: Mapping[str, Any],
+    settings: ProgramSettings,
+    parked_projects: Iterable[str] = (),
+) -> SlotStatus:
+    """Count research slots from a ledger document (pure; no I/O).
+
+    Topics of ``parked_projects`` (program projects an operator paused, see
+    ``parked_program_projects``) keep their ledger status but take no slot while
+    paused, so the projects still running can admit and materialize topics.
+    """
+
+    parked_ids = frozenset(parked_projects)
     counts = {status: 0 for status in TOPIC_STATUSES}
+    parked = 0
     for topic in ledger.get("topics") or []:
         status = str(topic.get("status"))
+        if status in SLOT_STATUSES and str(topic.get("program_project_id") or "") in parked_ids:
+            parked += 1
+            continue
         counts[status] = counts.get(status, 0) + 1
     return SlotStatus(
         max_active_topics=settings.max_active_topics,
@@ -471,13 +491,38 @@ def slot_status(ledger: Mapping[str, Any], settings: ProgramSettings) -> SlotSta
         in_review=counts["in_review"],
         ready_unsubmitted=counts["ready_queue"],
         status_counts={key: value for key, value in counts.items() if value},
+        parked=parked,
     )
+
+
+def parked_program_projects(paths: WorkspacePaths) -> frozenset[str]:
+    """Ids of research-program projects whose project.json status is ``paused``.
+
+    Pausing a program project (an operator edit, reverted by setting ``active``)
+    pauses its scout, admission and topic campaigns through project
+    synchronization; its topics keep their ledger status but are parked: they
+    take no research slot, are not materialized and trigger no stop rule.
+    """
+
+    from .projects import load_project
+
+    parked: set[str] = set()
+    for path in paths.project_config_paths():
+        try:
+            project = load_project(path)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if project.program and project.status == "paused":
+            parked.add(project.project_id)
+    return frozenset(parked)
 
 
 def program_slots(paths: WorkspacePaths, settings: ProgramSettings) -> SlotStatus:
     """Read the configured ledger and return current slot occupancy."""
 
-    return slot_status(open_topic_ledger(paths, settings).read(), settings)
+    return slot_status(
+        open_topic_ledger(paths, settings).read(), settings, parked_program_projects(paths)
+    )
 
 
 # --------------------------------------------------------------------------- decisions
@@ -1352,7 +1397,7 @@ def run_program_controller(
         document = ledger.read()
         frozen, cancelled = reconcile_frozen_campaigns(db, document)
         report.cancelled.extend(cancelled)
-        status = slot_status(document, settings)
+        status = slot_status(document, settings, parked_program_projects(paths))
         report.program.update({
             "enabled": True,
             "ledger_path": str(ledger.path),

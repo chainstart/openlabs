@@ -602,10 +602,11 @@ def utilization_report(
     program: dict[str, Any] = {}
     if settings.program.enabled:
         try:
-            from .program import open_topic_ledger, slot_status
+            from .program import open_topic_ledger, parked_program_projects, slot_status
 
             document = open_topic_ledger(paths, settings.program).read()
-            program = slot_status(document, settings.program).to_dict()
+            program = slot_status(
+                document, settings.program, parked_program_projects(paths)).to_dict()
         except Exception:  # noqa: BLE001 - the ledger view is advisory.
             program = {}
     admission = _admission_pass_rate(db)

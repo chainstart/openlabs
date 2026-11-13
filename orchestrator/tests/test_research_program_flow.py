@@ -36,6 +36,7 @@ from openlabs.program import (
     mark_topic_in_review,
     mark_topic_ready,
     open_topic_ledger,
+    parked_program_projects,
     propose_topic,
     slot_status,
 )
@@ -873,3 +874,72 @@ def test_container_instance_refuses_to_admit_a_wsl_math_topic(tmp_path, monkeypa
     assert program_flow.compute_location_problem(narrowed, _math_card(1)).startswith(
         "compute_location_unavailable:wsl_math")
     assert program_flow.compute_location_problem(settings, _math_card(1)) is None
+
+
+# --------------------------------------------------------------------------- paused projects
+
+
+def _set_project_status(project_path: Path, status: str) -> None:
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload["status"] = status
+    atomic_write_json(project_path, payload)
+
+
+def test_paused_program_project_parks_its_topics_and_resumes(tmp_path, monkeypatch) -> None:
+    """Pausing a program project frees its slots for the others and holds its admitted topics."""
+
+    paths = _paths(tmp_path)
+    project_path = _install_program(paths)
+    db = _db(paths)
+    settings = _settings(max_active_topics=2)
+    ledger = open_topic_ledger(paths, settings.program)
+    # Two running topics of another, paused program project fill both slots.
+    other = paths.data / "workspaces" / "ai" / "projects" / "other-program"
+    other.mkdir(parents=True)
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload.update({"project_id": "other-program", "status": "paused"})
+    for workstream in payload["workstreams"]:
+        workstream["workstream_id"] = "other-" + workstream["workstream_id"]
+        shutil.copyfile(TEMPLATE / workstream["state_path"], other / workstream["state_path"])
+    atomic_write_json(other / "project.json", payload)
+    for name in ("parked-a", "parked-b"):
+        propose_topic(ledger, {"topic_id": name, "domain": "ai", "question": name,
+                               "data_sources": ["s"], "primary_endpoint": "e"}, db=db,
+                      decided_by="backfill", metadata={"program_project_id": "other-program"})
+        admit_topic(ledger, name, db=db, settings=settings.program, decided_by="b",
+                    admission_task_id="b")
+        db.register_campaign(f"{name}-campaign", domain="ai", title=name)
+        activate_topic(ledger, name, db=db, campaign_id=f"{name}-campaign", decided_by="b")
+
+    assert parked_program_projects(paths) == frozenset({"other-program"})
+    document = ledger.read()
+    assert slot_status(document, settings.program).free_slots == 0
+    parked = slot_status(document, settings.program, parked_program_projects(paths))
+    assert (parked.free_slots, parked.parked) == (2, 2)
+
+    # The active project still admits and materializes into the freed slots; the third
+    # admitted topic waits for a slot.
+    _, admission, _ = _to_admission(paths, db, settings, monkeypatch,
+                                    [_card(n, RECEIPT_SHA) for n in range(3)])
+    entries = _packet(admission)["topic_cards"]
+    _complete(db, paths, admission["task_id"],
+              extra={"candidate_branches": [_branch(entry) for entry in entries]})
+    report = _tick(paths, settings, monkeypatch)
+    assert report.errors == []
+    first, second, third = (entry["topic_id"] for entry in entries)
+    assert [ledger.topic(t)["status"] for t in (first, second, third)] == [
+        "active", "active", "admitted"]
+    assert report.program["parked_topics"] == 2
+
+    # Paused, the project's admitted topic is not materialized even when a slot opens.
+    _set_project_status(project_path, "paused")
+    freeze_topic(ledger, first, db=db, reason_class="overdue", evidence=EVIDENCE,
+                 decided_by="judge")
+    assert materialize_waiting_topics(db, paths, settings).campaign_ids == ()
+    assert ledger.topic(third)["status"] == "admitted"
+
+    # Active again: it takes the slot.
+    _set_project_status(project_path, "active")
+    spawned = materialize_waiting_topics(db, paths, settings)
+    assert spawned.campaign_ids == (ledger.topic(third)["campaign_id"],)
+    assert ledger.topic(third)["status"] == "active"

@@ -112,3 +112,54 @@ def test_scout_packet_names_templates_and_intake_checks_the_template_id(tmp_path
     assert "paper_template" in admission["objective"]
     entry = flow._packet(admission)["topic_cards"][0]
     assert entry["card"]["paper_template"] == "2d-anode"
+
+
+def test_queued_template_scouts_copy_entries_and_admission_is_a_checklist(tmp_path, monkeypatch):
+    """A template with a candidate_queue sends scouts to the queue and the gate to a checklist."""
+
+    paths = flow._paths(tmp_path)
+    flow._install_program(paths)
+    lines._make_line_project(paths)
+    path = _templates_file(paths)
+    queue = tmp_path / "queue" / "queue.json"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "        minimum_content: [phonon stability of the host]\n",
+            "        minimum_content: [phonon stability of the host]\n"
+            f"        candidate_queue: {queue}\n",
+        ),
+        encoding="utf-8",
+    )
+    document = load_research_lines(path)
+    assert line_summary(document, lines.LINE)["paper_templates"][0]["candidate_queue"] == str(
+        queue)
+    db = flow._db(paths)
+    settings = flow._settings()
+    queued = _templated_card(0, candidate_queue_entry={
+        "queue": str(queue), "entry_id": "TIC 1", "novelty_verdict": "unreported"})
+    assert validate_topic_card(queued, current_year=flow.YEAR).valid
+    _, report = flow._scout_round(paths, db, settings, monkeypatch, [queued])
+    assert report.errors == []
+    with db.connect() as connection:
+        scout = dict(connection.execute(
+            "SELECT * FROM tasks WHERE task_type='topic_scout' LIMIT 1").fetchone())
+    assert f"2d-anode: {queue}" in scout["objective"]
+    assert "copy each entry's `card_fields`" in scout["objective"]
+    admission = flow._admission_task(db)
+    assert "admission is a checklist" in admission["objective"]
+    entry = flow._packet(admission)["topic_cards"][0]
+    assert entry["card"]["candidate_queue_entry"]["entry_id"] == "TIC 1"
+
+
+def test_scout_without_queue_keeps_the_open_template_search(tmp_path, monkeypatch):
+    paths = flow._paths(tmp_path)
+    flow._install_program(paths)
+    lines._make_line_project(paths)
+    _templates_file(paths)
+    db = flow._db(paths)
+    _, report = flow._scout_round(paths, db, flow._settings(), monkeypatch, [_templated_card(0)])
+    assert report.errors == []
+    with db.connect() as connection:
+        scout = dict(connection.execute(
+            "SELECT * FROM tasks WHERE task_type='topic_scout' LIMIT 1").fetchone())
+    assert "candidate_queue" not in scout["objective"]

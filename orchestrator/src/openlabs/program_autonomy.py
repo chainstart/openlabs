@@ -57,6 +57,7 @@ from .program import (
     mark_topic_in_review,
     mark_topic_ready,
     open_topic_ledger,
+    parked_program_projects,
     record_topic_note,
     return_topic_to_review,
     topic_for_campaign,
@@ -1211,7 +1212,11 @@ def _check_limits(db, paths, settings, report) -> None:
     program = settings.program
     ledger = _ledger(paths, settings)
     now = _now()
+    parked = parked_program_projects(paths)
     for topic in topics_by_status(ledger.read(), *FREEZABLE_STATUSES):
+        if str(topic.get("program_project_id") or "") in parked:
+            # A paused program project: its topics wait without budget/deadline decisions.
+            continue
         topic_id = str(topic["topic_id"])
         campaign_id = str(topic.get("campaign_id") or "")
         campaign = db.campaign(campaign_id) if campaign_id else None

@@ -65,6 +65,15 @@ def bounded_elapsed(started_at: str | None, finished_at: str, limit: int) -> flo
     return min(float(max(1, int(limit))), max(0.0, (finish - start).total_seconds()))
 
 
+def earlier_time(first: str, second: str) -> str:
+    """The earlier of two ISO timestamps (an unparsable second one is ignored)."""
+
+    try:
+        return second if datetime.fromisoformat(second) < datetime.fromisoformat(first) else first
+    except ValueError:
+        return first
+
+
 @dataclass(frozen=True)
 class AttemptDisposition:
     task_id: str
@@ -2165,7 +2174,8 @@ class FactoryDB:
                 """
                 SELECT tasks.task_id, tasks.campaign_id, tasks.attempt,
                        tasks.max_attempts, tasks.current_attempt_id,
-                       tasks.max_wall_seconds, campaigns.status AS campaign_status
+                       tasks.max_wall_seconds, tasks.lease_expires_at,
+                       campaigns.status AS campaign_status
                 FROM tasks
                 JOIN campaigns USING(campaign_id)
                 WHERE tasks.status IN ('leased', 'running')
@@ -2208,9 +2218,12 @@ class FactoryDB:
                         "SELECT started_at FROM task_attempts WHERE attempt_id=?",
                         (attempt_id,),
                     ).fetchone()
+                    # The worker stopped renewing its lease at the latest when the lease
+                    # expired: charge the campaign up to then, not up to this recovery
+                    # (a loop that was down for hours must not bill those hours).
                     elapsed = bounded_elapsed(
                         str(attempt["started_at"]) if attempt and attempt["started_at"] else None,
-                        now,
+                        earlier_time(now, str(row["lease_expires_at"])),
                         int(row["max_wall_seconds"]),
                     )
                     connection.execute(

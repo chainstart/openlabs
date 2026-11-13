@@ -95,7 +95,12 @@ def line_summary(document: Mapping[str, Any] | None, line_id: str) -> dict[str, 
     }
 
 
-TEMPLATE_SUMMARY_FIELDS = ("id", "name", "paradigm", "feasible", "per_paper_cost")
+# ``candidate_queue``: path of a ranked target file an enumerator wrote for the template
+# (targets already screened against the template and checked for occupancy). Scouts of a
+# queued template copy entries from it instead of searching for targets themselves.
+TEMPLATE_SUMMARY_FIELDS = (
+    "id", "name", "paradigm", "feasible", "per_paper_cost", "candidate_queue",
+)
 
 
 def line_templates(document: Mapping[str, Any] | None, line_id: str) -> list[dict[str, Any]]:
@@ -117,3 +122,14 @@ def template_summaries(entry: Mapping[str, Any]) -> list[dict[str, Any]]:
         {key: item.get(key) for key in TEMPLATE_SUMMARY_FIELDS if item.get(key) is not None}
         for item in templates if isinstance(item, Mapping) and item.get("id")
     ]
+
+
+def queued_templates(document: Mapping[str, Any] | None, line_id: str) -> dict[str, str]:
+    """``{template id: candidate_queue path}`` for the line's templates that name a queue."""
+
+    return {
+        str(item["id"]): str(item["candidate_queue"]).strip()
+        for item in line_templates(document, line_id)
+        if item.get("id") and isinstance(item.get("candidate_queue"), str)
+        and str(item["candidate_queue"]).strip()
+    }

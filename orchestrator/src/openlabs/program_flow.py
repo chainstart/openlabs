@@ -74,6 +74,7 @@ from .program import (
     last_rejection_reason,
     note_admission_attempt,
     open_topic_ledger,
+    parked_program_projects,
     propose_topic,
     record_rejected_card,
     record_topic_note,
@@ -91,6 +92,7 @@ from .research_lines import (
     environment_status,
     line_summary,
     line_templates,
+    queued_templates,
     read_lines_or_none,
 )
 from .resources import ResourceVector, default_task_resources
@@ -449,6 +451,25 @@ def expected_cards_per_scout(
     return max(0.5, cards / len(finished))
 
 
+def queue_scout_instruction(queues: Mapping[str, str]) -> str:
+    """Scout objective addition for templates with an enumerated candidate queue."""
+
+    if not queues:
+        return ""
+    return (
+        ". Templates with a candidate_queue ("
+        + ", ".join(f"{template}: {path}" for template, path in sorted(queues.items()))
+        + ") are enumerated, not scouted: do not search for other targets of them. Take the "
+        "highest-ranked entries whose novelty verdict is `unreported` and whose target is in "
+        "no ledger topic (compare its identifiers with ledger_snapshot); copy each entry's "
+        "`card_fields` (research_line, paper_template, occupancy_search, "
+        "candidate_queue_entry, series when present) into the card unchanged, re-running the "
+        "occupancy search only when its searched_at is more than 30 days old (then record the "
+        "new search), and fill the remaining card fields from the template and the SOP. Skip "
+        "an entry whose data access fails and say so in the result"
+    )
+
+
 def _schedule_one_scout(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -530,6 +551,8 @@ def _schedule_one_scout(
                     "template id, and use `series` for a few adjacent systems sharing one "
                     "pipeline (one paper per card). Cite reusable assets of the template in "
                     "`reusable_assets` and lower the cost estimate accordingly"
+                    + queue_scout_instruction(
+                        queued_templates(research_lines_document(paths, settings), line))
                     if line_templates(research_lines_document(paths, settings), line) else ""
                 )
                 if line else ""
@@ -600,7 +623,7 @@ def schedule_scouts(
         return [], "provider_routing_not_configured"
     ledger = open_topic_ledger(paths, program)
     document = ledger.read()
-    status = slot_status(document, program)
+    status = slot_status(document, program, parked_program_projects(paths))
     if status.admission_paused:
         return [], "admission_paused"
     if status.free_slots <= 0:
@@ -1363,7 +1386,7 @@ def schedule_revisions(
         pending.append(topic)
     if not pending:
         return [], "no_revisable_topic"
-    status = slot_status(document, program)
+    status = slot_status(document, program, parked_program_projects(paths))
     if status.admission_paused:
         return [], "admission_paused"
     if status.free_slots <= 0:
@@ -1785,7 +1808,14 @@ def schedule_topic_admission(
                 "same paradigm in the last two years (two examples); a parameter sweep across a "
                 "family is the expected form, not a defect. Reject it only for an existing report "
                 "of the same system and property, validation below the template's minimum, or "
-                "one result split into several papers."
+                "one result split into several papers. A card with `candidate_queue_entry` was "
+                "drawn from an enumerated target queue: admission is a checklist, not a debate. "
+                "Check (1) the entry exists in that queue file with the same target and verdict "
+                "`unreported`, and the card's occupancy_search equals the entry's; (2) re-run one "
+                "of its queries yourself; (3) the plan covers the template's minimum_content and "
+                "the line's minimum_validation; (4) the routine venues are the template's and "
+                "their fee route is verified; (5) cost and compute plan match the template. Admit "
+                "when all pass; otherwise reject or hold naming the failed item."
                 if line_ids else ""
             )
         ),
@@ -2227,13 +2257,16 @@ def materialize_waiting_topics(
     campaign_ids: list[str] = []
     task_ids: list[str] = []
     ledger = open_topic_ledger(paths, settings.program)
+    parked = parked_program_projects(paths)
     skipped: set[str] = set()
     while True:
         document = ledger.read()
-        if not slot_status(document, settings.program).can_materialize:
+        if not slot_status(document, settings.program, parked).can_materialize:
             break
+        # Admitted topics of a paused program project wait until it is active again.
         queue = [topic for topic in waiting_admitted(document, admission_sequence(db))
-                 if str(topic["topic_id"]) not in skipped]
+                 if str(topic["topic_id"]) not in skipped
+                 and str(topic.get("program_project_id") or "") not in parked]
         if not queue:
             break
         topic = queue[0]
@@ -2441,7 +2474,8 @@ def run_program_pipeline(
         info["waiting_admitted"] = [
             str(t["topic_id"]) for t in waiting_admitted(document, admission_sequence(db))
         ]
-        info.update(slot_status(document, settings.program).to_dict())
+        info.update(slot_status(
+            document, settings.program, parked_program_projects(paths)).to_dict())
         info.setdefault("admissions_scheduled", [])
         info.setdefault("admission_decisions", [])
     except (OSError, TopicLedgerError, KeyError, TypeError, ValueError,

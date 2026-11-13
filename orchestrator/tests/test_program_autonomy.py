@@ -899,3 +899,31 @@ def test_failed_decision_task_is_retried_once_then_the_topic_freezes(tmp_path, m
     frozen = _topic(paths, settings, topic["topic_id"])
     assert frozen["status"] == "frozen" and frozen["freeze_reason_class"] == "review_stalled"
     assert frozen["freeze_evidence"]
+
+
+def test_topics_of_a_paused_program_project_get_no_stop_rule_decision(tmp_path, monkeypatch):
+    """A paused project's topics wait: no overdue decision until the project is active."""
+
+    paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
+    later = budget_control.current_time() + timedelta(days=29)
+    monkeypatch.setattr(budget_control, "current_time", lambda: later)
+    research = db.latest_task(topic["campaign_id"])
+    _lease(paths, settings, monkeypatch, db, research["task_id"])
+    _finish(db, paths, research["task_id"], extra={"paper_candidate": False})
+    project_path = Path(str(db.campaign(topic["campaign_id"])["project_config_path"]))
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload["status"] = "paused"
+    project_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = _tick(paths, settings, monkeypatch)
+
+    assert _direction_tasks(db) == []
+    assert report.program["parked_topics"] == 1
+    assert db.campaign(topic["campaign_id"])["status"] == "production_paused"
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "active"
+
+    payload["status"] = "active"
+    project_path.write_text(json.dumps(payload), encoding="utf-8")
+    _tick(paths, settings, monkeypatch)
+    assert db.campaign(topic["campaign_id"])["status"] == "active"
+    assert len(_direction_tasks(db)) == 1

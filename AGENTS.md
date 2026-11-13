@@ -75,7 +75,9 @@ so admission can weigh it:
 Submitting a manuscript, any formal publication or journal event, spending money, and
 changing authorship are irreversible or have consequences outside the repository. A human
 confirms each one; a passing review gate or a selected journal is not that confirmation.
-Paid routes are never used: no venue with a mandatory author, page or publication fee.
+Paid routes are used only for a venue in zone 1 of the 2025 CAS journal partition (owner decision
+2026-11-13; the 2025 edition is the last one and is the partition this repository counts by). Every
+other venue needs a verified route with no mandatory author, page or publication fee.
 (Releasing a ready paper's supporting materials to Zenodo has standing authorization in
 `registry/settings.yaml#support_publication`; delivering a ready paper to the management site
 for the owner's review is not a submission.)

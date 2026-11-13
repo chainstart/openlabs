@@ -863,7 +863,9 @@ def test_expired_process_time_counts_against_campaign_budget(tmp_path) -> None:
     )
     with db.connect() as connection:
         connection.execute(
-            "UPDATE tasks SET lease_expires_at='2000-01-01T00:00:00Z' WHERE task_id='task'"
+            # The last heartbeat left a lease ten minutes after the start: the killed
+            # process is charged up to its wall limit within that window.
+            "UPDATE tasks SET lease_expires_at='2000-01-01T00:10:00Z' WHERE task_id='task'"
         )
         connection.execute(
             "UPDATE task_attempts SET started_at='2000-01-01T00:00:00Z' WHERE attempt_id=?",
@@ -876,3 +878,40 @@ def test_expired_process_time_counts_against_campaign_budget(tmp_path) -> None:
     assert db.campaign("campaign")["agent_seconds_used"] == 5
     assert db.stop_budget_exhausted_tasks() == ["task"]
     assert db.task("task")["status"] == "needs_human"
+
+
+def test_expired_lease_charges_time_only_until_the_lease_expired(tmp_path) -> None:
+    """A loop that was down for hours does not bill those hours to the campaign."""
+
+    db = FactoryDB(tmp_path / "factory.sqlite")
+    db.initialize()
+    db.register_campaign("campaign", domain="math", title="Campaign")
+    db.enqueue_task(
+        task_id="stale",
+        campaign_id="campaign",
+        domain="math",
+        task_type="research",
+        objective="Worker died with the loop.",
+        max_wall_seconds=43_200,
+    )
+    task = db.claim_next_task(owner="test", lease_seconds=60)
+    assert task is not None
+    attempt_id = str(task["current_attempt_id"])
+    db.mark_running("stale", attempt_id=attempt_id, owner="test", pid=123, lease_seconds=60)
+    with db.connect() as connection:
+        # Started 8 h ago; the last heartbeat left a lease that expired 7 h 50 min ago.
+        connection.execute(
+            "UPDATE task_attempts SET started_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-8 hours')"
+            " WHERE attempt_id=?",
+            (attempt_id,),
+        )
+        connection.execute(
+            "UPDATE tasks SET lease_expires_at="
+            "strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 hours', '-50 minutes') WHERE task_id='stale'"
+        )
+
+    recovery = db.recover_expired()
+
+    assert recovery.requeued == ("stale",)
+    used = float(db.campaign("campaign")["agent_seconds_used"])
+    assert 590 <= used <= 610
