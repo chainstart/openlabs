@@ -55,6 +55,23 @@ def test_discovery_does_not_require_formalization_runtime(tmp_path):
         runner._lab_runtime_setup(task, manifest, workspace=tmp_path, agent_workspace=tmp_path)
 
 
+def test_direction_decision_skips_lab_runtime_setup(tmp_path):
+    runner = _load_runner()
+    manifest = {"runtime_setup": [{"setup_id": "core", "command": ["missing-toolchain"]}]}
+    task = {"lab_manifest": str(tmp_path / "lab.json"), "task_type": "direction_decision"}
+    result = runner._lab_runtime_setup(task, manifest, workspace=tmp_path, agent_workspace=tmp_path)
+    assert result["setups"] == [] and "decision-only" in result["skipped"]
+
+
+def test_remote_notice_tells_agents_to_yield_instead_of_waiting(tmp_path):
+    runner = _load_runner()
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "remote-compute.json").write_text('{"enabled": true}', encoding="utf-8")
+    notice = runner._remote_compute_notice(tmp_path, "physics")
+    assert '"status": "awaiting_remote"' in notice
+    assert '"job_ids"' in notice
+
+
 def test_lab_runtime_setup_runs_before_the_agent_and_returns_typed_context(tmp_path) -> None:
     runner = _load_runner()
     lab_root = tmp_path / "openlabs" / "labs" / "math"

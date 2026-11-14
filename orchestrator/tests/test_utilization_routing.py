@@ -146,8 +146,8 @@ def test_stale_reading_is_extrapolated_instead_of_limiting_to_one(tmp_path) -> N
     state = router.availability(qr.RUNNERS["worker_gpt"], "ordinary")
     assert state.state == "available" and state.estimated
     estimate = router.readings[GPT]["seven_day"]
-    # 0.5 used 110 h into the week (window average pace) plus 10 more hours.
-    assert estimate.used_fraction == pytest.approx(0.5 + 0.5 / 110 * 10, rel=1e-3)
+    # The instance ran nothing since the reading (loop stopped): no extrapolation.
+    assert estimate.used_fraction == pytest.approx(0.5)
     assert estimate.estimated_from == observed
     # Not limited to one task in flight.
     assert router._limit_ok(qr.RUNNERS["worker_gpt"], state, {"worker_gpt": 3})
@@ -181,8 +181,62 @@ def test_extrapolation_adds_this_instances_agent_hours(tmp_path) -> None:
              budget_control._iso(NOW - timedelta(hours=2)), budget_control._iso(NOW)),
         )
     with_usage = budget_control.QuotaRouter.build(db, settings, now=NOW).readings[GPT]
+    # Own 2 agent-hours, plus the window's average pace (0.5 over 112 h) for the
+    # 2 h the instance was actually active -- not for all 8 h since the reading.
     assert with_usage["seven_day"].used_fraction == pytest.approx(
-        base.used_fraction + 2 * 0.01, rel=1e-3
+        base.used_fraction + 2 * 0.01 + 0.5 / 112 * 2, rel=1e-3
+    )
+
+
+def test_stopped_loop_and_dead_workers_do_not_inflate_stale_readings(tmp_path) -> None:
+    _, db = qr._setup(tmp_path)
+    settings = qr._settings(stale_estimate_hours=48, estimate_fraction_per_agent_hour=0.01)
+    observed = NOW - timedelta(hours=40)
+    window = {"name": "seven_day", "used_fraction": 0.84, "window_minutes": 10_080,
+              "resets_at": budget_control._iso(NOW + timedelta(days=3))}
+    _reading(db, settings, "worker_gpt", window, observed=observed)
+    qr._enqueue(db, "g", "cg", runner="worker_gpt")
+    db.claim_next_task(owner="t", lease_seconds=60)
+    with db.connect() as connection:
+        # A worker that died with the loop: never finished, lease long expired.
+        connection.execute(
+            "UPDATE tasks SET status='running', current_attempt_id='dead', lease_expires_at=?"
+            " WHERE task_id='g'",
+            (budget_control._iso(NOW - timedelta(hours=38)),),
+        )
+        connection.execute(
+            "INSERT INTO task_attempts (attempt_id, task_id, attempt_number, status, lease_owner,"
+            " started_at, created_at) VALUES ('dead', 'g', 9, 'running', 't', ?, ?)",
+            (budget_control._iso(NOW - timedelta(hours=39)), budget_control._iso(NOW)),
+        )
+    estimate = budget_control.QuotaRouter.build(db, settings, now=NOW).readings[GPT]
+    # One hour of real activity, not 39 hours of a dead lease.
+    assert estimate["seven_day"].used_fraction == pytest.approx(
+        0.84 + 0.01 + 0.84 / 56 * 1, rel=1e-3
+    )
+    assert estimate["seven_day"].used_fraction < 0.9
+
+
+def test_stale_extrapolation_is_capped(tmp_path) -> None:
+    _, db = qr._setup(tmp_path)
+    settings = qr._settings(stale_estimate_hours=48, estimate_fraction_per_agent_hour=0.05)
+    observed = NOW - timedelta(hours=20)
+    window = {"name": "seven_day", "used_fraction": 0.5, "window_minutes": 10_080,
+              "resets_at": budget_control._iso(NOW + timedelta(days=3))}
+    _reading(db, settings, "worker_gpt", window, observed=observed)
+    qr._enqueue(db, "g", "cg", runner="worker_gpt")
+    with db.connect() as connection:
+        for index in range(6):
+            connection.execute(
+                "INSERT INTO task_attempts (attempt_id, task_id, attempt_number, status,"
+                " lease_owner, started_at, finished_at, created_at)"
+                " VALUES (?, 'g', ?, 'succeeded', 't', ?, ?, ?)",
+                (f"a{index}", index + 1, budget_control._iso(NOW - timedelta(hours=19)),
+                 budget_control._iso(NOW - timedelta(hours=1)), budget_control._iso(NOW)),
+            )
+    estimate = budget_control.QuotaRouter.build(db, settings, now=NOW).readings[GPT]
+    assert estimate["seven_day"].used_fraction == pytest.approx(
+        0.5 + budget_control.STALE_ESTIMATE_MAX_INCREASE
     )
 
 

@@ -28,10 +28,19 @@ RESULT_STATUSES = {
     "needs_replan",
     "needs_human",
     "quarantined",
+    # The attempt ends to wait for remote compute jobs it submitted; the
+    # orchestrator parks the continuation until every listed job is terminal.
+    "awaiting_remote",
 }
 # These statuses authorize committing a valid attempt checkpoint.  They do not
 # mean that a domain objective, theorem, or publication gate was promoted.
-COMMITTABLE_RESULT_STATUSES = frozenset({"completed", "succeeded", "needs_replan"})
+COMMITTABLE_RESULT_STATUSES = frozenset(
+    {"completed", "succeeded", "needs_replan", "awaiting_remote"}
+)
+REMOTE_JOB_ID = re.compile(r"^[0-9a-f]{32}$")
+MAX_AWAITED_REMOTE_JOBS = 32
+# A declared wait longer than this is clipped (seven days).
+MAX_REMOTE_WAIT_SECONDS = 7 * 24 * 3600
 # Compatibility alias for callers outside this repository.  New code should
 # use the semantically precise name above.
 PROMOTABLE_RESULT_STATUSES = COMMITTABLE_RESULT_STATUSES
@@ -322,6 +331,34 @@ def validate_task(payload: Any) -> ValidationResult:
     return ValidationResult(not errors, tuple(errors), tuple(warnings))
 
 
+def _awaiting_remote_errors(block: Any) -> list[str]:
+    """Shape of ``awaiting_remote``: the remote jobs an attempt yields to wait for."""
+
+    if not isinstance(block, Mapping):
+        return ["status awaiting_remote requires an awaiting_remote object with job_ids"]
+    errors: list[str] = []
+    job_ids = block.get("job_ids")
+    if not isinstance(job_ids, list) or not job_ids:
+        errors.append("awaiting_remote.job_ids must be a non-empty array")
+    else:
+        if len(job_ids) > MAX_AWAITED_REMOTE_JOBS:
+            errors.append(f"awaiting_remote.job_ids lists more than {MAX_AWAITED_REMOTE_JOBS} jobs")
+        bad = [item for item in job_ids if not isinstance(item, str) or not REMOTE_JOB_ID.match(item)]
+        if bad:
+            errors.append("awaiting_remote.job_ids must be 32-character lowercase hex job ids")
+        if len(set(map(str, job_ids))) != len(job_ids):
+            errors.append("awaiting_remote.job_ids contains duplicates")
+    resume = block.get("resume_objective")
+    if resume is not None and not _text(resume):
+        errors.append("awaiting_remote.resume_objective must be a non-empty string when given")
+    max_wait = block.get("max_wait_seconds")
+    if max_wait is not None and (
+        not isinstance(max_wait, int) or isinstance(max_wait, bool) or max_wait < 60
+    ):
+        errors.append("awaiting_remote.max_wait_seconds must be an integer of at least 60")
+    return errors
+
+
 def validate_result_bundle(payload: Any) -> ValidationResult:
     if not isinstance(payload, Mapping):
         return ValidationResult(False, ("result bundle must be a JSON object",))
@@ -505,6 +542,12 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
                             errors.append(f"{prefix}.resources.{key} must be a positive integer")
     if status == "needs_replan" and payload.get("paper_candidate") is True:
         errors.append("needs_replan cannot declare paper_candidate=true")
+    if status == "awaiting_remote":
+        if payload.get("paper_candidate") is True:
+            errors.append("awaiting_remote cannot declare paper_candidate=true")
+        errors.extend(_awaiting_remote_errors(payload.get("awaiting_remote")))
+    elif payload.get("awaiting_remote") is not None and status != "needs_replan":
+        warnings.append("awaiting_remote is ignored unless status is awaiting_remote")
     candidate_branches = payload.get("candidate_branches", [])
     if not isinstance(candidate_branches, list):
         errors.append("candidate_branches must be an array")

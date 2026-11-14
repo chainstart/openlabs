@@ -116,6 +116,30 @@ def test_valid_attempt_is_promoted_as_one_campaign_transaction(tmp_path) -> None
     assert metadata["status"] == "committed"
 
 
+def test_python_caches_are_not_authoritative_state(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    _db, task = _leased_task(paths)
+    cache = paths.data / "workspaces" / "math" / "campaign" / "code" / "__pycache__"
+    cache.mkdir(parents=True)
+    (cache / "solve.cpython-311.pyc").write_bytes(b"old bytecode")
+    (cache.parent / "stray.pyc").write_bytes(b"stray")
+    workspace = prepare_attempt_workspace(paths, task, {})
+    # Caches are not copied into the attempt; a run regenerating them is harmless.
+    assert not (workspace.campaign_root / "code" / "__pycache__").exists()
+    regenerated = workspace.campaign_root / "code" / "__pycache__"
+    regenerated.mkdir(parents=True)
+    (regenerated / "solve.cpython-312.pyc").write_bytes(b"new bytecode")
+    atomic_write_json(workspace.campaign_root / "production_lane.json", {"nodes": ["node-1"]})
+
+    metadata = promote_attempt_workspace(workspace)
+
+    assert metadata["status"] == "committed"
+    canonical = workspace.canonical_campaign_root
+    assert json.loads((canonical / "production_lane.json").read_text(encoding="utf-8")) == {
+        "nodes": ["node-1"]
+    }
+
+
 def test_campaign_boundary_rejects_large_or_artifact_only_payloads_at_promotion(
     tmp_path,
 ) -> None:

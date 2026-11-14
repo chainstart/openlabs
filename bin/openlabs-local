@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# OpenLabs local background compute (ailab overflow; openlabs.local_compute).
+#   bin/openlabs-local submit --source DIR --cpus N --memory-mib N --timeout-seconds N -- COMMAND [ARGS...]
+#   bin/openlabs-local status JOB_ID
+#   bin/openlabs-local dispatch
+# Use it only when ailab is saturated (two solves running and more queued). A job runs
+# detached inside bin/openlabs-resource-guard; at most OPENLABS_LOCAL_MAX_JOBS (2) jobs and
+# OPENLABS_LOCAL_MAX_CPUS (8) declared CPUs run at once; the rest wait for the next
+# dispatch (each orchestrator tick). Queue root: $OPENLABS_LOCAL_QUEUE, else
+# /workspace/.openlabs-local-compute. Outputs: jobs/JOB_ID/result/outputs ($OPENLABS_OUTPUT_DIR).
+set -euo pipefail
+SCRIPT=$(readlink -f -- "${BASH_SOURCE[0]}")
+ROOT=$(cd -- "$(dirname -- "$SCRIPT")/.." && pwd)
+export PYTHONPATH="$ROOT/orchestrator/src${PYTHONPATH:+:$PYTHONPATH}"
+exec /usr/bin/python3 -m openlabs.local_compute "$@"

@@ -91,6 +91,9 @@ class RecoverySummary:
     attempts: tuple[AttemptDisposition, ...] = ()
 
 
+# Statuses a task may be created in: ready, parked on remote compute, or stopped for a human.
+ENQUEUE_STATUSES = frozenset({"queued", "awaiting_remote", "needs_human"})
+
 class FactoryDB:
     """Own all authoritative runtime state transitions.
 
@@ -835,7 +838,7 @@ class FactoryDB:
             rows = connection.execute(
                 """
                 SELECT task_id FROM tasks
-                WHERE campaign_id=? AND status='queued'
+                WHERE campaign_id=? AND status IN ('queued', 'awaiting_remote')
                 ORDER BY task_id
                 """,
                 (campaign_id,),
@@ -846,7 +849,7 @@ class FactoryDB:
                 UPDATE tasks
                 SET status='cancelled', not_before=NULL,
                     last_error=?, updated_at=?
-                WHERE campaign_id=? AND status='queued'
+                WHERE campaign_id=? AND status IN ('queued', 'awaiting_remote')
                 """,
                 (f"production_paused:{reason}", now, campaign_id),
             )
@@ -929,7 +932,7 @@ class FactoryDB:
             rows = connection.execute(
                 """
                 SELECT task_id FROM tasks
-                WHERE campaign_id=? AND status='queued'
+                WHERE campaign_id=? AND status IN ('queued', 'awaiting_remote')
                 ORDER BY task_id
                 """,
                 (campaign_id,),
@@ -939,7 +942,7 @@ class FactoryDB:
                 """
                 UPDATE tasks
                 SET status='cancelled', not_before=NULL, last_error=?, updated_at=?
-                WHERE campaign_id=? AND status='queued'
+                WHERE campaign_id=? AND status IN ('queued', 'awaiting_remote')
                 """,
                 (f"campaign_frozen:{reason}", now, campaign_id),
             )
@@ -971,8 +974,8 @@ class FactoryDB:
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
-                "SELECT task_id FROM tasks WHERE campaign_id=? AND status='queued' "
-                "ORDER BY task_id",
+                "SELECT task_id FROM tasks WHERE campaign_id=? "
+                "AND status IN ('queued', 'awaiting_remote') ORDER BY task_id",
                 (campaign_id,),
             ).fetchall()
             cancelled = [str(row["task_id"]) for row in rows]
@@ -981,7 +984,7 @@ class FactoryDB:
                     """
                     UPDATE tasks SET status='cancelled', not_before=NULL, last_error=?,
                         updated_at=?
-                    WHERE campaign_id=? AND status='queued'
+                    WHERE campaign_id=? AND status IN ('queued', 'awaiting_remote')
                     """,
                     (reason, now, campaign_id),
                 )
@@ -1307,7 +1310,8 @@ class FactoryDB:
                 SELECT tasks.task_id, campaigns.status AS campaign_status
                 FROM tasks
                 JOIN campaigns USING(campaign_id)
-                WHERE tasks.status='queued' AND campaigns.status!='active'
+                WHERE tasks.status IN ('queued', 'awaiting_remote')
+                  AND campaigns.status!='active'
                 ORDER BY tasks.task_id
                 """
             ).fetchall()
@@ -1318,7 +1322,7 @@ class FactoryDB:
                     """
                     UPDATE tasks
                     SET status='cancelled', not_before=NULL, last_error=?, updated_at=?
-                    WHERE task_id=? AND status='queued'
+                    WHERE task_id=? AND status IN ('queued', 'awaiting_remote')
                     """,
                     (error, now, task_id),
                 )
@@ -1447,9 +1451,13 @@ class FactoryDB:
         memory_mib: int = 4_096,
         scratch_mib: int = 4_096,
         exclude_provider: str | None = None,
+        initial_status: str = "queued",
+        last_error: str | None = None,
     ) -> str:
         identifier = task_id or str(uuid.uuid4())
         now = utc_now()
+        if initial_status not in ENQUEUE_STATUSES:
+            raise ValueError(f"initial_status must be one of {sorted(ENQUEUE_STATUSES)}")
         if agent_role not in AGENT_ROLES:
             raise ValueError(f"agent_role must be one of {AGENT_ROLES}")
         mode = session_mode or ("fresh" if agent_role == "reviewer" else "resume")
@@ -1545,9 +1553,9 @@ class FactoryDB:
                     session_source_task_id, campaign_epoch, status, priority,
                     max_attempts, not_before,
                     max_wall_seconds, cpu_threads, memory_mib, scratch_mib,
-                    created_at, updated_at, exclude_provider
+                    created_at, updated_at, exclude_provider, last_error
                 ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                         'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -1566,6 +1574,7 @@ class FactoryDB:
                     agent_session_id,
                     session_source_task_id,
                     int(campaign["production_epoch"]),
+                    initial_status,
                     priority,
                     max(1, int(max_attempts)),
                     not_before,
@@ -1576,6 +1585,7 @@ class FactoryDB:
                     now,
                     now,
                     (str(exclude_provider).strip() or None) if exclude_provider else None,
+                    last_error,
                 ),
             )
             self._event(
@@ -1584,6 +1594,7 @@ class FactoryDB:
                 identifier,
                 "task_enqueued",
                 {
+                    "status": initial_status,
                     "agent_role": agent_role,
                     "session_mode": mode,
                     "session_source_task_id": session_source_task_id,
@@ -1753,10 +1764,92 @@ class FactoryDB:
     def has_queued_tasks(self, campaign_id: str) -> bool:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT 1 FROM tasks WHERE campaign_id=? AND status='queued' LIMIT 1",
+                "SELECT 1 FROM tasks WHERE campaign_id=? "
+                "AND status IN ('queued', 'awaiting_remote') LIMIT 1",
                 (campaign_id,),
             ).fetchone()
         return row is not None
+
+    def has_awaiting_remote_tasks(self, campaign_id: str) -> bool:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM tasks WHERE campaign_id=? AND status='awaiting_remote' LIMIT 1",
+                (campaign_id,),
+            ).fetchone()
+        return row is not None
+
+    def awaiting_remote_tasks(self) -> list[dict[str, Any]]:
+        """Tasks parked until their remote compute jobs reach a terminal state."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM tasks WHERE status='awaiting_remote' ORDER BY created_at, task_id"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def release_awaiting_task(
+        self,
+        task_id: str,
+        *,
+        objective: str,
+        status: str = "queued",
+        error: str | None = None,
+        event: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """``awaiting_remote -> queued`` (or ``needs_human``) with an updated objective.
+
+        No attempt is consumed and no Agent time is charged: the parked task never ran.
+        Returns False when the task is no longer awaiting (cancelled by a freeze, say).
+        """
+
+        if status not in {"queued", "needs_human"}:
+            raise ValueError("an awaiting task is released to queued or needs_human")
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            changed = connection.execute(
+                """
+                UPDATE tasks SET status=?, objective=?, not_before=NULL, last_error=?,
+                    updated_at=?
+                WHERE task_id=? AND status='awaiting_remote'
+                """,
+                (status, objective, error, now, task_id),
+            ).rowcount
+            if changed:
+                self._event(
+                    connection,
+                    "task",
+                    task_id,
+                    "remote_wait_released",
+                    {"status": status, **dict(event or {})},
+                )
+        return bool(changed)
+
+    def replan_streak(self, campaign_id: str) -> int:
+        """Consecutive most-recent finished tasks of a campaign that ended ``needs_replan``.
+
+        Cancelled and still pending tasks are skipped; any other terminal status
+        (a success, a yield to a remote wait, a human stop) ends the streak.
+        """
+
+        streak = 0
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT status FROM tasks
+                WHERE campaign_id=?
+                  AND status NOT IN ('cancelled', 'queued', 'leased', 'running',
+                                     'awaiting_remote')
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT 200
+                """,
+                (campaign_id,),
+            ).fetchall()
+        for row in rows:
+            if str(row["status"]) != "needs_replan":
+                break
+            streak += 1
+        return streak
 
     def latest_task(self, campaign_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
@@ -2457,9 +2550,13 @@ class FactoryDB:
             "needs_replan": "needs_replan",
             "needs_human": "needs_human",
             "quarantined": "quarantined",
+            # The agent ended its attempt to wait for remote compute; a parked
+            # successor carries the work on (see openlabs.remote_wait).
+            "awaiting_remote": "yielded",
+            "yielded": "yielded",
         }
         final_status = mapping.get(status, "failed")
-        if not valid or (final_status == "succeeded" and not gate_passed):
+        if not valid or (final_status in {"succeeded", "yielded"} and not gate_passed):
             final_status = "needs_replan"
         now = utc_now()
         bounded_seconds = max(0.0, float(run_seconds))

@@ -43,6 +43,38 @@ label on ailab, not an 18 GiB machine limit. Admission uses the physical 8-CPU,
 62961-MiB capacity, permitting multiple jobs when their declared budgets fit.
 `wait` timing out does not cancel a job; its execution timeout remains authoritative.
 
+## Waiting from an autonomous task (2026-11-14)
+
+A factory agent must not hold its process open on `wait` for more than a few
+minutes. On 2026-11-13 eight astronomy topics queued 14 four-CPU jobs behind two
+running ones; their agents spent 4-hour task windows polling, and one campaign then
+ran 61 lead-model replans whose only conclusion was "wait for job 9fe82e22".
+Instead the agent ends its attempt with `"status": "awaiting_remote"` and
+`"awaiting_remote": {"job_ids": [...], "resume_objective": "..."}`. The orchestrator
+(`orchestrator/src/openlabs/remote_wait.py`) commits the staged state, creates the
+continuation in task status `awaiting_remote` (never claimed, no Agent seconds, no
+attempt, no replan or direction decision), reads each job's `status.json` once per
+tick, and releases the continuation into the same Agent session when every job is
+`succeeded`, `failed`, withdrawn (`WITHDRAWN*` marker) or missing, with the states
+prepended to its objective. A wait expires at the longest declared job timeout plus
+24 h (or the agent's `max_wait_seconds`), extended while a job runs, at most 7 days;
+it is released once with a note, and a second yield on the same jobs stops the topic
+for a human. A `needs_replan` result that names a still queued/running job is parked
+the same way. The topic's 28-day calendar deadline is unaffected.
+
+## Local overflow (2026-11-14)
+
+ailab is preferred and should be kept full, but it is not the only place to work.
+When it is saturated (two jobs running and more queued) a CPU job may run on the
+cc-sg container instead: `bin/openlabs-local submit --source DIR --cpus N
+--memory-mib M --timeout-seconds S -- COMMAND` snapshots DIR into
+`/workspace/.openlabs-local-compute/jobs/JOB_ID/` and starts it detached inside
+`bin/openlabs-resource-guard` when a slot is free (at most `OPENLABS_LOCAL_MAX_JOBS=2`
+jobs and `OPENLABS_LOCAL_MAX_CPUS=8` declared CPUs of the container's 15; each tick and
+each submit dispatch). Outputs go to `result/outputs` (`$OPENLABS_OUTPUT_DIR`); the
+job's `status.json` uses the same states, so `awaiting_remote.job_ids` accepts local
+ids. GPU work still reserves the device explicitly through the resource guard.
+
 The source directory must contain the actual script and required inputs, not the
 whole campaign or home. The client snapshots it with SHA-256 and does not follow
 symlinks. Obvious credential files are excluded from newly transmitted payloads.

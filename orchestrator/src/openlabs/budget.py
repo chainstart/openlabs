@@ -706,6 +706,11 @@ def window_abundance(
     return (ceiling - reading.used_fraction) / max(left, MIN_REMAINING_FRACTION)
 
 
+# An extrapolated stale reading never rises more than this above the last real one;
+# a fresh reading (or a probe) replaces it long before that matters.
+STALE_ESTIMATE_MAX_INCREASE = 0.25
+
+
 def _attempt_agent_seconds(
     db: FactoryDB,
     settings: FactorySettings,
@@ -715,11 +720,29 @@ def _attempt_agent_seconds(
 ) -> dict[str, float]:
     """Agent-seconds of this instance's attempts per provider since ``since``."""
 
+    return _attempt_usage(db, settings, since=since, now=now)[0]
+
+
+def _attempt_usage(
+    db: FactoryDB,
+    settings: FactorySettings,
+    *,
+    since: datetime,
+    now: datetime,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Per provider since ``since``: summed agent-seconds and active wall seconds.
+
+    Active wall seconds are the union of the attempts' running intervals: the
+    time this instance was actually spending the provider's quota at all.
+    """
+
     with db.connect() as connection:
         rows = connection.execute(
             """
             SELECT task_attempts.started_at, task_attempts.finished_at,
-                   task_attempts.run_seconds, tasks.runner
+                   task_attempts.run_seconds, tasks.runner,
+                   CASE WHEN tasks.current_attempt_id=task_attempts.attempt_id
+                        THEN tasks.lease_expires_at END AS lease_expires_at
             FROM task_attempts JOIN tasks USING(task_id)
             WHERE task_attempts.started_at IS NOT NULL
               AND (task_attempts.finished_at IS NULL OR task_attempts.finished_at >= ?)
@@ -727,17 +750,39 @@ def _attempt_agent_seconds(
             (_iso(since),),
         ).fetchall()
     totals: dict[str, float] = {}
+    intervals: dict[str, list[tuple[datetime, datetime]]] = {}
     for row in rows:
         started = parse_time(row["started_at"])
         if started is None:
             continue
-        finished = parse_time(row["finished_at"]) or now
-        seconds = (finished - max(started, since)).total_seconds()
+        # An unfinished attempt counts only while its lease is alive: a worker
+        # that died with the stopped loop is not spending quota.
+        finished = parse_time(row["finished_at"]) or min(
+            now, parse_time(row["lease_expires_at"]) or started
+        )
+        finished = min(finished, now)
+        begin = max(started, since)
+        seconds = (finished - begin).total_seconds()
         if seconds <= 0:
             continue
         provider = provider_of(settings, row["runner"])
         totals[provider] = totals.get(provider, 0.0) + seconds
-    return totals
+        intervals.setdefault(provider, []).append((begin, finished))
+    active: dict[str, float] = {}
+    for provider, spans in intervals.items():
+        total = 0.0
+        current_start, current_end = None, None
+        for begin, end in sorted(spans):
+            if current_end is None or begin > current_end:
+                if current_end is not None:
+                    total += (current_end - current_start).total_seconds()
+                current_start, current_end = begin, end
+            else:
+                current_end = max(current_end, end)
+        if current_end is not None:
+            total += (current_end - current_start).total_seconds()
+        active[provider] = total
+    return totals, active
 
 
 def estimate_stale_readings(
@@ -749,9 +794,13 @@ def estimate_stale_readings(
 ) -> dict[str, dict[str, WindowReading]]:
     """Replace stale-but-recent readings with a conservative extrapolation.
 
-    ``used + window average pace x age + own agent-hours x
+    ``used + window average pace x active time + own agent-hours x
     estimate_fraction_per_agent_hour`` (the per-hour cost is stated for a
-    7-day window and scaled to the window's length). Only readings younger than
+    7-day window and scaled to the window's length), where *active time* is the
+    wall time since the reading during which this instance actually ran agents on
+    the provider (recorded attempts). While the loop is stopped nothing is
+    extrapolated, so a long pause cannot inflate a window to 100% used. The rise
+    is capped at ``STALE_ESTIMATE_MAX_INCREASE``. Only readings younger than
     ``stale_estimate_hours`` whose window has not reset are extrapolated;
     everything else is returned unchanged.
     """
@@ -760,7 +809,7 @@ def estimate_stale_readings(
     result = {provider: dict(windows) for provider, windows in readings.items()}
     if routing.stale_estimate_hours <= 0:
         return result
-    usage_cache: dict[datetime, dict[str, float]] = {}
+    usage_cache: dict[datetime, tuple[dict[str, float], dict[str, float]]] = {}
     for provider, windows in result.items():
         for name, reading in list(windows.items()):
             if reading_is_fresh(reading, now=now, stale_hours=routing.snapshot_stale_hours):
@@ -777,19 +826,22 @@ def estimate_stale_readings(
             elapsed = window - min(window, max(timedelta(0), reading.resets_at - reading.observed_at))
             elapsed = max(elapsed, window * routing.pace_min_elapsed_fraction,
                           timedelta(seconds=1))
-            others = reading.used_fraction / elapsed.total_seconds() * age.total_seconds()
             if reading.observed_at not in usage_cache:
-                usage_cache[reading.observed_at] = _attempt_agent_seconds(
+                usage_cache[reading.observed_at] = _attempt_usage(
                     db, settings, since=reading.observed_at, now=now
                 )
-            hours = usage_cache[reading.observed_at].get(provider, 0.0) / 3600.0
+            agent_seconds, active_seconds = usage_cache[reading.observed_at]
+            active = min(age.total_seconds(), active_seconds.get(provider, 0.0))
+            others = reading.used_fraction / elapsed.total_seconds() * active
+            hours = agent_seconds.get(provider, 0.0) / 3600.0
             own = hours * routing.estimate_fraction_per_agent_hour * (
                 10_080 / reading.window_minutes
             )
+            increase = min(STALE_ESTIMATE_MAX_INCREASE, others + own)
             windows[name] = WindowReading(
                 provider=reading.provider,
                 name=reading.name,
-                used_fraction=max(0.0, min(1.0, reading.used_fraction + others + own)),
+                used_fraction=max(0.0, min(1.0, reading.used_fraction + increase)),
                 window_minutes=reading.window_minutes,
                 resets_at=reading.resets_at,
                 observed_at=now,

@@ -418,9 +418,11 @@ class RoutingSettings:
     # reading; None: ``probe_idle_minutes`` like the paid probe.
     stale_refresh_minutes: int | None = None
     # A stale reading younger than this many hours is extrapolated instead of
-    # treated as unknown: used + the window's average pace since then + this
-    # instance's agent-hours on the provider x ``estimate_fraction_per_agent_hour``
-    # (of a 7-day window; scaled for shorter windows). 0 disables it.
+    # treated as unknown: used + the window's average pace over the time this
+    # instance actually ran agents on the provider since then + its agent-hours
+    # x ``estimate_fraction_per_agent_hour`` (of a 7-day window; scaled for
+    # shorter windows), capped at +0.25. A stopped loop extrapolates nothing.
+    # 0 disables it.
     stale_estimate_hours: float = 0.0
     estimate_fraction_per_agent_hour: float = 0.01
 

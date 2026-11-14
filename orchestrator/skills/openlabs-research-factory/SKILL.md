@@ -122,7 +122,11 @@ An LLM review is not a substitute for any applicable oracle.
 Use `needs_replan` only as a durable, evidence-valid checkpoint when the current process cannot
 safely continue before its budget ends; include the next executable route. When the selected
 protocol owns continuation, that route is advisory input and cannot bypass its configured gate.
-Use `needs_human` only
+When the next step needs remote compute jobs (`bin/openlabs-remote`) that are still queued or
+running and nothing else useful remains, end the attempt with `awaiting_remote` and
+`awaiting_remote.job_ids` (plus `resume_objective`) instead of polling or emitting a
+`needs_replan` that only says "wait"; the control plane resumes this session, at no Agent-time
+cost, once every listed job is terminal. Use `needs_human` only
 when new authority or a genuinely consequential external choice is required. A blocked campaign
 must not block unrelated campaigns.
 
@@ -139,7 +143,8 @@ End with:
 - artifact URI and SHA-256 entries;
 - limitations and remaining uncertainty;
 - bounded next actions;
-- one of `completed`, `failed`, `needs_replan`, `needs_human`, or `quarantined`.
+- one of `completed`, `failed`, `needs_replan`, `awaiting_remote`, `needs_human`, or
+  `quarantined`.
 
 Do not bind a supported claim directly to a live mutable lane file. The control plane snapshots
 every referenced artifact into an immutable result archive before ingestion; if the bytes change

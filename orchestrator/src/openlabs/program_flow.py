@@ -127,7 +127,8 @@ SCOUT_REGISTERED_PREFIX = "program_scout_registered:"
 # rejected as ``admission_undecided`` (it may be resubmitted as a new card).
 MAX_ADMISSION_ATTEMPTS = 3
 HUMAN_PROVIDER = "human"
-IN_FLIGHT_STATUSES = ("queued", "leased", "running")
+# awaiting_remote: parked on remote compute jobs (openlabs.remote_wait); still in flight.
+IN_FLIGHT_STATUSES = ("queued", "leased", "running", "awaiting_remote")
 POOL_STATUSES = ("proposed",)
 DOMAIN_LOAD_STATUSES = ("proposed", "admitted", "active", "in_review")
 # Research campaigns may continue in these ledger states (enforce_admission).

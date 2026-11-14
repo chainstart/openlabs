@@ -240,6 +240,7 @@ def _remote_compute_notice(code_root: Path, domain: str) -> str:
     if not settings.get("enabled"):
         return ""
     command = code_root / "bin" / "openlabs-remote"
+    local = code_root / "bin" / "openlabs-local"
     kind = "math" if domain == "math" else "cpu"
     try:
         load = _remote_load_line(remote_queue_summary(remote_queue_root(), settings))
@@ -259,8 +260,30 @@ ailab storage includes six independent experimental SSDs, `/data/ssd1` through
 with most free space; add `--storage ssd1` through `--storage ssd6` to choose explicitly.
 Use `$OPENLABS_STORAGE_ROOT`, `$OPENLABS_STORAGE_ROOTS` (JSON), and
 `$OPENLABS_SCRATCH_DIR` for disk-local paths; TMPDIR already uses the selected SSD.
-Write remote outputs under `$OPENLABS_OUTPUT_DIR`. Use `{command} status JOB_ID` or
-`{command} wait JOB_ID --timeout-seconds S`; failures retain logs and outputs.
+Write remote outputs under `$OPENLABS_OUTPUT_DIR`. Use `{command} status JOB_ID` to check a
+job; `{command} wait JOB_ID --timeout-seconds S` only for a wait of a few minutes (S <= 600).
+Failures retain logs and outputs.
+
+Do not spend this process waiting for remote jobs. Jobs queue behind each other and can take
+hours; a blocked `wait`, a sleep/poll loop or a `needs_replan` that only says "wait for job X"
+burns Agent time and quota for nothing. When the next scientific step needs remote jobs that are
+still queued or running and nothing useful remains to do meanwhile, persist your state (the job
+ids, what each job computes, what to do with its outputs) and end the attempt with
+`"status": "awaiting_remote"` and
+`"awaiting_remote": {{"job_ids": ["<32-hex job id>", ...], "resume_objective": "<what to do
+when they finish>"}}` (optional `"max_wait_seconds"`). The control plane commits your staged
+state, parks the continuation without charging Agent time, and resumes this same session once
+every listed job has succeeded, failed, been withdrawn or gone missing, with each job's state
+added to the objective. A job that was withdrawn or failed is a result to record, not to hide.
+Before submitting, reuse an existing job or receipt for the same frozen computation (for
+example a research line's shared control solve) instead of submitting a duplicate.
+ailab comes first and should be kept full. When it is saturated (two or more jobs running and
+more queued), a CPU job may instead run on this container in the background with
+`{local} submit --source DIR --cpus N --memory-mib M --timeout-seconds S -- COMMAND`
+(at most 2 local jobs and 8 declared CPUs at once, 4 CPUs per solve; extra jobs wait for the
+next dispatch). It runs detached inside the resource guard, writes outputs under
+`$OPENLABS_OUTPUT_DIR`, and returns a 32-hex job id that `awaiting_remote.job_ids` accepts
+like an ailab id. GPU work still reserves the device with `bin/openlabs-resource-guard`.
 The bridge returns files under `/workspace/.openlabs-remote/jobs/JOB_ID/result/`
 (on WSL: `~/work/projects/.openlabs-remote/jobs/JOB_ID/result/`). Copy the evidence
 needed by this attempt into its artifact staging, declare its hashes in the result bundle,
@@ -416,11 +439,17 @@ switch, pause, revive, or abandon approaches and use any installed laboratory ca
 {transaction_notice}
 
 Before stopping, atomically write one `openlabs.result_bundle.v1` JSON object to the required
-result path. Do not write to SQLite. Preserve unsupported, negative, and inconclusive outcomes. Do
+result path. Do not write to SQLite. For an admitted research-program topic, a result that sets
+`paper_candidate: true` or `gate_result.promotion_decision: "freeze"` must also carry top-level
+`primary_endpoint_verdict` (`met`, `failed` or `inconclusive`; a precheck that cannot evaluate
+the endpoint is `inconclusive`) and the topic's `preregistration_sha256`. Preserve unsupported, negative, and inconclusive outcomes. Do
 not submit, publish, spend unbounded resources, or perform another irreversible external action.
 For a portfolio-review task, include `candidate_branches` (possibly empty); the control plane will
 mechanically start each branch in a separate researcher campaign without altering your judgment.
 """
+
+
+DECISION_ONLY_TASK_TYPES = frozenset({"direction_decision"})
 
 
 def _lab_runtime_setup(
@@ -435,6 +464,15 @@ def _lab_runtime_setup(
     configured = manifest.get("runtime_setup", [])
     if not isinstance(configured, list):
         raise TypeError("lab runtime_setup must be an array")
+    if str(task.get("task_type") or "") in DECISION_ONLY_TASK_TYPES:
+        # A direction decision reads evidence and decides; it runs no lab code, so an
+        # incomplete lab environment must not stop it (2026-11-13: four physics
+        # direction decisions became needs_human on "core environment is incomplete").
+        return {
+            "schema_version": LAB_RUNTIME_SCHEMA,
+            "setups": [],
+            "skipped": "decision-only task runs no lab code",
+        }
     project = task.get("project")
     protocol_id = project.get("protocol_id") if isinstance(project, Mapping) else None
     for protocol in manifest.get("protocols", []):

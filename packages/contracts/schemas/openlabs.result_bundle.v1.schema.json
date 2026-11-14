@@ -23,7 +23,10 @@
     "lab_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "domain": {"type": "string", "minLength": 1},
     "status": {
-      "enum": ["completed", "succeeded", "failed", "needs_replan", "needs_human", "quarantined"]
+      "enum": [
+        "completed", "succeeded", "failed", "needs_replan", "needs_human", "quarantined",
+        "awaiting_remote"
+      ]
     },
     "summary": {"type": "string", "minLength": 1},
     "artifacts": {
@@ -116,6 +119,33 @@
         "properties": {
           "next_actions": {"minItems": 1},
           "paper_candidate": {"const": false}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"status": {"const": "awaiting_remote"}},
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["awaiting_remote"],
+        "properties": {
+          "paper_candidate": {"const": false},
+          "awaiting_remote": {
+            "type": "object",
+            "required": ["job_ids"],
+            "properties": {
+              "job_ids": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 32,
+                "uniqueItems": true,
+                "items": {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+              },
+              "resume_objective": {"type": "string", "minLength": 1},
+              "max_wait_seconds": {"type": "integer", "minimum": 60}
+            }
+          }
         }
       }
     }

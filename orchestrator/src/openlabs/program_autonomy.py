@@ -103,7 +103,7 @@ CHOICE_FREEZE_CLASS = {
 MAX_DECISION_ATTEMPTS = 2
 DECISION_META_PREFIX = "program_direction:"
 TRIGGER_META_PREFIX = "program_trigger:"
-IN_FLIGHT = ("queued", "leased", "running")
+IN_FLIGHT = ("queued", "leased", "running", "awaiting_remote")
 DECISION_FAILED_STATUSES = ("failed", "needs_human", "needs_replan", "quarantined", "cancelled")
 RESEARCH_ROLES = frozenset({"researcher", "experimenter"})
 EVIDENCE_REMEDIATION_ROUTINGS = frozenset({"review_evidence_remediation", TARGETED_ROUTING})
@@ -1230,7 +1230,12 @@ def _check_limits(db, paths, settings, report) -> None:
         used = float(campaign.get("agent_seconds_used") or 0)
         maximum = float(campaign.get("max_agent_seconds") or 0)
         cap = float(program.topic_max_agent_seconds)
-        if used + 1 > maximum and not db.has_active_tasks(campaign_id):
+        if (
+            used + 1 > maximum
+            and not db.has_active_tasks(campaign_id)
+            # A continuation parked on remote jobs is decided after they finish.
+            and not db.has_awaiting_remote_tasks(campaign_id)
+        ):
             detail = {"agent_seconds_used": round(used, 1), "max_agent_seconds": int(maximum),
                       "topic_max_agent_seconds": int(cap)}
             evidence = [_write_evidence(paths, topic_id, "budget", detail)]

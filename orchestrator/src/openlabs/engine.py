@@ -70,6 +70,8 @@ from .program import (
 )
 from . import assets as asset_library
 from . import program_autonomy
+from . import local_compute
+from . import remote_wait
 from . import utilization
 from .program_autonomy import DIRECTION_TASK_TYPE, EVIDENCE_REMEDIATION_ROUTINGS
 from .program_flow import (
@@ -419,6 +421,170 @@ def _derived_task_id(parent_task_id: str, suffix: str, digest: str) -> str:
     return candidate if len(candidate) <= 128 else f"{suffix}:{digest[:32]}"
 
 
+# Consecutive needs_replan results after which the next replan waits (backoff).
+REPLAN_STREAK_LIMIT = 3
+REPLAN_BACKOFF_BASE_SECONDS = 30 * 60
+REPLAN_BACKOFF_MAX_SECONDS = 6 * 3600
+
+
+def _replan_backoff(
+    db: FactoryDB,
+    report: TickReport,
+    campaign_id: str,
+    *,
+    source_task_id: str | None,
+) -> str | None:
+    """``not_before`` for the next replan once a campaign keeps ending in needs_replan.
+
+    Up to ``REPLAN_STREAK_LIMIT - 1`` consecutive replans start at once; after that
+    each further replan waits 30 min, doubling per extra failure up to 6 h, so a
+    campaign whose replans reach no executable new step stops burning lead-model time.
+    """
+
+    streak = db.replan_streak(campaign_id)
+    if streak < REPLAN_STREAK_LIMIT:
+        return None
+    delay = min(
+        REPLAN_BACKOFF_MAX_SECONDS,
+        REPLAN_BACKOFF_BASE_SECONDS * 2 ** (streak - REPLAN_STREAK_LIMIT),
+    )
+    not_before = datetime.fromtimestamp(
+        datetime.now(UTC).timestamp() + delay, UTC
+    ).isoformat().replace("+00:00", "Z")
+    detail = {
+        "campaign_id": campaign_id,
+        "consecutive_needs_replan": streak,
+        "delay_seconds": delay,
+        "not_before": not_before,
+        "source_task_id": source_task_id,
+        "reason": "consecutive replans produced no executable new step",
+    }
+    db.update_meta({}, events=[("campaign", campaign_id, "replan_loop_backoff", detail)])
+    report.production_blocked.append({**detail, "reason": "replan_loop_backoff"})
+    return not_before
+
+
+def _park_for_remote_jobs(
+    db: FactoryDB,
+    settings: FactorySettings,
+    report: TickReport,
+    *,
+    task: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    attempt_id: str,
+    result_path: Path,
+    result_sha256: str,
+    final_status: str,
+    next_plan: ActionPlan | None,
+    has_room: bool,
+) -> bool:
+    """Create the parked continuation of a task that waits for remote compute.
+
+    ``yielded``: the agent declared ``awaiting_remote.job_ids``. ``needs_replan``:
+    parked only when the result names remote jobs that are still queued or running.
+    Returns True when a continuation (parked, or stopped for a human) was created.
+    """
+
+    task_id = str(task["task_id"])
+    campaign_id = str(task["campaign_id"])
+    queue_root = remote_wait.default_queue_root()
+    block = payload.get("awaiting_remote")
+    block = block if isinstance(block, Mapping) else {}
+    if final_status == "yielded":
+        job_ids = [str(item) for item in block.get("job_ids") or []]
+        origin = "awaiting_remote"
+    else:
+        job_ids = remote_wait.pending_job_ids(payload, queue_root)
+        origin = "needs_replan_waiting_on_remote"
+    if not job_ids:
+        return False
+    if not has_room:
+        report.errors.append(
+            f"Campaign {campaign_id} reached its automatic-task safety limit while "
+            "waiting for remote jobs"
+        )
+        return False
+    campaign = db.campaign(campaign_id) or {}
+    if str(campaign.get("status") or "") != "active":
+        return False
+    role = str(task.get("agent_role") or "researcher")
+    current = db.task(task_id) or dict(task)
+    resume_objective = str(
+        block.get("resume_objective")
+        or (next_plan.objective if next_plan is not None and final_status == "yielded" else "")
+        or (
+            current.get("objective")
+            if str(current.get("task_type") or "") != "replan"
+            else (next_plan.objective if next_plan is not None else current.get("objective"))
+        )
+        or ""
+    ).strip()
+    resume_objective = remote_wait._strip_parked_prefix(resume_objective)
+    session_mode = "resume" if current.get("agent_session_id") else "fresh"
+    successor_id = f"await:{result_sha256[:32]}"
+    if db.task(successor_id) is not None:
+        return True
+    repeated = remote_wait.repeated_expired_wait(db, task_id, job_ids)
+    max_wait = block.get("max_wait_seconds")
+    record = remote_wait.build_record(
+        job_ids=job_ids,
+        queue_root=queue_root,
+        source_task_id=task_id,
+        source_attempt_id=attempt_id,
+        origin=origin,
+        max_wait_seconds=int(max_wait) if isinstance(max_wait, int) else None,
+    )
+    runner = (
+        "balanced"
+        if str(current.get("task_type") or "") == "replan"
+        else _inherited_runner(current)
+    )
+    db.enqueue_task(
+        task_id=successor_id,
+        campaign_id=campaign_id,
+        domain=str(current["domain"]),
+        task_type=_continuation_task_type(role),
+        objective=remote_wait.parked_objective(job_ids, resume_objective),
+        input_path=str(result_path),
+        skill_path=(str(current["skill_path"]) if current.get("skill_path") else None),
+        runner=runner,
+        routing_reason="remote_wait",
+        parent_task_id=task_id,
+        agent_role=role,
+        session_mode=session_mode,
+        priority=int(current.get("priority") or 0),
+        max_attempts=settings.max_attempts,
+        max_wall_seconds=min(
+            int(current.get("max_wall_seconds") or settings.max_task_wall_seconds),
+            settings.max_task_wall_seconds,
+        ),
+        initial_status="needs_human" if repeated else "awaiting_remote",
+        last_error=(
+            "remote_wait_expired_twice: the agent yielded again on jobs whose wait already "
+            "expired: " + ", ".join(job_ids)
+            if repeated
+            else None
+        ),
+        **task_resources(current).to_dict(),
+    )
+    db.update_meta(
+        {remote_wait.WAIT_META_PREFIX + successor_id: json.dumps(record, sort_keys=True)},
+        events=[("task", successor_id, "remote_wait_started", record)],
+    )
+    report.enqueued.append(successor_id)
+    report.remote_waits.setdefault("parked", []).append(
+        {
+            "task_id": successor_id,
+            "source_task_id": task_id,
+            "job_ids": job_ids,
+            "origin": origin,
+            "deadline": record["deadline"],
+            "needs_human": repeated,
+        }
+    )
+    return True
+
+
 def _agent_tools(settings: FactorySettings, runner: Any) -> dict[str, Any]:
     """Tool decisions the lab runner applies (Claude: sub-agent tools by tier)."""
 
@@ -542,12 +708,14 @@ class TickReport:
     host_usage: dict[str, Any] = field(default_factory=dict)
     # Read-only ailab queue load; empty when remote compute is off or unreadable.
     ailab: dict[str, Any] = field(default_factory=dict)
+    # Tasks parked on remote compute jobs: parked / released / expired / waiting.
+    remote_waits: dict[str, Any] = field(default_factory=dict)
     # One row per supervised quantity: current vs target and what limits it.
     balance: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         payload = self._base_dict()
-        for name in ("parallel_limit", "host_usage", "ailab", "balance"):
+        for name in ("parallel_limit", "host_usage", "ailab", "balance", "remote_waits"):
             value = getattr(self, name)
             if value:
                 payload[name] = value
@@ -1802,6 +1970,12 @@ def _replenish_continuous_campaign(
     admission_room = parallel_admission_room(db, settings, campaign)
     if db.has_active_tasks(campaign_id) and not admission_room:
         return
+    if db.has_awaiting_remote_tasks(campaign_id):
+        # The continuation is parked on remote compute; nothing else is seeded.
+        report.production_blocked.append(
+            {"campaign_id": campaign_id, "reason": "awaiting_remote"}
+        )
+        return
     latest = db.latest_task(campaign_id)
     if latest and str(latest.get("status")) in {"needs_human", "quarantined"}:
         if _triage_infrastructure_block(db, paths, settings, report, campaign_id, latest):
@@ -1885,6 +2059,29 @@ def _replenish_continuous_campaign(
         return
     execution_policy = _campaign_execution_policy(campaign)
     payload = _verified_result_payload(latest, paths) if latest else None
+    if (
+        latest
+        and payload
+        and latest_status == "needs_replan"
+        and str(latest.get("agent_role") or "researcher") in remote_wait.RESEARCH_ROLES
+        and latest.get("result_path")
+        and latest.get("result_sha256")
+        and _park_for_remote_jobs(
+            db,
+            settings,
+            report,
+            task=latest,
+            payload=payload,
+            attempt_id=str(latest.get("current_attempt_id") or ""),
+            result_path=Path(str(latest["result_path"])),
+            result_sha256=str(latest["result_sha256"]),
+            final_status="needs_replan",
+            next_plan=None,
+            has_room=True,
+        )
+    ):
+        # The last replan only waited for remote jobs still in flight: park, don't replan.
+        return
     if (
         stream_policy.get("dynamic") is True
         and latest
@@ -2055,6 +2252,16 @@ def _replenish_continuous_campaign(
     else:
         runner = "balanced"
     db.enqueue_task(
+        not_before=(
+            _replan_backoff(
+                db,
+                report,
+                campaign_id,
+                source_task_id=(str(latest["task_id"]) if latest else None),
+            )
+            if status == "needs_replan"
+            else None
+        ),
         task_id=task_id,
         campaign_id=campaign_id,
         domain=str(campaign["domain"]),
@@ -2378,7 +2585,7 @@ def ingest_results(
             )
             result_status = str(payload.get("status") or "failed")
             runtime_error: str | None = None
-            if bool(runtime.get("timed_out")):
+            if bool(runtime.get("timed_out")) and result_status != "awaiting_remote":
                 result_status = "needs_replan"
                 runtime_error = "Agent process timed out"
             elif int(runtime["exit_code"]) != 0:
@@ -2402,8 +2609,18 @@ def ingest_results(
                 if isinstance(next_actions, list) and next_actions
                 else None
             )
+            if result_status == "awaiting_remote" and (
+                current_role not in remote_wait.RESEARCH_ROLES
+                or str(task.get("task_type") or "") in {
+                    *CARD_TASK_TYPES, DIRECTION_TASK_TYPE, asset_library.RETROSPECTIVE_TASK_TYPE
+                }
+            ):
+                result_status = "needs_replan"
+                runtime_error = (
+                    "awaiting_remote is only available to researcher/experimenter research tasks"
+                )
             if (
-                result_status in {"completed", "succeeded", "needs_replan"}
+                result_status in {"completed", "succeeded", "needs_replan", "awaiting_remote"}
                 and str(runtime.get("adapter") or "") in HOOK_GATED_ADAPTERS
             ):
                 hook_error, hook_warning = _codex_hook_receipt_status(runtime)
@@ -2411,8 +2628,12 @@ def ingest_results(
                     runtime["hook_receipt_warning"] = hook_warning
                 if hook_error:
                     result_status = "needs_replan"
-                    runtime_error = hook_error
-                    runtime["hook_receipt_error"] = runtime_error
+                    # A killed agent never reaches its final Stop hook; keep the
+                    # cause (e.g. "Agent process timed out") ahead of the symptom.
+                    runtime_error = (
+                        f"{runtime_error}; {hook_error}" if runtime_error else hook_error
+                    )
+                    runtime["hook_receipt_error"] = hook_error
             continuity_required = (
                 result_status in {"completed", "succeeded"}
                 and current_role != "reviewer"
@@ -2438,7 +2659,7 @@ def ingest_results(
             transaction_error: str | None = None
             promotion_pending = False
             promotable = (
-                result_status in {"completed", "succeeded", "needs_replan"}
+                result_status in {"completed", "succeeded", "needs_replan", "awaiting_remote"}
                 and gate.passed
                 and runtime_error is None
             )
@@ -2568,7 +2789,7 @@ def ingest_results(
                     task_id=task_id,
                 )
             if promotion_pending and attempt_workspace is not None:
-                if final_status not in {"succeeded", "needs_replan"}:
+                if final_status not in {"succeeded", "needs_replan", "yielded"}:
                     rollback_attempt_promotion(
                         attempt_workspace,
                         reason=f"database_rejected_promotion:{final_status}",
@@ -3012,6 +3233,36 @@ def ingest_results(
                         f"Reviewer task {task_id} requested an unsafe or ambiguous handoff"
                     )
 
+            # An attempt that yielded to wait for remote compute, or a replan whose
+            # conclusion is "wait for job X", parks its continuation instead of
+            # spending Agent time (and lead-model replans) on waiting.
+            if (
+                not successor_handled
+                and automatic_successors_allowed
+                and current_role in remote_wait.RESEARCH_ROLES
+                and (
+                    final_status == "yielded"
+                    or (final_status == "needs_replan" and gate.validation.valid)
+                )
+            ):
+                if _park_for_remote_jobs(
+                    db,
+                    settings,
+                    report,
+                    task=task,
+                    payload=payload,
+                    attempt_id=attempt_id,
+                    result_path=result_path,
+                    result_sha256=actual_sha,
+                    final_status=final_status,
+                    next_plan=next_plan,
+                    has_room=has_room,
+                ):
+                    successor_handled = True
+            if final_status == "yielded" and not successor_handled:
+                report.errors.append(
+                    f"Task {task_id} yielded to remote jobs but no parked continuation was created"
+                )
             can_follow = (
                 settings.auto_continue
                 and next_plan is not None
@@ -3054,8 +3305,14 @@ def ingest_results(
                     session_mode = "fresh"
                 prefix = "replan" if is_replan else "continue"
                 follow_task_id = f"{prefix}:{actual_sha[:32]}"
+                replan_not_before = (
+                    _replan_backoff(db, report, campaign_id, source_task_id=task_id)
+                    if is_replan
+                    else None
+                )
                 if db.task(follow_task_id) is None:
                     db.enqueue_task(
+                        not_before=replan_not_before,
                         task_id=follow_task_id,
                         campaign_id=str(payload["campaign_id"]),
                         domain=domain,
@@ -3495,6 +3752,24 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     report.cancelled.extend(recovery.cancelled)
     for disposition in recovery.attempts:
         _apply_attempt_disposition(paths, report, disposition)
+    # Local background jobs (ailab overflow) start here, within the local limits.
+    if settings.launch_jobs:
+        try:
+            local = local_compute.dispatch()
+        except Exception as exc:  # noqa: BLE001 - the local queue is advisory.
+            report.errors.append(f"local compute dispatch failed: {exc}")
+        else:
+            if local["started"] or local["reaped"]:
+                report.remote_waits["local_dispatch"] = local
+    # Read-only check of the jobs parked tasks wait for; release finished waits.
+    try:
+        released = remote_wait.release_ready_waits(db)
+    except Exception as exc:  # noqa: BLE001 - a queue read error must not stop the tick.
+        report.errors.append(f"remote wait check failed: {exc}")
+    else:
+        for key, value in released.items():
+            if value:
+                report.remote_waits.setdefault(key, []).extend(value)
     try:
         divert = program_autonomy.budget_divert_campaigns(paths, settings)
     except (OSError, TopicLedgerError, ValueError) as exc:
