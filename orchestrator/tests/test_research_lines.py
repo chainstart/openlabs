@@ -305,3 +305,19 @@ def test_research_line_example_card_is_valid() -> None:
     for item in card["audience"]["citations"]:
         item["year"] = flow.YEAR - 1
     assert validate_topic_card(card, current_year=flow.YEAR).valid
+
+
+def test_precheck_budget_excludes_remote_queue_wait(tmp_path, monkeypatch):
+    paths, db, settings = _line_setup(tmp_path, "ready")
+    _, admission, _ = flow._to_admission(paths, db, settings, monkeypatch, [_line_card(0)])
+    entry = flow._packet(admission)["topic_cards"][0]
+    flow._complete(db, paths, admission["task_id"],
+                   extra={"candidate_branches": [flow._branch(entry)]})
+    flow._tick(paths, settings, monkeypatch)
+    topic = open_topic_ledger(paths, settings.program).topic(entry["topic_id"])
+    campaign = db.campaign(topic["campaign_id"])
+    state = json.loads(Path(campaign["workstream_state_path"]).read_text(encoding="utf-8"))
+    assert "queued or running remote jobs" in state["precheck_clock"]["excludes"]
+    assert "awaiting_remote" in state["precheck_clock"]["pending_remote_jobs"]
+    first = db.latest_task(topic["campaign_id"])
+    assert "not time waiting for queued remote jobs" in first["objective"]

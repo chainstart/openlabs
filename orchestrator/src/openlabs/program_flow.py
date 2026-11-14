@@ -2273,7 +2273,21 @@ def _research_state(
             for key in ("research_line", "feasibility_precheck", "license_check", "fee_check")
             if card.get(key) is not None
         },
+        **({"precheck_clock": PRECHECK_CLOCK}
+           if isinstance(card.get("feasibility_precheck"), Mapping) else {}),
     }
+
+
+# How a feasibility precheck's agent-time budget is measured. On 2026-11-13 the
+# precheck of topic-6da8c0ba counted wall time spent waiting for a queued ailab
+# solve against its 3600-agent-second card budget and froze as "inconclusive".
+PRECHECK_CLOCK = {
+    "counts": "active agent seconds charged to this campaign, plus the declared compute",
+    "excludes": "time waiting for queued or running remote jobs (awaiting_remote is not "
+                "charged), and wall time before the task started",
+    "pending_remote_jobs": "end the attempt with awaiting_remote; a precheck whose jobs have "
+                           "not finished is neither failed nor inconclusive",
+}
 
 
 def record_conditions(record: Mapping[str, Any]) -> list[dict[str, str]]:
@@ -2357,7 +2371,10 @@ def materialize_waiting_topics(
                 " Before that, run the card's feasibility_precheck (research_state.json) as the "
                 "first task and nothing else; if it misses its pass criterion, return gate_result "
                 "{promotion_decision: freeze, freeze_reason_class: feasibility_precheck_failed} "
-                "with the precheck evidence. Follow the research line's SOP and environment "
+                "with the precheck evidence. Its budget counts active agent time "
+                "(research_state.json precheck_clock), not time waiting for queued remote jobs: "
+                "while those are pending, end with awaiting_remote instead of declaring the "
+                "precheck inconclusive. Follow the research line's SOP and environment "
                 "in registry/research-lines.yaml."
                 if isinstance(card.get("feasibility_precheck"), Mapping) else ""
             )

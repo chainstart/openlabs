@@ -170,7 +170,8 @@ Each field is there because the gate needs it to decide:
   rejects a line card without them. `packages/contracts/examples/research-program/topic-card.research-line.example.json` shows
   the shape.
   - `feasibility_precheck` — `description` (the cheap decisive check), `pass_criterion` (numeric),
-    `budget` (agent time and compute), `on_failure: "freeze"`. After admission this is the first
+    `budget` (active agent time and compute; time waiting for queued remote jobs is not agent
+    time), `on_failure: "freeze"`. After admission this is the first
     research task and nothing else runs before it; a miss freezes the topic.
   - `license_check` — `items[]` with `name`, `kind` (software, weights, data), `license`,
     `evidence` (the research-lines entry or a licence text you read), `allowed: true`, for every
