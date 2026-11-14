@@ -163,6 +163,7 @@ def configure_codex_runtime(
         "project": task.get("project"),
         "protocol_binding": protocol_binding,
         "execution_policy": task.get("execution_policy"),
+        "research_program": task.get("research_program"),
         "skills": skill_invocations,
         "optional_methods": optional_methods,
         "skill_source_root": str(skills_root),

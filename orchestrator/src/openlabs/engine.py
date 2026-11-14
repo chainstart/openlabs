@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from . import budget as budget_control
@@ -50,7 +51,7 @@ from .db import (
     normalize_runner,
     retry_not_before,
 )
-from .gates import evaluate_result_bundle
+from .gates import evaluate_result_bundle, fill_control_plane_fields
 from .labs import LabManifest, ProtocolManifest, discover_labs, lab_for_domain
 from .locking import factory_operation_lock
 from .portfolio import (
@@ -2630,6 +2631,11 @@ def ingest_results(
             preregistration = program_autonomy.expected_preregistration(
                 paths, settings, task, report
             )
+            # Fields the control plane can compute (the ledger's pre-registration
+            # hash, an unstated verdict read as pending) are filled, not bounced.
+            payload, filled = fill_control_plane_fields(payload, preregistration)
+            if filled:
+                runtime["control_plane_filled"] = filled
             gate = evaluate_result_bundle(
                 payload, allowed_roots=roots, preregistration_sha256=preregistration
             )
@@ -3448,6 +3454,7 @@ def _write_task_spec(
     campaign: Mapping[str, Any] | None = None,
     agent_tools: Mapping[str, Any] | None = None,
     extra_read_resources: list[dict[str, str]] | None = None,
+    program_preregistration: str | None = None,
 ) -> Path:
     agent_workspace = attempt_workspace.campaign_root
     agent_workspace.mkdir(parents=True, exist_ok=True)
@@ -3502,6 +3509,10 @@ def _write_task_spec(
     }
     if agent_tools is not None:
         payload["agent_tools"] = dict(agent_tools)
+    if program_preregistration:
+        # Lets the Stop hook ask, in this same session, for the endpoint verdict a
+        # promoted research result of this admitted topic should state.
+        payload["research_program"] = {"preregistration_sha256": program_preregistration}
     project_path = (
         campaign.get("project_config_path") or campaign.get("production_plan_path")
         if campaign is not None
@@ -3656,6 +3667,9 @@ def _launch_task(
         campaign=campaign,
         agent_tools=_agent_tools(settings, task.get("runner") or "balanced"),
         extra_read_resources=asset_library.research_read_resources(paths, settings, task, campaign),
+        program_preregistration=program_autonomy.expected_preregistration(
+            paths, settings, task, SimpleNamespace(errors=[])
+        ),
     )
     log_path = output_path.parent / "worker.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)

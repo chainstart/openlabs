@@ -486,9 +486,11 @@ switch, pause, revive, or abandon approaches and use any installed laboratory ca
 
 Before stopping, atomically write one `openlabs.result_bundle.v1` JSON object to the required
 result path. Do not write to SQLite. For an admitted research-program topic, a result that sets
-`paper_candidate: true` or `gate_result.promotion_decision: "freeze"` must also carry top-level
-`primary_endpoint_verdict` (`met`, `failed` or `inconclusive`; a precheck that cannot evaluate
-the endpoint is `inconclusive`) and the topic's `preregistration_sha256`. Preserve unsupported, negative, and inconclusive outcomes. Do
+`paper_candidate: true` or `gate_result.promotion_decision: "freeze"` states top-level
+`primary_endpoint_verdict`: `met`, `failed` or `inconclusive` once the endpoint was evaluated,
+`pending` when it was not (a paper candidate with `pending` keeps researching instead of entering
+writing). The control plane adds the topic's `preregistration_sha256` when you omit it; a value
+you declare must match the ledger. Preserve unsupported, negative, and inconclusive outcomes. Do
 not submit, publish, spend unbounded resources, or perform another irreversible external action.
 For a portfolio-review task, include `candidate_branches` (possibly empty); the control plane will
 mechanically start each branch in a separate researcher campaign without altering your judgment.

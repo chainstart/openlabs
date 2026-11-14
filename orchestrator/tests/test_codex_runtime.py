@@ -331,3 +331,43 @@ def test_hook_persists_terminal_reentry_failure(tmp_path) -> None:
     assert receipt["stop_hook_active"] is True
     assert receipt["outcome"] == "result_gate_failed_final"
     assert receipt["output_summary"] == "required result remains missing"
+
+
+def test_stop_hook_asks_once_for_an_unstated_verdict_and_rejects_a_forged_hash(tmp_path):
+    workspace = tmp_path / "campaign"
+    workspace.mkdir()
+    result = workspace / "result.json"
+    factory_skill = tmp_path / "skills" / "factory"
+    _skill(factory_skill, "factory")
+    expected = "a" * 64
+    task = {
+        "task_id": "research", "campaign_id": "topic-campaign", "lab_id": "ai", "domain": "ai",
+        "objective": "Run the pre-registered analysis.", "agent": {"role": "researcher"},
+        "transaction": {}, "research_program": {"preregistration_sha256": expected},
+    }
+    configure_codex_runtime(workspace, task=task, output_path=result,
+                            skill_dirs=(factory_skill,))
+    context = runtime_context(workspace / ".codex" / "openlabs-context.json")
+    bundle = {
+        "schema_version": RESULT_SCHEMA, "task_id": "research",
+        "campaign_id": "topic-campaign", "lab_id": "ai", "domain": "ai",
+        "status": "completed", "summary": "Candidate.", "artifacts": [], "claims": [],
+        "paper_candidate": True,
+    }
+    atomic_write_json(result, bundle)
+
+    # First stop: one more step in this session, not a failure.
+    output, outcome, summary = _stop_evaluation({}, context)
+    assert output["decision"] == "block" and outcome == "result_gate_advisory"
+    assert "primary_endpoint_verdict" in summary
+    # Re-entry: the result passes as it stands (the control plane reads pending).
+    output, outcome, _ = _stop_evaluation({"stop_hook_active": True}, context)
+    assert output == {} and outcome == "result_gate_passed"
+    # A stated verdict passes at once; the missing hash is the control plane's to add.
+    atomic_write_json(result, {**bundle, "primary_endpoint_verdict": "met"})
+    assert _stop_evaluation({}, context)[1] == "result_gate_passed"
+    # A hash that differs from the ledger is a gate failure.
+    atomic_write_json(result, {**bundle, "primary_endpoint_verdict": "met",
+                               "preregistration_sha256": "f" * 64})
+    output, outcome, summary = _stop_evaluation({}, context)
+    assert outcome == "result_gate_blocked" and "differs" in summary

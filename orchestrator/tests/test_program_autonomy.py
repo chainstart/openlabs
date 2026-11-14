@@ -298,18 +298,56 @@ def test_preregistration_hash_must_match_the_ledger(tmp_path, monkeypatch) -> No
     assert not any(db.task(t)["task_type"] == "paper_readiness" for t in report.enqueued)
 
 
-def test_missing_verdict_is_rejected_and_unlinked_campaigns_are_unchanged(tmp_path, monkeypatch):
-    from openlabs.gates import evaluate_result_bundle
+def test_missing_fields_are_filled_not_bounced_and_unlinked_campaigns_are_unchanged(
+    tmp_path, monkeypatch
+):
+    from openlabs.gates import evaluate_result_bundle, fill_control_plane_fields
 
     payload = {
         "schema_version": RESULT_SCHEMA, "task_id": "t", "campaign_id": "c", "lab_id": "ai",
         "status": "succeeded", "summary": "s", "artifacts": [], "claims": [],
         "paper_candidate": False, "gate_result": {"promotion_decision": "freeze"},
     }
-    gate = evaluate_result_bundle(payload, preregistration_sha256="a" * 64)
-    assert not gate.passed and "preregistration" in gate.failure_classes
-    # No topic (no expected hash): the gate is unchanged.
+    # 2026-11-12/13: six results were bounced for these two fields and three lead
+    # replans were spent adding them. A missing hash or verdict no longer blocks.
+    assert evaluate_result_bundle(payload, preregistration_sha256="a" * 64).passed
+    filled, notes = fill_control_plane_fields(payload, "a" * 64)
+    assert filled["preregistration_sha256"] == "a" * 64
+    assert filled["primary_endpoint_verdict"] == "pending" and len(notes) == 2
+    assert evaluate_result_bundle({**payload, "primary_endpoint_verdict": "pending"},
+                                  preregistration_sha256="a" * 64).passed
+    # A wrong verdict word or a hash that differs from the ledger still blocks.
+    assert not evaluate_result_bundle({**payload, "primary_endpoint_verdict": "partly"},
+                                      preregistration_sha256="a" * 64).passed
+    forged = evaluate_result_bundle({**payload, "preregistration_sha256": "f" * 64},
+                                    preregistration_sha256="a" * 64)
+    assert not forged.passed and "preregistration" in forged.failure_classes
+    # No topic (no expected hash): nothing is filled and the gate is unchanged.
+    assert fill_control_plane_fields(payload, None) == (payload, [])
     assert evaluate_result_bundle(payload).passed
+
+
+def test_paper_candidate_without_verdict_keeps_researching_without_a_replan(
+    tmp_path, monkeypatch
+):
+    paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
+    research = db.latest_task(topic["campaign_id"])
+    _lease(paths, settings, monkeypatch, db, research["task_id"])
+    _finish(db, paths, research["task_id"], extra={"paper_candidate": True}, session="r1")
+
+    report = _tick(paths, settings, monkeypatch)
+
+    task = db.task(research["task_id"])
+    assert task["status"] == "succeeded", task["last_error"]
+    runtime = db.result_runtime(research["task_id"])
+    assert runtime["control_plane_filled"] == [
+        "preregistration_sha256 (from the topic ledger)",
+        "primary_endpoint_verdict pending (not stated)",
+    ]
+    archived = json.loads(Path(task["result_path"]).read_text(encoding="utf-8"))
+    assert archived["preregistration_sha256"] == topic["preregistration_sha256"]
+    assert not [t for t in report.enqueued if db.task(t)["task_type"] == "paper_readiness"]
+    assert not [t for t in report.enqueued if db.task(t)["task_type"] == "replan"]
 
 
 def test_failed_endpoint_does_not_enter_writing_and_schedules_a_direction_decision(

@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlparse
 
 from .contracts import (
     COMMITTABLE_RESULT_STATUSES,
+    PRIMARY_ENDPOINT_VERDICTS,
     ValidationResult,
     artifact_digests,
     sha256_file,
@@ -35,9 +36,6 @@ class GateResult:
         }
 
 
-PRIMARY_ENDPOINT_VERDICTS = frozenset({"met", "failed", "inconclusive"})
-
-
 def research_promotion(payload: Mapping[str, Any]) -> bool:
     """A result that would leave research: a paper candidate or an audited terminal freeze."""
 
@@ -57,28 +55,69 @@ def preregistration_blockers(
     """Pre-registration binding of a research result of an admitted topic.
 
     ``expected_sha256`` comes from the topic ledger (canonical), never from the
-    campaign state an agent can edit.
+    campaign state an agent can edit. Only a declared hash that differs from the
+    ledger blocks: a missing hash is filled in by the control plane
+    (:func:`fill_control_plane_fields`), and a missing or ``pending`` verdict is
+    read as not yet evaluated (a paper candidate then keeps researching instead of
+    entering writing, so nothing is reworded on the way).
     """
 
     if not research_promotion(payload):
         return []
     blockers: list[str] = []
     verdict = str(payload.get("primary_endpoint_verdict") or "").strip()
-    if verdict not in PRIMARY_ENDPOINT_VERDICTS:
+    if verdict and verdict not in PRIMARY_ENDPOINT_VERDICTS:
         blockers.append(
-            "a promoted research result of an admitted topic needs primary_endpoint_verdict "
-            "met, failed or inconclusive"
+            "primary_endpoint_verdict must be met, failed, inconclusive or pending"
         )
     declared = str(payload.get("preregistration_sha256") or "").strip().lower()
-    if not declared:
-        blockers.append(
-            "a promoted research result of an admitted topic needs preregistration_sha256"
-        )
-    elif declared != expected_sha256:
+    if declared and declared != expected_sha256:
         blockers.append(
             "preregistration_sha256 differs from the pre-registration recorded in the topic ledger"
         )
     return blockers
+
+
+def preregistration_advisories(payload: Mapping[str, Any]) -> list[str]:
+    """What a promoted result should still state; asked once in the same session.
+
+    These never fail a result (see :func:`preregistration_blockers`); the Stop
+    hook asks the agent once to state them before it stops.
+    """
+
+    if not research_promotion(payload):
+        return []
+    verdict = str(payload.get("primary_endpoint_verdict") or "").strip()
+    if payload.get("paper_candidate") is True and verdict in {"", "pending"}:
+        return [
+            "paper_candidate: true needs primary_endpoint_verdict met, failed or inconclusive "
+            "(with pending the topic keeps researching and does not enter writing)"
+        ]
+    if not verdict:
+        return [
+            "a freeze should state primary_endpoint_verdict (met, failed, inconclusive, or "
+            "pending when the endpoint was never evaluated)"
+        ]
+    return []
+
+
+def fill_control_plane_fields(
+    payload: Mapping[str, Any],
+    expected_sha256: str | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Add the fields of a promoted result the control plane can compute itself."""
+
+    filled = dict(payload)
+    notes: list[str] = []
+    if expected_sha256 is None or not research_promotion(payload):
+        return filled, notes
+    if not str(payload.get("preregistration_sha256") or "").strip():
+        filled["preregistration_sha256"] = expected_sha256
+        notes.append("preregistration_sha256 (from the topic ledger)")
+    if not str(payload.get("primary_endpoint_verdict") or "").strip():
+        filled["primary_endpoint_verdict"] = "pending"
+        notes.append("primary_endpoint_verdict pending (not stated)")
+    return filled, notes
 
 
 def evaluate_result_bundle(

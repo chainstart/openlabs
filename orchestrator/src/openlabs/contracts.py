@@ -1291,7 +1291,9 @@ def admission_conditions(admission: Any) -> list[dict[str, str]]:
 
 # ---------------------------------------------------------------- autonomous back half
 
-PRIMARY_ENDPOINT_VERDICTS = frozenset({"met", "failed", "inconclusive"})
+# ``pending``: the endpoint has not been evaluated yet (a freeze before the analysis,
+# a paper candidate whose verdict the researcher still owes; neither enters writing).
+PRIMARY_ENDPOINT_VERDICTS = frozenset({"met", "failed", "inconclusive", "pending"})
 FREEZE_REASON_CLASSES = frozenset(
     {
         "primary_endpoint_failed",

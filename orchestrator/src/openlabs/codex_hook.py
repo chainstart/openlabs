@@ -21,6 +21,7 @@ from typing import Any
 
 from .agent_runtime import runtime_context
 from .contracts import COMMITTABLE_RESULT_STATUSES, validate_result_bundle
+from .gates import preregistration_advisories, preregistration_blockers
 from .labs import load_lab
 from .protocols import validate_protocol_state
 from .reproduction import preflight_reproductions
@@ -95,6 +96,34 @@ def _protocol_gate_problems(context: Mapping[str, Any]) -> list[str]:
     return [f"protocol state: {error}" for error in validation.errors]
 
 
+def _program_problems(
+    payload: Mapping[str, Any], context: Mapping[str, Any]
+) -> tuple[list[str], list[str]]:
+    """Pre-registration checks of an admitted topic's result: (failures, advisories).
+
+    A declared hash that differs from the ledger fails the gate (the engine would
+    reject it too). A missing hash or verdict is only asked for once: the control
+    plane fills the hash and reads an unstated verdict as pending.
+    """
+
+    program = context.get("research_program")
+    expected = program.get("preregistration_sha256") if isinstance(program, Mapping) else None
+    if not expected:
+        return [], []
+    return preregistration_blockers(payload, str(expected)), preregistration_advisories(payload)
+
+
+def _stop_gate_advisories(context: Mapping[str, Any]) -> list[str]:
+    result_path = Path(str(context.get("result_path") or "")).expanduser()
+    try:
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, Mapping):
+        return []
+    return _program_problems(payload, context)[1]
+
+
 def _stop_gate_problems(context: Mapping[str, Any]) -> list[str]:
     result_path = Path(str(context.get("result_path") or "")).expanduser()
     problems: list[str] = []
@@ -109,6 +138,7 @@ def _stop_gate_problems(context: Mapping[str, Any]) -> list[str]:
     if isinstance(payload, Mapping):
         validation = validate_result_bundle(payload)
         problems.extend(validation.errors)
+        problems.extend(_program_problems(payload, context)[0])
         expected = context.get("expected_result")
         if isinstance(expected, Mapping):
             for key, value in expected.items():
@@ -139,6 +169,13 @@ def _stop_evaluation(
 
     problems = _stop_gate_problems(context)
     if not problems:
+        advisories = _stop_gate_advisories(context)
+        if advisories and event.get("stop_hook_active") is not True:
+            # One more step in this session instead of a later replan task; on
+            # re-entry the result passes as it stands.
+            reason = "OpenLabs result is complete but should still state: " + "; ".join(
+                advisories)
+            return {"decision": "block", "reason": reason}, "result_gate_advisory", reason
         return {}, "result_gate_passed", "result_gate_passed"
     reason = "OpenLabs result gate is incomplete: " + "; ".join(problems[:8])
     if event.get("stop_hook_active") is True:
