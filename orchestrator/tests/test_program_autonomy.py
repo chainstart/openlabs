@@ -927,3 +927,108 @@ def test_topics_of_a_paused_program_project_get_no_stop_rule_decision(tmp_path, 
     _tick(paths, settings, monkeypatch)
     assert db.campaign(topic["campaign_id"])["status"] == "active"
     assert len(_direction_tasks(db)) == 1
+
+
+# --------------------------------------------------------------------------- research needs_human
+
+
+BLOCKED = {
+    "status": "needs_human",
+    "summary": "The precheck job is still queued; no verdict exists.",
+    "human_intervention": {"reason": "A lead decision is needed to continue or pause the topic.",
+                           "required_action": "Decide whether to wait for the job or freeze."},
+}
+
+
+def _blocked_research(paths, db, settings, monkeypatch, topic) -> dict:
+    research = db.latest_task(topic["campaign_id"])
+    _lease(paths, settings, monkeypatch, db, research["task_id"])
+    _finish(db, paths, research["task_id"], extra=dict(BLOCKED))
+    return research
+
+
+def test_research_needs_human_becomes_one_direction_decision_and_a_freeze_frees_the_slot(
+    tmp_path, monkeypatch
+):
+    paths, db, settings, (first, second) = _program(
+        tmp_path, monkeypatch, cards=2, max_active_topics=1
+    )
+    assert first["status"] == "active" and second["status"] == "admitted"
+    research = _blocked_research(paths, db, settings, monkeypatch, first)
+
+    report = _tick(paths, settings, monkeypatch)
+
+    assert db.task(research["task_id"])["status"] == "needs_human"
+    tasks = _direction_tasks(db)
+    assert len(tasks) == 1
+    packet = json.loads(Path(tasks[0]["input_path"]).read_text(encoding="utf-8"))
+    assert packet["trigger"]["reason"] == "research_needs_human"
+    assert packet["trigger"]["source_task_id"] == research["task_id"]
+    assert BLOCKED["human_intervention"]["reason"] in packet["reasons_to_answer"]
+    assert BLOCKED["summary"] in packet["reasons_to_answer"]
+    assert [d["trigger"] for d in report.program["direction_decisions"]] == [
+        "research_needs_human"
+    ]
+    assert _topic(paths, settings, first["topic_id"])["status"] == "active"
+    _tick(paths, settings, monkeypatch)
+    assert len(_direction_tasks(db)) == 1  # once per source result
+
+    _decide(paths, settings, monkeypatch, db, _freeze_decision(BLOCKED["summary"]))
+
+    frozen = _topic(paths, settings, first["topic_id"])
+    assert frozen["status"] == "frozen"
+    assert frozen["freeze_reason_class"] == "contribution_insufficient"
+    assert _topic(paths, settings, second["topic_id"])["status"] == "active"
+    for _ in range(2):
+        _tick(paths, settings, monkeypatch)
+    assert len(_direction_tasks(db)) == 1
+
+
+def test_research_needs_human_can_continue_with_one_targeted_step(tmp_path, monkeypatch):
+    paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
+    research = _blocked_research(paths, db, settings, monkeypatch, topic)
+    _tick(paths, settings, monkeypatch)
+
+    report = _decide(paths, settings, monkeypatch, db, _analysis_decision(BLOCKED["summary"]))
+
+    analysis = db.task(report.program["direction_decisions"][-1]["executed_task_id"])
+    assert analysis["campaign_id"] == topic["campaign_id"]
+    assert analysis["routing_reason"] == "direction_targeted_analysis"
+    assert analysis["parent_task_id"] == research["task_id"]
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "active"
+    _tick(paths, settings, monkeypatch)
+    assert len(_direction_tasks(db)) == 1
+
+
+def test_research_needs_human_of_a_paused_campaign_gets_no_decision(tmp_path, monkeypatch):
+    paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
+    _blocked_research(paths, db, settings, monkeypatch, topic)
+    project_path = Path(str(db.campaign(topic["campaign_id"])["project_config_path"]))
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload["status"] = "paused"
+    project_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    _tick(paths, settings, monkeypatch)
+
+    assert _direction_tasks(db) == []
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "active"
+
+
+def test_needs_human_from_a_runner_failure_is_left_to_the_infrastructure_triage(
+    tmp_path, monkeypatch
+):
+    paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
+    research = _blocked_research(paths, db, settings, monkeypatch, topic)
+    _tick(paths, settings, monkeypatch)
+    attempts = db.task_attempts(research["task_id"])
+    assert attempts
+    campaign = db.campaign(topic["campaign_id"])
+    latest = db.task(research["task_id"])
+    assert latest["status"] == "needs_human"
+    assert program_autonomy._research_block(db, campaign, latest) is not None
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE task_attempts SET runtime_json=? WHERE attempt_id=?",
+            (json.dumps({"failure_class": "lab_runtime_setup"}), attempts[-1]["attempt_id"]),
+        )
+    assert program_autonomy._research_block(db, campaign, latest) is None

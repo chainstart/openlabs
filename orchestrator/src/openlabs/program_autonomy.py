@@ -85,6 +85,11 @@ TRIGGER_REVIEW_DIRECTION = "review_direction_decision"
 TRIGGER_REVIEW_RETARGET = "review_retarget_required"
 TRIGGER_REVIEW_STALLED = "review_stalled"
 TRIGGER_REVIEW_ROUNDS = "review_rounds_exhausted"
+# A research executor stopped with needs_human on a scientific/process question
+# (not an infrastructure miss): the lead decides instead of the topic waiting
+# for the 28-day calendar trigger while it holds a slot (2026-11-14: two astro
+# topics held slots this way). Fires once per source result.
+TRIGGER_RESEARCH_BLOCKED = "research_needs_human"
 ONCE_PER_TOPIC_TRIGGERS = frozenset({TRIGGER_OVERDUE, TRIGGER_BUDGET})
 TRIGGER_FREEZE_CLASS = {
     TRIGGER_ENDPOINT_FAILED: "primary_endpoint_failed",
@@ -352,6 +357,10 @@ def _trigger_reason_text(trigger: str, detail: Mapping[str, Any]) -> str:
         TRIGGER_REVIEW_RETARGET: "The unified review requires a retarget.",
         TRIGGER_REVIEW_STALLED: "The unified review is stalled: scores no longer improve.",
         TRIGGER_REVIEW_ROUNDS: "The unified review used all rounds for this target.",
+        TRIGGER_RESEARCH_BLOCKED: (
+            "The research executor stopped with needs_human instead of continuing; decide "
+            "whether one targeted step continues the topic or it is frozen."
+        ),
     }
     return texts.get(trigger, f"Direction decision trigger: {trigger}.")
 
@@ -387,6 +396,60 @@ def _result_reasons(payload: Mapping[str, Any] | None) -> list[str]:
     if isinstance(gate_result, Mapping):
         reasons.append(str(gate_result.get("reason") or gate_result.get("rationale") or "").strip())
     return [item for item in reasons if item]
+
+
+def _blocked_reasons(payload: Mapping[str, Any]) -> list[str]:
+    """Reasons a needs_human research result gives, for ``reasons_to_answer``."""
+
+    reasons = _result_reasons(payload)
+    intervention = payload.get("human_intervention")
+    if isinstance(intervention, Mapping):
+        for key in ("reason", "required_action"):
+            text = str(intervention.get(key) or "").strip()
+            if text:
+                reasons.append(text)
+    text = str(payload.get("stop_reason") or "").strip()
+    if text:
+        reasons.append(text)
+    return list(dict.fromkeys(reasons))
+
+
+def _research_block(
+    db: FactoryDB,
+    campaign: Mapping[str, Any],
+    latest: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, str]]] | None:
+    """(payload, evidence) when a researcher ended the topic's work with needs_human.
+
+    Only an agent-written needs_human result of an active campaign counts: runner
+    failures (any recorded ``failure_class``, launch failures) stay with the
+    infrastructure triage, and a campaign an operator paused is left alone.
+    """
+
+    if (
+        str(latest.get("status") or "") != "needs_human"
+        or str(latest.get("agent_role") or "") not in RESEARCH_ROLES
+        or str(campaign.get("status") or "") != "active"
+    ):
+        return None
+    attempts = db.task_attempts(str(latest["task_id"]))
+    if not attempts:
+        return None
+    last = attempts[-1]
+    runtime = last.get("runtime") if isinstance(last.get("runtime"), Mapping) else {}
+    if str(last.get("status") or "") == "launch_failed" or runtime.get("failure_class"):
+        return None
+    result_path = str(last.get("result_path") or latest.get("result_path") or "")
+    if not result_path:
+        return None
+    path = Path(result_path)
+    try:
+        payload = _read_object(path)
+    except (OSError, TypeError, ValueError):
+        return None
+    if str(payload.get("status") or "") != "needs_human":
+        return None
+    return payload, [_evidence(path, str(last.get("result_sha256") or "") or None)]
 
 
 def _resource(label: str, path: Path) -> dict[str, str] | None:
@@ -1249,6 +1312,16 @@ def _check_limits(db, paths, settings, report) -> None:
                 _freeze(db, paths, settings, report, topic_id=topic_id,
                         reason_class="budget_exhausted", evidence=evidence,
                         decided_by="orchestrator:topic_budget_ceiling", note=detail)
+            continue
+        blocked = _research_block(db, campaign, latest)
+        if blocked is not None:
+            payload, evidence = blocked
+            schedule_direction_decision(
+                db, paths, settings, report, topic=topic, trigger=TRIGGER_RESEARCH_BLOCKED,
+                source_task_id=str(latest["task_id"]), evidence=evidence,
+                reasons=_blocked_reasons(payload),
+                detail={"task_status": "needs_human", "task_type": latest.get("task_type")},
+            )
             continue
         admitted = budget_control.parse_time(topic.get("admitted_at"))
         if admitted is None:

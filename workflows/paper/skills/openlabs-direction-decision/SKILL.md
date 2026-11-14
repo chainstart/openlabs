@@ -50,6 +50,15 @@ stands. It must be one of `reasons_to_answer`; quote it verbatim in `answers_rea
   new_method, venue_policy_change, external_result; `description`: what would have to become
   true, specifically enough that a later scout can check it).
 
+Trigger `research_needs_human`: the research executor stopped and asked for a decision or
+authority instead of continuing (for example it was unsure whether to keep waiting for a remote
+job, or whether it may continue past an inconclusive step). Your decision is that authority; no
+human is asked. Choose `targeted_core_analysis` only when one named next step (with its job ids,
+inputs and stop rule from the evidence) can still reach the pre-registered verdict at a
+proportionate cost; otherwise freeze. Genuine human-only actions (credentials, payment,
+submission) are not research steps: freeze with a reopen condition that names what must become
+available.
+
 The control plane refuses a choice whose `decisions_remaining` is 0, or an analysis whose budget
 does not fit under the topic's hard Agent-time ceiling, and then freezes the topic; choose
 `freeze` yourself in that case and give its reopen conditions.
