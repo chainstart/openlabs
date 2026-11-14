@@ -145,7 +145,7 @@ def test_unchanged_canonical_promotes_exactly_as_before(tmp_path) -> None:
     metadata = promote_attempt_workspace(attempt)
 
     assert metadata["promotion_merge"] == {
-        "canonical_moved": False, "content_merged": [], "refused": [],
+        "canonical_moved": False, "content_merged": [], "refused": [], "deletions_refused": [],
     }
     assert _read(root / "scout_state.json") == {"rounds": {"x": 1}}
 
@@ -168,3 +168,24 @@ def test_crash_recovery_after_a_merged_exchange_restores_the_moved_canonical(tmp
     assert not (root / "two.json").exists()
     with pytest.raises(AttemptWorkspaceError):
         finalize_attempt_promotion(second)
+
+
+def test_a_deleted_campaign_file_is_kept_and_the_other_changes_land(tmp_path) -> None:
+    # replan:ce28cf1a (2026-11-13) lost a lead model's work because it deleted
+    # files; portfolio_review 257dcecd deleted a frozen admission packet.
+    paths = _paths(tmp_path)
+    db, root = _campaign(paths)
+    (root / "admission-review").mkdir()
+    atomic_write_json(root / "admission-review" / "frozen-packet.json", {"frozen": True})
+    attempt = _attempt(paths, db, "review")
+    (attempt.campaign_root / "admission-review" / "frozen-packet.json").unlink()
+    atomic_write_json(attempt.campaign_root / "review.json", {"verdict": "admit"})
+
+    metadata = promote_attempt_workspace(attempt)
+
+    assert metadata["status"] == "committed"
+    assert _read(root / "admission-review" / "frozen-packet.json") == {"frozen": True}
+    assert _read(root / "review.json") == {"verdict": "admit"}
+    assert metadata["promotion_merge"]["deletions_refused"] == [
+        "admission-review/frozen-packet.json"
+    ]

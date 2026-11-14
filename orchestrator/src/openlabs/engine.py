@@ -2736,6 +2736,7 @@ def ingest_results(
                         merge_record = promoted.get("promotion_merge")
                         if isinstance(merge_record, Mapping) and (
                             merge_record.get("canonical_moved") or merge_record.get("refused")
+                            or merge_record.get("deletions_refused")
                         ):
                             # Merged onto a canonical tree another task advanced;
                             # refused (conflicting) changes stay in the attempt.

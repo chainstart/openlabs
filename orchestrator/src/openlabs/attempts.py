@@ -465,7 +465,8 @@ def plan_campaign_merge(
     attempt (or identically by both) -> the attempt's bytes; changed differently by
     both -> a content merge (JSON objects by key, append-only text by tail) when a
     pristine base exists, else the canonical file stays and the attempt's version is
-    refused as a conflict. Deleting a baseline file is reported in ``deleted``.
+    refused as a conflict. A baseline file the attempt deleted is reported in
+    ``deleted`` and is not deleted.
     """
 
     writes: dict[str, Path | bytes] = {}
@@ -881,10 +882,9 @@ def begin_attempt_promotion(workspace: AttemptWorkspace) -> dict[str, Any]:
         # tree after this point is detected below instead of silently dropped.
         current = _tree_manifest(candidate)
         merge = plan_campaign_merge(workspace, normalized_baseline, current, staged)
-        if merge.deleted:
-            raise AttemptWorkspaceError(
-                "Attempt tried to delete authoritative state: " + ", ".join(merge.deleted[:8])
-            )
+        # Campaign state is never deleted by an attempt: a deleted file stays as it is
+        # in the canonical tree and the deletion is recorded as refused, while the
+        # attempt's other changes land (a stray deletion used to discard them all).
         expected = dict(current)
         for relative, source in merge.writes.items():
             target = candidate / relative
@@ -904,6 +904,7 @@ def begin_attempt_promotion(workspace: AttemptWorkspace) -> dict[str, Any]:
             "canonical_moved": merge.canonical_moved,
             "content_merged": list(merge.merged),
             "refused": list(merge.refused),
+            "deletions_refused": list(merge.deleted),
         }
         _update_metadata(
             workspace,
