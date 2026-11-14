@@ -313,6 +313,16 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   直接按原决定立项（`hold_released_admitted`），不需要新卡片。关口自己给出、只有
   `line_environment_ready` 一个条件的 hold 则回到 proposed 重新送关口（`hold_released_for_review`）；
   还有其他条件的 hold 走修订卡。每个题目只放行一次。
+- 产线级原因冻结的题目可自动重开（`orchestrator/src/openlabs/reopen.py`）：题目台账的 `auto_reopen.when`
+  列出可机械求值的条件，全部成立才算满足——`control_receipt`（产线对照回执 JSON 的点路径字段比较，
+  `summary.` 读回执 `results_dir` 下的 summary.json）和 `line_capability`（`registry/research-lines.yaml`
+  里该产线条目的某个键为真）。条件来自负责人冻结包的可选 `reopen_when`，或对旧冻结题目用
+  `python -m openlabs program reopen-register --topic-id T --when-file F.json --by NAME [--note ...]`
+  登记（只写题目台账，不碰数据库）；`program reopen-check` 只读地显示当前求值。控制面每轮检查：条件全成立、
+  有空研究槽、campaign 仍有 Agent 预算、题目在负责人模式、自动重开次数未达 `[program].auto_reopen_max`
+  （默认 1，0 关闭）时，题目 `frozen -> active`（`auto_reopen_conditions_met`），campaign 解冻，给原负责人会话
+  派一个 `owner_reopened` 坐席并写明哪些条件变了。预注册、主终点、停止规则和预算都不变；再次冻结时若没有新的
+  `reopen_when`，旧条件清空，不会因同一事实反复重开。
 - 现有实例迁移：`python -m openlabs program init-instance --instance-dir <dir> --set-research-lines`
   先看 dry-run，再加 `--write`。它只新增缺少的产线项目，并在实例 TOML 的 `[program]` 里写入
   `research_lines`（其余键与注释不动，旧文件留 `.bak`），不改题目台账。回滚：恢复 `.bak`。

@@ -219,6 +219,10 @@ class ProgramSettings:
     # list of research-line ids applies it to the topics of those lines only.
     owner_mode: str | tuple[str, ...] = "off"
     owner: OwnerSettings = field(default_factory=lambda: OwnerSettings())
+    # Automatic reopens per frozen topic whose recorded line-level conditions
+    # (``auto_reopen``: shared control receipt, line capability) came true; a
+    # topic may ask for fewer. 0 turns automatic reopening off.
+    auto_reopen_max: int = 1
 
 
 DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_gpt")
@@ -873,6 +877,7 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         compute_locations=_compute_locations(program.get("compute_locations")),
         owner_mode=_owner_mode(program.get("owner_mode")),
         owner=_owner_settings(program.get("owner")),
+        auto_reopen_max=_nonnegative_int(program.get("auto_reopen_max"), 1),
         **_git_settings(program.get("git")),
     )
 

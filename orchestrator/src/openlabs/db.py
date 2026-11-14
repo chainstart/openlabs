@@ -967,6 +967,34 @@ class FactoryDB:
                 )
         return tuple(cancelled)
 
+    def reopen_frozen_campaign(
+        self, campaign_id: str, *, reason: str, topic_id: str | None = None
+    ) -> bool:
+        """``frozen -> active`` for the campaign of an automatically reopened topic.
+
+        The only way out of ``frozen``; called after the topic ledger recorded the
+        reopen (``reopen.py``). Any other status is left unchanged. Returns True when
+        the status changed.
+        """
+
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status FROM campaigns WHERE campaign_id=?", (campaign_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(campaign_id)
+            if str(row["status"]) != "frozen":
+                return False
+            connection.execute(
+                "UPDATE campaigns SET status='active', updated_at=? WHERE campaign_id=?",
+                (now, campaign_id),
+            )
+            self._event(connection, "campaign", campaign_id, "campaign_reopened",
+                        {"reason": reason, "prior_status": "frozen", "topic_id": topic_id})
+        return True
+
     def cancel_queued_campaign_tasks(self, campaign_id: str, *, reason: str) -> tuple[str, ...]:
         """Cancel queued tasks of one campaign without changing the campaign status."""
 

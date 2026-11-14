@@ -477,23 +477,83 @@ def expected_cards_per_scout(
     return max(0.5, cards / len(finished))
 
 
-def queue_scout_instruction(queues: Mapping[str, str]) -> str:
-    """Scout objective addition for templates with an enumerated candidate queue."""
+def queue_scout_instruction(
+    queues: Mapping[str, str], held_released: Mapping[str, bool] | None = None
+) -> str:
+    """Scout objective addition for templates with an enumerated candidate queue.
+
+    ``held_released`` maps the release key of held queue entries (``held_candidates``,
+    e.g. a needs-spot hold) to whether the control plane found it met this tick.
+    """
 
     if not queues:
         return ""
+    held = ""
+    if held_released:
+        released = sorted(key for key, value in held_released.items() if value)
+        waiting = sorted(key for key, value in held_released.items() if not value)
+        held = (
+            " Entries under `held_candidates` wait for a line capability (their "
+            "draw_hold.release_when); checked this tick: "
+            + "; ".join([*(f"{key} met" for key in released),
+                         *(f"{key} not met" for key in waiting)])
+            + ". Draw a held entry only when its key is met, after the `candidates`, with a "
+            "card that pre-registers that capability (e.g. the spot parametrisation) instead of "
+            "a symmetric-only gate; if its target belongs to a frozen ledger topic, the card "
+            "declares `reopens` that topic with reopen_basis type new_method."
+        )
     return (
         ". Templates with a candidate_queue ("
         + ", ".join(f"{template}: {path}" for template, path in sorted(queues.items()))
         + ") are enumerated, not scouted: do not search for other targets of them. Take the "
-        "highest-ranked entries whose novelty verdict is `unreported` and whose target is in "
-        "no ledger topic (compare its identifiers with ledger_snapshot); copy each entry's "
-        "`card_fields` (research_line, paper_template, occupancy_search, "
+        "highest-ranked entries of `candidates` (rank is the draw order; mechanical "
+        "queue prechecks have already put the targets the standard configuration can solve "
+        "first, see each entry's queue_precheck) whose novelty verdict is `unreported` and "
+        "whose target is in no ledger topic (compare its identifiers with ledger_snapshot); "
+        "copy each entry's `card_fields` (research_line, paper_template, occupancy_search, "
         "candidate_queue_entry, series when present) into the card unchanged, re-running the "
         "occupancy search only when its searched_at is more than 30 days old (then record the "
-        "new search), and fill the remaining card fields from the template and the SOP. Skip "
-        "an entry whose data access fails and say so in the result"
+        "new search), and fill the remaining card fields from the template and the SOP. "
+        "Register only control criteria the line's current control receipt can meet "
+        "(queue metadata.queue_precheck.control_status); otherwise state that the control is "
+        "judged once it requalifies. Skip an entry whose data access fails and say so in the "
+        "result" + held
     )
+
+
+def held_queue_releases(
+    paths: WorkspacePaths, settings: FactorySettings, line: str, queues: Mapping[str, str]
+) -> dict[str, bool]:
+    """``{release key: met}`` for the line-capability holds of the line's queued entries."""
+
+    from .reopen import evaluate_condition
+
+    lines_path = paths.data / settings.program.research_lines_path
+    document = read_lines_or_none(lines_path)
+    result: dict[str, bool] = {}
+    for path in queues.values():
+        try:
+            queue = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for entry in queue.get("held_candidates") or [] if isinstance(queue, Mapping) else []:
+            hold = (entry.get("draw_hold") or {}) if isinstance(entry, Mapping) else {}
+            when = hold.get("release_when") if isinstance(hold, Mapping) else None
+            if not isinstance(when, Mapping) or when.get("kind") != "line_capability":
+                continue
+            key = str(when.get("key") or "")
+            if not key or key in result:
+                continue
+            result[key] = bool(evaluate_condition(
+                {"kind": "line_capability", "key": key, "line": when.get("line") or line},
+                topic={"research_line": line}, lines_document=document,
+                lines_path=lines_path)["met"])
+    return result
+
+
+def _queue_instruction(paths: WorkspacePaths, settings: FactorySettings, line: str) -> str:
+    queues = queued_templates(research_lines_document(paths, settings), line)
+    return queue_scout_instruction(queues, held_queue_releases(paths, settings, line, queues))
 
 
 def _schedule_one_scout(
@@ -577,8 +637,7 @@ def _schedule_one_scout(
                     "template id, and use `series` for a few adjacent systems sharing one "
                     "pipeline (one paper per card). Cite reusable assets of the template in "
                     "`reusable_assets` and lower the cost estimate accordingly"
-                    + queue_scout_instruction(
-                        queued_templates(research_lines_document(paths, settings), line))
+                    + _queue_instruction(paths, settings, line)
                     if line_templates(research_lines_document(paths, settings), line) else ""
                 )
                 if line else ""
@@ -2523,6 +2582,12 @@ def run_program_pipeline(
             str(item["task_id"]) for item in info["card_repairs"] if item.get("task_id")
         )
         info["holds_released"] = release_ready_holds(db, paths, settings)
+        # Frozen topics whose line-level reopen conditions came true take their slot
+        # back before new admissions are materialized (reopen.py).
+        from .reopen import reopen_ready_topics, repair_half_done_reopens
+
+        info["reopen_repaired"] = repair_half_done_reopens(db, paths, settings, report)
+        info["auto_reopen"] = reopen_ready_topics(db, paths, settings, report)
         spawned = materialize_waiting_topics(db, paths, settings)
         report.enqueued.extend(spawned.task_ids)
         report.production_synced.extend(spawned.campaign_ids)

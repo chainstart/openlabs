@@ -29,7 +29,9 @@ recorded reopen conditions.
 Two guarded moves leave ``rejected`` (ledger schema v2): a hold whose only
 blocker was its research line's environment returns to ``proposed`` for the
 gate, or straight to ``admitted`` when the gate had already admitted it, once
-the line is ready (``release_held_topic``).
+the line is ready (``release_held_topic``). One guarded move leaves ``frozen``:
+``frozen -> active`` when the topic's recorded line-level ``auto_reopen``
+conditions all hold (``reopen.py``); its pre-registration is unchanged.
 """
 
 from __future__ import annotations
@@ -79,14 +81,19 @@ TRANSITIONS: dict[str | None, frozenset[str]] = {
     "submitted": frozenset(),
     # Only the guarded hold releases below leave ``rejected``.
     "rejected": frozenset({"proposed", "admitted"}),
-    "frozen": frozenset(),
+    # Only an automatic reopen (``reopen.py``) leaves ``frozen``; every other reopening
+    # is a new card that declares ``reopens``.
+    "frozen": frozenset({"active"}),
 }
 # Transitions allowed only with these reasons (see ``release_held_topic``).
 HOLD_RELEASE_FOR_REVIEW = "hold_released_for_review"
 HOLD_RELEASE_ADMITTED = "hold_released_admitted"
+# A frozen topic whose recorded line-level reopen conditions all hold (``reopen.py``).
+AUTO_REOPEN_REASON = "auto_reopen_conditions_met"
 GUARDED_TRANSITIONS: dict[tuple[str, str], frozenset[str]] = {
     ("rejected", "proposed"): frozenset({HOLD_RELEASE_FOR_REVIEW}),
     ("rejected", "admitted"): frozenset({HOLD_RELEASE_ADMITTED}),
+    ("frozen", "active"): frozenset({AUTO_REOPEN_REASON}),
 }
 # Statuses that hold one of the ``max_active_topics`` research slots.
 # ``admitted`` is a reservation: the topic passed the admission gate but its
@@ -147,6 +154,9 @@ TOPIC_FIELDS = (
     "repair_of",
     "revision",
     "revision_of",
+    # Machine-checkable line-level reopen conditions of a frozen topic and the
+    # automatic reopens done so far (``reopen.py``; absent from older ledgers).
+    "auto_reopen",
     "history",
 )
 # Rejections that judged the topic on its merits. A card with the same
@@ -1288,18 +1298,34 @@ def freeze_topic(
     evidence: Any,
     decided_by: str,
     reopen_conditions: Iterable[Mapping[str, Any]] = (),
+    reopen_when: Iterable[Mapping[str, Any]] | None = None,
 ) -> TopicDecision:
     """``active|in_review -> frozen``: record the freeze, then stop its campaign.
 
     The ledger is written first (canonical); if the process dies before the
     campaign is frozen, :func:`reconcile_frozen_campaigns` finishes it on the next
-    tick.
+    tick. ``reopen_when`` (already validated by ``reopen.normalize_conditions``)
+    replaces the topic's automatic-reopen conditions; a freeze without it clears
+    them, so conditions met before this freeze never reopen it again. The count of
+    automatic reopens already done is kept.
     """
 
     if reason_class not in FREEZE_REASON_CLASSES:
         raise TopicLedgerError(f"unsupported freeze reason class {reason_class!r}")
     evidence_items = _evidence_list(evidence, required=True, label="freeze_evidence")
     conditions = _reopen_conditions(reopen_conditions)
+    extra: dict[str, Any] = {}
+    previous = (ledger.topic(topic_id) or {}).get("auto_reopen")
+    when = [dict(item) for item in reopen_when or []]
+    if when or isinstance(previous, Mapping):
+        block = copy.deepcopy(dict(previous)) if isinstance(previous, Mapping) else {}
+        block["when"] = when
+        block.setdefault("max_reopens", 1)
+        block.setdefault("reopens", [])
+        if when:
+            block.setdefault("registered", []).append({"at": utc_now(), "by": decided_by,
+                                                       "note": "declared in the freeze"})
+        extra["auto_reopen"] = block
     decision = transition_topic(
         ledger,
         topic_id,
@@ -1313,6 +1339,7 @@ def freeze_topic(
             "freeze_reason_class": reason_class,
             "freeze_evidence": evidence_items,
             "reopen_conditions": conditions,
+            **extra,
         },
     )
     topic = ledger.topic(topic_id) or {}

@@ -203,6 +203,24 @@ def _parser() -> argparse.ArgumentParser:
     revisable.add_argument("--topic-id", required=True)
     revisable.add_argument("--reason", required=True, help="Why the defect is fixable")
     revisable.add_argument("--by", default="operator", help="Who decided (provenance)")
+    reopen_register = program_commands.add_parser(
+        "reopen-register",
+        help="Attach machine-checkable line-level reopen conditions (auto_reopen) to a frozen "
+        "topic; the control plane reopens it when they all hold (topic ledger only)",
+    )
+    reopen_register.add_argument("--topic-id", required=True)
+    reopen_register.add_argument(
+        "--when-file", required=True, type=Path,
+        help="JSON list of conditions (or {reopen_when: [...]}); kinds control_receipt, "
+        "line_capability (see openlabs/reopen.py)",
+    )
+    reopen_register.add_argument("--max-reopens", type=int, default=1)
+    reopen_register.add_argument("--note", help="Why these conditions answer the freeze")
+    reopen_register.add_argument("--by", default="operator", help="Who registered (provenance)")
+    program_commands.add_parser(
+        "reopen-check",
+        help="Evaluate every frozen topic's auto_reopen conditions now (read-only)",
+    )
     instance = program_commands.add_parser(
         "init-instance",
         help="Create a separate orchestrator instance (own database, settings and projects; "
@@ -446,6 +464,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             payload = _asset_command(asset_library, args, None, paths, load_settings(paths))
         except (asset_library.AssetIndexError, OSError, ValueError) as exc:
+            print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False),
+                  file=sys.stderr)
+            return 1
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "program" and args.program_command in {"reopen-register", "reopen-check"}:
+        # Topic ledger only: the factory database is neither created nor written.
+        from .program import TopicLedgerError, open_topic_ledger
+        from .reopen import ReopenConditionError, check_report, register_auto_reopen
+
+        settings = load_settings(paths)
+        try:
+            if args.program_command == "reopen-check":
+                payload = check_report(paths, settings)
+            else:
+                when = json.loads(args.when_file.read_text(encoding="utf-8"))
+                if isinstance(when, dict) and "reopen_when" in when:
+                    when = when["reopen_when"]
+                block = register_auto_reopen(
+                    open_topic_ledger(paths, settings.program), args.topic_id, when,
+                    decided_by=f"manual:{args.by}", note=args.note or "",
+                    max_reopens=args.max_reopens,
+                )
+                payload = {"schema_version": "openlabs.program_reopen_register.v1",
+                           "topic_id": args.topic_id, "auto_reopen": block}
+        except (OSError, ValueError, TopicLedgerError, ReopenConditionError) as exc:
             print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False),
                   file=sys.stderr)
             return 1

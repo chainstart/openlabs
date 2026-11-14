@@ -285,12 +285,17 @@ def normalize_packet(
             bundle["status"] = "completed"
     elif status == "frozen":
         gate: dict[str, Any] = {"promotion_decision": "freeze", "reason": reason or summary}
-        reason_class = str(raw.get("freeze_reason_class") or raw.get("reason_class") or "")
+        # Owners often nest the freeze fields in their own gate_result block; read both.
+        nested = raw.get("gate_result") if isinstance(raw.get("gate_result"), Mapping) else {}
+        reason_class = str(raw.get("freeze_reason_class") or raw.get("reason_class")
+                           or nested.get("freeze_reason_class") or nested.get("reason_class")
+                           or "")
         if reason_class:
             gate["freeze_reason_class"] = reason_class
-        for key in ("evidence", "reopen_conditions"):
-            if raw.get(key) is not None:
-                gate[key] = raw[key]
+        for key in ("evidence", "reopen_conditions", "reopen_when"):
+            value = raw.get(key) if raw.get(key) is not None else nested.get(key)
+            if value is not None:
+                gate[key] = value
         bundle["status"] = "completed"
         bundle["gate_result"] = gate
         # A freeze is a promotion: an unstated verdict is "pending" (never
@@ -438,6 +443,9 @@ def choose_runner(
 def _seat_id(campaign_id: str, source: str) -> str:
     digest = hashlib.sha256(f"{campaign_id}\0{source}".encode()).hexdigest()
     return f"owner:{digest[:40]}"
+
+
+seat_id = _seat_id
 
 
 def enqueue_seat(
@@ -1168,6 +1176,10 @@ def render_brief(
         "\"summary\", \"job_ids\", \"paper_id\", \"primary_endpoint_verdict\": "
         "\"met|failed|inconclusive|pending\", \"reason\"}`. Only status is required (job_ids, "
         "reason where they apply); the control plane fills the rest.",
+        "- Frozen for a line-level fact (shared control misses your registered criterion, shared "
+        "solver lacks a capability)? Add `reopen_when`: [{kind: control_receipt, checks: [[field, "
+        "op, value]]} | {kind: line_capability, key}] (CODE/orchestrator/src/openlabs/reopen.py); "
+        "all true -> reopened once, this session, same pre-registration.",
     ]
     if handover:
         lines += ["", "## This seat", handover]

@@ -643,8 +643,17 @@ def _freeze(
     decided_by: str,
     reopen_conditions: Any = (),
     note: Mapping[str, Any] | None = None,
+    reopen_when: Any = None,
 ) -> None:
+    from .reopen import ReopenConditionError, normalize_conditions
+
     ledger = _ledger(paths, settings)
+    try:
+        when = normalize_conditions(reopen_when)
+    except ReopenConditionError as exc:
+        # An unusable condition never blocks the freeze; the topic just will not reopen.
+        when = []
+        note = {**dict(note or {}), "reopen_when_invalid": str(exc)[:300]}
     try:
         conditions = [
             {"type": str(item.get("type")), "description": str(item.get("description"))}
@@ -656,7 +665,7 @@ def _freeze(
         conditions = []
     decision = freeze_topic(
         ledger, topic_id, db=db, reason_class=reason_class, evidence=evidence,
-        decided_by=decided_by, reopen_conditions=conditions,
+        decided_by=decided_by, reopen_conditions=conditions, reopen_when=when,
     )
     report.cancelled.extend(decision.cancelled_tasks)
     if note:
@@ -780,6 +789,7 @@ def _on_research_result(db, paths, settings, report, *, topic, task, payload, ev
             db, paths, settings, report, topic_id=topic_id, reason_class=reason_class,
             evidence=[*declared_evidence, *evidence], decided_by=task_id,
             reopen_conditions=gate_result.get("reopen_conditions"), note=note,
+            reopen_when=gate_result.get("reopen_when"),
         )
         return "handled"
     if campaign_on_hold(db, settings, str(topic["campaign_id"])):
@@ -1080,7 +1090,8 @@ def apply_direction_decision(
         )
         _freeze(db, paths, settings, report, topic_id=topic_id,
                 reason_class=str(freeze["reason_class"]), evidence=evidence,
-                decided_by=task_id, reopen_conditions=freeze.get("reopen_conditions"))
+                decided_by=task_id, reopen_conditions=freeze.get("reopen_conditions"),
+                reopen_when=freeze.get("reopen_when"))
         return finish("frozen", {"choice": choice, "reason_class": freeze["reason_class"]})
     source_task_id = str(record["source_task_id"])
     if trigger == TRIGGER_BUDGET or float(campaign.get("agent_seconds_used") or 0) + 1 > float(
