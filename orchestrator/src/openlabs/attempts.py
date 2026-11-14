@@ -1248,6 +1248,17 @@ def _artifact_stage_manifest(workspace: AttemptWorkspace) -> dict[str, str]:
     return manifest
 
 
+def _attempt_started(workspace: AttemptWorkspace) -> float | None:
+    """When the attempt workspace was created (POSIX seconds), if recorded."""
+
+    try:
+        metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+        text = str(metadata.get("created_at") or "").replace("Z", "+00:00")
+        return datetime.fromisoformat(text).timestamp() if text else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def publish_staged_artifacts(
     paths: WorkspacePaths,
     source_payload: Mapping[str, Any],
@@ -1287,10 +1298,16 @@ def publish_staged_artifacts(
         (paths.artifacts / "objects").resolve(),
         (paths.artifacts / "result-bundles").resolve(),
     )
+    started = _attempt_started(workspace)
     for source in declared:
         if _inside(source, staging) or _inside(source, workspace.campaign_root):
             continue
         if any(_inside(source, root) for root in immutable_roots):
+            continue
+        if started is not None and source.is_file() and source.stat().st_mtime < started:
+            # Cited, not produced: a file unchanged since before the attempt began
+            # (the task's own input packet, an earlier attempt's evidence). The
+            # gate verified its hash and the archive already holds a copy.
             continue
         if _inside(source, paths.artifacts):
             raise AttemptWorkspaceError(

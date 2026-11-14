@@ -2670,6 +2670,21 @@ def ingest_results(
                         else None
                     ),
                 )
+                # Staged files are frozen now and bound to the frozen hash; a log that
+                # grew after the owner (or the Stop hook) hashed it is corrected.
+                normalized, corrected = owner_mode.settle_staged_artifacts(
+                    normalized,
+                    attempt_workspace.artifact_staging_root
+                    if attempt_workspace is not None
+                    else None,
+                )
+                if corrected:
+                    runtime["staged_hash_corrections"] = corrected
+                    db.record_event_once(
+                        "task", task_id, "staged_artifact_hash_corrected",
+                        {"attempt_id": attempt_id, "corrections": corrected},
+                        event_key=f"staged-hash:{attempt_id}",
+                    )
                 if normalized != payload:
                     atomic_write_json(result_path, normalized)
                     actual_sha = sha256_file(result_path)

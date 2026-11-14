@@ -844,3 +844,32 @@ def test_replay_container_fallback_needs_the_switch_and_a_verified_container(
     assert errors == []
     assert receipts[0]["status"] == "passed"
     assert receipts[0]["sandbox"] == "none-verified-container"
+
+
+def test_existing_live_file_may_be_cited_as_evidence(tmp_path) -> None:
+    # 2026-11-14: direction decisions cited their own input packet
+    # (program-control/direction-packets/...), which the control plane wrote before
+    # the attempt began; seven were refused as "new artifact ... live artifact path".
+    import os
+
+    paths = _paths(tmp_path)
+    _db, task = _leased_task(paths)
+    packet = paths.artifacts / "program-control" / "direction-packets" / "p.json"
+    packet.parent.mkdir(parents=True)
+    packet.write_text("{}\n", encoding="utf-8")
+    workspace = prepare_attempt_workspace(paths, task, {})
+    before = packet.stat().st_mtime - 3600
+    os.utime(packet, (before, before))
+    artifact = {
+        "artifact_id": "direction-packet",
+        "uri": packet.resolve().as_uri(),
+        "sha256": sha256_file(packet),
+        "kind": "decision_packet",
+    }
+    publish_staged_artifacts(
+        paths,
+        {"artifacts": [artifact]},
+        {"artifacts": [artifact]},
+        workspace=workspace,
+        attempt_id=str(task["current_attempt_id"]),
+    )

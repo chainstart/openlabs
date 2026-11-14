@@ -227,11 +227,73 @@ def _with_staged(
             continue
         digest = sha256_file(resolved)
         artifact_id = f"staged-{digest[:16]}"
-        if artifact_id in ids:
-            continue
+        # Two files with the same bytes (empty logs) are still two staged files;
+        # skipping the second left it undeclared and the commit refused it.
+        suffix = 1
+        while artifact_id in ids:
+            suffix += 1
+            artifact_id = f"staged-{digest[:16]}-{suffix}"
         ids.add(artifact_id)
         result.append({"artifact_id": artifact_id, **entry, "sha256": digest})
     return result
+
+
+def settle_staged_artifacts(
+    payload: Mapping[str, Any],
+    staging_root: Path | None,
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Freeze each declared file in attempt staging and bind it to its frozen hash.
+
+    A staged file is new output of this attempt; its hash is the control plane's to
+    compute, not the owner's. Each one is replaced by a read-only copy (a process
+    still writing to the old inode no longer changes it) and the copy's hash is
+    recorded. A declared hash that differs is corrected, never refused; the pair is
+    returned so the caller can record it. Artifacts outside staging (existing,
+    committed objects) are left alone and stay strictly hash-checked by the gate.
+    """
+
+    import os
+    import tempfile
+
+    result = dict(payload)
+    artifacts = payload.get("artifacts")
+    if staging_root is None or not staging_root.is_dir() or not isinstance(artifacts, list):
+        return result, []
+    staging = staging_root.resolve()
+    frozen: dict[Path, str] = {}
+    corrections: list[dict[str, str]] = []
+    settled: list[Any] = []
+    for item in artifacts:
+        if not isinstance(item, Mapping) or not str(item.get("uri") or "").startswith("file:"):
+            settled.append(item)
+            continue
+        path = _uri_path(str(item["uri"]))
+        if (path is None or not path.is_relative_to(staging) or path.is_symlink()
+                or not path.is_file()):
+            settled.append(item)
+            continue
+        if path not in frozen:
+            handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+            try:
+                with os.fdopen(handle, "wb") as target, path.open("rb") as source:
+                    while chunk := source.read(1 << 20):
+                        target.write(chunk)
+                Path(temporary).chmod(0o444)
+                os.replace(temporary, path)
+            except BaseException:
+                Path(temporary).unlink(missing_ok=True)
+                raise
+            frozen[path] = sha256_file(path)
+        entry = dict(item)
+        declared = str(entry.get("sha256") or "")
+        if declared != frozen[path]:
+            corrections.append({"artifact_id": str(entry.get("artifact_id") or ""),
+                                "path": path.relative_to(staging).as_posix(),
+                                "declared": declared, "actual": frozen[path]})
+            entry["sha256"] = frozen[path]
+        settled.append(entry)
+    result["artifacts"] = settled
+    return result, corrections
 
 
 def relocate_bulk_files(
@@ -247,9 +309,19 @@ def relocate_bulk_files(
     cost a seat. A new or changed such file is moved to ``staging/workspace/<path>``;
     when the canonical campaign already has the file, its canonical bytes are put
     back so the promotion does not delete it. Returns ``(relative, old, new)`` per file.
+
+    Only files the data boundary checks are moved: ``results/`` (the runner's own
+    agent-stdout.log, agent-stderr.log and worker.log, still open for writing when the
+    Stop hook runs) and the runtime directories are not campaign state. Moving those
+    open logs made their hash change after registration (2026-11-14, 26 seats refused).
     """
 
-    from .attempts import _ARTIFACT_ONLY_SUFFIXES, DEFAULT_MAX_DATA_FILE_BYTES
+    from .attempts import (
+        _ARTIFACT_ONLY_SUFFIXES,
+        _ATTEMPT_RUNTIME_DIRS,
+        DEFAULT_MAX_DATA_FILE_BYTES,
+        _generated_cache,
+    )
 
     if workspace is None or staging_root is None or not workspace.is_dir():
         return []
@@ -257,12 +329,13 @@ def relocate_bulk_files(
     staging = staging_root.resolve()
     if staging == root or staging.is_relative_to(root):
         return []
+    skipped = _DIGEST_SKIP_DIRS | _ATTEMPT_RUNTIME_DIRS | {"results"}
     moved: list[tuple[str, Path, Path]] = []
     for path in sorted(root.rglob("*")):
         if path.is_symlink() or not path.is_file():
             continue
         relative = path.relative_to(root)
-        if relative.parts and relative.parts[0] in _DIGEST_SKIP_DIRS:
+        if relative.parts and relative.parts[0] in skipped or _generated_cache(relative):
             continue
         lowered = relative.as_posix().lower()
         bulky = path.stat().st_size > DEFAULT_MAX_DATA_FILE_BYTES
