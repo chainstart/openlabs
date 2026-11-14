@@ -885,6 +885,7 @@ _METADATA_FIELDS = frozenset(
         "proposer_provider",
         "card_path",
         "card_errors",
+        "card_check",
         "routine_fallback",
         "cost_estimate",
         "admission",

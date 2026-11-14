@@ -194,9 +194,13 @@ Each field is there because the gate needs it to decide:
   `condition_responses[]` (`condition`: index into the packet's `target.reopen_conditions`,
   `response`) for every condition marked `answer_required`.
 
-The control plane checks the structure. A card missing a field is recorded with the failed
-checks and gets one automatic repair task; a second failure is final. Checking your own cards is
-still cheaper.
+The control plane checks the structure. Mechanical slips (a number written as text, a nameless
+escalation, an unknown tier, a missing empty list) are fixed and noted; gaps the gate can weigh
+(audience evidence, a data source's version or licence, cost numbers, an occupancy search) travel
+to the gate as warnings. Only a gap admission cannot judge around (no question, no complete
+primary endpoint, no data source with a DOI or URL, no named routine venue, no closest prior
+work, unverified data access, the compute plan, a line card's precheck, licences or fees)
+rejects the card; it then gets one automatic repair task, and a second failure is final.
 
 ## After admission
 

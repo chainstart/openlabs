@@ -259,14 +259,28 @@ def test_topic_card_contract_names_missing_fields() -> None:
     missing = _card()
     for name in ("audience", "cost_estimate", "venues"):
         missing.pop(name)
-    errors = validate_topic_card(missing, current_year=YEAR).errors
-    assert any(error.startswith("audience is missing") for error in errors)
-    assert any(error.startswith("cost_estimate is missing") for error in errors)
-    assert any(error.startswith("venues is missing") for error in errors)
+    check = validate_topic_card(missing, current_year=YEAR)
+    # Audience evidence is for the gate to weigh: a warning, not a rejection.
+    assert any(error.startswith("audience is missing") for error in check.warnings)
+    assert any(error.startswith("cost_estimate is missing") for error in check.errors)
+    assert any(error.startswith("venues is missing") for error in check.errors)
     stale = _card()
     for item in stale["audience"]["citations"]:
         item["year"] = YEAR - 6
-    assert any("last 3 years" in e for e in validate_topic_card(stale, current_year=YEAR).errors)
+    stale_check = validate_topic_card(stale, current_year=YEAR)
+    assert stale_check.valid and any("last 3 years" in e for e in stale_check.warnings)
+    # Only gaps admission cannot judge around reject the card.
+    for name in ("primary_endpoint", "data_sources", "question"):
+        gap = _card()
+        gap.pop(name)
+        assert not validate_topic_card(gap, current_year=YEAR).valid, name
+    no_venue = _card()
+    no_venue["venues"]["routine"] = []
+    assert any(e.startswith("venues.routine needs a named routine target venue")
+               for e in validate_topic_card(no_venue, current_year=YEAR).errors)
+    one_venue = _card()
+    one_venue["venues"]["routine"] = one_venue["venues"]["routine"][:1]
+    assert validate_topic_card(one_venue, current_year=YEAR).valid
     wet = _card(computational_only=False)
     assert "computational_only must be true" in validate_topic_card(wet).errors
     unverified = _card()
@@ -382,7 +396,7 @@ def test_invalid_cards_are_rejected_with_their_missing_fields(tmp_path, monkeypa
     db = _db(paths)
     settings = _settings()
     no_audience = _card(1, RECEIPT_SHA)
-    no_audience.pop("audience")
+    no_audience.pop("primary_endpoint")
     wet = _card(2, RECEIPT_SHA, computational_only=False)
     unverified = _card(3, RECEIPT_SHA)
     unverified["decisive_analysis"]["data_access_verified"] = False
@@ -398,7 +412,7 @@ def test_invalid_cards_are_rejected_with_their_missing_fields(tmp_path, monkeypa
     rejected = report.program["rejected_cards"]
     assert len(rejected) == 4
     reasons = [" | ".join(item["errors"]) for item in rejected]
-    assert any("audience is missing" in text for text in reasons)
+    assert any("primary_endpoint must be an object" in text for text in reasons)
     assert any("computational_only must be true" in text for text in reasons)
     assert any("data_access_verified must be true" in text for text in reasons)
     assert any("not a hash-bound artifact" in text for text in reasons)

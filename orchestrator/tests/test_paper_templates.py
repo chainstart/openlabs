@@ -59,20 +59,23 @@ def test_template_fields_are_optional_and_checked_when_present() -> None:
 
     no_search = _templated_card()
     no_search.pop("occupancy_search")
-    assert any(e.startswith("occupancy_search is missing")
-               for e in validate_topic_card(no_search, current_year=flow.YEAR).errors)
+    # Template fields are evidence for the gate: gaps are warnings, not rejections
+    # (topic-a6968ee3 was rejected for a missing occupancy_search on 2026-11-12).
+    check = validate_topic_card(no_search, current_year=flow.YEAR)
+    assert check.valid and any(e.startswith("occupancy_search is missing")
+                               for e in check.warnings)
     thin = _templated_card(occupancy_search={**SEARCH, "queries": []})
     assert "occupancy_search.queries must be a non-empty array" in validate_topic_card(
-        thin, current_year=flow.YEAR).errors
+        thin, current_year=flow.YEAR).warnings
     lone = _templated_card(series={"members": ["MoSSe"], "shared_pipeline": "x"})
     assert any("at least 2 adjacent systems" in e
-               for e in validate_topic_card(lone, current_year=flow.YEAR).errors)
+               for e in validate_topic_card(lone, current_year=flow.YEAR).warnings)
     unshared = _templated_card(series={"members": ["MoSSe", "WSSe"]})
     assert "series.shared_pipeline is missing (what the members share)" in validate_topic_card(
-        unshared, current_year=flow.YEAR).errors
+        unshared, current_year=flow.YEAR).warnings
     lineless = flow._card(paper_template="2d-anode", occupancy_search=dict(SEARCH))
     assert "paper_template needs research_line" in validate_topic_card(
-        lineless, current_year=flow.YEAR).errors
+        lineless, current_year=flow.YEAR).warnings
 
 
 def test_line_summary_carries_the_templates(tmp_path) -> None:
@@ -102,16 +105,20 @@ def test_scout_packet_names_templates_and_intake_checks_the_template_id(tmp_path
     packet = json.loads(Path(scout["input_path"]).read_text(encoding="utf-8"))
     assert packet["research_line_summary"]["paper_templates"][0]["id"] == "2d-anode"
     registered = report.program["cards_registered"]
-    assert len(registered) == 1
-    topic = open_topic_ledger(paths, settings.program).topic(registered[0]["topic_id"])
-    assert topic["status"] == "proposed"
-    rejected = report.program["rejected_cards"]
-    assert len(rejected) == 1
-    assert any("'perovskite-pv' is not a paper_templates id" in e for e in rejected[0]["errors"])
+    # An unknown template id is a warning the gate sees, not a rejection.
+    assert len(registered) == 2 and report.program["rejected_cards"] == []
+    ledger = open_topic_ledger(paths, settings.program)
+    topics = [ledger.topic(item["topic_id"]) for item in registered]
+    assert {topic["status"] for topic in topics} == {"proposed"}
+    flagged = [topic for topic in topics if topic.get("card_check")]
+    assert len(flagged) == 1
+    assert any("'perovskite-pv' is not a paper_templates id" in e
+               for e in flagged[0]["card_check"]["warnings"])
     admission = flow._admission_task(db)
     assert "paper_template" in admission["objective"]
-    entry = flow._packet(admission)["topic_cards"][0]
-    assert entry["card"]["paper_template"] == "2d-anode"
+    entries = flow._packet(admission)["topic_cards"]
+    assert {entry["card"]["paper_template"] for entry in entries} == {"2d-anode", "perovskite-pv"}
+    assert [bool(entry.get("card_check")) for entry in entries].count(True) == 1
 
 
 def test_queued_template_scouts_copy_entries_and_admission_is_a_checklist(tmp_path, monkeypatch):

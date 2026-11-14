@@ -111,7 +111,10 @@ expensive. Check that `cost_estimate.compute_plan` fits the work: GPU memory for
 ailab cores, memory and hours for heavy CPU work, nothing heavier than minutes in
 `container_cpu`. A location this instance cannot serve is rejected by the control plane
 regardless of your verdict. A card entry's `asset_reuse` lists the indexed assets it relies on
-(with use counts and last verification), when the packet has one.
+(with use counts and last verification), when the packet has one. A card entry's `card_check`
+lists the control plane's mechanical fixes (`normalized`) and the structural gaps it did not
+reject the card for (`warnings`: audience evidence, a data source's version or licence note, cost
+numbers, an occupancy search, an unknown asset or template id); weigh them like any other gap.
 
 ## Venues, fees and ranking evidence
 

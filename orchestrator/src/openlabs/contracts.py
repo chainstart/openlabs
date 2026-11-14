@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -725,13 +726,21 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
 
     The check only establishes that every field the admission gate needs is
     present and well formed; whether the answers are good is the gate's call.
-    Error strings name the missing or malformed field.
+    ``errors`` are gaps that change what admission can judge or a hard limit (no
+    question, no pre-registrable primary endpoint, no data source, no target venue,
+    no closest prior work, unverified data access, a non-computational topic, the
+    compute plan, a line card's precheck, licences and fees, a revision's answers):
+    the card is rejected and gets one repair. Everything else is a ``warning``
+    recorded with the card and shown to the admission gate (audience evidence,
+    data-source version or licence notes, cost numbers, occupancy search, ...).
+    Run :func:`normalize_topic_card` first to fix the purely mechanical slips.
     """
 
     if not isinstance(card, Mapping):
         return ValidationResult(False, ("topic card must be a JSON object",))
     year = current_year or datetime.now(UTC).year
     errors: list[str] = []
+    warnings: list[str] = []
     schema = card.get("schema_version")
     if schema is not None and schema != TOPIC_CARD_SCHEMA:
         errors.append(f"schema_version must be {TOPIC_CARD_SCHEMA}")
@@ -744,39 +753,44 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
         venues = {}
     else:
         routine = venues.get("routine")
-        if not isinstance(routine, list) or len(routine) < 2:
-            errors.append("venues.routine needs two routine candidate venues")
+        named = [
+            item for item in routine if isinstance(item, Mapping) and _text(item.get("name"))
+        ] if isinstance(routine, list) else []
+        if not named:
+            errors.append("venues.routine needs a named routine target venue (two preferred)")
         else:
+            if len(named) < 2:
+                warnings.append("venues.routine names one routine venue (two preferred)")
             for index, item in enumerate(routine):
                 if not isinstance(item, Mapping) or not _text(item.get("name")):
-                    errors.append(f"venues.routine[{index}].name is missing")
+                    warnings.append(f"venues.routine[{index}].name is missing")
         escalation = venues.get("escalation")
         # An escalation names its venue in ``name`` or, for alternatives, a ``venues`` list.
         if escalation is not None and not escalation_venue_names(escalation):
-            errors.append(
+            warnings.append(
                 "venues.escalation must be null or an object with a name (or a venues list)"
             )
     venue_names = _venue_names(venues)
 
     audience = card.get("audience")
     if not isinstance(audience, Mapping):
-        errors.append("audience is missing (who cares, with two recent candidate-venue papers)")
+        warnings.append("audience is missing (who cares, with two recent candidate-venue papers)")
     else:
         if not _text(audience.get("who")):
-            errors.append("audience.who is missing")
+            warnings.append("audience.who is missing")
         citations = audience.get("citations")
         recent = 0
         if not isinstance(citations, list):
-            errors.append("audience.citations is missing")
+            warnings.append("audience.citations is missing")
             citations = []
         for index, item in enumerate(citations):
             prefix = f"audience.citations[{index}]"
             if not isinstance(item, Mapping) or not _text(item.get("citation")):
-                errors.append(f"{prefix}.citation is missing")
+                warnings.append(f"{prefix}.citation is missing")
                 continue
             published = item.get("year")
             if not isinstance(published, int) or isinstance(published, bool):
-                errors.append(f"{prefix}.year must be an integer")
+                warnings.append(f"{prefix}.year must be an integer")
                 continue
             # Readers' papers in other venues are ordinary evidence of the audience; only
             # papers in the candidate venues count towards the venue-readership minimum.
@@ -785,7 +799,7 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
             if year - AUDIENCE_RECENT_YEARS <= published <= year:
                 recent += 1
         if recent < 2:
-            errors.append(
+            warnings.append(
                 "audience.citations needs at least two papers from the last "
                 f"{AUDIENCE_RECENT_YEARS} years published in candidate venues"
             )
@@ -797,14 +811,14 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
         for index, item in enumerate(prior):
             for name in ("citation", "what_it_shows", "our_difference"):
                 if not isinstance(item, Mapping) or not _text(item.get(name)):
-                    errors.append(f"closest_prior_work[{index}].{name} is missing")
+                    warnings.append(f"closest_prior_work[{index}].{name} is missing")
 
     decisive = card.get("decisive_analysis")
     if not isinstance(decisive, Mapping):
         errors.append("decisive_analysis is missing")
     else:
         if not _text(decisive.get("description")):
-            errors.append("decisive_analysis.description is missing")
+            warnings.append("decisive_analysis.description is missing")
         if decisive.get("data_access_verified") is not True:
             errors.append("decisive_analysis.data_access_verified must be true")
         receipt = decisive.get("access_receipt")
@@ -830,12 +844,12 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
                 errors.append(f"{prefix} needs a stable doi or url")
             for name in ("version", "license"):
                 if not _text(item.get(name)):
-                    errors.append(f"{prefix}.{name} is missing")
+                    warnings.append(f"{prefix}.{name} is missing")
 
     if card.get("computational_only") is not True:
         errors.append("computational_only must be true")
     if not _text(card.get("computational_only_rationale")):
-        errors.append(
+        warnings.append(
             "computational_only_rationale is missing (why no wet lab or real-world interaction)"
         )
 
@@ -845,27 +859,27 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
     else:
         for name in COST_ESTIMATE_FIELDS:
             if not _nonnegative_number(cost.get(name)):
-                errors.append(f"cost_estimate.{name} must be a non-negative number")
+                warnings.append(f"cost_estimate.{name} must be a non-negative number")
         if not _text(cost.get("basis")):
-            errors.append("cost_estimate.basis is missing")
+            warnings.append("cost_estimate.basis is missing")
         errors.extend(compute_plan_errors(cost))
 
     assets = card.get("reusable_assets")
     if not isinstance(assets, list):
-        errors.append("reusable_assets must be an array (possibly empty)")
+        warnings.append("reusable_assets must be an array (possibly empty)")
 
     ledger_check = card.get("ledger_check")
     if not isinstance(ledger_check, Mapping) or not isinstance(
         ledger_check.get("compared_topic_ids"), list
     ):
-        errors.append("ledger_check.compared_topic_ids must be an array")
+        warnings.append("ledger_check.compared_topic_ids must be an array")
 
     if card.get("research_line") is not None:
         errors.extend(research_line_card_errors(card, venues))
 
     tier = card.get("target_tier")
     if tier is not None and tier not in TOPIC_TIERS:
-        errors.append("target_tier must be routine or escalation")
+        warnings.append("target_tier must be routine or escalation")
     if card.get("reopens") is not None:
         basis = card.get("reopen_basis")
         if not _text(card.get("reopens")):
@@ -876,7 +890,7 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
             or not _text(basis.get("description"))
         ):
             errors.append("reopen_basis needs a type and a description")
-    errors.extend(paper_template_errors(card))
+    warnings.extend(paper_template_errors(card))
     if card.get("revises") is not None:
         # A revision card answers the reopen conditions of the held or fixably
         # rejected topic it revises (the control plane sets ``revises``).
@@ -898,7 +912,73 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
                     f"condition_responses[{index}] needs condition (index into the revised "
                     "topic's reopen_conditions) and response"
                 )
-    return ValidationResult(not errors, tuple(errors))
+    return ValidationResult(not errors, tuple(errors), tuple(warnings))
+
+
+def _number_from_text(value: Any) -> Any:
+    """``"3600"``/``"0.5"`` -> number; anything else unchanged."""
+
+    if isinstance(value, str) and re.fullmatch(r"\s*\d+(\.\d+)?\s*", value):
+        number = float(value)
+        return int(number) if number.is_integer() else number
+    return value
+
+
+def normalize_topic_card(card: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Fix the purely mechanical slips of a topic card; return the card and what changed.
+
+    Only formatting is touched (schema tag, numbers written as text, an empty
+    escalation, an unknown tier, missing empty lists, the one allowed precheck
+    ``on_failure``). Nothing the admission gate judges is invented: a missing
+    endpoint, data source, venue or receipt stays missing and is an error.
+    """
+
+    fixed = copy.deepcopy(dict(card))
+    notes: list[str] = []
+    if fixed.get("schema_version") not in (None, TOPIC_CARD_SCHEMA):
+        notes.append(f"schema_version set to {TOPIC_CARD_SCHEMA}")
+        fixed["schema_version"] = TOPIC_CARD_SCHEMA
+    audience = fixed.get("audience")
+    if isinstance(audience, dict) and isinstance(audience.get("citations"), list):
+        for index, item in enumerate(audience["citations"]):
+            if isinstance(item, dict) and isinstance(item.get("year"), str):
+                year = _number_from_text(item["year"])
+                if isinstance(year, int):
+                    item["year"] = year
+                    notes.append(f"audience.citations[{index}].year read as a number")
+    cost = fixed.get("cost_estimate")
+    if isinstance(cost, dict):
+        for name in COST_ESTIMATE_FIELDS:
+            value = _number_from_text(cost.get(name))
+            if value is not cost.get(name):
+                cost[name] = value
+                notes.append(f"cost_estimate.{name} read as a number")
+    venues = fixed.get("venues")
+    if (
+        isinstance(venues, dict)
+        and venues.get("escalation") is not None
+        and not escalation_venue_names(venues.get("escalation"))
+    ):
+        venues["escalation"] = None
+        notes.append("venues.escalation without a venue name set to null")
+    if fixed.get("target_tier") is not None and fixed.get("target_tier") not in TOPIC_TIERS:
+        notes.append(f"target_tier {fixed.get('target_tier')!r} dropped (routine or escalation)")
+        fixed.pop("target_tier")
+    if not isinstance(fixed.get("reusable_assets"), list):
+        notes.append("reusable_assets was not an array; set to []")
+        fixed["reusable_assets"] = []
+    ledger_check = fixed.get("ledger_check")
+    if not isinstance(ledger_check, dict):
+        fixed["ledger_check"] = {"compared_topic_ids": []}
+        notes.append("ledger_check.compared_topic_ids set to []")
+    elif not isinstance(ledger_check.get("compared_topic_ids"), list):
+        ledger_check["compared_topic_ids"] = []
+        notes.append("ledger_check.compared_topic_ids set to []")
+    precheck = fixed.get("feasibility_precheck")
+    if isinstance(precheck, dict) and not _text(precheck.get("on_failure")):
+        precheck["on_failure"] = "freeze"
+        notes.append("feasibility_precheck.on_failure set to freeze (the only allowed value)")
+    return fixed, notes
 
 
 SERIES_MIN_MEMBERS = 2

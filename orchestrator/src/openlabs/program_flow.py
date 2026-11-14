@@ -46,6 +46,7 @@ from .contracts import (
     canonical_json_bytes,
     compute_plan_locations,
     data_source_identifiers,
+    normalize_topic_card,
     sha256_file,
     validate_topic_admission,
     validate_topic_card,
@@ -801,21 +802,27 @@ def card_problems(
     *,
     receipt_digests: set[str] | None,
     ledger_document: Mapping[str, Any] | None = None,
+    warnings: list[str] | None = None,
 ) -> list[str]:
     """Every machine check of a card: contract, asset references, compute plan, receipt.
 
+    Returns the errors that reject the card (see ``validate_topic_card``); checks that
+    do not change what admission can judge are appended to ``warnings`` instead.
     With the ledger, a revision card must also answer every reopen condition of
     the topic it revises (a fixable format problem, so it goes to repair).
     """
 
-    errors = list(validate_topic_card(card).errors)
+    validation = validate_topic_card(card)
+    errors = list(validation.errors)
+    notes = warnings if warnings is not None else []
+    notes.extend(validation.warnings)
     template = str(card.get("paper_template") or "").strip()
     line = str(card.get("research_line") or "").strip()
     if template and line:
         known = {str(item.get("id")) for item in line_templates(
             research_lines_document(paths, settings), line)}
         if template not in known:
-            errors.append(
+            notes.append(
                 f"paper_template {template!r} is not a paper_templates id of research line {line}"
                 + (f" (known: {', '.join(sorted(known))})" if known else " (the line has none)")
             )
@@ -829,7 +836,8 @@ def card_problems(
                 "condition_responses must answer reopen condition(s) "
                 f"{problem.split(':', 1)[1]} of {card['revises']}"
             )
-    errors.extend(asset_library.card_reference_errors(paths, settings, card))
+    # A wrong or archived asset id is a reference slip; the gate sees the warning.
+    notes.extend(asset_library.card_reference_errors(paths, settings, card))
     location_problem = compute_location_problem(settings, card)
     if location_problem is not None:
         errors.append(location_problem)
@@ -888,9 +896,14 @@ def intake_card(
         card["repair_of"] = repair_of
     if revises:
         card["revises"] = revises
+    card, normalized = normalize_topic_card(card)
+    warnings: list[str] = []
     errors = card_problems(paths, settings, card, receipt_digests=receipt_digests,
-                           ledger_document=ledger.read())
+                           ledger_document=ledger.read(), warnings=warnings)
     metadata = _card_metadata(project, card, source_task_id=source_task_id, provider=provider)
+    if normalized or warnings:
+        # Mechanical fixes and non-blocking gaps travel with the card to the gate.
+        metadata["card_check"] = {"normalized": normalized[:20], "warnings": warnings[:40]}
     if repair_of:
         metadata["repair_of"] = repair_of
     repairable = source_task_id is not None and not repair_of
@@ -1233,8 +1246,8 @@ def schedule_card_repairs(
             continue
         provider = str(topic.get("proposer_provider") or HUMAN_PROVIDER)
         source_task_id = str(topic.get("source_task_id") or "") or None
-        errors = card_problems(paths, settings, card, receipt_digests=digests,
-                               ledger_document=ledger.read())
+        errors = card_problems(paths, settings, normalize_topic_card(card)[0],
+                               receipt_digests=digests, ledger_document=ledger.read())
         if not errors:
             # The card passes the current checks as it stands: register it again.
             outcome = intake_card(
@@ -1699,6 +1712,9 @@ def schedule_topic_admission(
             "proposer_provider": provider,
             "card": card,
         }
+        if isinstance(topic.get("card_check"), Mapping):
+            # Non-blocking gaps found at intake (audience evidence, licence notes, ...).
+            entry["card_check"] = dict(topic["card_check"])
         revised = find_topic(snapshot_document, str(topic.get("revision_of") or ""))
         if revised is not None:
             # A revision card is checked against these conditions only.

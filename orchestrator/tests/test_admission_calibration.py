@@ -13,6 +13,7 @@ from openlabs import program_flow as pf
 from openlabs.contracts import (
     ADMISSION_POLICY_VERSION,
     validate_topic_admission,
+    normalize_topic_card,
     validate_topic_card,
 )
 from openlabs.program import (
@@ -106,8 +107,10 @@ def test_card_contract_accepts_audience_papers_outside_the_candidate_venues() ->
     few = flow._card()
     for item in few["audience"]["citations"]:
         item["venue"] = "Some Other Journal"
-    errors = validate_topic_card(few, current_year=flow.YEAR).errors
-    assert any("at least two papers" in e for e in errors)
+    # It is a warning shown to the gate, not a reason to reject the card.
+    check = validate_topic_card(few, current_year=flow.YEAR)
+    assert check.valid
+    assert any("at least two papers" in e for e in check.warnings)
     # An escalation may list its venues instead of a single name.
     listed = flow._card()
     listed["venues"]["escalation"] = {"condition": "only if H1 holds on both cohorts",
@@ -116,7 +119,10 @@ def test_card_contract_accepts_audience_papers_outside_the_candidate_venues() ->
     empty = flow._card()
     empty["venues"]["escalation"] = {"condition": "never named"}
     assert any(e.startswith("venues.escalation must be null")
-               for e in validate_topic_card(empty, current_year=flow.YEAR).errors)
+               for e in validate_topic_card(empty, current_year=flow.YEAR).warnings)
+    # Normalization turns the nameless escalation into null.
+    fixed, notes = normalize_topic_card(empty)
+    assert fixed["venues"]["escalation"] is None and notes
 
 
 # --------------------------------------------------------------------------- conditional admit
@@ -196,8 +202,9 @@ def test_rejected_is_left_only_through_the_guarded_releases(tmp_path) -> None:
 
 
 def _bad_card(n: int) -> dict:
+    # A gap admission cannot judge around: the endpoint has no metric.
     card = flow._card(n, flow.RECEIPT_SHA)
-    card["audience"].pop("who")
+    card["primary_endpoint"].pop("metric")
     return card
 
 
@@ -215,7 +222,7 @@ def test_invalid_card_gets_one_repair_task_and_the_fixed_card_is_proposed(tmp_pa
     assert task["runner"] in {"worker_gpt", "worker_claude"} or task["runner"].startswith("light")
     packet = json.loads(Path(task["input_path"]).read_text(encoding="utf-8"))
     assert packet["repair_of"] == original_id
-    assert any("audience.who" in error for error in packet["errors"])
+    assert any("primary_endpoint.metric" in error for error in packet["errors"])
     assert flow.RECEIPT_SHA in packet["receipt_digests"]
     ledger = _ledger(paths, settings)
     assert ledger.topic(original_id)["card_repair"]["status"] == "scheduled"
@@ -444,3 +451,25 @@ def test_rejections_are_revisable_only_when_marked_fixable(tmp_path, monkeypatch
                            "data_sources": ["s"], "primary_endpoint": "e"}, db=db, decided_by="s")
     with pytest.raises(ValueError, match="not a judged rejection"):
         pf.mark_revisable(db, paths, settings, "fresh", decided_by="x", reason="y")
+
+
+def test_mechanical_card_slips_are_normalized_not_rejected() -> None:
+    card = flow._card()
+    card["schema_version"] = "openlabs.topic_card.v0"
+    card["audience"]["citations"][0]["year"] = str(card["audience"]["citations"][0]["year"])
+    card["cost_estimate"]["agent_seconds"] = "3600"
+    card["target_tier"] = "top"
+    card["reusable_assets"] = None
+    card.pop("ledger_check")
+    assert not validate_topic_card(card, current_year=flow.YEAR).valid
+    fixed, notes = normalize_topic_card(card)
+    assert validate_topic_card(fixed, current_year=flow.YEAR).valid
+    assert fixed["cost_estimate"]["agent_seconds"] == 3600
+    assert "target_tier" not in fixed and fixed["reusable_assets"] == []
+    assert len(notes) == 6
+    # Nothing the gate judges is invented.
+    gap = flow._card()
+    gap.pop("primary_endpoint")
+    fixed_gap, _ = normalize_topic_card(gap)
+    assert "primary_endpoint" not in fixed_gap
+    assert not validate_topic_card(fixed_gap, current_year=flow.YEAR).valid

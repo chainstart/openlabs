@@ -386,12 +386,16 @@ def test_admission_rejects_unknown_or_archived_assets_and_flags_reuse(tmp_path, 
                            _card(n, RECEIPT_SHA, reusable_assets=refs), decided_by="manual:t",
                            provider="human", source_task_id=None, receipt_digests=None)
 
+    # A wrong asset reference is recorded for the gate, not a rejection.
+    ledger = open_topic_ledger(paths, settings.program)
     unknown = intake(1, ["no-such-asset"])
-    assert unknown["status"] == "rejected"
+    assert unknown["status"] == "proposed"
     assert any("'no-such-asset' is not in the reusable-asset index" in e
-               for e in unknown["errors"])
+               for e in ledger.topic(unknown["topic_id"])["card_check"]["warnings"])
     archived = intake(2, [{"asset_id": holder["archived"]}])
-    assert archived["status"] == "rejected" and "is archived" in archived["errors"][0]
+    assert archived["status"] == "proposed"
+    assert any("is archived" in e
+               for e in ledger.topic(archived["topic_id"])["card_check"]["warnings"])
     assert intake(3, [holder["pipeline"]])["status"] == "proposed"
 
     # Through the scout and the gate: the admission packet carries the reuse fact.
