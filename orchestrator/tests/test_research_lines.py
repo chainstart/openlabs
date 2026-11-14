@@ -207,7 +207,7 @@ def _line_setup(tmp_path, status: str):
 
 
 def test_line_project_cards_carry_the_line_and_the_packet_names_it(tmp_path, monkeypatch):
-    paths, db, settings = _line_setup(tmp_path, "not_ready")
+    paths, db, settings = _line_setup(tmp_path, "ready")
     card = _line_card(0, research_line="some-other-line")
     _, admission, report = flow._to_admission(paths, db, settings, monkeypatch, [card])
     assert report.errors == []
@@ -216,16 +216,54 @@ def test_line_project_cards_carry_the_line_and_the_packet_names_it(tmp_path, mon
     topic = open_topic_ledger(paths, settings.program).topic(registered[0]["topic_id"])
     assert topic["research_line"] == LINE  # the project's line, not the agent's
     packet = flow._packet(admission)
-    assert packet["research_lines"][LINE]["environment_status"] == "not_ready"
+    assert packet["research_lines"][LINE]["environment_status"] == "ready"
     assert packet["topic_cards"][0]["card"]["research_line"] == LINE
     labels = {item["label"] for item in packet["read_resources"]}
     assert "research-lines" in labels
     assert "research-lines.yaml" in admission["objective"]
 
 
-def test_a_card_of_a_line_without_ready_environment_is_held(tmp_path, monkeypatch):
+def test_a_line_without_ready_environment_gets_no_scout_and_no_review(tmp_path, monkeypatch):
+    # 2026-11-12/13: 24 gate admits were turned into control-plane holds because the
+    # line was not ready; 14 never left the hold. Now the tick skips such a line.
     paths, db, settings = _line_setup(tmp_path, "not_ready")
+    report = flow._tick(paths, settings, monkeypatch)
+    assert report.program["scouts_scheduled"] == []
+    assert report.program["scout_blocked"] == "research_line_environment_not_ready"
+    assert report.program["lines_environment_not_ready"] == {LINE: "not_ready"}
+    assert parallel._scouts(db) == []
+
+    # A card that is already proposed (by hand, or from before) waits unreviewed.
+    from openlabs.program_flow import intake_card, schedule_topic_admission
+    from openlabs.projects import load_project
+
+    project = load_project(paths.data / "workspaces" / "ai" / "projects" / "research-program"
+                           / "project.json")
+    receipt = paths.data / "receipts" / "data-access.json"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_bytes(flow.RECEIPT)
+    outcome = intake_card(db, paths, settings, project, _line_card(0), decided_by="manual:t",
+                          provider="human", source_task_id=None, receipt_digests=None)
+    assert outcome["status"] == "proposed", outcome
+    with db.connect() as connection:
+        admission_campaign = dict(connection.execute(
+            "SELECT * FROM campaigns WHERE campaign_id LIKE '%admission%' LIMIT 1").fetchone())
+    schedule = schedule_topic_admission(db, paths, settings, admission_campaign, epoch=1)
+    assert schedule.task_id is None
+    assert schedule.reason == "research_line_environment_not_ready"
+    topic = open_topic_ledger(paths, settings.program).topic(outcome["topic_id"])
+    assert topic["status"] == "proposed"
+
+    # Once the line is ready the waiting card goes to the gate.
+    _lines_file(paths, "ready")
+    schedule = schedule_topic_admission(db, paths, settings, admission_campaign, epoch=1)
+    assert schedule.task_id is not None
+
+
+def test_a_line_that_stops_being_ready_during_review_is_still_held(tmp_path, monkeypatch):
+    paths, db, settings = _line_setup(tmp_path, "ready")
     _, admission, _ = flow._to_admission(paths, db, settings, monkeypatch, [_line_card(0)])
+    _lines_file(paths, "not_ready")
     entry = flow._packet(admission)["topic_cards"][0]
     flow._complete(db, paths, admission["task_id"],
                    extra={"candidate_branches": [flow._branch(entry)]})

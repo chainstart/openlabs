@@ -208,6 +208,30 @@ def research_lines_document(
     return read_lines_or_none(paths.data / settings.program.research_lines_path)
 
 
+def lines_not_ready(
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    lines: Any,
+) -> dict[str, str]:
+    """``{line: environment status}`` of the given research lines that are not ready.
+
+    A topic of such a line could not run its first research task (the feasibility
+    precheck), so the program neither scouts nor reviews topics for it until the
+    line's environment is ``ready`` in registry/research-lines.yaml.
+    """
+
+    wanted = sorted({str(line).strip() for line in lines if str(line or "").strip()})
+    if not wanted:
+        return {}
+    document = research_lines_document(paths, settings)
+    if document is None:
+        # Without a readable direction file nothing is known to be unready; the
+        # admission-time hold still keeps such a topic from starting.
+        return {}
+    statuses = {line: environment_status(document, line) for line in wanted}
+    return {line: status for line, status in statuses.items() if status != ENVIRONMENT_READY}
+
+
 def program_projects(paths: WorkspacePaths) -> list[ProjectConfig]:
     """Active research-program projects (invalid configs are reported elsewhere)."""
 
@@ -630,16 +654,28 @@ def schedule_scouts(
         return [], "admission_paused"
     if status.free_slots <= 0:
         return [], "no_free_slot"
-    pool = len(_proposed_pool(document))
+    all_projects = program_projects(paths)
+    # No scout for a line whose environment is not ready, and its waiting cards do
+    # not fill the pool for the lines that can run (they wait for the environment).
+    blocked_lines = lines_not_ready(
+        paths, settings,
+        [project.research_line for project in all_projects]
+        + [topic.get("research_line") for topic in _proposed_pool(document)],
+    )
+    projects = [project for project in all_projects
+                if not project.research_line or project.research_line not in blocked_lines]
+    pool = len([topic for topic in _proposed_pool(document)
+                if str(topic.get("research_line") or "") not in blocked_lines])
     if pool >= program.candidate_pool_low_water:
         return [], "candidate_pool_at_low_water"
     if lead_short:
         return [], "lead_quota_short"
+    if all_projects and not projects:
+        return [], "research_line_environment_not_ready"
     in_flight = _program_tasks(db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?",
                                parameters=(SCOUT_TASK_TYPE,))
     moment = now or _now_moment()
     interval = timedelta(hours=program.scout_min_interval_hours)
-    projects = program_projects(paths)
     if program.max_concurrent_scouts <= 1:
         if in_flight:
             return [], "scout_in_flight"
@@ -1662,6 +1698,13 @@ def schedule_topic_admission(
         for topic in topics_by_status(ledger.read(), "proposed")
         if topic.get("program_project_id") == project.project_id
     ]
+    # A card of a line whose environment is not ready stays proposed, unreviewed:
+    # an admit could not start its precheck, so the review would only be held.
+    blocked_lines = lines_not_ready(
+        paths, settings, [topic.get("research_line") for topic in proposed])
+    waiting_for_line = [topic for topic in proposed
+                        if str(topic.get("research_line") or "") in blocked_lines]
+    proposed = [topic for topic in proposed if topic not in waiting_for_line]
     in_flight = {
         str(task["task_id"]): task
         for task in _program_tasks(db, statuses=IN_FLIGHT_STATUSES,
@@ -1684,7 +1727,9 @@ def schedule_topic_admission(
         pending.append(topic)
     if not pending:
         return ReviewSchedule(
-            reason="admission_batches_in_flight" if reviewing else "awaiting_topic_cards"
+            reason="admission_batches_in_flight" if reviewing
+            else "research_line_environment_not_ready" if waiting_for_line
+            else "awaiting_topic_cards"
         )
     cap = settings.program.max_concurrent_admissions
     if cap > 0 and len(in_flight) >= cap:
@@ -2475,6 +2520,8 @@ def run_program_pipeline(
             for item in scheduled
         ]
         info["scout_blocked"] = blocked
+        info["lines_environment_not_ready"] = lines_not_ready(
+            paths, settings, [project.research_line for project in program_projects(paths)])
         revisions, revision_blocked = schedule_revisions(
             db, paths, settings, lead_short=lead_quota_short(db, settings)
         )

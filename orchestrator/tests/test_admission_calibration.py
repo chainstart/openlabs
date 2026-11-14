@@ -296,8 +296,11 @@ def test_legacy_invalid_card_passing_the_current_checks_is_resubmitted_without_a
 
 
 def _line_hold(tmp_path, monkeypatch, branch_for):
-    paths, db, settings = lines._line_setup(tmp_path, "not_ready")
+    # A line that is not ready gets no scout and no review, so a hold now only
+    # happens when the environment goes away while the review runs.
+    paths, db, settings = lines._line_setup(tmp_path, "ready")
     flow._to_admission(paths, db, settings, monkeypatch, [lines._line_card(0)])
+    lines._lines_file(paths, "not_ready")
     entries, report = _judge(paths, db, settings, monkeypatch,
                              lambda entries: [branch_for(entries[0])])
     return paths, db, settings, entries[0]["topic_id"], report
