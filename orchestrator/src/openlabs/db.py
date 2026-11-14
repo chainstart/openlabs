@@ -1825,6 +1825,48 @@ class FactoryDB:
                 )
         return bool(changed)
 
+    def reassign_queued_task(
+        self,
+        task_id: str,
+        *,
+        runner: str,
+        fresh_session: bool,
+        event: str,
+        detail: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """Pin a still-queued task to another runner (owner mode: change of owner).
+
+        ``fresh_session`` drops the recorded session: a successor in another model
+        family cannot resume the old conversation and starts from the work log.
+        Returns False when the task is no longer queued.
+        """
+
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if fresh_session:
+                changed = connection.execute(
+                    """
+                    UPDATE tasks SET runner=?, runner_request=NULL, session_mode='fresh',
+                        agent_session_id=NULL, session_source_task_id=NULL, updated_at=?
+                    WHERE task_id=? AND status='queued'
+                    """,
+                    (runner, now, task_id),
+                ).rowcount
+            else:
+                changed = connection.execute(
+                    """
+                    UPDATE tasks SET runner=?, runner_request=NULL, updated_at=?
+                    WHERE task_id=? AND status='queued'
+                    """,
+                    (runner, now, task_id),
+                ).rowcount
+            if changed:
+                self._event(connection, "task", task_id, event,
+                            {"runner": runner, "fresh_session": fresh_session,
+                             **dict(detail or {})})
+        return bool(changed)
+
     def replan_streak(self, campaign_id: str) -> int:
         """Consecutive most-recent finished tasks of a campaign that ended ``needs_replan``.
 

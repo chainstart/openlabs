@@ -72,6 +72,7 @@ from .program import (
 from . import assets as asset_library
 from . import program_autonomy
 from . import local_compute
+from . import owner as owner_mode
 from . import remote_wait
 from . import utilization
 from .program_autonomy import (
@@ -517,6 +518,7 @@ def _park_for_remote_jobs(
         return False
     role = str(task.get("agent_role") or "researcher")
     current = db.task(task_id) or dict(task)
+    owner_seat = owner_mode.applies(settings, campaign)
     resume_objective = str(
         block.get("resume_objective")
         or (next_plan.objective if next_plan is not None and final_status == "yielded" else "")
@@ -529,6 +531,9 @@ def _park_for_remote_jobs(
     ).strip()
     resume_objective = remote_wait._strip_parked_prefix(resume_objective)
     session_mode = "resume" if current.get("agent_session_id") else "fresh"
+    if owner_seat and not owner_mode.is_owner_task(current):
+        # A converted topic's owner starts its own session with the job ids.
+        session_mode = "fresh"
     successor_id = f"await:{result_sha256[:32]}"
     if db.task(successor_id) is not None:
         return True
@@ -547,11 +552,17 @@ def _park_for_remote_jobs(
         if str(current.get("task_type") or "") == "replan"
         else _inherited_runner(current)
     )
+    if owner_seat:
+        runner = (
+            str(current.get("runner") or "")
+            if owner_mode.is_owner_task(current)
+            else ""
+        ) or owner_mode.choose_runner(db, settings, campaign_id=campaign_id) or "frontier"
     db.enqueue_task(
         task_id=successor_id,
         campaign_id=campaign_id,
         domain=str(current["domain"]),
-        task_type=_continuation_task_type(role),
+        task_type=(owner_mode.OWNER_TASK_TYPE if owner_seat else _continuation_task_type(role)),
         objective=remote_wait.parked_objective(job_ids, resume_objective),
         input_path=str(result_path),
         skill_path=(str(current["skill_path"]) if current.get("skill_path") else None),
@@ -563,7 +574,9 @@ def _park_for_remote_jobs(
         priority=int(current.get("priority") or 0),
         max_attempts=settings.max_attempts,
         max_wall_seconds=min(
-            int(current.get("max_wall_seconds") or settings.max_task_wall_seconds),
+            settings.program.owner.seat_wall_seconds
+            if owner_seat
+            else int(current.get("max_wall_seconds") or settings.max_task_wall_seconds),
             settings.max_task_wall_seconds,
         ),
         initial_status="needs_human" if repeated else "awaiting_remote",
@@ -2074,6 +2087,10 @@ def _replenish_continuous_campaign(
         return
     if db.has_queued_tasks(campaign_id) and not admission_room:
         return
+    if owner_mode.applies(settings, campaign):
+        # Owner mode: the topic's next step is always its owner's next seat.
+        owner_mode.replenish(db, paths, settings, report, campaign=campaign, latest=latest)
+        return
     if stream_policy.get("continuation") == "review_on_new_results":
         reconciled = reconcile_pending_portfolio_review(
             db,
@@ -2589,6 +2606,8 @@ def ingest_results(
                     "domain": task["domain"],
                 }
                 for key, expected_value in payload_identity.items():
+                    if payload.get(key) is None and owner_mode.is_owner_task(task):
+                        continue  # an owner packet may omit its identity; it is filled
                     if payload.get(key) != expected_value:
                         raise ValueError(f"Result {key} mismatch for {task_id}")
             except Exception as exc:  # noqa: BLE001
@@ -2631,6 +2650,30 @@ def ingest_results(
             preregistration = program_autonomy.expected_preregistration(
                 paths, settings, task, report
             )
+            attempt_workspace = find_attempt_workspace(
+                paths,
+                campaign_id=str(task["campaign_id"]),
+                attempt_id=attempt_id,
+            )
+            if owner_mode.is_owner_task(task):
+                # The owner leaves a small packet; the control plane completes it.
+                normalized = owner_mode.normalize_packet(
+                    payload,
+                    expected=payload_identity,
+                    preregistration_sha256=preregistration,
+                    workspace=(
+                        attempt_workspace.campaign_root if attempt_workspace is not None else None
+                    ),
+                    staging_root=(
+                        attempt_workspace.artifact_staging_root
+                        if attempt_workspace is not None
+                        else None
+                    ),
+                )
+                if normalized != payload:
+                    atomic_write_json(result_path, normalized)
+                    actual_sha = sha256_file(result_path)
+                    payload = normalized
             # Fields the control plane can compute (the ledger's pre-registration
             # hash, an unstated verdict read as pending) are filled, not bounced.
             payload, filled = fill_control_plane_fields(payload, preregistration)
@@ -2638,11 +2681,6 @@ def ingest_results(
                 runtime["control_plane_filled"] = filled
             gate = evaluate_result_bundle(
                 payload, allowed_roots=roots, preregistration_sha256=preregistration
-            )
-            attempt_workspace = find_attempt_workspace(
-                paths,
-                campaign_id=str(task["campaign_id"]),
-                attempt_id=attempt_id,
             )
             result_status = str(payload.get("status") or "failed")
             runtime_error: str | None = None
@@ -3040,12 +3078,40 @@ def ingest_results(
             )
             has_room = room.allowed
 
+            # Owner mode: the topic's owner decides the next step; the staged
+            # successors below (readiness, writing, revision, replan) are not used.
+            owner_handled = False
+            if (
+                settings.auto_continue
+                and automatic_successors_allowed
+                and owner_mode.applies(settings, campaign_binding)
+            ):
+                try:
+                    owner_handled = owner_mode.after_result(
+                        db, paths, settings, report, task=task, payload=payload,
+                        final_status=final_status, successful=successful,
+                        program_disposition=program_disposition, result_path=result_path,
+                        result_sha256=actual_sha,
+                        # After promotion the canonical campaign holds the seat's work.
+                        workspace_root=(
+                            attempt_workspace.canonical_campaign_root
+                            if attempt_workspace is not None
+                            else None
+                        ),
+                        has_room=has_room,
+                    )
+                except Exception as exc:  # noqa: BLE001 - replenishment retries the seat.
+                    owner_handled = True
+                    report.errors.append(f"Owner successor of {task_id} failed: {exc}")
+                successor_handled = successor_handled or owner_handled
+
             # Evidence requested by a paper reviewer returns to the prior writer
             # session when one exists. A pre-writing evidence repair is audited
             # again before a writer is ever created.
             if (
                 settings.auto_continue
                 and automatic_successors_allowed
+                and not owner_handled
                 and successful
                 and task_type == "evidence_remediation"
                 and task.get("routing_reason") in EVIDENCE_REMEDIATION_ROUTINGS
@@ -3455,6 +3521,8 @@ def _write_task_spec(
     agent_tools: Mapping[str, Any] | None = None,
     extra_read_resources: list[dict[str, str]] | None = None,
     program_preregistration: str | None = None,
+    db: FactoryDB | None = None,
+    settings: FactorySettings | None = None,
 ) -> Path:
     agent_workspace = attempt_workspace.campaign_root
     agent_workspace.mkdir(parents=True, exist_ok=True)
@@ -3603,6 +3671,17 @@ def _write_task_spec(
                 f"{campaign.get('protocol_id')!r}"
             )
         skill_dirs.append(skill_path.parent)
+    if owner_mode.is_owner_task(task) and campaign is not None and db is not None and (
+        settings is not None
+    ):
+        # An owner seat gets its short brief instead of the staged-task request,
+        # and may always start sub-agents.
+        payload["owner"] = owner_mode.spec_block(
+            paths, settings, task=task, spec=payload, campaign=campaign,
+            wall_seconds=wall_seconds, db=db,
+        )
+        payload["agent_tools"] = {**dict(payload.get("agent_tools") or {}),
+                                  "allow_subagents": True}
     payload["runtime_policy"] = configure_codex_runtime(
         agent_workspace,
         task=payload,
@@ -3670,6 +3749,8 @@ def _launch_task(
         program_preregistration=program_autonomy.expected_preregistration(
             paths, settings, task, SimpleNamespace(errors=[])
         ),
+        db=db,
+        settings=settings,
     )
     log_path = output_path.parent / "worker.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3915,6 +3996,10 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
         report.quota_pause = router.pause_summary()
         budget_control.record_lead_shortage(db, router)
         budget_control.record_quota_pause(db, router, report.quota_pause)
+        try:
+            owner_mode.supervise(db, settings, report, router, now=budget_now)
+        except Exception as exc:  # noqa: BLE001 - a switch is retried next tick.
+            report.errors.append(f"owner runner supervision failed: {exc}")
     launch_limit = _supervise_throughput(
         db, paths, settings, report, router, hard=launch_limit, now=budget_now
     )

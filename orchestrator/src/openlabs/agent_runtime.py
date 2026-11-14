@@ -170,6 +170,14 @@ def configure_codex_runtime(
         "claude_skill_source_root": str(claude_skills_root),
         "hook_receipt_path": str(hook_receipt_path),
     }
+    owner = task.get("owner")
+    if isinstance(owner, Mapping):
+        # Owner-mode seat: the Stop gate completes the owner's small status packet.
+        context["owner"] = {
+            key: owner.get(key)
+            for key in ("schema_version", "artifact_staging_root", "preregistration_sha256",
+                        "work_log", "deadline")
+        }
     context_path = atomic_write_json(codex_root / "openlabs-context.json", context)
     # Codex deliberately sanitizes hook subprocess environments.  In particular,
     # it does not preserve the orchestrator's PYTHONPATH, so ``python -m openlabs``

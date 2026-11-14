@@ -213,6 +213,46 @@ class ProgramSettings:
     compute_locations: tuple[str, ...] = (
         "container_cpu", "container_gpu", "ailab", "wsl_math",
     )
+    # Owner mode (owner decision 2026-11-14): after admission one owner agent
+    # session carries a topic to a reviewed manuscript or a freeze. "off" keeps
+    # the staged post-admission flow; "all" applies it to every program topic; a
+    # list of research-line ids applies it to the topics of those lines only.
+    owner_mode: str | tuple[str, ...] = "off"
+    owner: OwnerSettings = field(default_factory=lambda: OwnerSettings())
+
+
+DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_gpt")
+
+
+@dataclass(frozen=True)
+class OwnerSettings:
+    """``[program.owner]``: the owner agent's seat, runner choice and breaker."""
+
+    # Main-agent preference (owner 2026-11-14: Fable, then Opus 5.5, then astra);
+    # names of [runners.*] entries. A topic keeps its owner while that runner
+    # can take ordinary work.
+    runners: tuple[str, ...] = DEFAULT_OWNER_RUNNERS
+    # Upper bound of one seat (one agent process); the env timeout still caps it.
+    seat_wall_seconds: int = 14_400
+    # A queued seat whose runner has been unable to start it this long moves to
+    # the next usable runner (fresh session, or the same session when the new
+    # runner is of the same provider and keep_session_within_provider is true).
+    switch_after_minutes: float = 120.0
+    keep_session_within_provider: bool = True
+    # Topics one runner may own at once (unlisted runners: no limit). Default:
+    # Fable owns at most one topic.
+    max_topics_per_runner: dict[str, int] = field(
+        default_factory=lambda: {"lead_claude": 1}
+    )
+    # Consecutive finished seats without new evidence (unchanged workspace digest,
+    # no new artifact hash, no remote-job wake-up) that schedule a direction decision.
+    no_progress_seats: int = 3
+    # Default model of Claude sub-agents an owner session starts without naming
+    # one (CLAUDE_CODE_SUBAGENT_MODEL); an explicit Agent `model` still wins.
+    claude_subagent_model: str | None = "claude-opus-5-5"
+    # Weaker GPT model the brief offers through `codex exec` / Codex spawn_agent.
+    codex_helper_model: str = "gpt-6.1-sol"
+    codex_light_model: str = "gpt-6-luna"
 
 
 DEFAULT_DIRECTION_LIMITS: dict[str, int] = {
@@ -258,6 +298,8 @@ class BudgetSettings:
 
 
 TIERS = ("lead", "worker", "light")
+# One owner-agent seat of a research-program topic in owner mode ([program].owner_mode).
+OWNER_TASK_TYPE = "topic_owner"
 # Pre-provider runner names. They request a tier, never a model family: with a
 # ``[runners]`` table configured, a task carrying one of them is routed.
 LEGACY_RUNNER_TIERS: dict[str, str] = {"frontier": "lead", "balanced": "worker", "cheap": "light"}
@@ -273,6 +315,8 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
     "topic_admission": "lead",
     "failure_diagnosis": "lead",
     "replan": "lead",
+    # An owner seat is pinned to a concrete runner ([program.owner].runners).
+    "topic_owner": "lead",
     # worker: code, experiments, analysis, writing.
     "research": "worker",
     "research_continue": "worker",
@@ -827,7 +871,59 @@ def load_program_settings(payload: Any) -> ProgramSettings:
             program.get("release_review_timeout_seconds"), 7_200
         ),
         compute_locations=_compute_locations(program.get("compute_locations")),
+        owner_mode=_owner_mode(program.get("owner_mode")),
+        owner=_owner_settings(program.get("owner")),
         **_git_settings(program.get("git")),
+    )
+
+
+def _owner_mode(value: Any) -> str | tuple[str, ...]:
+    if value is None or value is False:
+        return "off"
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"off", "all"}:
+            return text
+        raise ValueError('[program].owner_mode must be "off", "all" or an array of line ids')
+    if isinstance(value, list):
+        return _domain_list(value, "owner_mode")
+    raise ValueError('[program].owner_mode must be "off", "all" or an array of line ids')
+
+
+def _owner_settings(value: Any) -> OwnerSettings:
+    if value is None:
+        return OwnerSettings()
+    if not isinstance(value, dict):
+        raise ValueError("[program.owner] must be a table")
+    defaults = OwnerSettings()
+    runners = value.get("runners")
+    if runners is not None and (
+        not isinstance(runners, list) or not runners
+        or any(not isinstance(item, str) or not item.strip() for item in runners)
+    ):
+        raise ValueError("[program.owner].runners must be a non-empty array of runner names")
+    limits_raw = value.get("max_topics_per_runner")
+    limits = dict(defaults.max_topics_per_runner)
+    if limits_raw is not None:
+        if not isinstance(limits_raw, dict):
+            raise ValueError("[program.owner].max_topics_per_runner must be a table")
+        limits = {str(key): _nonnegative_int(raw, 1) for key, raw in limits_raw.items()}
+    subagent = value.get("claude_subagent_model", defaults.claude_subagent_model)
+    return OwnerSettings(
+        runners=tuple(item.strip() for item in runners) if runners else defaults.runners,
+        seat_wall_seconds=_positive_int(value.get("seat_wall_seconds"),
+                                        defaults.seat_wall_seconds),
+        switch_after_minutes=_nonnegative_float(value.get("switch_after_minutes"),
+                                                defaults.switch_after_minutes),
+        keep_session_within_provider=value.get(
+            "keep_session_within_provider", defaults.keep_session_within_provider
+        ) is not False,
+        max_topics_per_runner=limits,
+        no_progress_seats=_positive_int(value.get("no_progress_seats"),
+                                        defaults.no_progress_seats),
+        claude_subagent_model=(str(subagent).strip() or None) if subagent else None,
+        codex_helper_model=str(value.get("codex_helper_model") or defaults.codex_helper_model),
+        codex_light_model=str(value.get("codex_light_model") or defaults.codex_light_model),
     )
 
 

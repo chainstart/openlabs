@@ -44,6 +44,7 @@ from typing import Any
 
 from .config import (
     LEGACY_RUNNER_TIERS,
+    OWNER_TASK_TYPE,
     TIERS,
     BudgetSettings,
     FactorySettings,
@@ -71,6 +72,8 @@ UNHEALTHY_FAILURE_CLASSES = frozenset(
     }
 )
 TASK_CLASSES = ("decision", "review", "ordinary")
+# Owner-mode seats: ordinary ceilings and pacing, without Fable's review ceiling.
+OWNER_CLASS = "owner"
 ADAPTER_PROVIDERS = {"claude": "anthropic", "codex": "openai-codex"}
 
 
@@ -856,10 +859,14 @@ def estimate_stale_readings(
 
 
 def task_class(settings: FactorySettings, task: Mapping[str, Any]) -> str:
-    """``decision`` (admission/direction/portfolio), ``review`` or ``ordinary``."""
+    """``decision`` (admission/direction/portfolio), ``review``, ``owner`` or ``ordinary``."""
 
     task_type = str(task.get("task_type") or "")
     routing = settings.routing
+    if task_type == OWNER_TASK_TYPE:
+        # Ordinary for the ceilings and pacing; only the protected lead's review
+        # ceiling does not apply (``protection_limit``).
+        return OWNER_CLASS
     if task_type in routing.decision_task_types:
         return "decision"
     if task_type in routing.review_task_types or str(task.get("agent_role") or "") == "reviewer":
@@ -903,9 +910,9 @@ def protected_windows(
 
 
 def class_ceiling(routing: RoutingSettings, klass: str) -> float:
-    """Final-day ceiling of a task class: ordinary 80%, review and decision 90%."""
+    """Final-day ceiling of a task class: ordinary (and owner) 80%, review and decision 90%."""
 
-    if klass == "ordinary":
+    if klass in {"ordinary", OWNER_CLASS}:
         return min(routing.ordinary_ceiling, routing.hard_ceiling)
     return routing.hard_ceiling
 
@@ -1003,7 +1010,10 @@ def protection_limit(
     limit = 1.0
     if protected_window:
         limit = min(limit, 1.0 - routing.lead_decision_reserve)
-    if protected_runner:
+    if protected_runner and klass != OWNER_CLASS:
+        # An owner seat on Fable is ordinary work under the paced 80% ceiling; the
+        # review ceiling only keeps Fable's review/ordinary tasks from crowding out
+        # its decisions, which lead_decision_reserve already does for owner seats.
         limit = min(limit, routing.lead_review_ceiling)
     return limit
 

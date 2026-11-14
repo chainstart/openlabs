@@ -138,11 +138,46 @@ release_review_timeout_seconds = 7200
 # names paper, version, action and topic.
 message = "{action}: {paper_id} v{version}"
 
+# Owner mode (owner decision 2026-11-14): after admission one owner agent session
+# carries a topic to a reviewed manuscript or a freeze, deciding every next step
+# itself (sub-agents and the other provider's models included). It replaces the
+# staged maturation/replan/continue/readiness/write/remediation/revision tasks.
+# Kept: the admission gate, the hash-bound pre-registered endpoint, the
+# cross-family paper_review (comments return to the owner session), the
+# direction decision as circuit breaker, and the human confirmation of a
+# submission. "off" | "all" | ["<research-line id>", ...]. Topics already running
+# switch at their next successor; running and parked tasks are never interrupted.
+# owner_mode = ["astro-survey-photometry"]
+
 # Per-topic direction-decision choices that keep a topic alive; afterwards only
 # freeze is accepted (an exhausted choice is refused and the topic frozen).
 [program.direction_limits]
 targeted_core_analysis = 1
 retarget_or_short_format = 2
+
+# Owner seats ([program].owner_mode). An owner seat is ordinary work for the quota
+# rules (paced 80% ceiling) but not subject to Fable's lead_review_ceiling; Fable's
+# lead_decision_reserve stays above the ordinary ceiling.
+[program.owner]
+# Main-agent preference: Fable, then Opus 5.5, then gpt-6-astra ([runners.*] names).
+runners = ["lead_claude", "worker_claude", "lead_gpt"]
+# One seat (one agent process) at most this long; OPENLABS_AGENT_TIMEOUT_SECONDS
+# still caps it.
+seat_wall_seconds = 14400
+# A queued seat whose runner cannot start it this long moves to the next usable
+# runner (same provider: the session is kept; other provider: fresh session that
+# starts from the owner's work log).
+switch_after_minutes = 120
+keep_session_within_provider = true
+# Topics one runner may own at once (unlisted: no limit).
+max_topics_per_runner = { lead_claude = 1 }
+# Consecutive seats without new evidence that schedule a direction decision.
+no_progress_seats = 3
+# Default model of Claude sub-agents started without an explicit model.
+claude_subagent_model = "claude-opus-5-5"
+# GPT models the brief offers (codex exec / Codex spawn_agent).
+codex_helper_model = "gpt-6.1-sol"
+codex_light_model = "gpt-6-luna"
 
 # Reusable-asset library (index at [program].asset_index_path). Both switches
 # off: packets, task specs and the tick are unchanged. Only acts while

@@ -38,7 +38,27 @@ def _read_event() -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _owner_session_context(context: Mapping[str, Any]) -> dict[str, Any]:
+    owner = context.get("owner") if isinstance(context.get("owner"), Mapping) else {}
+    message = (
+        f"OpenLabs owner seat {context.get('expected_result', {}).get('task_id')}: you own "
+        "this topic and decide the next step yourself. Work only in the private campaign "
+        f"workspace {context.get('agent_workspace')}; never modify the canonical campaign "
+        f"{context.get('canonical_campaign_workspace')}. Keep the work log "
+        f"{owner.get('work_log')} current and, before the seat ends "
+        f"({owner.get('deadline')}), write the status JSON to {context.get('result_path')}."
+    )
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": message,
+        }
+    }
+
+
 def _session_context(context: Mapping[str, Any], adapter: str = "codex") -> dict[str, Any]:
+    if isinstance(context.get("owner"), Mapping):
+        return _owner_session_context(context)
     if adapter == "claude":
         # Claude Code invokes Skills by bare name through its Skill tool.
         names = [str(item).removeprefix("$") for item in context.get("skills", [])]
@@ -127,6 +147,14 @@ def _stop_gate_advisories(context: Mapping[str, Any]) -> list[str]:
 def _stop_gate_problems(context: Mapping[str, Any]) -> list[str]:
     result_path = Path(str(context.get("result_path") or "")).expanduser()
     problems: list[str] = []
+    if isinstance(context.get("owner"), Mapping):
+        # Owner seat: complete the small status packet into a result bundle first.
+        from .owner import hook_normalize
+
+        try:
+            hook_normalize(context)
+        except Exception as exc:  # noqa: BLE001 - the gate below reports what is wrong.
+            problems.append(f"owner packet could not be completed: {exc}")
     try:
         payload = json.loads(result_path.read_text(encoding="utf-8"))
     except FileNotFoundError:

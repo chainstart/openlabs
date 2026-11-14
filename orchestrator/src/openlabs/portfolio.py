@@ -672,6 +672,25 @@ def materialize_candidate(
         settings.max_task_wall_seconds,
     )
     first_task_id = f"candidate:{hashlib.sha256(campaign_id.encode()).hexdigest()[:32]}"
+    from . import owner as owner_mode
+
+    if owner_mode.applies(settings, db.campaign(campaign_id)):
+        # Owner mode: one owner agent carries the admitted topic from here on.
+        objective = " ".join(str(raw_branch.get("objective") or "").split())
+        seat_id = owner_mode.first_seat(
+            db,
+            settings,
+            campaign_id=campaign_id,
+            task_id=f"owner:{hashlib.sha256(campaign_id.encode()).hexdigest()[:40]}",
+            objective=(
+                "Start owning this admitted topic. Admission note: "
+                + (objective[:1200] + ("…" if len(objective) > 1200 else ""))
+            ),
+            input_path=str(result_path),
+            priority=int(source_campaign.get("priority") or 0) + 1,
+            resources=resources,
+        )
+        return campaign_id, seat_id
     maturation_instruction = str(
         portfolio.get("candidate_maturation_instruction") or ""
     ).strip()

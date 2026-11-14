@@ -357,6 +357,10 @@ def _trigger_reason_text(trigger: str, detail: Mapping[str, Any]) -> str:
         TRIGGER_REVIEW_RETARGET: "The unified review requires a retarget.",
         TRIGGER_REVIEW_STALLED: "The unified review is stalled: scores no longer improve.",
         TRIGGER_REVIEW_ROUNDS: "The unified review used all rounds for this target.",
+        "owner_no_progress": (
+            f"The topic owner finished {detail.get('no_progress_streak')} consecutive seats "
+            "without new evidence (unchanged workspace, no new artifact, no finished job)."
+        ),
         TRIGGER_RESEARCH_BLOCKED: (
             "The research executor stopped with needs_human instead of continuing; decide "
             "whether one targeted step continues the topic or it is frozen."
@@ -515,6 +519,10 @@ def schedule_direction_decision(
     ]
     routine = _routine_names(topic)
     exclude = research_provider(db, settings, campaign_id)
+    work_log = Path(str(campaign.get("state_path") or "")) / "OWNER_LOG.md"
+    if campaign.get("state_path") and work_log.is_file():
+        # Owner mode: the owner's own log is the shortest account of the topic.
+        evidence = [*evidence, _evidence(work_log)]
     ledger_entry = {
         key: topic.get(key)
         for key in ("topic_id", "domain", "question", "status", "target_tier", "campaign_id",
@@ -1119,6 +1127,25 @@ def _enqueue_targeted_analysis(db, settings, *, campaign, decision, decision_tas
     if db.task(task_id) is not None:
         return task_id
     source = db.task(source_task_id) or {}
+    from . import owner as owner_mode
+
+    if owner_mode.applies(settings, campaign):
+        # The owner runs the chosen step itself, in its own session.
+        owner_mode.reset_streak(db, str(campaign["campaign_id"]), reason=decision_task_id)
+        owner_mode.enqueue_seat(
+            db, settings, None, campaign=campaign, parent=source or None,
+            note=(
+                f"Direction decision {decision_task_id} (input path) continues the topic with "
+                f"exactly one targeted analysis: {analysis['name']}. Expected to change: "
+                f"{analysis['expected_to_change']}. Data: {analysis['data']}. Success "
+                f"criterion: {analysis['success_criterion']}. Budget: "
+                f"{analysis['budget_seconds']} Agent seconds. Report it against the criterion "
+                "honestly, including a negative result; keep the pre-registered endpoint; then "
+                "write up or freeze as the evidence says."
+            ),
+            routing_reason=TARGETED_ROUTING, input_path=str(input_path), task_id=task_id,
+        )
+        return task_id
     db.enqueue_task(
         task_id=task_id,
         campaign_id=str(campaign["campaign_id"]),
@@ -1182,6 +1209,17 @@ def _enqueue_retarget(db, settings, *, topic, campaign, decision, decision_task_
         "evidence." + fallback_note
     )
     domain = str(campaign["domain"])
+    from . import owner as owner_mode
+
+    if owner_mode.applies(settings, campaign):
+        task_id = f"{decision_task_id}:retarget"
+        owner_mode.reset_streak(db, str(campaign["campaign_id"]), reason=decision_task_id)
+        owner_mode.enqueue_seat(
+            db, settings, None, campaign=campaign, parent=db.task(source_task_id),
+            note=f"Direction decision {decision_task_id} (input path): " + objective,
+            routing_reason=RETARGET_ROUTING, input_path=str(input_path), task_id=task_id,
+        )
+        return task_id
     writer_source = db.nearest_session_source(source_task_id, agent_role="writer") if (
         db.task(source_task_id)
     ) else None

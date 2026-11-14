@@ -32,6 +32,8 @@ LAB_RUNTIME_SCHEMA = "openlabs.lab_runtime_setup.v1"
 # and the hook-receipt check.  Any other executable is a deterministic transport
 # test double.
 RUNTIME_ADAPTERS = frozenset({"codex", "claude"})
+# Owner-mode seat (orchestrator ``openlabs.owner``): its request is pre-rendered.
+OWNER_TASK_TYPE = "topic_owner"
 
 
 def sha256_file(path: Path) -> str:
@@ -439,6 +441,13 @@ workers run independently; do not terminate this process merely to make room for
             + json.dumps(lab_runtime, ensure_ascii=False, indent=2, sort_keys=True)
             + "\n"
         )
+    owner = task.get("owner")
+    if task.get("task_type") == OWNER_TASK_TYPE and isinstance(owner, Mapping) and str(
+        owner.get("request") or ""
+    ).strip():
+        # Owner mode: the orchestrator rendered the owner's whole brief (goal,
+        # resources, tools, hard limits) or the short next-seat message.
+        return str(owner["request"])
     judgement_only = (
         str(task.get("routing_reason") or "") == "topic_admission"
         or str(task.get("task_type") or "") in JUDGEMENT_TASK_TYPES
@@ -2048,6 +2057,23 @@ def _transaction_sandbox(
     return sandbox, "bubblewrap"
 
 
+def _agent_environment(task: Mapping[str, Any], adapter: str | None) -> dict[str, str] | None:
+    """The agent's environment: inherited, plus an owner seat's sub-agent default model.
+
+    ``CLAUDE_CODE_SUBAGENT_MODEL`` sets the model of Claude sub-agents started without
+    an explicit ``model`` (an explicit Agent ``model`` still wins; verified with
+    claude 2.1.325 on 2026-11-14). ``None`` keeps the plain inherited environment.
+    """
+
+    owner = task.get("owner")
+    if adapter != "claude" or not isinstance(owner, Mapping):
+        return None
+    model = str(owner.get("claude_subagent_model") or "").strip()
+    if not model:
+        return None
+    return {**os.environ, "CLAUDE_CODE_SUBAGENT_MODEL": model}
+
+
 def _run_agent(
     task: dict[str, Any],
     manifest: dict[str, Any],
@@ -2175,6 +2201,7 @@ def _run_agent(
         process = subprocess.Popen(
             command,
             text=True,
+            env=_agent_environment(task, adapter_name),
             cwd=agent_workspace,
             stdin=subprocess.PIPE,
             stdout=stdout_handle,
