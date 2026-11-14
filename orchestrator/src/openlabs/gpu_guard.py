@@ -21,8 +21,8 @@ import sys
 import time
 from dataclasses import dataclass
 
-MAX_USED_FRACTION = 0.90
-MIN_FREE_MIB = 1024
+MAX_USED_FRACTION = 0.75
+MIN_FREE_MIB = 2048
 DEFAULT_BUDGET_MIB = 8192
 CONTEXT_RESERVE_MIB = 768
 MAX_TEMPERATURE_C = 85
@@ -302,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
     env = allocator_environment(env, [baseline], budget)
     env["OPENLABS_GPU_SUPERVISOR_PID"] = str(os.getpid())
     print(f"OpenLabs GPU guard: task-type=gpu; reservation={budget} MiB; "
-          f"max VRAM=90%, reserve>=1024 MiB; allocator fraction={env['OPENLABS_GPU_ALLOCATOR_FRACTION']}",
+          f"max VRAM=75%, reserve>=2048 MiB; allocator fraction={env['OPENLABS_GPU_ALLOCATOR_FRACTION']}",
           file=sys.stderr, flush=True)
     try:
         return supervise(command, env, rows, baseline, budget, args.gpu_device)

@@ -15,14 +15,14 @@ from openlabs import gpu_guard as guard
 
 def test_admission_headroom_and_exclusive_lease(tmp_path):
     gpu = guard.GPU(0, "GPU-test", 12227, 543, 42)
-    assert gpu.ceiling == 11004
+    assert gpu.ceiling == 9170
     directory = tmp_path / "private"
     with guard.reserve(gpu, 8192, directory):
         with pytest.raises(guard.GuardError, match="already reserved"):
             guard.reserve(gpu, 8192, directory)
     with guard.reserve(gpu, 8192, directory):
         pass
-    for budget in (0, -1, 768, 11000):
+    for budget in (0, -1, 768, 9000):
         with pytest.raises(guard.GuardError, match="rejected"):
             guard.reserve(gpu, budget, directory)
 
@@ -40,7 +40,7 @@ def test_allocator_cap_preserves_cuda_and_other_settings():
 
 
 @pytest.mark.parametrize("row,match", [
-    (guard.GPU(0, "GPU-test", 12227, 11005, 40), "ceiling"),
+    (guard.GPU(0, "GPU-test", 12227, 9200, 40), "ceiling"),
     (guard.GPU(0, "GPU-test", 12227, 3000, 85), "temperature"),
     (guard.GPU(0, "GPU-test", 12227, 5000, 40), "growth"),
     (guard.GPU(0, "GPU-other", 12227, 1000, 40), "disappeared"),

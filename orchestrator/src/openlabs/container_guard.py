@@ -11,7 +11,7 @@ def validate(root: Path = Path('/sys/fs/cgroup')) -> None:
     ceiling = max(1, (os.cpu_count() or 1) * 75 // 100)
     if quota == 'max' or int(period) <= 0 or not 0 < int(quota) <= ceiling * int(period):
         raise ValueError('container CPU quota exceeds 75% of visible CPUs')
-    for filename, limit in [('memory.max', 34 * GIB), ('memory.swap.max', 4 * GIB), ('pids.max', 2048)]:
+    for filename, limit in [('memory.max', 34 * GIB), ('memory.swap.max', 4 * GIB), ('pids.max', 512)]:
         value = (root / filename).read_text().strip()
         if value == 'max' or not 0 <= int(value) <= limit:
             raise ValueError(f'container {filename} is missing or exceeds {limit}')
