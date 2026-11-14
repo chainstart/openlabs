@@ -305,6 +305,35 @@ admits jobs against the declared budgets, so the jobs queue rather than overload
 """
 
 
+# Program control tasks (scouting, card repair/revision, admission review, direction
+# decision, asset retrospective) run with their own Skill only; these few lines
+# stand in for the research coordinator Skill they no longer load.
+PROGRAM_TASK_RULES = """
+General rules for this program task:
+
+- Work only in the staged campaign and artifact staging named below; never write the canonical
+  campaign, SQLite or the live artifact tree. Declare every file you rely on in
+  `result.artifacts` with its `file://` URI and SHA-256.
+- Do not fabricate data, citations, receipts or reviews; keep negative and inconclusive findings.
+- Do not submit, publish, spend money or take any other irreversible external action.
+- Write one `openlabs.result_bundle.v1` object to the required result path before stopping, as
+  defined in `{contract}`.
+"""
+# Task kinds that only read and judge a packet: they run no experiments.
+JUDGEMENT_TASK_TYPES = frozenset({"direction_decision", "topic_retrospective"})
+# Mirrors ``openlabs.engine.program_control_skill``.
+PROGRAM_CONTROL_TASK_TYPES = frozenset(
+    {"topic_scout", "topic_card_repair", "topic_revision", *JUDGEMENT_TASK_TYPES}
+)
+
+
+def _program_control_task(task: Mapping[str, Any]) -> bool:
+    return (
+        str(task.get("task_type") or "") in PROGRAM_CONTROL_TASK_TYPES
+        or str(task.get("routing_reason") or "") == "topic_admission"
+    )
+
+
 def _agent_request(
     task: dict[str, Any],
     manifest: dict[str, Any],
@@ -370,6 +399,13 @@ automatically. Never copy staged changes to the canonical campaign yourself.
                 f"Skill at `{task.get('skill_path')}`."
             )
         )
+    program_rules = (
+        PROGRAM_TASK_RULES.format(
+            contract=factory_skill.parent / "references" / "result-contract.md"
+        )
+        if _program_control_task(task)
+        else ""
+    )
     optional_skill_instruction = (
         " Other laboratory method guides are readable but not registered as active Skills: "
         + json.dumps(optional_methods, ensure_ascii=False, sort_keys=True)
@@ -403,13 +439,17 @@ workers run independently; do not terminate this process merely to make room for
             + json.dumps(lab_runtime, ensure_ascii=False, indent=2, sort_keys=True)
             + "\n"
         )
-    remote_notice = _remote_compute_notice(
+    judgement_only = (
+        str(task.get("routing_reason") or "") == "topic_admission"
+        or str(task.get("task_type") or "") in JUDGEMENT_TASK_TYPES
+    )
+    remote_notice = "" if judgement_only else _remote_compute_notice(
         Path(str(task["lab_manifest"])).resolve().parents[2], str(manifest["domain"])
     )
     return f"""# OpenLabs autonomous research task
 
 {skill_instruction}{optional_skill_instruction}
-
+{program_rules}
 Own the analysis, decomposition, tool use, milestones, and scientific decisions needed to reach the
 task objective or its declared quality gate. Perform as many safe intermediate research operations
 as are useful within the declared budget. An intermediate evidence advance is a reason to persist

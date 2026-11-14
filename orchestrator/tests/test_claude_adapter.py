@@ -745,3 +745,18 @@ def test_orchestrator_decides_subagent_tools_per_runner() -> None:
     assert _agent_tools(legacy, "balanced")["allow_subagents"] is False
     with pytest.raises(ValueError, match="allow_subagents must be true or false"):
         load_runner_specs({"x": {"provider": "anthropic", "tier": "lead", "allow_subagents": "yes"}})
+
+
+def test_program_control_tasks_get_compact_rules_and_judges_no_compute_notice(tmp_path) -> None:
+    layout = _layout(tmp_path)
+    research = lab_runner._agent_request(dict(layout["task"]), layout["manifest"],
+                                         layout["output"])
+    assert "General rules for this program task" not in research
+    scout = dict(layout["task"], task_type="topic_scout")
+    scout_text = lab_runner._agent_request(scout, layout["manifest"], layout["output"])
+    assert "General rules for this program task" in scout_text
+    assert "result-contract.md" in scout_text
+    review = dict(layout["task"], task_type="portfolio_review", routing_reason="topic_admission")
+    review_text = lab_runner._agent_request(review, layout["manifest"], layout["output"])
+    assert "General rules for this program task" in review_text
+    assert "Remote CPU compute is available" not in review_text

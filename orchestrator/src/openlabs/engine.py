@@ -73,9 +73,16 @@ from . import program_autonomy
 from . import local_compute
 from . import remote_wait
 from . import utilization
-from .program_autonomy import DIRECTION_TASK_TYPE, EVIDENCE_REMEDIATION_ROUTINGS
+from .program_autonomy import (
+    DIRECTION_SKILL,
+    DIRECTION_TASK_TYPE,
+    EVIDENCE_REMEDIATION_ROUTINGS,
+)
 from .program_flow import (
+    ADMISSION_ROUTING_REASON,
+    ADMISSION_SKILL,
     CARD_TASK_TYPES,
+    SCOUT_SKILL,
     packet_read_resources,
     parallel_admission_room,
     parallel_routing_reasons,
@@ -1327,6 +1334,44 @@ def _campaign_runtime_skill_ids(
     if campaign.get("production_plan_path") or campaign.get("production_lane_path"):
         return tuple(str(item["skill_id"]) for item in lab.skills)
     return ()
+
+
+# Skills that serve one program control task each (scouting, admission, direction,
+# asset retrospective). A research protocol lists them all, but a task only needs
+# its own: before 2026-11-14 every task was told to invoke all of them (~58 KB).
+PROGRAM_CONTROL_SKILLS = frozenset(
+    {SCOUT_SKILL, ADMISSION_SKILL, DIRECTION_SKILL, asset_library.RETROSPECTIVE_SKILL}
+)
+
+
+def program_control_skill(task: Mapping[str, Any]) -> str | None:
+    """The one Skill a program control task runs with, or None for any other task."""
+
+    task_type = str(task.get("task_type") or "")
+    if task_type in CARD_TASK_TYPES:
+        return SCOUT_SKILL
+    if str(task.get("routing_reason") or "") == ADMISSION_ROUTING_REASON:
+        return ADMISSION_SKILL
+    if task_type == DIRECTION_TASK_TYPE:
+        return DIRECTION_SKILL
+    if task_type == asset_library.RETROSPECTIVE_TASK_TYPE:
+        return asset_library.RETROSPECTIVE_SKILL
+    return None
+
+
+def task_runtime_skill_ids(
+    task: Mapping[str, Any], runtime_skill_ids: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Protocol runtime Skills narrowed to what this task type uses.
+
+    A program control task gets only its own Skill; every other task (research,
+    writing, review) gets the protocol's Skills minus the program control ones.
+    """
+
+    control = program_control_skill(task)
+    if control is not None:
+        return (control,)
+    return tuple(item for item in runtime_skill_ids if item not in PROGRAM_CONTROL_SKILLS)
 
 
 def _campaign_execution_policy(campaign: Mapping[str, Any]) -> ExecutionPolicy:
@@ -3499,15 +3544,25 @@ def _write_task_spec(
                 known_paths.add(item["path"])
                 known_labels.add(item["label"])
         payload["execution_policy"] = execution_policy.to_dict()
-    skill_dirs = [
-        paths.code / "orchestrator" / "skills" / "openlabs-research-factory",
-    ]
-    if str(task.get("agent_role") or "researcher") == "researcher":
+    control_skill = program_control_skill(task)
+    # A program control task replaces the research coordinator Skill with the
+    # short general rules in its request (lab_runner); research keeps it.
+    skill_dirs = (
+        []
+        if control_skill is not None
+        else [paths.code / "orchestrator" / "skills" / "openlabs-research-factory"]
+    )
+    if str(task.get("agent_role") or "researcher") == "researcher" and control_skill in {
+        None, SCOUT_SKILL,
+    }:
+        # Literature lookup serves research and scouting (prior-work search).
         skill_dirs.append(
             paths.code / "orchestrator" / "skills" / "vendor" / "paper-lookup"
         )
     runtime_lab = lab_for_domain(discover_labs(paths.code), str(task["domain"]))
-    runtime_skill_ids = _campaign_runtime_skill_ids(runtime_lab, campaign)
+    runtime_skill_ids = task_runtime_skill_ids(
+        task, _campaign_runtime_skill_ids(runtime_lab, campaign)
+    )
     skill_dirs.extend(
         candidate.parent
         for skill_id in runtime_skill_ids
@@ -3519,7 +3574,7 @@ def _write_task_spec(
         candidate.parent
         for item in runtime_lab.skills
         if (candidate := runtime_lab.skill_path(str(item["skill_id"]))) is not None
-    ]
+    ] if control_skill is None else []
     if skill_path is not None and skill_path.parent not in skill_dirs:
         requested_skill_id = str(task.get("skill_path") or "").strip()
         project_bound = bool(campaign and campaign.get("project_config_path"))
