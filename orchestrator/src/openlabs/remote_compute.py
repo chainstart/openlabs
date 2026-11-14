@@ -39,6 +39,9 @@ from typing import Any, Callable, Sequence
 
 SCHEMA_VERSION = 'openlabs.remote-compute.v1'
 BACKENDS = ('ailab',)
+# CLI choices: `auto` (default) keeps ailab first and overflows to the local container
+# queue (openlabs.local_compute) when ailab is full; `local` queues there explicitly.
+CLI_BACKENDS = ('auto', 'ailab', 'local')
 STORAGE_CHOICES = ('auto', 'ssd1', 'ssd2', 'ssd3', 'ssd4', 'ssd5', 'ssd6')
 STATES = ('queued', 'running', 'succeeded', 'failed')
 TERMINAL_STATES = ('succeeded', 'failed')
@@ -419,9 +422,20 @@ def _remove_incomplete_job(directory: Path) -> None:
 
 # --------------------------------------------------------------- status/wait
 
-def read_status(job_id: str, queue_root: Path | None = None) -> dict[str, Any]:
+def locate_job(job_id: str, queue_root: Path | None = None) -> tuple[str, Path]:
+    """(backend, job directory): ailab queue first, else the local overflow queue; an
+    ailab job moved to the container (``WITHDRAWN.moved-to-local``) resolves locally."""
+    from .local_compute import locate
+
+    validate_job_id(job_id)
     root = Path(queue_root) if queue_root is not None else default_queue_root()
-    path = job_dir(root, job_id) / 'status.json'
+    return locate(job_id, root)
+
+
+def read_status(job_id: str, queue_root: Path | None = None) -> dict[str, Any]:
+    backend, directory = locate_job(job_id, queue_root)
+    root = directory.parent.parent
+    path = directory / 'status.json'
     try:
         data = json.loads(path.read_text(encoding='utf-8'))
     except FileNotFoundError:
@@ -437,6 +451,8 @@ def read_status(job_id: str, queue_root: Path | None = None) -> dict[str, Any]:
     receipt = data.get('receipt_sha256')
     if receipt is not None and not (isinstance(receipt, str) and SHA256_RE.match(receipt)):
         raise RemoteComputeError(f'status for job {job_id} has malformed receipt_sha256')
+    if backend == 'local':
+        data = {**data, 'backend': 'local', 'result_dir': str(directory / 'result')}
     return data
 
 
@@ -480,12 +496,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest='action', required=True)
     s = sub.add_parser('submit', usage='openlabs-remote submit --source DIR --cpus N --memory-mib N '
-                       '--timeout-seconds N [--backend ailab] -- COMMAND [ARGS...]')
+                       '--timeout-seconds N [--backend auto|ailab|local] -- COMMAND [ARGS...]')
     s.add_argument('--source', required=True)
     s.add_argument('--cpus', required=True, type=int)
     s.add_argument('--memory-mib', required=True, type=int)
     s.add_argument('--timeout-seconds', required=True, type=int)
-    s.add_argument('--backend', default='ailab', choices=BACKENDS)
+    s.add_argument('--backend', default='auto', choices=CLI_BACKENDS)
     s.add_argument('--task-type', default='cpu', choices=('cpu', 'math'))
     s.add_argument('--storage', default='auto', choices=STORAGE_CHOICES)
     st = sub.add_parser('status')
@@ -494,6 +510,49 @@ def _parser() -> argparse.ArgumentParser:
     w.add_argument('job_id')
     w.add_argument('--timeout-seconds', type=float, default=None)
     return parser
+
+
+def _submit_routed(args: argparse.Namespace, command: list[str]) -> int | None:
+    """`auto`/`local` submissions: None means "submit to ailab as usual"."""
+    from . import local_compute
+
+    argv = validate_argv(command)
+    resources = validate_resources(args.cpus, args.memory_mib, args.timeout_seconds)
+    if args.task_type not in ('cpu', 'math'):
+        raise RemoteComputeError('task_type must be cpu or math')
+    if args.storage not in STORAGE_CHOICES:
+        raise RemoteComputeError('storage must be auto or ssd1 through ssd6')
+    scan = scan_source(Path(args.source))
+    if args.backend == 'local':
+        if args.task_type != 'cpu' or args.storage != 'auto':
+            raise RemoteComputeError('--backend local takes CPU jobs with default storage only')
+        decision: dict[str, Any] = {'backend': 'local', 'reason': 'requested --backend local',
+                                    'decided_at': utc_now()}
+    else:
+        decision = local_compute.overflow_decision(
+            cpu_threads=resources['cpu_threads'], memory_mib=resources['memory_mib'],
+            task_type=args.task_type, storage=args.storage,
+            texts=local_compute.scan_texts(scan, argv), argv=argv,
+            remote_root=default_queue_root(),
+        )
+        if decision['backend'] != 'local':
+            print(f'routing: ailab ({decision["reason"]})', file=sys.stderr)
+            for problem in decision.get('not_portable') or []:
+                print(f'  not portable: {problem}', file=sys.stderr)
+            return None
+    job_id = local_compute.submit(
+        Path(args.source), argv, cpu_threads=resources['cpu_threads'],
+        memory_mib=resources['memory_mib'], wall_seconds=resources['wall_seconds'],
+        scan=scan, routing=decision,
+    )
+    for name in scan.excluded:
+        print(f'excluded: {name}', file=sys.stderr)
+    print(f'routing: local ({decision["reason"]}); starts at the next orchestrator tick',
+          file=sys.stderr)
+    print(f'job_id: {job_id}')
+    print(f'job_dir: {local_compute.default_queue_root() / "jobs" / job_id}')
+    print('backend: local')
+    return EXIT_OK
 
 
 def _print_json(obj: Any) -> None:
@@ -512,11 +571,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(args_list)
 
     try:
+        if args.action == 'submit' and args.backend != 'ailab':
+            routed = _submit_routed(args, command)
+            if routed is not None:
+                return routed
         if args.action == 'submit':
             result = submit(
                 Path(args.source), command,
                 cpu_threads=args.cpus, memory_mib=args.memory_mib,
-                wall_seconds=args.timeout_seconds, backend=args.backend,
+                wall_seconds=args.timeout_seconds, backend='ailab',
                 task_type=args.task_type,
                 storage=args.storage,
             )
@@ -524,6 +587,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f'excluded: {name}', file=sys.stderr)
             print(f'job_id: {result.job_id}')
             print(f'job_dir: {result.job_dir}')
+            print('backend: ailab')
             return EXIT_OK
         if args.action == 'status':
             _print_json(read_status(args.job_id))
@@ -535,7 +599,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f'timed out waiting for job {args.job_id}; the job directory is kept', file=sys.stderr)
                 return EXIT_TIMEOUT
             if outcome.status['state'] == 'failed':
-                result_dir = job_dir(default_queue_root(), args.job_id) / 'result'
+                result_dir = locate_job(args.job_id)[1] / 'result'
                 print(f'job {args.job_id} failed; outputs kept under {result_dir}', file=sys.stderr)
                 return EXIT_JOB_FAILED
             return EXIT_OK

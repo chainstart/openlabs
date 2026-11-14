@@ -80,15 +80,16 @@ def job_state(
     """Read-only view of one job: state, error, declared wall time and result path.
 
     The id is looked up in the ailab queue first, then in the local background
-    queue (``openlabs.local_compute``); both use the same layout.
+    queue (``openlabs.local_compute``); both use the same layout. An ailab job moved
+    to the container under the same id (``WITHDRAWN.moved-to-local``) reads locally.
     """
 
     directory = Path(queue_root) / "jobs" / job_id
     backend = "ailab"
-    if REMOTE_JOB_ID.match(job_id) and not directory.is_dir():
-        local = (local_root or local_queue_root()) / "jobs" / job_id
-        if local.is_dir():
-            directory, backend = local, "local"
+    if REMOTE_JOB_ID.match(job_id):
+        from .local_compute import locate
+
+        backend, directory = locate(job_id, Path(queue_root), local_root or local_queue_root())
     view: dict[str, Any] = {
         "job_id": job_id,
         "backend": backend,

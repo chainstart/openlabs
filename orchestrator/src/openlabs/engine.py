@@ -12,7 +12,7 @@ import socket
 import subprocess
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -714,12 +714,16 @@ class TickReport:
     ailab: dict[str, Any] = field(default_factory=dict)
     # Tasks parked on remote compute jobs: parked / released / expired / waiting.
     remote_waits: dict[str, Any] = field(default_factory=dict)
+    # Local overflow queue (ailab overflow in this container): load against its limits.
+    local_compute: dict[str, Any] = field(default_factory=dict)
     # One row per supervised quantity: current vs target and what limits it.
     balance: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         payload = self._base_dict()
-        for name in ("parallel_limit", "host_usage", "ailab", "balance", "remote_waits"):
+        for name in (
+            "parallel_limit", "host_usage", "ailab", "local_compute", "balance", "remote_waits"
+        ):
             value = getattr(self, name)
             if value:
                 payload[name] = value
@@ -3796,6 +3800,20 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
 
     reserved = db.active_resource_totals()
     resource_capacity = effective_capacity(paths.workspace, settings, reserved)
+    # Local overflow jobs share the container with the agents: their declared CPUs and
+    # memory are not available to new agent tasks while they run.
+    try:
+        local_jobs = local_compute.summary()
+    except Exception as exc:  # noqa: BLE001 - the local queue is advisory.
+        report.errors.append(f"local compute summary failed: {exc}")
+    else:
+        if local_jobs["running"] or local_jobs["queued"]:
+            report.local_compute = local_jobs  # reported only while the queue holds work
+        resource_capacity = dataclass_replace(
+            resource_capacity,
+            cpu_threads=max(0, resource_capacity.cpu_threads - local_jobs["running_cpus"]),
+            memory_mib=max(0, resource_capacity.memory_mib - local_jobs["running_memory_mib"]),
+        )
     report.resource_capacity = resource_capacity.to_dict()
 
     budget_now = budget_control.current_time()

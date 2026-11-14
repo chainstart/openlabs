@@ -64,16 +64,46 @@ the same way. The topic's 28-day calendar deadline is unaffected.
 
 ## Local overflow (2026-11-14)
 
-ailab is preferred and should be kept full, but it is not the only place to work.
-When it is saturated (two jobs running and more queued) a CPU job may run on the
-cc-sg container instead: `bin/openlabs-local submit --source DIR --cpus N
---memory-mib M --timeout-seconds S -- COMMAND` snapshots DIR into
-`/workspace/.openlabs-local-compute/jobs/JOB_ID/` and starts it detached inside
-`bin/openlabs-resource-guard` when a slot is free (at most `OPENLABS_LOCAL_MAX_JOBS=2`
-jobs and `OPENLABS_LOCAL_MAX_CPUS=8` declared CPUs of the container's 15; each tick and
-each submit dispatch). Outputs go to `result/outputs` (`$OPENLABS_OUTPUT_DIR`); the
-job's `status.json` uses the same states, so `awaiting_remote.job_ids` accepts local
-ids. GPU work still reserves the device explicitly through the resource guard.
+ailab is preferred and should be kept full, but it is not the only place to work
+(owner, 2026-11-14: "ailab 超订的话，其余的也派给本机"). `openlabs-remote submit`
+routes automatically (default `--backend auto`, `orchestrator/src/openlabs/local_compute.py`
+`overflow_decision`): a job goes to ailab unless ailab cannot start it now, i.e. the
+declared CPUs (or memory, or job count) of its running plus dispatchable queued jobs plus
+this job exceed `config/remote-compute.json`. Then it goes to the cc-sg container's
+background queue `/workspace/.openlabs-local-compute/jobs/JOB_ID/` when all of these hold:
+
+- task type `cpu` (math keeps its own rules) and default storage (no `--storage ssdN`);
+- the local queue has room: at most `max_jobs` (3) jobs, `max_cpus` (8 of the container's
+  15) and `max_memory_mib` (16384) declared at once, counting queued local jobs, and the
+  container keeps `min_free_memory_mib` (8192) free after the job (`config/local-compute.json`;
+  `OPENLABS_LOCAL_MAX_JOBS`, `_MAX_CPUS`, `_MAX_MEMORY_MIB`, `_MIN_FREE_MEMORY_MIB` override;
+  `OPENLABS_COMPUTE_OVERFLOW=0` switches automatic overflow off);
+- the job runs here unchanged: its scripts neither install nor download anything
+  (`uv`/`pip`/`conda` installs, `download-direct`, `curl`/`wget`, `git clone`), use no
+  `OPENLABS_STORAGE_ROOT` and name no absolute path this container lacks (`/data/ssdN/...`,
+  `/usr/bin/time`, ...). `environment_aliases` maps a registered ailab environment to a
+  container one built from the same hash lock (astronomy: `.../environments/astro-photometry`
+  -> `build/lines/astro-survey-photometry/venv`); the rewrite is applied to the snapshot and
+  recorded in `request.json` (`path_rewrites`) and in the receipt.
+
+Otherwise the job queues on ailab as before; the client prints the reason on stderr and
+`backend: ailab|local` on stdout. `--backend ailab` forces ailab; `--backend local` or
+`bin/openlabs-local submit` queue locally explicitly. A local job never starts at
+submission (the submitting agent's process tree is torn down when its attempt ends, which
+killed local job 946ac0f9 on 2026-11-14); each orchestrator tick starts queued jobs detached
+inside `bin/openlabs-resource-guard --task-type cpu` with `CUDA_VISIBLE_DEVICES=''`, and the
+tick subtracts running local jobs' declared CPUs and memory from the capacity it gives new
+agent tasks (`local_compute` in the tick report). Outputs go to `result/outputs`
+(`$OPENLABS_OUTPUT_DIR`), with `result/receipt.json` (request, source and output hashes).
+`openlabs-remote status/wait` and `awaiting_remote.job_ids` accept local ids. Stopping the
+loop or the container stops local jobs; they are recorded as failed, not re-run.
+
+A still-queued ailab job can be moved here under the same id with
+`bin/openlabs-local adopt-ailab JOB_ID --reason TEXT`: it verifies the payload hash and the
+portability rules, builds the local job, withdraws the ailab copy (`READY.withdrawn` plus
+`WITHDRAWN.moved-to-local`) and re-checks that the bridge had not taken it. Lookups follow
+that marker to the local copy, so waits on the id keep working. GPU work still reserves the
+device explicitly through the resource guard.
 
 The source directory must contain the actual script and required inputs, not the
 whole campaign or home. The client snapshots it with SHA-256 and does not follow

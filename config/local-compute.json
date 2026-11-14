@@ -1,0 +1,15 @@
+{
+  "schema_version": "openlabs.local-compute-config.v1",
+  "auto_overflow": true,
+  "policy": "ailab first and kept full; a CPU job that ailab cannot start now (running + queued declared CPUs/memory/jobs would exceed its capacity) goes to this container's local queue when it fits the limits below and runs here unchanged. Math jobs and jobs pinned to an ailab SSD stay on ailab. Owner 2026-11-14: \"ailab 超订的话，其余的也派给本机\".",
+  "max_jobs": 3,
+  "max_cpus": 8,
+  "max_memory_mib": 16384,
+  "min_free_memory_mib": 8192,
+  "environment_aliases": {
+    "/data/ssd1/openlabs-worker/environments/astro-photometry": "/workspace/openlabs/build/lines/astro-survey-photometry/venv"
+  },
+  "environment_alias_evidence": {
+    "/data/ssd1/openlabs-worker/environments/astro-photometry": "Both built from build/lines/astro-survey-photometry/resolve/any.lock.txt (--require-hashes). Checked 2026-11-14: phoebe 2.5.4, emcee 3.1.6, numpy 2.4.6, astropy 8.0.2 on both (ailab job 26d41ac1 environment.txt vs container venv); scipy 1.17.1 in the container lock. Python 3.11.15 on ailab, 3.11.2 in the container."
+  }
+}

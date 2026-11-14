@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # OpenLabs remote compute client (shared file queue, protocol openlabs.remote-compute.v1).
 #   bin/openlabs-remote submit --source DIR --cpus N --memory-mib N --timeout-seconds N \
-#       [--backend ailab] -- COMMAND [ARGS...]
-#   bin/openlabs-remote status JOB_ID
+#       [--backend auto|ailab|local] -- COMMAND [ARGS...]
+#   (auto, the default: ailab first; overflow to the local container queue when ailab
+#   cannot start the job now and it runs here unchanged -- see openlabs.local_compute)
+#   bin/openlabs-remote status JOB_ID            (ailab or local job id)
 #   bin/openlabs-remote wait JOB_ID [--timeout-seconds N]
 # Queue root: $OPENLABS_REMOTE_QUEUE, else /workspace/.openlabs-remote (container)
 # or ~/work/projects/.openlabs-remote (WSL). Every operation runs inside the

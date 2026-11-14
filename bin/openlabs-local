@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # OpenLabs local background compute (ailab overflow; openlabs.local_compute).
 #   bin/openlabs-local submit --source DIR --cpus N --memory-mib N --timeout-seconds N -- COMMAND [ARGS...]
-#   bin/openlabs-local status JOB_ID
-#   bin/openlabs-local dispatch
-# Use it only when ailab is saturated (two solves running and more queued). A job runs
-# detached inside bin/openlabs-resource-guard; at most OPENLABS_LOCAL_MAX_JOBS (2) jobs and
-# OPENLABS_LOCAL_MAX_CPUS (8) declared CPUs run at once; the rest wait for the next
-# dispatch (each orchestrator tick). Queue root: $OPENLABS_LOCAL_QUEUE, else
-# /workspace/.openlabs-local-compute. Outputs: jobs/JOB_ID/result/outputs ($OPENLABS_OUTPUT_DIR).
+#   bin/openlabs-local status JOB_ID | dispatch | summary
+#   bin/openlabs-local adopt-ailab JOB_ID [--reason TEXT]   # move a queued ailab job here, same id
+# bin/openlabs-remote submit (default --backend auto) already overflows here when ailab is
+# full and the job runs here unchanged; use this entry only to queue locally explicitly.
+# Jobs never start at submission: each orchestrator tick (or `dispatch` from a long-lived
+# shell) starts them detached inside bin/openlabs-resource-guard, within the limits of
+# config/local-compute.json (env OPENLABS_LOCAL_MAX_JOBS/_MAX_CPUS/_MAX_MEMORY_MIB override).
+# Queue root: $OPENLABS_LOCAL_QUEUE, else /workspace/.openlabs-local-compute.
+# Outputs: jobs/JOB_ID/result/outputs ($OPENLABS_OUTPUT_DIR), receipt in result/receipt.json.
 set -euo pipefail
 SCRIPT=$(readlink -f -- "${BASH_SOURCE[0]}")
 ROOT=$(cd -- "$(dirname -- "$SCRIPT")/.." && pwd)

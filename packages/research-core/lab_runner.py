@@ -277,13 +277,19 @@ every listed job has succeeded, failed, been withdrawn or gone missing, with eac
 added to the objective. A job that was withdrawn or failed is a result to record, not to hide.
 Before submitting, reuse an existing job or receipt for the same frozen computation (for
 example a research line's shared control solve) instead of submitting a duplicate.
-ailab comes first and should be kept full. When it is saturated (two or more jobs running and
-more queued), a CPU job may instead run on this container in the background with
-`{local} submit --source DIR --cpus N --memory-mib M --timeout-seconds S -- COMMAND`
-(at most 2 local jobs and 8 declared CPUs at once, 4 CPUs per solve; extra jobs wait for the
-next dispatch). It runs detached inside the resource guard, writes outputs under
-`$OPENLABS_OUTPUT_DIR`, and returns a 32-hex job id that `awaiting_remote.job_ids` accepts
-like an ailab id. GPU work still reserves the device with `bin/openlabs-resource-guard`.
+ailab comes first and should be kept full. `{command} submit` routes automatically (default
+`--backend auto`): when ailab cannot start the job now (its running plus queued declared CPUs
+would exceed its capacity), the job goes to this container's background queue instead, within
+the local limits in `config/local-compute.json` (about 8 declared CPUs in total), provided the
+job runs here unchanged: CPU task type, default storage, and scripts that neither install nor
+download anything nor use an ailab-only path (registered environments such as the astronomy
+venv are mapped). The output says `backend: local` or `backend: ailab`; either way the 32-hex
+job id works with `status`, `wait` and `awaiting_remote.job_ids`, and a local job's files are
+under `/workspace/.openlabs-local-compute/jobs/JOB_ID/result/` (`status` prints `result_dir`).
+A local job starts at the next orchestrator tick, detached inside the resource guard with no
+GPU. To keep a job portable, use `$OPENLABS_OUTPUT_DIR`/`$OPENLABS_SCRATCH_DIR`, not disk
+paths. `--backend ailab` forces ailab; `{local} submit ... -- COMMAND` queues locally
+explicitly. GPU work still reserves the device with `bin/openlabs-resource-guard`.
 The bridge returns files under `/workspace/.openlabs-remote/jobs/JOB_ID/result/`
 (on WSL: `~/work/projects/.openlabs-remote/jobs/JOB_ID/result/`). Copy the evidence
 needed by this attempt into its artifact staging, declare its hashes in the result bundle,
