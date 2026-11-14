@@ -188,23 +188,120 @@ def _artifacts(
         if path is not None:
             seen_paths.add(path)
         result.append(entry)
-    if staging_root is not None and staging_root.is_dir():
-        for candidate in sorted(staging_root.rglob("*")):
-            if candidate.is_symlink() or not candidate.is_file():
-                continue
-            resolved = candidate.resolve()
-            if resolved in seen_paths:
-                continue
-            entry = {"uri": resolved.as_uri(), "kind": "data"}
-            if executable_artifact(entry):
-                # Scripts need a replay closure the owner must declare itself.
-                continue
-            digest = sha256_file(resolved)
-            artifact_id = f"staged-{digest[:16]}"
-            if artifact_id in seen_ids:
-                continue
-            seen_ids.add(artifact_id)
-            result.append({"artifact_id": artifact_id, **entry, "sha256": digest})
+    return _with_staged(result, staging_root, seen_ids=seen_ids, seen_paths=seen_paths)
+
+
+def _with_staged(
+    artifacts: list[dict[str, Any]],
+    staging_root: Path | None,
+    *,
+    seen_ids: set[str] | None = None,
+    seen_paths: set[Path] | None = None,
+) -> list[dict[str, Any]]:
+    """``artifacts`` plus every staged non-script file it does not declare yet.
+
+    The commit rejects staged files absent from ``result.artifacts``; owners staged
+    logs and forgot to list them (2026-11-14), so the control plane lists them.
+    """
+
+    result = list(artifacts)
+    ids = set(seen_ids or ()) | {str(item.get("artifact_id") or "") for item in result
+                                 if isinstance(item, Mapping)}
+    paths = set(seen_paths or ())
+    for item in result:
+        if isinstance(item, Mapping) and str(item.get("uri") or "").startswith("file:"):
+            path = _uri_path(str(item["uri"]))
+            if path is not None:
+                paths.add(path)
+    if staging_root is None or not staging_root.is_dir():
+        return result
+    for candidate in sorted(staging_root.rglob("*")):
+        if candidate.is_symlink() or not candidate.is_file():
+            continue
+        resolved = candidate.resolve()
+        if resolved in paths:
+            continue
+        entry = {"uri": resolved.as_uri(), "kind": "data"}
+        if executable_artifact(entry):
+            # Scripts need a replay closure the owner must declare itself.
+            continue
+        digest = sha256_file(resolved)
+        artifact_id = f"staged-{digest[:16]}"
+        if artifact_id in ids:
+            continue
+        ids.add(artifact_id)
+        result.append({"artifact_id": artifact_id, **entry, "sha256": digest})
+    return result
+
+
+def relocate_bulk_files(
+    workspace: Path | None,
+    staging_root: Path | None,
+    canonical: Path | None,
+) -> list[tuple[str, Path, Path]]:
+    """Move new log/bulk files out of the writable workspace into artifact staging.
+
+    The campaign workspace may only gain small text files: the commit rejects files
+    above the data-file limit and artifact-only formats (``.log``, ``.npz``, ``.out``,
+    ...). Owners kept writing solver logs there (2026-11-14), and each rejection
+    cost a seat. A new or changed such file is moved to ``staging/workspace/<path>``;
+    when the canonical campaign already has the file, its canonical bytes are put
+    back so the promotion does not delete it. Returns ``(relative, old, new)`` per file.
+    """
+
+    from .attempts import _ARTIFACT_ONLY_SUFFIXES, DEFAULT_MAX_DATA_FILE_BYTES
+
+    if workspace is None or staging_root is None or not workspace.is_dir():
+        return []
+    root = workspace.resolve()
+    staging = staging_root.resolve()
+    if staging == root or staging.is_relative_to(root):
+        return []
+    moved: list[tuple[str, Path, Path]] = []
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if relative.parts and relative.parts[0] in _DIGEST_SKIP_DIRS:
+            continue
+        lowered = relative.as_posix().lower()
+        bulky = path.stat().st_size > DEFAULT_MAX_DATA_FILE_BYTES
+        if not bulky and not any(lowered.endswith(suffix) for suffix in _ARTIFACT_ONLY_SUFFIXES):
+            continue
+        original = (canonical / relative) if canonical is not None else None
+        if original is not None and original.is_file() and sha256_file(original) == sha256_file(
+                path):
+            continue  # unchanged from the canonical campaign
+        target = staging / "workspace" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            target = target.with_name(f"{target.name}.{sha256_file(path)[:8]}")
+        path.replace(target)
+        if original is not None and original.is_file():
+            path.write_bytes(original.read_bytes())
+        moved.append((relative.as_posix(), path, target))
+    return moved
+
+
+def _repoint(declared: Any, moved: list[tuple[str, Path, Path]], workspace: Path) -> Any:
+    """Declared artifacts that named a moved file now name its staged copy."""
+
+    if not isinstance(declared, list) or not moved:
+        return declared
+    targets = {old.resolve(): new for _relative, old, new in moved}
+    result = []
+    for item in declared:
+        entry = {"uri": item} if isinstance(item, str) else item
+        if isinstance(entry, Mapping):
+            uri = _as_uri(entry.get("uri") or entry.get("path"), workspace)
+            old = _uri_path(uri) if uri else None
+            if old is not None and old in targets:
+                entry = {key: value for key, value in entry.items() if key != "path"}
+                entry["uri"] = targets[old].resolve().as_uri()
+                entry.pop("sha256", None)
+            elif isinstance(item, str):
+                entry = item
+        result.append(entry)
     return result
 
 
@@ -232,6 +329,8 @@ def normalize_packet(
         bundle = dict(raw)
         for key, value in identity.items():
             bundle.setdefault(key, value)
+        if staging_root is not None and isinstance(bundle.get("artifacts"), list):
+            bundle["artifacts"] = _with_staged(bundle["artifacts"], staging_root)
         return bundle
     packet = {
         key: value for key, value in raw.items()
@@ -1176,10 +1275,11 @@ def render_brief(
         "\"summary\", \"job_ids\", \"paper_id\", \"primary_endpoint_verdict\": "
         "\"met|failed|inconclusive|pending\", \"reason\"}`. Only status is required (job_ids, "
         "reason where they apply); the control plane fills the rest.",
-        "- Frozen for a line-level fact (shared control misses your registered criterion, shared "
-        "solver lacks a capability)? Add `reopen_when`: [{kind: control_receipt, checks: [[field, "
-        "op, value]]} | {kind: line_capability, key}] (CODE/orchestrator/src/openlabs/reopen.py); "
-        "all true -> reopened once, this session, same pre-registration.",
+        "- Files: workspace = small text (<= 5 MB: notes, JSON, CSV, scripts, figures); logs, "
+        "chains, archives, PDFs, big files -> large-outputs dir (footer, declared for you; "
+        "strays are moved there).",
+        "- Frozen for a line-level fact? Add `reopen_when` (CODE/orchestrator/src/openlabs/"
+        "reopen.py): all true -> reopened once, this session, same pre-registration.",
     ]
     if handover:
         lines += ["", "## This seat", handover]
@@ -1272,6 +1372,22 @@ def hook_normalize(context: Mapping[str, Any]) -> None:
     if not isinstance(raw, Mapping):
         return
     staging = str(block.get("artifact_staging_root") or "").strip()
+    canonical = str(context.get("canonical_campaign_workspace") or "").strip()
+    moved = relocate_bulk_files(
+        Path(str(context.get("agent_workspace") or "")).expanduser() if context.get(
+            "agent_workspace") else None,
+        Path(staging) if staging else None,
+        Path(canonical) if canonical else None,
+    )
+    if moved:
+        work = Path(str(context.get("agent_workspace") or ".")).expanduser()
+        raw = {**raw, "artifacts": _repoint(raw.get("artifacts"), moved, work)}
+        if raw.get("schema_version") != RESULT_SCHEMA:
+            raw["control_note"] = (
+                "moved to artifact staging (logs/bulk are not allowed in the campaign "
+                "workspace): " + ", ".join(item[0] for item in moved[:20]))
+        if raw.get("artifacts") is None:
+            raw.pop("artifacts")
     bundle = normalize_packet(
         raw,
         expected=dict(context.get("expected_result") or {}),
@@ -1279,7 +1395,7 @@ def hook_normalize(context: Mapping[str, Any]) -> None:
         workspace=Path(str(context.get("agent_workspace") or ".")),
         staging_root=Path(staging) if staging else None,
     )
-    if bundle != raw:
+    if bundle != raw or moved:
         atomic_write_json(path, bundle)
 
 

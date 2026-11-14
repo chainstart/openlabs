@@ -514,10 +514,12 @@ def queue_scout_instruction(
         "candidate_queue_entry, series when present) into the card unchanged, re-running the "
         "occupancy search only when its searched_at is more than 30 days old (then record the "
         "new search), and fill the remaining card fields from the template and the SOP. "
-        "Register only control criteria the line's current control receipt can meet "
-        "(queue metadata.queue_precheck.control_status); otherwise state that the control is "
-        "judged once it requalifies. Skip an entry whose data access fails and say so in the "
-        "result" + held
+        "Pre-register a symmetry gate with the queue's rule (significance AND amplitude: > 3 "
+        "combined SE and > 1 % of the eclipse depth) and a control criterion only as the shared "
+        "control receipt can judge it (each parameter within 2 combined sigma, convergence "
+        "flags; no absolute tolerance such as |di| <= 2 deg; queue "
+        "metadata.queue_precheck.control_status). Skip an entry whose data access fails and say "
+        "so in the result" + held
     )
 
 

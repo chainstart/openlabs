@@ -241,7 +241,7 @@ def test_brief_documents_reopen_when(tmp_path, monkeypatch):
     text = owner.render_brief(
         paths, settings, task=seat, campaign=db.campaign(topic["campaign_id"]), topic=topic,
         adapter_family=None, deadline=__import__("datetime").datetime(2026, 11, 14))
-    assert "reopen_when" in text and "line_capability" in text and "control_receipt" in text
+    assert "reopen_when" in text and "reopen.py" in text
 
 
 def test_scout_instruction_names_the_draw_order_and_held_entries() -> None:
@@ -251,6 +251,7 @@ def test_scout_instruction_names_the_draw_order_and_held_entries() -> None:
                                    {"environment.standard_solver.spot_config": False})
     assert "rank is the draw order" in text and "held_candidates" in text
     assert "spot_config not met" in text and "control_status" in text
+    assert "1 % of the eclipse depth" in text and "2 combined sigma" in text
     assert "held_candidates" not in queue_scout_instruction({"t": "/q.json"})
 
 

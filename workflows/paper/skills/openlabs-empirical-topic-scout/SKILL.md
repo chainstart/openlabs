@@ -173,6 +173,15 @@ Each field is there because the gate needs it to decide:
     `budget` (active agent time and compute; time waiting for queued remote jobs is not agent
     time), `on_failure: "freeze"`. After admission this is the first
     research task and nothing else runs before it; a miss freezes the topic.
+    Write criteria the line can actually be judged on. A symmetry gate (O'Connell maxima,
+    eclipse antisymmetry, bottom tilt) uses significance AND amplitude, the queue's rule
+    (`queue_precheck`): fail only when the effect exceeds 3 combined SE (2 sigma for a slope)
+    and 1 % of the eclipse depth; with TESS precision a significance-only gate fails almost
+    every contact binary. A control criterion uses only what the line's shared control receipt
+    can decide: each parameter within 2 combined sigma (quadrature of published and posterior
+    uncertainty), plus the receipt's convergence flags. Do not add absolute tolerances such as
+    |di| <= 2 deg: published inclination errors (0.01 deg) and the documented inter-pipeline
+    systematic (~2 deg) make them unreachable, and the topic freezes at its first check.
   - `license_check` — `items[]` with `name`, `kind` (software, weights, data), `license`,
     `evidence` (the research-lines entry or a licence text you read), `allowed: true`, for every
     package, model weight and dataset the topic uses; `blacklist_checked: true`. Items the line
