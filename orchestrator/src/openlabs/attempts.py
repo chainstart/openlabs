@@ -418,7 +418,8 @@ def _merge_file_contents(
 ) -> tuple[bytes | None, list[str]]:
     """Merged bytes of a file both sides changed (None: not mergeable) and conflicts."""
 
-    if base is not None and ours.startswith(base) and theirs.startswith(base):
+    if (base and not relative.lower().endswith(".json")
+            and ours.startswith(base) and theirs.startswith(base)):
         # Append-only on both sides (logs, notes, ledgers): canonical then attempt tail.
         return ours + theirs[len(base):], []
     if not relative.lower().endswith(".json"):
