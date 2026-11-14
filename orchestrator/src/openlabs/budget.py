@@ -902,38 +902,170 @@ def protected_windows(
     return frozenset(names)
 
 
-def window_ceiling(
+def class_ceiling(routing: RoutingSettings, klass: str) -> float:
+    """Final-day ceiling of a task class: ordinary 80%, review and decision 90%."""
+
+    if klass == "ordinary":
+        return min(routing.ordinary_ceiling, routing.hard_ceiling)
+    return routing.hard_ceiling
+
+
+def _paced_window(reading: WindowReading, routing: RoutingSettings) -> timedelta | None:
+    """The window's length when it is paced; None for short or shapeless windows."""
+
+    if reading.window_minutes is None or reading.resets_at is None:
+        return None
+    window = timedelta(minutes=reading.window_minutes)
+    if window < timedelta(hours=routing.pace_min_window_hours):  # the 5-hour window
+        return None
+    return window
+
+
+def curve_value(curve: tuple[tuple[float, float], ...], share: float) -> float:
+    """Piecewise-linear pace factor at an elapsed share of the window."""
+
+    share = max(0.0, min(1.0, share))
+    previous = curve[0]
+    if share <= previous[0]:
+        return previous[1]
+    for point in curve[1:]:
+        if share <= point[0]:
+            span = point[0] - previous[0]
+            return previous[1] + (point[1] - previous[1]) * (share - previous[0]) / span
+        previous = point
+    return curve[-1][1]
+
+
+def curve_inverse(curve: tuple[tuple[float, float], ...], factor: float) -> float:
+    """Smallest elapsed share at which the pace factor reaches ``factor``."""
+
+    if factor <= curve[0][1]:
+        return 0.0
+    previous = curve[0]
+    for point in curve[1:]:
+        if factor <= point[1]:
+            rise = point[1] - previous[1]
+            if rise <= 0:
+                return point[0]
+            return previous[0] + (point[0] - previous[0]) * (factor - previous[1]) / rise
+        previous = point
+    return curve[-1][0]
+
+
+def pace_factor(
+    reading: WindowReading,
+    routing: RoutingSettings,
+    *,
+    now: datetime,
+) -> float | None:
+    """``pace_curve`` at the window's elapsed share; None when not paced.
+
+    Front-loaded by default and 1 from the start of the window's last day. A
+    window shorter than ``pace_min_window_hours``, or one without a known length
+    and reset time, is not paced (its ceilings apply in full).
+    """
+
+    window = _paced_window(reading, routing)
+    if window is None or reading.resets_at is None:
+        return None
+    remaining = min(window, max(timedelta(0), reading.resets_at - now))
+    return curve_value(routing.pace_curve, (window - remaining) / window)
+
+
+def paced_allowance(ceiling: float, factor: float | None, lead: float) -> float:
+    """Used fraction allowed now: ``min(ceiling, max(ceiling x factor, lead))``.
+
+    ``lead`` is a small start allowance so a freshly reset window can take work;
+    it does not raise the line once the line is above it.
+    """
+
+    if factor is None:
+        return ceiling
+    return min(ceiling, max(ceiling * factor, lead))
+
+
+def protection_limit(
     routing: RoutingSettings,
     *,
     klass: str,
     protected_window: bool,
     protected_runner: bool,
 ) -> float:
-    """Highest used fraction a task class may push one window to.
+    """The protected lead's (Fable's) own, unpaced limits; 1.0 where none apply.
 
-    * ``review_reserve`` (default 15%) of every window is kept for review and
-      decision tasks;
-    * on windows the protected lead (Fable) depends on, ``lead_decision_reserve``
-      (default 25%) is kept for decision tasks only -- reviews may not use it;
-    * on the protected lead itself, review and ordinary work stop at
-      ``lead_review_ceiling`` used (default 60%);
-    * with ``utilization_target`` set, ordinary work also stops at that share:
-      what is left above it is kept for review and decision tasks (the
-      stricter of the target and the reserves applies).
+    * on windows Fable depends on, ``lead_decision_reserve`` is kept for decision
+      tasks only -- reviews and ordinary work may not use it;
+    * on Fable itself, review and ordinary work stop at ``lead_review_ceiling``.
     """
 
-    decision_reserve = routing.lead_decision_reserve if protected_window else 0.0
     if klass == "decision":
         return 1.0
-    if klass == "review":
-        ceiling = 1.0 - decision_reserve
-    else:
-        ceiling = 1.0 - max(routing.review_reserve, decision_reserve)
-        if routing.utilization_target > 0:
-            ceiling = min(ceiling, routing.utilization_target)
+    limit = 1.0
+    if protected_window:
+        limit = min(limit, 1.0 - routing.lead_decision_reserve)
     if protected_runner:
-        ceiling = min(ceiling, routing.lead_review_ceiling)
-    return ceiling
+        limit = min(limit, routing.lead_review_ceiling)
+    return limit
+
+
+def window_ceiling(
+    routing: RoutingSettings,
+    *,
+    klass: str,
+    protected_window: bool,
+    protected_runner: bool,
+    factor: float | None = None,
+    override: float | None = None,
+) -> float:
+    """Highest used fraction a task class may push one window to right now.
+
+    The class ceiling (``ordinary_ceiling`` / ``hard_ceiling``) scaled by the
+    window's pace factor, at least ``pace_lead`` (see ``pace_factor``; ``None``
+    means the full ceiling), or a manual ``override`` ceiling instead (no pacing,
+    every class); then the stricter of that and Fable's own protection.
+    """
+
+    if override is not None:
+        base = override
+    else:
+        base = paced_allowance(class_ceiling(routing, klass), factor, routing.pace_lead)
+    return min(
+        base,
+        protection_limit(
+            routing, klass=klass, protected_window=protected_window,
+            protected_runner=protected_runner,
+        ),
+    )
+
+
+def allowance_resume_at(
+    reading: WindowReading,
+    routing: RoutingSettings,
+    *,
+    ceiling: float,
+    limit: float,
+    override: float | None,
+) -> datetime | None:
+    """When a window's allowance next rises above its current use (estimate).
+
+    On the pace line that is where ``ceiling x pace(share) > used``; past the
+    final ceiling, the protection ``limit`` or an override ceiling only the
+    reset helps (None when the reset time is unknown).
+    """
+
+    used = reading.used_fraction
+    window = _paced_window(reading, routing)
+    if (
+        override is None
+        and window is not None
+        and reading.resets_at is not None
+        and ceiling > 0
+        and used < ceiling
+        and used < limit
+    ):
+        start = reading.resets_at - window
+        return start + window * curve_inverse(routing.pace_curve, used / ceiling)
+    return reading.resets_at
 
 
 @dataclass(frozen=True)
@@ -959,6 +1091,10 @@ class Availability:
     abundance: float | None = None
     # Some constraining window is an extrapolated, not a measured, reading.
     estimated: bool = False
+    # Unavailable: estimated time the binding allowance rises above current use.
+    resume_at: datetime | None = None
+    # The manual override ceiling that applied (None: the paced rule applied).
+    override: float | None = None
 
     @property
     def usable(self) -> bool:
@@ -979,6 +1115,8 @@ class Availability:
             "in_lead_reserve": self.in_lead_reserve,
             "abundance": None if self.abundance is None else round(self.abundance, 4),
             "estimated": self.estimated,
+            "resume_at": None if self.resume_at is None else _iso(self.resume_at),
+            "override": self.override,
             "windows": list(self.windows),
         }
 
@@ -991,75 +1129,115 @@ def runner_availability(
     *,
     klass: str,
     now: datetime,
+    override: float | None = None,
 ) -> Availability:
-    """Pure: headroom, pace and reserves of ``spec`` for a task class.
+    """Pure: paced allowance, headroom and reserves of ``spec`` for a task class.
 
-    The runner is unavailable when any constraining window is below its ceiling
-    (``below_reserve``) or, for ordinary tasks, overspeed. Missing or stale
-    windows make it ``unknown``: dispatch is allowed with parallelism 1 and an
-    assumed headroom of ``routing.unknown_headroom``.
+    Each constraining window allows ``window_ceiling`` (the class ceiling on the
+    pace line, or the manual ``override`` ceiling, and never more than Fable's
+    own protection). The runner is unavailable once any window has reached its
+    allowance (``below_reserve``); ``reason`` says which limit binds:
+    ``pace`` (the pace line; it moves up with time), ``ceiling`` (the class's
+    final ceiling; only the reset helps), ``lead_reserve``/``reserve`` (Fable's
+    protection) or ``override_ceiling``. Missing or stale windows make it
+    ``unknown``: dispatch is allowed with parallelism 1 and an assumed headroom
+    of ``routing.unknown_headroom`` -- but a stale reading of a window that has
+    not reset is a lower bound of its use, so one already at its allowance
+    still blocks.
     """
 
     names = runner_windows(spec, runners, readings)
     guarded = protected_windows(spec.provider, runners, readings)
     headroom: float | None = None
     binding: str | None = None
+    binding_kind: str | None = None
     abundance: float | None = None
     estimated = False
-    overspeed = False
+    blocked_kinds: list[str] = []
     in_reserve = False
+    resume: datetime | None = None
+    resume_unknown = False
     unknown: list[str] = []
     details: list[dict[str, Any]] = []
     for name in names:
         reading = readings.get(name)
-        if reading is None or not reading_is_fresh(
+        fresh = reading is not None and reading_is_fresh(
             reading, now=now, stale_hours=routing.snapshot_stale_hours
+        )
+        if reading is None or (
+            not fresh and (reading.resets_at is None or reading.resets_at <= now)
         ):
             unknown.append(name)
             continue
-        ceiling = window_ceiling(
-            routing,
-            klass=klass,
-            protected_window=name in guarded,
+        protected_window = name in guarded
+        cap = class_ceiling(routing, klass)
+        limit = protection_limit(
+            routing, klass=klass, protected_window=protected_window,
             protected_runner=spec.protected,
         )
-        room = ceiling - reading.used_fraction
-        # Overspeed means the hard limit (100%) is reached before the reset at
-        # the window's average pace; the target is enforced by the ceiling, so
-        # a window close to its reset with quota left is never overspeed.
-        fast = is_overspeed(
-            reading, now=now, min_elapsed_fraction=routing.pace_min_elapsed_fraction
+        factor = None if override is not None else pace_factor(reading, routing, now=now)
+        ceiling = window_ceiling(
+            routing, klass=klass, protected_window=protected_window,
+            protected_runner=spec.protected, factor=factor, override=override,
         )
-        overspeed = overspeed or fast
+        final = min(override if override is not None else cap, limit)
+        room = ceiling - reading.used_fraction
+        if not fresh:
+            # Stale but not reset: its use can only have grown since.
+            if room > 0:
+                unknown.append(name)
+                continue
         estimated = estimated or reading.estimated
         if spec.protected and reading.used_fraction >= 1.0 - routing.lead_decision_reserve:
             in_reserve = True
-        rich = window_abundance(reading, ceiling, now=now)
+        if room <= 0:
+            if reading.used_fraction >= limit and limit < (
+                override if override is not None else cap
+            ):
+                kind = "lead_reserve" if spec.protected or protected_window else "reserve"
+            elif override is not None:
+                kind = "override_ceiling"
+            elif reading.used_fraction >= cap:
+                kind = "ceiling"
+            else:
+                kind = "pace"
+            blocked_kinds.append(kind)
+            when = allowance_resume_at(
+                reading, routing, ceiling=cap, limit=limit, override=override
+            )
+            # Every blocked window must open again: the latest one decides; one
+            # with an unknown reset time leaves the estimate unknown.
+            if when is None:
+                resume_unknown = True
+            elif resume is None or when > resume:
+                resume = when
+        else:
+            kind = None
+        rich = window_abundance(reading, final, now=now)
         projected = projected_fraction_at_reset(
             reading, now=now, min_elapsed_fraction=routing.pace_min_elapsed_fraction
         )
         details.append(
-            {**reading.to_dict(), "ceiling": round(ceiling, 4), "headroom": round(room, 4),
-             "overspeed": fast,
+            {**reading.to_dict(), "ceiling": round(ceiling, 4), "cap": round(final, 4),
+             "pace_factor": None if factor is None else round(factor, 4),
+             "headroom": round(room, 4),
+             "blocked_by": kind, "stale": not fresh,
+             "overspeed": kind == "pace",
              "abundance": None if rich is None else round(rich, 4),
              "projected_at_reset": None if projected is None else round(projected, 4)}
         )
         if rich is not None and (abundance is None or rich < abundance):
             abundance = rich
         if headroom is None or room < headroom:
-            headroom, binding = room, name
+            headroom, binding, binding_kind = room, name, kind
     below = headroom is not None and headroom <= 0
     reason: str | None = None
     if below:
         state = "unavailable"
-        reason = (
-            "lead_reserve"
-            if spec.protected or (binding in guarded and klass != "decision")
-            else "reserve"
-        )
-    elif overspeed and klass == "ordinary":
-        state = "unavailable"
-        reason = "overspeed"
+        # ``pace`` only when the pace line is all that blocks: any window held
+        # by a final ceiling or a reserve opens no earlier than its reset.
+        lasting = [kind for kind in blocked_kinds if kind != "pace"]
+        reason = (binding_kind if binding_kind in lasting else lasting[0]) if lasting else "pace"
     elif unknown or not names:
         state = "unknown"
         reason = "stale_or_missing_reading"
@@ -1079,7 +1257,8 @@ def runner_availability(
         task_class=klass,
         state=state,
         headroom=headroom,
-        overspeed=overspeed,
+        # Ahead of the pace line (the former overspeed, now part of pacing).
+        overspeed=below and reason == "pace",
         below_reserve=below,
         binding_window=binding,
         windows=tuple(details),
@@ -1089,7 +1268,189 @@ def runner_availability(
         in_lead_reserve=in_reserve,
         abundance=abundance,
         estimated=estimated,
+        resume_at=None if not below or resume_unknown else resume,
+        override=override,
     )
+
+
+# ------------------------------------------------------------ manual overrides
+
+QUOTA_OVERRIDE_PREFIX = "quota_override:"
+QUOTA_TASK_OVERRIDE_PREFIX = "quota_override_task:"
+
+
+class QuotaOverrideError(ValueError):
+    """A manual quota override request is invalid."""
+
+
+def _override_ceiling(entry: Mapping[str, Any] | None) -> float | None:
+    if not entry:
+        return None
+    try:
+        return float(entry["ceiling"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def quota_overrides(db: FactoryDB) -> dict[str, dict[str, Any]]:
+    """Every stored provider override (expired ones included until a tick removes them)."""
+
+    result: dict[str, dict[str, Any]] = {}
+    for provider, raw in db.meta_items(QUOTA_OVERRIDE_PREFIX).items():
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict):
+            result[provider] = entry
+    return result
+
+
+def active_quota_overrides(
+    db: FactoryDB,
+    settings: FactorySettings,
+    *,
+    now: datetime,
+) -> dict[str, dict[str, Any]]:
+    """Unexpired provider overrides; the ceiling never exceeds ``override_max_ceiling``."""
+
+    result: dict[str, dict[str, Any]] = {}
+    for provider, entry in quota_overrides(db).items():
+        until = parse_time(entry.get("until"))
+        ceiling = _override_ceiling(entry)
+        if until is None or until <= now or ceiling is None:
+            continue
+        result[provider] = {
+            **entry,
+            "ceiling": min(ceiling, settings.routing.override_max_ceiling),
+        }
+    return result
+
+
+def set_quota_override(
+    db: FactoryDB,
+    settings: FactorySettings,
+    *,
+    provider: str,
+    until: str,
+    reason: str,
+    ceiling: float | None = None,
+    by: str = "owner",
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Let every automatic task of ``provider`` use up to ``ceiling`` until ``until``.
+
+    Replaces the paced class ceilings of that provider (no pacing); Fable's own
+    protection still applies. ``ceiling`` defaults to ``hard_ceiling`` and may
+    not exceed ``override_max_ceiling`` (below 100%, so paid overage is never
+    reached). Expires by itself; ``revoke_quota_override`` ends it earlier.
+    """
+
+    moment = _now(now)
+    providers = {spec.provider for spec in settings.runners.values()}
+    if provider not in providers:
+        raise QuotaOverrideError(
+            f"unknown provider {provider!r}; configured: {', '.join(sorted(providers)) or 'none'}"
+        )
+    expires = parse_time(until)
+    if expires is None:
+        raise QuotaOverrideError(f"--until is not an ISO time: {until!r}")
+    if expires <= moment:
+        raise QuotaOverrideError(f"--until {until} is not in the future")
+    if not str(reason or "").strip():
+        raise QuotaOverrideError("--reason is required")
+    routing = settings.routing
+    value = routing.hard_ceiling if ceiling is None else float(ceiling)
+    if not 0 < value <= routing.override_max_ceiling:
+        raise QuotaOverrideError(
+            f"--ceiling must be in (0, {routing.override_max_ceiling}] (never 100%: paid overage)"
+        )
+    entry = {
+        "provider": provider,
+        "ceiling": value,
+        "until": _iso(expires),
+        "reason": str(reason).strip(),
+        "by": by,
+        "set_at": _iso(moment),
+    }
+    db.update_meta(
+        {QUOTA_OVERRIDE_PREFIX + provider: json.dumps(entry, sort_keys=True)},
+        events=[("provider", provider, "quota_override_set", entry)],
+    )
+    return entry
+
+
+def revoke_quota_override(
+    db: FactoryDB,
+    *,
+    provider: str,
+    by: str = "owner",
+    reason: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """End a provider override now; None when there was none."""
+
+    entry = quota_overrides(db).get(provider)
+    if entry is None:
+        return None
+    detail = {**entry, "revoked_by": by, "revoked_at": _iso(_now(now)),
+              "revoke_reason": reason}
+    db.update_meta(
+        {QUOTA_OVERRIDE_PREFIX + provider: None},
+        events=[("provider", provider, "quota_override_revoked", detail)],
+    )
+    return detail
+
+
+def expire_quota_overrides(db: FactoryDB, *, now: datetime) -> list[str]:
+    """Remove overrides whose time has passed (one event each); returns the providers."""
+
+    expired: list[str] = []
+    for provider, entry in quota_overrides(db).items():
+        until = parse_time(entry.get("until"))
+        if until is not None and until > now:
+            continue
+        db.update_meta(
+            {QUOTA_OVERRIDE_PREFIX + provider: None},
+            events=[("provider", provider, "quota_override_expired", entry)],
+        )
+        expired.append(provider)
+    return expired
+
+
+def _task_overrides(db: FactoryDB) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for task_id, raw in db.meta_items(QUOTA_TASK_OVERRIDE_PREFIX).items():
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            entry = {}
+        result[task_id] = entry if isinstance(entry, dict) else {}
+    return result
+
+
+def mark_task_quota_override(
+    db: FactoryDB,
+    task_id: str,
+    *,
+    reason: str,
+    by: str = "owner",
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Flag a manually enqueued task: it ignores pacing and class ceilings.
+
+    It still stops at ``override_max_ceiling`` (and Fable's protection), and a
+    provider in rate-limit backoff is still skipped.
+    """
+
+    if not str(reason or "").strip():
+        raise QuotaOverrideError("--quota-override-reason is required")
+    entry = {"reason": str(reason).strip(), "by": by, "set_at": _iso(_now(now))}
+    db.update_meta(
+        {QUOTA_TASK_OVERRIDE_PREFIX + task_id: json.dumps(entry, sort_keys=True)},
+        events=[("task", task_id, "quota_override_task", entry)],
+    )
+    return entry
 
 
 def lead_availability(
@@ -1107,6 +1468,7 @@ def lead_availability(
 
     moment = _now(now)
     readings = quota_readings(db)
+    overrides = active_quota_overrides(db, settings, now=moment)
     backoffs = runner_backoffs(db, now=moment, settings=settings)
     names = [runner] if runner else [n for n, s in settings.runners.items() if s.protected]
     result: dict[str, dict[str, Any]] = {}
@@ -1119,6 +1481,7 @@ def lead_availability(
             klass: runner_availability(
                 spec, settings.runners, provider_readings, settings.routing,
                 klass=klass, now=moment,
+                override=_override_ceiling(overrides.get(spec.provider)),
             )
             for klass in ("decision", "review")
         }
@@ -1151,7 +1514,10 @@ class QuotaRouter:
     deferred: dict[str, dict[str, Any]] = field(default_factory=dict)
     decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
     lead_short: bool = False
-    _cache: dict[tuple[str, str], Availability] = field(default_factory=dict)
+    # Active manual provider overrides and tasks flagged ``--quota-override``.
+    overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    task_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    _cache: dict[tuple[str, str, bool], Availability] = field(default_factory=dict)
     _task_cache: dict[str, dict[str, Any] | None] = field(default_factory=dict)
 
     @classmethod
@@ -1170,6 +1536,8 @@ class QuotaRouter:
             readings=estimate_stale_readings(db, settings, quota_readings(db), now=moment),
             backoffs=runner_backoffs(db, now=moment, settings=settings),
             probes=probe_limits(db, now=moment, settings=settings),
+            overrides=active_quota_overrides(db, settings, now=moment),
+            task_overrides=_task_overrides(db),
         )
         leads = [spec for spec in settings.runners.values() if spec.tier == "lead"]
         router.lead_short = bool(leads) and not any(
@@ -1179,9 +1547,14 @@ class QuotaRouter:
 
     # -- pure-ish helpers ----------------------------------------------------
 
-    def availability(self, spec: RunnerSpec, klass: str) -> Availability:
-        key = (spec.name, klass)
+    def availability(self, spec: RunnerSpec, klass: str, *, manual: bool = False) -> Availability:
+        """``manual``: a task flagged ``--quota-override`` (no pacing, override ceiling)."""
+
+        key = (spec.name, klass, manual)
         if key not in self._cache:
+            override = _override_ceiling(self.overrides.get(spec.provider))
+            if manual:
+                override = self.settings.routing.override_max_ceiling
             self._cache[key] = runner_availability(
                 spec,
                 self.settings.runners,
@@ -1189,11 +1562,15 @@ class QuotaRouter:
                 self.settings.routing,
                 klass=klass,
                 now=self.now,
+                override=override,
             )
         return self._cache[key]
 
     def usable(self, spec: RunnerSpec, klass: str) -> bool:
         return spec.provider not in self.backoffs and self.availability(spec, klass).usable
+
+    def is_manual(self, task: Mapping[str, Any]) -> bool:
+        return str(task.get("task_id") or "") in self.task_overrides
 
     @property
     def utilization_enabled(self) -> bool:
@@ -1305,12 +1682,14 @@ class QuotaRouter:
         candidates: list[RunnerSpec],
         klass: str,
         active_by_runner: Mapping[str, int],
+        *,
+        manual: bool = False,
     ) -> tuple[RunnerSpec, Availability] | None:
         usable: list[tuple[RunnerSpec, Availability]] = []
         for spec in candidates:
             if spec.provider in self.backoffs:
                 continue
-            state = self.availability(spec, klass)
+            state = self.availability(spec, klass, manual=manual)
             if not state.usable or not self._limit_ok(spec, state, active_by_runner):
                 continue
             usable.append((spec, state))
@@ -1390,21 +1769,23 @@ class QuotaRouter:
         klass = task_class(self.settings, task)
         task_type = str(task.get("task_type") or "")
         paused = self.settings.routing.lead_shortage_paused
+        manual = self.is_manual(task)
         # The admission gate runs as a portfolio_review task whose routing reason
         # names the paused decision type.
-        if self.lead_short and (
+        if self.lead_short and not manual and (
             task_type in paused or str(task.get("routing_reason") or "") in paused
         ):
             self._defer(task, "lead_quota_short")
             return None
         pinned = self._pinned(task)
         if pinned is not None:
-            chosen = self._choose([pinned], klass, active_by_runner)
+            chosen = self._choose([pinned], klass, active_by_runner, manual=manual)
             if chosen is None:
-                self._defer(task, "pinned_runner_unavailable", runner=pinned.name)
+                self._defer(task, "pinned_runner_unavailable", runner=pinned.name,
+                            **self._resume_detail([pinned], klass, manual))
                 return None
             spec, state = chosen
-            return self._decision(spec, state, klass, pinned=True)
+            return self._decision(spec, state, klass, pinned=True, manual=manual)
         tier = self.required_tier(task)
         excluded = self._excluded_provider(task, tier, klass)
         sticky = self._sticky_provider(task)
@@ -1424,11 +1805,12 @@ class QuotaRouter:
         level = next((t for t in chain[chain.index(tier):] if t in configured), tier)
         pool = candidates_for(level)
         if pool:
-            chosen = self._choose(pool, klass, active_by_runner)
+            chosen = self._choose(pool, klass, active_by_runner, manual=manual)
             if chosen is not None:
                 spec, state = chosen
                 decision = self._decision(
-                    spec, state, klass, requested_tier=tier, excluded=excluded, sticky=sticky
+                    spec, state, klass, requested_tier=tier, excluded=excluded, sticky=sticky,
+                    manual=manual,
                 )
                 protected = [item.name for item in pool if item.protected]
                 if klass == "decision" and protected and not spec.protected:
@@ -1440,19 +1822,20 @@ class QuotaRouter:
                 # family's worker tier instead of waiting.
                 blocked = [
                     spec for spec in pool
-                    if spec.protected and self.availability(spec, klass).reason == "lead_reserve"
+                    if spec.protected
+                    and self.availability(spec, klass, manual=manual).reason == "lead_reserve"
                 ]
                 fallback = [
                     spec
                     for spec in candidates_for("worker")
                     if spec.provider in {item.provider for item in blocked}
                 ]
-                chosen = self._choose(fallback, klass, active_by_runner)
+                chosen = self._choose(fallback, klass, active_by_runner, manual=manual)
                 if chosen is not None:
                     spec, state = chosen
                     return self._decision(
                         spec, state, klass, requested_tier=tier, excluded=excluded,
-                        sticky=sticky, downgraded=True,
+                        sticky=sticky, downgraded=True, manual=manual,
                     )
         self._defer(
             task,
@@ -1461,8 +1844,37 @@ class QuotaRouter:
             task_class=klass,
             excluded_provider=excluded,
             sticky_provider=sticky,
+            **self._resume_detail(pool, klass, manual),
         )
         return None
+
+    def _resume_detail(
+        self, specs: Iterable[RunnerSpec], klass: str, manual: bool
+    ) -> dict[str, Any]:
+        """Why the candidates are blocked and the earliest estimated reopening."""
+
+        reasons: set[str] = set()
+        times: list[datetime] = []
+        for spec in specs:
+            if spec.provider in self.backoffs:
+                reasons.add("backoff")
+                until = parse_time(self.backoffs[spec.provider])
+                if until is not None:
+                    times.append(until)
+                continue
+            state = self.availability(spec, klass, manual=manual)
+            if state.usable:
+                continue  # blocked by a parallelism limit, not by quota
+            if state.reason:
+                reasons.add(state.reason)
+            if state.resume_at is not None:
+                times.append(state.resume_at)
+        detail: dict[str, Any] = {}
+        if reasons:
+            detail["quota_reasons"] = sorted(reasons)
+        if times:
+            detail["resume_at"] = _iso(min(times))
+        return detail
 
     def _decision(
         self,
@@ -1475,6 +1887,7 @@ class QuotaRouter:
         excluded: str | None = None,
         sticky: str | None = None,
         downgraded: bool = False,
+        manual: bool = False,
     ) -> dict[str, Any]:
         decision: dict[str, Any] = {
             "runner": spec.name,
@@ -1493,6 +1906,10 @@ class QuotaRouter:
             )
         if state.estimated:
             decision["estimated_reading"] = True
+        if state.override is not None:
+            decision["quota_override"] = state.override
+            if manual:
+                decision["manual_quota_override"] = True
         if excluded:
             decision["excluded_provider"] = excluded
         if sticky:
@@ -1517,6 +1934,7 @@ class QuotaRouter:
             state = runner_availability(
                 probe, self.settings.runners, self.readings.get(provider, {}),
                 self.settings.routing, klass="ordinary", now=self.now,
+                override=_override_ceiling(self.overrides.get(provider)),
             )
             readings = self.readings.get(provider, {})
             summary[provider] = {
@@ -1528,11 +1946,15 @@ class QuotaRouter:
                 "below_reserve": state.below_reserve,
                 "binding_window": state.binding_window,
                 "backoff_until": self.backoffs.get(provider),
+                "reason": state.reason,
+                "resume_at": None if state.resume_at is None else _iso(state.resume_at),
+                "override": self.overrides.get(provider),
                 "windows": {name: item.to_dict() for name, item in sorted(readings.items())},
                 "window_pace": {
                     str(item["name"]): {
                         key: item.get(key)
-                        for key in ("ceiling", "abundance", "projected_at_reset", "overspeed")
+                        for key in ("ceiling", "cap", "pace_factor", "abundance",
+                                    "projected_at_reset", "overspeed")
                     }
                     for item in state.windows
                 } if self.utilization_enabled else {},
@@ -1544,6 +1966,43 @@ class QuotaRouter:
                 },
             }
         return summary
+
+    def pause_summary(self) -> dict[str, Any]:
+        """Which task classes no provider can take now, why, and when that ends.
+
+        ``all_paused`` means no automatic task can start anywhere: the loop keeps
+        ticking but launches nothing until ``resume_at`` (an estimate from the
+        pace line or the reset; a fresh reading or an override can move it).
+        """
+
+        labels = {"ordinary": "普通任务", "review": "评审任务", "decision": "决策任务"}
+        classes: dict[str, Any] = {}
+        messages: list[str] = []
+        for klass in TASK_CLASSES:
+            specs = list(self.settings.runners.values())
+            if any(self.usable(spec, klass) for spec in specs):
+                classes[klass] = {"paused": False}
+                continue
+            detail = self._resume_detail(specs, klass, False)
+            reasons = detail.get("quota_reasons", [])
+            resume = detail.get("resume_at")
+            classes[klass] = {"paused": True, "reasons": reasons, "resume_at": resume}
+            cause = "因额度配速暂停" if "pace" in reasons else "因额度上限暂停"
+            messages.append(
+                f"{labels[klass]}{cause}（{'、'.join(reasons) or 'unknown'}），"
+                f"预计 {resume or '重置或新读数后'} 恢复"
+            )
+        all_paused = all(item["paused"] for item in classes.values())
+        resumes = [item["resume_at"] for item in classes.values()
+                   if item.get("paused") and item.get("resume_at")]
+        return {
+            "paused": any(item["paused"] for item in classes.values()),
+            "all_paused": all_paused,
+            "resume_at": min(resumes) if resumes else None,
+            "classes": classes,
+            "message": "；".join(messages) if messages else None,
+            "overrides": self.overrides,
+        }
 
     def lead_summary(self) -> dict[str, Any]:
         leads = [spec for spec in self.settings.runners.values() if spec.tier == "lead"]
@@ -1573,6 +2032,32 @@ def record_lead_shortage(db: FactoryDB, router: QuotaRouter) -> str | None:
     db.update_meta(
         {LEAD_SHORTAGE_KEY: _iso(router.now) if router.lead_short else None},
         events=[("scheduler", "lead_quota", event, router.lead_summary())],
+    )
+    return event
+
+
+QUOTA_PAUSE_KEY = "quota_pause"
+
+
+def record_quota_pause(
+    db: FactoryDB,
+    router: QuotaRouter,
+    pause: Mapping[str, Any],
+) -> str | None:
+    """Write ``quota_paused`` / ``quota_resumed`` once per change of the paused classes."""
+
+    paused = sorted(k for k, v in (pause.get("classes") or {}).items() if v.get("paused"))
+    previous = db.meta_get(QUOTA_PAUSE_KEY)
+    current = ",".join(paused) or None
+    if previous == current:
+        return None
+    event = "quota_paused" if current else "quota_resumed"
+    db.update_meta(
+        {QUOTA_PAUSE_KEY: current},
+        events=[("scheduler", "quota_pause", event,
+                 {"paused_classes": paused, "previous": previous,
+                  "resume_at": pause.get("resume_at"), "message": pause.get("message"),
+                  "at": _iso(router.now)})],
     )
     return event
 

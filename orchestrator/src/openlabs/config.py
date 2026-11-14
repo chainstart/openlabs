@@ -352,6 +352,50 @@ DEFAULT_MODEL_WINDOWS: dict[str, tuple[str, ...]] = {
     "claude-fable-5-2": ("seven_day_overage_included",),
 }
 DEFAULT_PROTECTED_MODELS: tuple[str, ...] = ("claude-fable-5-2",)
+# Owner decision 2026-11-14: front-loaded pacing; (elapsed share of the window,
+# share of the class ceiling allowed). For a 7-day window the points are the
+# ends of days 0..6; the factor is 1 from the start of the last day.
+DEFAULT_PACE_CURVE: tuple[tuple[float, float], ...] = (
+    (0.0, 0.0),
+    (0.1429, 0.3125),
+    (0.2857, 0.525),
+    (0.4286, 0.6875),
+    (0.5714, 0.8125),
+    (0.7143, 0.9125),
+    (0.8571, 1.0),
+)
+
+
+def parse_pace_curve(value: Any) -> tuple[tuple[float, float], ...]:
+    """Validate ``[routing].pace_curve``: ``[[elapsed share, factor], ...]``.
+
+    Elapsed shares start at 0 and strictly increase within [0, 1]; factors lie
+    in [0, 1], never decrease and end at 1. Anything else is a configuration
+    error (ValueError).
+    """
+
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ValueError("[routing].pace_curve must be a non-empty list of [share, factor]")
+    points: list[tuple[float, float]] = []
+    for item in value:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise ValueError(f"[routing].pace_curve point {item!r} is not [share, factor]")
+        try:
+            x, y = float(item[0]), float(item[1])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"[routing].pace_curve point {item!r} is not numeric") from exc
+        if not (0 <= x <= 1 and 0 <= y <= 1):
+            raise ValueError(f"[routing].pace_curve point {item!r} is outside [0, 1]")
+        if points and (x <= points[-1][0] or y < points[-1][1]):
+            raise ValueError(
+                "[routing].pace_curve must have increasing shares and non-decreasing factors"
+            )
+        points.append((x, y))
+    if points[0][0] != 0:
+        raise ValueError("[routing].pace_curve must start at share 0")
+    if points[-1][1] != 1:
+        raise ValueError("[routing].pace_curve must end at factor 1")
+    return tuple(points)
 
 
 @dataclass(frozen=True)
@@ -383,7 +427,29 @@ class RoutingSettings:
     Only active when ``FactorySettings.runners`` is non-empty.
     """
 
-    review_reserve: float = 0.15
+    # Owner rule 2026-11-14: on every quota window of every provider, ordinary
+    # tasks stop at ``ordinary_ceiling`` used and every automatic task (reviews
+    # and decisions included) at ``hard_ceiling``. Both are reached only in the
+    # window's last day: at elapsed share x of a window a class may use
+    # ``min(ceiling, max(ceiling x pace(x), pace_lead))`` where ``pace`` is the
+    # piecewise-linear ``pace_curve`` (points ``(elapsed share, factor)``,
+    # front-loaded by default: 7-day ends of day 1..6 -> 0.3125, 0.525, 0.6875,
+    # 0.8125, 0.9125, 1.0) and ``pace_lead`` a small start allowance so a fresh
+    # window can begin. Windows shorter than ``pace_min_window_hours`` (the
+    # 5-hour window) are not paced, only capped. ``pace_curve = [[0, 1]]``
+    # disables pacing; ``[[0, 0], [0.8571, 1]]`` is plain linear pacing to the
+    # last day of a 7-day window. These replace the former ``review_reserve``
+    # and the ceiling role of ``utilization_target`` (now only the switch for
+    # abundance spreading).
+    ordinary_ceiling: float = 0.8
+    hard_ceiling: float = 0.9
+    pace_curve: tuple[tuple[float, float], ...] = DEFAULT_PACE_CURVE
+    pace_min_window_hours: float = 48.0
+    pace_lead: float = 0.05
+    # Highest ceiling a manual override (``program quota-override``) or a task
+    # enqueued with ``--quota-override`` may use; kept below 100% so manual work
+    # never reaches paid overage.
+    override_max_ceiling: float = 0.99
     snapshot_stale_hours: float = 6.0
     unknown_headroom: float = 0.5
     pace_min_elapsed_fraction: float = 0.1
@@ -407,12 +473,11 @@ class RoutingSettings:
     probe_idle_minutes: int = 360
     # Codex probe: read the newest session file here (None disables it).
     codex_sessions_dir: str | None = None
-    # Share of each quota window to have used when it resets, reserves
-    # included (0 disables the strategy: routing compares plain headroom).
-    # Ordinary work stops at min(this, the reserve ceilings); routing then
-    # spreads work by relative abundance, (ceiling - used) / time-to-reset
-    # fraction, so a provider whose window resets soon with quota left is
-    # used first and a freshly reset one is saved.
+    # > 0 switches on the utilization strategy: routing spreads work by relative
+    # abundance, (final-day ceiling - used) / time-to-reset fraction, so a
+    # provider whose window resets soon with quota left is used first, and the
+    # tick supervises throughput. The value itself is no longer a ceiling
+    # (``ordinary_ceiling``/``hard_ceiling`` are); 0 compares plain headroom.
     utilization_target: float = 0.0
     # Minimum minutes between free refreshes (Codex session file) of a stale
     # reading; None: ``probe_idle_minutes`` like the paid probe.
@@ -953,8 +1018,26 @@ def load_routing_settings(payload: Any) -> RoutingSettings:
         stale = float(routing.get("snapshot_stale_hours", defaults.snapshot_stale_hours))
     except (TypeError, ValueError):
         stale = defaults.snapshot_stale_hours
+    hard_ceiling = _unit_fraction(routing.get("hard_ceiling"), defaults.hard_ceiling)
+    ordinary_ceiling = min(
+        hard_ceiling, _unit_fraction(routing.get("ordinary_ceiling"), defaults.ordinary_ceiling)
+    )
+    override_max = _unit_fraction(
+        routing.get("override_max_ceiling"), defaults.override_max_ceiling
+    )
     return RoutingSettings(
-        review_reserve=_unit_fraction(routing.get("review_reserve"), defaults.review_reserve),
+        ordinary_ceiling=ordinary_ceiling,
+        hard_ceiling=hard_ceiling,
+        pace_curve=(
+            defaults.pace_curve if routing.get("pace_curve") is None
+            else parse_pace_curve(routing.get("pace_curve"))
+        ),
+        pace_min_window_hours=_nonnegative_float(
+            routing.get("pace_min_window_hours"), defaults.pace_min_window_hours
+        ),
+        pace_lead=_unit_fraction(routing.get("pace_lead"), defaults.pace_lead),
+        # Manual overrides never reach 100% (paid overage).
+        override_max_ceiling=min(override_max, defaults.override_max_ceiling),
         snapshot_stale_hours=stale if stale > 0 else defaults.snapshot_stale_hours,
         unknown_headroom=_unit_fraction(
             routing.get("unknown_headroom"), defaults.unknown_headroom

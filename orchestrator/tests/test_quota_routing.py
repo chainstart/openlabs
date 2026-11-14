@@ -281,11 +281,13 @@ def test_resumed_session_stays_with_its_family(tmp_path) -> None:
 # ---------------------------------------------------------------- reserves
 
 
-def test_review_reserve_blocks_ordinary_work_but_not_reviews(tmp_path) -> None:
+def test_paced_ordinary_ceiling_blocks_ordinary_work_but_not_reviews(tmp_path) -> None:
     _paths_, db = _setup(tmp_path)
     settings = _settings()
-    _record(db, settings, "worker_gpt", {"seven_day": 0.88})
-    _record(db, settings, "worker_claude", {"five_hour": 0.2, "seven_day": 0.88})
+    # Two days before the reset: ordinary 0.8 x 0.9125 = 0.73, reviews 0.82
+    # (Claude's weekly window also keeps Fable's 25% decision reserve).
+    _record(db, settings, "worker_gpt", {"seven_day": 0.78})
+    _record(db, settings, "worker_claude", {"five_hour": 0.2, "seven_day": 0.78})
     _enqueue(db, "research", "c1", runner="balanced", priority=9)
     _enqueue(db, "review", "c2", runner="frontier", task_type="paper_review",
              agent_role="reviewer")
@@ -295,7 +297,7 @@ def test_review_reserve_blocks_ordinary_work_but_not_reviews(tmp_path) -> None:
     assert db.task("research")["status"] == "queued"
 
 
-def test_overspeed_is_a_pure_function_of_pace_and_blocks_ordinary_work(tmp_path) -> None:
+def test_pace_line_blocks_ordinary_work_before_reviews(tmp_path) -> None:
     def reading(used: float, to_reset: timedelta) -> budget_control.WindowReading:
         return budget_control.WindowReading(
             provider=GPT, name="seven_day", used_fraction=used, window_minutes=10080,
@@ -314,14 +316,15 @@ def test_overspeed_is_a_pure_function_of_pace_and_blocks_ordinary_work(tmp_path)
     _paths_, db = _setup(tmp_path)
     settings = _settings()
     db.update_meta({})
+    # End of day 2: ordinary may use 0.8 x 0.525 = 0.42, reviews 0.9 x 0.525.
     budget_control.record_quota_snapshot(db, settings, {
         "provider": GPT, "observed_at": budget_control._iso(NOW), "windows": [
-            {"name": "seven_day", "used_fraction": 0.5, "window_minutes": 10080,
+            {"name": "seven_day", "used_fraction": 0.45, "window_minutes": 10080,
              "resets_at": budget_control._iso(NOW + timedelta(days=5))}]})
     router = budget_control.QuotaRouter.build(db, settings, now=NOW)
     ordinary = router.availability(RUNNERS["worker_gpt"], "ordinary")
     assert (ordinary.state, ordinary.reason, ordinary.overspeed) == (
-        "unavailable", "overspeed", True)
+        "unavailable", "pace", True)
     assert router.availability(RUNNERS["lead_gpt"], "review").state == "available"
     assert router.provider_summary()[GPT]["overspeed"] is True
 
@@ -367,7 +370,10 @@ def test_both_families_unavailable_leaves_task_queued_with_event(
     assert len(events) == 1 and events[0]["payload"]["reason"] == "no_runner_available"
     payload = report.to_dict()
     assert payload["provider_quota"][GPT]["below_reserve"] is True
-    assert payload["lead_quota_short"] is False
+    # 95% is past the 90% hard ceiling: no class may run anywhere until the reset.
+    assert payload["lead_quota_short"] is True
+    assert payload["quota_pause"]["all_paused"] is True
+    assert payload["quota_pause"]["resume_at"] == budget_control._iso(NOW + timedelta(days=2))
 
 
 # ------------------------------------------------------------ Fable protection
@@ -390,9 +396,13 @@ def test_fable_review_line_and_decision_reserve(tmp_path) -> None:
     _fable(db, settings, 0.65)
     state = budget_control.lead_availability(db, settings, now=NOW)["lead_claude"]
     assert (state["review"], state["decision"]) == (False, True)
-    _fable(db, settings, 0.99)
+    _fable(db, settings, 0.8)
     state = budget_control.lead_availability(db, settings, now=NOW)["lead_claude"]
     assert (state["review"], state["decision"]) == (False, True)
+    # Decisions stop at the paced hard ceiling too (0.9 x 0.9125 two days out).
+    _fable(db, settings, 0.83)
+    state = budget_control.lead_availability(db, settings, now=NOW)["lead_claude"]
+    assert (state["review"], state["decision"]) == (False, False)
     # Reviews may not spend the decision reserve of a window Fable depends on,
     # whichever Claude runner they use.
     routing = settings.routing
@@ -401,9 +411,9 @@ def test_fable_review_line_and_decision_reserve(tmp_path) -> None:
     assert budget_control.window_ceiling(
         routing, klass="review", protected_window=True, protected_runner=True) == 0.60
     assert budget_control.window_ceiling(
-        routing, klass="decision", protected_window=True, protected_runner=True) == 1.0
+        routing, klass="decision", protected_window=True, protected_runner=True) == 0.9
     assert budget_control.window_ceiling(
-        routing, klass="ordinary", protected_window=False, protected_runner=False) == 0.85
+        routing, klass="ordinary", protected_window=False, protected_runner=False) == 0.8
 
 
 def test_claude_review_downgrades_to_worker_when_fable_is_reserved(tmp_path) -> None:
@@ -690,7 +700,7 @@ def test_claim_order_under_limited_parallelism(tmp_path) -> None:
     settings = _settings()
     for runner in ("lead_gpt", "worker_gpt"):
         _record(db, settings, runner, {"seven_day": 0.1})
-    _fable(db, settings, 0.1, shared=0.1)
+    _fable(db, settings, 0.1, shared=0.15)
     _enqueue(db, "scan", "c1", runner=None, task_type="literature_scan", priority=9)
     _enqueue(db, "admit", "c2", runner=None, task_type="topic_admission", priority=8)
     _enqueue(db, "research", "c3", runner="balanced", priority=7)
@@ -708,6 +718,5 @@ def test_claim_order_under_limited_parallelism(tmp_path) -> None:
     # whatever the campaign priorities say.
     assert set(order[:2]) == {"writing", "review"}
     assert order[2:] == ["research", "admit", "scan"]
-    # Writing is worker-tier work: GPT has the larger ordinary headroom here
-    # (Claude's shared windows also carry Fable's decision reserve).
+    # Writing is worker-tier work: GPT has the larger ordinary headroom here.
     assert db.task("writing")["runner"] == "worker_gpt"

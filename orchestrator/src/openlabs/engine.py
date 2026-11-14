@@ -700,6 +700,10 @@ class TickReport:
     lead_quota: dict[str, Any] = field(default_factory=dict)
     routed: list[dict[str, Any]] = field(default_factory=list)
     routing_deferred: list[dict[str, Any]] = field(default_factory=list)
+    # Task classes no provider may take (额度配速暂停), why, and the estimated
+    # resumption; plus active manual overrides and those that expired this tick.
+    quota_pause: dict[str, Any] = field(default_factory=dict)
+    quota_overrides_expired: list[str] = field(default_factory=list)
     escalated: list[dict[str, Any]] = field(default_factory=list)
     quota_probes: dict[str, str] = field(default_factory=dict)
     # This tick's launch ceiling and why (static unless [budget].adaptive_parallel).
@@ -731,6 +735,8 @@ class TickReport:
                     "lead_quota_short": bool(self.lead_quota.get("short")),
                     "routed": self.routed,
                     "routing_deferred": self.routing_deferred,
+                    "quota_pause": self.quota_pause,
+                    "quota_overrides_expired": self.quota_overrides_expired,
                     "escalated": self.escalated,
                     "quota_probes": self.quota_probes,
                 }
@@ -3805,10 +3811,15 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
             )
         except Exception as exc:  # noqa: BLE001 - probing is advisory
             report.errors.append(f"Quota probe failed: {exc}")
+        report.quota_overrides_expired = budget_control.expire_quota_overrides(
+            db, now=budget_now
+        )
         router = budget_control.QuotaRouter.build(db, settings, now=budget_now)
         report.provider_quota = router.provider_summary()
         report.lead_quota = router.lead_summary()
+        report.quota_pause = router.pause_summary()
         budget_control.record_lead_shortage(db, router)
+        budget_control.record_quota_pause(db, router, report.quota_pause)
     launch_limit = _supervise_throughput(
         db, paths, settings, report, router, hard=launch_limit, now=budget_now
     )

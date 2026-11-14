@@ -33,8 +33,8 @@ HOST_SAMPLE_KEY = "host_cpu_sample"
 ADAPTIVE_KEY = "adaptive_parallel"
 ADAPTIVE_HISTORY_KEY = "adaptive_parallel_history"
 ADAPTIVE_HISTORY_LENGTH = 20
-# A provider projected to end its window this far below its ceiling is
-# under-used; above the ceiling (or overspeed) it is over-paced.
+# A provider projected to end its window this far below its final ceiling is
+# under-used; above it (or already at its pace line) it is over-paced.
 PACE_MARGIN = 0.05
 UTILIZATION_SCHEMA = "openlabs.utilization.v1"
 
@@ -219,10 +219,10 @@ def provider_pace(router: budget_control.QuotaRouter) -> dict[str, dict[str, Any
     """Per provider: is ordinary work under, on or over the pace that meets its ceiling?
 
     ``under`` -- at the window's average pace every constraining window ends
-    more than ``PACE_MARGIN`` below its ceiling (quota would be left over);
-    ``over`` -- some window would pass its ceiling or is overspeed; ``on_pace``
-    otherwise. ``unknown`` without a usable reading, ``unavailable`` in backoff
-    or below its reserve.
+    more than ``PACE_MARGIN`` below its final (last-day) ceiling (quota would
+    be left over); ``over`` -- some window would pass that ceiling, or ordinary
+    work is held at the pace line now; ``on_pace`` otherwise. ``unknown``
+    without a usable reading, ``unavailable`` in backoff or at a final ceiling.
     """
 
     result: dict[str, dict[str, Any]] = {}
@@ -231,9 +231,10 @@ def provider_pace(router: budget_control.QuotaRouter) -> dict[str, dict[str, Any
         state = budget_control.runner_availability(
             spec, router.settings.runners, router.readings.get(provider, {}),
             router.settings.routing, klass="ordinary", now=router.now,
+            override=budget_control._override_ceiling(router.overrides.get(provider)),
         )
         gaps = [
-            float(item["ceiling"]) - float(item["projected_at_reset"])
+            float(item.get("cap", item["ceiling"])) - float(item["projected_at_reset"])
             for item in state.windows
             if item.get("projected_at_reset") is not None
         ]
@@ -241,12 +242,12 @@ def provider_pace(router: budget_control.QuotaRouter) -> dict[str, dict[str, Any
             signal = "unavailable"
             reason = "backoff"
         elif not state.usable:
-            signal = "unavailable" if state.reason != "overspeed" else "over"
+            signal = "unavailable" if state.reason != "pace" else "over"
             reason = state.reason
         elif state.state == "unknown" or not gaps:
             signal = "unknown"
             reason = state.reason or "no_projection"
-        elif state.overspeed or min(gaps) < 0:
+        elif min(gaps) < 0:
             signal = "over"
             reason = "projected_above_ceiling"
         elif min(gaps) > PACE_MARGIN:
@@ -262,10 +263,14 @@ def provider_pace(router: budget_control.QuotaRouter) -> dict[str, dict[str, Any
             "headroom": None if state.headroom is None else round(state.headroom, 4),
             "estimated": state.estimated,
             "binding_window": state.binding_window,
+            "resume_at": None if state.resume_at is None else budget_control._iso(state.resume_at),
+            "override": router.overrides.get(provider),
             "windows": {
                 str(item["name"]): {
                     "used_fraction": item.get("used_fraction"),
                     "ceiling": item.get("ceiling"),
+                    "cap": item.get("cap"),
+                    "pace_factor": item.get("pace_factor"),
                     "abundance": item.get("abundance"),
                     "projected_at_reset": item.get("projected_at_reset"),
                     "resets_at": item.get("resets_at"),
@@ -452,7 +457,6 @@ def balance_summary(
     """One row per supervised quantity: current, target, below target, what limits it."""
 
     rows: list[dict[str, Any]] = []
-    target = settings.routing.utilization_target
 
     def work_limiter() -> str:
         """Why there is not more agent work: the first binding constraint."""
@@ -476,8 +480,9 @@ def balance_summary(
         windows = item.get("windows") or {}
         projected = [w.get("projected_at_reset") for w in windows.values()
                      if w.get("projected_at_reset") is not None]
-        ceilings = [w.get("ceiling") for w in windows.values() if w.get("ceiling") is not None]
-        goal = target if target > 0 else (min(ceilings) if ceilings else None)
+        ceilings = [w.get("cap", w.get("ceiling")) for w in windows.values()
+                    if w.get("cap", w.get("ceiling")) is not None]
+        goal = min(ceilings) if ceilings else None
         current = max(projected) if projected else None
         below = item.get("signal") == "under"
         rows.append(
@@ -619,7 +624,7 @@ def utilization_report(
                 "projected_at_reset_vs_target": (
                     None if window.get("projected_at_reset") is None
                     else f"{window['projected_at_reset']:.2f} / "
-                    f"{(settings.routing.utilization_target or window.get('ceiling') or 0):.2f}"
+                    f"{(window.get('cap') or window.get('ceiling') or 0):.2f}"
                 ),
             }
         quota_rows[provider] = {**item, "windows": rows}
@@ -631,6 +636,14 @@ def utilization_report(
         "tasks": task_distribution(db, settings),
         "providers": quota_rows,
         "utilization_target": settings.routing.utilization_target,
+        "quota_rule": {
+            "ordinary_ceiling": settings.routing.ordinary_ceiling,
+            "hard_ceiling": settings.routing.hard_ceiling,
+            "pace_curve": [list(point) for point in settings.routing.pace_curve],
+            "pace_lead": settings.routing.pace_lead,
+            "pace_min_window_hours": settings.routing.pace_min_window_hours,
+        },
+        "quota_pause": router.pause_summary() if router is not None else {},
         "host": {
             **host,
             "target": host_target,

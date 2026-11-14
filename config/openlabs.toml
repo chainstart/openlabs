@@ -204,8 +204,23 @@ ailab_utilization_target = 0.9
 [routing]
 # Quota-aware runner selection. INERT until a [runners] table exists: without
 # one, every runner is its own quota key and scheduling is exactly as before.
-# Fraction of every provider window kept for review and decision tasks.
-review_reserve = 0.15
+# Owner rule 2026-11-14, on every window of every provider: ordinary tasks
+# stop at ordinary_ceiling used, every automatic task (reviews, decisions) at
+# hard_ceiling. Both are reached only on the window's last day: at elapsed
+# share x a class may use min(ceiling, max(ceiling x pace(x), pace_lead)).
+# pace_curve is piecewise linear [[share, factor], ...] (shares from 0,
+# increasing; factors non-decreasing, ending at 1). The default front-loads:
+# 7-day ends of days 1..6 -> 0.3125 0.525 0.6875 0.8125 0.9125 1.0. Plain
+# linear: [[0, 0], [0.8571, 1]]; [[0, 1]] turns pacing off. Windows shorter
+# than pace_min_window_hours (the 5-hour one) are capped, not paced.
+ordinary_ceiling = 0.8
+hard_ceiling = 0.9
+pace_curve = [[0, 0], [0.1429, 0.3125], [0.2857, 0.525], [0.4286, 0.6875], [0.5714, 0.8125], [0.7143, 0.9125], [0.8571, 1.0]]
+pace_lead = 0.05
+pace_min_window_hours = 48
+# Ceiling a manual `program quota-override` or `enqueue --quota-override` may
+# use at most (never 100%: paid overage).
+override_max_ceiling = 0.99
 # Readings older than this are "unknown": dispatch allowed, one task in flight
 # (unless stale_estimate_hours extrapolates them).
 snapshot_stale_hours = 6
@@ -226,11 +241,9 @@ protected_models = ["claude-fable-5-2"]
 # Read once every probe_idle_minutes at most, and only while readings are stale.
 probe_idle_minutes = 360
 codex_sessions_dir = "~/.codex/sessions"
-# Use-it-before-it-resets strategy. Share of every quota window to have used
-# when it resets, reserves included; 0 turns the strategy off (routing compares
-# plain headroom, as before). Ordinary work stops at min(this, the reserve
-# ceilings): what is left is kept for reviews and decisions. Work is then
-# spread over providers in proportion to relative abundance, (ceiling - used) /
+# Use-it-before-it-resets strategy: > 0 turns it on (the value is no longer a
+# ceiling; 0 compares plain headroom, as before). Work is spread over
+# providers in proportion to relative abundance, (final ceiling - used) /
 # share of the window still to run, so a provider whose window resets soon
 # with quota left gets more work and a freshly reset one is saved. A runner's
 # abundance is that of its tightest window (Claude: 5-hour, weekly and Fable's

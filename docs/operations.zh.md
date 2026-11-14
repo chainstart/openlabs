@@ -561,7 +561,7 @@ bin/openlabs-container-loop cli -- status    # 以本实例身份执行任意 py
 | `[program] scout_expected_cards` | 2.0 | 2.0 | 一个选题任务预期登记的卡片数；跑完三个后改用本实例的实测均值 |
 | `[program] max_admissions_per_domain` | 1 | 2 | 一个学科同时审的立项批次（不同批次、不同出题模型族可并行） |
 | `[program] max_concurrent_admissions` | 0（不限） | 0 | 全部学科同时审的立项任务上限 |
-| `[routing] utilization_target` | 0（关） | 0.9 | 每个额度窗口到重置时希望用掉的比例（含各类保留）；普通任务用到它（或更严的保留线）为止，余下只接评审与决策 |
+| `[routing] utilization_target` | 0（关） | 0.9 | 大于 0 即开启"按相对充裕度分配 + 吞吐监督"；数值本身不再是上限（上限见下文"额度上限与配速"） |
 | `[routing] stale_refresh_minutes` | 未设 | 10 | 过期的 Codex 读数多久免费重读一次会话文件（Claude 探测仍按 `probe_idle_minutes`） |
 | `[routing] stale_estimate_hours` | 0（关） | 48 | 这么久以内的过期读数做保守外推（上次读数 + 窗口平均速度 × 经过时间 + 本实例在该 provider 的智能体时长 × `estimate_fraction_per_agent_hour`），不再把该 provider 限为 1 个任务 |
 | `[budget] adaptive_parallel` | false | true | 每轮按可运行任务、实测负载和额度配速调整并行上限，每轮最多变 `adaptive_step`（2）；`max_parallel_agents` 仍是硬顶 |
@@ -570,13 +570,13 @@ bin/openlabs-container-loop cli -- status    # 以本实例身份执行任意 py
 
 怎么理解：
 
-- 相对充裕度 = （该类任务的上限 − 已用）÷ 窗口剩余时间占窗口的比例。大于 1 表示按平均速度用不完、
+- 相对充裕度 = （该类任务最后一天的上限 − 已用）÷ 窗口剩余时间占窗口的比例。大于 1 表示按平均速度用不完、
   应该多用；小于 1 表示要省着用。一个 runner 取它所有约束窗口里最小的（Claude 的 5 小时、每周、
   Fable 专属窗口都算），所以 5 小时窗口快满时会先被让开，撞到限额后已有的退避照常生效。
 - 打开 `utilization_target` 后，普通任务按相对充裕度的比例分给两家：没有在跑任务时给最充裕的一家，
   它的在跑数超过自己份额后下一个任务给另一家，临近重置而剩余多的一家份额更大。评审、决策的
   独立性（与产出方不同模型族）、保留线和 Fable 的偏好不变。
-- “超速”仍指按窗口平均速度会在重置前用到 100%，与目标线分开；临近重置而余量多的窗口不会被判超速。
+- 原来的"超速"（按平均速度会在重置前用到 100% 就停普通任务）已并入下面的配速线，不再单独判断。
 - 自适应上限：有可运行任务、某一家按当前速度到重置时会低于目标、容器实测负载低于目标减 0.1 时
   上调；负载达到目标或所有可用的 provider 都超出配速时每轮降 1；没有可运行任务时保持不动。
   智能体进程大多在等模型响应，CPU 空闲本身不会让上限越过额度配速和硬顶。
@@ -594,6 +594,55 @@ bin/openlabs-container-loop cli -- program utilization            # --history N�
 它列出在跑/排队任务按档位与 provider 的分布、各窗口已用比例、相对充裕度、按当前速度到重置时
 的预计用量（对照目标）、容器 CPU/内存/GPU、ailab 占用（对照 0.9）和最近几轮的上限及原因；
 运行库以只读方式打开。
+
+### 额度上限与配速（所有者 2026-11-14）
+
+两家提供方的每个额度窗口（Claude 的 5 小时、每周、Fable 专属窗口，Codex 的每周窗口）都按同一规则：
+
+- **上限**：普通任务最多用到 `ordinary_ceiling`（80%）；所有自动任务（含评审、决策）最多用到
+  `hard_ceiling`（90%），这是硬上限。
+- **配速**：上限只在窗口最后一天才可能达到。窗口已过比例为 x 时，某类任务允许的累计用量 =
+  `min(上限, max(上限 × pace(x), pace_lead))`。`pace` 是 `pace_curve` 给出的分段线性曲线，默认
+  "前快后慢"：七日窗口第 1–6 天结束时系数为 0.3125、0.525、0.6875、0.8125、0.9125、1.0，即普通任务
+  约 25%、42%、55%、65%、73%、80%，评审/决策按同一系数乘 90%。`pace_lead`（5 个百分点）是起步量，
+  只让刚重置的窗口能开工，不会把已高于它的配速线再往上抬，所以重置前两天允许值不超过上限的 0.9125 倍，
+  最后一段只能在最后一天用掉。短于 `pace_min_window_hours`（48 小时）的窗口（5 小时窗口）不配速，只用上限。
+- **派活**：某提供方的某个窗口达到某类任务当前允许值后，该类任务不再派给它（`reason` 为 `pace` 表示
+  配速线挡住、随时间上移后恢复；`ceiling` 表示到了最后一天的上限、只能等重置）；达到硬上限允许值后
+  该提供方任何自动任务都不派。两家都不可用时循环照常每轮检查但不启动任务，排队任务保持排队，
+  每个任务每次尝试只记一条 `routing_deferred`，暂停与恢复各记一条 `quota_paused`/`quota_resumed` 事件，
+  不会生成新的 replan 或决策任务。tick 报告的 `quota_pause` 和 `program utilization` 的 `quota_pause`
+  写明哪些类别暂停、原因和预计恢复时间（如"普通任务因额度配速暂停（pace），预计 … 恢复"）。
+- **读数过期**：过期但窗口未重置的读数是用量下限，已达允许值的照样挡住；低于允许值的按"未知"处理
+  （每家只放 1 个任务）。可外推的过期读数（`stale_estimate_hours`）照旧外推。
+- **Fable**：原有更严的保护保留，与新规则取较严者：Fable 依赖的窗口上 `lead_decision_reserve` 只留给决策，
+  Fable 自身的评审和普通任务到 `lead_review_ceiling` 为止；Fable 的决策也受 90% 配速线约束。
+
+| 键 | 默认 | 含义 |
+| --- | --- | --- |
+| `[routing] ordinary_ceiling` | 0.8 | 普通任务最后一天的上限 |
+| `[routing] hard_ceiling` | 0.9 | 所有自动任务的硬上限 |
+| `[routing] pace_curve` | 见上 | `[[已过比例, 系数], ...]`：比例从 0 起严格递增，系数在 [0,1] 内不减、末点为 1，否则配置报错。纯线性（第 6 天末到 1）写 `[[0, 0], [0.8571, 1]]`；`[[0, 1]]` 关闭配速 |
+| `[routing] pace_lead` | 0.05 | 起步量（绝对值） |
+| `[routing] pace_min_window_hours` | 48 | 短于此长度的窗口不配速 |
+| `[routing] override_max_ceiling` | 0.99 | 人工覆盖可用的最高比例（只能调低，永不到 100%，避免碰付费余额） |
+
+旧键 `review_reserve` 已删除（写了也不再生效）；`utilization_target` 只作开关。
+
+**人工覆盖**（存在运行库 meta 里，带过期时间，过期后下一轮 tick 自动删除并记 `quota_override_expired`）：
+
+```bash
+bin/openlabs-container-loop cli -- program quota-override --provider openai-codex \
+    --until 2026-11-21T00:00Z --ceiling 0.97 --reason "重置前用完"   # 默认 ceiling = hard_ceiling
+bin/openlabs-container-loop cli -- program quota-override --list
+bin/openlabs-container-loop cli -- program quota-override --provider openai-codex --revoke
+```
+
+覆盖期间该提供方所有类别不配速、统一用到覆盖上限为止（Fable 自身的保护仍在），达到即停；tick 报告的
+`quota_pause.overrides` 和 `provider_quota.<provider>.override` 显示当前覆盖。人工入队的单个任务可以加
+`enqueue ... --quota-override --quota-override-reason "..."`：它不受配速和类别上限约束（也不受负责人额度不足时
+对立项/文献扫描的暂停），但仍以 `override_max_ceiling` 为限，限流退避中的提供方仍跳过。不带此标记的人工
+入队任务与自动任务同样受配速约束。
 
 ## 台式机与笔记本交接
 

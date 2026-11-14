@@ -156,6 +156,12 @@ def _parser() -> argparse.ArgumentParser:
         default="balanced",
         help="Capability/cost tier; concrete model commands stay in local environment config",
     )
+    enqueue.add_argument(
+        "--quota-override", action="store_true",
+        help="Manual work outside the quota pacing: ignore the paced class ceilings (still "
+        "stops at [routing].override_max_ceiling, below 100%%); needs --quota-override-reason",
+    )
+    enqueue.add_argument("--quota-override-reason", help="Why this task may break the pacing")
 
     program = commands.add_parser(
         "program", help="Research-program topic ledger maintenance"
@@ -226,6 +232,23 @@ def _parser() -> argparse.ArgumentParser:
     )
     instance.add_argument("--git-user-name", help="[program.git].user_name")
     instance.add_argument("--git-user-email", help="[program.git].user_email")
+    override = program_commands.add_parser(
+        "quota-override",
+        help="Manually let one provider's automatic tasks exceed the paced quota ceilings "
+        "until a time (stored in the database, expires by itself); --revoke ends it, "
+        "--list shows the active ones",
+    )
+    override.add_argument("--provider", help="Provider name from [runners], e.g. openai-codex")
+    override.add_argument("--until", help="ISO time the override expires, e.g. 2026-11-16T10:00Z")
+    override.add_argument(
+        "--ceiling", type=float,
+        help="Highest used fraction for every task class (default [routing].hard_ceiling; at "
+        "most [routing].override_max_ceiling, never 100%%)",
+    )
+    override.add_argument("--reason", help="Why (recorded with the override)")
+    override.add_argument("--by", default="owner", help="Who decided (provenance)")
+    override.add_argument("--revoke", action="store_true", help="End the provider's override now")
+    override.add_argument("--list", action="store_true", help="Show active overrides")
     utilization_parser = program_commands.add_parser(
         "utilization",
         help="Read-only throughput view: tasks by tier/provider, quota windows with relative "
@@ -460,7 +483,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .program_autonomy import DeliveryError, assign_submission_handler
         from .program_flow import backfill_grandfathered, submit_topic_card
 
-        if args.program_command == "assets":
+        if args.program_command == "quota-override":
+            from . import budget as budget_control
+
+            try:
+                payload = _quota_override_command(budget_control, args, db, settings)
+            except budget_control.QuotaOverrideError as exc:
+                print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
+                return 1
+        elif args.program_command == "assets":
             try:
                 payload = _asset_command(asset_library, args, db, paths, settings)
             except (asset_library.AssetIndexError, OSError, ValueError) as exc:
@@ -579,6 +611,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             stop_systemd=not args.keep_factory,
         )
     elif args.command == "enqueue":
+        if args.quota_override and not str(args.quota_override_reason or "").strip():
+            print(json.dumps({"status": "failed",
+                              "error": "--quota-override needs --quota-override-reason"},
+                             ensure_ascii=False), file=sys.stderr)
+            return 1
         input_path = str(Path(args.input).expanduser().resolve()) if args.input else None
         campaign = db.campaign(args.campaign_id)
         if campaign is None:
@@ -624,10 +661,41 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
         )
         payload = {"schema_version": "openlabs.enqueue.v1", "task_id": task_id}
+        if args.quota_override:
+            from . import budget as budget_control
+
+            payload["quota_override"] = budget_control.mark_task_quota_override(
+                db, task_id, reason=args.quota_override_reason
+            )
     else:  # pragma: no cover - argparse enforces the command set.
         raise AssertionError(args.command)
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
+
+
+def _quota_override_command(budget_control, args, db, settings) -> dict:
+    """``program quota-override``: set, revoke or list manual provider overrides."""
+
+    now = budget_control.current_time()
+    if args.list:
+        return {
+            "schema_version": "openlabs.quota_override.v1",
+            "active": budget_control.active_quota_overrides(db, settings, now=now),
+        }
+    if not args.provider:
+        raise budget_control.QuotaOverrideError("--provider is required")
+    if args.revoke:
+        revoked = budget_control.revoke_quota_override(
+            db, provider=args.provider, by=args.by, reason=args.reason, now=now
+        )
+        return {"schema_version": "openlabs.quota_override.v1", "revoked": revoked}
+    if not args.until:
+        raise budget_control.QuotaOverrideError("--until is required")
+    entry = budget_control.set_quota_override(
+        db, settings, provider=args.provider, until=args.until, reason=args.reason or "",
+        ceiling=args.ceiling, by=args.by, now=now,
+    )
+    return {"schema_version": "openlabs.quota_override.v1", "set": entry}
 
 
 if __name__ == "__main__":

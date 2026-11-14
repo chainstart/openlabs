@@ -213,8 +213,10 @@ def test_utilization_command_is_read_only(tmp_path, monkeypatch, capsys) -> None
     assert payload["schema_version"] == utilization.UTILIZATION_SCHEMA
     assert payload["tasks"]["queued"]["worker/unrouted"]["count"] == 1
     gpt = payload["providers"][GPT]
-    assert gpt["abundance"] == pytest.approx(1.75, rel=1e-3)
-    assert gpt["windows"]["seven_day"]["projected_at_reset_vs_target"].endswith("/ 0.90")
+    assert gpt["abundance"] == pytest.approx(1.4, rel=1e-3)  # (0.8 - 0.6) / (1/7)
+    assert gpt["windows"]["seven_day"]["projected_at_reset_vs_target"].endswith("/ 0.80")
+    assert payload["quota_rule"]["ordinary_ceiling"] == 0.8
+    assert payload["quota_pause"]["paused"] is False
     assert {"cpu_limit", "target"} <= set(payload["host"])
     assert payload["parallel"]["hard_ceiling"] == 8
     items = {row["item"]: row for row in payload["balance"]}

@@ -50,10 +50,10 @@ def _route(db, settings, task_id: str, active=None, **enqueue):
 
 def test_target_zero_keeps_headroom_ranking(tmp_path) -> None:
     _, db = qr._setup(tmp_path)
-    settings = qr._settings()
+    settings = qr._settings(pace_curve=((0.0, 1.0),))  # ranking only: no pacing
     _gpt_resets_soon_claude_later(db, settings)
     decision, _ = _route(db, settings, "t")
-    assert decision["provider"] == CLAUDE  # more headroom (0.70 vs 0.25)
+    assert decision["provider"] == CLAUDE  # more headroom (0.70 vs 0.20)
     assert "abundance" not in decision
 
 
@@ -65,26 +65,29 @@ def test_provider_resetting_soon_with_quota_left_is_preferred(tmp_path) -> None:
     assert decision["provider"] == GPT
     gpt = router.availability(qr.RUNNERS["worker_gpt"], "ordinary")
     claude = router.availability(qr.RUNNERS["worker_claude"], "ordinary")
-    # (0.85 - 0.6) / (1/7) vs (0.75 - 0.05) / (6/7): Claude's ceiling carries
-    # Fable's decision reserve because Fable shares its weekly window.
-    assert gpt.abundance == pytest.approx(1.75, rel=1e-3)
+    # (0.80 - 0.6) / (1/7) vs (0.75 - 0.05) / (6/7), against the final-day
+    # ceilings: Claude's carries Fable's decision reserve because Fable shares
+    # its weekly window.
+    assert gpt.abundance == pytest.approx(1.4, rel=1e-3)
     assert claude.abundance == pytest.approx(0.70 / (6 / 7), rel=1e-3)
-    assert decision["abundance"] == pytest.approx(1.75, rel=1e-3)
+    assert decision["abundance"] == pytest.approx(1.4, rel=1e-3)
 
 
 def test_work_is_spread_in_proportion_to_abundance(tmp_path) -> None:
     _, db = qr._setup(tmp_path)
     settings = qr._settings(utilization_target=0.9)
     _gpt_resets_soon_claude_later(db, settings)
-    one, _ = _route(db, settings, "t1", active={"worker_gpt": 1})
-    assert one["provider"] == GPT  # GPT's share (~68%) is not yet filled
-    two, _ = _route(db, settings, "t2", active={"worker_gpt": 2})
+    one, _ = _route(db, settings, "t1")
+    assert one["provider"] == GPT  # the most abundant family starts
+    two, _ = _route(db, settings, "t2", active={"worker_gpt": 1})
     assert two["provider"] == CLAUDE  # the less abundant family gets its share too
+    three, _ = _route(db, settings, "t3", active={"worker_gpt": 1, "worker_claude": 1})
+    assert three["provider"] == GPT  # GPT's share (~63%) is larger
 
 
-def test_target_and_reserves_bound_ordinary_work_not_reviews(tmp_path) -> None:
+def test_ordinary_ceiling_bounds_ordinary_work_not_reviews(tmp_path) -> None:
     _, db = qr._setup(tmp_path)
-    settings = qr._settings(utilization_target=0.8)
+    settings = qr._settings(utilization_target=0.9)
     week = 10_080
     _reading(db, settings, "worker_gpt", _window("seven_day", 0.82, minutes=week,
                                                  resets_in=timedelta(hours=12)))
@@ -93,8 +96,10 @@ def test_target_and_reserves_bound_ordinary_work_not_reviews(tmp_path) -> None:
     decision, router = _route(db, settings, "t")
     assert decision["provider"] == CLAUDE
     state = router.availability(qr.RUNNERS["worker_gpt"], "ordinary")
-    assert state.state == "unavailable" and state.reason == "reserve"
-    # Past the target GPT still takes reviews (only the review reserve applies).
+    # Last day: no pacing left, the 80% ordinary ceiling binds until the reset.
+    assert state.state == "unavailable" and state.reason == "ceiling"
+    assert state.resume_at == NOW + timedelta(hours=12)
+    # Past 80% GPT still takes reviews (up to the 90% hard ceiling).
     assert router.availability(qr.RUNNERS["lead_gpt"], "review").usable
 
 
