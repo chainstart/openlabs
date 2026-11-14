@@ -4,6 +4,12 @@ Research agents are intentionally allowed to create many files, but an interrupt
 agent must not mutate the authoritative campaign state.  Each attempt therefore
 works on a private copy.  A validated completed result is promoted with one
 directory exchange; every other disposition leaves the private tree quarantined.
+
+Promotion merges rather than requiring an unchanged canonical tree: parallel
+attempts on one campaign (several scouts of a program project) each land their own
+files, a file both sides changed is merged by content where it can be (JSON object
+keys, append-only text), and only a genuinely conflicting change is refused (kept
+in the attempt under ``merge-conflicts/`` and recorded in ``promotion_merge``).
 """
 
 from __future__ import annotations
@@ -84,6 +90,16 @@ _ATTEMPT_RUNTIME_DIRS = frozenset({".agents", ".claude", ".codex", ".openlabs"})
 _GENERATED_CACHE_DIRS = frozenset({"__pycache__"})
 _GENERATED_CACHE_SUFFIXES = (".pyc", ".pyo")
 _GENERATED_CACHE_PATTERNS = ("__pycache__", "*.pyc", "*.pyo")
+
+
+# Concurrent attempts on one campaign (parallel scouts of a program project, a
+# portfolio review beside a research task) are merged file by file at promotion.
+# Pristine baseline copies of small text files let a file both sides changed be
+# merged by content: JSON objects key by key, append-only text by its appended tail.
+_MERGE_BASE_DIR = "merge-base"
+_MERGE_CONFLICT_DIR = "merge-conflicts"
+_MERGEABLE_SUFFIXES = (".json", ".md", ".txt", ".yaml", ".yml", ".csv", ".tsv")
+_MERGE_BASE_MAX_BYTES = 1024 * 1024
 
 
 def _generated_cache(relative: Path) -> bool:
@@ -348,6 +364,167 @@ def _tree_manifest(root: Path, *, exclude_results: bool = True) -> dict[str, str
     return manifest
 
 
+def _mergeable(relative: str) -> bool:
+    return relative.lower().endswith(_MERGEABLE_SUFFIXES)
+
+
+def _save_merge_base(staged_campaign: Path, target: Path, baseline: Mapping[str, str]) -> None:
+    """Keep pristine copies of small text files for content merges at promotion."""
+
+    for relative, digest in baseline.items():
+        if not _mergeable(relative):
+            continue
+        source = staged_campaign / relative
+        if not source.is_file() or source.stat().st_size > _MERGE_BASE_MAX_BYTES:
+            continue
+        if sha256_file(source) != digest:
+            continue
+        _copy_file(source, target / relative)
+
+
+_CONFLICT = object()
+
+
+def _merge_json_values(base: Any, ours: Any, theirs: Any, path: str,
+                       conflicts: list[str]) -> Any:
+    """Three-way merge of JSON values; ``ours`` is canonical, ``theirs`` the attempt.
+
+    Objects merge key by key; any other value is atomic. A key both sides changed
+    differently keeps the canonical value and is reported as a conflict.
+    """
+
+    if theirs == base:
+        return ours
+    if ours == base or ours == theirs:
+        return theirs
+    if isinstance(ours, dict) and isinstance(theirs, dict):
+        base_map = base if isinstance(base, dict) else {}
+        merged: dict[str, Any] = {}
+        for key in [*ours, *(item for item in theirs if item not in ours),
+                    *(item for item in base_map if item not in ours and item not in theirs)]:
+            value = _merge_json_values(
+                base_map.get(key, _CONFLICT), ours.get(key, _CONFLICT),
+                theirs.get(key, _CONFLICT), f"{path}.{key}" if path else str(key), conflicts,
+            )
+            if value is not _CONFLICT:
+                merged[key] = value
+        return merged
+    conflicts.append(path or "$")
+    return ours
+
+
+def _merge_file_contents(
+    relative: str, base: bytes | None, ours: bytes, theirs: bytes
+) -> tuple[bytes | None, list[str]]:
+    """Merged bytes of a file both sides changed (None: not mergeable) and conflicts."""
+
+    if base is not None and ours.startswith(base) and theirs.startswith(base):
+        # Append-only on both sides (logs, notes, ledgers): canonical then attempt tail.
+        return ours + theirs[len(base):], []
+    if not relative.lower().endswith(".json"):
+        return None, [relative]
+    try:
+        base_value = json.loads(base.decode("utf-8")) if base is not None else {}
+        ours_value = json.loads(ours.decode("utf-8"))
+        theirs_value = json.loads(theirs.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, [relative]
+    if not isinstance(ours_value, dict) or not isinstance(theirs_value, dict):
+        return None, [relative]
+    conflicts: list[str] = []
+    merged = _merge_json_values(base_value, ours_value, theirs_value, "", conflicts)
+    text = json.dumps(merged, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    return text.encode("utf-8"), [f"{relative}:{item}" for item in conflicts]
+
+
+@dataclass(frozen=True)
+class CampaignMerge:
+    """How a staged attempt lands on a canonical tree that moved meanwhile.
+
+    ``writes`` maps a relative path to the staged file to copy or to merged bytes;
+    ``refused`` lists attempt changes that were not applied (conflicts), each with
+    the attempt's version kept under the attempt's ``merge-conflicts/``.
+    """
+
+    writes: dict[str, Path | bytes]
+    merged: tuple[str, ...]
+    refused: tuple[dict[str, Any], ...]
+    deleted: tuple[str, ...]
+    canonical_moved: bool
+
+
+def plan_campaign_merge(
+    workspace: AttemptWorkspace,
+    baseline: Mapping[str, str],
+    current: Mapping[str, str],
+    staged: Mapping[str, str],
+) -> CampaignMerge:
+    """Three-way, file-level merge of staged attempt state onto the canonical tree.
+
+    For every path: untouched by the attempt -> canonical wins; changed only by the
+    attempt (or identically by both) -> the attempt's bytes; changed differently by
+    both -> a content merge (JSON objects by key, append-only text by tail) when a
+    pristine base exists, else the canonical file stays and the attempt's version is
+    refused as a conflict. Deleting a baseline file is reported in ``deleted``.
+    """
+
+    writes: dict[str, Path | bytes] = {}
+    merged: list[str] = []
+    refused: list[dict[str, Any]] = []
+    deleted: list[str] = []
+    base_root = workspace.root / _MERGE_BASE_DIR
+    for relative in sorted(set(baseline) | set(staged)):
+        base_digest = baseline.get(relative)
+        staged_digest = staged.get(relative)
+        if staged_digest == base_digest:
+            continue
+        if staged_digest is None:
+            deleted.append(relative)
+            continue
+        current_digest = current.get(relative)
+        if current_digest == base_digest:
+            writes[relative] = workspace.campaign_root / relative
+            continue
+        if current_digest == staged_digest:
+            continue
+        theirs = (workspace.campaign_root / relative).read_bytes()
+        base_path = base_root / relative
+        base_bytes = (
+            base_path.read_bytes()
+            if base_digest is not None and base_path.is_file()
+            and sha256_file(base_path) == base_digest
+            else None
+        )
+        if current_digest is None:
+            # Canonical deleted a file the attempt edited: keep the deletion.
+            content, conflicts = None, [relative]
+        elif base_digest is not None and base_bytes is None:
+            content, conflicts = None, [relative]
+        else:
+            ours = (workspace.canonical_campaign_root / relative).read_bytes()
+            content, conflicts = _merge_file_contents(relative, base_bytes, ours, theirs)
+        if content is not None:
+            writes[relative] = content
+            merged.append(relative)
+        if conflicts:
+            keep = workspace.root / _MERGE_CONFLICT_DIR / relative
+            keep.parent.mkdir(parents=True, exist_ok=True)
+            keep.write_bytes(theirs)
+            refused.append({
+                "path": relative,
+                "conflicts": conflicts[:20],
+                "partially_merged": content is not None,
+                "attempt_copy": str(keep),
+            })
+    return CampaignMerge(
+        writes=writes,
+        merged=tuple(merged),
+        refused=tuple(refused),
+        deleted=tuple(deleted),
+        canonical_moved=dict(current) != dict(baseline),
+    )
+
+
 def prepare_attempt_workspace(
     paths: WorkspacePaths,
     task: Mapping[str, Any],
@@ -433,6 +610,7 @@ def prepare_attempt_workspace(
                 Path(plan_value).expanduser().resolve(),
             )
         baseline = _tree_manifest(canonical_campaign)
+        _save_merge_base(temporary_campaign, temporary / _MERGE_BASE_DIR, baseline)
         atomic_write_json(
             temporary / "attempt-workspace.json",
             {
@@ -679,26 +857,13 @@ def begin_attempt_promotion(workspace: AttemptWorkspace) -> dict[str, Any]:
     baseline = metadata.get("baseline")
     if not isinstance(baseline, dict):
         raise AttemptWorkspaceError("Attempt baseline is missing")
-    current = _tree_manifest(workspace.canonical_campaign_root)
     # Baselines recorded before caches were ignored may still list them.
     normalized_baseline = {
         str(key): str(value)
         for key, value in baseline.items()
         if not _generated_cache(Path(str(key)))
     }
-    if current != normalized_baseline:
-        raise AttemptWorkspaceError("Canonical campaign changed while the attempt was running")
     staged = _tree_manifest(workspace.campaign_root)
-    deleted = sorted(set(normalized_baseline) - set(staged))
-    if deleted:
-        raise AttemptWorkspaceError(
-            "Attempt tried to delete authoritative state: " + ", ".join(deleted[:8])
-        )
-    changed = sorted(
-        relative
-        for relative, digest in staged.items()
-        if normalized_baseline.get(relative) != digest
-    )
 
     candidate = workspace.canonical_campaign_root.parent / (
         f".openlabs-promote-{_token(metadata.get('attempt_id'), prefix='attempt')}"
@@ -712,20 +877,49 @@ def begin_attempt_promotion(workspace: AttemptWorkspace) -> dict[str, Any]:
     )
     exchanged = False
     try:
-        for relative in changed:
-            _copy_file(workspace.campaign_root / relative, candidate / relative)
+        # The merge base is the copy itself, so a change landing on the canonical
+        # tree after this point is detected below instead of silently dropped.
+        current = _tree_manifest(candidate)
+        merge = plan_campaign_merge(workspace, normalized_baseline, current, staged)
+        if merge.deleted:
+            raise AttemptWorkspaceError(
+                "Attempt tried to delete authoritative state: " + ", ".join(merge.deleted[:8])
+            )
+        expected = dict(current)
+        for relative, source in merge.writes.items():
+            target = candidate / relative
+            if isinstance(source, bytes):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temporary = target.parent / f".{target.name}.openlabs-merge"
+                temporary.write_bytes(source)
+                os.replace(temporary, target)
+            else:
+                _copy_file(source, target)
+            expected[relative] = sha256_file(target)
         candidate_manifest = _tree_manifest(candidate)
-        if candidate_manifest != staged:
-            raise AttemptWorkspaceError("Promotion candidate does not match staged campaign state")
+        if candidate_manifest != expected:
+            raise AttemptWorkspaceError("Promotion candidate does not match the planned merge")
+        changed = sorted(merge.writes)
+        merge_record = {
+            "canonical_moved": merge.canonical_moved,
+            "content_merged": list(merge.merged),
+            "refused": list(merge.refused),
+        }
         _update_metadata(
             workspace,
             status="promotion_pending",
             promotion_started_at=_utc_now(),
             changed_files=changed,
+            promotion_base=current,
+            promotion_merge=merge_record,
             promotion_candidate=str(candidate),
         )
         _rename_exchange(candidate, workspace.canonical_campaign_root)
         exchanged = True
+        if _tree_manifest(candidate) != current:
+            raise AttemptWorkspaceError(
+                "Canonical campaign changed during the promotion exchange"
+            )
         metadata = _update_metadata(
             workspace,
             status="promotion_pending_db",
@@ -768,7 +962,11 @@ def finalize_attempt_promotion(workspace: AttemptWorkspace) -> dict[str, Any]:
     policy = metadata.get("artifact_policy")
     compacted: list[str] = []
     if isinstance(policy, Mapping) and policy.get("schema_version") == ARTIFACT_POLICY_SCHEMA:
-        for directory in (workspace.root / "workspaces", workspace.artifact_staging_root):
+        for directory in (
+            workspace.root / "workspaces",
+            workspace.artifact_staging_root,
+            workspace.root / _MERGE_BASE_DIR,
+        ):
             if directory.exists():
                 shutil.rmtree(directory)
                 compacted.append(str(directory))
@@ -832,7 +1030,11 @@ def recover_attempt_promotion(
     expected_parent = workspace.canonical_campaign_root.parent.resolve()
     if candidate.parent != expected_parent or not candidate.name.startswith(".openlabs-promote-"):
         raise AttemptWorkspaceError(f"Unsafe incomplete promotion candidate: {candidate}")
-    baseline = metadata.get("baseline")
+    # The pre-promotion canonical manifest: the merge base of a merged promotion,
+    # else (older metadata) the attempt baseline.
+    baseline = metadata.get("promotion_base")
+    if not isinstance(baseline, dict):
+        baseline = metadata.get("baseline")
     if not isinstance(baseline, dict):
         raise AttemptWorkspaceError("Incomplete promotion has no baseline")
     # Baselines recorded before caches were ignored may still list them.

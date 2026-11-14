@@ -2731,8 +2731,15 @@ def ingest_results(
                                 "campaign_changed_files": len(changed_files),
                                 "campaign_reference": str(reference) if reference else None,
                             }
-                        begin_attempt_promotion(attempt_workspace)
+                        promoted = begin_attempt_promotion(attempt_workspace)
                         promotion_pending = True
+                        merge_record = promoted.get("promotion_merge")
+                        if isinstance(merge_record, Mapping) and (
+                            merge_record.get("canonical_moved") or merge_record.get("refused")
+                        ):
+                            # Merged onto a canonical tree another task advanced;
+                            # refused (conflicting) changes stay in the attempt.
+                            runtime["campaign_merge"] = dict(merge_record)
                 except Exception as exc:  # noqa: BLE001
                     transaction_error = f"attempt_commit_failed:{exc}"
                     result_status = "needs_replan"
