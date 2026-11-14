@@ -45,8 +45,8 @@ On this 20-thread WSL host the limits are:
 - memory hard limit: 34 GiB
 - swap: 4 GiB
 - tasks: 512
-- GPU: one declared research job per device, 75% total VRAM ceiling, at least
-  2048 MiB free, stop at 85 C; default declared job budget below is 8192 MiB.
+- GPU: one declared research job per device, 90% total VRAM ceiling, at least
+  1024 MiB free, stop at 85 C; default declared job budget below is 8192 MiB.
 
 The memory, swap and task limits match the installed OpenMath guard. OpenMath
 does not currently define a CPU quota; OpenLabs retains its pre-existing 75%
