@@ -152,8 +152,14 @@ def test_queued_template_scouts_copy_entries_and_admission_is_a_checklist(tmp_pa
             "SELECT * FROM tasks WHERE task_type='topic_scout' LIMIT 1").fetchone())
     assert f"2d-anode: {queue}" in scout["objective"]
     assert "copy each entry's `card_fields`" in scout["objective"]
+    # batch_only targets are drawn after unreported ones and cite their batch tables
+    assert "`unreported`, then those with `batch_only`" in scout["objective"]
+    assert "novelty.batch_parameters" in scout["objective"]
     admission = flow._admission_task(db)
     assert "admission is a checklist" in admission["objective"]
+    assert "`unreported` or `batch_only`" in admission["objective"]
+    assert "no reason to reject" in admission["objective"]
+    assert "dedicated photometric solution" in admission["objective"]
     entry = flow._packet(admission)["topic_cards"][0]
     assert entry["card"]["candidate_queue_entry"]["entry_id"] == "TIC 1"
 

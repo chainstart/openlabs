@@ -53,7 +53,11 @@ several adjacent systems sharing one pipeline) is admitted at the routine tier w
 
 1. **the concrete combination is unreported**: no paper reports the same system (or series
    members) for the same property; check its `occupancy_search` (queries, databases, date,
-   findings) and repeat the key query yourself;
+   findings) and repeat the key query yourself. Parameters only in automated batch tables
+   (neural-network or pipeline catalogues; queue verdict `batch_only`) are not a report (owner
+   decision 2026-11-13) and no reason to reject, provided the card cites each table in closest
+   prior work and plans a parameter-by-parameter comparison with it; a dedicated
+   (individual or small-sample) light-curve solution of the target is a report;
 2. **it meets the template's minimum content and hard gates** (for example phonon and AIMD
    stability, hybrid-functional gaps or an explicit statement of the PBE limitation, NEB barriers,
    a reproduced published solution) at the template's stated cost;

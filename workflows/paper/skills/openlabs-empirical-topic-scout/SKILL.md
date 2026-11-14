@@ -46,7 +46,13 @@ proposal of a line, ahead of re-audits.
    formulas and aliases plus the property. Record it in the card as `occupancy_search`:
    `queries` (the exact strings), `databases`, `searched_at` (date), `findings` (the closest hits
    and why they do not cover the combination). An unreported combination is enough novelty for
-   a templated paper; one already reported is not, so pick another member.
+   a templated paper; one already reported is not, so pick another member. Parameters that exist
+   only in automated batch tables (neural-network or pipeline catalogues, a queue entry's
+   `batch_only` verdict) are not a published solution (owner decision 2026-11-13): such a target
+   is valid, after the `unreported` ones. List each batch table in `occupancy_search`, cite it in
+   `closest_prior_work`, and plan a table comparing your solution with its values and
+   the increment of the individual solution (total-eclipse q, third light, uncertainties,
+   absolute parameters). A dedicated light-curve study of the target still counts as reported.
 3. Set `paper_template` to the template id. To reuse one set of scripts, a card may cover a
    `series`: `members` (two or more adjacent systems: the same host with several ions, one
    support with a row of metals, a few targets of one class) and `shared_pipeline`. A series is
