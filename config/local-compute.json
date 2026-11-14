@@ -3,8 +3,8 @@
   "auto_overflow": true,
   "policy": "ailab first and kept full; a CPU job that ailab cannot start now (running + queued declared CPUs/memory/jobs would exceed its capacity) goes to this container's local queue when it fits the limits below and runs here unchanged. Math jobs and jobs pinned to an ailab SSD stay on ailab. Owner 2026-11-14: \"ailab 超订的话，其余的也派给本机\".",
   "max_jobs": 4,
-  "max_cpus": 12,
-  "max_memory_mib": 24576,
+  "max_cpus": 14,
+  "max_memory_mib": 26624,
   "min_free_memory_mib": 8192,
   "environment_aliases": {
     "/data/ssd1/openlabs-worker/environments/astro-photometry": "/workspace/openlabs/build/lines/astro-survey-photometry/venv"
