@@ -230,6 +230,19 @@ def _usage(db: FactoryDB, campaign_id: str) -> dict[str, int]:
 def research_provider(db: FactoryDB, settings: FactorySettings, campaign_id: str) -> str | None:
     """Model family of the topic's research executor (``None`` without routing)."""
 
+    runner = _research_runner(db, settings, campaign_id)
+    return None if runner is None else budget_control.provider_of(settings, runner)
+
+
+def research_model(db: FactoryDB, settings: FactorySettings, campaign_id: str) -> str | None:
+    """Model of the topic's research executor, when its runner names one."""
+
+    runner = _research_runner(db, settings, campaign_id)
+    spec = settings.runners.get(runner) if runner is not None else None
+    return spec.model if spec is not None and spec.model else None
+
+
+def _research_runner(db: FactoryDB, settings: FactorySettings, campaign_id: str) -> str | None:
     if not budget_control.routing_enabled(settings):
         return None
     with db.connect() as connection:
@@ -246,7 +259,7 @@ def research_provider(db: FactoryDB, settings: FactorySettings, campaign_id: str
         ).fetchone()
     if row is None:
         return None
-    return budget_control.provider_of(settings, row["runner"])
+    return str(row["runner"])
 
 
 # --------------------------------------------------------------------------- decision registry
@@ -565,6 +578,9 @@ def schedule_direction_decision(
         **asset_library.packet_fields(paths, settings, domains=[str(topic.get("domain") or "")],
                                       topic=topic),
         "research_executor_provider": exclude,
+        # Read by the router when only one model family is configured (same family,
+        # different model).
+        "producer_model": research_model(db, settings, campaign_id),
         "options": ["targeted_core_analysis", "retarget_or_short_format", "freeze"],
         "created_at": utc_now(),
     })

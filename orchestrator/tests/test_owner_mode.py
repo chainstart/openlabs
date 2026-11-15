@@ -206,6 +206,41 @@ def test_awaiting_remote_parks_the_seat_and_wakes_the_same_session(tmp_path, mon
     assert remote_wait.default_queue_root() == queue
 
 
+def test_paused_workstream_cancels_its_parked_wait_and_gets_no_seat(tmp_path, monkeypatch):
+    """Handing a topic to a human: research_state.json status paused while a seat is parked."""
+
+    queue = tmp_path / "remote-queue"
+    (queue / "jobs" / JOB).mkdir(parents=True)
+    monkeypatch.setenv("OPENLABS_REMOTE_QUEUE", str(queue))
+    (queue / "jobs" / JOB / "request.json").write_text(json.dumps(
+        {"job_id": JOB, "resources": {"cpu_threads": 2, "wall_seconds": 3600}}))
+    (queue / "jobs" / JOB / "status.json").write_text(json.dumps(
+        {"job_id": JOB, "state": "running", "updated_at": "2026-11-14T00:00:00Z"}))
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    seat = _first_seat(paths, db, settings, monkeypatch, topic)
+    _seat_packet(db, paths, seat["task_id"], {"status": "awaiting_remote", "job_ids": [JOB]},
+                 session="owner-s1")
+    _tick(paths, settings, monkeypatch)
+    parked = _latest(db, topic["campaign_id"])
+    assert parked["status"] == "awaiting_remote"
+    campaign = db.campaign(topic["campaign_id"])
+    state_path = Path(campaign["workstream_state_path"])
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["status"] = "paused"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _tick(paths, settings, monkeypatch)
+    assert db.campaign(topic["campaign_id"])["status"] == "production_paused"
+    assert db.task(parked["task_id"])["status"] == "cancelled"
+    assert remote_wait.wait_record(db, parked["task_id"])["job_ids"] == [JOB]
+    (queue / "jobs" / JOB / "status.json").write_text(json.dumps(
+        {"job_id": JOB, "state": "succeeded", "updated_at": "2026-11-14T01:00:00Z"}))
+    _tick(paths, settings, monkeypatch)
+    assert db.task(parked["task_id"])["status"] == "cancelled"
+    assert _latest(db, topic["campaign_id"])["task_id"] == parked["task_id"]
+    assert not [t for t in _tasks(db, topic["campaign_id"])
+                if t["status"] in {"queued", "leased", "running", "awaiting_remote"}]
+
+
 def test_no_progress_seats_trip_the_direction_decision(tmp_path, monkeypatch):
     paths, db, settings, (topic,) = _owner_program(
         tmp_path, monkeypatch, owner_settings=OwnerSettings(no_progress_seats=2)

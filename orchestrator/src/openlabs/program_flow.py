@@ -1878,6 +1878,8 @@ def schedule_topic_admission(
             "topic_cards": entries,
             "proposer_provider": provider,
             "exclude_provider": exclude,
+            # Read by the router when only one model family is configured.
+            "producer_model": _proposer_model(db, settings, batch),
             "admission_policy": ADMISSION_POLICY_VERSION,
             **(
                 {"research_lines": {line: line_summary(lines_document, line)
@@ -1977,6 +1979,22 @@ def schedule_topic_admission(
         event_key=task_id,
     )
     return ReviewSchedule(task_id=task_id)
+
+
+def _proposer_model(
+    db: FactoryDB, settings: FactorySettings, topics: list[Mapping[str, Any]]
+) -> str | None:
+    """The one model that proposed every card of a batch (scout task runners), if known."""
+
+    models: set[str] = set()
+    for topic in topics:
+        task = db.task(str(topic.get("source_task_id") or "")) if topic.get(
+            "source_task_id") else None
+        spec = settings.runners.get(str((task or {}).get("runner") or ""))
+        if spec is None or not spec.model:
+            return None
+        models.add(spec.model)
+    return models.pop() if len(models) == 1 else None
 
 
 def _attempt_task_id(attempt: Any) -> str:

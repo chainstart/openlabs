@@ -507,3 +507,34 @@ def test_review_record_names_the_writer_family_and_the_unregistered_fallback(tmp
     assert record["writer_model_source"] == "settings_review_writer_model"
     assert record["writer_model_note"] == flow.WRITER_MODEL_UNREGISTERED
     assert record["cross_model_referees"] == []
+
+
+def test_same_family_basis_accepts_another_model_and_labels_it():
+    gpt_only = {"editor": {"provider": "openai-codex", "model": "gpt-6-astra"},
+                "referee_a": {"provider": "openai-codex", "model": "gpt-6.1-sol"},
+                "referee_b": {"provider": "openai-codex", "model": "gpt-6-astra"}}
+    config = {"roles": gpt_only, "referee_roles": ["referee_a", "referee_b"],
+              "cross_model_required": True, "cross_model_basis": "model"}
+    assert flow.cross_model_blockers(config, "gpt-6-astra") == []
+    assert flow.cross_model_referees(config, "openai", writer_model="gpt-6-astra") == ["referee_a"]
+    assert flow.cross_model_independence(config, "openai", "gpt-6-astra") == "same_family_different_model"
+    # The same model on every referee seat is still refused.
+    same = dict(config, roles=dict(gpt_only, referee_a=gpt_only["referee_b"]))
+    assert "model differs from the writer" in flow.cross_model_blockers(same, "gpt-6-astra")[0]
+    assert flow.cross_model_independence(same, "openai", "gpt-6-astra") == "none"
+    # The default basis keeps requiring another family.
+    assert flow.cross_model_blockers(dict(config, cross_model_basis="model_family"), "gpt-6-astra")
+
+
+def test_same_family_basis_needs_a_recorded_authorization(tmp_path, monkeypatch):
+    review = {"referee_roles": ["referee_a", "referee_b"],
+              "cross_model": {"required": True, "basis": "model"},
+              "roles": {}}
+    monkeypatch.setattr(flow, "load_registry_settings", lambda root: {"review": review})
+    with pytest.raises(ValueError, match="basis_authorization"):
+        flow.review_config(tmp_path)
+    review["cross_model"]["basis_authorization"] = {"actor": "user", "date": "2026-11-15"}
+    assert flow.review_config(tmp_path)["cross_model_basis"] == "model"
+    review["cross_model"]["basis"] = "anything"
+    with pytest.raises(ValueError, match="basis must be one of"):
+        flow.review_config(tmp_path)

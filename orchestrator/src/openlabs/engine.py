@@ -1068,9 +1068,11 @@ def _sync_active_projects(
             try:
                 state_status = _workstream_state_status(campaign)
                 if state_status in {"paused", "completed"}:
-                    if not db.has_active_tasks(campaign_id) and not db.has_queued_tasks(
-                        campaign_id
-                    ):
+                    # A running seat finishes its attempt; once nothing is leased or
+                    # running, queued work and parked remote waits are cancelled (the
+                    # remote jobs themselves keep running and stay in the wait record),
+                    # so a workstream handed to a human gets no new seat.
+                    if not db.has_active_tasks(campaign_id):
                         db.pause_production_campaign(
                             campaign_id,
                             reason=f"agent_workstream_{state_status}",

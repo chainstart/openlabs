@@ -1665,6 +1665,98 @@ class QuotaRouter:
         providers = {s.provider for s in self.settings.runners.values() if s.tier == tier}
         return producer if providers - {producer} else None
 
+    def _producer_model(self, task: Mapping[str, Any]) -> str | None:
+        """Model that produced what a review/decision task judges, when it can be known.
+
+        The parent task's runner first; otherwise the ``producer_model`` field the
+        control plane writes into decision and admission packets (input path).
+        """
+
+        parent = self._task(task.get("parent_task_id"))
+        if parent is not None:
+            spec = self.settings.runners.get(normalize_runner(parent.get("runner")))
+            if spec is not None and spec.model:
+                return spec.model
+        path = str(task.get("input_path") or "").strip()
+        if not path.endswith(".json"):
+            return None
+        try:
+            packet = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        value = packet.get("producer_model") if isinstance(packet, Mapping) else None
+        return str(value).strip() or None if value else None
+
+    def _single_family(self, task: Mapping[str, Any], klass: str,
+                       excluded: str | None) -> str | None:
+        """The only configured provider, when a review/decision cannot leave its family.
+
+        Applies when every configured runner belongs to one provider and that is the
+        producer's (an explicit ``exclude_provider`` or the parent's runner): no
+        other family exists to take the task, so it must not wait for one.
+        """
+
+        if klass not in {"decision", "review"}:
+            return None
+        providers = {spec.provider for spec in self.settings.runners.values()}
+        if len(providers) != 1:
+            return None
+        (only,) = providers
+        if excluded is not None:
+            return only if excluded == only else None
+        parent = self._task(task.get("parent_task_id"))
+        if parent is not None and provider_of(self.settings, parent.get("runner")) == only:
+            return only
+        return None
+
+    def _route_same_family(
+        self,
+        task: Mapping[str, Any],
+        provider: str,
+        tier: str,
+        klass: str,
+        active_by_runner: Mapping[str, int],
+        *,
+        excluded: str | None,
+        manual: bool,
+    ) -> dict[str, Any] | None:
+        """Same family, different model: the fallback independence of a one-family setup.
+
+        The requested tier is tried first, then the other tiers strongest first;
+        a runner of the producer's own model is never chosen while the producer
+        model is known. The decision is labelled so results and events show it.
+        """
+
+        producer_model = self._producer_model(task)
+        order = [tier, *(level for level in ("lead", "worker", "light") if level != tier)]
+        for level in order:
+            pool = [
+                spec for spec in self.settings.runners.values()
+                if spec.provider == provider and spec.tier == level
+                and (producer_model is None or spec.model != producer_model)
+            ]
+            if not pool:
+                continue
+            chosen = self._choose(pool, klass, active_by_runner, manual=manual)
+            if chosen is None:
+                continue
+            spec, state = chosen
+            decision = self._decision(spec, state, klass, requested_tier=tier,
+                                      excluded=excluded, manual=manual)
+            decision["independence"] = (
+                "same_family_different_model" if producer_model else "same_family_model_unknown"
+            )
+            decision["producer_model"] = producer_model
+            decision["reason"] = (
+                "只配置了一个模型族：由同族不同模型承担 (single family configured: "
+                "same family, different model)"
+            )
+            return decision
+        self._defer(task, "no_runner_available", tier=tier, task_class=klass,
+                    excluded_provider=excluded, independence="same_family_different_model",
+                    producer_model=producer_model)
+        return None
+
     def _limit_ok(
         self,
         spec: RunnerSpec,
@@ -1799,6 +1891,10 @@ class QuotaRouter:
         tier = self.required_tier(task)
         excluded = self._excluded_provider(task, tier, klass)
         sticky = self._sticky_provider(task)
+        single = None if sticky is not None else self._single_family(task, klass, excluded)
+        if single is not None:
+            return self._route_same_family(task, single, tier, klass, active_by_runner,
+                                           excluded=excluded, manual=manual)
 
         def candidates_for(level: str) -> list[RunnerSpec]:
             return [

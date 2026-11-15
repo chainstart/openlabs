@@ -157,6 +157,15 @@ def review_config(root: str | Path) -> dict[str, Any]:
             or not isinstance(p.get("referee_roles"), list) or not _parse_time(p.get("valid_for_reviews_started_before"))
             for p in previous):
         raise ValueError("review.previous_panels entries need roles, referee_roles and valid_for_reviews_started_before")
+    basis = str(cross.get("basis") or "model_family")
+    if basis not in CROSS_MODEL_BASES:
+        raise ValueError(f"review.cross_model.basis must be one of {', '.join(CROSS_MODEL_BASES)}")
+    if basis == "model":
+        receipt = cross.get("basis_authorization")
+        if not isinstance(receipt, Mapping) or any(
+                not str(receipt.get(k) or "").strip() for k in ("actor", "date")):
+            raise ValueError("review.cross_model.basis 'model' (same family, different model) "
+                             "requires basis_authorization with actor and date")
     roles = review.get("roles") or {}
     if FORMAL_ROLE in roles:
         verifier = roles[FORMAL_ROLE]
@@ -176,6 +185,7 @@ def review_config(root: str | Path) -> dict[str, Any]:
             "timeout_seconds": int(review.get("timeout_seconds", 3600)),
             "writer_model": str(review.get("writer_model") or ""),
             "cross_model_required": bool(cross.get("required", False)),
+            "cross_model_basis": basis,
             "previous_panels": [dict(p) for p in previous]}
 
 
@@ -216,6 +226,12 @@ PROVIDER_FAMILIES = {"anthropic": "anthropic", "openai-codex": "openai", "openai
                      "google": "google"}
 
 
+# ``model_family`` (default): a referee of another model family is required.
+# ``model``: another model, possibly of the same family (one-family setups only, by
+# recorded decision); the decision record labels it ``same_family_different_model``.
+CROSS_MODEL_BASES = ("model_family", "model")
+
+
 def model_family(model: Any, provider: Any = None) -> str:
     """Family of a model: identifier prefix first, then the provider; unknown -> the id itself."""
     name = str(model or "").strip().lower()
@@ -247,7 +263,12 @@ def writer_identity(metadata: Mapping[str, Any], config: Mapping[str, Any]) -> d
 
 
 def cross_model_blockers(config: Mapping[str, Any], writer: str | Mapping[str, Any]) -> list[str]:
-    """User decision 2026-11-07: the drafting model's family must not be the only judge of its text."""
+    """User decision 2026-11-07: the drafting model's family must not be the only judge of its text.
+
+    With ``cross_model.basis: model`` (a recorded decision for a setup with one model
+    family only) a referee of another model of the same family satisfies the rule;
+    the decision record then says ``same_family_different_model``.
+    """
     if not config.get("cross_model_required"):
         return []
     identity = writer if isinstance(writer, Mapping) else {"model": writer, "family": model_family(writer)}
@@ -255,6 +276,13 @@ def cross_model_blockers(config: Mapping[str, Any], writer: str | Mapping[str, A
     if not model:
         return ["review.writer_model (or the paper's writer_model) must name the drafting model"]
     family = str(identity.get("family") or model_family(model))
+    if cross_model_basis(config) == "model":
+        if not cross_model_referees(config, family, writer_model=model):
+            return [f"Cross-model review requires an active referee whose model differs from the "
+                    f"writer {model}"]
+        if len(config["referee_roles"]) < 2:
+            return ["Cross-model review requires two active referees"]
+        return []
     if not cross_model_referees(config, family):
         return [f"Cross-model review requires an active referee whose model family differs from the "
                 f"writer {model} ({family})"]
@@ -263,10 +291,31 @@ def cross_model_blockers(config: Mapping[str, Any], writer: str | Mapping[str, A
     return []
 
 
-def cross_model_referees(config: Mapping[str, Any], writer_family: str) -> list[str]:
+def cross_model_basis(config: Mapping[str, Any]) -> str:
+    return str(config.get("cross_model_basis") or "model_family")
+
+
+def cross_model_referees(config: Mapping[str, Any], writer_family: str,
+                         writer_model: str | None = None) -> list[str]:
+    """Active referees independent of the writer: another family, or (basis ``model``
+    and ``writer_model`` given) another model."""
     roles = config["roles"]
+    if writer_model is not None and cross_model_basis(config) == "model":
+        own = writer_model.strip().lower()
+        return [n for n in config["referee_roles"]
+                if str(roles.get(n, {}).get("model") or "").strip().lower() not in {"", own}]
     return [n for n in config["referee_roles"]
             if model_family(roles.get(n, {}).get("model"), roles.get(n, {}).get("provider")) != writer_family]
+
+
+def cross_model_independence(config: Mapping[str, Any], writer_family: str, writer_model: str) -> str:
+    """``cross_family`` when a referee of another family is active, else
+    ``same_family_different_model`` (basis ``model``) or ``none``."""
+    if cross_model_referees(config, writer_family):
+        return "cross_family"
+    if cross_model_referees(config, writer_family, writer_model=writer_model):
+        return "same_family_different_model"
+    return "none"
 
 
 def policy_for_record(record: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
@@ -2151,8 +2200,12 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                "single_referee_panel": len(panel) == 1, "writer_model": writer,
                "writer_model_family": writer_record["family"],
                "writer_model_source": writer_record["source"],
-               "cross_model_basis": "model_family",
-               "cross_model_referees": cross_model_referees(config, writer_record["family"])}
+               "cross_model_basis": cross_model_basis(config),
+               "cross_model_referees": cross_model_referees(
+                   config, writer_record["family"],
+                   writer_model=writer if cross_model_basis(config) == "model" else None),
+               "cross_model_independence": cross_model_independence(
+                   config, writer_record["family"], writer)}
     if writer_record.get("note"):
         record["writer_model_note"] = writer_record["note"]
     if pre.get('active_revision_context') is not None:

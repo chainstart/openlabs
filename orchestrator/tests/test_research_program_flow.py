@@ -450,10 +450,11 @@ def test_admission_goes_to_another_family_lead_and_keeps_independence(tmp_path, 
 
 
 def test_no_independent_runner_leaves_topic_proposed_and_records_event(tmp_path, monkeypatch):
+    # One family with a single model: neither another family nor another model can judge.
     paths = _paths(tmp_path)
     _install_program(paths)
     db = _db(paths)
-    settings = _settings(runners=CLAUDE_ONLY)
+    settings = _settings(runners={"lead_claude": RUNNERS["lead_claude"]})
     _, admission, report = _to_admission(paths, db, settings, monkeypatch,
                                          [_card(0, RECEIPT_SHA)])
 
@@ -470,6 +471,24 @@ def test_no_independent_runner_leaves_topic_proposed_and_records_event(tmp_path,
     later = _tick(paths, settings, monkeypatch)
     assert db.task(admission["task_id"])["status"] == "queued"
     assert admission["task_id"] not in later.launched
+
+
+def test_single_family_admission_goes_to_another_model_of_it(tmp_path, monkeypatch):
+    # Owner 2026-11-15 (Claude quota no longer used): with one family configured the
+    # admission is taken by a different model of that family and labelled so.
+    paths = _paths(tmp_path)
+    _install_program(paths)
+    db = _db(paths)
+    settings = _settings(runners=CLAUDE_ONLY)
+    _, admission, _report = _to_admission(paths, db, settings, monkeypatch,
+                                          [_card(0, RECEIPT_SHA)])
+    assert admission["exclude_provider"] == CLAUDE
+    producer = _packet(admission)["producer_model"]
+    _tick(paths, settings, monkeypatch)
+    routed = [e["payload"] for e in db.events() if e["event_type"] == "task_routed"
+              and e["entity_id"] == admission["task_id"]]
+    assert routed and routed[0]["independence"] == "same_family_different_model"
+    assert routed[0]["model"] != producer and routed[0]["producer_model"] == producer
 
 
 def test_end_to_end_slot_scout_admission_campaign_first_task(tmp_path, monkeypatch) -> None:

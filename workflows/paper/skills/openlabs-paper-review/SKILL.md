@@ -8,8 +8,19 @@ description: "Run the sole OpenLabs journal self-review: deterministic preflight
 Use `review unified-run` under the resource guard; this is the only route to
 `writing_release: ready`. The editor, the referees, their models and the round limit come
 from `registry/settings.yaml#review`; do not restate them here. The panel must include a
-referee from a model family other than the drafting model (`review.cross_model`). A gate never
-authorizes journal submission.
+referee from a model family other than the drafting model (`review.cross_model`); where the
+settings record `cross_model.basis: model` (only one model family available), a referee of a
+different model of the same family counts, and the decision record says
+`same_family_different_model`. Report that label as it is; never describe such a panel as
+cross-family. A gate never authorizes journal submission.
+
+For a pre-registered study, compare the hash-bound pre-registration (`research_state.json`
+`preregistration`) with the manuscript word for word: quote the registered primary endpoint
+and its decision rule, quote what the manuscript reports as the outcome, and say whether the
+manuscript's verdict follows from the registered text read literally. A handling added after
+registration (an adjusted threshold, a reinterpreted statistic, a discrepancy allowance) is a
+supplementary analysis: the manuscript must also report the result judged by the original
+text. A mismatch is a scientific blocker, not a text change.
 
 ```bash
 bin/openlabs-resource-guard --task-type cpu -- env PYTHONPATH=workflows/paper python -m paper_writing \
