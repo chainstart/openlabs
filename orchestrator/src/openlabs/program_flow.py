@@ -1315,6 +1315,8 @@ def intake_card(
     lines_document = research_lines_document(paths, settings) if card.get(
         "research_line") else None
     line_entry, template_entry = card_checks.line_specs(lines_document, card)
+    card, filled = card_checks.fill_precheck_budget(card, line_entry, template_entry)
+    normalized = [*normalized, *filled]
     if settings.program.card_compute_floor:
         # The line knows its typical cost; a tighter card is corrected, not frozen later.
         card, raised = card_checks.apply_compute_floor(

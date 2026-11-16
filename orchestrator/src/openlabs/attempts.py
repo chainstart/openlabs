@@ -37,6 +37,10 @@ from .reproduction import materialize_reproduction
 ATTEMPT_SCHEMA = "openlabs.attempt_workspace.v1"
 ARCHIVE_SCHEMA = "openlabs.immutable_result_archive.v1"
 ARTIFACT_POLICY_SCHEMA = "openlabs.artifact_policy.v1"
+# A cited input outside the data/artifact roots (gates.bind_external_references) up to this
+# size is copied into the immutable archive like any artifact; a larger one is bound by
+# path, size and hash only (a research line's multi-GB light-curve cache is not duplicated).
+EXTERNAL_SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024
 CAMPAIGN_ARTIFACT_MANIFEST_SCHEMA = "openlabs.campaign_artifact_manifest.v1"
 EXPERIMENT_ARTIFACT_MANIFEST_SCHEMA = "openlabs.experiment_artifact_manifest.v1"
 DEFAULT_MAX_DATA_FILE_BYTES = 5 * 1024 * 1024
@@ -1119,6 +1123,18 @@ def freeze_result_bundle(
             raise AttemptWorkspaceError(
                 f"Artifact changed before immutable snapshot: {item.get('artifact_id')}"
             )
+        reference = item.get("external_reference")
+        if isinstance(reference, Mapping):
+            reference = dict(reference)
+            reference["source_uri"] = source.as_uri()
+            if source.stat().st_size > EXTERNAL_SNAPSHOT_MAX_BYTES:
+                # A large cited input stays where it is, bound by path, size and hash.
+                reference["snapshot"] = False
+                item["external_reference"] = reference
+                frozen_artifacts.append(item)
+                continue
+            reference["snapshot"] = True
+            item["external_reference"] = reference
         content_object = _content_object(paths, source, digest)
         suffix = source.suffix[:24]
         target = archive / "artifacts" / f"{index:03d}-{digest}{suffix}"
@@ -1257,6 +1273,12 @@ def _attempt_started(workspace: AttemptWorkspace) -> float | None:
         return datetime.fromisoformat(text).timestamp() if text else None
     except (OSError, ValueError, TypeError):
         return None
+
+
+def attempt_started(workspace: AttemptWorkspace) -> float | None:
+    """When the attempt workspace was created (POSIX seconds), if recorded."""
+
+    return _attempt_started(workspace)
 
 
 def publish_staged_artifacts(

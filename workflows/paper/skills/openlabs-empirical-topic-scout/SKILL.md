@@ -165,7 +165,9 @@ Each field is there because the gate needs it to decide:
 - `computational_only: true` and `computational_only_rationale`.
 - `venues` — `routine`: two venues in the routine tiers of
   `settings.yaml#journal_target_policy.venue_eligibility` (fee-free route, team-ledger status
-  checked); optional `escalation` (`name`, or `venues: [...]` for alternatives, with the
+  checked), each a named object: `"routine": [{"name": "Astrophysics and Space Science"},
+  {"name": "New Astronomy"}]` (a template's `venues.routine` lists bare names; write each as
+  `{"name": ...}`); optional `escalation` (`name`, or `venues: [...]` for alternatives, with the
   `condition` that would justify it). The routine pair is the
   fallback the campaign keeps.
 - `cost_estimate` — `agent_seconds`, `tokens`, `gpu_hours`, `calendar_days`, and `basis`: what
@@ -183,8 +185,9 @@ Each field is there because the gate needs it to decide:
   rejects a line card without them. `packages/contracts/examples/research-program/topic-card.research-line.example.json` shows
   the shape.
   - `feasibility_precheck` — `description` (the cheap decisive check), `pass_criterion` (numeric),
-    `budget` (active agent time and compute; time waiting for queued remote jobs is not agent
-    time), `on_failure: "freeze"`. After admission this is the first
+    `budget` (one text string with the active agent time and compute, e.g. `"5400 active agent
+    seconds; 40 CPU core-hours on ailab (4 CPUs, 5120 MiB); GPU 0; queued remote-job time
+    excluded"`; time waiting for queued remote jobs is not agent time), `on_failure: "freeze"`. After admission this is the first
     research task and nothing else runs before it; a miss freezes the topic.
     Write criteria the line can actually be judged on. Where the card's template has
     `card_rules` (research-lines.yaml), they decide the endpoint, the feasibility conditions and
@@ -222,7 +225,8 @@ Each field is there because the gate needs it to decide:
   `response`) for every condition marked `answer_required`.
 
 The control plane checks the structure. Mechanical slips (a number written as text, a nameless
-escalation, an unknown tier, a missing empty list) are fixed and noted; gaps the gate can weigh
+escalation, an unknown tier, a missing empty list, a venue given as a bare name, a precheck
+budget given as an object) are fixed and noted; gaps the gate can weigh
 (audience evidence, a data source's version or licence, cost numbers, an occupancy search) travel
 to the gate as warnings. Only a gap admission cannot judge around (no question, no complete
 primary endpoint, no data source with a DOI or URL, no named routine venue, no closest prior

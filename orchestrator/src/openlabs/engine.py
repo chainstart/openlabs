@@ -24,6 +24,7 @@ from .attempts import (
     AttemptWorkspace,
     attempt_artifact_policy,
     attempt_output_path,
+    attempt_started,
     begin_attempt_promotion,
     enforce_campaign_data_boundary,
     finalize_attempt_promotion,
@@ -51,7 +52,7 @@ from .db import (
     normalize_runner,
     retry_not_before,
 )
-from .gates import evaluate_result_bundle, fill_control_plane_fields
+from .gates import bind_external_references, evaluate_result_bundle, fill_control_plane_fields
 from .labs import LabManifest, ProtocolManifest, discover_labs, lab_for_domain
 from .locking import factory_operation_lock
 from .portfolio import (
@@ -117,6 +118,39 @@ def _inside(path: Path, roots: tuple[Path, ...]) -> bool:
     resolved = path.resolve()
     return any(
         resolved == root.resolve() or resolved.is_relative_to(root.resolve()) for root in roots
+    )
+
+
+JOB_PACKET_GRACE_SECONDS = 60.0
+
+
+def _bind_external_references(
+    paths: WorkspacePaths,
+    payload: Mapping[str, Any],
+    *,
+    roots: tuple[Path, ...],
+    task_id: str,
+    attempt_id: str,
+    workspace: AttemptWorkspace | None,
+    runtime: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """``gates.bind_external_references`` with this attempt's start and job packet."""
+
+    started = attempt_started(workspace) if workspace is not None else None
+    job_packet = (paths.job_inbox / f"{task_id}-{attempt_id}.json").resolve()
+    # The job packet is written right after the attempt workspace; it is an input while
+    # it is no newer than the agent request the lab runner wrote from it.
+    # Without that request file, a minute after the attempt began.
+    cutoff = started + JOB_PACKET_GRACE_SECONDS if started is not None else None
+    request = str(runtime.get("agent_request_path") or "")
+    if request:
+        try:
+            cutoff = Path(request).stat().st_mtime
+        except OSError:
+            pass
+    return bind_external_references(
+        payload, allowed_roots=roots, started=started,
+        control_plane_inputs={job_packet: cutoff},
     )
 
 
@@ -2727,6 +2761,19 @@ def ingest_results(
             payload, filled = fill_control_plane_fields(payload, preregistration)
             if filled:
                 runtime["control_plane_filled"] = filled
+            # Inputs the agent cited from outside the roots (its job packet, a line's
+            # queue) are bound as references, not a reason to refuse the whole result.
+            payload, external = _bind_external_references(
+                paths, payload, roots=roots, task_id=task_id, attempt_id=attempt_id,
+                workspace=attempt_workspace, runtime=runtime,
+            )
+            if external:
+                runtime["external_references"] = external
+                db.record_event_once(
+                    "task", task_id, "external_artifact_referenced",
+                    {"attempt_id": attempt_id, "references": external},
+                    event_key=f"external-ref:{attempt_id}",
+                )
             gate = evaluate_result_bundle(
                 payload, allowed_roots=roots, preregistration_sha256=preregistration
             )

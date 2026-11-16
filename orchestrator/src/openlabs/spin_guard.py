@@ -88,8 +88,8 @@ def result_products(payload: Mapping[str, Any] | None) -> set[str]:
         return set()
     products: set[str] = set()
     for item in payload.get("artifacts") or []:
-        if not isinstance(item, Mapping):
-            continue
+        if not isinstance(item, Mapping) or item.get("external_reference"):
+            continue  # a cited input from outside the roots is not a product
         kind = str(item.get("kind") or "").lower()
         digest = str(item.get("sha256") or "")
         if digest and not any(word in kind for word in SOURCE_KINDS):

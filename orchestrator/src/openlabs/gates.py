@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,6 +121,184 @@ def fill_control_plane_fields(
     return filled, notes
 
 
+# --------------------------------------------------------------------------- external references
+#
+# A result may cite a file outside the data/artifact roots that it read but did not make
+# (its own job packet, a research line's queue under build/lines). Such a citation is a
+# registration matter, settled by the control plane (2026-11-16: an admission review was
+# refused whole for citing task-input and queue-source). It is accepted as an
+# ``external_reference`` when the file exists, is outside every protected location below,
+# and was last modified before the attempt began; the control plane computes its size and
+# hash. A file outside the roots that the attempt created or changed is an output written
+# to the wrong place and is still refused, as is a missing file or a protected path.
+
+EXTERNAL_REFERENCE_SCHEMA = "openlabs.external_reference.v1"
+# Protected locations: never accepted as evidence, whatever their age.
+PROTECTED_REFERENCE_ROOTS = (
+    "/workspace/secret-key",
+    "/workspace/.download-bridge",
+    "/root",
+    "/home",
+    "/etc",
+    "/proc",
+    "/sys",
+    "/dev",
+    "/run",
+    "/var/run",
+    "/boot",
+)
+PROTECTED_REFERENCE_PARTS = frozenset({
+    ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".codex", ".claude", ".config",
+    ".git", "secret-key", "secrets", "credentials",
+})
+PROTECTED_REFERENCE_NAMES = frozenset({
+    ".env", ".netrc", ".git-credentials", ".pgpass", ".npmrc", ".pypirc", "auth.json",
+    "credentials.json", "token.json", "known_hosts", "authorized_keys",
+})
+PROTECTED_REFERENCE_PREFIXES = ("id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", ".env.")
+PROTECTED_REFERENCE_SUFFIXES = (
+    ".pem", ".key", ".p12", ".pfx", ".kdbx", ".gpg", ".asc", ".age",
+    ".sqlite", ".sqlite3", ".sqlite-wal", ".sqlite-shm", ".db",
+)
+
+
+def protected_reference(path: Path) -> bool:
+    """Whether a resolved path is in the refusal list for external references."""
+
+    text = str(path)
+    if any(text == root or text.startswith(root + "/") for root in PROTECTED_REFERENCE_ROOTS):
+        # The process temp directory may sit under a home directory; it holds no
+        # configuration (the dot-directory and file-name rules below still apply).
+        temp = str(Path(tempfile.gettempdir()).resolve())
+        in_temp = temp.startswith(("/home/", "/root/")) and text.startswith(temp + "/")
+        if not in_temp:
+            return True
+    if any(part in PROTECTED_REFERENCE_PARTS for part in path.parts[:-1]):
+        return True
+    name = path.name.lower()
+    return (
+        name in PROTECTED_REFERENCE_NAMES
+        or name.startswith(PROTECTED_REFERENCE_PREFIXES)
+        or name.endswith(PROTECTED_REFERENCE_SUFFIXES)
+    )
+
+
+def _local_path(uri: object) -> Path | None:
+    parsed = urlparse(str(uri or ""))
+    if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
+        return None
+    return Path(unquote(parsed.path)).resolve()
+
+
+def _inside_any(path: Path, roots: tuple[Path, ...]) -> bool:
+    return any(path == root or path.is_relative_to(root) for root in roots)
+
+
+def external_reference_problem(
+    path: Path,
+    *,
+    started: float | None,
+    control_plane_inputs: Mapping[Path, float | None] | None = None,
+) -> str | None:
+    """Why a file outside the roots cannot be cited (``None``: it can)."""
+
+    if protected_reference(path):
+        return "is in a protected location (credentials, home or system paths are never evidence)"
+    if not path.is_file():
+        return "is outside data/artifact roots and does not exist"
+    if started is None:
+        return "is outside data/artifact roots (no attempt start time to show it is an input)"
+    modified = path.stat().st_mtime
+    inputs = control_plane_inputs or {}
+    if path in inputs:
+        # The control plane writes the attempt's own job packet just after the attempt
+        # workspace; it counts as an input when unchanged since the agent was launched.
+        cutoff = inputs[path]
+        if cutoff is None or modified <= cutoff:
+            return None
+    if modified >= started:
+        return (
+            "is outside data/artifact roots and was written during this attempt; "
+            "write outputs under the attempt's artifact staging"
+        )
+    return None
+
+
+def bind_external_references(
+    payload: Mapping[str, Any],
+    *,
+    allowed_roots: tuple[Path, ...],
+    started: float | None,
+    control_plane_inputs: Mapping[Path, float | None] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Mark citable files outside the roots as control-plane ``external_reference``s.
+
+    Any ``external_reference`` / ``external_reference_refused`` an agent wrote is
+    dropped first, so only this function's verdict reaches the gate. Returns the payload
+    and one record per accepted reference (path, bytes, sha256 and any hash corrected).
+    """
+
+    roots = tuple(root.resolve() for root in allowed_roots)
+    bound = dict(payload)
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, list) or not roots:
+        return bound, []
+    records: list[dict[str, Any]] = []
+    rewritten: list[Any] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, Mapping):
+            rewritten.append(artifact)
+            continue
+        item = {k: v for k, v in artifact.items()
+                if k not in {"external_reference", "external_reference_refused"}}
+        path = _local_path(item.get("uri"))
+        if path is None or _inside_any(path, roots):
+            rewritten.append(item)
+            continue
+        problem = external_reference_problem(
+            path, started=started, control_plane_inputs=control_plane_inputs
+        )
+        if problem is not None:
+            item["external_reference_refused"] = problem
+            rewritten.append(item)
+            continue
+        digest = sha256_file(path)
+        declared = str(item.get("sha256") or "")
+        stat = path.stat()
+        reference = {
+            "schema_version": EXTERNAL_REFERENCE_SCHEMA,
+            "path": str(path),
+            "bytes": stat.st_size,
+            "sha256": digest,
+            "mtime": stat.st_mtime,
+            "basis": (
+                "attempt_job_packet" if path in (control_plane_inputs or {})
+                else "unchanged_since_attempt_start"
+            ),
+        }
+        if declared != digest:
+            reference["declared_sha256"] = declared or None
+        item["sha256"] = digest
+        item["external_reference"] = reference
+        records.append({"artifact_id": item.get("artifact_id"), **reference})
+        rewritten.append(item)
+    bound["artifacts"] = rewritten
+    return bound, records
+
+
+def _verified_external_reference(artifact: Mapping[str, Any], path: Path) -> bool:
+    reference = artifact.get("external_reference")
+    return (
+        isinstance(reference, Mapping)
+        and reference.get("schema_version") == EXTERNAL_REFERENCE_SCHEMA
+        and str(reference.get("path") or "") == str(path)
+        and reference.get("sha256") == artifact.get("sha256")
+        and not protected_reference(path)
+        and path.is_file()
+        and sha256_file(path) == artifact.get("sha256")
+    )
+
+
 def evaluate_result_bundle(
     payload: Mapping[str, Any],
     *,
@@ -145,8 +324,18 @@ def evaluate_result_bundle(
                 continue
             path = Path(unquote(parsed.path)).resolve()
             if not any(path == root or path.is_relative_to(root) for root in roots):
-                blockers.append(f"artifact {artifact_id} is outside data/artifact roots")
-                failure_classes.add("artifact_binding")
+                if _verified_external_reference(artifact, path):
+                    pass  # a cited input, bound by the control plane
+                else:
+                    refused = artifact.get("external_reference_refused")
+                    if isinstance(refused, str) and refused:
+                        detail = refused
+                    elif protected_reference(path):
+                        detail = external_reference_problem(path, started=None)
+                    else:
+                        detail = "is outside data/artifact roots"
+                    blockers.append(f"artifact {artifact_id} {detail}")
+                    failure_classes.add("artifact_binding")
             elif not path.is_file():
                 blockers.append(f"artifact {artifact_id} does not exist")
                 failure_classes.add("artifact_binding")

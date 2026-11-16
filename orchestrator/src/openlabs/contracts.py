@@ -954,6 +954,23 @@ def normalize_topic_card(card: Mapping[str, Any]) -> tuple[dict[str, Any], list[
                 cost[name] = value
                 notes.append(f"cost_estimate.{name} read as a number")
     venues = fixed.get("venues")
+    if isinstance(venues, dict):
+        # Research-line templates list routine venues as plain names; the card schema
+        # wants named objects. The name is the agent's own, only its shape changes.
+        routine = venues.get("routine")
+        if isinstance(routine, str) and routine.strip():
+            routine = [routine]
+            venues["routine"] = routine
+            notes.append("venues.routine was a single name; read as a list")
+        if isinstance(routine, list):
+            for index, item in enumerate(routine):
+                if isinstance(item, str) and item.strip():
+                    routine[index] = {"name": item.strip()}
+                    notes.append(f"venues.routine[{index}] name written as {{name: ...}}")
+        escalation = venues.get("escalation")
+        if isinstance(escalation, str) and escalation.strip():
+            venues["escalation"] = {"name": escalation.strip()}
+            notes.append("venues.escalation name written as {name: ...}")
     if (
         isinstance(venues, dict)
         and venues.get("escalation") is not None
@@ -978,7 +995,42 @@ def normalize_topic_card(card: Mapping[str, Any]) -> tuple[dict[str, Any], list[
     if isinstance(precheck, dict) and not _text(precheck.get("on_failure")):
         precheck["on_failure"] = "freeze"
         notes.append("feasibility_precheck.on_failure set to freeze (the only allowed value)")
+    if isinstance(precheck, dict):
+        budget = precheck.get("budget")
+        text = budget_text(budget)
+        if text and not _text(budget):
+            # A structured budget keeps its numbers; the schema's text form is derived.
+            precheck["budget"] = text
+            precheck.setdefault("budget_detail", budget)
+            notes.append("feasibility_precheck.budget object written as text (kept in budget_detail)")
     return fixed, notes
+
+
+def budget_text(value: Any) -> str:
+    """Deterministic text form of a structured budget (``""`` when there is nothing)."""
+
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        return f"{value:g}"
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, Mapping):
+        parts: list[str] = []
+        note = ""
+        for key, item in value.items():
+            if key in {"note", "notes"}:
+                note = budget_text(item)
+                continue
+            rendered = budget_text(item)
+            if rendered:
+                parts.append(f"{str(key).replace('_', ' ')} {rendered}")
+        if note:
+            parts.append(note)
+        return "; ".join(parts)
+    if isinstance(value, list):
+        return ", ".join(text for text in (budget_text(item) for item in value) if text)
+    return ""
 
 
 SERIES_MIN_MEMBERS = 2

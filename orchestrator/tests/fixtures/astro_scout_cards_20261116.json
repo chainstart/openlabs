@@ -1,0 +1,1181 @@
+{
+ "source": "cc-sg topic_scout attempt 53099600-b9e1-4fe8-ba3f-d83dcc5fe200 (2026-11-16T13:06Z), result.json topic_cards; long strings shortened, venues/feasibility_precheck.budget/fee_check kept as written",
+ "cards": [
+  {
+   "audience": {
+    "citations": [
+     {
+      "citation": "Zhang & Gao, The first study of the short period contact binary GY Psc, doi:10.1016/j.newast.2025.102358",
+      "doi": "10.1016/j.newast.2025.102358",
+      "venue": "New Astronomy",
+      "year": 2025
+     },
+     {
+      "citation": "Zhang et al., Photometric study for the short period contact binary V724 And, doi:10.1016/j.newast.2024.102318",
+      "doi": "10.1016/j.newast.2024.102318",
+      "venue": "New Astronomy",
+      "year": 2025
+     }
+    ],
+    "who": "Observers and modellers of W UMa binaries studying contact geometry, third-light degeneracy and orbital evolution; routine single-target photometric studies."
+   },
+   "candidate_queue_entry": {
+    "admission_precheck": "/workspace/openlabs/build/lines/astro-survey-photometry/venv/bin/python /workspace/openlabs/build/lines/astro-survey-photometry/enumerate/admission_precheck....",
+    "batch_parameters": [
+     {
+      "bibcode": "2025ApJS..277...51L",
+      "name_in_catalogue": "J174531.48+774919.8",
+      "params": {
+       "ASASSN-V": "J174531.48+774919.8",
+       "L2/L1": 0.198,
+       "Min.I": 2457505.6881,
+       "Omega": 2.118,
+       "Per": 0.53887,
+       "R2": 0.968,
+       "T1": 6270.0,
+       "T2/T1": 0.98,
+       "Ts": 0.0,
+       "Type": "A",
+       "e_Min.I": 0.0004,
+       "e_T2/T1": 0.002,
+       "e_Ts": 0.0,
+       "e_f": 0.017,
+       "e_i": 0.471,
+       "e_l3": 0.0,
+       "e_q": 0.002,
+       "f": 0.349,
+       "i": 81.812,
+       "l3": 0.0,
+       "long": 0.0,
+       "q": 0.17,
+       "r1": 0.551,
+       "r2": 0.256
+      },
+      "sep_arcsec": 0.04,
+      "title": "Physical Parameters of 12,201 ASAS-SN Contact Binaries Determined by a Neural Network.",
+      "vizier": "J/ApJS/277/51"
+     }
+    ],
+    "entry_id": "TIC441806604",
+    "ledger_occupancy": {
+     "reopens": "topic-b05c67b6272886a0",
+     "state": "reopenable"
+    },
+    "novelty_verdict": "batch_only",
+    "paper_requirement": "The paper must cite the automated batch-parameter table(s) J/ApJS/277/51 (2025ApJS..277...51L, Physical Parameters of 12,201 ASAS-SN Contact Binaries Determi...",
+    "queue": "/workspace/openlabs/build/lines/astro-survey-photometry/queue/queue.json",
+    "queue_precheck": {
+     "asymmetry_grade": 0,
+     "card_rules": "research-lines.yaml astro-survey-photometry paper_templates[contact-binary-solution] version 2: card_rules (endpoint form, forbidden conditions) and admissio...",
+     "class": "symmetric_ready",
+     "flags": [],
+     "method_version": "qp-2.0",
+     "reasons": [],
+     "template_version": 2
+    },
+    "template_version": 2
+   },
+   "closest_prior_work": [
+    {
+     "citation": "Physical Parameters of 12,201 ASAS-SN Contact Binaries Determined by a Neural Network. 2025ApJS..277...51L; J/ApJS/277/51; doi:10.3847/1538-4365/adba63",
+     "our_difference": "Individual l3-free likelihood profiles across all 19 known <=200-s sectors, reference MCMC, l3=0 sensitivity, named systematic error budget and homogeneous e...",
+     "what_it_shows": "Automated population-table parameters for this exact target: {\"ASASSN-V\": \"J174531.48+774919.8\", \"Per\": 0.53887, \"Min.I\": 2457505.6881, \"e_Min.I\": 0.0004, \"T..."
+    },
+    {
+     "citation": "Poro et al. 2025, RAA 25 035013, doi:10.1088/1674-4527/adb896",
+     "our_difference": "Different target TIC441806604; apply the validated common solver and v2 multi-sector analysis. Control offsets enter the error budget, with no control pass g...",
+     "what_it_shows": "Comparable total-eclipse solutions for TIC 318015356 and TIC 55522736; shared control receipt documents reproduction and pipeline offsets."
+    }
+   ],
+   "computational_only": true,
+   "computational_only_rationale": "Existing archived TESS photometry and Gaia metadata, public literature and standard numerical light-curve models; no new observations or external interaction.",
+   "cost_estimate": {
+    "agent_seconds": 28800,
+    "basis": "Reuse indexed SOP and pipeline plus shared control and contact_photometry toolkit; no solver development or control rerun. Reference MCMC allocation 30 core-...",
+    "calendar_days": 6,
+    "compute_plan": {
+     "ailab": {
+      "cpus": 4,
+      "hours": 50,
+      "memory_mib": 5120
+     },
+     "locations": [
+      "container_cpu",
+      "ailab"
+     ],
+     "placement": "solver/submit.sh astro-std-1 for every solve; existing solve ledger checked before submission. One active standard solve per target. Independent profile/refi..."
+    },
+    "cpu_core_hours": 200,
+    "gpu_hours": 0,
+    "tokens": 800000
+   },
+   "data_sources": [
+    {
+     "license": "MAST CC0, TESS/HLSP acknowledgements",
+     "url": "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:HLSP/tess-spoc/s0086/target/0000/0004/4180/6604/hlsp_tess-spoc_tess_phot_0000000441806604-s0086_tess_v...",
+     "version": "hlsp_tess-spoc_tess_phot_0000000441806604-s0086_tess_v1_lc.fits; all-sector inventory snapshot 2026-11-16 with per-product hash freeze before solving"
+    },
+    {
+     "license": "CC BY-NC 3.0 IGO; academic noncommercial use",
+     "url": "https://gea.esac.esa.int/archive/",
+     "version": "Gaia DR3; source_id 1705325801488800896"
+    },
+    {
+     "doi": "10.3847/1538-4365/adba63",
+     "license": "CC BY 4.0, published article/data attribution retained",
+     "version": "J/ApJS/277/51 published 2025; target-row values frozen in candidate_queue_entry"
+    }
+   ],
+   "decisive_analysis": {
+    "access_receipt": {
+     "path": "/workspace/openlabs/openlabs-artifacts/instances/cc-sg/attempt-workspaces/cc-sg-astro-survey-photometry-program-scout-5f5fec9f6a3a/53099600-b9e1-4fe8-ba3f-d8...",
+     "sha256": "7b88ee29a2627fb41bcdbdc58063c9d1a5b63827699d928d8376baa2df76e3a8"
+    },
+    "data_access_verified": true,
+    "description": "First after admission, build the reference-sector l3-free profile for cached S86 and apply E1; then profiles of all <=200-s sectors (19 currently known, comp..."
+   },
+   "feasibility_precheck": {
+    "budget": {
+     "agent_seconds": 5400,
+     "ailab_cpus": 4,
+     "ailab_memory_mib": 5120,
+     "cpu_core_hours": 40,
+     "locations": [
+      "container_cpu",
+      "ailab"
+     ],
+     "note": "Active agent time only; pending remote jobs yield awaiting_remote. This is an initial allocation, not an automatic core-hour freeze threshold; total paper allocation below covers continuation."
+    },
+    "description": "After admission, validate all-sector inventory and run the standard reference refinement and l3-free profile first; apply E1 literally from qprofile analyse ...",
+    "on_failure": "freeze",
+    "pass_criterion": "E1: reference 95% profile interval (Delta nll <=2) closed inside the grid with half-width <=0.10 q_fit after at most one grid extension. No control, symmetry..."
+   },
+   "fee_check": [
+    {
+     "colour_charges": "Colour illustrations free",
+     "evidence": "context/line-registry.yaml astro-survey-photometry venues.preferred; Springer journal 10509 how-to-publish and submission guidelines, retrieved 2026-11-12; C...",
+     "evidence_level": "verified_journal",
+     "fee_free_route": true,
+     "page_charges": "No mandatory publication charge on subscription route per line evidence; optional OA excluded",
+     "submission_fee": "No mandatory fee identified in line subscription-route evidence",
+     "venue": "Astrophysics and Space Science"
+    },
+    {
+     "colour_charges": "Journal-specific policy unverified; use online colour and greyscale print, verify before submission",
+     "evidence": "context/line-registry.yaml astro-survey-photometry venues.preferred; Elsevier choice policy and 2026-10-05 APC list; journal-specific colour page unavailable...",
+     "evidence_level": "verified_publisher",
+     "fee_free_route": true,
+     "page_charges": "Elsevier hybrid subscription model at no cost (publisher-wide evidence)",
+     "submission_fee": "No mandatory fee on publisher subscription route; journal-specific confirmation before submission",
+     "venue": "New Astronomy"
+    }
+   ],
+   "ledger_check": {
+    "compared_topic_ids": [
+     "topic-c28ec0b2402a051e",
+     "topic-414f5d420dd5726e",
+     "topic-bffb6145d49f5138",
+     "topic-00a00b952f87b98b"
+    ],
+    "queue_occupancy": {
+     "other_blocking": [],
+     "reopens": "topic-b05c67b6272886a0",
+     "state": "reopenable",
+     "topics": [
+      {
+       "at": "2026-11-14T10:02:35Z",
+       "declared_reopen_types": [],
+       "reason": "feasibility_precheck_failed",
+       "status": "frozen",
+       "topic_id": "topic-b05c67b6272886a0"
+      }
+     ]
+    },
+    "team_venue_check": "No New Astronomy or Astrophysics and Space Science rejection entries found in frozen team ledger."
+   },
+   "license_check": {
+    "blacklist_checked": true,
+    "items": [
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "GPL-3.0-or-later",
+      "name": "PHOEBE 2.5.4 and ndpolator 1.3.1"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "MIT",
+      "name": "emcee 3.1.6 and lightkurve 2.6.0"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "BSD-3-Clause (NumPy bundled components also MIT/0BSD/Zlib/CC0)",
+      "name": "astropy 8.0.2, astroquery 0.4.11, NumPy 2.4.6, SciPy 1.17.1, pandas 2.3.3"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "Matplotlib PSF-style",
+      "name": "matplotlib 3.11.2"
+     }
+    ]
+   },
+   "limitations": [
+    "Occupancy copied unchanged because searched_at is <30 days; ADS was not checked, as explicitly recorded.",
+    "Personal access receipt covers cached reference-sector bytes, not full all-sector acquisition or a new remote availability test.",
+    "CAS Z4 evidence remains single-source per registry; verify authoritative tier/SCIE and journal-specific mandatory charges before submission.",
+    "Gaia luminosity is a reported consistency check; extinction and empirical absolute scaling are systematic uncertainties."
+   ],
+   "novelty_increment": "Batch-only target: multi-sector q identification with l3 free and its cross-epoch error budget, plus homogeneous period study, beyond the catalogue single-ta...",
+   "occupancy_search": {
+    "databases": [
+     "SIMBAD (CfA mirror)",
+     "VizieR: J/A+A/426/1001, J/A+A/672/A176, J/A+A/692/L4, J/A+A/710/A49, J/AJ/143/99, J/AJ/148/126, J/AJ/152/57, J/AJ/158/186, J/AJ/162/13, J/AJ/164/202, J/AJ/16...",
+     "arXiv"
+    ],
+    "findings": "仅有批量自动参数：J/ApJS/277/51 (2025ApJS..277...51L, Physical Parameters of 12,201 ASAS-SN Contact Binaries Determined by a Neural Network.) [Per=0.53887, q=0.17, e_...",
+    "queries": [
+     "SIMBAD TAP (simbad.harvard.edu mirror): ident IN ['TIC 441806604', 'Gaia DR3 1705325801488800896', 'ASASSN-V J174531.48+774919.8'] (fallback 3\" cone) -> basi...",
+     "VizieR catalogues (China-VO/CfA mirrors, local 3\" positional match): position within 3\" in J/A+A/426/1001, J/A+A/672/A176, J/A+A/692/L4, J/A+A/710/A49, J/AJ/...",
+     "arXiv API (export.arxiv.org): all:\"TIC 441806604\" OR all:\"ASASSN-V J174531.48+774919.8\" OR all:\"TYC 4573-319-1\" OR all:\"2MASS J17453150+7749198\" OR all:\"[GGM...",
+     "NASA ADS: not queried: no ADS API token in /workspace/secret-key archive @ 2026-11-13T14:50:02Z -> 0 hit(s) ; ADS not checked"
+    ],
+    "searched_at": "2026-11-13T14:50:02Z"
+   },
+   "paper_requirements": [
+    "The paper must cite the automated batch-parameter table(s) J/ApJS/277/51 (2025ApJS..277...51L, Physical Parameters of 12,201 ASAS-SN Contact Binaries Determi..."
+   ],
+   "paper_template": "contact-binary-solution",
+   "primary_endpoint": {
+    "decision_rule": "H1 \"q is identified by the total eclipse and stable across epochs\" holds when E1, E2 and E3 all hold, read literally from the tool JSON",
+    "matched_baseline": "Same data, passband, phase/exposure treatment and nuisance parameters: l3-free profile versus l3=0 reference-sector profile. Catalogue parameter sets are ext...",
+    "metric": "E1 reference-sector identification - the l3-free profile 95 % interval (Delta nll <= 2, point-based, qprofile analyse interval_points[\"2\"]) is closed inside ...",
+    "split": "Temporal sector replication: reference sector is the cached queue sector; all usable <=200-s epochs receive profiles and their 95% common intersection is tes...",
+    "stop_rule": "E1 failing on the reference sector after one allowed grid extension -> freeze (primary_endpoint_failed). E2 or E3 failing -> endpoint not met; the paper repo..."
+   },
+   "question": "Is the total-eclipse photometric mass ratio of [GGM2006]  1124817 (TIC441806604) identified with free third light and stable across its TESS epochs to 10 per...",
+   "reopen_basis": {
+    "description": "New card under paper template contact-binary-solution v2 (2026-11-16), research-lines.yaml astro-survey-photometry paper_templates[contact-binary-solution] c...",
+    "type": "new_method"
+   },
+   "reopens": "topic-b05c67b6272886a0",
+   "required_analysis": [
+    "every usable TESS sector enumerated (products enumerate incl. TESScut sectors) and used or excluded with a stated reason",
+    "BJD_TDB recomputed for the target position for every product used for timing (tess_time)",
+    "q from the l3-free profile likelihood (qprofile plan/run/analyse) on every sector at <= 200 s (else <= 600 s), with the l3 = 0 control on the reference sector",
+    "adopted q and its error from budget (statistical + named systematic terms - third light, control offset, product, spots, physical parameters, resolution); ma..."
+   ],
+   "research_line": "astro-survey-photometry",
+   "reusable_assets": [
+    "sop-for-survey-photometry-binary-light-curve-pap-83d2a8b4",
+    "contact-eclipsing-binary-light-curve-solution-te-38ba4ea2"
+   ],
+   "schema_version": "openlabs.topic_card.v1",
+   "target_tier": "routine",
+   "title": "Multi-sector photometric solution and timing study of [GGM2006]  1124817 (TIC441806604)",
+   "venues": {
+    "routine": [
+     "Astrophysics and Space Science",
+     "New Astronomy"
+    ]
+   }
+  },
+  {
+   "audience": {
+    "citations": [
+     {
+      "citation": "Zhang & Gao, The first study of the short period contact binary GY Psc, doi:10.1016/j.newast.2025.102358",
+      "doi": "10.1016/j.newast.2025.102358",
+      "venue": "New Astronomy",
+      "year": 2025
+     },
+     {
+      "citation": "Zhang et al., Photometric study for the short period contact binary V724 And, doi:10.1016/j.newast.2024.102318",
+      "doi": "10.1016/j.newast.2024.102318",
+      "venue": "New Astronomy",
+      "year": 2025
+     }
+    ],
+    "who": "Observers and modellers of W UMa binaries studying contact geometry, third-light degeneracy and orbital evolution; routine single-target photometric studies."
+   },
+   "candidate_queue_entry": {
+    "admission_precheck": "/workspace/openlabs/build/lines/astro-survey-photometry/venv/bin/python /workspace/openlabs/build/lines/astro-survey-photometry/enumerate/admission_precheck....",
+    "batch_parameters": [
+     {
+      "bibcode": "2025ApJS..277...51L",
+      "name_in_catalogue": "J185717.71+700210.6",
+      "params": {
+       "ASASSN-V": "J185717.71+700210.6",
+       "L2/L1": 0.342,
+       "Min.I": 2458418.307,
+       "Omega": 2.441,
+       "Per": 0.46382,
+       "R2": 0.99,
+       "T1": 6389.0,
+       "T2/T1": 0.986,
+       "Ts": 0.0,
+       "Type": "A",
+       "e_Min.I": 0.0003,
+       "e_T2/T1": 0.015,
+       "e_Ts": 0.0,
+       "e_f": 0.144,
+       "e_i": 13.071,
+       "e_l3": 0.256,
+       "e_q": 0.287,
+       "f": 0.277,
+       "i": 84.198,
+       "l3": 0.343,
+       "long": 0.0,
+       "q": 0.313,
+       "r1": 0.5,
+       "r2": 0.301
+      },
+      "sep_arcsec": 0.04,
+      "title": "Physical Parameters of 12,201 ASAS-SN Contact Binaries Determined by a Neural Network.",
+      "vizier": "J/ApJS/277/51"
+     },
+     {
+      "bibcode": "2024ApJS..271...32L",
+      "name_in_catalogue": "J185717.71+700210.6",
+      "params": {
+       "ASASSN-V": "J185717.71+700210.6",
+       "GaiaDR3": "2262432469083531264",
+       "Inc": 69.0,
+       "Ls/Lp": 0.97204,
+       "Per": 0.463816,
+       "R2": 0.984501733,
+       "Rp": 0.41410137,
+       "Rs": 0.370306591,
+       "Teff": 6388.7,
+       "TeffP": 6388.7,
+       "TeffS": 6672.5,
+       "Ts/Tp": 1.04,
+       "Type": "W",
+       "e_Inc": 0.2,
+       "e_f": 0.008,
+       "e_q": 0.1,
+       "f": 0.138,
+       "l3": 0.0,
+       "q": 0.78
+      },
+      "sep_arcsec": 0.0,
+      "title": "Physical Parameters of 11,100 Short-period ASAS-SN Eclipsing Contact Binaries.",
+      "vizier": "J/ApJS/271/32"
+     }
+    ],
+    "entry_id": "TIC229791283",
+    "ledger_occupancy": {
+     "reopens": "topic-7e6023da199cdeee",
+     "state": "reopenable"
+    },
+    "novelty_verdict": "batch_only",
+    "paper_requirement": "The paper must cite the automated batch-parameter table(s) J/ApJS/277/51 (2025ApJS..277...51L, Physical Parameters of 12,201 ASAS-SN Contact Binaries Determi...",
+    "queue": "/workspace/openlabs/build/lines/astro-survey-photometry/queue/queue.json",
+    "queue_precheck": {
+     "asymmetry_grade": 0,
+     "card_rules": "research-lines.yaml astro-survey-photometry paper_templates[contact-binary-solution] version 2: card_rules (endpoint form, forbidden conditions) and admissio...",
+     "class": "symmetric_ready",
+     "flags": [],
+     "method_version": "qp-2.0",
+     "reasons": [],
+     "template_version": 2
+    },
+    "template_version": 2
+   },
+   "closest_prior_work": [
+    {
+     "citation": "Physical Parameters of 12,201 ASAS-SN Contact Binaries Determined by a Neural Network. 2025ApJS..277...51L; J/ApJS/277/51; doi:10.3847/1538-4365/adba63",
+     "our_difference": "Individual l3-free likelihood profiles across all 17 known <=200-s sectors, reference MCMC, l3=0 sensitivity, named systematic error budget and homogeneous e...",
+     "what_it_shows": "Automated population-table parameters for this exact target: {\"ASASSN-V\": \"J185717.71+700210.6\", \"Per\": 0.46382, \"Min.I\": 2458418.307, \"e_Min.I\": 0.0003, \"Ty..."
+    },
+    {
+     "citation": "Physical Parameters of 11,100 Short-period ASAS-SN Eclipsing Contact Binaries. 2024ApJS..271...32L; J/ApJS/271/32; doi:10.3847/1538-4365/ad226a",
+     "our_difference": "Individual l3-free likelihood profiles across all 17 known <=200-s sectors, reference MCMC, l3=0 sensitivity, named systematic error budget and homogeneous e...",
+     "what_it_shows": "Automated population-table parameters for this exact target: {\"ASASSN-V\": \"J185717.71+700210.6\", \"Per\": 0.463816, \"TeffP\": 6388.7, \"Inc\": 69.0, \"e_Inc\": 0.2,..."
+    },
+    {
+     "citation": "Poro et al. 2025, RAA 25 035013, doi:10.1088/1674-4527/adb896",
+     "our_difference": "Different target TIC229791283; apply the validated common solver and v2 multi-sector analysis. Control offsets enter the error budget, with no control pass g...",
+     "what_it_shows": "Comparable total-eclipse solutions for TIC 318015356 and TIC 55522736; shared control receipt documents reproduction and pipeline offsets."
+    }
+   ],
+   "computational_only": true,
+   "computational_only_rationale": "Existing archived TESS photometry and Gaia metadata, public literature and standard numerical light-curve models; no new observations or external interaction.",
+   "cost_estimate": {
+    "agent_seconds": 28800,
+    "basis": "Reuse indexed SOP and pipeline plus shared control and contact_photometry toolkit; no solver development or control rerun. Reference MCMC allocation 30 core-...",
+    "calendar_days": 6,
+    "compute_plan": {
+     "ailab": {
+      "cpus": 4,
+      "hours": 50,
+      "memory_mib": 5120
+     },
+     "locations": [
+      "container_cpu",
+      "ailab"
+     ],
+     "placement": "solver/submit.sh astro-std-1 for every solve; existing solve ledger checked before submission. One active standard solve per target. Independent profile/refi..."
+    },
+    "cpu_core_hours": 200,
+    "gpu_hours": 0,
+    "tokens": 800000
+   },
+   "data_sources": [
+    {
+     "license": "MAST CC0, TESS/HLSP acknowledgements",
+     "url": "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:HLSP/qlp/s0086/0000/0002/2979/1283/hlsp_qlp_tess_ffi_s0086-0000000229791283_tess_v01_llc.fits",
+     "version": "hlsp_qlp_tess_ffi_s0086-0000000229791283_tess_v01_llc.fits; all-sector inventory snapshot 2026-11-16 with per-product hash freeze before solving"
+    },
+    {
+     "license": "CC BY-NC 3.0 IGO; academic noncommercial use",
+     "url": "https://gea.esac.esa.int/archive/",
+     "version": "Gaia DR3; source_id 2262432469083531264"
+    },
+    {
+     "doi": "10.3847/1538-4365/adba63",
+     "license": "CC BY 4.0, published article/data attribution retained",
+     "version": "J/ApJS/277/51 published 2025; target-row values frozen in candidate_queue_entry"
+    },
+    {
+     "doi": "10.3847/1538-4365/ad226a",
+     "license": "CC BY 4.0, published article/data attribution retained",
+     "version": "J/ApJS/271/32 published 2024; target-row values frozen in candidate_queue_entry"
+    }
+   ],
+   "decisive_analysis": {
+    "access_receipt": {
+     "path": "/workspace/openlabs/openlabs-artifacts/instances/cc-sg/attempt-workspaces/cc-sg-astro-survey-photometry-program-scout-5f5fec9f6a3a/53099600-b9e1-4fe8-ba3f-d8...",
+     "sha256": "c007cf59adb0261246002c5d00cb21db1812f1c6bb2cd6439138f3f81c38fef3"
+    },
+    "data_access_verified": true,
+    "description": "First after admission, build the reference-sector l3-free profile for cached S86 and apply E1; then profiles of all <=200-s sectors (17 currently known, comp..."
+   },
+   "feasibility_precheck": {
+    "budget": {
+     "agent_seconds": 5400,
+     "ailab_cpus": 4,
+     "ailab_memory_mib": 5120,
+     "cpu_core_hours": 40,
+     "locations": [
+      "container_cpu",
+      "ailab"
+     ],
+     "note": "Active agent time only; pending remote jobs yield awaiting_remote. This is an initial allocation, not an automatic core-hour freeze threshold; total paper allocation below covers continuation."
+    },
+    "description": "After admission, validate all-sector inventory and run the standard reference refinement and l3-free profile first; apply E1 literally from qprofile analyse ...",
+    "on_failure": "freeze",
+    "pass_criterion": "E1: reference 95% profile interval (Delta nll <=2) closed inside the grid with half-width <=0.10 q_fit after at most one grid extension. No control, symmetry..."
+   },
+   "fee_check": [
+    {
+     "colour_charges": "Colour illustrations free",
+     "evidence": "context/line-registry.yaml astro-survey-photometry venues.preferred; Springer journal 10509 how-to-publish and submission guidelines, retrieved 2026-11-12; C...",
+     "evidence_level": "verified_journal",
+     "fee_free_route": true,
+     "page_charges": "No mandatory publication charge on subscription route per line evidence; optional OA excluded",
+     "submission_fee": "No mandatory fee identified in line subscription-route evidence",
+     "venue": "Astrophysics and Space Science"
+    },
+    {
+     "colour_charges": "Journal-specific policy unverified; use online colour and greyscale print, verify before submission",
+     "evidence": "context/line-registry.yaml astro-survey-photometry venues.preferred; Elsevier choice policy and 2026-10-05 APC list; journal-specific colour page unavailable...",
+     "evidence_level": "verified_publisher",
+     "fee_free_route": true,
+     "page_charges": "Elsevier hybrid subscription model at no cost (publisher-wide evidence)",
+     "submission_fee": "No mandatory fee on publisher subscription route; journal-specific confirmation before submission",
+     "venue": "New Astronomy"
+    }
+   ],
+   "ledger_check": {
+    "compared_topic_ids": [
+     "topic-c28ec0b2402a051e",
+     "topic-414f5d420dd5726e",
+     "topic-bffb6145d49f5138",
+     "topic-00a00b952f87b98b"
+    ],
+    "queue_occupancy": {
+     "other_blocking": [],
+     "reopens": "topic-7e6023da199cdeee",
+     "state": "reopenable",
+     "topics": [
+      {
+       "at": "2026-11-14T17:42:20Z",
+       "declared_reopen_types": [],
+       "reason": "decisive_data_unavailable",
+       "status": "frozen",
+       "topic_id": "topic-7e6023da199cdeee"
+      }
+     ]
+    },
+    "team_venue_check": "No New Astronomy or Astrophysics and Space Science rejection entries found in frozen team ledger."
+   },
+   "license_check": {
+    "blacklist_checked": true,
+    "items": [
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "GPL-3.0-or-later",
+      "name": "PHOEBE 2.5.4 and ndpolator 1.3.1"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "MIT",
+      "name": "emcee 3.1.6 and lightkurve 2.6.0"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "BSD-3-Clause (NumPy bundled components also MIT/0BSD/Zlib/CC0)",
+      "name": "astropy 8.0.2, astroquery 0.4.11, NumPy 2.4.6, SciPy 1.17.1, pandas 2.3.3"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "Matplotlib PSF-style",
+      "name": "matplotlib 3.11.2"
+     }
+    ]
+   },
+   "limitations": [
+    "Occupancy copied unchanged because searched_at is <30 days; ADS was not checked, as explicitly recorded.",
+    "Personal access receipt covers cached reference-sector bytes, not full all-sector acquisition or a new remote availability test.",
+    "CAS Z4 evidence remains single-source per registry; verify authoritative tier/SCIE and journal-specific mandatory charges before submission.",
+    "Gaia luminosity is a reported consistency check; extinction and empirical absolute scaling are systematic uncertainties."
+   ],
+   "novelty_increment": "Batch-only target: multi-sector q identification with l3 free and its cross-epoch error budget, plus homogeneous period study, beyond the catalogue single-ta...",
+   "occupancy_search": {
+    "databases": [
+     "SIMBAD (CfA mirror)",
+     "VizieR: J/A+A/426/1001, J/A+A/672/A176, J/A+A/692/L4, J/A+A/710/A49, J/AJ/143/99, J/AJ/148/126, J/AJ/152/57, J/AJ/158/186, J/AJ/162/13, J/AJ/164/202, J/AJ/16...",
+     "arXiv"
+    ],
+    "findings": "仅有批量自动参数：J/ApJS/277/51 (2025ApJS..277...51L, Physical Parameters of 12,201 ASAS-SN Contact Binaries Determined by a Neural Network.) [Per=0.46382, q=0.313, e...",
+    "queries": [
+     "SIMBAD TAP (simbad.harvard.edu mirror): ident IN ['TIC 229791283', 'Gaia DR3 2262432469083531264', 'ASASSN-V J185717.71+700210.6', 'V0576 Dra'] (fallback 3\" ...",
+     "VizieR catalogues (China-VO/CfA mirrors, local 3\" positional match): position within 3\" in J/A+A/426/1001, J/A+A/672/A176, J/A+A/692/L4, J/A+A/710/A49, J/AJ/...",
+     "arXiv API (export.arxiv.org): all:\"TIC 229791283\" OR all:\"ASASSN-V J185717.71+700210.6\" OR all:\"V0576 Dra\" OR all:\"V* V576 Dra\" OR all:\"TYC 4435-430-1\" OR al...",
+     "NASA ADS: not queried: no ADS API token in /workspace/secret-key archive @ 2026-11-13T14:49:10Z -> 0 hit(s) ; ADS not checked"
+    ],
+    "searched_at": "2026-11-13T14:49:10Z"
+   },
+   "paper_requirements": [
+    "The paper must cite the automated batch-parameter table(s) J/ApJS/277/51 (2025ApJS..277...51L, Physical Parameters of 12,201 ASAS-SN Contact Binaries Determi..."
+   ],
+   "paper_template": "contact-binary-solution",
+   "primary_endpoint": {
+    "decision_rule": "H1 \"q is identified by the total eclipse and stable across epochs\" holds when E1, E2 and E3 all hold, read literally from the tool JSON",
+    "matched_baseline": "Same data, passband, phase/exposure treatment and nuisance parameters: l3-free profile versus l3=0 reference-sector profile. Catalogue parameter sets are ext...",
+    "metric": "E1 reference-sector identification - the l3-free profile 95 % interval (Delta nll <= 2, point-based, qprofile analyse interval_points[\"2\"]) is closed inside ...",
+    "split": "Temporal sector replication: reference sector is the cached queue sector; all usable <=200-s epochs receive profiles and their 95% common intersection is tes...",
+    "stop_rule": "E1 failing on the reference sector after one allowed grid extension -> freeze (primary_endpoint_failed). E2 or E3 failing -> endpoint not met; the paper repo..."
+   },
+   "question": "Is the total-eclipse photometric mass ratio of [GGM2006]  1203825 (TIC229791283) identified with free third light and stable across its TESS epochs to 10 per...",
+   "reopen_basis": {
+    "description": "New card under paper template contact-binary-solution v2 (2026-11-16), research-lines.yaml astro-survey-photometry paper_templates[contact-binary-solution] c...",
+    "type": "new_method"
+   },
+   "reopens": "topic-7e6023da199cdeee",
+   "required_analysis": [
+    "every usable TESS sector enumerated (products enumerate incl. TESScut sectors) and used or excluded with a stated reason",
+    "BJD_TDB recomputed for the target position for every product used for timing (tess_time)",
+    "q from the l3-free profile likelihood (qprofile plan/run/analyse) on every sector at <= 200 s (else <= 600 s), with the l3 = 0 control on the reference sector",
+    "adopted q and its error from budget (statistical + named systematic terms - third light, control offset, product, spots, physical parameters, resolution); ma..."
+   ],
+   "research_line": "astro-survey-photometry",
+   "reusable_assets": [
+    "sop-for-survey-photometry-binary-light-curve-pap-83d2a8b4",
+    "contact-eclipsing-binary-light-curve-solution-te-38ba4ea2"
+   ],
+   "schema_version": "openlabs.topic_card.v1",
+   "target_tier": "routine",
+   "title": "Multi-sector photometric solution and timing study of [GGM2006]  1203825 (TIC229791283)",
+   "venues": {
+    "routine": [
+     "Astrophysics and Space Science",
+     "New Astronomy"
+    ]
+   }
+  },
+  {
+   "audience": {
+    "citations": [
+     {
+      "citation": "Zhang & Gao, The first study of the short period contact binary GY Psc, doi:10.1016/j.newast.2025.102358",
+      "doi": "10.1016/j.newast.2025.102358",
+      "venue": "New Astronomy",
+      "year": 2025
+     },
+     {
+      "citation": "Zhang et al., Photometric study for the short period contact binary V724 And, doi:10.1016/j.newast.2024.102318",
+      "doi": "10.1016/j.newast.2024.102318",
+      "venue": "New Astronomy",
+      "year": 2025
+     }
+    ],
+    "who": "Observers and modellers of W UMa binaries studying contact geometry, third-light degeneracy and orbital evolution; routine single-target photometric studies."
+   },
+   "candidate_queue_entry": {
+    "admission_precheck": "/workspace/openlabs/build/lines/astro-survey-photometry/venv/bin/python /workspace/openlabs/build/lines/astro-survey-photometry/enumerate/admission_precheck....",
+    "entry_id": "TIC167722431",
+    "ledger_occupancy": {
+     "reopens": "topic-6f7f47a3e91c46c0",
+     "state": "reopenable"
+    },
+    "novelty_verdict": "unreported",
+    "queue": "/workspace/openlabs/build/lines/astro-survey-photometry/queue/queue.json",
+    "queue_precheck": {
+     "asymmetry_grade": 0,
+     "card_rules": "research-lines.yaml astro-survey-photometry paper_templates[contact-binary-solution] version 2: card_rules (endpoint form, forbidden conditions) and admissio...",
+     "class": "symmetric_ready",
+     "flags": [
+      "primary eclipse bottom slope 2.6 sigma over +-0.01 phase, tilt across the window 0.13% of depth; <= 1% of depth: grade 0 (noted only)"
+     ],
+     "method_version": "qp-2.0",
+     "reasons": [],
+     "template_version": 2
+    },
+    "template_version": 2
+   },
+   "closest_prior_work": [
+    {
+     "citation": "Poro et al. 2025, RAA 25 035013, doi:10.1088/1674-4527/adb896",
+     "our_difference": "Different target TIC167722431; apply the validated common solver and v2 multi-sector analysis. Control offsets enter the error budget, with no control pass g...",
+     "what_it_shows": "Comparable total-eclipse solutions for TIC 318015356 and TIC 55522736; shared control receipt documents reproduction and pipeline offsets."
+    },
+    {
+     "citation": "Prsa et al. 2022, TESS eclipsing binary catalogue, 2022ApJS..258...16P; Gaia DR3 eclipsing-binary catalogue 2023A&A...674A..16M (queue SIMBAD references)",
+     "our_difference": "First individual multi-epoch physical solution of TIC167722431, with explicit q-l3 identifiability and a homogeneous linear ephemeris. No secular period-chan...",
+     "what_it_shows": "Survey identification and catalogue context; queue search found no dedicated physical light-curve solution."
+    }
+   ],
+   "computational_only": true,
+   "computational_only_rationale": "Existing archived TESS photometry and Gaia metadata, public literature and standard numerical light-curve models; no new observations or external interaction.",
+   "cost_estimate": {
+    "agent_seconds": 28800,
+    "basis": "Reuse indexed SOP and pipeline plus shared control and contact_photometry toolkit; no solver development or control rerun. Reference MCMC allocation 30 core-...",
+    "calendar_days": 6,
+    "compute_plan": {
+     "ailab": {
+      "cpus": 4,
+      "hours": 50,
+      "memory_mib": 5120
+     },
+     "locations": [
+      "container_cpu",
+      "ailab"
+     ],
+     "placement": "solver/submit.sh astro-std-1 for every solve; existing solve ledger checked before submission. One active standard solve per target. Independent profile/refi..."
+    },
+    "cpu_core_hours": 200,
+    "gpu_hours": 0,
+    "tokens": 800000
+   },
+   "data_sources": [
+    {
+     "license": "MAST CC0, TESS/HLSP acknowledgements",
+     "url": "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:TESS/product/tess2025232030459-s0096-0000000167722431-0293-s_lc.fits",
+     "version": "tess2025232030459-s0096-0000000167722431-0293-s_lc.fits; all-sector inventory snapshot 2026-11-16 with per-product hash freeze before solving"
+    },
+    {
+     "license": "CC BY-NC 3.0 IGO; academic noncommercial use",
+     "url": "https://gea.esac.esa.int/archive/",
+     "version": "Gaia DR3; source_id 5478885446438293376"
+    }
+   ],
+   "decisive_analysis": {
+    "access_receipt": {
+     "path": "/workspace/openlabs/openlabs-artifacts/instances/cc-sg/attempt-workspaces/cc-sg-astro-survey-photometry-program-scout-5f5fec9f6a3a/53099600-b9e1-4fe8-ba3f-d8...",
+     "sha256": "faa1a82bb7f6251a8eaf08d8f2f54a67df5c2d07e71032ba0f29eda617aa6382"
+    },
+    "data_access_verified": true,
+    "description": "First after admission, build the reference-sector l3-free profile for cached S96 and apply E1; then profiles of all <=200-s sectors (24 currently known, comp..."
+   },
+   "feasibility_precheck": {
+    "budget": {
+     "agent_seconds": 5400,
+     "ailab_cpus": 4,
+     "ailab_memory_mib": 5120,
+     "cpu_core_hours": 40,
+     "locations": [
+      "container_cpu",
+      "ailab"
+     ],
+     "note": "Active agent time only; pending remote jobs yield awaiting_remote. This is an initial allocation, not an automatic core-hour freeze threshold; total paper allocation below covers continuation."
+    },
+    "description": "After admission, validate all-sector inventory and run the standard reference refinement and l3-free profile first; apply E1 literally from qprofile analyse ...",
+    "on_failure": "freeze",
+    "pass_criterion": "E1: reference 95% profile interval (Delta nll <=2) closed inside the grid with half-width <=0.10 q_fit after at most one grid extension. No control, symmetry..."
+   },
+   "fee_check": [
+    {
+     "colour_charges": "Colour illustrations free",
+     "evidence": "context/line-registry.yaml astro-survey-photometry venues.preferred; Springer journal 10509 how-to-publish and submission guidelines, retrieved 2026-11-12; C...",
+     "evidence_level": "verified_journal",
+     "fee_free_route": true,
+     "page_charges": "No mandatory publication charge on subscription route per line evidence; optional OA excluded",
+     "submission_fee": "No mandatory fee identified in line subscription-route evidence",
+     "venue": "Astrophysics and Space Science"
+    },
+    {
+     "colour_charges": "Journal-specific policy unverified; use online colour and greyscale print, verify before submission",
+     "evidence": "context/line-registry.yaml astro-survey-photometry venues.preferred; Elsevier choice policy and 2026-10-05 APC list; journal-specific colour page unavailable...",
+     "evidence_level": "verified_publisher",
+     "fee_free_route": true,
+     "page_charges": "Elsevier hybrid subscription model at no cost (publisher-wide evidence)",
+     "submission_fee": "No mandatory fee on publisher subscription route; journal-specific confirmation before submission",
+     "venue": "New Astronomy"
+    }
+   ],
+   "ledger_check": {
+    "compared_topic_ids": [
+     "topic-c28ec0b2402a051e",
+     "topic-414f5d420dd5726e",
+     "topic-bffb6145d49f5138",
+     "topic-00a00b952f87b98b"
+    ],
+    "queue_occupancy": {
+     "other_blocking": [],
+     "reopens": "topic-6f7f47a3e91c46c0",
+     "state": "reopenable",
+     "topics": [
+      {
+       "at": "2026-11-14T06:51:09Z",
+       "declared_reopen_types": [],
+       "reason": "feasibility_precheck_failed",
+       "status": "frozen",
+       "topic_id": "topic-6f7f47a3e91c46c0"
+      }
+     ]
+    },
+    "team_venue_check": "No New Astronomy or Astrophysics and Space Science rejection entries found in frozen team ledger."
+   },
+   "license_check": {
+    "blacklist_checked": true,
+    "items": [
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "GPL-3.0-or-later",
+      "name": "PHOEBE 2.5.4 and ndpolator 1.3.1"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "MIT",
+      "name": "emcee 3.1.6 and lightkurve 2.6.0"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "BSD-3-Clause (NumPy bundled components also MIT/0BSD/Zlib/CC0)",
+      "name": "astropy 8.0.2, astroquery 0.4.11, NumPy 2.4.6, SciPy 1.17.1, pandas 2.3.3"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "Matplotlib PSF-style",
+      "name": "matplotlib 3.11.2"
+     }
+    ]
+   },
+   "limitations": [
+    "Occupancy copied unchanged because searched_at is <30 days; ADS was not checked, as explicitly recorded.",
+    "Personal access receipt covers cached reference-sector bytes, not full all-sector acquisition or a new remote availability test.",
+    "CAS Z4 evidence remains single-source per registry; verify authoritative tier/SCIE and journal-specific mandatory charges before submission.",
+    "Gaia luminosity is a reported consistency check; extinction and empirical absolute scaling are systematic uncertainties."
+   ],
+   "novelty_increment": "Unreported target: first individual multi-sector solution plus a homogeneous period study.",
+   "occupancy_search": {
+    "databases": [
+     "SIMBAD (CfA mirror)",
+     "VizieR: J/A+A/426/1001, J/A+A/672/A176, J/A+A/692/L4, J/A+A/710/A49, J/AJ/143/99, J/AJ/148/126, J/AJ/152/57, J/AJ/158/186, J/AJ/162/13, J/AJ/164/202, J/AJ/16...",
+     "arXiv"
+    ],
+    "findings": "No published light-curve solution found: 6 SIMBAD reference(s), all catalogue/survey titles (6); no match in VizieR solution or batch-parameter catalogues; n...",
+    "queries": [
+     "SIMBAD TAP (simbad.harvard.edu mirror): ident IN ['TIC 167722431'] (fallback 3\" cone) -> basic/ident/has_ref+ref @ 2026-11-13T11:05:13Z -> 6 hit(s) ; 2018MNR...",
+     "VizieR catalogues (China-VO/CfA mirrors, local 3\" positional match): position within 3\" in J/A+A/426/1001, J/A+A/672/A176, J/A+A/692/L4, J/A+A/710/A49, J/AJ/...",
+     "arXiv API (export.arxiv.org): all:\"TIC 167722431\" OR all:\"GALAH 170115002701095\" OR all:\"2MASS J06540706-6139376\" OR all:\"CD-61 1510\" OR all:\"CPD-61 735\" OR ...",
+     "NASA ADS: not queried: no ADS API token in /workspace/secret-key archive @ 2026-11-13T11:17:44Z -> 0 hit(s) ; ADS not checked"
+    ],
+    "searched_at": "2026-11-13T11:17:44Z"
+   },
+   "paper_template": "contact-binary-solution",
+   "primary_endpoint": {
+    "decision_rule": "H1 \"q is identified by the total eclipse and stable across epochs\" holds when E1, E2 and E3 all hold, read literally from the tool JSON",
+    "matched_baseline": "Same data, passband, phase/exposure treatment and nuisance parameters: l3-free profile versus l3=0 reference-sector profile. Catalogue parameter sets are ext...",
+    "metric": "E1 reference-sector identification - the l3-free profile 95 % interval (Delta nll <= 2, point-based, qprofile analyse interval_points[\"2\"]) is closed inside ...",
+    "split": "Temporal sector replication: reference sector is the cached queue sector; all usable <=200-s epochs receive profiles and their 95% common intersection is tes...",
+    "stop_rule": "E1 failing on the reference sector after one allowed grid extension -> freeze (primary_endpoint_failed). E2 or E3 failing -> endpoint not met; the paper repo..."
+   },
+   "question": "Is the total-eclipse photometric mass ratio of CD-61  1510 (TIC167722431) identified with free third light and stable across its TESS epochs to 10 percent to...",
+   "reopen_basis": {
+    "description": "New card under paper template contact-binary-solution v2 (2026-11-16), research-lines.yaml astro-survey-photometry paper_templates[contact-binary-solution] c...",
+    "type": "new_method"
+   },
+   "reopens": "topic-6f7f47a3e91c46c0",
+   "required_analysis": [
+    "every usable TESS sector enumerated (products enumerate incl. TESScut sectors) and used or excluded with a stated reason",
+    "BJD_TDB recomputed for the target position for every product used for timing (tess_time)",
+    "q from the l3-free profile likelihood (qprofile plan/run/analyse) on every sector at <= 200 s (else <= 600 s), with the l3 = 0 control on the reference sector",
+    "adopted q and its error from budget (statistical + named systematic terms - third light, control offset, product, spots, physical parameters, resolution); ma..."
+   ],
+   "research_line": "astro-survey-photometry",
+   "reusable_assets": [
+    "sop-for-survey-photometry-binary-light-curve-pap-83d2a8b4",
+    "contact-eclipsing-binary-light-curve-solution-te-38ba4ea2"
+   ],
+   "schema_version": "openlabs.topic_card.v1",
+   "target_tier": "routine",
+   "title": "Multi-sector photometric solution and timing study of CD-61  1510 (TIC167722431)",
+   "venues": {
+    "routine": [
+     "Astrophysics and Space Science",
+     "New Astronomy"
+    ]
+   }
+  },
+  {
+   "audience": {
+    "citations": [
+     {
+      "citation": "Zhang & Gao, The first study of the short period contact binary GY Psc, doi:10.1016/j.newast.2025.102358",
+      "doi": "10.1016/j.newast.2025.102358",
+      "venue": "New Astronomy",
+      "year": 2025
+     },
+     {
+      "citation": "Zhang et al., Photometric study for the short period contact binary V724 And, doi:10.1016/j.newast.2024.102318",
+      "doi": "10.1016/j.newast.2024.102318",
+      "venue": "New Astronomy",
+      "year": 2025
+     }
+    ],
+    "who": "Observers and modellers of W UMa binaries studying contact geometry, third-light degeneracy and orbital evolution; routine single-target photometric studies."
+   },
+   "candidate_queue_entry": {
+    "admission_precheck": "/workspace/openlabs/build/lines/astro-survey-photometry/venv/bin/python /workspace/openlabs/build/lines/astro-survey-photometry/enumerate/admission_precheck....",
+    "batch_parameters": [
+     {
+      "bibcode": "2025ApJS..277...51L",
+      "name_in_catalogue": "J052133.91-633514.2",
+      "params": {
+       "ASASSN-V": "J052133.91-633514.2",
+       "L2/L1": 0.232,
+       "Min.I": 2458241.6846,
+       "Omega": 2.105,
+       "Per": 0.47381,
+       "R2": 0.928,
+       "T1": 6308.0,
+       "T2/T1": 0.988,
+       "Ts": 0.0,
+       "Type": "A",
+       "e_Min.I": 0.0007,
+       "e_T2/T1": 0.003,
+       "e_Ts": 0.0,
+       "e_f": 0.032,
+       "e_i": 2.669,
+       "e_l3": 0.036,
+       "e_q": 0.006,
+       "f": 0.67,
+       "i": 87.49,
+       "l3": 0.356,
+       "long": 0.0,
+       "q": 0.18,
+       "r1": 0.561,
+       "r2": 0.277
+      },
+      "sep_arcsec": 0.04,
+      "title": "Physical Parameters of 12,201 ASAS-SN Contact Binaries Determined by a Neural Network.",
+      "vizier": "J/ApJS/277/51"
+     },
+     {
+      "bibcode": "2024ApJS..271...32L",
+      "name_in_catalogue": "J052133.91-633514.2",
+      "params": {
+       "ASASSN-V": "J052133.91-633514.2",
+       "GaiaDR3": "4661220838327639296",
+       "Inc": 59.2,
+       "Ls/Lp": 0.671674604,
+       "Per": 0.4738083,
+       "R2": 0.959350689,
+       "Rp": 0.443678142,
+       "Rs": 0.409497388,
+       "Teff": 6308.4,
+       "TeffP": 6308.4,
+       "TeffS": 5993.0,
+       "Ts/Tp": 0.95,
+       "Type": "A",
+       "e_Inc": 2.2,
+       "e_f": 0.168,
+       "e_q": 0.27,
+       "f": 0.491,
+       "l3": 0.0,
+       "q": 0.82
+      },
+      "sep_arcsec": 0.0,
+      "title": "Physical Parameters of 11,100 Short-period ASAS-SN Eclipsing Contact Binaries.",
+      "vizier": "J/ApJS/271/32"
+     }
+    ],
+    "entry_id": "TIC149061173",
+    "ledger_occupancy": {
+     "reopens": "topic-b181c5923d178e47",
+     "state": "reopenable"
+    },
+    "novelty_verdict": "batch_only",
+    "paper_requirement": "The paper must cite the automated batch-parameter table(s) J/ApJS/277/51 (2025ApJS..277...51L, Physical Parameters of 12,201 ASAS-SN Contact Binaries Determi...",
+    "queue": "/workspace/openlabs/build/lines/astro-survey-photometry/queue/queue.json",
+    "queue_precheck": {
+     "asymmetry_grade": 0,
+     "card_rules": "research-lines.yaml astro-survey-photometry paper_templates[contact-binary-solution] version 2: card_rules (endpoint form, forbidden conditions) and admissio...",
+     "class": "symmetric_ready",
+     "flags": [
+      "neighbour flux within 63\" = 0.149 (> 5 %): aperture-based third-light prior required"
+     ],
+     "method_version": "qp-2.0",
+     "reasons": [],
+     "template_version": 2
+    },
+    "template_version": 2
+   },
+   "closest_prior_work": [
+    {
+     "citation": "Physical Parameters of 12,201 ASAS-SN Contact Binaries Determined by a Neural Network. 2025ApJS..277...51L; J/ApJS/277/51; doi:10.3847/1538-4365/adba63",
+     "our_difference": "Individual l3-free likelihood profiles across all 19 known <=200-s sectors, reference MCMC, l3=0 sensitivity, named systematic error budget and homogeneous e...",
+     "what_it_shows": "Automated population-table parameters for this exact target: {\"ASASSN-V\": \"J052133.91-633514.2\", \"Per\": 0.47381, \"Min.I\": 2458241.6846, \"e_Min.I\": 0.0007, \"T..."
+    },
+    {
+     "citation": "Physical Parameters of 11,100 Short-period ASAS-SN Eclipsing Contact Binaries. 2024ApJS..271...32L; J/ApJS/271/32; doi:10.3847/1538-4365/ad226a",
+     "our_difference": "Individual l3-free likelihood profiles across all 19 known <=200-s sectors, reference MCMC, l3=0 sensitivity, named systematic error budget and homogeneous e...",
+     "what_it_shows": "Automated population-table parameters for this exact target: {\"ASASSN-V\": \"J052133.91-633514.2\", \"Per\": 0.4738083, \"TeffP\": 6308.4, \"Inc\": 59.2, \"e_Inc\": 2.2..."
+    },
+    {
+     "citation": "Poro et al. 2025, RAA 25 035013, doi:10.1088/1674-4527/adb896",
+     "our_difference": "Different target TIC149061173; apply the validated common solver and v2 multi-sector analysis. Control offsets enter the error budget, with no control pass g...",
+     "what_it_shows": "Comparable total-eclipse solutions for TIC 318015356 and TIC 55522736; shared control receipt documents reproduction and pipeline offsets."
+    }
+   ],
+   "computational_only": true,
+   "computational_only_rationale": "Existing archived TESS photometry and Gaia metadata, public literature and standard numerical light-curve models; no new observations or external interaction.",
+   "cost_estimate": {
+    "agent_seconds": 28800,
+    "basis": "Reuse indexed SOP and pipeline plus shared control and contact_photometry toolkit; no solver development or control rerun. Reference MCMC allocation 30 core-...",
+    "calendar_days": 6,
+    "compute_plan": {
+     "ailab": {
+      "cpus": 4,
+      "hours": 50,
+      "memory_mib": 5120
+     },
+     "locations": [
+      "container_cpu",
+      "ailab"
+     ],
+     "placement": "solver/submit.sh astro-std-1 for every solve; existing solve ledger checked before submission. One active standard solve per target. Independent profile/refi..."
+    },
+    "cpu_core_hours": 200,
+    "gpu_hours": 0,
+    "tokens": 800000
+   },
+   "data_sources": [
+    {
+     "license": "MAST CC0, TESS/HLSP acknowledgements",
+     "url": "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:HLSP/tess-spoc/s0069/target/0000/0001/4906/1173/hlsp_tess-spoc_tess_phot_0000000149061173-s0069_tess_v...",
+     "version": "hlsp_tess-spoc_tess_phot_0000000149061173-s0069_tess_v1_lc.fits; all-sector inventory snapshot 2026-11-16 with per-product hash freeze before solving"
+    },
+    {
+     "license": "CC BY-NC 3.0 IGO; academic noncommercial use",
+     "url": "https://gea.esac.esa.int/archive/",
+     "version": "Gaia DR3; source_id 4661220838327639296"
+    },
+    {
+     "doi": "10.3847/1538-4365/adba63",
+     "license": "CC BY 4.0, published article/data attribution retained",
+     "version": "J/ApJS/277/51 published 2025; target-row values frozen in candidate_queue_entry"
+    },
+    {
+     "doi": "10.3847/1538-4365/ad226a",
+     "license": "CC BY 4.0, published article/data attribution retained",
+     "version": "J/ApJS/271/32 published 2024; target-row values frozen in candidate_queue_entry"
+    }
+   ],
+   "decisive_analysis": {
+    "access_receipt": {
+     "path": "/workspace/openlabs/openlabs-artifacts/instances/cc-sg/attempt-workspaces/cc-sg-astro-survey-photometry-program-scout-5f5fec9f6a3a/53099600-b9e1-4fe8-ba3f-d8...",
+     "sha256": "cc14d2de8a6822e4723483ba1ac17a6c6673269218bd7ea6a5f0de7f9efd38ca"
+    },
+    "data_access_verified": true,
+    "description": "First after admission, build the reference-sector l3-free profile for cached S69 and apply E1; then profiles of all <=200-s sectors (19 currently known, comp..."
+   },
+   "feasibility_precheck": {
+    "budget": {
+     "agent_seconds": 5400,
+     "ailab_cpus": 4,
+     "ailab_memory_mib": 5120,
+     "cpu_core_hours": 40,
+     "locations": [
+      "container_cpu",
+      "ailab"
+     ],
+     "note": "Active agent time only; pending remote jobs yield awaiting_remote. This is an initial allocation, not an automatic core-hour freeze threshold; total paper allocation below covers continuation."
+    },
+    "description": "After admission, validate all-sector inventory and run the standard reference refinement and l3-free profile first; apply E1 literally from qprofile analyse ...",
+    "on_failure": "freeze",
+    "pass_criterion": "E1: reference 95% profile interval (Delta nll <=2) closed inside the grid with half-width <=0.10 q_fit after at most one grid extension. No control, symmetry..."
+   },
+   "fee_check": [
+    {
+     "colour_charges": "Colour illustrations free",
+     "evidence": "context/line-registry.yaml astro-survey-photometry venues.preferred; Springer journal 10509 how-to-publish and submission guidelines, retrieved 2026-11-12; C...",
+     "evidence_level": "verified_journal",
+     "fee_free_route": true,
+     "page_charges": "No mandatory publication charge on subscription route per line evidence; optional OA excluded",
+     "submission_fee": "No mandatory fee identified in line subscription-route evidence",
+     "venue": "Astrophysics and Space Science"
+    },
+    {
+     "colour_charges": "Journal-specific policy unverified; use online colour and greyscale print, verify before submission",
+     "evidence": "context/line-registry.yaml astro-survey-photometry venues.preferred; Elsevier choice policy and 2026-10-05 APC list; journal-specific colour page unavailable...",
+     "evidence_level": "verified_publisher",
+     "fee_free_route": true,
+     "page_charges": "Elsevier hybrid subscription model at no cost (publisher-wide evidence)",
+     "submission_fee": "No mandatory fee on publisher subscription route; journal-specific confirmation before submission",
+     "venue": "New Astronomy"
+    }
+   ],
+   "ledger_check": {
+    "compared_topic_ids": [
+     "topic-c28ec0b2402a051e",
+     "topic-414f5d420dd5726e",
+     "topic-bffb6145d49f5138",
+     "topic-00a00b952f87b98b"
+    ],
+    "queue_occupancy": {
+     "other_blocking": [],
+     "reopens": "topic-b181c5923d178e47",
+     "state": "reopenable",
+     "topics": [
+      {
+       "at": "2026-11-14T10:14:58Z",
+       "declared_reopen_types": [],
+       "reason": "feasibility_precheck_failed",
+       "status": "frozen",
+       "topic_id": "topic-b181c5923d178e47"
+      }
+     ]
+    },
+    "team_venue_check": "No New Astronomy or Astrophysics and Space Science rejection entries found in frozen team ledger."
+   },
+   "license_check": {
+    "blacklist_checked": true,
+    "items": [
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "GPL-3.0-or-later",
+      "name": "PHOEBE 2.5.4 and ndpolator 1.3.1"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "MIT",
+      "name": "emcee 3.1.6 and lightkurve 2.6.0"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "BSD-3-Clause (NumPy bundled components also MIT/0BSD/Zlib/CC0)",
+      "name": "astropy 8.0.2, astroquery 0.4.11, NumPy 2.4.6, SciPy 1.17.1, pandas 2.3.3"
+     },
+     {
+      "allowed": true,
+      "evidence": "context/line-readme.md installed-package table and context/package-licences.csv; registry whitelist",
+      "kind": "software",
+      "license": "Matplotlib PSF-style",
+      "name": "matplotlib 3.11.2"
+     }
+    ]
+   },
+   "limitations": [
+    "Occupancy copied unchanged because searched_at is <30 days; ADS was not checked, as explicitly recorded.",
+    "Personal access receipt covers cached reference-sector bytes, not full all-sector acquisition or a new remote availability test.",
+    "CAS Z4 evidence remains single-source per registry; verify authoritative tier/SCIE and journal-specific mandatory charges before submission.",
+    "Gaia luminosity is a reported consistency check; extinction and empirical absolute scaling are systematic uncertainties."
+   ],
+   "novelty_increment": "Batch-only target: multi-sector q identification with l3 free and its cross-epoch error budget, plus homogeneous period study, beyond the catalogue single-ta...",
+   "occupancy_search": {
+    "databases": [
+     "SIMBAD (CfA mirror)",
+     "VizieR: J/A+A/426/1001, J/A+A/672/A176, J/A+A/692/L4, J/A+A/710/A49, J/AJ/143/99, J/AJ/148/126, J/AJ/152/57, J/AJ/158/186, J/AJ/162/13, J/AJ/164/202, J/AJ/16...",
+     "arXiv"
+    ],
+    "findings": "仅有批量自动参数：J/ApJS/277/51 (2025ApJS..277...51L, Physical Parameters of 12,201 ASAS-SN Contact Binaries Determined by a Neural Network.) [Per=0.47381, q=0.18, e_...",
+    "queries": [
+     "SIMBAD TAP (simbad.harvard.edu mirror): ident IN ['TIC 149061173', 'Gaia DR3 4661220838327639296', 'ASASSN-V J052133.91-633514.2'] (fallback 3\" cone) -> basi...",
+     "VizieR catalogues (China-VO/CfA mirrors, local 3\" positional match): position within 3\" in J/A+A/426/1001, J/A+A/672/A176, J/A+A/692/L4, J/A+A/710/A49, J/AJ/...",
+     "arXiv API (export.arxiv.org): all:\"TIC 149061173\" OR all:\"ASASSN-V J052133.91-633514.2\" OR all:\"GALAH 161209002901298\" OR all:\"2MASS J05213388-6335140\" OR al...",
+     "NASA ADS: not queried: no ADS API token in /workspace/secret-key archive @ 2026-11-13T14:50:52Z -> 0 hit(s) ; ADS not checked"
+    ],
+    "searched_at": "2026-11-13T14:50:52Z"
+   },
+   "paper_requirements": [
+    "The paper must cite the automated batch-parameter table(s) J/ApJS/277/51 (2025ApJS..277...51L, Physical Parameters of 12,201 ASAS-SN Contact Binaries Determi..."
+   ],
+   "paper_template": "contact-binary-solution",
+   "primary_endpoint": {
+    "decision_rule": "H1 \"q is identified by the total eclipse and stable across epochs\" holds when E1, E2 and E3 all hold, read literally from the tool JSON",
+    "matched_baseline": "Same data, passband, phase/exposure treatment and nuisance parameters: l3-free profile versus l3=0 reference-sector profile. Catalogue parameter sets are ext...",
+    "metric": "E1 reference-sector identification - the l3-free profile 95 % interval (Delta nll <= 2, point-based, qprofile analyse interval_points[\"2\"]) is closed inside ...",
+    "split": "Temporal sector replication: reference sector is the cached queue sector; all usable <=200-s epochs receive profiles and their 95% common intersection is tes...",
+    "stop_rule": "E1 failing on the reference sector after one allowed grid extension -> freeze (primary_endpoint_failed). E2 or E3 failing -> endpoint not met; the paper repo..."
+   },
+   "question": "Is the total-eclipse photometric mass ratio of CRTS J052133.8-633514 (TIC149061173) identified with free third light and stable across its TESS epochs to 10 ...",
+   "reopen_basis": {
+    "description": "New card under paper template contact-binary-solution v2 (2026-11-16), research-lines.yaml astro-survey-photometry paper_templates[contact-binary-solution] c...",
+    "type": "new_method"
+   },
+   "reopens": "topic-b181c5923d178e47",
+   "required_analysis": [
+    "every usable TESS sector enumerated (products enumerate incl. TESScut sectors) and used or excluded with a stated reason",
+    "BJD_TDB recomputed for the target position for every product used for timing (tess_time)",
+    "q from the l3-free profile likelihood (qprofile plan/run/analyse) on every sector at <= 200 s (else <= 600 s), with the l3 = 0 control on the reference sector",
+    "adopted q and its error from budget (statistical + named systematic terms - third light, control offset, product, spots, physical parameters, resolution); ma..."
+   ],
+   "research_line": "astro-survey-photometry",
+   "reusable_assets": [
+    "sop-for-survey-photometry-binary-light-curve-pap-83d2a8b4",
+    "contact-eclipsing-binary-light-curve-solution-te-38ba4ea2"
+   ],
+   "schema_version": "openlabs.topic_card.v1",
+   "target_tier": "routine",
+   "title": "Multi-sector photometric solution and timing study of CRTS J052133.8-633514 (TIC149061173)",
+   "venues": {
+    "routine": [
+     "Astrophysics and Space Science",
+     "New Astronomy"
+    ]
+   }
+  }
+ ]
+}

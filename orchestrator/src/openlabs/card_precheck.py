@@ -322,11 +322,43 @@ def apply_compute_floor(card: Mapping[str, Any],
     return fixed, notes
 
 
+PRECHECK_BUDGET_FIELD = "feasibility_precheck_budget"
+
+
+def fill_precheck_budget(card: Mapping[str, Any], line_entry: Mapping[str, Any],
+                         template_entry: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """A line card's missing ``feasibility_precheck.budget`` from the line's own spec.
+
+    The template (else the line) may declare ``feasibility_precheck_budget`` (text, or
+    an object rendered as text). It fills only an absent or empty budget; a budget the
+    card states is never replaced. Without that field nothing is invented and a missing
+    budget stays an error.
+    """
+
+    import copy
+
+    from .contracts import budget_text
+
+    fixed = copy.deepcopy(dict(card))
+    precheck = fixed.get("feasibility_precheck")
+    if not isinstance(precheck, dict) or budget_text(precheck.get("budget")):
+        return fixed, []
+    for source_name, source in (("template", template_entry), ("line", line_entry)):
+        text = budget_text(source.get(PRECHECK_BUDGET_FIELD))
+        if text:
+            precheck["budget"] = text
+            return fixed, [f"feasibility_precheck.budget filled from the {source_name} "
+                           f"{PRECHECK_BUDGET_FIELD}"]
+    return fixed, []
+
+
 __all__ = [
     "FIELD",
+    "PRECHECK_BUDGET_FIELD",
     "apply_compute_floor",
     "compute_floor",
     "entry_id_of",
+    "fill_precheck_budget",
     "line_specs",
     "precheck_reasons",
     "precheck_spec",
