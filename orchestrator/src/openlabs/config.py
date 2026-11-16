@@ -580,6 +580,14 @@ class RoutingSettings:
     # 0 disables it.
     stale_estimate_hours: float = 0.0
     estimate_fraction_per_agent_hour: float = 0.01
+    # User decision 2026-11-16: a review/decision whose independent family is
+    # configured but has no runner able to take it for quota reasons (state
+    # unavailable: ceiling, pace, reserve, backoff) goes to another model of the
+    # producer's family instead of waiting. The other family's estimated
+    # reopening within ``independence_fallback_min_wait_minutes`` is waited for
+    # (0: fall back as soon as it is unavailable).
+    independence_fallback_on_quota: bool = True
+    independence_fallback_min_wait_minutes: float = 0.0
 
     def ceilings_for(self, provider: str | None) -> tuple[float, float]:
         """``(ordinary, hard)`` ceilings of ``provider`` (the global pair when not overridden)."""
@@ -1429,6 +1437,14 @@ def load_routing_settings(payload: Any) -> RoutingSettings:
         estimate_fraction_per_agent_hour=_unit_fraction(
             routing.get("estimate_fraction_per_agent_hour"),
             defaults.estimate_fraction_per_agent_hour,
+        ),
+        independence_fallback_on_quota=_optional_bool(
+            routing.get("independence_fallback_on_quota"),
+            "[routing] independence_fallback_on_quota",
+        ) is not False,
+        independence_fallback_min_wait_minutes=_nonnegative_float(
+            routing.get("independence_fallback_min_wait_minutes"),
+            defaults.independence_fallback_min_wait_minutes,
         ),
     )
 

@@ -376,7 +376,7 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
 ```
 
 - **重算式复审**：`paper_review` 任务、技能 `openlabs-recompute-review`、空白会话、父任务是负责人坐席，所以
-  路由按父任务避开负责人的模型族（只有一个模型族时同族不同模型，已有机制）。每轮都是新任务新会话，不继承上一轮
+  路由按父任务避开负责人的模型族（只有一个模型族、或另一族因额度不可用时同族不同模型，见"额度上限与配速"一节的独立性回退）。每轮都是新任务新会话，不继承上一轮
   评审的上下文；输入包（`program_control/recompute-reviews/<campaign>/round-N-*.json`）列出负责人结果、campaign
   目录、`research_state.json`、工作日志、该线规格、核对清单和此前各轮的意见与作者答复（`REVIEW_RESPONSE.md`
   的路径与哈希，以及状态包的 `response` 字段）。核对清单取研究线的 `review_checklist`（见下节），没有时用通用
@@ -833,6 +833,29 @@ bin/openlabs-container-loop cli -- program utilization            # --history N�
 | `[routing] override_max_ceiling` | 0.99 | 人工覆盖可用的最高比例（只能调低，永不到 100%，避免碰付费余额） |
 
 旧键 `review_reserve` 已删除（写了也不再生效）；`utilization_target` 只作开关。
+
+**另一模型族额度不可用时的独立性回退**（用户 2026-11-16 决定）：需要与产出方不同模型族的任务——立项评审
+（`portfolio_review`，routing_reason `topic_admission`）、方向决策（`direction_decision`）、负责人稿件的重算式复审
+（`paper_review`，`owner_recompute_review`）以及编排器派发的其他评审/决策任务——当另一模型族在 `[runners]` 里
+有配置、但它所有可承担该任务的 runner 都因额度不可用（状态 unavailable：到上限 `ceiling`、超配速 `pace`、
+保留线 `reserve`/`lead_reserve`、限流退避 `backoff`、读数判定不可用）时，不再一直等，而是交给产出方同族的
+另一个模型（先试请求的档位，再按 lead→worker→light；产出方自己的模型永不选），与只配一个模型族时的已有机制相同。
+`task_routed` 事件里写 `independence: same_family_different_model`、`producer_model`，另加
+`independence_fallback: other_family_quota_unavailable`、`unavailable_providers`、`other_family_quota_reasons`
+和 `other_family_resume_at`（另一族的预计恢复时间，未知时为 null）。
+
+- 另一族只是忙（可用但并行数已满、读数未知只放 1 个）时照常等，不回退。
+- 同族里没有不同模型可用时继续等（`routing_deferred` 带同样的回退字段），不会自己审自己。
+- 另一族恢复后，新派发的任务自动回到跨模型族；已派出的任务不追回。
+- 续接会话（`session_mode = resume`）、固定 runner 的任务不受影响；Fable 的保护规则（`protected_models`、
+  `lead_review_ceiling`、`lead_decision_reserve`）照常适用于回退后选中的 runner。
+- `workflows/paper` 的统一评审（`paper-writing review unified-run`）审稿人由数据仓库
+  `registry/settings.yaml` 的评审设置决定，不走这里的路由，也不受此开关影响。
+
+| 键 | 默认 | 含义 |
+| --- | --- | --- |
+| `[routing] independence_fallback_on_quota` | true | 关闭（false）后另一族额度不可用时一直等 |
+| `[routing] independence_fallback_min_wait_minutes` | 0 | 另一族预计在这么多分钟内恢复就等（`routing_deferred` 的 reason 为 `independent_family_resumes_soon`）；0 表示只要不可用就回退；恢复时间未知时不阻止回退 |
 
 **人工覆盖**（存在运行库 meta 里，带过期时间，过期后下一轮 tick 自动删除并记 `quota_override_expired`）：
 

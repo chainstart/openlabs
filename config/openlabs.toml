@@ -320,6 +320,21 @@ lead_decision_reserve = 0.25
 # Fable takes reviews (and other non-decision work) only up to this used
 # fraction; past it Claude-family reviews go to the Claude worker runner.
 lead_review_ceiling = 0.60
+# User decision 2026-11-16: a review or decision that must leave the producer's
+# model family (admission, direction decision, recompute review, paper review),
+# whose other family is configured but has no runner able to take it for quota
+# reasons (unavailable: ceiling, pace, reserve, backoff), goes to a different
+# model of the producer's family instead of waiting; the task_routed event says
+# independence = "same_family_different_model" and independence_fallback =
+# "other_family_quota_unavailable" with the other family's resume_at. A busy but
+# available other family is still waited for; with no different model in the
+# family the task keeps waiting. Once the other family is back, new tasks cross
+# families again (tasks already dispatched are not recalled). false: always wait.
+independence_fallback_on_quota = true
+# Wait instead when the other family is expected back within this many minutes
+# (0: fall back as soon as it is unavailable; an unknown reopening time does not
+# hold the fallback back).
+independence_fallback_min_wait_minutes = 0
 # Consecutive non-infrastructure failures of a worker-tier task before its next
 # attempt is routed to the lead tier with a diagnosis preamble (0 disables).
 escalate_to_lead_after_failures = 2

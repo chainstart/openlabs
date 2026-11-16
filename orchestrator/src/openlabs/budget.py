@@ -1728,12 +1728,16 @@ class QuotaRouter:
         *,
         excluded: str | None,
         manual: bool,
+        fallback: Mapping[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Same family, different model: the fallback independence of a one-family setup.
 
         The requested tier is tried first, then the other tiers strongest first;
         a runner of the producer's own model is never chosen while the producer
         model is known. The decision is labelled so results and events show it.
+        ``fallback``: the other family is configured but unavailable for quota
+        reasons; its detail (``independence_fallback``, the other family's
+        ``resume_at``...) is added to the decision or the deferral.
         """
 
         producer_model = self._producer_model(task)
@@ -1756,15 +1760,70 @@ class QuotaRouter:
                 "same_family_different_model" if producer_model else "same_family_model_unknown"
             )
             decision["producer_model"] = producer_model
-            decision["reason"] = (
-                "只配置了一个模型族：由同族不同模型承担 (single family configured: "
-                "same family, different model)"
-            )
+            if fallback:
+                decision.update(fallback)
+                decision["reason"] = (
+                    "另一模型族因额度不可用：由同族不同模型承担 (other family unavailable "
+                    "for quota: same family, different model)"
+                )
+            else:
+                decision["reason"] = (
+                    "只配置了一个模型族：由同族不同模型承担 (single family configured: "
+                    "same family, different model)"
+                )
             return decision
         self._defer(task, "no_runner_available", tier=tier, task_class=klass,
                     excluded_provider=excluded, independence="same_family_different_model",
-                    producer_model=producer_model)
+                    producer_model=producer_model, **dict(fallback or {}))
         return None
+
+    def _quota_fallback(
+        self,
+        klass: str,
+        others: list[RunnerSpec],
+        *,
+        excluded: str | None,
+        sticky: str | None,
+        manual: bool,
+    ) -> dict[str, Any] | None:
+        """Detail of a quota fallback when the independent family cannot take the task.
+
+        ``others`` are the runners of the other families that could have taken
+        it. Applies (user decision 2026-11-16) to a review/decision whose
+        producer family is known, when the switch is on and every one of
+        ``others`` is unavailable for quota reasons (state unavailable or in a
+        quota backoff) -- not merely busy. Returns ``None`` to keep waiting;
+        within ``independence_fallback_min_wait_minutes`` of the other family's
+        estimated reopening the detail carries ``wait_minutes``: the caller waits.
+        An unknown reopening time does not hold the fallback back.
+        """
+
+        routing = self.settings.routing
+        if (
+            not routing.independence_fallback_on_quota
+            or klass not in {"decision", "review"}
+            or excluded is None
+            or sticky is not None
+            or not others
+        ):
+            return None
+        for spec in others:
+            if spec.provider not in self.backoffs and self.availability(
+                spec, klass, manual=manual
+            ).usable:
+                return None  # busy, not out of quota: it frees up soon
+        blocked = self._resume_detail(others, klass, manual)
+        detail: dict[str, Any] = {
+            "independence_fallback": "other_family_quota_unavailable",
+            "unavailable_providers": sorted({spec.provider for spec in others}),
+            "other_family_quota_reasons": blocked.get("quota_reasons", []),
+            "other_family_resume_at": blocked.get("resume_at"),
+        }
+        wait = routing.independence_fallback_min_wait_minutes
+        resume = parse_time(blocked.get("resume_at"))
+        if wait > 0 and resume is not None and resume - self.now <= timedelta(minutes=wait):
+            detail["wait_minutes"] = wait
+        return detail
 
     def _limit_ok(
         self,
@@ -1919,6 +1978,7 @@ class QuotaRouter:
         chain = ("light", "worker", "lead")
         level = next((t for t in chain[chain.index(tier):] if t in configured), tier)
         pool = candidates_for(level)
+        others = list(pool)
         if pool:
             chosen = self._choose(pool, klass, active_by_runner, manual=manual)
             if chosen is not None:
@@ -1945,6 +2005,7 @@ class QuotaRouter:
                     for spec in candidates_for("worker")
                     if spec.provider in {item.provider for item in blocked}
                 ]
+                others.extend(fallback)
                 chosen = self._choose(fallback, klass, active_by_runner, manual=manual)
                 if chosen is not None:
                     spec, state = chosen
@@ -1952,6 +2013,18 @@ class QuotaRouter:
                         spec, state, klass, requested_tier=tier, excluded=excluded,
                         sticky=sticky, downgraded=True, manual=manual,
                     )
+        # The independent family is configured but out of quota (user decision
+        # 2026-11-16): another model of the producer's family takes the task.
+        quota = self._quota_fallback(klass, others, excluded=excluded, sticky=sticky,
+                                     manual=manual)
+        if quota is not None and excluded is not None:
+            if "wait_minutes" not in quota:
+                return self._route_same_family(task, excluded, tier, klass, active_by_runner,
+                                               excluded=excluded, manual=manual,
+                                               fallback=quota)
+            self._defer(task, "independent_family_resumes_soon", tier=tier, task_class=klass,
+                        excluded_provider=excluded, **quota)
+            return None
         self._defer(
             task,
             "no_runner_available",
