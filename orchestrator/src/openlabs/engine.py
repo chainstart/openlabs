@@ -53,6 +53,8 @@ from .db import (
     retry_not_before,
 )
 from .gates import bind_external_references, evaluate_result_bundle, fill_control_plane_fields
+from .result_normalize import normalize_result
+from .result_normalize import warnings_of as registration_warnings
 from .labs import LabManifest, ProtocolManifest, discover_labs, lab_for_domain
 from .locking import factory_operation_lock
 from .portfolio import (
@@ -2761,6 +2763,17 @@ def ingest_results(
             payload, filled = fill_control_plane_fields(payload, preregistration)
             if filled:
                 runtime["control_plane_filled"] = filled
+            # Artifact ids and the claim evidence naming them are registration: made
+            # valid, unique and resolvable here instead of a replan (result_normalize).
+            payload, registration = normalize_result(payload)
+            if registration:
+                runtime["registration_normalized"] = registration[:100]
+                db.record_event_once(
+                    "task", task_id, "result_registration_normalized",
+                    {"attempt_id": attempt_id, "changes": registration[:100],
+                     "warnings": registration_warnings(registration)[:40]},
+                    event_key=f"registration:{attempt_id}",
+                )
             # Inputs the agent cited from outside the roots (its job packet, a line's
             # queue) are bound as references, not a reason to refuse the whole result.
             payload, external = _bind_external_references(

@@ -105,7 +105,9 @@ in the ledger. Keep each condition concrete enough that a later agent can tell w
 
 ## Cost
 
-Judge `cost_judgement.proportionate` against routine topics, not against a perfect one. Mark it
+Write `cost_judgement` as `{"proportionate": true|false, "rationale": "..."}`: one boolean and one
+text that covers agent time, tokens and compute (further keys are kept but do not replace
+`rationale`). Judge `cost_judgement.proportionate` against routine topics, not against a perfect one. Mark it
 false only when the token or agent-time estimate clearly exceeds a routine topic's limits (72
 agent hours per topic) or is badly out of proportion to what the result can reach. A missing
 itemized or measured basis is not a reason to reject; ask for it as a condition. Judge token

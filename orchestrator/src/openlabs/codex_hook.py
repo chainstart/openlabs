@@ -21,6 +21,7 @@ from typing import Any
 
 from .agent_runtime import runtime_context
 from .contracts import COMMITTABLE_RESULT_STATUSES, validate_result_bundle
+from .result_normalize import normalize_result
 from .gates import preregistration_advisories, preregistration_blockers
 from .labs import load_lab
 from .protocols import validate_protocol_state
@@ -165,6 +166,9 @@ def _stop_gate_problems(context: Mapping[str, Any]) -> list[str]:
         payload = None
         problems.append(f"required result file is unreadable JSON: {exc}")
     if isinstance(payload, Mapping):
+        # The ingest fixes artifact ids and claim evidence references itself
+        # (result_normalize); the gate here judges the form it will commit.
+        payload, _registration = normalize_result(payload)
         validation = validate_result_bundle(payload)
         problems.extend(validation.errors)
         problems.extend(_program_problems(payload, context)[0])
