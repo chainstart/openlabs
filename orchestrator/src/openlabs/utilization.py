@@ -639,6 +639,12 @@ def utilization_report(
         "quota_rule": {
             "ordinary_ceiling": settings.routing.ordinary_ceiling,
             "hard_ceiling": settings.routing.hard_ceiling,
+            # Effective (ordinary, hard) per configured provider, overrides applied.
+            "provider_ceilings": {
+                provider: dict(zip(("ordinary_ceiling", "hard_ceiling"),
+                                   settings.routing.ceilings_for(provider)))
+                for provider in sorted({s.provider for s in settings.runners.values()})
+            },
             "pace_curve": [list(point) for point in settings.routing.pace_curve],
             "pace_lead": settings.routing.pace_lead,
             "pace_min_window_hours": settings.routing.pace_min_window_hours,

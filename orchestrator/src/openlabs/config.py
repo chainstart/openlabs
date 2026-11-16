@@ -8,7 +8,7 @@ import shlex
 import stat
 import tomllib
 from collections.abc import MutableMapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -491,6 +491,13 @@ class RoutingSettings:
     # abundance spreading).
     ordinary_ceiling: float = 0.8
     hard_ceiling: float = 0.9
+    # Optional per-provider overrides (``[routing.provider_ceilings.<provider>]``
+    # with ``ordinary_ceiling`` and/or ``hard_ceiling``): provider ->
+    # ``(ordinary, hard)``, already resolved against the global values above.
+    # Providers not listed use the global values. Read them through
+    # ``ceilings_for``/``for_provider``, never the two fields directly, wherever
+    # the task's provider is known.
+    provider_ceilings: dict[str, tuple[float, float]] = field(default_factory=dict)
     pace_curve: tuple[tuple[float, float], ...] = DEFAULT_PACE_CURVE
     pace_min_window_hours: float = 48.0
     pace_lead: float = 0.05
@@ -538,6 +545,27 @@ class RoutingSettings:
     # 0 disables it.
     stale_estimate_hours: float = 0.0
     estimate_fraction_per_agent_hour: float = 0.01
+
+    def ceilings_for(self, provider: str | None) -> tuple[float, float]:
+        """``(ordinary, hard)`` ceilings of ``provider`` (the global pair when not overridden)."""
+
+        if provider is not None and provider in self.provider_ceilings:
+            return self.provider_ceilings[provider]
+        return (min(self.ordinary_ceiling, self.hard_ceiling), self.hard_ceiling)
+
+    def for_provider(self, provider: str | None) -> "RoutingSettings":
+        """These settings with ``provider``'s own ceilings as ``ordinary``/``hard``.
+
+        Returns ``self`` unchanged when the provider has no override, so the
+        global behaviour is exactly the former one.
+        """
+
+        if provider is None or provider not in self.provider_ceilings:
+            return self
+        ordinary, hard = self.provider_ceilings[provider]
+        if ordinary == self.ordinary_ceiling and hard == self.hard_ceiling:
+            return self
+        return replace(self, ordinary_ceiling=ordinary, hard_ceiling=hard)
 
 
 @dataclass(frozen=True)
@@ -1074,6 +1102,67 @@ def _optional_bool(value: Any, label: str) -> bool | None:
     raise ValueError(f"{label} must be true or false")
 
 
+PROVIDER_CEILING_KEYS = ("ordinary_ceiling", "hard_ceiling")
+
+
+def _strict_ceiling(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a number in (0, 1], got {value!r}")
+    parsed = float(value)
+    if not 0 < parsed <= 1:
+        raise ValueError(f"{label} must be in (0, 1], got {value!r}")
+    return parsed
+
+
+def parse_provider_ceilings(
+    payload: Any,
+    *,
+    ordinary: float,
+    hard: float,
+) -> dict[str, tuple[float, float]]:
+    """``[routing.provider_ceilings.<provider>]`` -> provider -> ``(ordinary, hard)``.
+
+    Each table may set ``ordinary_ceiling`` and/or ``hard_ceiling``; an unset
+    value is the global one (an inherited ordinary ceiling is lowered to the
+    provider's hard ceiling, as globally). An explicit ordinary ceiling above
+    the provider's hard ceiling, an unknown key or a value outside (0, 1] is a
+    configuration error.
+    """
+
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError("[routing.provider_ceilings] must be a table of provider tables")
+    result: dict[str, tuple[float, float]] = {}
+    for provider, entry in payload.items():
+        label = f"[routing.provider_ceilings.{provider}]"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{label} must be a table with ordinary_ceiling and/or hard_ceiling")
+        unknown = sorted(set(entry) - set(PROVIDER_CEILING_KEYS))
+        if unknown:
+            raise ValueError(
+                f"{label} has unknown key(s) {', '.join(unknown)}; "
+                f"allowed: {', '.join(PROVIDER_CEILING_KEYS)}"
+            )
+        provider_hard = (
+            _strict_ceiling(entry["hard_ceiling"], f"{label}.hard_ceiling")
+            if "hard_ceiling" in entry else hard
+        )
+        if "ordinary_ceiling" in entry:
+            provider_ordinary = _strict_ceiling(
+                entry["ordinary_ceiling"], f"{label}.ordinary_ceiling"
+            )
+            if provider_ordinary > provider_hard:
+                raise ValueError(
+                    f"{label}.ordinary_ceiling ({provider_ordinary}) must not exceed "
+                    f"its hard_ceiling ({provider_hard})"
+                )
+        else:
+            provider_ordinary = min(ordinary, provider_hard)
+        result[str(provider)] = (provider_ordinary, provider_hard)
+    return result
+
+
 def load_routing_settings(payload: Any) -> RoutingSettings:
     routing = payload if isinstance(payload, dict) else {}
     defaults = RoutingSettings()
@@ -1126,9 +1215,13 @@ def load_routing_settings(payload: Any) -> RoutingSettings:
     override_max = _unit_fraction(
         routing.get("override_max_ceiling"), defaults.override_max_ceiling
     )
+    provider_ceilings = parse_provider_ceilings(
+        routing.get("provider_ceilings"), ordinary=ordinary_ceiling, hard=hard_ceiling
+    )
     return RoutingSettings(
         ordinary_ceiling=ordinary_ceiling,
         hard_ceiling=hard_ceiling,
+        provider_ceilings=provider_ceilings,
         pace_curve=(
             defaults.pace_curve if routing.get("pace_curve") is None
             else parse_pace_curve(routing.get("pace_curve"))
@@ -1239,6 +1332,14 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
     runners = load_runner_specs(payload.get("runners"))
     routing = load_routing_settings(payload.get("routing"))
     runners = apply_model_defaults(runners, routing, payload.get("runners"))
+    if runners and routing.provider_ceilings:
+        known = {spec.provider for spec in runners.values()}
+        stray = sorted(set(routing.provider_ceilings) - known)
+        if stray:
+            raise ValueError(
+                f"[routing.provider_ceilings] names unknown provider(s) {', '.join(stray)}; "
+                f"configured runners use: {', '.join(sorted(known))}"
+            )
     return FactorySettings(
         max_worker_processes=_positive_int(
             factory.get("max_worker_processes", factory.get("max_concurrent_jobs")), 8

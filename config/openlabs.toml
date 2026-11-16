@@ -248,6 +248,11 @@ ailab_utilization_target = 0.9
 # 7-day ends of days 1..6 -> 0.3125 0.525 0.6875 0.8125 0.9125 1.0. Plain
 # linear: [[0, 0], [0.8571, 1]]; [[0, 1]] turns pacing off. Windows shorter
 # than pace_min_window_hours (the 5-hour one) are capped, not paced.
+# One provider may get its own pair (unset keys keep these global values; its
+# ordinary ceiling may not exceed its hard one; the provider must be one used
+# in [runners]), e.g. as a separate table after [routing]:
+#   [routing.provider_ceilings.anthropic]
+#   ordinary_ceiling = 0.7
 ordinary_ceiling = 0.8
 hard_ceiling = 0.9
 pace_curve = [[0, 0], [0.1429, 0.3125], [0.2857, 0.525], [0.4286, 0.6875], [0.5714, 0.8125], [0.7143, 0.9125], [0.8571, 1.0]]

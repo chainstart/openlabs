@@ -1243,6 +1243,24 @@ def brief_paths(task: Mapping[str, Any]) -> dict[str, str]:
     }
 
 
+def _owner_ceiling_text(settings: FactorySettings) -> str:
+    """Owner-seat (ordinary) ceiling: one percentage, or one per provider when they differ."""
+
+    routing = settings.routing
+    providers = sorted({spec.provider for spec in settings.runners.values()})
+    values = {
+        provider: budget_control.class_ceiling(routing, budget_control.OWNER_CLASS, provider)
+        for provider in providers
+    }
+    distinct = set(values.values())
+    if len(distinct) <= 1:
+        value = distinct.pop() if distinct else budget_control.class_ceiling(
+            routing, budget_control.OWNER_CLASS
+        )
+        return f"{value:.0%}"
+    return " / ".join(f"{value:.0%} ({provider})" for provider, value in values.items())
+
+
 def render_brief(
     paths: WorkspacePaths,
     settings: FactorySettings,
@@ -1317,8 +1335,8 @@ def render_brief(
         "- Models: use sub-agents or another model whenever it is worth it.",
         models,
         "- Quota: `PYTHONPATH=CODE/orchestrator/src python3 -m openlabs program utilization "
-        "--no-gpu` (read-only, `providers`). Work stops at 80% on a paced line; near it prefer "
-        "cheaper models and fewer parallel agents.",
+        f"--no-gpu` (read-only, `providers`). Work stops at {_owner_ceiling_text(settings)} on a "
+        "paced line; near it prefer cheaper models and fewer parallel agents.",
         "",
         "## Tools",
         f"- Line `{line or 'n/a'}`: DATA/{settings.program.research_lines_path} -> "

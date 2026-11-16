@@ -909,12 +909,17 @@ def protected_windows(
     return frozenset(names)
 
 
-def class_ceiling(routing: RoutingSettings, klass: str) -> float:
-    """Final-day ceiling of a task class: ordinary (and owner) 80%, review and decision 90%."""
+def class_ceiling(routing: RoutingSettings, klass: str, provider: str | None = None) -> float:
+    """Final-day ceiling of a task class: ordinary (and owner) 80%, review and decision 90%.
 
+    With ``provider``, that provider's ``[routing.provider_ceilings]`` override
+    applies; ``routing`` already narrowed by ``for_provider`` needs none.
+    """
+
+    ordinary, hard = routing.ceilings_for(provider)
     if klass in {"ordinary", OWNER_CLASS}:
-        return min(routing.ordinary_ceiling, routing.hard_ceiling)
-    return routing.hard_ceiling
+        return min(ordinary, hard)
+    return hard
 
 
 def _paced_window(reading: WindowReading, routing: RoutingSettings) -> timedelta | None:
@@ -1156,6 +1161,8 @@ def runner_availability(
     still blocks.
     """
 
+    # Every ceiling below is the runner's provider's own ([routing.provider_ceilings]).
+    routing = routing.for_provider(spec.provider)
     names = runner_windows(spec, runners, readings)
     guarded = protected_windows(spec.provider, runners, readings)
     headroom: float | None = None
@@ -1351,7 +1358,8 @@ def set_quota_override(
     """Let every automatic task of ``provider`` use up to ``ceiling`` until ``until``.
 
     Replaces the paced class ceilings of that provider (no pacing); Fable's own
-    protection still applies. ``ceiling`` defaults to ``hard_ceiling`` and may
+    protection still applies. ``ceiling`` defaults to the provider's
+    ``hard_ceiling`` (its ``[routing.provider_ceilings]`` value if set) and may
     not exceed ``override_max_ceiling`` (below 100%, so paid overage is never
     reached). Expires by itself; ``revoke_quota_override`` ends it earlier.
     """
@@ -1370,7 +1378,8 @@ def set_quota_override(
     if not str(reason or "").strip():
         raise QuotaOverrideError("--reason is required")
     routing = settings.routing
-    value = routing.hard_ceiling if ceiling is None else float(ceiling)
+    # Default: this provider's own hard ceiling ([routing.provider_ceilings]).
+    value = routing.ceilings_for(provider)[1] if ceiling is None else float(ceiling)
     if not 0 < value <= routing.override_max_ceiling:
         raise QuotaOverrideError(
             f"--ceiling must be in (0, {routing.override_max_ceiling}] (never 100%: paid overage)"

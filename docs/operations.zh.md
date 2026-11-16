@@ -595,7 +595,8 @@ bin/openlabs-container-loop cli -- status    # 以本实例身份执行任意 py
 `ailab`（共享队列只读统计）、`balance`（每一项的当前值 / 目标、是否低于目标、被什么限制：
 `topic_slots` 名额、`candidate_pool` 候选池、`admission_pass_rate` 立项通过率、`quota_pacing`
 额度配速、`hard_ceiling` 硬顶、`demand` 没有可运行任务等），`provider_quota` 里每家的
-`abundance` 和各窗口的 `window_pace`。随时可以只读地看汇总：
+`abundance` 和各窗口的 `window_pace`（其中 `ceiling`/`cap` 按该提供方自己的上限计算，见下文
+"按提供方覆盖"）。随时可以只读地看汇总：
 
 ```bash
 bin/openlabs-container-loop cli -- program utilization            # --history N、--no-gpu
@@ -627,11 +628,25 @@ bin/openlabs-container-loop cli -- program utilization            # --history N�
   （每家只放 1 个任务）。可外推的过期读数（`stale_estimate_hours`）照旧外推。
 - **Fable**：原有更严的保护保留，与新规则取较严者：Fable 依赖的窗口上 `lead_decision_reserve` 只留给决策，
   Fable 自身的评审和普通任务到 `lead_review_ceiling` 为止；Fable 的决策也受 90% 配速线约束。
+- **按提供方覆盖**（2026-11-16 起）：`[routing.provider_ceilings.<provider>]` 可为单个提供方单独设
+  `ordinary_ceiling` 和/或 `hard_ceiling`，未列出的提供方、未写的键沿用 `[routing]` 的全局值。覆盖后的值
+  用于该提供方的一切：类别上限、配速线（按该提供方的上限缩放）、恢复时间与 `projected_at_reset` 对照、
+  tick 报告 `provider_quota.<provider>.window_pace` 的 `ceiling`/`cap`、`program utilization` 的
+  `quota_rule.provider_ceilings`、`quota-override` 不带 `--ceiling` 时的默认值，以及负责人坐席说明里的上限。
+  值须在 (0, 1]，显式写的 `ordinary_ceiling` 不得高于该提供方的 `hard_ceiling`，键名或提供方名
+  （须是 `[runners]` 里出现的 provider）写错都会在加载配置时报错。所有者 2026-11-16 要求：自动研究中
+  Claude 的普通任务上限由 80% 改为 70%，Codex 仍为 80%，硬上限都保持 90%：
+
+  ```toml
+  [routing.provider_ceilings.anthropic]
+  ordinary_ceiling = 0.7
+  ```
 
 | 键 | 默认 | 含义 |
 | --- | --- | --- |
 | `[routing] ordinary_ceiling` | 0.8 | 普通任务最后一天的上限 |
 | `[routing] hard_ceiling` | 0.9 | 所有自动任务的硬上限 |
+| `[routing.provider_ceilings.<provider>]` | 无 | 该提供方自己的 `ordinary_ceiling`/`hard_ceiling`，未写的沿用全局值 |
 | `[routing] pace_curve` | 见上 | `[[已过比例, 系数], ...]`：比例从 0 起严格递增，系数在 [0,1] 内不减、末点为 1，否则配置报错。纯线性（第 6 天末到 1）写 `[[0, 0], [0.8571, 1]]`；`[[0, 1]]` 关闭配速 |
 | `[routing] pace_lead` | 0.05 | 起步量（绝对值） |
 | `[routing] pace_min_window_hours` | 48 | 短于此长度的窗口不配速 |
@@ -643,7 +658,7 @@ bin/openlabs-container-loop cli -- program utilization            # --history N�
 
 ```bash
 bin/openlabs-container-loop cli -- program quota-override --provider openai-codex \
-    --until 2026-11-21T00:00Z --ceiling 0.97 --reason "重置前用完"   # 默认 ceiling = hard_ceiling
+    --until 2026-11-21T00:00Z --ceiling 0.97 --reason "重置前用完"   # 默认 ceiling = 该提供方的 hard_ceiling
 bin/openlabs-container-loop cli -- program quota-override --list
 bin/openlabs-container-loop cli -- program quota-override --provider openai-codex --revoke
 ```

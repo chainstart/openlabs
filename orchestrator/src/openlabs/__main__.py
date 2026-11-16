@@ -260,7 +260,8 @@ def _parser() -> argparse.ArgumentParser:
     override.add_argument("--until", help="ISO time the override expires, e.g. 2026-11-16T10:00Z")
     override.add_argument(
         "--ceiling", type=float,
-        help="Highest used fraction for every task class (default [routing].hard_ceiling; at "
+        help="Highest used fraction for every task class (default the provider's hard_ceiling: "
+        "[routing.provider_ceilings.<provider>] or [routing].hard_ceiling; at "
         "most [routing].override_max_ceiling, never 100%%)",
     )
     override.add_argument("--reason", help="Why (recorded with the override)")
