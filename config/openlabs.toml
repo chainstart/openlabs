@@ -194,8 +194,13 @@ switch_after_minutes = 120
 keep_session_within_provider = true
 # Topics one runner may own at once (unlisted: no limit).
 max_topics_per_runner = { lead_claude = 1 }
-# Consecutive seats without new evidence that schedule a direction decision.
+# Consecutive seats without new evidence that schedule a direction decision. Log,
+# handover, research_state.json and quota/checkpoint receipts are not evidence.
 no_progress_seats = 3
+# From the 2nd no-progress seat on the next seat waits (minutes; the last repeats).
+no_progress_backoff_minutes = [10, 30, 120]
+# Shorter seats count as progress only through jobs, artifacts, phase or status.
+short_seat_seconds = 180
 # Default model of Claude sub-agents started without an explicit model.
 claude_subagent_model = "claude-opus-5-5"
 # GPT models the brief offers (codex exec / Codex spawn_agent).

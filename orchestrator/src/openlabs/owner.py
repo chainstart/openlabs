@@ -110,7 +110,29 @@ OWNER_PHASES = ("precheck", "solving", "writing")
 # Directory names never part of the progress fingerprint: runtime and outputs.
 _DIGEST_SKIP_DIRS = frozenset({".agents", ".codex", ".claude", "attempts", "__pycache__"})
 _DIGEST_SKIP_FILES = frozenset({WORK_LOG_NAME, BRIEF_NAME, HANDOVER_NAME})
+# Bookkeeping never counts as progress (2026-11-17: 75 seats each only refreshed the
+# log, the handover and a quota receipt and were all scored ``workspace_changed``).
+# research_state.json also carries control-plane fields (clocks, holds).
+_BOOKKEEPING_FILES = frozenset({*_DIGEST_SKIP_FILES, "research_state.json"})
+_BOOKKEEPING_WORDS = ("quota", "utilization", "utilisation", "pacing", "checkpoint",
+                      "heartbeat", "provider_receipt", "provider_check")
+_BOOKKEEPING_SUFFIXES = frozenset({".json", ".md", ".txt", ".log", ".yaml", ".yml"})
+# Packet statuses that are themselves a step forward.
+_ADVANCING_STATUSES = frozenset({"awaiting_remote", "ready_for_review", "frozen"})
+
+
+def is_bookkeeping(name: str) -> bool:
+    """Owner log/brief/handover, research_state.json, logs and quota/checkpoint receipts."""
+
+    base = Path(str(name)).name
+    lower = base.lower()
+    suffix = Path(lower).suffix
+    if base in _BOOKKEEPING_FILES or suffix == ".log":
+        return True
+    return suffix in _BOOKKEEPING_SUFFIXES and any(word in lower for word in _BOOKKEEPING_WORDS)
 _MAX_REMEMBERED_ARTIFACTS = 2000
+# Version of the workspace-digest definition (2: bookkeeping excluded).
+DIGEST_VERSION = 2
 _LINEAGE_LIMIT = 500
 
 
@@ -831,7 +853,11 @@ def first_seat(
 
 
 def workspace_digest(root: Path | None) -> str | None:
-    """Fingerprint of a campaign workspace's research files (log, brief, outputs excluded)."""
+    """Fingerprint of a campaign workspace's research files.
+
+    Bookkeeping (:func:`is_bookkeeping`: owner log, brief, handover, research_state.json,
+    logs, quota/utilization/checkpoint receipts) and runtime/output dirs are excluded.
+    """
 
     if root is None or not root.is_dir():
         return None
@@ -842,7 +868,7 @@ def workspace_digest(root: Path | None) -> str | None:
             continue
         if path.is_symlink() or not path.is_file():
             continue
-        if path.name in _DIGEST_SKIP_FILES or path.name.endswith(".pending"):
+        if is_bookkeeping(path.name) or path.name.endswith(".pending"):
             continue
         digest.update(relative.as_posix().encode())
         digest.update(b"\0")
@@ -876,21 +902,28 @@ def record_seat(
     workspace_root: Path | None,
     promoted: bool,
     handover_max_bytes: int = 8_192,
+    short_seat_seconds: int = 0,
 ) -> dict[str, Any]:
     """Update the no-progress streak of a topic after one finished seat.
 
-    Progress (the streak resets) when the seat's promoted workspace digest differs
-    from the last one, it declared an artifact hash not seen before, it started
-    after remote/local jobs finished (``remote_wait``), or it yielded on new jobs.
-    A seat whose work was not promoted (timeout, failed gate) never counts as
-    progress. The seat's handover file is only checked (present, size); a missing or
-    oversized one is noted for the next brief, never refused.
+    Progress (the streak resets) only through substantive output: the promoted
+    workspace's research files changed (bookkeeping excluded, :func:`is_bookkeeping`),
+    a declared non-bookkeeping artifact hash not seen before, a start after
+    remote/local jobs finished (``remote_wait``), a yield on new jobs, a declared phase
+    later than the recorded one, or an advancing packet status (``awaiting_remote``,
+    ``ready_for_review``, ``frozen``). A seat shorter than ``short_seat_seconds`` never
+    counts through the workspace change alone. Updating OWNER_LOG/OWNER_HANDOVER or a
+    quota/utilization receipt is not progress. A seat whose work was not promoted
+    (timeout, failed gate) never counts as progress. The seat's handover file is only
+    checked (present, size); a missing or oversized one is noted, never refused.
     """
 
     campaign_id = str(task["campaign_id"])
     state = owner_state(db, campaign_id)
     packet = packet_of(payload)
     phase = str(packet.get("phase") or "").strip().lower()
+    packet_status = str(packet.get("status") or "").strip().lower()
+    run_seconds = _seat_run_seconds(db, str(task["task_id"]))
     handover = dict(state.get("handover") or {})
     handover_root = workspace_root
     if handover_root is None:
@@ -907,9 +940,15 @@ def record_seat(
         str(item.get("sha256")) for item in payload.get("artifacts") or []
         if isinstance(item, Mapping) and SHA256.fullmatch(str(item.get("sha256") or ""))
         and str(item.get("sha256")) not in known
+        and not is_bookkeeping(str(item.get("uri") or item.get("path") or ""))
     ] if promoted else []
+    short = (run_seconds is not None and short_seat_seconds > 0
+             and run_seconds < short_seat_seconds)
     reasons: list[str] = []
-    if promoted and digest is not None and digest != state.get("digest"):
+    # A digest of an older definition is a baseline only, never a difference.
+    comparable = state.get("digest_version") == DIGEST_VERSION
+    if (promoted and digest is not None and comparable and digest != state.get("digest")
+            and not short):
         reasons.append("workspace_changed")
     if new_hashes:
         reasons.append("new_artifacts")
@@ -917,11 +956,20 @@ def record_seat(
         reasons.append("jobs_finished")
     if final_status == "yielded":
         reasons.append("jobs_submitted")
+    previous_phase = str(state.get("phase") or "")
+    if (promoted and phase in OWNER_PHASES and previous_phase in OWNER_PHASES
+            and OWNER_PHASES.index(phase) > OWNER_PHASES.index(previous_phase)):
+        reasons.append("phase_advanced")
+    if promoted and packet_status in _ADVANCING_STATUSES:
+        reasons.append(f"status_{packet_status}")
     streak = 0 if reasons else int(state.get("no_progress_streak") or 0) + 1
     remembered = list(dict.fromkeys([*(state.get("artifact_hashes") or []), *new_hashes]))
     updated = {
         **state,
         "digest": digest if digest is not None else state.get("digest"),
+        "digest_version": DIGEST_VERSION if digest is not None else state.get("digest_version"),
+        "last_run_seconds": run_seconds,
+        "last_short_seat": short,
         "no_progress_streak": streak,
         "seats": int(state.get("seats") or 0) + 1,
         "last_task_id": str(task["task_id"]),
@@ -935,9 +983,43 @@ def record_seat(
     _store_state(db, campaign_id, updated, ("owner_seat_recorded", {
         "task_id": str(task["task_id"]), "final_status": final_status,
         "progress": reasons, "no_progress_streak": streak,
+        "run_seconds": run_seconds, "short_seat": short,
         "handover": handover or None,
     }))
     return updated
+
+
+def _seat_run_seconds(db: FactoryDB, task_id: str) -> float | None:
+    """Run time of the seat's latest finished attempt (None when not recorded)."""
+
+    try:
+        with db.connect() as connection:
+            row = connection.execute(
+                "SELECT run_seconds FROM task_attempts WHERE task_id=? AND finished_at IS NOT "
+                "NULL ORDER BY rowid DESC LIMIT 1", (task_id,),
+            ).fetchone()
+    except Exception:  # noqa: BLE001 - the duration only sharpens the progress rule.
+        return None
+    if row is None or row[0] is None:
+        return None
+    return float(row[0])
+
+
+def backoff_not_before(settings: FactorySettings, state: Mapping[str, Any], *,
+                       now: datetime | None = None) -> str | None:
+    """``not_before`` of the next seat on a no-progress streak (None: start now).
+
+    From the second consecutive no-progress seat on the next seat waits
+    ``no_progress_backoff_minutes`` (10, 30, 120 by default; the last repeats).
+    """
+
+    streak = int(state.get("no_progress_streak") or 0)
+    steps = settings.program.owner.no_progress_backoff_minutes
+    if streak < 2 or not steps:
+        return None
+    minutes = int(steps[min(streak - 2, len(steps) - 1)])
+    moment = (now or datetime.now(UTC)) + timedelta(minutes=minutes)
+    return budget_control._iso(moment)
 
 
 def update_state(db: FactoryDB, campaign_id: str, event: str | None = None,
@@ -1530,10 +1612,12 @@ def after_result(
     """
 
     limit = settings.program.owner.handover_max_bytes
+    short_limit = settings.program.owner.short_seat_seconds
     if final_status == "yielded":
         if is_owner_task(task):
             record_seat(db, task=task, payload=payload, final_status=final_status,
-                        workspace_root=workspace_root, promoted=True, handover_max_bytes=limit)
+                        workspace_root=workspace_root, promoted=True, handover_max_bytes=limit,
+                        short_seat_seconds=short_limit)
         return False
     campaign = db.campaign(str(task["campaign_id"]))
     if campaign is None:
@@ -1543,14 +1627,14 @@ def after_result(
         if is_owner_task(task):
             record_seat(db, task=task, payload=payload, final_status=final_status,
                         workspace_root=workspace_root, promoted=successful,
-                        handover_max_bytes=limit)
+                        handover_max_bytes=limit, short_seat_seconds=short_limit)
         return True
     if final_status == "failed" and is_owner_task(task):
         # Out of attempts: a seat without progress; replenishment starts the next one
         # unless the breaker sends the topic to a direction decision.
         state = record_seat(db, task=task, payload=payload, final_status=final_status,
                             workspace_root=workspace_root, promoted=False,
-                            handover_max_bytes=limit)
+                            handover_max_bytes=limit, short_seat_seconds=short_limit)
         _breaker(db, paths, settings, report, task=task, state=state,
                  result_path=result_path, result_sha256=result_sha256)
         return True
@@ -1595,7 +1679,7 @@ def after_result(
     packet = packet_of(payload)
     state = record_seat(db, task=task, payload=payload, final_status=final_status,
                         workspace_root=workspace_root, promoted=successful,
-                        handover_max_bytes=limit)
+                        handover_max_bytes=limit, short_seat_seconds=short_limit)
     status = str(packet.get("status") or "")
     if successful and status == "ready_for_review":
         verdict = str(packet.get("primary_endpoint_verdict") or "").strip().lower()
@@ -1629,11 +1713,19 @@ def after_result(
                 state={**state, "summary": payload.get("summary")},
                 result_path=result_path, result_sha256=result_sha256):
         return True
+    # No progress twice in a row: the next seat waits (no immediate redispatch).
+    wait = backoff_not_before(settings, state)
+    if wait is not None:
+        report.program.setdefault("owner_backoffs", []).append(
+            {"campaign_id": str(task["campaign_id"]), "after_task_id": str(task["task_id"]),
+             "no_progress_streak": int(state.get("no_progress_streak") or 0),
+             "not_before": wait})
     if successful:
         note = str(packet.get("resume_note") or packet.get("next_step") or "").strip() or (
             "Continue owning the topic from where the last seat stopped (your work log).")
         enqueue_seat(db, settings, report, campaign=campaign, parent=task, note=note,
-                     routing_reason=ROUTING_CONTINUE, input_path=str(result_path))
+                     routing_reason=ROUTING_CONTINUE, input_path=str(result_path),
+                     not_before=wait)
         return True
     errors = "; ".join(
         str(item) for item in (payload.get("blockers") or [])
@@ -1643,6 +1735,7 @@ def after_result(
         note=(f"The last seat's result was not accepted ({final_status}: {errors[:1500]}); its "
               "workspace changes were not promoted. Fix what the message names and continue; "
               "leave the status JSON before the seat deadline."),
+        not_before=wait,
     )
     return True
 
@@ -1669,8 +1762,17 @@ def replenish(
                 f"({latest.get('task_type')}) ended {latest.get('status')}; its result, if any, "
                 "is at the input path.")
         routing = ROUTING_CONVERTED if not is_owner_task(latest) else ROUTING_RETRY
+    wait = backoff_not_before(settings, owner_state(db, str(campaign["campaign_id"])))
+    if wait is not None and latest is not None:
+        # Keep the streak's backoff, counted from the last seat's end, not from now.
+        ended = budget_control.parse_time(latest.get("updated_at"))
+        if ended is not None:
+            wait = backoff_not_before(settings, owner_state(db, str(campaign["campaign_id"])),
+                                      now=ended)
+            if (budget_control.parse_time(wait) or ended) <= datetime.now(UTC):
+                wait = None
     seat = enqueue_seat(db, settings, report, campaign=campaign, parent=latest, note=note,
-                        routing_reason=routing,
+                        routing_reason=routing, not_before=wait,
                         task_id=_seat_id(str(campaign["campaign_id"]), "replenish:" + str(
                             (latest or {}).get("task_id") or "seed")))
     if seat is not None:
@@ -1915,9 +2017,10 @@ def render_brief(
         "for long jobs: end the seat awaiting_remote; it resumes when they finish.",
         "- Models: use sub-agents or another model whenever it is worth it.",
         models,
-        "- Quota: `PYTHONPATH=CODE/orchestrator/src python3 -m openlabs program utilization "
-        f"--no-gpu` (read-only, `providers`). Work stops at {_owner_ceiling_text(settings)} on a "
-        "paced line; near it prefer cheaper models and fewer parallel agents.",
+        "- Quota: a dispatched seat is authorized; the control plane manages quota. Work "
+        "normally; never stop or idle on pace/over signals. Only before calling another model "
+        "or many sub-sessions: `providers.*.dispatch_allowed` in `python3 -m openlabs program "
+        "utilization --no-gpu` (PYTHONPATH=CODE/orchestrator/src); \"no\" -> a cheaper model.",
         "",
         "## Tools",
         f"- Line `{line or 'n/a'}`: DATA/{settings.program.research_lines_path} -> "

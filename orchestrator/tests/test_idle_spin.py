@@ -342,3 +342,32 @@ def test_production_stop_skips_probes_and_can_keep_local_compute(tmp_path, monke
     assert calls == ["local"]
     flow._tick(paths, flow._settings(), monkeypatch)
     assert calls == ["local", "local", "probe"]
+
+
+def test_owner_seats_without_progress_count_as_zero_output(tmp_path):
+    """2026-11-16: 75 quota-stop owner seats showed zero_output 0 in the tick report."""
+
+    paths = rw._paths(tmp_path)
+    db = rw._db(paths)
+    db.register_campaign("campaign-o", domain="physics", title="Owner")
+    now = datetime.now(UTC)
+    stamp = (now - timedelta(minutes=5)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    for index, progress in enumerate([[], [], ["new_artifacts"]]):
+        task_id = f"owner:{index}"
+        _task(db, task_id, "campaign-o", "succeeded", task_type="topic_owner")
+        with db.connect() as connection:  # test fixture: one finished attempt and its record
+            connection.execute(
+                "INSERT INTO task_attempts (attempt_id, task_id, attempt_number, status, "
+                "lease_owner, started_at, finished_at, run_seconds, created_at) "
+                "VALUES (?, ?, 1, 'succeeded', 't', ?, ?, 36.0, ?)",
+                (f"a{index}", task_id, stamp, stamp, stamp))
+            connection.execute(
+                "INSERT INTO events (created_at, entity_type, entity_id, event_type, "
+                "payload_json) VALUES (?, 'campaign', 'campaign-o', 'owner_seat_recorded', ?)",
+                (stamp, json.dumps({"task_id": task_id, "progress": progress})))
+    metrics = spin_guard.idle_metrics(db, now=now)
+    seats = metrics["by_task_type"]["topic_owner"]
+    assert seats["attempts"] == 3 and seats["zero_output"] == 2
+    assert seats["zero_output_agent_hours"] == round(72 / 3600, 2)
+    # Still neutral for the generic chain guard (the owner breaker owns that).
+    assert spin_guard.no_progress_streak(db, "campaign-o")[0] == 0

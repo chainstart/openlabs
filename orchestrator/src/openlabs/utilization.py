@@ -256,7 +256,18 @@ def provider_pace(router: budget_control.QuotaRouter) -> dict[str, dict[str, Any
         else:
             signal = "on_pace"
             reason = "projected_near_ceiling"
+        # What the router does now (2026-11-17): ``signal`` is the parallelism pace
+        # forecast, not a dispatch verdict; an ``over`` provider may still take seats.
+        specs = [s for s in router.settings.runners.values() if s.provider == provider]
+        allowed = {
+            klass: "yes" if any(router.usable(item, klass) for item in specs) else "no"
+            for klass in (*budget_control.TASK_CLASSES, budget_control.OWNER_CLASS)
+        }
         result[provider] = {
+            "state": state.state,
+            "dispatch_allowed": allowed,
+            "signal_note": "signal = pace forecast for parallelism; dispatch_allowed = "
+                           "whether the control plane starts tasks of that class now",
             "signal": signal,
             "reason": reason,
             "abundance": None if state.abundance is None else round(state.abundance, 4),

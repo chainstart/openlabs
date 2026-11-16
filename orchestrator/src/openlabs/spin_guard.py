@@ -3,7 +3,9 @@
 Any task chain of one campaign that keeps finishing without progress is backed off
 and then stopped for a human, whatever its task type (replan, maturation,
 continuation, revision, card repair, ...). Owner seats keep their own breaker
-(``owner.py``, ``no_progress_seats``) and are neutral here; topic scouts have their
+(``owner.py``, ``no_progress_seats``, with its own backoff) and are neutral for the
+streak here, but :func:`idle_metrics` counts their no-progress seats as zero output from
+the owner breaker's ``owner_seat_recorded`` events; topic scouts have their
 empty-draw backoff (``program_flow.scout_supply_blocks``).
 
 A finished task made progress when
@@ -235,6 +237,26 @@ def guard_queued_tasks(
     return actions
 
 
+def owner_seat_progress(db: FactoryDB, *, since: str) -> dict[str, bool]:
+    """``{seat task id: made progress}`` from ``owner_seat_recorded`` events since ``since``."""
+
+    with db.connect() as connection:
+        rows = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='owner_seat_recorded' "
+            "AND created_at >= ? ORDER BY event_id",
+            (since,),
+        ).fetchall()
+    result: dict[str, bool] = {}
+    for row in rows:
+        try:
+            payload = json.loads(row[0] or "{}")
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and payload.get("task_id"):
+            result[str(payload["task_id"])] = bool(payload.get("progress"))
+    return result
+
+
 def idle_metrics(
     db: FactoryDB,
     *,
@@ -246,7 +268,8 @@ def idle_metrics(
 
     Zero output: the attempt's task finished without progress (see ``classify``); a
     topic scout is zero output when no card it returned stands in the ledger as
-    anything but rejected (``accepted_cards_by_task``). Unfinished attempts are not
+    anything but rejected (``accepted_cards_by_task``); an owner seat when the owner
+    breaker recorded it without progress (:func:`owner_seat_progress`). Unfinished attempts are not
     counted as zero output.
     """
 
@@ -266,6 +289,7 @@ def idle_metrics(
     for campaign_id in sorted({str(row["campaign_id"]) for row in rows}):
         for task, value in classify(_campaign_history(db, campaign_id, limit=500)):
             progress[str(task["task_id"])] = value
+    owner_progress = owner_seat_progress(db, since=since)
     cards = accepted_cards_by_task or {}
     by_type: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -279,6 +303,9 @@ def idle_metrics(
         task_id = str(row["task_id"])
         if task_type == "topic_scout":
             zero = cards.get(task_id, 0) == 0 and str(row["status"]) in FINISHED_STATUSES
+        elif task_type == "topic_owner":
+            # The owner breaker's own verdict (owner.record_seat), latest per seat.
+            zero = owner_progress.get(task_id) is False
         else:
             zero = progress.get(task_id) is False
         if zero:

@@ -266,3 +266,28 @@ def test_owner_brief_names_each_providers_ceiling() -> None:
         "70% (anthropic) / 80% (openai-codex)")
     same = _settings(provider_ceilings={CLAUDE: (0.8, 0.9)})
     assert owner_mode._owner_ceiling_text(same) == "80%"
+
+
+def test_over_pace_forecast_with_an_open_allowance_still_reads_dispatch_allowed(tmp_path) -> None:
+    """2026-11-16: openai-codex showed signal over (projected_above_ceiling) while the router
+    kept dispatching owner seats to it; an owner read 'over' as a stop order. The view
+    now states the router's own verdict per task class next to the forecast."""
+
+    _, db = qr._setup(tmp_path)
+    settings = _settings(utilization_target=0.9, provider_ceilings=CLAUDE_70)
+    # Day 2 of 7: allowance 0.8 * 0.525 = 0.42 > 0.35 used, but 0.35 / (2/7) > 0.8.
+    qp._record_window(db, settings, "worker_gpt", 0.35, day=2)
+    # Claude at its pace line: nothing ordinary may start.
+    qp._record_window(db, settings, "worker_claude", 0.6, day=2)
+    router = budget_control.QuotaRouter.build(db, settings, now=NOW)
+    pace = utilization.provider_pace(router)
+    assert pace[GPT]["signal"] == "over" and pace[GPT]["reason"] == "projected_above_ceiling"
+    assert pace[GPT]["state"] == "available"
+    assert pace[GPT]["dispatch_allowed"][budget_control.OWNER_CLASS] == "yes"
+    assert pace[GPT]["dispatch_allowed"]["ordinary"] == "yes"
+    assert pace[CLAUDE]["signal"] == "over" and pace[CLAUDE]["state"] == "unavailable"
+    assert pace[CLAUDE]["dispatch_allowed"][budget_control.OWNER_CLASS] == "no"
+    # The verdict is the router's: an owner seat on the GPT lead is usable.
+    assert owner_mode.runner_usable(settings, router, "lead_gpt") == (
+        router.usable(qr.RUNNERS["lead_gpt"], budget_control.OWNER_CLASS))
+    assert "dispatch_allowed" in pace[GPT]["signal_note"]

@@ -323,7 +323,13 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   `no_progress_backoff_minutes`（默认 60→240→1440 分钟）推迟（事件 `no_progress_backoff`），到
   `no_progress_escalate_after`（默认 8）次转 `needs_human`（`no_progress_circuit`，事件
   `no_progress_circuit_open`），连续产线的补种也随之停下等人。摘要、时间戳、任务编号的变化不算进展。负责人
-  坐席仍用 `[program.owner].no_progress_seats` 的方向决策熔断；scout 用上面的空抽退避。已有的 replan 退避
+  坐席仍用 `[program.owner].no_progress_seats` 的方向决策熔断（2026-11-17 加固：只认实质产出——新作业、
+  新的非日志类产物、研究文件变化、阶段推进、awaiting_remote/ready_for_review/frozen；OWNER_LOG、
+  OWNER_HANDOVER、research_state.json 与额度/utilization/检查点回执不算；短于 `short_seat_seconds`
+  的坐席不靠文件变化计进展；连续第 2 个无进展坐席起下一坐席按 `no_progress_backoff_minutes`
+  （10→30→120 分钟）推迟），tick 的 `idle_metrics` 也把无进展的负责人坐席计入 `zero_output`；
+  `program utilization` 的 `providers.<p>.dispatch_allowed` 给出控制面按任务类别能否派发（`signal`
+  只是配速预测，不是停工指令）；scout 用上面的空抽退避。已有的 replan 退避
   （30 分钟翻倍、6 小时封顶）保留，现在由本保险在第 8 次封住。
 - **空转指标**：每个 tick 报告带 `idle_metrics`：最近 24 小时每个任务类型的 `attempts`、`zero_output`
   （任务按上面的口径无进展；scout 为无有效卡片）、`agent_hours` 与 `zero_output_agent_hours`，以及合计。

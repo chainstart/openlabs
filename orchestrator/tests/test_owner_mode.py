@@ -51,7 +51,8 @@ def _owner_program(tmp_path, monkeypatch, *, cards: int = 1, owner_settings=None
 
 
 def _seat_packet(db: FactoryDB, paths, task_id: str, packet: dict, *, session: str | None = None,
-                 artifact: bool = False) -> Path:
+                 artifact: bool = False, duration: float = 10.0,
+                 files: dict[str, str] | None = None) -> Path:
     """Fake owner: only the small status packet (no bundle fields) and a receipt."""
 
     task = db.task(task_id)
@@ -60,6 +61,10 @@ def _seat_packet(db: FactoryDB, paths, task_id: str, packet: dict, *, session: s
     root = paths.data / "workspaces" / str(task["domain"]) / str(task["campaign_id"])
     output = root / "attempts" / attempt_id / "result.json"
     body = dict(packet)
+    for name, text in (files or {}).items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
     if artifact:
         evidence = root / "evidence" / f"{attempt_id}.json"
         evidence.parent.mkdir(parents=True, exist_ok=True)
@@ -68,7 +73,7 @@ def _seat_packet(db: FactoryDB, paths, task_id: str, packet: dict, *, session: s
     db.bind_attempt_spec(task_id, attempt_id=attempt_id, lab_id="ai", output_path=str(output))
     db.mark_running(task_id, attempt_id=attempt_id, owner="test", pid=1, lease_seconds=600)
     atomic_write_json(output, body)
-    runtime = {"duration_seconds": 10.0, "exit_code": 0, "runner": task["runner"]}
+    runtime = {"duration_seconds": duration, "exit_code": 0, "runner": task["runner"]}
     if session:
         runtime["session_id"] = session
     atomic_write_json(paths.result_inbox / f"{attempt_id}.json", {
@@ -503,8 +508,9 @@ def test_brief_is_short_has_the_four_parts_and_forces_no_skill(tmp_path, monkeyp
     request = block["request"]
     body = request.split("\n---\n")[0]
     # About 4.3 KB in production (shorter roots); the test roots are long tmp paths. The
-    # recompute-review goal and the handover rule (2026-11-16) added about 0.3 KB.
-    assert len(body.encode("utf-8")) <= 4_700, len(body.encode("utf-8"))
+    # recompute-review goal and the handover rule (2026-11-16) added about 0.3 KB; the
+    # quota-authorization line (2026-11-17) about 50 B.
+    assert len(body.encode("utf-8")) <= 4_800, len(body.encode("utf-8"))
     assert "independent recompute review" in body and owner.HANDOVER_NAME in body
     for heading in ("## Goal", "## Resources", "## Tools", "## Hard limits", "## Ending a seat"):
         assert heading in request
@@ -614,3 +620,183 @@ def test_fresh_successor_seat_gets_a_handover_note(tmp_path, monkeypatch):
                              campaign=db.campaign(topic["campaign_id"]), wall_seconds=600, db=db)
     assert "A previous owner session (lead_claude" in block["request"]
     assert owner.WORK_LOG_NAME in block["request"] and "spawn_agent" in block["request"]
+
+
+# ------------------------------------------------------------- quota-stop spin (2026-11-17)
+
+
+def _quota_stop_files(n: int) -> dict[str, str]:
+    """What the 75 quota-stop seats of 2026-11-16 wrote: log, handover, quota receipt."""
+
+    return {
+        owner.WORK_LOG_NAME: f"## seat {n}\n- Stopped under the paced-line rule.\n",
+        owner.HANDOVER_NAME: f"Resume when pacing permits ({n}).\n",
+        "quota_checkpoint.json": json.dumps({"at": n, "providers": {"openai-codex": "over"}}),
+    }
+
+
+def _release(db: FactoryDB, task_id: str) -> None:
+    """Test only: end a seat's backoff early so the next seat can be leased now."""
+
+    with db.connect() as connection:
+        connection.execute("UPDATE tasks SET not_before=NULL WHERE task_id=?", (task_id,))
+
+
+def _quota_stop_seat(paths, db, settings, monkeypatch, task_id: str, n: int, **kwargs) -> None:
+    _lease(paths, settings, monkeypatch, db, task_id)
+    packet = {"status": "continuing", "phase": "precheck",
+              "summary": "Quota-paced checkpoint; feasibility precheck remains pending.",
+              "reason": "Provider pacing prevents work."}
+    _seat_packet(db, paths, task_id, packet, session=f"s{n}",
+                 files={**_quota_stop_files(n), **kwargs.pop("files", {})}, **kwargs)
+    _tick(paths, settings, monkeypatch)
+
+
+def test_quota_stop_seats_back_off_then_trip_the_direction_decision(tmp_path, monkeypatch):
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    assert settings.program.owner.no_progress_seats == 3
+    campaign_id = topic["campaign_id"]
+    first = _latest(db, campaign_id)
+    # Long seats (no short-seat rule): only bookkeeping changed, never progress.
+    _quota_stop_seat(paths, db, settings, monkeypatch, first["task_id"], 1, duration=600.0)
+    state = owner.owner_state(db, campaign_id)
+    assert state["no_progress_streak"] == 1 and state["last_progress"] == []
+    second = _latest(db, campaign_id)
+    assert second["task_type"] == OWNER_TASK_TYPE and second["task_id"] != first["task_id"]
+    assert second["not_before"] is None  # the first no-progress seat is not backed off
+    _quota_stop_seat(paths, db, settings, monkeypatch, second["task_id"], 2, duration=600.0)
+    assert owner.owner_state(db, campaign_id)["no_progress_streak"] == 2
+    third = _latest(db, campaign_id)
+    assert third["task_type"] == OWNER_TASK_TYPE and third["status"] == "queued"
+    wait = budget_control.parse_time(third["not_before"])
+    assert wait is not None
+    delay = wait - datetime.now(UTC)
+    assert timedelta(minutes=8) < delay <= timedelta(minutes=10, seconds=5), delay
+    # Backed off: further ticks do not dispatch it.
+    _tick(paths, settings, monkeypatch)
+    assert db.task(third["task_id"])["status"] == "queued"
+    assert not _direction_tasks(db)
+    _release(db, third["task_id"])
+    _quota_stop_seat(paths, db, settings, monkeypatch, third["task_id"], 3, duration=600.0)
+    decisions = _direction_tasks(db)
+    assert len(decisions) == 1
+    packet = json.loads(Path(decisions[0]["input_path"]).read_text(encoding="utf-8"))
+    assert packet["trigger"]["reason"] == owner.TRIGGER_NO_PROGRESS
+    # No further seat while the decision is pending.
+    assert _latest(db, campaign_id)["task_id"] == third["task_id"]
+
+
+def test_backoff_steps_grow_and_the_last_repeats() -> None:
+    from types import SimpleNamespace
+
+    settings = SimpleNamespace(program=SimpleNamespace(owner=OwnerSettings()))
+    now = datetime(2026, 11, 17, tzinfo=UTC)
+    waits = [owner.backoff_not_before(settings, {"no_progress_streak": n}, now=now)
+             for n in range(0, 7)]
+    assert waits[0] is None and waits[1] is None
+    minutes = [(budget_control.parse_time(w) - now) / timedelta(minutes=1) for w in waits[2:]]
+    assert minutes == [10, 30, 120, 120, 120]
+
+
+def test_substantive_output_resets_the_streak(tmp_path, monkeypatch):
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    campaign_id = topic["campaign_id"]
+    _quota_stop_seat(paths, db, settings, monkeypatch, _latest(db, campaign_id)["task_id"], 1,
+                     duration=600.0)
+    assert owner.owner_state(db, campaign_id)["no_progress_streak"] == 1
+    # A new data artifact (not bookkeeping) is progress even in a short seat.
+    seat = _latest(db, campaign_id)
+    _lease(paths, settings, monkeypatch, db, seat["task_id"])
+    _seat_packet(db, paths, seat["task_id"], {"status": "continuing"}, session="s2",
+                 artifact=True, files=_quota_stop_files(2))
+    _tick(paths, settings, monkeypatch)
+    state = owner.owner_state(db, campaign_id)
+    assert state["no_progress_streak"] == 0 and "new_artifacts" in state["last_progress"]
+    # A phase advance is progress as well.
+    assert _latest(db, campaign_id)["not_before"] is None
+    seat = _latest(db, campaign_id)
+    _lease(paths, settings, monkeypatch, db, seat["task_id"])
+    _seat_packet(db, paths, seat["task_id"], {"status": "continuing", "phase": "solving"},
+                 session="s4", files=_quota_stop_files(4))
+    _tick(paths, settings, monkeypatch)
+    state = owner.owner_state(db, campaign_id)
+    assert state["no_progress_streak"] == 0 and state["last_progress"] == ["phase_advanced"]
+
+
+def _record(db, campaign_id, root, task_id, **packet):
+    return owner.record_seat(
+        db, task={"task_id": task_id, "campaign_id": campaign_id,
+                  "routing_reason": owner.ROUTING_CONTINUE},
+        payload={"owner_packet": {"status": "continuing", **packet}}, final_status="succeeded",
+        workspace_root=root, promoted=True, short_seat_seconds=180)
+
+
+def test_record_seat_counts_research_files_not_bookkeeping(tmp_path, monkeypatch):
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    campaign_id = topic["campaign_id"]
+    monkeypatch.setattr(owner, "_seat_run_seconds", lambda _db, _task: 900.0)
+    root = tmp_path / "ws"
+    (root / "analysis").mkdir(parents=True)
+    (root / "analysis" / "fit.py").write_text("print(1)\n")
+    # The first seat under the new digest only sets the baseline.
+    assert _record(db, campaign_id, root, "owner:a")["no_progress_streak"] == 1
+    for name, text in _quota_stop_files(2).items():
+        (root / name).write_text(text)
+    state = _record(db, campaign_id, root, "owner:b")
+    assert state["no_progress_streak"] == 2 and state["last_progress"] == []
+    (root / "analysis" / "fit.py").write_text("print(2)\n")
+    state = _record(db, campaign_id, root, "owner:c")
+    assert state["no_progress_streak"] == 0 and state["last_progress"] == ["workspace_changed"]
+    # An advancing status is progress without any file change.
+    assert _record(db, campaign_id, root, "owner:d")["no_progress_streak"] == 1
+    state = _record(db, campaign_id, root, "owner:e", status="awaiting_remote")
+    assert state["last_progress"] == ["status_awaiting_remote"]
+
+
+def test_short_seat_counts_without_substantive_output(tmp_path, monkeypatch):
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    campaign_id = topic["campaign_id"]
+    root = tmp_path / "ws"
+    root.mkdir()
+    monkeypatch.setattr(owner, "_seat_run_seconds", lambda _db, _task: 900.0)
+    _record(db, campaign_id, root, "owner:a")
+    # A 30 s seat that writes a non-bookkeeping note is still no progress.
+    monkeypatch.setattr(owner, "_seat_run_seconds", lambda _db, _task: 30.0)
+    (root / "notes.md").write_text("pacing still over\n")
+    state = _record(db, campaign_id, root, "owner:b")
+    assert state["no_progress_streak"] == 2 and state["last_progress"] == []
+    assert state["last_short_seat"] is True and state["last_run_seconds"] == 30.0
+    # The same change in a normal seat counts.
+    monkeypatch.setattr(owner, "_seat_run_seconds", lambda _db, _task: 900.0)
+    (root / "notes.md").write_text("first reference fit converged\n")
+    assert _record(db, campaign_id, root, "owner:c")["last_progress"] == ["workspace_changed"]
+
+
+def test_bookkeeping_files_are_not_research_files(tmp_path) -> None:
+    for name in (owner.WORK_LOG_NAME, owner.HANDOVER_NAME, owner.BRIEF_NAME,
+                 "research_state.json", "quota_checkpoint.json", "utilization_receipt.md",
+                 "provider_pacing.txt", "run.log"):
+        assert owner.is_bookkeeping(name), name
+    for name in ("fit.py", "results.csv", "figure1.pdf", "chain.npz", "precheck.json",
+                 owner.RESPONSE_NAME):
+        assert not owner.is_bookkeeping(name), name
+    root = tmp_path / "c"
+    root.mkdir()
+    (root / "fit.py").write_text("1")
+    first = owner.workspace_digest(root)
+    for name, text in _quota_stop_files(1).items():
+        (root / name).write_text(text)
+    (root / "research_state.json").write_text("{}")
+    assert owner.workspace_digest(root) == first
+
+
+def test_brief_authorizes_quota_and_forbids_pace_stops(tmp_path, monkeypatch):
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    seat = _latest(db, topic["campaign_id"])
+    block = owner.spec_block(paths, settings, task=seat, spec=_spec(tmp_path, seat["task_id"]),
+                             campaign=db.campaign(topic["campaign_id"]), wall_seconds=600, db=db)
+    request = block["request"]
+    assert "a dispatched seat is authorized" in request
+    assert "never stop or idle on pace/over signals" in request
+    assert "dispatch_allowed" in request
+    assert "Work stops at" not in request

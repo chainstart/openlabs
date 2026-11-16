@@ -268,6 +268,14 @@ class OwnerSettings:
     # Consecutive finished seats without new evidence (unchanged workspace digest,
     # no new artifact hash, no remote-job wake-up) that schedule a direction decision.
     no_progress_seats: int = 3
+    # Backoff before the next seat once the streak reaches 2 (2026-11-17, after 75
+    # half-minute quota-stop seats): minutes per further no-progress seat, the last
+    # value repeats; the seat is queued with not_before so nothing is dispatched early.
+    no_progress_backoff_minutes: tuple[int, ...] = (10, 30, 120)
+    # A seat shorter than this counts as progress only through a substantive signal
+    # (new jobs, new non-bookkeeping artifacts, phase/status advance), never through
+    # workspace file changes alone.
+    short_seat_seconds: int = 180
     # Default model of Claude sub-agents an owner session starts without naming
     # one (CLAUDE_CODE_SUBAGENT_MODEL); an explicit Agent `model` still wins.
     claude_subagent_model: str | None = "claude-opus-5-5"
@@ -1097,6 +1105,13 @@ def _owner_settings(value: Any) -> OwnerSettings:
         max_topics_per_runner=limits,
         no_progress_seats=_positive_int(value.get("no_progress_seats"),
                                         defaults.no_progress_seats),
+        no_progress_backoff_minutes=(
+            _minutes_sequence(value.get("no_progress_backoff_minutes"))
+            if value.get("no_progress_backoff_minutes") is not None
+            else defaults.no_progress_backoff_minutes
+        ),
+        short_seat_seconds=_nonnegative_int(value.get("short_seat_seconds"),
+                                            defaults.short_seat_seconds),
         claude_subagent_model=(str(subagent).strip() or None) if subagent else None,
         codex_helper_model=str(value.get("codex_helper_model") or defaults.codex_helper_model),
         codex_light_model=str(value.get("codex_light_model") or defaults.codex_light_model),
