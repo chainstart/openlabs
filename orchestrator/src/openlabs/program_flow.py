@@ -91,6 +91,7 @@ from .projects import ProjectConfig, load_project, workstream_policy
 from .research_lines import (
     ENVIRONMENT_READY,
     environment_status,
+    line_entry,
     line_summary,
     line_templates,
     queued_templates,
@@ -124,6 +125,11 @@ SCOUT_SKILL = "openlabs-empirical-topic-scout"
 ADMISSION_SKILL = "openlabs-topic-admission"
 LAST_SCOUT_KEY = "program_last_scout_at"
 SCOUT_REGISTERED_PREFIX = "program_scout_registered:"
+# Per rotation key (line, else domain): the empty-draw streak of its scouts, JSON
+# {fingerprint, count, last_at, last_task_id, last_created_at, last_summary, reason}.
+SCOUT_SUPPLY_PREFIX = "program_scout_supply:"
+# Scout outcomes that end the draw: a result exists to count its cards.
+SCOUT_FINISHED_STATUSES = ("succeeded", "needs_replan", "needs_human")
 # A topic included in this many admission packets without a valid decision is
 # rejected as ``admission_undecided`` (it may be resubmitted as a new card).
 MAX_ADMISSION_ATTEMPTS = 3
@@ -565,6 +571,216 @@ def _queue_instruction(paths: WorkspacePaths, settings: FactorySettings, line: s
     return queue_scout_instruction(queues, held_queue_releases(paths, settings, line, queues))
 
 
+# ----------------------------------------------------------- empty-draw backoff
+
+
+def _file_digest(path: Any) -> str | None:
+    try:
+        return sha256_file(Path(str(path)))
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def scout_supply_fingerprint(
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    project: ProjectConfig,
+    document: Mapping[str, Any],
+) -> str:
+    """Digest of what a scout of this line can draw from.
+
+    Covers the line's entry in the direction file (templates, declared
+    capabilities such as a spot configuration), the bytes of its candidate
+    queues, which held queue entries are released, and the line's ledger topics
+    (id and status). Any change means a new scout may find something new.
+    """
+
+    line = project.research_line
+    lines_document = research_lines_document(paths, settings)
+    queues = queued_templates(lines_document, line) if line else {}
+    key = scout_key(project)
+    parts = {
+        "key": key,
+        "line": line_entry(lines_document, line) if line else None,
+        "queues": {template: _file_digest(path) for template, path in sorted(queues.items())},
+        "held": held_queue_releases(paths, settings, line, queues) if line and queues else {},
+        "ledger": sorted(
+            [str(topic.get("topic_id") or ""), str(topic.get("status") or "")]
+            for topic in document.get("topics") or []
+            if isinstance(topic, Mapping) and _topic_key(topic) == key
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(parts, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def _supply_state(db: FactoryDB, key: str) -> dict[str, Any]:
+    raw = db.meta_get(SCOUT_SUPPLY_PREFIX + key)
+    try:
+        value = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        value = {}
+    return value if isinstance(value, dict) else {}
+
+
+def _scout_result_cards(task: Mapping[str, Any]) -> tuple[int | None, str]:
+    """``(cards in the hash-bound result, summary)``; ``None`` when unreadable."""
+
+    result_path = Path(str(task.get("result_path") or ""))
+    expected = str(task.get("result_sha256") or "")
+    try:
+        if not result_path.is_file() or (expected and sha256_file(result_path) != expected):
+            return None, ""
+        payload = _read_object(result_path)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None, ""
+    cards = payload.get("topic_cards")
+    return (len(cards) if isinstance(cards, list) else 0), str(payload.get("summary") or "")[:400]
+
+
+def record_scout_outcomes(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    document: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Update each line's empty-draw streak from scouts finished since the last tick.
+
+    A scout is empty when no card it returned stands in the ledger as anything but
+    ``rejected`` (no card at all, or every card rejected at intake). An empty scout
+    extends the streak when the supply fingerprint is the one of the previous empty
+    draw, else restarts it at 1; a productive scout clears it. Runs after
+    ``register_scout_results`` so the cards of a succeeded scout are in the ledger.
+    """
+
+    projects = {
+        scout_workstream_id(project): project
+        for project in program_projects(paths) if scout_workstream_id(project)
+    }
+    by_source: dict[str, int] = {}
+    for topic in document.get("topics") or []:
+        if isinstance(topic, Mapping) and str(topic.get("status") or "") != "rejected":
+            source = str(topic.get("source_task_id") or "")
+            by_source[source] = by_source.get(source, 0) + 1
+    states: dict[str, dict[str, Any]] = {}
+    changes: list[dict[str, Any]] = []
+    fingerprints: dict[str, str] = {}
+    queued: dict[str, bool] = {}
+    for task in _program_tasks(db, statuses=SCOUT_FINISHED_STATUSES, where="AND task_type=?",
+                               parameters=(SCOUT_TASK_TYPE,)):
+        project = projects.get(str(task.get("campaign_id") or ""))
+        if project is None:
+            continue
+        key = scout_key(project)
+        state = states.setdefault(key, _supply_state(db, key))
+        marker = (str(task.get("created_at") or ""), str(task["task_id"]))
+        recent = [str(item) for item in state.get("recent_task_ids") or []]
+        if marker[0] < str(state.get("last_created_at") or "") or marker[1] in recent:
+            continue
+        cards, summary = _scout_result_cards(task)
+        accepted = by_source.get(str(task["task_id"]), 0)
+        state["last_created_at"], state["last_task_id"] = marker
+        state["recent_task_ids"] = [*recent, marker[1]][-20:]
+        if accepted:
+            if int(state.get("count") or 0):
+                changes.append({"key": key, "event": "topic_scout_productive",
+                                "task_id": marker[1], "previous_empty_draws": state["count"]})
+            state.update(count=0, fingerprint=None, reason=None, last_summary=None)
+            continue
+        if cards is None and str(task.get("status")) != "succeeded":
+            continue  # no readable result: neither empty nor productive
+        if key not in fingerprints:
+            fingerprints[key] = scout_supply_fingerprint(paths, settings, project, document)
+            queued[key] = bool(project.research_line and queued_templates(
+                research_lines_document(paths, settings), project.research_line))
+        fingerprint = fingerprints[key]
+        same = state.get("fingerprint") == fingerprint and int(state.get("count") or 0) > 0
+        state.update(
+            count=(int(state.get("count") or 0) + 1) if same else 1,
+            fingerprint=fingerprint,
+            last_at=str(task.get("updated_at") or utc_now()),
+            last_summary=summary,
+            reason=(
+                "cards_rejected" if cards
+                else "candidate_queue_exhausted" if queued[key] else "no_cards"
+            ),
+        )
+        changes.append({"key": key, "event": "topic_scout_empty", "task_id": marker[1],
+                         "empty_draws": state["count"], "reason": state["reason"]})
+    if states:
+        db.update_meta(
+            {SCOUT_SUPPLY_PREFIX + key: json.dumps(state, sort_keys=True)
+             for key, state in states.items()},
+            events=[("program", item["key"], item["event"], item) for item in changes],
+        )
+    return changes
+
+
+def scout_supply_blocks(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    projects: list[ProjectConfig],
+    document: Mapping[str, Any],
+    *,
+    moment: datetime,
+) -> dict[str, dict[str, Any]]:
+    """``{rotation key: block}`` for lines whose next scout must wait or not run.
+
+    A block is ``scout_empty_backoff`` (with ``until``) or ``candidates_exhausted``.
+    A line whose supply fingerprint changed since its last empty draw is released
+    here at once (streak cleared, ``topic_scout_backoff_released`` event).
+    """
+
+    program = settings.program
+    blocks: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
+    for project in projects:
+        key = scout_key(project)
+        if key in seen:
+            continue
+        seen.add(key)
+        state = _supply_state(db, key)
+        count = int(state.get("count") or 0)
+        if count <= 0:
+            continue
+        fingerprint = scout_supply_fingerprint(paths, settings, project, document)
+        if fingerprint != state.get("fingerprint"):
+            detail = {"key": key, "empty_draws": count, "reason": "candidate_supply_changed"}
+            state.update(count=0, fingerprint=None, reason=None, last_summary=None)
+            db.update_meta(
+                {SCOUT_SUPPLY_PREFIX + key: json.dumps(state, sort_keys=True)},
+                events=[("program", key, "topic_scout_backoff_released", detail)],
+            )
+            continue
+        base = {
+            "research_line": project.research_line or None,
+            "domain": project.domain,
+            "campaign_id": scout_workstream_id(project),
+            "empty_draws": count,
+            "empty_reason": state.get("reason"),
+            "last_empty_at": state.get("last_at"),
+            "last_scout_task_id": state.get("last_task_id"),
+            "last_summary": state.get("last_summary"),
+            "release_when": "the line's candidate queue, its entry in research-lines.yaml, "
+                            "a held-entry capability or its ledger topics change",
+        }
+        if program.scout_exhausted_after and count >= program.scout_exhausted_after:
+            blocks[key] = {**base, "reason": "candidates_exhausted"}
+            continue
+        hours = program.scout_empty_backoff_hours
+        delay = hours[min(count, len(hours)) - 1] if hours else 0.0
+        last = budget_control.parse_time(state.get("last_at"))
+        if last is None or delay <= 0:
+            continue
+        until = last + timedelta(hours=delay)
+        if moment < until:
+            blocks[key] = {**base, "reason": "scout_empty_backoff", "until": _iso(until),
+                           "backoff_hours": delay}
+    return blocks
+
+
 def _schedule_one_scout(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -744,14 +960,18 @@ def schedule_scouts(
                                parameters=(SCOUT_TASK_TYPE,))
     moment = now or _now_moment()
     interval = timedelta(hours=program.scout_min_interval_hours)
+    supply_blocks = scout_supply_blocks(db, paths, settings, projects, document, moment=moment)
+    blocked_keys = frozenset(supply_blocks)
     if program.max_concurrent_scouts <= 1:
         if in_flight:
             return [], "scout_in_flight"
         last = budget_control.parse_time(db.meta_get(LAST_SCOUT_KEY))
         if last is not None and moment - last < interval:
             return [], "scout_min_interval"
-        chosen = _choose_scout_project(db, settings, projects, document)
+        chosen = _choose_scout_project(db, settings, projects, document, exclude=blocked_keys)
         if chosen is None:
+            if blocked_keys and _choose_scout_project(db, settings, projects, document):
+                return [], _supply_block_reason(supply_blocks)
             return [], "no_program_project"
         project, campaign_id = chosen
         decision = _schedule_one_scout(
@@ -786,11 +1006,15 @@ def schedule_scouts(
     reason: str | None = None
     while len(scheduled) < wanted:
         chosen = _choose_scout_project(
-            db, settings, projects, document, exclude=frozenset(busy | recent)
+            db, settings, projects, document, exclude=frozenset(busy | recent) | blocked_keys
         )
         if chosen is None:
             if not projects:
                 reason = "no_program_project"
+            elif blocked_keys and _choose_scout_project(
+                db, settings, projects, document, exclude=frozenset(busy | recent)
+            ) is not None:
+                reason = _supply_block_reason(supply_blocks)
             elif busy and not (recent - busy):
                 reason = "scout_in_flight"
             else:
@@ -809,6 +1033,14 @@ def schedule_scouts(
             else "candidate_pool_covered_by_scouts"
         )
     return scheduled, reason
+
+
+def _supply_block_reason(blocks: Mapping[str, Mapping[str, Any]]) -> str:
+    """``candidates_exhausted`` when every blocked line is exhausted, else the backoff."""
+
+    if blocks and all(item.get("reason") == "candidates_exhausted" for item in blocks.values()):
+        return "candidates_exhausted"
+    return "scout_empty_backoff"
 
 
 def maybe_schedule_scout(
@@ -2615,6 +2847,9 @@ def run_program_pipeline(
             str(item["task_id"]) for item in info["card_repairs"] if item.get("task_id")
         )
         info["holds_released"] = release_ready_holds(db, paths, settings)
+        info["scout_outcomes"] = record_scout_outcomes(
+            db, paths, settings, open_topic_ledger(paths, settings.program).read()
+        )
         # Frozen topics whose line-level reopen conditions came true take their slot
         # back before new admissions are materialized (reopen.py).
         from .reopen import reopen_ready_topics, repair_half_done_reopens
@@ -2635,6 +2870,17 @@ def run_program_pipeline(
             for item in scheduled
         ]
         info["scout_blocked"] = blocked
+        supply = scout_supply_blocks(
+            db, paths, settings, program_projects(paths),
+            open_topic_ledger(paths, settings.program).read(), moment=_now_moment(),
+        )
+        info["scout_supply_blocked"] = list(supply.values())
+        for item in supply.values():
+            if item["reason"] == "candidates_exhausted":
+                report.production_blocked.append({
+                    **{k: v for k, v in item.items() if v is not None},
+                    "campaign_id": str(item.get("campaign_id") or ""),
+                })
         info["lines_environment_not_ready"] = lines_not_ready(
             paths, settings, [project.research_line for project in program_projects(paths)])
         revisions, revision_blocked = schedule_revisions(

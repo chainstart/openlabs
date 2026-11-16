@@ -293,6 +293,42 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
 开关与上限只在 `config/openlabs.toml` 的 `[program]` 里配置，编排器不读
 `settings.yaml#research_portfolio.autonomy`（那里只记业主的决定及日期）。
 
+### 空转防护（2026-11-16）
+
+起因：天文线候选队列抽空后，`topic_scout` 每约 8 分钟抽一次空队列，两天约 250 次零产出。现有四道防护，
+都只读台账/队列/数据库、不调用模型，状态写在 meta 与 events 里：
+
+- **出题空抽退避**（`program_flow.record_scout_outcomes` / `scout_supply_blocks`）。一个 scout 结束后，
+  它交回的卡片在台账里没有一张不是 rejected，即为空抽（原因 `candidate_queue_exhausted`、`no_cards`
+  或 `cards_rejected`）。每条产线（无产线时按学科）记一个“供给指纹”：产线在 `research-lines.yaml` 里的条目
+  （模板、能力声明如带斑配置）、各 `candidate_queue` 文件的哈希、held 条目的放行情况、该产线台账题目的
+  编号与状态。指纹不变时连续空抽第 n 次后，下一次 scout 等 `[program].scout_empty_backoff_hours[n-1]`
+  （默认 1→6→24 小时，末值重复）；连续 `scout_exhausted_after`（默认 4，0 关闭）次后该线标为
+  `candidates_exhausted`：不再出题，并在 tick 报告的 `production_blocked` 和 `program.scout_supply_blocked`
+  写明空抽次数、最后一次 scout 的摘要和解除条件。指纹一变（刷新队列、登记新能力、台账题目变化）下一轮立即
+  解除（事件 `topic_scout_backoff_released`），有产出的 scout 也会清零。人工解除：改动该产线在
+  `research-lines.yaml` 的条目或队列文件即可。`program.scout_blocked` 相应为 `scout_empty_backoff` /
+  `candidates_exhausted`。
+- **远程作业重复 yield**（`remote_wait.rewait_block`）。agent yield 的作业在两个队列里都不存在
+  （`remote_job_missing`），或全部已终态且本任务链（沿 `parent_task_id` 向上，含中间的 replan/换座）早先的
+  等待已经因它们释放过（`remote_jobs_already_released`），后继直接建为 `needs_human`，不再停车→立即释放→
+  再启动。首次 yield 在刚结束的作业上仍停车一次，让 agent 看到结果。释放时：开始等待时就不存在的作业转
+  `needs_human`；开始时存在、现在目录不见了（如挂载丢失）的作业不算完成，继续等到期限。释放与等待记录在
+  同一事务提交；一条等待读取出错只记入 `remote_waits.errors`，不挡其他等待。`auto_continue = false` 或
+  协议自管续接的 campaign 不再停车。
+- **通用无进展保险**（`spin_guard.py`，所有非负责人任务类型）。同一 campaign 最近连续结束的任务若都没有
+  进展——`needs_replan`/`needs_human`/`failed`/`quarantined`、yield 在已出现过的作业上、或成功但没有新的
+  非输入类产物哈希、卡片或论文候选（决定类任务 `direction_decision`、`portfolio_review`、评审等成功即算
+  进展）——连续 `[factory].no_progress_backoff_after`（默认 4）次起，该 campaign 排队的任务按
+  `no_progress_backoff_minutes`（默认 60→240→1440 分钟）推迟（事件 `no_progress_backoff`），到
+  `no_progress_escalate_after`（默认 8）次转 `needs_human`（`no_progress_circuit`，事件
+  `no_progress_circuit_open`），连续产线的补种也随之停下等人。摘要、时间戳、任务编号的变化不算进展。负责人
+  坐席仍用 `[program.owner].no_progress_seats` 的方向决策熔断；scout 用上面的空抽退避。已有的 replan 退避
+  （30 分钟翻倍、6 小时封顶）保留，现在由本保险在第 8 次封住。
+- **空转指标**：每个 tick 报告带 `idle_metrics`：最近 24 小时每个任务类型的 `attempts`、`zero_output`
+  （任务按上面的口径无进展；scout 为无有效卡片）、`agent_hours` 与 `zero_output_agent_hours`，以及合计。
+  例：`tail -1 state/ticks.jsonl | jq .report.idle_metrics`。
+
 ### 研究产线
 
 选题按研究产线组织（2026-11-12 方向）。方向文件在数据仓库 `registry/research-lines.yaml`
@@ -547,6 +583,14 @@ bin/openlabs-container-loop cli -- status    # 以本实例身份执行任意 py
 （默认不设 = 沿用启动者的代理环境）让 `run`/`cli` 显式使用该代理入口，预检和它拉起的 worker 都继承。
 间隔等见脚本头部（`OPENLABS_LOOP_INTERVAL_SECONDS` 默认 180）。在容器环境文件里加
 `OPENLABS_REQUIRE_INSTANCE=1` 后，没有选实例的 `python -m openlabs tick` 会被拒绝。
+
+停产与恢复（不停循环）：实例 TOML 的 `[factory] launch_jobs = false` 使每个 tick 不领取、不启动任何智能体
+任务（出题、立项、负责人、评审、方向决策、组合评审、候选成熟、重规划都留在队列里），循环照常入库结果、
+释放远程等待、做台账簿记；在跑的会话自然结束本坐席。此时 tick 也不做额度探测（`[routing.probe_commands]`
+的 `claude -p` 会花一次模型调用）。本机计算队列默认随 `launch_jobs` 一起停；要让纯 CPU 的本机作业照常开工，
+另设 `[factory] launch_local_compute = true`（或手动 `bin/openlabs-local dispatch`）。论文工具链等直接命令行
+调用不经过派发，不受影响。恢复：改回 `launch_jobs = true`（必要时恢复 probe 配置），下一轮 tick 起派发；恢复
+前先看队列里积压的任务（`bin/openlabs-container-loop cli -- status`），以免一次性启动过多。
 
 与 WSL 旧实例并存的边界：
 

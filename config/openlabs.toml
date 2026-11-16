@@ -12,7 +12,17 @@ max_auto_tasks_per_epoch = 24
 # not a scientific phase or checkpoint cadence.
 max_task_wall_seconds = 43200
 max_campaign_agent_seconds = 86400
+# false = production stop: no agent task is claimed or launched (queued work waits,
+# the loop keeps ingesting results and releasing remote waits) and no quota probe
+# runs. Local compute dispatch follows launch_jobs unless launch_local_compute is set.
 launch_jobs = true
+# launch_local_compute = true
+# No-progress guard (spin_guard.py): consecutive tasks of one campaign without a new
+# artifact/card/job back off from the 4th (60, 240, 1440 min) and stop for a human
+# at the 8th. Owner seats and topic scouts have their own breakers.
+no_progress_backoff_after = 4
+no_progress_escalate_after = 8
+no_progress_backoff_minutes = [60, 240, 1440]
 
 [resources]
 # The shared systemd slice and scheduler both cap aggregate CPU at 75% of the
@@ -65,6 +75,13 @@ max_concurrent_scouts = 1
 # Cards one scout is expected to register (replaced by this instance's own mean
 # once three scouts have finished).
 scout_expected_cards = 2.0
+# Empty-draw backoff: after the n-th consecutive scout of a line that yielded no
+# usable card while its candidate supply (queue files, line entry, held releases,
+# ledger topics) is unchanged, the next scout waits the n-th value (hours, last
+# repeats); after scout_exhausted_after draws the line is candidates_exhausted
+# until its supply changes (0 = never).
+scout_empty_backoff_hours = [1, 6, 24]
+scout_exhausted_after = 4
 # Admission reviews of one domain in flight at once, each on a different batch
 # of its proposed topics (1 = one review per domain). The batches share the
 # admission campaign; reviewers do not edit campaign state, so they do not

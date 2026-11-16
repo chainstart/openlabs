@@ -226,13 +226,14 @@ def test_release_after_every_job_is_terminal(tmp_path, queue) -> None:
     assert claimed is not None and claimed["task_id"] == parked_id
 
 
-def test_missing_job_counts_as_terminal(tmp_path, queue) -> None:
+def test_missing_job_stops_for_a_human_instead_of_parking(tmp_path, queue) -> None:
+    # 2026-11-16: a yield on a job that does not exist used to park and release at
+    # once (missing counted as terminal), which let the agent yield on it forever.
     paths = _paths(tmp_path)
     db = _db(paths)
     report = _run(db, paths, "research-1", _yield_payload(JOB_A))
-    summary = remote_wait.release_ready_waits(db)
-    assert summary["released"] == report.enqueued
-    assert f"{JOB_A} (ailab): missing" in db.task(report.enqueued[0])["objective"]
+    assert db.task(report.enqueued[0])["status"] == "needs_human"
+    assert remote_wait.release_ready_waits(db)["released"] == []
 
 
 def test_expired_wait_releases_once_then_stops_for_a_human(tmp_path, queue) -> None:

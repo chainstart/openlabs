@@ -74,6 +74,7 @@ from . import program_autonomy
 from . import local_compute
 from . import owner as owner_mode
 from . import remote_wait
+from . import spin_guard
 from . import utilization
 from .program_autonomy import (
     DIRECTION_SKILL,
@@ -538,6 +539,13 @@ def _park_for_remote_jobs(
     if db.task(successor_id) is not None:
         return True
     repeated = remote_wait.repeated_expired_wait(db, task_id, job_ids)
+    # A yield on jobs that do not exist, or on finished jobs this chain was already
+    # released on, would park and release at once: stop for a human instead.
+    rewait = (
+        remote_wait.rewait_block(db, task_id, job_ids, queue_root)
+        if final_status == "yielded" and not repeated
+        else None
+    )
     max_wait = block.get("max_wait_seconds")
     record = remote_wait.build_record(
         job_ids=job_ids,
@@ -579,11 +587,14 @@ def _park_for_remote_jobs(
             else int(current.get("max_wall_seconds") or settings.max_task_wall_seconds),
             settings.max_task_wall_seconds,
         ),
-        initial_status="needs_human" if repeated else "awaiting_remote",
+        initial_status="needs_human" if repeated or rewait else "awaiting_remote",
         last_error=(
             "remote_wait_expired_twice: the agent yielded again on jobs whose wait already "
             "expired: " + ", ".join(job_ids)
             if repeated
+            else f"{rewait}: the agent yielded on jobs that cannot change any more: "
+            + ", ".join(job_ids)
+            if rewait
             else None
         ),
         **task_resources(current).to_dict(),
@@ -600,7 +611,8 @@ def _park_for_remote_jobs(
             "job_ids": job_ids,
             "origin": origin,
             "deadline": record["deadline"],
-            "needs_human": repeated,
+            "needs_human": bool(repeated or rewait),
+            **({"stop_reason": rewait} if rewait else {}),
         }
     )
     return True
@@ -739,11 +751,17 @@ class TickReport:
     local_compute: dict[str, Any] = field(default_factory=dict)
     # One row per supervised quantity: current vs target and what limits it.
     balance: list[dict[str, Any]] = field(default_factory=list)
+    # Idle-spin view (spin_guard.idle_metrics): last 24 h per task type, attempts,
+    # zero-output attempts and their agent hours.
+    idle_metrics: dict[str, Any] = field(default_factory=dict)
+    # Queued tasks the no-progress guard delayed or stopped this tick.
+    no_progress_guard: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         payload = self._base_dict()
         for name in (
-            "parallel_limit", "host_usage", "ailab", "local_compute", "balance", "remote_waits"
+            "parallel_limit", "host_usage", "ailab", "local_compute", "balance", "remote_waits",
+            "idle_metrics", "no_progress_guard",
         ):
             value = getattr(self, name)
             if value:
@@ -3391,6 +3409,8 @@ def ingest_results(
             if (
                 not successor_handled
                 and automatic_successors_allowed
+                and settings.auto_continue
+                and not protocol_managed_continuation
                 and current_role in remote_wait.RESEARCH_ROLES
                 and (
                     final_status == "yielded"
@@ -3917,6 +3937,21 @@ def _maybe_escalate_to_lead(
         report.escalated.append({"task_id": str(task["task_id"]), **payload})
 
 
+def _accepted_cards_by_task(
+    paths: WorkspacePaths, settings: FactorySettings
+) -> dict[str, int]:
+    """``{source task id: ledger topics it proposed that are not rejected}``."""
+
+    if not settings.program.enabled:
+        return {}
+    counts: dict[str, int] = {}
+    for topic in open_topic_ledger(paths, settings.program).read().get("topics") or []:
+        if isinstance(topic, Mapping) and str(topic.get("status") or "") != "rejected":
+            source = str(topic.get("source_task_id") or "")
+            counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
 def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport:
     paths.ensure_runtime_directories()
     db = FactoryDB(paths.database_file)
@@ -3938,7 +3973,12 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     for disposition in recovery.attempts:
         _apply_attempt_disposition(paths, report, disposition)
     # Local background jobs (ailab overflow) start here, within the local limits.
-    if settings.launch_jobs:
+    local_dispatch = (
+        settings.launch_jobs
+        if settings.launch_local_compute is None
+        else settings.launch_local_compute
+    )
+    if local_dispatch:
         try:
             local = local_compute.dispatch()
         except Exception as exc:  # noqa: BLE001 - the local queue is advisory.
@@ -3972,6 +4012,11 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     asset_library.run_assets_tick(db, paths, settings, report)
     if settings.auto_continue:
         _replenish_continuous_campaigns(db, paths, settings, report)
+    # Any campaign whose recent tasks keep ending without progress waits, then stops.
+    try:
+        report.no_progress_guard = spin_guard.guard_queued_tasks(db, settings, report)
+    except Exception as exc:  # noqa: BLE001 - the guard is advisory; launches continue
+        report.errors.append(f"no-progress guard failed: {exc}")
 
     reserved = db.active_resource_totals()
     resource_capacity = effective_capacity(paths.workspace, settings, reserved)
@@ -3998,12 +4043,15 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     report.provider_backoff_until = backoffs
     router: budget_control.QuotaRouter | None = None
     if budget_control.routing_enabled(settings):
-        try:
-            report.quota_probes = budget_control.probe_stale_providers(
-                db, settings, now=budget_now
-            )
-        except Exception as exc:  # noqa: BLE001 - probing is advisory
-            report.errors.append(f"Quota probe failed: {exc}")
+        # A probe may cost a model call (claude -p); with launch_jobs = false
+        # (production stopped) nothing would use the reading, so do not probe.
+        if settings.launch_jobs:
+            try:
+                report.quota_probes = budget_control.probe_stale_providers(
+                    db, settings, now=budget_now
+                )
+            except Exception as exc:  # noqa: BLE001 - probing is advisory
+                report.errors.append(f"Quota probe failed: {exc}")
         report.quota_overrides_expired = budget_control.expire_quota_overrides(
             db, now=budget_now
         )
@@ -4078,6 +4126,14 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
 
     if router is not None:
         _record_routing_deferrals(db, report, router)
+    try:
+        metrics = spin_guard.idle_metrics(
+            db, accepted_cards_by_task=_accepted_cards_by_task(paths, settings)
+        )
+        # Only while something ran in the window, so an idle report keeps its shape.
+        report.idle_metrics = metrics if metrics["by_task_type"] else {}
+    except Exception as exc:  # noqa: BLE001 - reporting only
+        report.errors.append(f"idle metrics failed: {exc}")
     report.resource_reserved = db.active_resource_totals()
     report.status_counts = db.status_counts()
     return report

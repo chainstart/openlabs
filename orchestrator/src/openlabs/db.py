@@ -1823,11 +1823,13 @@ class FactoryDB:
         status: str = "queued",
         error: str | None = None,
         event: Mapping[str, Any] | None = None,
+        meta: Mapping[str, str] | None = None,
     ) -> bool:
         """``awaiting_remote -> queued`` (or ``needs_human``) with an updated objective.
 
         No attempt is consumed and no Agent time is charged: the parked task never ran.
         Returns False when the task is no longer awaiting (cancelled by a freeze, say).
+        ``meta`` (e.g. the updated wait record) is written in the same transaction.
         """
 
         if status not in {"queued", "needs_human"}:
@@ -1844,6 +1846,12 @@ class FactoryDB:
                 (status, objective, error, now, task_id),
             ).rowcount
             if changed:
+                for key, value in (meta or {}).items():
+                    connection.execute(
+                        "INSERT INTO meta(key, value) VALUES(?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (key, str(value)),
+                    )
                 self._event(
                     connection,
                     "task",
@@ -1851,6 +1859,42 @@ class FactoryDB:
                     "remote_wait_released",
                     {"status": status, **dict(event or {})},
                 )
+        return bool(changed)
+
+    def hold_queued_task(
+        self,
+        task_id: str,
+        *,
+        not_before: str | None = None,
+        status: str | None = None,
+        error: str | None = None,
+        event_type: str,
+        detail: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """Delay a queued task (``not_before``) or stop it (``status='needs_human'``).
+
+        Used by the no-progress guard; only a task still ``queued`` changes.
+        """
+
+        if status not in {None, "needs_human"}:
+            raise ValueError("a queued task is only held or stopped for a human")
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if status is not None:
+                changed = connection.execute(
+                    "UPDATE tasks SET status=?, not_before=NULL, last_error=?, updated_at=? "
+                    "WHERE task_id=? AND status='queued'",
+                    (status, error, now, task_id),
+                ).rowcount
+            else:
+                changed = connection.execute(
+                    "UPDATE tasks SET not_before=?, updated_at=? "
+                    "WHERE task_id=? AND status='queued'",
+                    (not_before, now, task_id),
+                ).rowcount
+            if changed:
+                self._event(connection, "task", task_id, event_type, dict(detail or {}))
         return bool(changed)
 
     def reassign_queued_task(

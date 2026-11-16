@@ -149,6 +149,15 @@ class ProgramSettings:
     # much toward ``candidate_pool_low_water`` (replaced by this instance's own
     # average once a few scouts have finished).
     scout_expected_cards: float = 2.0
+    # Empty-draw backoff (2026-11-16): after the n-th consecutive scout of a line
+    # that registered no usable card while the line's candidate supply (queue files,
+    # line entry, held-entry releases, its ledger topics) is unchanged, the next
+    # scout of that line waits scout_empty_backoff_hours[n-1] (last value repeats).
+    # A supply change releases the backoff at once. After scout_exhausted_after
+    # such draws the line is reported as candidates_exhausted and no longer scouted
+    # until its supply changes (0 = never mark exhausted).
+    scout_empty_backoff_hours: tuple[float, ...] = (1.0, 6.0, 24.0)
+    scout_exhausted_after: int = 4
     # Admission reviews of one domain in flight at once (different batches of
     # its proposed topics); 1 keeps one review per domain.
     max_admissions_per_domain: int = 1
@@ -584,6 +593,17 @@ class FactorySettings:
     max_task_wall_seconds: int = 43_200
     max_campaign_agent_seconds: int = 86_400
     launch_jobs: bool = True
+    # Local overflow compute queue dispatch; None follows launch_jobs. Setting it
+    # true keeps CPU-only local jobs starting while launch_jobs = false stops every
+    # agent session (production stop).
+    launch_local_compute: bool | None = None
+    # Generic no-progress guard (spin_guard.py): after this many consecutive tasks of
+    # one campaign without progress its queued tasks wait no_progress_backoff_minutes
+    # (last value repeats); at no_progress_escalate_after they stop as needs_human.
+    # 0 disables the backoff (and the guard); escalate 0 = back off only.
+    no_progress_backoff_after: int = 4
+    no_progress_escalate_after: int = 8
+    no_progress_backoff_minutes: tuple[int, ...] = (60, 240, 1440)
     archive_result_receipts: bool = True
     max_cpu_fraction_of_host: float = 0.75
     reserve_cpu_threads: int = 2
@@ -847,6 +867,15 @@ def _nonnegative_float(value: Any, default: float) -> float:
     return parsed if parsed >= 0 else default
 
 
+def _hours_sequence(value: Any, default: tuple[float, ...]) -> tuple[float, ...]:
+    if not isinstance(value, (list, tuple)) or not value:
+        return default
+    parsed = tuple(_nonnegative_float(item, -1.0) for item in value)
+    if any(item < 0 for item in parsed):
+        return default
+    return parsed
+
+
 def _domain_list(value: Any, key: str = "domains") -> tuple[str, ...]:
     if value is None:
         return ()
@@ -875,6 +904,10 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         ),
         max_concurrent_scouts=_positive_int(program.get("max_concurrent_scouts"), 1),
         scout_expected_cards=_positive_float(program.get("scout_expected_cards"), 2.0),
+        scout_empty_backoff_hours=_hours_sequence(
+            program.get("scout_empty_backoff_hours"), (1.0, 6.0, 24.0)
+        ),
+        scout_exhausted_after=_nonnegative_int(program.get("scout_exhausted_after"), 4),
         max_admissions_per_domain=_positive_int(program.get("max_admissions_per_domain"), 1),
         max_concurrent_admissions=_nonnegative_int(
             program.get("max_concurrent_admissions"), 0
@@ -1359,6 +1392,18 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
         max_task_wall_seconds=_positive_int(factory.get("max_task_wall_seconds"), 43_200),
         max_campaign_agent_seconds=_positive_int(factory.get("max_campaign_agent_seconds"), 86_400),
         launch_jobs=bool(factory.get("launch_jobs", True)),
+        launch_local_compute=(
+            None if factory.get("launch_local_compute") is None
+            else bool(factory.get("launch_local_compute"))
+        ),
+        no_progress_backoff_after=_nonnegative_int(factory.get("no_progress_backoff_after"), 4),
+        no_progress_escalate_after=_nonnegative_int(
+            factory.get("no_progress_escalate_after"), 8
+        ),
+        no_progress_backoff_minutes=(
+            _minutes_sequence(factory.get("no_progress_backoff_minutes"))
+            if factory.get("no_progress_backoff_minutes") is not None else (60, 240, 1440)
+        ),
         archive_result_receipts=bool(retention.get("archive_result_receipts", True)),
         max_cpu_fraction_of_host=_fraction(resources.get("max_cpu_fraction_of_host"), 0.75),
         reserve_cpu_threads=_nonnegative_int(resources.get("reserve_cpu_threads"), 2),

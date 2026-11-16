@@ -210,6 +210,49 @@ def repeated_expired_wait(db: Any, task_id: str, job_ids: Iterable[str]) -> bool
     return bool(set(record.get("job_ids") or ()) & set(job_ids))
 
 
+def _chain_wait_records(db: Any, task_id: str, *, depth: int = 30) -> list[dict[str, Any]]:
+    """Wait records of ``task_id`` and its ancestors (replans and seats in between)."""
+
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    current: str | None = task_id
+    while current and current not in seen and len(seen) < depth:
+        seen.add(current)
+        record = wait_record(db, current)
+        if record is not None:
+            records.append(record)
+        task = db.task(current)
+        current = str((task or {}).get("parent_task_id") or "") or None
+    return records
+
+
+def rewait_block(
+    db: Any, task_id: str, job_ids: Iterable[str], queue_root: Path
+) -> str | None:
+    """Why a yield on ``job_ids`` must not park again, or ``None`` when it may.
+
+    - ``remote_job_missing``: a listed job does not exist in either queue (wrong id,
+      never submitted); parking would release at once and loop.
+    - ``remote_jobs_already_released``: every listed job is already terminal and an
+      earlier wait of this task chain was released on one of them; the agent got the
+      outcomes and yields on them again (the park -> release -> yield loop).
+
+    A first yield on jobs that finished quickly still parks (and is released at once
+    with the outcomes), so the agent sees them exactly once.
+    """
+
+    wanted = [str(job_id) for job_id in job_ids]
+    views = [job_state(queue_root, job_id) for job_id in wanted]
+    if any(view["state"] == "missing" for view in views):
+        return "remote_job_missing"
+    if not all(is_terminal(view) for view in views):
+        return None
+    for record in _chain_wait_records(db, task_id):
+        if record.get("released_at") and set(record.get("job_ids") or ()) & set(wanted):
+            return "remote_jobs_already_released"
+    return None
+
+
 def build_record(
     *,
     job_ids: list[str],
@@ -289,51 +332,92 @@ def release_ready_waits(
     moment = now or _now()
     summary: dict[str, Any] = {"released": [], "expired": [], "waiting": []}
     for task in db.awaiting_remote_tasks():
-        task_id = str(task["task_id"])
-        record = wait_record(db, task_id)
-        if record is None:
-            # A parked task without its wait record cannot be checked: run it.
-            db.release_awaiting_task(
-                task_id,
-                objective=_strip_parked_prefix(str(task["objective"])),
-                event={"reason": "wait_record_missing"},
+        # One unreadable wait must not hold back the other parked tasks.
+        try:
+            _release_one(db, task, moment=moment, queue_root=queue_root, summary=summary)
+        except Exception as exc:  # noqa: BLE001 - reported, retried next tick
+            summary.setdefault("errors", []).append(
+                {"task_id": str(task.get("task_id")), "error": str(exc)[:300]}
             )
-            summary["released"].append(task_id)
-            continue
-        root = Path(str(record.get("queue_root") or queue_root or default_queue_root()))
-        views = [job_state(root, str(job_id)) for job_id in record.get("job_ids") or []]
-        done = all(is_terminal(view) for view in views)
-        deadline = effective_deadline(record, views)
-        expired = not done and moment >= deadline
-        if not done and not expired:
-            summary["waiting"].append(
-                {
-                    "task_id": task_id,
-                    "pending": [v["job_id"] for v in views if not is_terminal(v)],
-                    "deadline": _iso(deadline),
-                }
-            )
-            continue
-        note = _outcome_note(views, expired=expired, now=moment)
-        objective = note + "\n\n" + _strip_parked_prefix(str(task["objective"]))
-        states = {view["job_id"]: view["state"] for view in views}
+    return summary
+
+
+def _release_one(
+    db: Any,
+    task: Mapping[str, Any],
+    *,
+    moment: datetime,
+    queue_root: Path | None,
+    summary: dict[str, Any],
+) -> None:
+    task_id = str(task["task_id"])
+    record = wait_record(db, task_id)
+    if record is None:
+        # A parked task without its wait record cannot be checked: run it.
+        db.release_awaiting_task(
+            task_id,
+            objective=_strip_parked_prefix(str(task["objective"])),
+            event={"reason": "wait_record_missing"},
+        )
+        summary["released"].append(task_id)
+        return
+    root = Path(str(record.get("queue_root") or queue_root or default_queue_root()))
+    views = [job_state(root, str(job_id)) for job_id in record.get("job_ids") or []]
+    at_start = record.get("states_at_start") or {}
+    missing = [view["job_id"] for view in views if view["state"] == "missing"]
+    if missing and all(at_start.get(job_id) == "missing" for job_id in missing):
+        # Never existed: releasing would only let the agent yield on it again.
         if db.release_awaiting_task(
             task_id,
-            objective=objective,
-            event={"expired": expired, "job_states": states},
+            objective=_strip_parked_prefix(str(task["objective"])),
+            status="needs_human",
+            error="remote_job_missing: " + ", ".join(missing),
+            event={"reason": "remote_job_missing", "job_ids": missing},
+            meta={WAIT_META_PREFIX + task_id: json.dumps(
+                {**record, "released_at": _iso(moment), "expired": False,
+                 "job_states": {v["job_id"]: v["state"] for v in views}},
+                sort_keys=True)},
         ):
-            db.update_meta(
+            summary.setdefault("needs_human", []).append(task_id)
+        return
+    # A job that existed when the wait started and is missing now (queue mount
+    # gone, say) is not finished: keep waiting until the deadline.
+    done = all(
+        is_terminal(view) and not (view["state"] == "missing"
+                                   and at_start.get(view["job_id"]) != "missing")
+        for view in views
+    )
+    deadline = effective_deadline(record, views)
+    expired = not done and moment >= deadline
+    if not done and not expired:
+        summary["waiting"].append(
+            {
+                "task_id": task_id,
+                "pending": [v["job_id"] for v in views
+                            if not is_terminal(v) or v["job_id"] in missing],
+                "deadline": _iso(deadline),
+            }
+        )
+        return
+    note = _outcome_note(views, expired=expired, now=moment)
+    objective = note + "\n\n" + _strip_parked_prefix(str(task["objective"]))
+    states = {view["job_id"]: view["state"] for view in views}
+    # Release and the updated wait record commit together, so a crash cannot
+    # lose the expired flag that stops a second wait on the same jobs.
+    if db.release_awaiting_task(
+        task_id,
+        objective=objective,
+        event={"expired": expired, "job_states": states},
+        meta={
+            WAIT_META_PREFIX + task_id: json.dumps(
                 {
-                    WAIT_META_PREFIX + task_id: json.dumps(
-                        {
-                            **record,
-                            "released_at": _iso(moment),
-                            "expired": expired,
-                            "job_states": states,
-                        },
-                        sort_keys=True,
-                    )
-                }
+                    **record,
+                    "released_at": _iso(moment),
+                    "expired": expired,
+                    "job_states": states,
+                },
+                sort_keys=True,
             )
-            summary["expired" if expired else "released"].append(task_id)
-    return summary
+        },
+    ):
+        summary["expired" if expired else "released"].append(task_id)
