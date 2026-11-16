@@ -5,14 +5,14 @@
 `bin/openlabs-resource-guard` also supports the cc-sg Docker workspace without
 an in-container systemd manager. The wrapper verifies the actual cgroup v2
 CPU quota (at most 75% of visible CPUs), memory hard limit (34 GiB), swap limit
-(4 GiB) and task limit (512). It also requires the host GPU lock directory to
+(4 GiB) and task limit (2048). It also requires the host GPU lock directory to
 be bind-mounted at `$XDG_RUNTIME_DIR/openlabs-gpu-guard` (default
 `/run/user/1000/openlabs-gpu-guard`). Missing limits or the mount fail closed.
 CPU and GPU command syntax is unchanged. GPU admission, allocator caps,
 telemetry supervision and descendant cleanup still use `gpu_guard.py`.
 
 The cc-sg workspace has 15 CPUs, a 34 GiB hard memory limit, a 30 GiB Docker
-memory reservation, 4 GiB swap and 512 tasks. A Docker memory reservation is
+memory reservation, 4 GiB swap and 2048 tasks. A Docker memory reservation is
 not the WSL guard's `memory.high` soft throttle. These are aggregate limits
 for processes **inside that container**, not a combined host-and-container
 CPU/RAM budget. WSL research remains in its own systemd slice; do not assume
@@ -45,8 +45,8 @@ On this 20-thread WSL host the limits are:
 - memory hard limit: 34 GiB
 - swap: 4 GiB
 - tasks: 512
-- GPU: one declared research job per device, 75% total VRAM ceiling, at least
-  2048 MiB free, stop at 85 C; default declared job budget below is 8192 MiB.
+- GPU: one declared research job per device, 90% total VRAM ceiling, at least
+  1024 MiB free, stop at 85 C; default declared job budget below is 8192 MiB.
 
 The memory, swap and task limits match the installed OpenMath guard. OpenMath
 does not currently define a CPU quota; OpenLabs retains its pre-existing 75%
@@ -173,8 +173,8 @@ Admission fails promptly when occupied; queue/retry after the current job ends.
 The budget includes allocator memory, contexts, and other CUDA allocations.
 CPU commands and downloads can run alongside the reserved GPU job.
 
-On this RTX 5070 (12227 MiB), the global used-memory ceiling is **9170 MiB**,
-leaving at least **3057 MiB** for the display/host and transient pressure. An
+On this RTX 5070 (12227 MiB), the global used-memory ceiling is **11004 MiB**,
+leaving at least **1223 MiB** for the display/host and transient pressure. An
 8192 MiB job is admitted only when current usage plus 8192 fits below that ceiling.
 Its PyTorch native allocator receives **7424 MiB** (768 MiB context reserve).
 The allocator environment key is verified against installed PyTorch 2.10; other

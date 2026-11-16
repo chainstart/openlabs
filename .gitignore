@@ -56,3 +56,6 @@ dist/
 *.synctex.gz
 *.toc
 *.xdv
+
+# Historical recovery notes already preserved in the private data repository.
+/data/maintenance/biomed-sixhour-20261109/environment/
