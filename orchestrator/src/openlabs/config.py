@@ -232,6 +232,14 @@ class ProgramSettings:
     # (``auto_reopen``: shared control receipt, line capability) came true; a
     # topic may ask for fewer. 0 turns automatic reopening off.
     auto_reopen_max: int = 1
+    # Card intake (2026-11-16): run the mechanical precheck a research line declares
+    # (``admission_precheck`` in research-lines.yaml, no model involved) before a card is
+    # registered for admission, and raise a card's compute plan to the line's typical
+    # cost (``card_compute_floor`` / ``per_paper_cost``). A line that declares
+    # neither is unaffected. The timeout caps any line's own timeout_seconds.
+    card_precheck: bool = True
+    card_precheck_max_seconds: int = 900
+    card_compute_floor: bool = True
 
 
 DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_gpt")
@@ -266,6 +274,24 @@ class OwnerSettings:
     # Weaker GPT model the brief offers through `codex exec` / Codex spawn_agent.
     codex_helper_model: str = "gpt-6.1-sol"
     codex_light_model: str = "gpt-6-luna"
+    # Recompute review (2026-11-16): a manuscript the owner returns as ready_for_review
+    # first goes to an independent reviewer (other model family; same family, other
+    # model when only one is configured) who recomputes its core results from the data.
+    # major -> back to the owner, then the next round; minor -> the owner fixes and
+    # self-checks, then the unified review; accept -> the unified review; reject or a
+    # major verdict in round review_max_rounds -> direction decision. False: the owner's
+    # ready_for_review goes straight to the unified review (behaviour before 2026-11-16).
+    recompute_review: bool = True
+    review_max_rounds: int = 3
+    # Session length (2026-11-16): seats one agent session may run before the next seat
+    # starts a fresh session from the owner's handover (OWNER_HANDOVER.md). 1 = every
+    # seat is a fresh session; 0 = no seat limit (always resume, the earlier behaviour).
+    session_max_seats: int = 1
+    # Tokens read (uncached + cached input) by one session above which the next seat
+    # starts fresh even below session_max_seats; 0 = no token threshold.
+    session_max_tokens_read: int = 0
+    # Size limit of the owner's handover file; a larger one is cut for the next brief.
+    handover_max_bytes: int = 8_192
 
 
 DEFAULT_DIRECTION_LIMITS: dict[str, int] = {
@@ -617,6 +643,79 @@ class FactorySettings:
     runners: dict[str, RunnerSpec] = field(default_factory=dict)
     routing: RoutingSettings = field(default_factory=RoutingSettings)
     assets: AssetSettings = field(default_factory=lambda: AssetSettings())
+    reporting: ReportingSettings = field(default_factory=lambda: ReportingSettings())
+
+
+@dataclass(frozen=True)
+class ModelPrice:
+    """List price of one model in USD per million tokens (an equivalent, not a bill)."""
+
+    input: float
+    cached_input: float
+    output: float
+    cache_write: float = 0.0
+    cache_write_1h: float | None = None
+
+
+# Prices used by the 2026-11-16 cost review (maintenance/20261116-cost-review section 1):
+# the Claude rows from the claude-api model table (2026-11-03), the OpenAI rows from the
+# GPT-6.1 Sol announcement and public price trackers (2026-11-16), short-context tier.
+DEFAULT_MODEL_PRICES: dict[str, ModelPrice] = {
+    "claude-fable-5-2": ModelPrice(8.0, 0.20, 40.0, 10.0, 16.0),
+    "claude-opus-5-5": ModelPrice(4.0, 0.20, 20.0, 5.0, 8.0),
+    "claude-haiku-5-5": ModelPrice(0.10, 0.01, 0.50, 0.125, 0.20),
+    "gpt-6.1-sol": ModelPrice(2.0, 0.10, 10.0, 2.5),
+    "gpt-6-astra": ModelPrice(10.0, 1.0, 50.0, 12.5),
+    "gpt-6-luna": ModelPrice(0.10, 0.01, 0.50, 0.125),
+}
+
+
+@dataclass(frozen=True)
+class ReportingSettings:
+    """``[reporting]``: token cost and per-topic economics in the tick report."""
+
+    prices: dict[str, ModelPrice] = field(default_factory=lambda: dict(DEFAULT_MODEL_PRICES))
+    # Window of the per-task-type token/cost summary next to the idle metrics.
+    token_window_hours: int = 24
+    # Only attempts finished at or after this time count toward the per-paper averages
+    # (for example the date of a restart); None counts everything recorded.
+    economics_since: str | None = None
+
+
+def load_reporting_settings(value: Any) -> ReportingSettings:
+    if value is None:
+        return ReportingSettings()
+    if not isinstance(value, dict):
+        raise ValueError("[reporting] must be a table")
+    defaults = ReportingSettings()
+    prices = dict(defaults.prices)
+    raw_prices = value.get("prices")
+    if raw_prices is not None:
+        if not isinstance(raw_prices, dict):
+            raise ValueError("[reporting.prices] must be a table of models")
+        for model, row in raw_prices.items():
+            if not isinstance(row, dict):
+                raise ValueError(f"[reporting.prices.{model}] must be a table")
+            try:
+                prices[str(model)] = ModelPrice(
+                    input=float(row["input"]),
+                    cached_input=float(row.get("cached_input", row["input"])),
+                    output=float(row["output"]),
+                    cache_write=float(row.get("cache_write", 0.0)),
+                    cache_write_1h=(None if row.get("cache_write_1h") is None
+                                    else float(row["cache_write_1h"])),
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"[reporting.prices.{model}] needs numeric input and output"
+                ) from exc
+    since = value.get("economics_since")
+    return ReportingSettings(
+        prices=prices,
+        token_window_hours=_positive_int(value.get("token_window_hours"),
+                                         defaults.token_window_hours),
+        economics_since=str(since).strip() if since else None,
+    )
 
 
 @dataclass(frozen=True)
@@ -939,6 +1038,9 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         owner_mode=_owner_mode(program.get("owner_mode")),
         owner=_owner_settings(program.get("owner")),
         auto_reopen_max=_nonnegative_int(program.get("auto_reopen_max"), 1),
+        card_precheck=program.get("card_precheck", True) is not False,
+        card_precheck_max_seconds=_positive_int(program.get("card_precheck_max_seconds"), 900),
+        card_compute_floor=program.get("card_compute_floor", True) is not False,
         **_git_settings(program.get("git")),
     )
 
@@ -990,6 +1092,15 @@ def _owner_settings(value: Any) -> OwnerSettings:
         claude_subagent_model=(str(subagent).strip() or None) if subagent else None,
         codex_helper_model=str(value.get("codex_helper_model") or defaults.codex_helper_model),
         codex_light_model=str(value.get("codex_light_model") or defaults.codex_light_model),
+        recompute_review=value.get("recompute_review", defaults.recompute_review) is not False,
+        review_max_rounds=_positive_int(value.get("review_max_rounds"),
+                                        defaults.review_max_rounds),
+        session_max_seats=_nonnegative_int(value.get("session_max_seats"),
+                                           defaults.session_max_seats),
+        session_max_tokens_read=_nonnegative_int(value.get("session_max_tokens_read"),
+                                                 defaults.session_max_tokens_read),
+        handover_max_bytes=_positive_int(value.get("handover_max_bytes"),
+                                         defaults.handover_max_bytes),
     )
 
 
@@ -1417,4 +1528,5 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
         budget=load_budget_settings(payload.get("budget")),
         runners=runners,
         routing=routing,
+        reporting=load_reporting_settings(payload.get("reporting")),
     )

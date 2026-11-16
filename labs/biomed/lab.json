@@ -8,6 +8,7 @@
     {"skill_id": "biomed-research-loop", "path": "skills/biomed-research-loop/SKILL.md"},
     {"skill_id": "openlabs-biology-paper", "path": "../../workflows/paper/skills/openlabs-biology-paper/SKILL.md"},
     {"skill_id": "openlabs-paper-review", "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"},
+    {"skill_id": "openlabs-recompute-review", "path": "../../workflows/paper/skills/openlabs-recompute-review/SKILL.md"},
     {"skill_id": "openlabs-empirical-topic-scout", "path": "../../workflows/paper/skills/openlabs-empirical-topic-scout/SKILL.md"},
     {"skill_id": "openlabs-topic-admission", "path": "../../workflows/paper/skills/openlabs-topic-admission/SKILL.md"},
     {"skill_id": "openlabs-direction-decision", "path": "../../workflows/paper/skills/openlabs-direction-decision/SKILL.md"},

@@ -75,6 +75,7 @@ from . import local_compute
 from . import owner as owner_mode
 from . import remote_wait
 from . import spin_guard
+from . import usage as usage_accounting
 from . import utilization
 from .program_autonomy import (
     DIRECTION_SKILL,
@@ -532,9 +533,10 @@ def _park_for_remote_jobs(
     ).strip()
     resume_objective = remote_wait._strip_parked_prefix(resume_objective)
     session_mode = "resume" if current.get("agent_session_id") else "fresh"
-    if owner_seat and not owner_mode.is_owner_task(current):
-        # A converted topic's owner starts its own session with the job ids.
-        session_mode = "fresh"
+    if owner_seat:
+        # A converted topic's owner starts its own session with the job ids; an owner
+        # seat resumes only within [program.owner].session_max_seats/tokens.
+        session_mode = owner_mode.park_session_mode(db, settings, current)
     successor_id = f"await:{result_sha256[:32]}"
     if db.task(successor_id) is not None:
         return True
@@ -754,6 +756,12 @@ class TickReport:
     # Idle-spin view (spin_guard.idle_metrics): last 24 h per task type, attempts,
     # zero-output attempts and their agent hours.
     idle_metrics: dict[str, Any] = field(default_factory=dict)
+    # Tokens and list-price equivalent cost per task type over the same window
+    # (usage.token_cost_summary; per-attempt increments).
+    token_cost: dict[str, Any] = field(default_factory=dict)
+    # Per program topic in research: seats, agent hours, tokens, cost, CPU core-hours,
+    # phase; average cost of a paper that reached the confirmation queue.
+    topic_economics: dict[str, Any] = field(default_factory=dict)
     # Queued tasks the no-progress guard delayed or stopped this tick.
     no_progress_guard: list[dict[str, Any]] = field(default_factory=list)
 
@@ -761,7 +769,7 @@ class TickReport:
         payload = self._base_dict()
         for name in (
             "parallel_limit", "host_usage", "ailab", "local_compute", "balance", "remote_waits",
-            "idle_metrics", "no_progress_guard",
+            "idle_metrics", "token_cost", "topic_economics", "no_progress_guard",
         ):
             value = getattr(self, name)
             if value:
@@ -2601,6 +2609,11 @@ def ingest_results(
                         f"{receipt.get(key)!r} != {expected_value!r}"
                     )
             runtime = dict(receipt["runtime"])
+            try:
+                # Session-total counters of a resumed session become this attempt's use.
+                runtime = usage_accounting.record_increment(db, task, runtime)
+            except Exception as exc:  # noqa: BLE001 - accounting never blocks ingestion
+                report.errors.append(f"Could not compute usage increment of {task_id}: {exc}")
             _record_quota_reading(db, settings, report, task, runtime)
             result_path = Path(str(receipt["result_path"])).expanduser().resolve()
             actual_sha: str | None = None
@@ -3698,6 +3711,7 @@ def _write_task_spec(
         paper_skill_ids: set[str] = set()
         if task_type == "paper_review":
             paper_skill_ids.add("openlabs-paper-review")
+            paper_skill_ids.add(owner_mode.RECOMPUTE_SKILL)
         elif task_type in {"paper_readiness", "paper_write", "paper_revision"}:
             configured_paper_skill = _paper_skill(str(task.get("domain") or ""))
             if configured_paper_skill:
@@ -4134,6 +4148,14 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
         report.idle_metrics = metrics if metrics["by_task_type"] else {}
     except Exception as exc:  # noqa: BLE001 - reporting only
         report.errors.append(f"idle metrics failed: {exc}")
+    try:
+        cost = usage_accounting.token_cost_summary(db, settings)
+        report.token_cost = cost if cost["by_task_type"] else {}
+        economics = usage_accounting.topic_economics(db, paths, settings)
+        report.topic_economics = economics if economics.get("topics") or economics.get(
+            "ready_papers") else {}
+    except Exception as exc:  # noqa: BLE001 - reporting only
+        report.errors.append(f"token cost summary failed: {exc}")
     report.resource_reserved = db.active_resource_totals()
     report.status_counts = db.status_counts()
     return report

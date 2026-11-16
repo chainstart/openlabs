@@ -45,7 +45,8 @@ def _owner_session_context(context: Mapping[str, Any]) -> dict[str, Any]:
         "this topic and decide the next step yourself. Work only in the private campaign "
         f"workspace {context.get('agent_workspace')}; never modify the canonical campaign "
         f"{context.get('canonical_campaign_workspace')}. Keep the work log "
-        f"{owner.get('work_log')} current and, before the seat ends "
+        f"{owner.get('work_log')} and OWNER_HANDOVER.md next to it current and, before the "
+        "seat ends "
         f"({owner.get('deadline')}), write the status JSON to {context.get('result_path')}."
     )
     return {

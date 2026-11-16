@@ -99,7 +99,7 @@ def line_summary(document: Mapping[str, Any] | None, line_id: str) -> dict[str, 
 # (targets already screened against the template and checked for occupancy). Scouts of a
 # queued template copy entries from it instead of searching for targets themselves.
 TEMPLATE_SUMMARY_FIELDS = (
-    "id", "name", "paradigm", "feasible", "per_paper_cost", "candidate_queue",
+    "id", "version", "name", "paradigm", "feasible", "per_paper_cost", "candidate_queue",
 )
 
 

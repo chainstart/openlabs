@@ -328,6 +328,82 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
 - **空转指标**：每个 tick 报告带 `idle_metrics`：最近 24 小时每个任务类型的 `attempts`、`zero_output`
   （任务按上面的口径无进展；scout 为无有效卡片）、`agent_hours` 与 `zero_output_agent_hours`，以及合计。
   例：`tail -1 state/ticks.jsonl | jq .report.idle_metrics`。
+- **token 与等价成本**（2026-11-16，`usage.py`）：旁边的 `token_cost` 给同一窗口
+  （`[reporting].token_window_hours`，默认 24）每个任务类型的 `attempts`、`agent_hours`、`tokens_read`
+  （未缓存+缓存读+缓存写的输入）、`output_tokens`、`equivalent_usd`（按 `[reporting.prices]` 的列表价，
+  默认取 2026-11-16 成本核算的价格；不是账单）和 `unpriced_attempts`（模型不在价格表里）。
+  `topic_economics` 给每个在研（active/in_review）题目一行：`seats`（负责人坐席数）、`agent_hours`、
+  `tokens_read`、`output_tokens`、`equivalent_usd`、`cpu_core_hours`、`phase`（`precheck`/`solving`/
+  `writing` 由负责人在状态包里声明；`recompute_review_N`、`revision_after_round_N`、`minor_revision`、
+  `unified_review`、`direction_decision`、`awaiting_confirmation` 由控制面判断），以及
+  `per_ready_paper`：进入 ready 队列（待人工确认）的论文平均成本，`direct_*` 只算该题 campaign 自己的尝试，
+  `loaded_equivalent_usd` 把窗口内全部尝试（出题、立项、决策、冻结题）摊到这些论文上。只统计
+  `[reporting].economics_since` 之后结束的尝试（未设则全部）；建议设为重启时刻。CPU 核时取自作业状态文件：
+  ailab 作业为 `result/receipt.json` 的 `elapsed_seconds` × 线程数，本机作业为 `started_at` 到
+  `finished_at`（运行中算到现在）；只有任务曾 yield 等待过的作业，或本机作业的 `source` 在该题 campaign
+  或其尝试工作区里，才归到该题。`program utilization` 输出同样的 `token_cost` 与 `topic_economics`。
+- **token 记账改为每次尝试的增量**（2026-11-16）。成本核算发现：续接会话时 Codex 的 token 计数和 Claude 的
+  `total_cost_usd` 是整个会话的累计值（Codex 相加虚高 4.6 倍，Claude 续接费用约 3 倍），Claude 的 token 计数
+  则是本次调用的。现在入库时（`usage.record_increment`）按同一会话之前的记录扣除：原始值留在
+  `usage_cumulative`，会话此前的累计在 `usage_session_base`，顶层字段改为本次增量，`usage_basis:
+  attempt_increment`；计数比会话此前累计还小（进程重启后从零计）时原样保留。历史行不改写，
+  `usage.normalized_attempts` 读的时候用同样的方法校正，所以上面的报表对旧数据也成立；`budget.execution_summary`
+  与资产复用对比直接读顶层字段，今后自然是增量。配速与额度估算（`estimate_stale_readings`）用的是 Agent 秒数和
+  额度读数，不读 token，不受影响。lab runner 另外记录 Claude 的缓存写入
+  （`cache_write_input_tokens`、`cache_write_1h_input_tokens`），它们按缓存写价计。口径限制：runtime
+  只有整次尝试的 token，没有逐请求的模型，所以全部按该尝试的模型计价——配置为 gpt-6-astra、把大量工作交给
+  gpt-6.1-sol 子会话的负责人坐席会被高估（用 2026-11-16 前的数据核对：V0651 Hya 课题按此口径约 108 美元，
+  逐请求实测 37 美元；全期 Codex 输入 token 由原始相加的 6,812M 校正为 1,365M，实测 1,471M）；单次请求超过
+  长上下文阈值的加价未计。精确核算仍用 `maintenance/20261116-cost-review/` 的逐请求脚本。
+
+### 负责人模式：一直负责到复审“小修/接受”（2026-11-14，2026-11-16 扩展）
+
+`[program].owner_mode` 打开后，立项的题目由一个负责人 agent（`topic_owner` 坐席，一次一个进程，按
+`[program.owner].runners` 的顺序选 runner）从头负责：做不做子 agent、何时调用另一家模型都由它决定。控制面
+只给目标、资源、工具和硬限制（简报约 4.3 KB，`owner.render_brief`），并按负责人与评审交回的结果自动衔接。
+
+**目标**是稿件达到独立“重算式复审”的小修或接受，而不只是写出稿件。状态机（存于 meta `owner_state:<campaign>`
+的 `review_round`、`review_stage`、`review_history`）：
+
+```
+负责人坐席 --ready_for_review--> 重算式复审第 N 轮（paper_review，routing owner_recompute_review）
+   accept  ------------------------------------------------> 统一评审（routing owner_review）
+   minor   --> 负责人小修 + 自查一致性 --ready_for_review----> 统一评审
+   major   --> 负责人修改（可提交作业并 awaiting_remote）--ready_for_review--> 第 N+1 轮（新评审会话）
+   major 且 N = review_max_rounds、或 reject --> 方向决策（owner_review_rounds_exhausted / owner_review_rejected）
+   结论无法解析 --> 同一轮换新会话重审一次；再失败 --> 回负责人
+统一评审 ready --> ready 队列（待人工确认、交付流水线）；统一评审要求修改 --> 回负责人 --> 再次统一评审
+```
+
+- **重算式复审**：`paper_review` 任务、技能 `openlabs-recompute-review`、空白会话、父任务是负责人坐席，所以
+  路由按父任务避开负责人的模型族（只有一个模型族时同族不同模型，已有机制）。每轮都是新任务新会话，不继承上一轮
+  评审的上下文；输入包（`program_control/recompute-reviews/<campaign>/round-N-*.json`）列出负责人结果、campaign
+  目录、`research_state.json`、工作日志、该线规格、核对清单和此前各轮的意见与作者答复（`REVIEW_RESPONSE.md`
+  的路径与哈希，以及状态包的 `response` 字段）。核对清单取研究线的 `review_checklist`（见下节），没有时用通用
+  清单：关键数值复现、数据与时间/单位系统、误差预算与敏感性、文献抽查、表图正文一致性、流程用语与过强表述。
+  评审交回 `recompute_review`：`verdict`（accept/minor/major/reject）、`required`、`optional`、`unverified`、
+  `checks`、`scripts`（重算脚本路径）、`summary`。
+- **与统一评审的分工**：重算式复审是负责人循环内的质量环节，只管“核心结论能否从数据重算出来”；统一评审
+  （`paper-writing review unified-run`）仍是交付/投稿前的正式关口（编辑筛查、盲审、预注册原文逐字核对、文献与
+  公式核验）。二者不重复：重算式复审不做预注册逐字核对和期刊筛查；统一评审的任务说明列出重算记录与脚本，要求
+  不再重算，只核对重算提出的必改项已解决，并在复审轮把记录写进答复信供审稿人参考。重算式复审通过（minor 完成
+  或 accept）后，负责人再交 ready_for_review 只走统一评审。方向决策选定点分析后重算轮次从零开始
+  （`review_cycle` 加一，历史保留）；选换刊时证据不变，已通过的重算保留，只再走统一评审，未通过的从零开始。
+  方向决策次数仍受 `[program.direction_limits]` 约束。
+- **长会话成本**：默认每个坐席都是新会话（`session_max_seats = 1`），从负责人自己写的交接文件
+  `OWNER_HANDOVER.md`（当前状态、待办、关键文件路径、待完成作业、上一轮评审与答复）开始；控制面只检查它是否存在、
+  是否超过 `handover_max_bytes`（默认 8192 字节），在下一份简报里附上（超长截断并提示），并附上工作日志路径和
+  上一轮复审的结论与必改项，不替负责人写摘要，也不因缺失或超长退回结果。`session_max_seats = N` 允许同一会话
+  连续 N 个坐席（0 = 不限，即旧行为）；`session_max_tokens_read > 0` 时该会话已读输入 token 达到阈值也换新会话。
+  远程作业等待后的唤醒坐席遵循同一规则。两种 runner 的效果：Claude runner 新会话不带 `--resume`，不必在缓存
+  过期（最长 1 小时）后把整段旧上下文重新写入缓存（续接一个四小时坐席后的会话，常见一次几美元的缓存写入）；
+  Codex runner 新会话是新的 thread，不再每次请求重读累计的旧上下文，`total_token_usage` 也从零计。负责人在
+  坐席内自己开的子 agent 不受此影响。
+- 状态包可带 `phase`（`precheck`/`solving`/`writing`），只用于上面的 `topic_economics`。
+- 配置（`[program.owner]`）：`recompute_review`（默认 true；false 时 ready_for_review 直接进统一评审，
+  即 2026-11-16 之前的行为）、`review_max_rounds`（默认 3）、`session_max_seats`（默认 1）、
+  `session_max_tokens_read`（默认 0，不按 token 切）、`handover_max_bytes`（默认 8192）。其余键见
+  `config.OwnerSettings`。
 
 ### 研究产线
 
@@ -344,6 +420,66 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   `license_check`、`fee_check`（每本 routine 期刊的版面费/彩图费/投稿费与证据等级，至少一本已核实的
   免费途径）。例：`packages/contracts/examples/research-program/topic-card.research-line.example.json`。
 - 立项后第一项研究任务就是预检；不通过时研究者返回 `freeze_reason_class: feasibility_precheck_failed`。
+- **立项前的机械预检与核时下限**（2026-11-16，`card_precheck.py`）。卡片在登记为 proposed 之前由控制面处理，
+  不调用模型；没有声明的产线/模板不受影响。`[program].card_precheck`（默认 true）、
+  `card_precheck_max_seconds`（默认 900，封顶每个命令的超时）、`card_compute_floor`（默认 true）可在实例里关掉。
+  字段（产线条目里；`admission_precheck` 的形式由天文线 2026-11-16 写下的 draft 定，编排器按它读取）：
+
+  ```yaml
+  admission_precheck:            # 产线级；按卡片的 paper_template 选命令
+    schema: draft-2026-11-16
+    model_calls: none
+    network: none
+    per_template:
+      contact-binary-solution:
+        command: /abs/venv/bin/python /abs/enumerate/admission_precheck.py {entry_id} --json
+        inputs: [...]            # 说明性
+        pass_condition: exit code 0 and JSON verdict == "pass"   # 说明性；判定规则见下
+        hard_checks: [...]       # 说明性
+        soft_checks: [...]       # 说明性
+        typical_seconds: 0.1-1
+        output: JSON {verdict, failed, warnings, checks[{name, pass, hard, value, rule}]}
+        timeout_seconds: 60      # 可选，编排器扩展；默认 120
+        cwd: /abs/path           # 可选，编排器扩展；默认本卡的预检输出目录
+  card_compute_floor:            # 可选，产线或模板；缺省时取 per_paper_cost 的下界
+    ailab_core_hours: 60         # compute_plan.ailab 的 cpus × hours 不得低于此
+    agent_hours: 6               # cost_estimate.agent_seconds 不得低于此 × 3600
+  review_checklist:              # 可选，产线：重算式复审的核对清单（字符串列表，或文档的一节）
+    path: registry/research-lines/sop-astro-survey-photometry.md
+    section: "8.4"
+  ```
+
+  命令是字符串（按 shell 词法切分，但不经过 shell）或 argv 列表。占位符：`{entry_id}`（卡片
+  `candidate_queue_entry.entry_id`，即队列条目或批次号）、`{tic}`（`TIC...` 条目的数字部分）、`{card}`（存好的
+  卡片 JSON）、`{line}`、`{template}`、`{data}`（数据仓库根）；环境变量 `OPENLABS_CARD_PATH`、
+  `OPENLABS_QUEUE_ENTRY_ID`、`OPENLABS_RESEARCH_LINE`、`OPENLABS_PAPER_TEMPLATE`。判定读退出码和 stdout 上的
+  JSON 对象（stdout 原样存为 `program_control/<项目>/prechecks/topic-<卡片哈希>/precheck.json`）：
+  - **pass**：退出码 0 且 `verdict == "pass"`；结果（含 `warnings`）写进题目 `card_check.precheck`，随卡进入
+    立项评审包。
+  - **fail**：JSON 的 verdict 不是 pass（`fail`、`not_found`）且退出码为 0/1/2，或卡片缺少命令需要的
+    `candidate_queue_entry.entry_id`。卡片记为 rejected（`card_precheck_failed`，不自动修正，不算对题目的判定，
+    `card_errors` 写失败的硬检查项：名称、值、规则），不进立项评审，退回出题方的结果里可见；每条线的累计数在
+    tick 报告 `program.card_prechecks.by_line.<线>.rejected`。
+  - **error**（基础设施问题）：超时、命令起不来、stdout 不是带 verdict 的 JSON、其他退出码。卡片保持 proposed
+    但不送立项评审（`schedule_topic_admission` 原因 `admission_precheck_error`），每个 tick 重跑一次
+    （`program.card_prechecks.retried`，`card_check.precheck.attempts` 计数），每次出错都写进 tick 报告
+    `errors`，直到通过（照常送评审）或不通过（记 rejected）。既不静默放行，也不静默拦截；
+    `by_line.<线>.waiting_on_error` 是正在等待的卡片数。线上去掉该模板的命令或在实例里关掉预检时，等待的卡片放行。
+
+  预检在 tick 里同步运行，只应声明不联网、几秒内跑完、读缓存数据的检查（天文线两个命令实测 0.1–0.3 秒）。
+  核时下限：卡片 `compute_plan.ailab` 的核时低于下限时把 `hours` 上调到下限、`agent_seconds` 低于下限时上调，
+  改动写进 `card_check.normalized`，不退回卡片。`per_paper_cost` 的下界只取以数字开头的值
+  （`"60-120 ..."` → 60；`"< 5"` 不设下限），优先 `ailab_core_hours`，其次 `cpu_core_hours`；天文线模板 v2 的
+  `cpu_core_hours: 60-120 per single-star paper ...` 与审计模板的 `400-560` 都能直接读出。
+- **多模板的枚举队列**（2026-11-16，队列 qp-2.0）。一条线可以有多个带 `candidate_queue` 的模板（天文线：
+  `contact-binary-solution` 的 `queue/queue.json`，`nn-catalogue-audit` 的 `queue/nn_audit_batches.json`）。出题说明
+  要求按各队列 `candidates` 的 `rank` 抽取，按条目的 `ledger_occupancy` 跳过占用的目标，把 `card_fields` 的全部键
+  原样抄进卡片（含 `reopens` 与 `reopen_basis`：旧规则下冻结的目标靠它们按新模板版本重新立项，台账按“问题+数据源+
+  主终点”指纹判重，重开类型须在旧题目声明过的类型内，未声明时不限），其余按该模板条目的 `card_rules` 写，不再写
+  单星口径的对称性/对照星门槛；同一目标出现在两个模板里是两个题目，不互相判重。空转退避的供给指纹包含每个模板
+  队列文件的哈希；另按模板记空抽次数（meta `program_scout_supply:<线>` 的 `templates`，有该模板的卡片立住即清零、队列
+  文件变了从 1 重计），写进出题说明的“Queue state”和退避信息，供 scout 跳过已抽空的模板。不依赖
+  `environment.standard_solver.spot_config` 或任何具体能力键。
 - 产线的 `environment.status` 不是 `ready` 时，立项关口的 admit 会被控制面改为 hold，复开条件类型
   `line_environment_ready`，关口的完整决定保留在立项记录里；方向文件把该产线标为 `ready` 后，控制面
   直接按原决定立项（`hold_released_admitted`），不需要新卡片。关口自己给出、只有
@@ -356,8 +492,8 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   `python -m openlabs program reopen-register --topic-id T --when-file F.json --by NAME [--note ...]`
   登记（只写题目台账，不碰数据库）；`program reopen-check` 只读地显示当前求值。控制面每轮检查：条件全成立、
   有空研究槽、campaign 仍有 Agent 预算、题目在负责人模式、自动重开次数未达 `[program].auto_reopen_max`
-  （默认 1，0 关闭）时，题目 `frozen -> active`（`auto_reopen_conditions_met`），campaign 解冻，给原负责人会话
-  派一个 `owner_reopened` 坐席并写明哪些条件变了。预注册、主终点、停止规则和预算都不变；再次冻结时若没有新的
+  （默认 1，0 关闭）时，题目 `frozen -> active`（`auto_reopen_conditions_met`），campaign 解冻，给原负责人
+  派一个 `owner_reopened` 坐席并写明哪些条件变了（会话按负责人模式的会话规则：默认新会话，从交接文件开始）。预注册、主终点、停止规则和预算都不变；再次冻结时若没有新的
   `reopen_when`，旧条件清空，不会因同一事实反复重开。
 - 现有实例迁移：`python -m openlabs program init-instance --instance-dir <dir> --set-research-lines`
   先看 dry-run，再加 `--write`。它只新增缺少的产线项目，并在实例 TOML 的 `[program]` 里写入

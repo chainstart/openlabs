@@ -686,7 +686,9 @@ def transition_topic(
 
 # Fields an automatic decision may set on a topic without changing its status.
 NOTE_FIELDS = frozenset(
-    {"awaiting_owner_review", "handoff", "paper_id", "release", "card_repair", "revision"}
+    {"awaiting_owner_review", "handoff", "paper_id", "release", "card_repair", "revision",
+     # A retried line admission precheck (program_flow.retry_held_prechecks).
+     "card_check"}
 )
 
 
@@ -936,12 +938,14 @@ def record_rejected_card(
     decided_by: str,
     errors: Iterable[str],
     metadata: Mapping[str, Any] | None = None,
+    reason: str = "card_invalid",
 ) -> TopicDecision:
     """Record a structurally invalid card as ``proposed -> rejected (card_invalid)``.
 
     The topic keeps the list of failed checks in ``card_errors``. Its fingerprint
     is stored when it can be computed, but an invalid card never blocks a
-    corrected resubmission.
+    corrected resubmission. ``reason`` names another mechanical rejection (a failed
+    line precheck: ``card_precheck_failed``); it is never a judged rejection.
     """
 
     if not decided_by:
@@ -979,10 +983,10 @@ def record_rejected_card(
             topic.update(_metadata_fields(metadata))
             topic["card_errors"] = problems
             document["topics"].append(topic)
-            for status, reason in (("proposed", "topic_card_submitted"),
-                                   ("rejected", "card_invalid")):
+            for status, step in (("proposed", "topic_card_submitted"),
+                                 ("rejected", reason)):
                 _, entry = _apply_transition(
-                    topic, status, reason=reason, decided_by=decided_by, evidence=[],
+                    topic, status, reason=step, decided_by=decided_by, evidence=[],
                     updates={}, at=now,
                 )
                 entries.append(entry)
@@ -994,7 +998,7 @@ def record_rejected_card(
         topic_id=topic_id,
         status=str(snapshot["status"]),
         changed=changed,
-        reason="card_invalid",
+        reason=reason,
     )
 
 

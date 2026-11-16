@@ -1391,6 +1391,18 @@ def _jsonl_runtime(path: Path) -> dict[str, Any]:
                 and cache_read >= 0
             ):
                 runtime["cached_input_tokens"] = cache_read
+            # Claude cache writes (priced separately; a resumed session rewrites its
+            # whole context once the cache has expired).
+            cache_write = usage.get("cache_creation_input_tokens")
+            if isinstance(cache_write, int) and not isinstance(cache_write, bool) and (
+                cache_write >= 0
+            ):
+                runtime["cache_write_input_tokens"] = cache_write
+                detail = usage.get("cache_creation")
+                hour = detail.get("ephemeral_1h_input_tokens") if isinstance(
+                    detail, Mapping) else None
+                if isinstance(hour, int) and not isinstance(hour, bool) and hour >= 0:
+                    runtime["cache_write_1h_input_tokens"] = hour
         total_cost = event.get("total_cost_usd")
         if isinstance(total_cost, (int, float)) and not isinstance(total_cost, bool):
             runtime["cost_usd"] = total_cost

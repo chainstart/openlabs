@@ -161,7 +161,9 @@ def test_owner_mode_by_line_only_applies_to_listed_lines(tmp_path, monkeypatch) 
 
 
 def test_continuing_seat_resumes_the_same_session_without_any_replan(tmp_path, monkeypatch):
-    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    # session_max_seats = 0: no session limit (the behaviour before 2026-11-16).
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch, owner_settings=OwnerSettings(session_max_seats=0))
     seat = _first_seat(paths, db, settings, monkeypatch, topic)
     _seat_packet(db, paths, seat["task_id"], {"status": "continuing"}, session="owner-s1",
                  artifact=True)
@@ -186,7 +188,8 @@ def test_awaiting_remote_parks_the_seat_and_wakes_the_same_session(tmp_path, mon
         {"job_id": JOB, "resources": {"cpu_threads": 2, "wall_seconds": 3600}}))
     (queue / "jobs" / JOB / "status.json").write_text(json.dumps(
         {"job_id": JOB, "state": "running", "updated_at": "2026-11-14T00:00:00Z"}))
-    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch, owner_settings=OwnerSettings(session_max_seats=0))
     seat = _first_seat(paths, db, settings, monkeypatch, topic)
     _seat_packet(db, paths, seat["task_id"], {"status": "awaiting_remote", "job_ids": [JOB],
                                               "resume_note": "Fit the posterior."},
@@ -243,7 +246,8 @@ def test_paused_workstream_cancels_its_parked_wait_and_gets_no_seat(tmp_path, mo
 
 def test_no_progress_seats_trip_the_direction_decision(tmp_path, monkeypatch):
     paths, db, settings, (topic,) = _owner_program(
-        tmp_path, monkeypatch, owner_settings=OwnerSettings(no_progress_seats=2)
+        tmp_path, monkeypatch,
+        owner_settings=OwnerSettings(no_progress_seats=2, session_max_seats=0),
     )
     seat = _first_seat(paths, db, settings, monkeypatch, topic)
     _seat_packet(db, paths, seat["task_id"], {"status": "continuing"}, session="s1")
@@ -273,7 +277,10 @@ def test_no_progress_seats_trip_the_direction_decision(tmp_path, monkeypatch):
 def test_ready_for_review_goes_to_another_family_and_comments_return_to_the_owner(
     tmp_path, monkeypatch
 ):
-    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    # The unified review alone (recompute review off), sessions without a seat limit.
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch,
+        owner_settings=OwnerSettings(recompute_review=False, session_max_seats=0))
     seat = _first_seat(paths, db, settings, monkeypatch, topic)
     _seat_packet(db, paths, seat["task_id"], {
         "status": "ready_for_review", "paper_id": "20261114-ai-owner",
@@ -361,7 +368,8 @@ def test_fable_owns_at_most_one_topic_by_default(tmp_path, monkeypatch):
 
 
 def test_blocked_owner_moves_to_the_next_runner_after_the_threshold(tmp_path, monkeypatch):
-    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch, owner_settings=OwnerSettings(session_max_seats=0))
     seat = _first_seat(paths, db, settings, monkeypatch, topic)
     _seat_packet(db, paths, seat["task_id"], {"status": "continuing"}, session="s1",
                  artifact=True)
@@ -494,8 +502,10 @@ def test_brief_is_short_has_the_four_parts_and_forces_no_skill(tmp_path, monkeyp
                              wall_seconds=14_400, db=db)
     request = block["request"]
     body = request.split("\n---\n")[0]
-    # About 4 KB in production (shorter roots); the test roots are long tmp paths.
-    assert len(body.encode("utf-8")) <= 4_400, len(body.encode("utf-8"))
+    # About 4.3 KB in production (shorter roots); the test roots are long tmp paths. The
+    # recompute-review goal and the handover rule (2026-11-16) added about 0.3 KB.
+    assert len(body.encode("utf-8")) <= 4_700, len(body.encode("utf-8"))
+    assert "independent recompute review" in body and owner.HANDOVER_NAME in body
     for heading in ("## Goal", "## Resources", "## Tools", "## Hard limits", "## Ending a seat"):
         assert heading in request
     assert "Invoke" not in request and "Skill tool" not in request
@@ -590,7 +600,8 @@ def test_legacy_replan_of_an_owner_topic_becomes_an_owner_seat(tmp_path, monkeyp
 
 
 def test_fresh_successor_seat_gets_a_handover_note(tmp_path, monkeypatch):
-    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch, owner_settings=OwnerSettings(session_max_seats=0))
     seat = _first_seat(paths, db, settings, monkeypatch, topic)
     _seat_packet(db, paths, seat["task_id"], {"status": "continuing"}, session="s1",
                  artifact=True)

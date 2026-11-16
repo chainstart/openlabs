@@ -14,7 +14,8 @@ Mechanics, all keyed on ``[program].owner_mode``:
 
 * a ``topic_owner`` task is one *seat* (one agent process, a few hours). It is
   pinned to a concrete runner chosen from ``[program.owner].runners`` (Fable,
-  then Opus 5.5, then gpt-6-astra) and resumes the same session seat after seat;
+  then Opus 5.5, then gpt-6-astra) and keeps that runner seat after seat (the session
+  only within the limits below);
 * the owner ends a seat with a small packet (``continuing``, ``awaiting_remote``
   with job ids, ``ready_for_review``, ``frozen`` or ``blocked_human``) that
   :func:`normalize_packet` turns into an ordinary result bundle, filling what the
@@ -27,6 +28,22 @@ Mechanics, all keyed on ``[program].owner_mode``:
   ``no_progress_seats`` seats without progress a direction decision is scheduled;
 * :func:`supervise` moves a seat whose runner cannot start it for
   ``switch_after_minutes`` to the next usable runner.
+
+Owner through minor revision (2026-11-16):
+
+* ``ready_for_review`` first goes to a *recompute review* (``paper_review`` routed
+  ``owner_recompute_review``, skill ``openlabs-recompute-review``, fresh session,
+  parented to the seat so the router excludes the owner's family): the reviewer
+  recomputes the core results from the data along the line's ``review_checklist`` and
+  returns ``recompute_review.verdict``. major -> the owner revises and the next round
+  starts with a fresh reviewer that reads the earlier rounds and the author's answer;
+  minor -> the owner fixes and self-checks, then the unified review; accept -> the
+  unified review; reject or major in round ``review_max_rounds`` -> direction decision.
+  The unified review (``_enqueue_review``) stays the formal gate before delivery and is
+  told not to repeat the recomputation (:func:`_after_recompute` is the state machine);
+* a successor seat resumes its session only while :func:`keep_session` allows it
+  (``session_max_seats``, ``session_max_tokens_read``); otherwise it is a fresh session
+  that starts from the owner's own ``OWNER_HANDOVER.md`` (:func:`handover_text`).
 
 With ``owner_mode = "off"`` none of this runs and every path is unchanged.
 """
@@ -62,18 +79,37 @@ OWNER_STATUSES = ("continuing", "awaiting_remote", "ready_for_review", "frozen",
 EVALUATED_VERDICTS = frozenset({"met", "failed", "inconclusive"})
 WORK_LOG_NAME = "OWNER_LOG.md"
 BRIEF_NAME = "OWNER_BRIEF.md"
+# Written by the owner at the end of every seat: the next (fresh) session starts from it.
+HANDOVER_NAME = "OWNER_HANDOVER.md"
+# The owner's answer to the last review round, read by the next round's reviewer.
+RESPONSE_NAME = "REVIEW_RESPONSE.md"
 STATE_META_PREFIX = "owner_state:"
 BLOCKED_META_PREFIX = "owner_blocked:"
 TRIGGER_NO_PROGRESS = "owner_no_progress"
+TRIGGER_REVIEW_REJECTED = "owner_review_rejected"
+TRIGGER_REVIEW_ROUNDS = "owner_review_rounds_exhausted"
 ROUTING_FIRST = "owner_first_seat"
 ROUTING_CONTINUE = "owner_continue"
 ROUTING_CONVERTED = "owner_converted"
 ROUTING_REVIEW = "owner_review"
 ROUTING_REVIEWED = "owner_review_returned"
+ROUTING_RECOMPUTE = "owner_recompute_review"
+ROUTING_RECOMPUTED = "owner_recompute_returned"
 ROUTING_RETRY = "owner_retry"
+RECOMPUTE_PACKET_SCHEMA = "openlabs.recompute_review_packet.v1"
+RECOMPUTE_SKILL = "openlabs-recompute-review"
+RECOMPUTE_VERDICTS = ("accept", "minor", "major", "reject")
+# Review stages kept in the owner state (``review_stage``).
+STAGE_RECOMPUTE = "recompute_review"
+STAGE_MAJOR = "major_revision"
+STAGE_MINOR = "minor_revision"
+STAGE_PASSED = "recompute_passed"
+STAGE_UNIFIED = "unified_review"
+# Phases an owner may declare in its packet (``phase``); reported per topic.
+OWNER_PHASES = ("precheck", "solving", "writing")
 # Directory names never part of the progress fingerprint: runtime and outputs.
 _DIGEST_SKIP_DIRS = frozenset({".agents", ".codex", ".claude", "attempts", "__pycache__"})
-_DIGEST_SKIP_FILES = frozenset({WORK_LOG_NAME, BRIEF_NAME})
+_DIGEST_SKIP_FILES = frozenset({WORK_LOG_NAME, BRIEF_NAME, HANDOVER_NAME})
 _MAX_REMEMBERED_ARTIFACTS = 2000
 _LINEAGE_LIMIT = 500
 
@@ -506,6 +542,66 @@ def session_seat(db: FactoryDB, task_id: str | None) -> dict[str, Any] | None:
     return None
 
 
+def session_tasks(db: FactoryDB, source: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Owner seats of ``source``'s agent session in its lineage, newest first."""
+
+    session = str(source.get("agent_session_id") or "")
+    if not session:
+        return []
+    found: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = dict(source)
+    for _ in range(_LINEAGE_LIMIT):
+        if current is None:
+            break
+        if is_owner_task(current):
+            if str(current.get("agent_session_id") or "") != session:
+                break
+            found.append(current)
+        parent = current.get("parent_task_id")
+        current = db.task(str(parent)) if parent else None
+    return found
+
+
+def keep_session(
+    db: FactoryDB, settings: FactorySettings, source: Mapping[str, Any]
+) -> tuple[bool, str]:
+    """Whether the next seat resumes ``source``'s session, and why (not).
+
+    ``[program.owner].session_max_seats`` seats per session (0: no limit) and, when set,
+    ``session_max_tokens_read`` input tokens read by the session; past either the next
+    seat is a fresh session that starts from the owner's handover.
+    """
+
+    owner = settings.program.owner
+    chain = session_tasks(db, source)
+    if not chain:
+        return False, "no_session"
+    if owner.session_max_seats and len(chain) >= owner.session_max_seats:
+        return False, f"session_max_seats:{len(chain)}"
+    if owner.session_max_tokens_read:
+        from .usage import normalized_attempts, tokens_read
+
+        ids = {str(item["task_id"]) for item in chain}
+        read = sum(
+            tokens_read(item["runtime"])
+            for item in normalized_attempts(db, campaign_ids=[str(source["campaign_id"])])
+            if str(item["task_id"]) in ids
+        )
+        if read >= owner.session_max_tokens_read:
+            return False, f"session_max_tokens_read:{read}"
+    return True, "resume"
+
+
+def park_session_mode(
+    db: FactoryDB, settings: FactorySettings, current: Mapping[str, Any]
+) -> str:
+    """Session mode of the seat that wakes after a remote/local-job wait."""
+
+    if not is_owner_task(current) or not current.get("agent_session_id"):
+        return "fresh"
+    return "resume" if keep_session(db, settings, current)[0] else "fresh"
+
+
 def last_seat(
     db: FactoryDB, campaign_id: str, *, before: str | None = None
 ) -> dict[str, Any] | None:
@@ -636,7 +732,7 @@ def enqueue_seat(
     not_before: str | None = None,
     router: budget_control.QuotaRouter | None = None,
 ) -> str | None:
-    """Queue the next seat of a topic: same session and runner when there is one."""
+    """Queue the next seat of a topic: same runner; same session while ``keep_session``."""
 
     campaign_id = str(campaign["campaign_id"])
     identifier = task_id or _seat_id(campaign_id, str((parent or {}).get("task_id") or "seed"))
@@ -647,10 +743,13 @@ def enqueue_seat(
     runner: str | None = None
     session_mode = "fresh"
     session_source: str | None = None
+    session_reason = "no_session"
     if source is not None:
         runner = str(source.get("runner") or "") or None
-        session_mode = "resume"
-        session_source = str(source["task_id"])
+        keep, session_reason = keep_session(db, settings, source)
+        if keep:
+            session_mode = "resume"
+            session_source = str(source["task_id"])
     elif is_owner_task(parent):
         # No recorded session (the CLI reported none): same owner, fresh session.
         runner = str((parent or {}).get("runner") or "") or None
@@ -686,7 +785,8 @@ def enqueue_seat(
     report.enqueued.append(identifier)
     report.program.setdefault("owner_seats", []).append(
         {"task_id": identifier, "campaign_id": campaign_id, "runner": runner,
-         "session_mode": session_mode, "routing_reason": routing_reason}
+         "session_mode": session_mode, "session_reason": session_reason,
+         "routing_reason": routing_reason}
     )
     return identifier
 
@@ -775,6 +875,7 @@ def record_seat(
     final_status: str,
     workspace_root: Path | None,
     promoted: bool,
+    handover_max_bytes: int = 8_192,
 ) -> dict[str, Any]:
     """Update the no-progress streak of a topic after one finished seat.
 
@@ -782,11 +883,24 @@ def record_seat(
     from the last one, it declared an artifact hash not seen before, it started
     after remote/local jobs finished (``remote_wait``), or it yielded on new jobs.
     A seat whose work was not promoted (timeout, failed gate) never counts as
-    progress.
+    progress. The seat's handover file is only checked (present, size); a missing or
+    oversized one is noted for the next brief, never refused.
     """
 
     campaign_id = str(task["campaign_id"])
     state = owner_state(db, campaign_id)
+    packet = packet_of(payload)
+    phase = str(packet.get("phase") or "").strip().lower()
+    handover = dict(state.get("handover") or {})
+    handover_root = workspace_root
+    if handover_root is None:
+        canonical = (db.campaign(campaign_id) or {}).get("state_path")
+        handover_root = Path(str(canonical)) if canonical else None
+    if promoted and handover_root is not None:
+        path = handover_root / HANDOVER_NAME
+        size = path.stat().st_size if path.is_file() else 0
+        handover = {"present": path.is_file(), "bytes": size,
+                    "over_limit": size > handover_max_bytes, "task_id": str(task["task_id"])}
     known = set(state.get("artifact_hashes") or [])
     digest = workspace_digest(workspace_root) if promoted else None
     new_hashes = [
@@ -814,13 +928,81 @@ def record_seat(
         "last_runner": str(task.get("runner") or ""),
         "last_progress": reasons,
         "artifact_hashes": remembered[-_MAX_REMEMBERED_ARTIFACTS:],
+        "phase": phase if phase in OWNER_PHASES else state.get("phase"),
+        "handover": handover,
         "updated_at": utc_now(),
     }
     _store_state(db, campaign_id, updated, ("owner_seat_recorded", {
         "task_id": str(task["task_id"]), "final_status": final_status,
         "progress": reasons, "no_progress_streak": streak,
+        "handover": handover or None,
     }))
     return updated
+
+
+def update_state(db: FactoryDB, campaign_id: str, event: str | None = None,
+                 detail: Mapping[str, Any] | None = None, **changes: Any) -> dict[str, Any]:
+    state = {**owner_state(db, campaign_id), **changes, "updated_at": utc_now()}
+    _store_state(db, campaign_id, state, (event, detail or {}) if event else None)
+    return state
+
+
+def reset_review_cycle(db: FactoryDB, campaign_id: str, *, reason: str,
+                       keep_passed: bool = False) -> None:
+    """A direction decision kept the topic alive: the recompute rounds start again.
+
+    ``keep_passed`` (a retarget: the evidence is unchanged) keeps a recompute review
+    that already passed, so the retargeted manuscript goes to the unified review only.
+    """
+
+    state = owner_state(db, campaign_id)
+    if not state.get("review_round") and not state.get("review_stage"):
+        return
+    if keep_passed and state.get("review_stage") in {STAGE_PASSED, STAGE_MINOR, STAGE_UNIFIED}:
+        return
+    update_state(db, campaign_id, "owner_review_cycle_reset",
+                 {"reason": reason, "previous_round": state.get("review_round")},
+                 review_round=0, review_stage=None,
+                 review_cycle=int(state.get("review_cycle") or 0) + 1)
+
+
+def topic_phase(db: FactoryDB, campaign_id: str, *, topic: Mapping[str, Any] | None = None
+                ) -> str:
+    """Where a topic stands: precheck/solving/writing (owner-declared), review rounds, ...
+
+    ``awaiting_confirmation`` (ready queue: a human confirms delivery), ``frozen``,
+    ``direction_decision``, ``recompute_review_N`` / ``unified_review`` (in flight),
+    ``revision_after_round_N`` / ``minor_revision`` (back with the owner), else the
+    owner's declared phase or ``research``.
+    """
+
+    status = str((topic or {}).get("status") or "")
+    if status in {"ready_queue", "submitted"}:
+        return "awaiting_confirmation"
+    if status == "frozen":
+        return "frozen"
+    from .program_autonomy import pending_decision
+
+    if pending_decision(db, campaign_id) is not None:
+        return "direction_decision"
+    state = owner_state(db, campaign_id)
+    with db.connect() as connection:
+        live = [dict(row) for row in connection.execute(
+            "SELECT task_type, routing_reason FROM tasks WHERE campaign_id=? AND status IN "
+            "('queued','leased','running') AND task_type='paper_review'", (campaign_id,),
+        ).fetchall()]
+    if any(row.get("routing_reason") == ROUTING_RECOMPUTE for row in live):
+        return f"recompute_review_{int(state.get('review_round') or 0) + 1}"
+    if live:
+        return "unified_review"
+    stage = str(state.get("review_stage") or "")
+    if stage == STAGE_MAJOR:
+        return f"revision_after_round_{int(state.get('review_round') or 0)}"
+    if stage == STAGE_MINOR:
+        return "minor_revision"
+    if stage == STAGE_UNIFIED:
+        return "revision_after_unified_review"
+    return str(state.get("phase") or "research")
 
 
 def reset_streak(db: FactoryDB, campaign_id: str, *, reason: str) -> None:
@@ -871,12 +1053,32 @@ def _breaker(
     return scheduled is not None
 
 
-def _review_objective(packet: Mapping[str, Any], topic: Mapping[str, Any] | None) -> str:
+def _recompute_context(state: Mapping[str, Any]) -> str:
+    """What the unified review is told about the recompute rounds (no repeated work)."""
+
+    history = [item for item in state.get("review_history") or [] if isinstance(item, Mapping)]
+    if not history:
+        return ""
+    last = history[-1]
+    records = ", ".join(str(item.get("result_path")) for item in history[-3:])
+    scripts = ", ".join(str(item) for item in (last.get("scripts") or [])[:5])
+    return (
+        f"An independent recompute review already recomputed the core results from the data "
+        f"({len(history)} round(s), last verdict {last.get('verdict')}; records: {records}; "
+        f"recompute scripts: {scripts or 'see the records'}). "
+        "Do not repeat that recomputation: give its records to the referees as context (in the "
+        "response letter of a re-review), and check only that its required items are resolved. "
+    )
+
+
+def _review_objective(packet: Mapping[str, Any], topic: Mapping[str, Any] | None,
+                      state: Mapping[str, Any] | None = None) -> str:
     paper = str(packet.get("paper_id") or "").strip()
     sha = str((topic or {}).get("preregistration_sha256") or "")
     return (
-        (f"The owner names paper ID {paper}. " if paper else
-         "Resolve the paper ID from the owner's registered artifacts. ")
+        _recompute_context(state or {})
+        + (f"The owner names paper ID {paper}. " if paper else
+           "Resolve the paper ID from the owner's registered artifacts. ")
         + "Run `paper-writing review unified-run --paper-id <id>` (add --response for a "
         "re-review). It runs the preflight, the target-journal editor screen, two blind "
         "referees and the conservative decision; do not reproduce its stages or edit the "
@@ -914,12 +1116,13 @@ def _enqueue_review(
         return None
     campaign = db.campaign(str(task["campaign_id"])) or {}
     topic = _topic(paths, settings, str(task["campaign_id"]))
+    state = owner_state(db, str(task["campaign_id"]))
     db.enqueue_task(
         task_id=review_id,
         campaign_id=str(task["campaign_id"]),
         domain=str(task["domain"]),
         task_type="paper_review",
-        objective=_review_objective(packet, topic),
+        objective=_review_objective(packet, topic, state),
         input_path=str(result_path),
         skill_path="openlabs-paper-review",
         runner="frontier",
@@ -933,6 +1136,8 @@ def _enqueue_review(
         **default_task_resources(settings).to_dict(),
     )
     report.enqueued.append(review_id)
+    update_state(db, str(task["campaign_id"]), "owner_unified_review_scheduled",
+                 {"task_id": review_id}, review_stage=STAGE_UNIFIED)
     try:
         program_autonomy.on_review_scheduled(
             db, paths, settings, campaign_id=str(task["campaign_id"]), review_task_id=review_id
@@ -962,6 +1167,345 @@ def _review_note(payload: Mapping[str, Any], result_path: Path) -> str:
     )
 
 
+# --------------------------------------------------------------------------- recompute review
+
+# Used when the research line declares no ``review_checklist``.
+GENERIC_RECOMPUTE_CHECKLIST = (
+    "Key numbers: recompute the headline values (abstract, main table, main figure) from the "
+    "data and result files the manuscript cites, with your own script.",
+    "Data, time and unit systems: check provenance, versions, time standards, units and "
+    "conversions the analysis relies on.",
+    "Error budget and sensitivity: recompute the stated uncertainties, vary the main analysis "
+    "choices, look for double-counted or missing terms.",
+    "Literature: spot-check 3-5 references (they exist, metadata right, they say what is cited).",
+    "Consistency: numbers agree across abstract, text, tables and figures.",
+    "Wording: no internal process words; no claim stronger than the evidence.",
+)
+_CHECKLIST_TEXT_LIMIT = 6_000
+
+
+def _section(text: str, section: str) -> str | None:
+    import re
+
+    lines = text.splitlines()
+    pattern = re.compile(r"^(#+)\s*" + re.escape(section) + r"(?:\b|\s|\.|$)")
+    for index, line in enumerate(lines):
+        match = pattern.match(line.strip())
+        if not match:
+            continue
+        level = len(match.group(1))
+        body = [line]
+        for following in lines[index + 1:]:
+            heading = re.match(r"^(#+)\s", following.strip())
+            if heading and len(heading.group(1)) <= level:
+                break
+            body.append(following)
+        return "\n".join(body).strip()
+    return None
+
+
+def recompute_checklist(paths: WorkspacePaths, settings: FactorySettings,
+                        line: str | None) -> dict[str, Any]:
+    """The line's ``review_checklist`` (items, or a document section), else the generic one."""
+
+    from .research_lines import line_entry, read_lines_or_none
+
+    entry = line_entry(read_lines_or_none(paths.data / settings.program.research_lines_path),
+                       line or "") or {} if line else {}
+    spec = entry.get("review_checklist")
+    if isinstance(spec, list) and any(isinstance(item, str) and item.strip() for item in spec):
+        return {"source": f"line {line} review_checklist",
+                "items": [str(item).strip() for item in spec if str(item).strip()]}
+    if isinstance(spec, Mapping) and str(spec.get("path") or "").strip():
+        path = Path(str(spec["path"]))
+        if not path.is_absolute():
+            path = paths.data / path
+        section = str(spec.get("section") or "").strip()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        body = _section(text, section) if section and text else text
+        if body:
+            return {"source": f"line {line} review_checklist",
+                    "reference": f"{path}" + (f" section {section}" if section else ""),
+                    "text": body[:_CHECKLIST_TEXT_LIMIT]}
+    return {"source": "generic", "items": list(GENERIC_RECOMPUTE_CHECKLIST)}
+
+
+def _history(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [dict(item) for item in state.get("review_history") or [] if isinstance(item, Mapping)]
+
+
+def _response_of(campaign: Mapping[str, Any], packet: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The owner's answer to the last round: REVIEW_RESPONSE.md and/or the packet note."""
+
+    root = Path(str(campaign.get("state_path") or ""))
+    path = root / RESPONSE_NAME
+    note = str(packet.get("response") or packet.get("review_response") or "").strip()
+    result: dict[str, Any] = {}
+    if campaign.get("state_path") and path.is_file():
+        result = {"path": str(path), "sha256": sha256_file(path)}
+    if note:
+        result["note"] = note[:2_000]
+    return result or None
+
+
+def _recompute_objective(round_number: int, max_rounds: int) -> str:
+    return (
+        f"Recompute review, round {round_number} of {max_rounds}, of a topic owner's manuscript "
+        "(you are independent of the author; this is not the unified review: do not run "
+        "`paper-writing review unified-run` and do not edit the manuscript or the campaign). "
+        "Read the packet at the input path. Recompute the core results yourself from the data "
+        "and result files the manuscript cites, item by item along packet.checklist: reproduced "
+        "/ not reproduced (by how much) / could not reproduce (what is missing). Keep your "
+        "scripts and their outputs in your large-outputs directory and list them. For a later "
+        "round check each required item of packet.previous_rounds against the author's "
+        "response. Return the result field `recompute_review`: {verdict: accept|minor|major|"
+        "reject, required: [...], optional: [...], unverified: [...], checks: [{item, outcome, "
+        "detail}], scripts: [paths], summary}. major: a core number or conclusion does not "
+        "hold as stated; minor: core results reproduce, fixes are local; reject: the main "
+        "conclusion fails and no revision of this topic can rescue it. paper_candidate=false."
+    )
+
+
+def _enqueue_recompute_review(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    report: Any,
+    *,
+    task: Mapping[str, Any],
+    packet: Mapping[str, Any],
+    result_path: Path,
+    retry_of: str | None = None,
+) -> str | None:
+    """Queue one recompute review round of the manuscript an owner seat returned."""
+
+    campaign_id = str(task["campaign_id"])
+    campaign = db.campaign(campaign_id) or {}
+    state = owner_state(db, campaign_id)
+    history = _history(state)
+    round_number = int(state.get("review_round") or 0) + 1
+    max_rounds = settings.program.owner.review_max_rounds
+    source = "recompute:" + str(task["task_id"]) + (f":retry:{retry_of}" if retry_of else "")
+    review_id = "owner-recompute:" + _seat_id(campaign_id, source).split(":", 1)[1]
+    if db.task(review_id) is not None:
+        return None
+    topic = _topic(paths, settings, campaign_id)
+    line = campaign_line(campaign)
+    root = Path(str(campaign.get("state_path") or ""))
+    body = {
+        "schema_version": RECOMPUTE_PACKET_SCHEMA,
+        "topic_id": (topic or {}).get("topic_id"),
+        "campaign_id": campaign_id,
+        "research_line": line,
+        "round": round_number,
+        "max_rounds": max_rounds,
+        "paper_id": packet.get("paper_id") or state.get("paper_id"),
+        "owner_seat": str(task["task_id"]),
+        "owner_result": str(result_path),
+        "canonical_workspace": str(root) if campaign.get("state_path") else None,
+        "research_state": campaign.get("workstream_state_path"),
+        "work_log": str(root / WORK_LOG_NAME) if campaign.get("state_path") else None,
+        "preregistration_sha256": (topic or {}).get("preregistration_sha256"),
+        "line_spec": (f"{paths.data / settings.program.research_lines_path} (line {line}: "
+                      "owner_requirements, analysis_package)") if line else None,
+        "checklist": recompute_checklist(paths, settings, line),
+        "previous_rounds": history[-max_rounds:],
+        "not_in_scope": "The literal pre-registration check and the venue/editor screen are "
+                        "done by the unified review afterwards; do not repeat them here.",
+        "created_at": utc_now(),
+    }
+    digest = hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
+    packet_path = (paths.program_control / "recompute-reviews" / campaign_id.replace(":", "-")
+                   / f"round-{round_number}-{digest[:16]}.json")
+    atomic_write_json(packet_path, body)
+    db.enqueue_task(
+        task_id=review_id,
+        campaign_id=campaign_id,
+        domain=str(task["domain"]),
+        task_type="paper_review",
+        objective=_recompute_objective(round_number, max_rounds),
+        input_path=str(packet_path),
+        skill_path=RECOMPUTE_SKILL,
+        runner="frontier",
+        routing_reason=ROUTING_RECOMPUTE,
+        parent_task_id=str(task["task_id"]),
+        agent_role="reviewer",
+        session_mode="fresh",
+        priority=int(campaign.get("priority") or 0) + 1,
+        max_attempts=settings.max_attempts,
+        max_wall_seconds=settings.max_task_wall_seconds,
+        **default_task_resources(settings).to_dict(),
+    )
+    report.enqueued.append(review_id)
+    update_state(db, campaign_id, "owner_recompute_review_scheduled",
+                 {"task_id": review_id, "round": round_number, "packet": str(packet_path)},
+                 review_stage=STAGE_RECOMPUTE, review_in_flight=review_id,
+                 paper_id=packet.get("paper_id") or state.get("paper_id"),
+                 last_ready_seat=str(task["task_id"]))
+    report.program.setdefault("owner_reviews", []).append(
+        {"campaign_id": campaign_id, "task_id": review_id, "kind": "recompute",
+         "round": round_number})
+    return review_id
+
+
+def recompute_block(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The reviewer's structured verdict, or None when it is missing or unusable."""
+
+    block = payload.get("recompute_review")
+    if not isinstance(block, Mapping):
+        return None
+    verdict = str(block.get("verdict") or "").strip().lower()
+    aliases = {"minor_revision": "minor", "major_revision": "major", "accepted": "accept"}
+    verdict = aliases.get(verdict, verdict)
+    if verdict not in RECOMPUTE_VERDICTS:
+        return None
+
+    def items(name: str) -> list[str]:
+        value = block.get(name)
+        values = value if isinstance(value, list) else [value] if value else []
+        return [_short(item, 600) for item in values if str(item or "").strip()][:20]
+
+    return {"verdict": verdict, "required": items("required"), "optional": items("optional"),
+            "unverified": items("unverified"), "scripts": items("scripts"),
+            "summary": _short(block.get("summary") or "", 800)}
+
+
+def _seat_after_review(
+    db: FactoryDB, settings: FactorySettings, report: Any, *, campaign: Mapping[str, Any],
+    review: Mapping[str, Any], result_path: Path, note: str,
+) -> None:
+    enqueue_seat(db, settings, report, campaign=campaign, parent=review, note=note,
+                 routing_reason=ROUTING_RECOMPUTED, input_path=str(result_path))
+
+
+def _items_text(values: list[str], limit: int = 1_500) -> str:
+    return _short("; ".join(values), limit) if values else "none listed"
+
+
+def _after_recompute(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    report: Any,
+    *,
+    task: Mapping[str, Any],
+    campaign: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    successful: bool,
+    final_status: str,
+    result_path: Path,
+    result_sha256: str,
+) -> bool:
+    """Next step after one recompute review round (the state machine of the loop)."""
+
+    from .program_autonomy import schedule_direction_decision
+
+    campaign_id = str(campaign["campaign_id"])
+    state = owner_state(db, campaign_id)
+    block = recompute_block(payload) if successful else None
+    seat = db.task(str(task.get("parent_task_id") or "")) or {}
+    if block is None:
+        retries = list(state.get("recompute_retries") or [])
+        if str(task.get("task_id")) not in retries and seat:
+            # One fresh re-run before the owner hears about it: a missing verdict is
+            # the reviewer's slip, not the manuscript's.
+            new = _enqueue_recompute_review(
+                db, paths, settings, report, task=seat,
+                packet=packet_of(_read_json(Path(str(seat.get("result_path") or "")))),
+                result_path=Path(str(seat.get("result_path") or result_path)),
+                retry_of=str(task["task_id"]))
+            if new is not None:
+                update_state(db, campaign_id, "owner_recompute_review_unusable",
+                             {"task_id": str(task["task_id"]), "final_status": final_status,
+                              "retry": new},
+                             recompute_retries=[*retries, new][-20:])
+                return True
+        _seat_after_review(db, settings, report, campaign=campaign, review=task,
+                           result_path=result_path, note=(
+                               f"The recompute review {task['task_id']} ended {final_status} "
+                               "without a usable verdict. Return ready_for_review again when "
+                               "you want it re-run."))
+        update_state(db, campaign_id, review_stage=None, review_in_flight=None)
+        return True
+    round_number = int(state.get("review_round") or 0) + 1
+    max_rounds = settings.program.owner.review_max_rounds
+    entry = {"round": round_number, "cycle": int(state.get("review_cycle") or 0),
+             "task_id": str(task["task_id"]), "runner": str(task.get("runner") or ""),
+             "result_path": str(result_path), "result_sha256": result_sha256,
+             **{key: block[key] for key in ("verdict", "required", "optional", "unverified",
+                                            "scripts", "summary")}}
+    history = [*_history(state), entry][-12:]
+    verdict = block["verdict"]
+    stage = {"accept": STAGE_PASSED, "minor": STAGE_MINOR, "major": STAGE_MAJOR,
+             "reject": None}[verdict]
+    state = update_state(db, campaign_id, "owner_recompute_review_returned",
+                         {"task_id": str(task["task_id"]), "round": round_number,
+                          "verdict": verdict, "required": len(block["required"])},
+                         review_round=round_number, review_history=history,
+                         review_stage=stage, review_in_flight=None)
+    report.program.setdefault("owner_reviews", []).append(
+        {"campaign_id": campaign_id, "task_id": str(task["task_id"]), "kind": "recompute",
+         "round": round_number, "verdict": verdict})
+    reset_streak(db, campaign_id, reason="recompute_review_returned")
+    reference = (f"Review result: {result_path} (round {round_number} of {max_rounds}). "
+                 f"Required: {_items_text(block['required'])}. Optional: "
+                 f"{_items_text(block['optional'], 600)}. Not verifiable by the reviewer: "
+                 f"{_items_text(block['unverified'], 600)}. Reviewer scripts: "
+                 f"{_items_text(block['scripts'], 400)}.")
+    if verdict == "accept":
+        packet = packet_of(_read_json(Path(str(seat.get("result_path") or "")))) if seat else {}
+        _enqueue_review(db, paths, settings, report, task=seat or task,
+                        packet={"paper_id": state.get("paper_id"), **packet},
+                        result_path=Path(str(seat.get("result_path") or result_path)))
+        return True
+    if verdict == "minor":
+        _seat_after_review(db, settings, report, campaign=campaign, review=task,
+                           result_path=result_path, note=(
+                               "The independent recompute review judged the manuscript minor "
+                               f"revision. {reference} Make the minor changes, then check the "
+                               "whole manuscript for consistency yourself (numbers against the "
+                               "scripts that produce them, abstract/text/tables/figures), write "
+                               f"{RESPONSE_NAME} (item -> change) and return ready_for_review: "
+                               "it then goes to the unified review."))
+        return True
+    trigger = TRIGGER_REVIEW_REJECTED if verdict == "reject" else (
+        TRIGGER_REVIEW_ROUNDS if round_number >= max_rounds else None)
+    if trigger is None:
+        _seat_after_review(db, settings, report, campaign=campaign, review=task,
+                           result_path=result_path, note=(
+                               "The independent recompute review judged the manuscript major "
+                               f"revision. {reference} Fix the science first (rerun what is "
+                               "needed; you may submit compute jobs and end the seat "
+                               f"awaiting_remote), answer every required item in {RESPONSE_NAME} "
+                               "(item -> what changed or why not, with evidence), then return "
+                               f"ready_for_review for round {round_number + 1} with a fresh "
+                               "reviewer."))
+        return True
+    topic = _topic(paths, settings, campaign_id)
+    scheduled = None
+    if topic is not None:
+        scheduled = schedule_direction_decision(
+            db, paths, settings, report, topic=topic, trigger=trigger,
+            source_task_id=str(task["task_id"]),
+            evidence=[{"path": str(result_path), "sha256": result_sha256}],
+            reasons=[block["summary"]] if block["summary"] else None,
+            detail={"verdict": verdict, "round": round_number, "max_rounds": max_rounds,
+                    "required": block["required"][:10]},
+        )
+    if scheduled is None:
+        # No decision could be scheduled (one is pending, or the topic left research):
+        # the owner hears the verdict instead of the topic stalling.
+        _seat_after_review(db, settings, report, campaign=campaign, review=task,
+                           result_path=result_path, note=(
+                               f"The recompute review returned {verdict} in round "
+                               f"{round_number} of {max_rounds}. {reference} Decide whether the "
+                               "topic can still reach minor revision; otherwise freeze it."))
+    return True
+
+
 def after_result(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -985,10 +1529,11 @@ def after_result(
     remote-wait parking, which creates the next owner seat itself.
     """
 
+    limit = settings.program.owner.handover_max_bytes
     if final_status == "yielded":
         if is_owner_task(task):
             record_seat(db, task=task, payload=payload, final_status=final_status,
-                        workspace_root=workspace_root, promoted=True)
+                        workspace_root=workspace_root, promoted=True, handover_max_bytes=limit)
         return False
     campaign = db.campaign(str(task["campaign_id"]))
     if campaign is None:
@@ -997,13 +1542,15 @@ def after_result(
     if program_disposition == "handled":
         if is_owner_task(task):
             record_seat(db, task=task, payload=payload, final_status=final_status,
-                        workspace_root=workspace_root, promoted=successful)
+                        workspace_root=workspace_root, promoted=successful,
+                        handover_max_bytes=limit)
         return True
     if final_status == "failed" and is_owner_task(task):
         # Out of attempts: a seat without progress; replenishment starts the next one
         # unless the breaker sends the topic to a direction decision.
         state = record_seat(db, task=task, payload=payload, final_status=final_status,
-                            workspace_root=workspace_root, promoted=False)
+                            workspace_root=workspace_root, promoted=False,
+                            handover_max_bytes=limit)
         _breaker(db, paths, settings, report, task=task, state=state,
                  result_path=result_path, result_sha256=result_sha256)
         return True
@@ -1017,6 +1564,11 @@ def after_result(
         report.errors.append(f"Campaign {campaign['campaign_id']} reached its automatic-task "
                              "safety limit (owner seat deferred to replenishment)")
         return True
+    if task_type == "paper_review" and str(task.get("routing_reason") or "") == ROUTING_RECOMPUTE:
+        return _after_recompute(db, paths, settings, report, task=task, campaign=campaign,
+                                payload=payload, successful=successful,
+                                final_status=final_status, result_path=result_path,
+                                result_sha256=result_sha256)
     if task_type == "paper_review":
         if successful:
             note = _review_note(payload, result_path)
@@ -1042,7 +1594,8 @@ def after_result(
         return True
     packet = packet_of(payload)
     state = record_seat(db, task=task, payload=payload, final_status=final_status,
-                        workspace_root=workspace_root, promoted=successful)
+                        workspace_root=workspace_root, promoted=successful,
+                        handover_max_bytes=limit)
     status = str(packet.get("status") or "")
     if successful and status == "ready_for_review":
         verdict = str(packet.get("primary_endpoint_verdict") or "").strip().lower()
@@ -1054,7 +1607,21 @@ def after_result(
                       "it and return ready_for_review again."),
             )
             return True
-        reset_streak(db, str(task["campaign_id"]), reason="review_requested")
+        campaign_id = str(task["campaign_id"])
+        reset_streak(db, campaign_id, reason="review_requested")
+        history = _history(state)
+        response = _response_of(campaign, packet)
+        if history and response and not history[-1].get("owner_response"):
+            history[-1]["owner_response"] = response
+            state = update_state(db, campaign_id, review_history=history)
+        stage = str(state.get("review_stage") or "")
+        if settings.program.owner.recompute_review and stage not in {
+            STAGE_MINOR, STAGE_PASSED, STAGE_UNIFIED,
+        }:
+            # Recompute review first; the unified review once it says minor or accept.
+            _enqueue_recompute_review(db, paths, settings, report, task=task, packet=packet,
+                                      result_path=result_path)
+            return True
         _enqueue_review(db, paths, settings, report, task=task, packet=packet,
                         result_path=result_path)
         return True
@@ -1226,6 +1793,14 @@ def _line_tools(paths: WorkspacePaths, settings: FactorySettings, line: str | No
     for key in ("sop",):
         if isinstance(environment.get(key), str):
             items.append(f"{key}: {_short(environment[key], 140)}")
+    package = entry.get("analysis_package")
+    if isinstance(package, Mapping) and isinstance(package.get("path"), str):
+        items.append(f"analysis package (use it): {_short(package['path'], 120)}"
+                     + (f"; {_short(package['entry'], 80)}" if isinstance(
+                         package.get("entry"), str) else ""))
+    if entry.get("review_checklist"):
+        items.append("independent recompute checklist: `review_checklist` (run it on your own "
+                     "results before ready_for_review)")
     return items
 
 
@@ -1312,8 +1887,14 @@ def render_brief(
         "You own this admitted topic end to end; how to get there is your decision.",
         "",
         "## Goal",
-        "One manuscript, on the research line's paper template, that a venue on the line's "
-        "list would publish - or an early, honest verdict that it cannot be done, and why."
+        ("One manuscript, on the line's paper template, that an independent recompute review "
+         "(another model, fresh session, recomputing your core numbers from your data) judges "
+         "minor or accept - or an early, honest verdict that it cannot be done, and why. Major "
+         f"verdicts return to you (at most {owner.review_max_rounds} rounds), then the unified "
+         "review and a human decide. Run the recompute checklist on your results first."
+         if owner.recompute_review else
+         "One manuscript, on the research line's paper template, that a venue on the line's "
+         "list would publish - or an early, honest verdict that it cannot be done, and why.")
         + precheck,
         f"- Question: {_short(state.get('question') or campaign.get('title') or '', 220)}",
         f"- Pre-registered primary endpoint (sha256 {sha}): "
@@ -1361,24 +1942,72 @@ def render_brief(
         "route.",
         "7. Submission, payment, authorship, external publication: stop and leave it to a human.",
         "8. Never approve your own manuscript: return ready_for_review; another model family "
-        "reviews it and its comments come back to this session.",
+        "reviews it and its comments come back to you.",
         "",
         "## Ending a seat",
-        f"Keep {WORK_LOG_NAME} in the writable workspace current (done, evidence, decisions, next "
-        "step) for a successor or a direction decision, then write JSON to the result path: "
+        f"Keep {WORK_LOG_NAME} (writable workspace) current. A seat normally starts a fresh "
+        f"session: end each with {HANDOVER_NAME} there (<= {owner.handover_max_bytes // 1024} KB:"
+        f" state, open items, key paths, pending jobs, last review); answer review items in "
+        f"{RESPONSE_NAME}. Then write JSON to the result path: "
         "`{\"status\": \"continuing|awaiting_remote|ready_for_review|frozen|blocked_human\", "
         "\"summary\", \"job_ids\", \"paper_id\", \"primary_endpoint_verdict\": "
-        "\"met|failed|inconclusive|pending\", \"reason\"}`. Only status is required (job_ids, "
-        "reason where they apply); the control plane fills the rest.",
+        "\"met|failed|inconclusive|pending\", \"phase\": \"precheck|solving|writing\", "
+        "\"reason\"}`. Only status is required (job_ids, reason where they apply); the control "
+        "plane fills the rest.",
         "- Files: workspace = small text (<= 5 MB: notes, JSON, CSV, scripts, figures); logs, "
         "chains, archives, PDFs, big files -> large-outputs dir (footer, declared for you; "
         "strays are moved there).",
         "- Frozen for a line-level fact? Add `reopen_when` (CODE/orchestrator/src/openlabs/"
-        "reopen.py): all true -> reopened once, this session, same pre-registration.",
+        "reopen.py): all true -> reopened once, same pre-registration.",
     ]
     if handover:
         lines += ["", "## This seat", handover]
     return "\n".join(lines) + "\n"
+
+
+def handover_text(
+    db: FactoryDB,
+    settings: FactorySettings,
+    campaign: Mapping[str, Any],
+    *,
+    canonical: str | None = None,
+) -> str:
+    """The fresh session's start: the owner's own handover (cut to the limit) and pointers.
+
+    The control plane adds only what it knows for certain (file paths, the last review
+    round and the owner's recorded answer); the summary itself is the owner's.
+    """
+
+    limit = settings.program.owner.handover_max_bytes
+    root = Path(canonical) if canonical and Path(canonical).is_dir() else Path(
+        str(campaign.get("state_path") or ""))
+    path = root / HANDOVER_NAME
+    state = owner_state(db, str(campaign["campaign_id"]))
+    lines = ["### Handover"]
+    if path.is_file():
+        data = path.read_bytes()
+        text = data[:limit].decode("utf-8", errors="ignore").strip()
+        lines.append(f"From {HANDOVER_NAME} (written by the last seat):")
+        lines.append(text)
+        if len(data) > limit:
+            lines.append(f"[cut at {limit} bytes of {len(data)}: keep {HANDOVER_NAME} shorter]")
+    else:
+        lines.append(f"The last seat left no {HANDOVER_NAME}; start from {WORK_LOG_NAME} and "
+                     "research_state.json, and write the handover at the end of this seat.")
+    lines.append(f"Work log: {root / WORK_LOG_NAME}; research state: "
+                 f"{campaign.get('workstream_state_path') or 'research_state.json'}.")
+    history = _history(state)
+    if history:
+        last = history[-1]
+        answer = last.get("owner_response") if isinstance(last.get("owner_response"),
+                                                          Mapping) else {}
+        lines.append(
+            f"Last review: recompute round {last.get('round')}, verdict {last.get('verdict')}, "
+            f"result {last.get('result_path')}; required: "
+            f"{_items_text(list(last.get('required') or []), 800)}"
+            + (f"; your recorded answer: {answer.get('path') or answer.get('note')}"
+               if answer else "") + ".")
+    return "\n".join(lines)
 
 
 def render_seat_footer(task: Mapping[str, Any], *, deadline: datetime) -> str:
@@ -1421,7 +2050,7 @@ def spec_block(
         request = (
             f"# Topic owner: next seat\n\n{note}\n\nYour brief is unchanged ({BRIEF_NAME} in "
             f"the writable workspace); the paths below are new for this seat. Update "
-            f"{WORK_LOG_NAME} there, then write the status JSON.\n"
+            f"{WORK_LOG_NAME} and {HANDOVER_NAME} there, then write the status JSON.\n"
         )
     else:
         previous = last_seat(db, str(campaign["campaign_id"]), before=str(task["task_id"]))
@@ -1429,8 +2058,8 @@ def spec_block(
         if previous is not None:
             handover = (
                 f"A previous owner session ({previous.get('runner')}, seat "
-                f"{previous['task_id']}) ran this topic; read the work log {WORK_LOG_NAME} and "
-                f"research_state.json first. {note}"
+                f"{previous['task_id']}) ran this topic. {note}\n\n"
+                + handover_text(db, settings, campaign, canonical=where["canonical"])
             )
         request = render_brief(paths, settings, task=spec_view, campaign=campaign, topic=topic,
                                adapter_family=family, deadline=deadline, handover=handover)
@@ -1497,18 +2126,28 @@ def hook_normalize(context: Mapping[str, Any]) -> None:
 __all__ = [
     "OWNER_STATUSES",
     "PACKET_SCHEMA",
+    "RECOMPUTE_VERDICTS",
     "TRIGGER_NO_PROGRESS",
+    "TRIGGER_REVIEW_REJECTED",
+    "TRIGGER_REVIEW_ROUNDS",
     "after_result",
     "applies",
     "choose_runner",
     "enqueue_seat",
     "first_seat",
+    "handover_text",
     "hook_normalize",
+    "keep_session",
     "normalize_packet",
+    "park_session_mode",
+    "recompute_block",
+    "recompute_checklist",
     "record_seat",
     "render_brief",
     "replenish",
+    "reset_review_cycle",
     "spec_block",
     "supervise",
+    "topic_phase",
     "workspace_digest",
 ]

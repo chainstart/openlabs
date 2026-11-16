@@ -42,6 +42,10 @@
       "path": "../../workflows/paper/skills/openlabs-paper-review/SKILL.md"
     },
     {
+      "skill_id": "openlabs-recompute-review",
+      "path": "../../workflows/paper/skills/openlabs-recompute-review/SKILL.md"
+    },
+    {
       "skill_id": "722",
       "path": "skills/722/SKILL.md"
     },

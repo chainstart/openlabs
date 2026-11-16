@@ -39,6 +39,13 @@ property or application), minimum content, hard gates, per-paper compute and age
 venues and how its novelty is judged. The owner wants these papers; they are the default
 proposal of a line, ahead of re-audits.
 
+A template with a `candidate_queue` is enumerated: draw its queue's `candidates` in `rank`
+order (skip entries whose `ledger_occupancy` is blocked), copy each entry's `card_fields` into
+the card with every key unchanged (`reopens` and `reopen_basis` included: they reopen a frozen
+topic under the new template version), and write the rest by the template's `card_rules`. Each
+queued template has its own queue and rules; the same target in two templates is two topics.
+Steps 1-2 below then reduce to checking the copied occupancy search.
+
 1. Pick a template and a concrete system x property combination from its dimensions.
 2. Run the occupancy search before anything else: is this exact combination already reported?
    Search the databases the template names (Crossref, arXiv, Google Scholar or Semantic Scholar,
@@ -49,7 +56,7 @@ proposal of a line, ahead of re-audits.
    a templated paper; one already reported is not, so pick another member. Parameters that exist
    only in automated batch tables (neural-network or pipeline catalogues, a queue entry's
    `batch_only` verdict) are not a published solution (owner decision 2026-11-13): such a target
-   is valid, after the `unreported` ones. List each batch table in `occupancy_search`, cite it in
+   is valid; a queue's `rank` decides the draw order. List each batch table in `occupancy_search`, cite it in
    `closest_prior_work`, and plan a table comparing your solution with its values and
    the increment of the individual solution (total-eclipse q, third light, uncertainties,
    absolute parameters). A dedicated light-curve study of the target still counts as reported.
@@ -179,7 +186,11 @@ Each field is there because the gate needs it to decide:
     `budget` (active agent time and compute; time waiting for queued remote jobs is not agent
     time), `on_failure: "freeze"`. After admission this is the first
     research task and nothing else runs before it; a miss freezes the topic.
-    Write criteria the line can actually be judged on. A symmetry gate (O'Connell maxima,
+    Write criteria the line can actually be judged on. Where the card's template has
+    `card_rules` (research-lines.yaml), they decide the endpoint, the feasibility conditions and
+    what is forbidden; follow them and skip the two rules below (for example
+    contact-binary-solution v2 forbids control gates and stop-on-asymmetry gates). Otherwise:
+    A symmetry gate (O'Connell maxima,
     eclipse antisymmetry, bottom tilt) uses significance AND amplitude, the queue's rule
     (`queue_precheck`): fail only when the effect exceeds 3 combined SE (2 sigma for a slope)
     and 1 % of the eclipse depth; with TESS precision a significance-only gate fails almost

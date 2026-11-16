@@ -149,7 +149,8 @@ def test_frozen_topic_reopens_once_when_the_control_requalifies(tmp_path, monkey
     seat = _latest(db, topic["campaign_id"])
     assert seat["task_type"] == OWNER_TASK_TYPE and seat["status"] in {"queued", "leased"}
     assert seat["routing_reason"] == reopen.ROUTING_REOPENED
-    assert seat["session_mode"] == "resume" and seat["runner"] == freeze_seat["runner"]
+    # Same owner runner; by default (session_max_seats = 1) a fresh session from the handover.
+    assert seat["session_mode"] == "fresh" and seat["runner"] == freeze_seat["runner"]
     assert "Conditions now met" in seat["objective"] and "all checks pass" in seat["objective"]
     assert db.count_events("campaign", topic["campaign_id"], "campaign_reopened") == 1
     # One seat only, even if the tick repeats.
@@ -249,9 +250,12 @@ def test_scout_instruction_names_the_draw_order_and_held_entries() -> None:
 
     text = queue_scout_instruction({"contact-binary-solution": "/q.json"},
                                    {"environment.standard_solver.spot_config": False})
-    assert "rank is the draw order" in text and "held_candidates" in text
-    assert "spot_config not met" in text and "control_status" in text
-    assert "1 % of the eclipse depth" in text and "2 combined sigma" in text
+    assert "`rank` order" in text and "held_candidates" in text
+    assert "spot_config not met" in text
+    # 2026-11-16: the card follows its template's card_rules; the single-star symmetry and
+    # control gates are no longer prescribed here (contact-binary v2 forbids them).
+    assert "card_rules" in text and "forbidden_conditions" in text
+    assert "1 % of the eclipse depth" not in text and "2 combined sigma" not in text
     assert "held_candidates" not in queue_scout_instruction({"t": "/q.json"})
 
 

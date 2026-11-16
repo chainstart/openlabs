@@ -97,6 +97,9 @@ TRIGGER_FREEZE_CLASS = {
     TRIGGER_BUDGET: "budget_exhausted",
     TRIGGER_REVIEW_STALLED: "review_stalled",
     TRIGGER_REVIEW_ROUNDS: "review_stalled",
+    # Owner recompute review loop (owner.py).
+    "owner_review_rounds_exhausted": "review_stalled",
+    "owner_review_rejected": "review_stalled",
 }
 CHOICE_FREEZE_CLASS = {
     "targeted_core_analysis": "contribution_insufficient",
@@ -370,6 +373,14 @@ def _trigger_reason_text(trigger: str, detail: Mapping[str, Any]) -> str:
         TRIGGER_REVIEW_RETARGET: "The unified review requires a retarget.",
         TRIGGER_REVIEW_STALLED: "The unified review is stalled: scores no longer improve.",
         TRIGGER_REVIEW_ROUNDS: "The unified review used all rounds for this target.",
+        "owner_review_rejected": (
+            "The independent recompute review rejected the manuscript: its main conclusion "
+            "does not hold and the reviewer sees no revision of this topic that rescues it."
+        ),
+        "owner_review_rounds_exhausted": (
+            f"The independent recompute review still judged the manuscript major revision in "
+            f"round {detail.get('round')} of {detail.get('max_rounds')}."
+        ),
         "owner_no_progress": (
             f"The topic owner finished {detail.get('no_progress_streak')} consecutive seats "
             "without new evidence (unchanged workspace, no new artifact, no finished job)."
@@ -769,6 +780,10 @@ def on_result(
     if role in RESEARCH_ROLES:
         return _on_research_result(db, paths, settings, report, topic=topic, task=task,
                                    payload=payload, evidence=evidence)
+    if role == "reviewer" and task_type == "paper_review" and str(
+        task.get("routing_reason") or ""
+    ) == "owner_recompute_review":
+        return None  # the owner's recompute review loop (owner.py) takes the next step
     if role == "reviewer" and task_type == "paper_review":
         return _on_review_result(db, paths, settings, report, topic=topic, task=task,
                                  payload=payload, evidence=evidence)
@@ -1159,6 +1174,7 @@ def _enqueue_targeted_analysis(db, settings, *, campaign, decision, decision_tas
     if owner_mode.applies(settings, campaign):
         # The owner runs the chosen step itself, in its own session.
         owner_mode.reset_streak(db, str(campaign["campaign_id"]), reason=decision_task_id)
+        owner_mode.reset_review_cycle(db, str(campaign["campaign_id"]), reason=decision_task_id)
         owner_mode.enqueue_seat(
             db, settings, None, campaign=campaign, parent=source or None,
             note=(
@@ -1241,6 +1257,8 @@ def _enqueue_retarget(db, settings, *, topic, campaign, decision, decision_task_
     if owner_mode.applies(settings, campaign):
         task_id = f"{decision_task_id}:retarget"
         owner_mode.reset_streak(db, str(campaign["campaign_id"]), reason=decision_task_id)
+        owner_mode.reset_review_cycle(db, str(campaign["campaign_id"]),
+                                      reason=decision_task_id, keep_passed=True)
         owner_mode.enqueue_seat(
             db, settings, None, campaign=campaign, parent=db.task(source_task_id),
             note=f"Direction decision {decision_task_id} (input path): " + objective,

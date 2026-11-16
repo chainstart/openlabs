@@ -37,6 +37,7 @@ from typing import Any
 
 from . import assets as asset_library
 from . import budget as budget_control
+from . import card_precheck as card_checks
 from .config import FactorySettings, WorkspacePaths
 from .contracts import (
     ADMISSION_POLICY_VERSION,
@@ -484,12 +485,16 @@ def expected_cards_per_scout(
 
 
 def queue_scout_instruction(
-    queues: Mapping[str, str], held_released: Mapping[str, bool] | None = None
+    queues: Mapping[str, str],
+    held_released: Mapping[str, bool] | None = None,
+    supply: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> str:
     """Scout objective addition for templates with an enumerated candidate queue.
 
     ``held_released`` maps the release key of held queue entries (``held_candidates``,
-    e.g. a needs-spot hold) to whether the control plane found it met this tick.
+    e.g. a needs-spot hold) to whether the control plane found it met this tick;
+    ``supply`` the per-template draw state (``template_supply``: drawable entries, empty
+    draws since the queue last changed).
     """
 
     if not queues:
@@ -504,35 +509,34 @@ def queue_scout_instruction(
             + "; ".join([*(f"{key} met" for key in released),
                          *(f"{key} not met" for key in waiting)])
             + ". Draw a held entry only when its key is met, after the `candidates`, with a "
-            "card that pre-registers that capability (e.g. the spot parametrisation) instead of "
-            "a symmetric-only gate; if its target belongs to a frozen ledger topic, the card "
-            "declares `reopens` that topic with reopen_basis type new_method."
+            "card that pre-registers that capability instead of a gate against it."
         )
+    state = ""
+    if supply:
+        state = " Queue state: " + "; ".join(
+            f"{template}: {item.get('drawable', '?')} drawable"
+            + (f", {item['empty_draws']} empty draw(s) since it last changed - skip it unless "
+               "an entry is free" if item.get("empty_draws") else "")
+            for template, item in sorted(supply.items())) + "."
     return (
         ". Templates with a candidate_queue ("
         + ", ".join(f"{template}: {path}" for template, path in sorted(queues.items()))
-        + ") are enumerated, not scouted: do not search for other targets of them. Take the "
-        "highest-ranked entries of `candidates` (rank is the draw order; mechanical "
-        "queue prechecks have already put the targets the standard configuration can solve "
-        "first, see each entry's queue_precheck) whose novelty verdict is `unreported`, then "
-        "those with `batch_only`, and whose target is in no ledger topic (compare its "
-        "identifiers with ledger_snapshot). `batch_only` (owner decision 2026-11-13) means the "
-        "target has parameters only in automated batch tables (neural-network or pipeline "
-        "catalogues), which is not a published solution: such a card is valid; its "
-        "occupancy_search (copied) lists those tables, closest prior work cites each one "
-        "(novelty.batch_parameters), and the plan compares the new solution with their values "
-        "parameter by parameter and states what the individual solution adds (q constrained by "
-        "the total eclipse, third light, uncertainties, absolute parameters); "
-        "copy each entry's `card_fields` (research_line, paper_template, occupancy_search, "
-        "candidate_queue_entry, series when present) into the card unchanged, re-running the "
-        "occupancy search only when its searched_at is more than 30 days old (then record the "
-        "new search), and fill the remaining card fields from the template and the SOP. "
-        "Pre-register a symmetry gate with the queue's rule (significance AND amplitude: > 3 "
-        "combined SE and > 1 % of the eclipse depth) and a control criterion only as the shared "
-        "control receipt can judge it (each parameter within 2 combined sigma, convergence "
-        "flags; no absolute tolerance such as |di| <= 2 deg; queue "
-        "metadata.queue_precheck.control_status). Skip an entry whose data access fails and say "
-        "so in the result" + held
+        + ") are enumerated, not scouted: do not search for other targets of them. Each "
+        "template has its own queue and its own card rules; a target may appear under two "
+        "templates (a single-target solution and a sample audit batch) - those are different "
+        "topics, not duplicates. Draw the entries of a queue's `candidates` in `rank` order "
+        "(the queue's draw order, e.g. score_v2). Each entry's `ledger_occupancy` says whether "
+        "its target is free, reopenable or blocked: skip blocked and in-flight ones. Copy the "
+        "entry's `card_fields` into the card unchanged - every key, including `reopens` and "
+        "`reopen_basis` when present (a reopening card must declare both; the ledger refuses a "
+        "reopen whose basis type the frozen topic did not allow) - and re-run the occupancy "
+        "search only when its searched_at is empty or more than 30 days old (then record the "
+        "new search). Write the rest of the card from that template's entry in "
+        "research-lines.yaml: its `card_rules` (required_analysis, primary_endpoint_template, "
+        "forbidden_conditions, reopening) where it has them, else its minimum_content, "
+        "novelty_rule and the SOP; never add a condition its forbidden_conditions list. The "
+        "control plane runs the line's admission_precheck on each card before review. Skip an "
+        "entry whose data access fails and say so in the result" + held + state
     )
 
 
@@ -566,9 +570,38 @@ def held_queue_releases(
     return result
 
 
-def _queue_instruction(paths: WorkspacePaths, settings: FactorySettings, line: str) -> str:
+def _queue_instruction(paths: WorkspacePaths, settings: FactorySettings, line: str,
+                       db: FactoryDB | None = None) -> str:
     queues = queued_templates(research_lines_document(paths, settings), line)
-    return queue_scout_instruction(queues, held_queue_releases(paths, settings, line, queues))
+    supply = template_supply(queues)
+    if db is not None:
+        counts = _supply_state(db, line).get("templates") or {}
+        for template, item in supply.items():
+            entry = counts.get(template) if isinstance(counts, Mapping) else None
+            if isinstance(entry, Mapping) and int(entry.get("count") or 0):
+                item["empty_draws"] = int(entry["count"])
+    return queue_scout_instruction(queues, held_queue_releases(paths, settings, line, queues),
+                                   supply)
+
+
+def template_supply(queues: Mapping[str, str]) -> dict[str, dict[str, Any]]:
+    """Per queued template: queue digest and drawable entries (free or reopenable)."""
+
+    result: dict[str, dict[str, Any]] = {}
+    for template, path in sorted(queues.items()):
+        entry: dict[str, Any] = {"digest": _file_digest(path)}
+        try:
+            queue = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            queue = None
+        candidates = queue.get("candidates") if isinstance(queue, Mapping) else None
+        if isinstance(candidates, list):
+            entry["drawable"] = sum(
+                1 for item in candidates if isinstance(item, Mapping)
+                and str((item.get("ledger_occupancy") or {}).get("state") or "free")
+                in {"free", "reopenable"})
+        result[template] = entry
+    return result
 
 
 # ----------------------------------------------------------- empty-draw backoff
@@ -659,10 +692,12 @@ def record_scout_outcomes(
         for project in program_projects(paths) if scout_workstream_id(project)
     }
     by_source: dict[str, int] = {}
+    accepted_topics: dict[str, list[Mapping[str, Any]]] = {}
     for topic in document.get("topics") or []:
         if isinstance(topic, Mapping) and str(topic.get("status") or "") != "rejected":
             source = str(topic.get("source_task_id") or "")
             by_source[source] = by_source.get(source, 0) + 1
+            accepted_topics.setdefault(source, []).append(topic)
     states: dict[str, dict[str, Any]] = {}
     changes: list[dict[str, Any]] = []
     fingerprints: dict[str, str] = {}
@@ -682,6 +717,9 @@ def record_scout_outcomes(
         accepted = by_source.get(str(task["task_id"]), 0)
         state["last_created_at"], state["last_task_id"] = marker
         state["recent_task_ids"] = [*recent, marker[1]][-20:]
+        if project.research_line and (cards is not None or accepted):
+            _record_template_draws(paths, settings, project.research_line, state,
+                                   accepted_topics.get(str(task["task_id"]), []))
         if accepted:
             if int(state.get("count") or 0):
                 changes.append({"key": key, "event": "topic_scout_productive",
@@ -715,6 +753,44 @@ def record_scout_outcomes(
             events=[("program", item["key"], item["event"], item) for item in changes],
         )
     return changes
+
+
+def _record_template_draws(
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    line: str,
+    state: dict[str, Any],
+    accepted: list[Mapping[str, Any]],
+) -> None:
+    """Per-template empty-draw streaks of a multi-template line (``state["templates"]``).
+
+    A template the scout drew a standing card from is reset; every other queued template
+    counts one more empty draw while its queue file is unchanged (restart at 1 when it
+    changed). Only reported (scout instruction, block detail); the line-level backoff
+    above still decides whether the next scout runs.
+    """
+
+    queues = queued_templates(research_lines_document(paths, settings), line)
+    if not queues:
+        return
+    drawn: set[str] = set()
+    for topic in accepted:
+        try:
+            card = _read_object(Path(str(topic.get("card_path") or "")))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        drawn.add(str(card.get("paper_template") or ""))
+    previous = state.get("templates") if isinstance(state.get("templates"), dict) else {}
+    templates: dict[str, Any] = {}
+    for template, item in template_supply(queues).items():
+        old = previous.get(template) if isinstance(previous.get(template), Mapping) else {}
+        if template in drawn:
+            templates[template] = {"count": 0, "digest": item.get("digest")}
+            continue
+        same = old.get("digest") == item.get("digest")
+        templates[template] = {"count": int(old.get("count") or 0) + 1 if same else 1,
+                               "digest": item.get("digest")}
+    state["templates"] = templates
 
 
 def scout_supply_blocks(
@@ -766,6 +842,9 @@ def scout_supply_blocks(
             "release_when": "the line's candidate queue, its entry in research-lines.yaml, "
                             "a held-entry capability or its ledger topics change",
         }
+        if isinstance(state.get("templates"), Mapping) and state["templates"]:
+            base["templates"] = {template: int((item or {}).get("count") or 0)
+                                 for template, item in state["templates"].items()}
         if program.scout_exhausted_after and count >= program.scout_exhausted_after:
             blocks[key] = {**base, "reason": "candidates_exhausted"}
             continue
@@ -862,7 +941,7 @@ def _schedule_one_scout(
                     "template id, and use `series` for a few adjacent systems sharing one "
                     "pipeline (one paper per card). Cite reusable assets of the template in "
                     "`reusable_assets` and lower the cost estimate accordingly"
-                    + _queue_instruction(paths, settings, line)
+                    + _queue_instruction(paths, settings, line, db)
                     if line_templates(research_lines_document(paths, settings), line) else ""
                 )
                 if line else ""
@@ -1233,6 +1312,14 @@ def intake_card(
     if revises:
         card["revises"] = revises
     card, normalized = normalize_topic_card(card)
+    lines_document = research_lines_document(paths, settings) if card.get(
+        "research_line") else None
+    line_entry, template_entry = card_checks.line_specs(lines_document, card)
+    if settings.program.card_compute_floor:
+        # The line knows its typical cost; a tighter card is corrected, not frozen later.
+        card, raised = card_checks.apply_compute_floor(
+            card, card_checks.compute_floor(line_entry, template_entry))
+        normalized = [*normalized, *raised]
     warnings: list[str] = []
     errors = card_problems(paths, settings, card, receipt_digests=receipt_digests,
                            ledger_document=ledger.read(), warnings=warnings)
@@ -1247,18 +1334,40 @@ def intake_card(
         return _record_invalid(db, paths, ledger, project, card, errors=errors,
                                decided_by=decided_by, metadata=metadata, repairable=repairable)
     metadata["card_path"] = str(_store_card(paths, project, card))
+    precheck = _run_card_precheck(paths, settings, project.project_id, card, line_entry,
+                                  card_path=Path(metadata["card_path"]))
+    if precheck is not None:
+        precheck["attempts"] = 1
+        metadata["card_check"] = {**metadata.get("card_check", {"normalized": [],
+                                                               "warnings": []}),
+                                  "precheck": precheck}
+        if precheck["status"] == "fail":
+            outcome = _record_invalid(
+                db, paths, ledger, project, card,
+                errors=["card_precheck_failed: " + card_checks.precheck_reasons(precheck)],
+                decided_by=decided_by, metadata=metadata, repairable=False,
+                reason="card_precheck_failed", not_repairable_reason="card_precheck_failed",
+            )
+            return {**outcome, "precheck": "fail"}
+        # An erroring precheck (infrastructure) leaves the card proposed but held from the
+        # admission review; schedule_topic_admission retries it and reports it each tick.
     try:
         decision = propose_topic(ledger, card, db=db, decided_by=decided_by, metadata=metadata)
     except TopicLedgerError as exc:
         return _record_invalid(db, paths, ledger, project, card, errors=[str(exc)],
                                decided_by=decided_by, metadata=metadata, repairable=repairable)
-    return {
+    result = {
         "topic_id": decision.topic_id,
         "status": decision.status,
         "reason": decision.reason,
         "errors": [],
         "duplicate_of": list(decision.duplicate_of),
     }
+    if precheck is not None:
+        result["precheck"] = precheck["status"]
+        if precheck["status"] == "error":
+            result["precheck_error"] = card_checks.precheck_reasons(precheck)
+    return result
 
 
 def _record_invalid(
@@ -1272,19 +1381,130 @@ def _record_invalid(
     decided_by: str,
     metadata: dict[str, Any],
     repairable: bool,
+    reason: str = "card_invalid",
+    not_repairable_reason: str | None = None,
 ) -> dict[str, Any]:
     values = dict(metadata)
     values["card_path"] = str(_store_card(paths, project, card, invalid=True))
     values["card_repair"] = (
         {"status": "pending", "errors": list(errors)} if repairable
         else {"status": "not_repairable",
-              "reason": "repair_failed" if card.get("repair_of") else "manual_or_unbound_card"}
+              "reason": not_repairable_reason or (
+                  "repair_failed" if card.get("repair_of") else "manual_or_unbound_card")}
     )
     decision = record_rejected_card(
-        ledger, card, db=db, decided_by=decided_by, errors=errors, metadata=values
+        ledger, card, db=db, decided_by=decided_by, errors=errors, metadata=values,
+        reason=reason,
     )
-    return {"topic_id": decision.topic_id, "status": "rejected", "reason": "card_invalid",
+    return {"topic_id": decision.topic_id, "status": "rejected", "reason": reason,
             "errors": errors, "card_repair": values["card_repair"]["status"]}
+
+
+def _run_card_precheck(
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    project_id: str,
+    card: Mapping[str, Any],
+    line_entry: Mapping[str, Any],
+    *,
+    card_path: Path,
+) -> dict[str, Any] | None:
+    """The line's ``admission_precheck`` of one card (None when none is declared)."""
+
+    if not settings.program.card_precheck:
+        return None
+    spec = card_checks.precheck_spec(line_entry, str(card.get("paper_template") or ""))
+    if spec is None:
+        return None
+    digest = card_sha256(card)
+    output_dir = (_control_root(paths) / _token(project_id) / "prechecks"
+                  / f"topic-{digest[:16]}")
+    return card_checks.run_precheck(
+        spec, card=card, card_path=card_path, output_dir=output_dir, data_root=paths.data,
+        max_seconds=settings.program.card_precheck_max_seconds,
+    )
+
+
+def precheck_statistics(document: Mapping[str, Any]) -> dict[str, dict[str, int]]:
+    """Per line: cards rejected by its admission precheck, and cards waiting on an error."""
+
+    stats: dict[str, dict[str, int]] = {}
+    for topic in document.get("topics") or []:
+        if not isinstance(topic, Mapping):
+            continue
+        line = str(topic.get("research_line") or "")
+        rejected = (topic.get("status") == "rejected"
+                    and last_rejection_reason(topic) == "card_precheck_failed")
+        waiting = topic.get("status") == "proposed" and precheck_held(topic)
+        if rejected or waiting:
+            entry = stats.setdefault(line, {"rejected": 0, "waiting_on_error": 0})
+            entry["rejected" if rejected else "waiting_on_error"] += 1
+    return stats
+
+
+def precheck_held(topic: Mapping[str, Any]) -> bool:
+    """A proposed card whose line precheck erred (infrastructure) waits, unreviewed."""
+
+    check = topic.get("card_check") if isinstance(topic.get("card_check"), Mapping) else {}
+    precheck = check.get("precheck") if isinstance(check.get("precheck"), Mapping) else {}
+    return str(precheck.get("status") or "") == "error"
+
+
+def retry_held_prechecks(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    report: Any,
+) -> list[dict[str, Any]]:
+    """Re-run the erred prechecks of waiting proposed cards (once per tick each).
+
+    pass -> the card goes to the admission review as usual; fail -> it is rejected
+    (``card_precheck_failed``); still an error -> it keeps waiting and the tick reports it.
+    """
+
+    ledger = open_topic_ledger(paths, settings.program)
+    held = [topic for topic in ledger.read().get("topics") or []
+            if isinstance(topic, Mapping) and topic.get("status") == "proposed"
+            and precheck_held(topic)]
+    if not held:
+        return []
+    document = research_lines_document(paths, settings)
+    outcomes: list[dict[str, Any]] = []
+    for topic in held:
+        topic_id = str(topic["topic_id"])
+        card_path = Path(str(topic.get("card_path") or ""))
+        previous = dict(topic["card_check"]["precheck"])
+        attempts = int(previous.get("attempts") or 1) + 1
+        try:
+            card = _read_object(card_path)
+            line_entry, _template = card_checks.line_specs(document, card)
+            result = _run_card_precheck(paths, settings,
+                                        str(topic.get("program_project_id") or "program"),
+                                        card, line_entry, card_path=card_path)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            result = {"status": "error", "error": f"could not re-read the card: {exc}"}
+        if result is None:
+            # The line no longer declares a precheck (or it was switched off): release.
+            result = {**previous, "status": "not_declared"}
+        result["attempts"] = attempts
+        check = {**dict(topic.get("card_check") or {}), "precheck": result}
+        outcome = {"topic_id": topic_id, "status": result["status"], "attempts": attempts}
+        record_topic_note(ledger, topic_id, db=db, event_type="card_precheck_recorded",
+                          reason=f"card_precheck_{result['status']}",
+                          decided_by="orchestrator:admission_precheck",
+                          detail={"attempts": attempts,
+                                  "reasons": card_checks.precheck_reasons(result)},
+                          updates={"card_check": check},
+                          key=f"card_precheck:{topic_id}:{attempts}")
+        if result["status"] == "fail":
+            reject_topic(ledger, topic_id, db=db, reason="card_precheck_failed",
+                         decided_by="orchestrator:admission_precheck")
+        if result["status"] == "error":
+            report.errors.append(
+                f"Admission precheck of {topic_id} failed to run (attempt {attempts}; the card "
+                f"waits, not reviewed): {card_checks.precheck_reasons(result)}")
+        outcomes.append(outcome)
+    return outcomes
 
 
 def register_scout_results(
@@ -2005,6 +2225,10 @@ def schedule_topic_admission(
     waiting_for_line = [topic for topic in proposed
                         if str(topic.get("research_line") or "") in blocked_lines]
     proposed = [topic for topic in proposed if topic not in waiting_for_line]
+    # A card whose line admission precheck could not run waits for a retried precheck
+    # (retry_held_prechecks); it is neither admitted unchecked nor rejected.
+    waiting_for_precheck = [topic for topic in proposed if precheck_held(topic)]
+    proposed = [topic for topic in proposed if topic not in waiting_for_precheck]
     in_flight = {
         str(task["task_id"]): task
         for task in _program_tasks(db, statuses=IN_FLIGHT_STATUSES,
@@ -2029,6 +2253,7 @@ def schedule_topic_admission(
         return ReviewSchedule(
             reason="admission_batches_in_flight" if reviewing
             else "research_line_environment_not_ready" if waiting_for_line
+            else "admission_precheck_error" if waiting_for_precheck
             else "awaiting_topic_cards"
         )
     cap = settings.program.max_concurrent_admissions
@@ -2174,8 +2399,14 @@ def schedule_topic_admission(
                 "of the same system and property, validation below the template's minimum, or "
                 "one result split into several papers. A card with `candidate_queue_entry` was "
                 "drawn from an enumerated target queue: admission is a checklist, not a debate. "
-                "Check (1) the entry exists in that queue file with the same target and verdict "
-                "`unreported` or `batch_only`, and the card's occupancy_search equals the entry's; "
+                "The line's mechanical admission_precheck has already run on it (card_check."
+                "precheck in the packet; a failed one never reaches you). "
+                "Check (1) the entry exists in that queue file (the template's own queue: a "
+                "target may sit in two templates' queues, which are different topics) and the "
+                "card copies its card_fields (occupancy_search may be newer when re-run); a "
+                "template with `card_rules`: the card follows them and has none of its "
+                "forbidden_conditions; a single-target entry has verdict "
+                "`unreported` or `batch_only`; "
                 "for `batch_only` the card cites every batch table of the entry in closest prior "
                 "work and plans a parameter-by-parameter comparison with it - parameters in "
                 "automated batch catalogues are not a published solution (owner decision "
@@ -2842,6 +3073,19 @@ def run_program_pipeline(
         outcomes = register_scout_results(db, paths, settings)
         info["cards_registered"] = [item for item in outcomes if item["status"] == "proposed"]
         info["rejected_cards"] = [item for item in outcomes if item["status"] == "rejected"]
+        for item in outcomes:
+            if item.get("precheck") == "error":
+                report.errors.append(
+                    f"Admission precheck of {item['topic_id']} failed to run (the card waits, "
+                    f"not reviewed; retried next tick): {item.get('precheck_error')}")
+        info["card_prechecks"] = {
+            "this_tick": [{"topic_id": item["topic_id"], "status": item["precheck"]}
+                          for item in outcomes if item.get("precheck")],
+            "retried": retry_held_prechecks(db, paths, settings, report),
+            "by_line": precheck_statistics(open_topic_ledger(paths, settings.program).read()),
+        }
+        if not any(info["card_prechecks"].values()):
+            info.pop("card_prechecks")
         info["card_repairs"] = schedule_card_repairs(db, paths, settings)
         report.enqueued.extend(
             str(item["task_id"]) for item in info["card_repairs"] if item.get("task_id")

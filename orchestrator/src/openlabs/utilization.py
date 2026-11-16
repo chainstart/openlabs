@@ -677,6 +677,14 @@ def utilization_report(
         "admission": admission,
         "program": program,
     }
+    try:
+        from . import usage as usage_accounting
+
+        payload["token_cost"] = usage_accounting.token_cost_summary(db, settings, now=moment)
+        payload["topic_economics"] = usage_accounting.topic_economics(
+            db, paths, settings, now=moment)
+    except Exception as exc:  # noqa: BLE001 - the cost view is advisory.
+        payload["token_cost"] = {"error": str(exc)}
     payload["balance"] = balance_summary(
         settings, parallel=parallel, pace=pace, host=host, ailab=ailab, program=program,
         admission=admission,

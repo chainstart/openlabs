@@ -151,10 +151,13 @@ def test_queued_template_scouts_copy_entries_and_admission_is_a_checklist(tmp_pa
         scout = dict(connection.execute(
             "SELECT * FROM tasks WHERE task_type='topic_scout' LIMIT 1").fetchone())
     assert f"2d-anode: {queue}" in scout["objective"]
-    assert "copy each entry's `card_fields`" in scout["objective"]
-    # batch_only targets are drawn after unreported ones and cite their batch tables
-    assert "`unreported`, then those with `batch_only`" in scout["objective"]
-    assert "novelty.batch_parameters" in scout["objective"]
+    # 2026-11-16 (queue qp-2.0): draw by rank, copy every card_fields key (reopens and
+    # reopen_basis included), write the rest by the template's card_rules.
+    assert "Copy the entry's `card_fields`" in scout["objective"]
+    assert "every key, including `reopens` and `reopen_basis`" in scout["objective"]
+    assert "`rank` order" in scout["objective"] and "ledger_occupancy" in scout["objective"]
+    assert "card_rules" in scout["objective"] and "novelty_rule" in scout["objective"]
+    assert "different topics, not duplicates" in scout["objective"]
     admission = flow._admission_task(db)
     assert "admission is a checklist" in admission["objective"]
     assert "`unreported` or `batch_only`" in admission["objective"]
