@@ -760,6 +760,11 @@ def enqueue_seat(
     elif is_owner_task(parent):
         # No recorded session (the CLI reported none): same owner, fresh session.
         runner = str((parent or {}).get("runner") or "") or None
+    if runner is not None and settings.runners and runner not in settings.program.owner.runners:
+        # The owner list changed (e.g. owners moved to the worker tier): the next seat goes to
+        # a listed runner with a fresh session and the hand-over file.
+        runner = None
+        session_mode, session_source, session_reason = "fresh", None, "owner_runner_not_listed"
     if runner is None:
         runner = choose_runner(db, settings, campaign_id=campaign_id, router=router) or "frontier"
     resources = task_resources(source) if source else default_task_resources(settings)
@@ -1797,7 +1802,8 @@ def supervise(
             continue
         runner = str(task.get("runner") or "")
         owners = current_owners(db, exclude_campaign=str(task["campaign_id"]))
-        if runner in settings.runners and runner_usable(settings, router, runner) and (
+        listed = runner in settings.program.owner.runners
+        if listed and runner in settings.runners and runner_usable(settings, router, runner) and (
             _under_cap(settings, owners, runner)
         ):
             if db.meta_get(BLOCKED_META_PREFIX + task_id) is not None:
@@ -1807,7 +1813,7 @@ def supervise(
         if since is None:
             db.update_meta({BLOCKED_META_PREFIX + task_id: budget_control._iso(moment)})
             since = moment
-        if runner in settings.runners and moment - since < timedelta(
+        if listed and runner in settings.runners and moment - since < timedelta(
             minutes=owner.switch_after_minutes
         ):
             continue
