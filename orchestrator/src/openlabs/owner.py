@@ -2060,8 +2060,8 @@ def render_brief(
         "SKILL.md). Skills and CODE/AGENTS.md are optional references and checklists.",
         "",
         "## Hard limits",
-        "1. Every download goes through the download bridge; never change network, proxy or "
-        "firewall settings.",
+        "1. Downloads: bridge only, always `--route auto` (`--route proxy` needs user approval; "
+        "slow is not failed). Never change network, proxy or firewall settings.",
         "2. Never print, copy or send credentials.",
         "3. Heavy work on ailab/the queue or in the resource guard; GPU only through its lock.",
         "4. Never fabricate data, results, citations or reviews; never pass simulated or "
