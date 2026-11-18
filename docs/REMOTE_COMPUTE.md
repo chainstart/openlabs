@@ -76,6 +76,42 @@ past the limit, with exit code 4 and a message naming the jobs, the limit and wh
 with nothing in the queues may always submit one job. Sessions without the topic
 variable are not limited.
 
+## Listing and withdrawing jobs (2026-11-19)
+
+Before the limit, owners had queued about 22 ailab jobs (about 96 declared threads against
+8), mostly without `submitter.json`. The user approved on 2026-11-19 that owners clean up
+their own over-limit queue ("同意负责人处理").
+
+```sh
+openlabs-remote list [--mine | --campaign ID] [--json]
+openlabs-remote withdraw JOB_ID [JOB_ID ...] [--reason TEXT] [--any-topic]
+```
+
+`list` shows the queued (READY, not withdrawn) and running jobs of both queues with
+threads, memory, creation time, source (local source directory, or the first entry of an
+ailab payload) and topic. The topic comes from `submitter.json`; an untagged older job is
+attributed (`BY` column) by `source_path` (a local source, a moved job's origin or the
+command names the campaign workspace or its `attempt-workspaces/<token>` directory) or by
+`workspace_mention` (the job id appears in text files, at most 256 KB each, of exactly one
+campaign workspace under `openlabs-data/workspaces/DOMAIN/`; several campaigns make it
+`ambiguous`). `OPENLABS_JOB_ATTRIBUTION_ROOTS` overrides the workspace roots. The scan
+(about 4 s on cc-sg) runs only while untagged jobs exist. The per-topic limit at `submit`
+and the owner brief count inferred jobs too.
+
+`withdraw` takes back jobs that are still only queued. It refuses a job that is running,
+finished, in transfer (`transport.log`), not dispatchable or already withdrawn (a running
+job is not stopped), and, unless `--any-topic`, one tagged or attributed to another topic
+than the caller's `OPENLABS_CAMPAIGN_ID`. Otherwise it writes `WITHDRAWN.by-submitter`
+(JSON: who, when, reason, attribution), then renames `READY` to `READY.withdrawn`.
+Dispatchers act only on `READY`: the bridge (`tools/remote-compute/bridge.py`) takes a job
+by writing state `running` (after hashing the payload) and opening `transport.log`, and the
+local dispatcher writes `running` before it starts. After 5 s `withdraw` checks again and
+rolls a job back (`READY` restored, marker removed, reported "taken by the dispatcher") if
+either has picked it up meanwhile. Exit code 0 means everything was withdrawn, 5 means
+something was not. A waiting task (`awaiting_remote`) treats a withdrawn job as a normal
+end of the wait (`withdrawn`, with the marker's who/why), never as a missing job. If a
+dispatcher started the job despite a marker, the job's real state is used.
+
 ## Local overflow (2026-11-14)
 
 ailab is preferred and should be kept full, but it is not the only place to work

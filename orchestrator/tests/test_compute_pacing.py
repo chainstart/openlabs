@@ -53,6 +53,7 @@ def queues(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENLABS_REMOTE_QUEUE", str(remote))
     monkeypatch.setenv("OPENLABS_LOCAL_QUEUE", str(local))
     monkeypatch.setenv("OPENLABS_LOCAL_MAX_CPUS", "12")
+    monkeypatch.setenv(remote_compute.ATTRIBUTION_ROOTS_ENV, str(tmp_path / "workspaces"))
     return remote, local
 
 
@@ -221,3 +222,20 @@ def test_brief_lines_show_capacity_snapshot_and_limit(queues) -> None:
     assert "<= 8 thr; submit refuses more" in text
     assert "<= " not in "\n".join(owner.compute_brief_lines(
         _settings(campaign_compute_threads=0), "topic-a"))
+    assert "list --mine" in text and "Over the limit" not in text
+
+
+def test_brief_tells_an_owner_over_its_limit_to_withdraw(queues, tmp_path) -> None:
+    remote, _local = queues
+    _job(remote, "a" * 32, state="running", campaign="topic-a")
+    _job(remote, "b" * 32, campaign="topic-a")
+    _job(remote, "c" * 32)                       # untagged, named in topic-a's notes
+    _job(remote, "d" * 32)                       # untagged, unattributable
+    workspace = tmp_path / "workspaces" / "physics" / "topic-a"
+    workspace.mkdir(parents=True)
+    (workspace / "OWNER_LOG.md").write_text("submitted " + "c" * 32 + "\n")
+    text = "\n".join(owner.compute_brief_lines(_settings(), "topic-a"))
+    assert "this topic 3/12 (1 untagged, inferred)." in text
+    assert ("Over the limit now: this topic has 2 job(s) queued, 1 running, 12 thr "
+            "(limit 8)") in text
+    assert "`CODE/bin/openlabs-remote list --mine`" in text and "coarse before fine" in text

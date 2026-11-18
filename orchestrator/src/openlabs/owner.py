@@ -1948,7 +1948,7 @@ def compute_brief_lines(settings: FactorySettings, campaign_id: str) -> list[str
         ailab = local_compute.ailab_load(remote_root, caps)
         here = local_compute.local_load()
         mine = remote_compute.campaign_queue_load(
-            campaign_id, (remote_root, local_compute.default_queue_root()))
+            campaign_id, (remote_root, local_compute.default_queue_root()), infer=True)
     except Exception:  # noqa: BLE001 - the snapshot is advisory
         return []
     memory_gb = round(int(caps.get("memory_mib") or 0) / 1024)
@@ -1958,12 +1958,21 @@ def compute_brief_lines(settings: FactorySettings, campaign_id: str) -> list[str
         f" Queued jobs/thr: ailab {ailab.get('queued')}/{ailab.get('queued_cpus')} "
         f"(+{ailab.get('running_cpus')} running), local {here.get('queued')}/"
         f"{here.get('queued_cpus')} (+{here.get('running_cpus')}); this topic "
-        f"{mine['jobs']}/{mine['cpu_threads']}.",
+        f"{mine['jobs']}/{mine['cpu_threads']}"
+        + (f" ({mine['inferred']} untagged, inferred)" if mine["inferred"] else "")
+        + ".",
     ]
     if limit > 0:
         lines.append(
             f"  - Limit: this topic's queued+running jobs <= {limit} thr; submit refuses more. "
-            "Big sweeps: in batches, coarse first, each deciding the next.")
+            "Batches, coarse first; `openlabs-remote list --mine`, `withdraw ID`.")
+        if mine["cpu_threads"] > limit:
+            lines.append(
+                f"  - Over the limit now: this topic has {mine['queued']} job(s) queued, "
+                f"{mine['running']} running, {mine['cpu_threads']} thr (limit {limit}). First "
+                "run `CODE/bin/openlabs-remote list --mine` and withdraw the less important queued jobs "
+                "(keep those most decisive for the current verdict, coarse before fine), then "
+                "continue; resubmit withdrawn batches later within the limit.")
     backlog = compute_backlog(settings)
     if backlog and backlog.get("backlogged"):
         lines.append("  - The queues are backlogged; no new topics start until they drain.")

@@ -105,17 +105,25 @@ def job_state(
     except (OSError, ValueError, TypeError, AttributeError):
         pass
     try:
-        if any(directory.glob("WITHDRAWN*")):
-            return {**view, "state": "withdrawn"}
+        markers = sorted(directory.glob("WITHDRAWN*"))
     except OSError:
-        pass
+        markers = []
     try:
         status = json.loads((directory / "status.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {**view, "state": "unknown"}
+        status = None
+    state = str(status.get("state") or "unknown") if isinstance(status, Mapping) else "unknown"
+    # A withdrawn job (``openlabs-remote withdraw``, a move to the local queue) is a
+    # normal end of the wait, never a lost job. Only if a dispatcher had taken it
+    # before the withdrawal (state running or finished) does its real state count.
+    if markers and state not in {"running", "succeeded", "failed"}:
+        view = {**view, "state": "withdrawn"}
+        detail = _withdrawal_detail(markers[0])
+        if detail:
+            view["withdrawn"] = detail
+        return view
     if not isinstance(status, Mapping):
         return {**view, "state": "unknown"}
-    state = str(status.get("state") or "unknown")
     view["state"] = state if state in {"queued", "running", "succeeded", "failed"} else "unknown"
     if status.get("updated_at"):
         view["updated_at"] = str(status["updated_at"])
@@ -124,6 +132,31 @@ def job_state(
     if status.get("receipt_sha256"):
         view["receipt_sha256"] = str(status["receipt_sha256"])
     return view
+
+
+def _withdrawal_detail(marker: Path) -> str:
+    """Short "by whom, when, why" of a withdrawal marker (JSON or free text)."""
+
+    try:
+        raw = marker.read_text(encoding="utf-8", errors="replace")[:2000]
+    except OSError:
+        return ""
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        data = None
+    if not isinstance(data, Mapping):
+        text = " ".join(raw.split())
+        return f"{marker.name}: {text[:200]}" if text else marker.name
+    by = data.get("by") if isinstance(data.get("by"), Mapping) else {}
+    parts = [marker.name]
+    if by.get("task_id") or by.get("campaign_id"):
+        parts.append(f"by {by.get('task_id') or by.get('campaign_id')}")
+    if data.get("withdrawn_at") or data.get("at"):
+        parts.append(f"at {data.get('withdrawn_at') or data.get('at')}")
+    if data.get("reason"):
+        parts.append(f"reason: {str(data['reason'])[:200]}")
+    return "; ".join(parts)
 
 
 def is_terminal(view: Mapping[str, Any]) -> bool:
@@ -292,6 +325,8 @@ def _outcome_note(views: list[Mapping[str, Any]], *, expired: bool, now: datetim
         line = f"- {view['job_id']} ({view.get('backend', 'ailab')}): {view['state']}"
         if view.get("error"):
             line += f" (error: {view['error']})"
+        if view.get("withdrawn"):
+            line += f" ({view['withdrawn']}; not run - resubmit it if it is still needed)"
         if view["state"] in {"succeeded", "failed"}:
             line += f"; result files under {view['result_dir']}"
         lines.append(line)

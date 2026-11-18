@@ -6,6 +6,8 @@
 #   cannot start the job now and it runs here unchanged -- see openlabs.local_compute)
 #   bin/openlabs-remote status JOB_ID            (ailab or local job id)
 #   bin/openlabs-remote wait JOB_ID [--timeout-seconds N]
+#   bin/openlabs-remote list [--mine | --campaign ID] [--json]   (queued + running, by topic)
+#   bin/openlabs-remote withdraw JOB_ID... [--reason TEXT]        (still-queued jobs only)
 # Queue root: $OPENLABS_REMOTE_QUEUE, else /workspace/.openlabs-remote (container)
 # or ~/work/projects/.openlabs-remote (WSL). Every operation runs inside the
 # OpenLabs resource guard; if you call `python3 -m openlabs.remote_compute`

@@ -459,46 +459,402 @@ def _read_json(path: Path) -> Any:
         return None
 
 
-def campaign_queue_load(campaign_id: str, roots: Sequence[Path]) -> dict[str, Any]:
+def active_state(directory: Path) -> str | None:
+    """'queued' (dispatchable: READY, not withdrawn) or 'running', else None.
+
+    The same rule as the bridge's and the tick's load counts: a withdrawn job
+    (``WITHDRAWN*``: moved to the local queue, or withdrawn by its submitter) and a
+    queued job without READY are not in the queue.
+    """
+    status = _read_json(directory / 'status.json')
+    state = status.get('state') if isinstance(status, dict) else None
+    if state not in ('queued', 'running'):
+        return None
+    try:
+        if any(directory.glob('WITHDRAWN*')):
+            return None
+    except OSError:
+        return None
+    if state == 'queued' and not (directory / 'READY').is_file():
+        return None
+    return state
+
+
+def campaign_queue_load(campaign_id: str, roots: Sequence[Path], *, infer: bool = False,
+                        attribution_roots: Sequence[Path] | None = None) -> dict[str, Any]:
     """Jobs of one topic still in the given queues (queued with READY, or running).
 
     A withdrawn ailab copy (moved to the local queue, abandoned) is not counted; the
-    local copy of a moved job is.
+    local copy of a moved job is. Jobs are the topic's by ``submitter.json``; with
+    ``infer`` also older untagged jobs attributed to it by path or by a unique mention
+    in its workspace (:func:`queue_jobs`).
     """
     load: dict[str, Any] = {'jobs': 0, 'queued': 0, 'running': 0, 'cpu_threads': 0,
-                            'job_ids': []}
+                            'job_ids': [], 'inferred': 0, 'untagged_elsewhere': 0}
+    listing = queue_jobs([('', Path(root)) for root in roots], attribute=infer,
+                         attribution_roots=attribution_roots)
+    for row in listing['jobs']:
+        if row['campaign_id'] != campaign_id:
+            if row['campaign_id'] is None:
+                load['untagged_elsewhere'] += 1
+            continue
+        load['jobs'] += 1
+        load[row['state']] += 1
+        load['cpu_threads'] += row['cpu_threads']
+        load['job_ids'].append(row['job_id'])
+        if row['attribution'] != 'submitter':
+            load['inferred'] += 1
+    return load
+
+
+# ------------------------------------------------------- attribution and listing
+
+ATTRIBUTION_ROOTS_ENV = 'OPENLABS_JOB_ATTRIBUTION_ROOTS'
+MENTION_SUFFIXES = frozenset({'.md', '.txt', '.json', '.jsonl', '.sh', '.log', '.yaml',
+                              '.yml', '.toml'})
+MENTION_MAX_FILE_BYTES = 256 * 1024
+MENTION_MAX_DEPTH = 5
+MENTION_TIME_BUDGET_SECONDS = 10.0
+# One tick renders several briefs; the scan (about 4 s over the cc-sg workspaces on
+# 2026-11-19) is reused within a process for this long.
+MENTION_CACHE_SECONDS = 600.0
+_MENTION_CACHE: dict[Any, tuple[float, dict[str, set[str]], bool]] = {}
+_SAFE_TOKEN = re.compile(r'[^a-zA-Z0-9._-]+')
+
+
+def default_attribution_roots(environ: dict[str, str] | None = None) -> list[Path]:
+    """Workspace roots (``.../workspaces``; children ``DOMAIN/CAMPAIGN_ID``) used to
+    attribute untagged jobs. ``OPENLABS_JOB_ATTRIBUTION_ROOTS`` (os.pathsep-separated;
+    empty: none) overrides the instance's ``openlabs-data/workspaces``."""
+    env = os.environ if environ is None else environ
+    if ATTRIBUTION_ROOTS_ENV in env:
+        return [Path(item) for item in str(env[ATTRIBUTION_ROOTS_ENV]).split(os.pathsep)
+                if item.strip()]
+    try:
+        from .config import workspace_paths
+
+        root = workspace_paths().data / 'workspaces'
+    except Exception:  # noqa: BLE001 - attribution is best effort
+        return []
+    return [root] if root.is_dir() else []
+
+
+def known_campaigns(roots: Sequence[Path]) -> dict[str, Path]:
+    """campaign id -> canonical workspace directory, from ``ROOT/DOMAIN/CAMPAIGN_ID``."""
+    found: dict[str, Path] = {}
     for root in roots:
         try:
+            domains = [item for item in Path(root).iterdir() if item.is_dir()]
+        except OSError:
+            continue
+        for domain in domains:
+            try:
+                children = sorted(item for item in domain.iterdir()
+                                  if item.is_dir() and item.name != 'instances')
+            except OSError:
+                continue
+            for child in children:
+                found.setdefault(child.name, child)
+    return found
+
+
+def attempt_token(campaign_id: str) -> str:
+    """The campaign's directory name under ``attempt-workspaces`` (attempts._token)."""
+    cleaned = _SAFE_TOKEN.sub('-', campaign_id).strip('-._')[:48] or 'item'
+    return f'{cleaned}-{hashlib.sha256(campaign_id.encode()).hexdigest()[:12]}'
+
+
+def _path_campaign(texts: Sequence[str], tokens: dict[str, str]) -> str | None:
+    for text in texts:
+        for part in re.split(r'[/\s]+', str(text or '')):
+            if part in tokens:
+                return tokens[part]
+    return None
+
+
+def _mentions(job_ids: set[str], campaigns: dict[str, Path], *,
+              budget_seconds: float = MENTION_TIME_BUDGET_SECONDS,
+              clock: Callable[[], float] = time.monotonic) -> tuple[dict[str, set[str]], bool]:
+    """job id -> campaigns whose workspace text files name it; False if the scan was cut
+    short by its time budget."""
+    found: dict[str, set[str]] = {job_id: set() for job_id in job_ids}
+    if not job_ids:
+        return found, True
+    deadline = clock() + budget_seconds
+
+    def walk(directory: Path, depth: int, campaign: str) -> bool:
+        try:
+            entries = sorted(os.scandir(directory), key=lambda item: item.name)
+        except OSError:
+            return True
+        for entry in entries:
+            if clock() > deadline:
+                return False
+            try:
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir():
+                    if depth < MENTION_MAX_DEPTH and entry.name not in EXCLUDED_DIR_NAMES:
+                        if not walk(Path(entry.path), depth + 1, campaign):
+                            return False
+                    continue
+                if (not entry.is_file() or Path(entry.name).suffix.lower() not in MENTION_SUFFIXES
+                        or entry.stat().st_size > MENTION_MAX_FILE_BYTES):
+                    continue
+                with open(entry.path, 'rb') as handle:
+                    data = handle.read()
+            except OSError:
+                continue
+            for match in pattern.findall(data):
+                found[match.decode('ascii')].add(campaign)
+        return True
+
+    pattern = re.compile(b'|'.join(re.escape(job_id.encode('ascii'))
+                                   for job_id in sorted(job_ids)))
+
+    for campaign, directory in campaigns.items():
+        if not walk(directory, 0, campaign):
+            return found, False
+    return found, True
+
+
+def _payload_top(path: Path) -> str | None:
+    """First top-level entry of an ailab payload (its source directory's layout)."""
+    try:
+        with tarfile.open(path, mode='r|gz') as archive:
+            for member in archive:
+                top = member.name.split('/')[0]
+                return top + '/' if member.isdir() or '/' in member.name else top
+    except (OSError, tarfile.TarError, EOFError):
+        return None
+    return None
+
+
+def queue_jobs(roots: Sequence[tuple[str, Path]], *, attribute: bool = True,
+               attribution_roots: Sequence[Path] | None = None,
+               environ: dict[str, str] | None = None) -> dict[str, Any]:
+    """Queued (dispatchable) and running jobs of the given queues, each attributed to a
+    topic.
+
+    ``roots`` are ``(backend, queue root)`` pairs (an empty backend is read from the
+    job's request). ``attribution`` per job:
+
+    - ``submitter``: ``submitter.json`` (jobs submitted from an agent seat since
+      2026-11-18);
+    - ``source_path``: the local job's source directory, a moved job's origin or the
+      command names the campaign's workspace or attempt-workspace directory;
+    - ``workspace_mention``: only that campaign's workspace text files (handover, work
+      log, notes) name the job id;
+    - ``ambiguous`` (several campaigns name it; ``candidates``) or ``unknown``.
+
+    Without ``attribute`` only ``submitter.json`` is read.
+    """
+    rows: list[dict[str, Any]] = []
+    for backend, root in roots:
+        try:
             directories = sorted(item for item in (Path(root) / 'jobs').iterdir()
-                                 if item.is_dir())
+                                 if item.is_dir() and JOB_ID_RE.match(item.name))
         except OSError:
             continue
         for directory in directories:
-            record = _read_json(directory / SUBMITTER_FILE)
-            if not isinstance(record, dict) or record.get('campaign_id') != campaign_id:
-                continue
-            status = _read_json(directory / 'status.json')
-            state = status.get('state') if isinstance(status, dict) else None
-            if state not in ('queued', 'running'):
-                continue
-            try:
-                if any(directory.glob('WITHDRAWN*')):
-                    continue
-            except OSError:
-                continue
-            if state == 'queued' and not (directory / 'READY').is_file():
+            state = active_state(directory)
+            if state is None:
                 continue
             request = _read_json(directory / 'request.json')
-            resources = request.get('resources') if isinstance(request, dict) else None
+            request = request if isinstance(request, dict) else {}
+            resources = request.get('resources') if isinstance(request.get('resources'),
+                                                               dict) else {}
             try:
-                threads = int((resources or {}).get('cpu_threads') or 0)
+                threads = int(resources.get('cpu_threads') or 0)
+                memory = int(resources.get('memory_mib') or 0)
             except (TypeError, ValueError):
-                threads = 0
-            load['jobs'] += 1
-            load[state] += 1
-            load['cpu_threads'] += threads
-            load['job_ids'].append(directory.name)
-    return load
+                threads = memory = 0
+            record = _read_json(directory / SUBMITTER_FILE)
+            campaign = (str(record.get('campaign_id') or '') or None
+                        if isinstance(record, dict) else None)
+            moved = request.get('moved_from') if isinstance(request.get('moved_from'),
+                                                            dict) else {}
+            source = request.get('source')
+            if not source and (directory / 'payload.tar.gz').is_file():
+                top = _payload_top(directory / 'payload.tar.gz')
+                source = f'payload: {top}' if top else None
+            rows.append({
+                'job_id': directory.name,
+                'backend': backend or str(request.get('backend') or 'ailab'),
+                'state': state,
+                'cpu_threads': threads,
+                'memory_mib': memory,
+                'wall_seconds': resources.get('wall_seconds'),
+                'created_at': request.get('created_at'),
+                'submitted_task': record.get('task_id') if isinstance(record, dict) else None,
+                'campaign_id': campaign,
+                'attribution': 'submitter' if campaign else 'unknown',
+                'source': source,
+                'argv': [str(item) for item in request.get('argv') or []][:6],
+                '_paths': [str(request.get('source') or ''), str(moved.get('job_dir') or ''),
+                           *[str(item) for item in request.get('argv') or []]],
+                'job_dir': str(directory),
+            })
+    complete = True
+    untagged = [row for row in rows if row['campaign_id'] is None]
+    if attribute and untagged:
+        campaigns = known_campaigns(attribution_roots if attribution_roots is not None
+                                    else default_attribution_roots(environ))
+        tokens = {**{attempt_token(cid): cid for cid in campaigns},
+                  **{cid: cid for cid in campaigns}}
+        for row in untagged:
+            campaign = _path_campaign(row['_paths'], tokens)
+            if campaign:
+                row['campaign_id'], row['attribution'] = campaign, 'source_path'
+        remaining = {row['job_id'] for row in untagged if row['campaign_id'] is None}
+        key = (frozenset(remaining), tuple(sorted(str(path) for path in campaigns.values())))
+        cached = _MENTION_CACHE.get(key)
+        if cached is not None and time.monotonic() - cached[0] < MENTION_CACHE_SECONDS:
+            mentions, complete = cached[1], cached[2]
+        else:
+            mentions, complete = _mentions(remaining, campaigns)
+            _MENTION_CACHE.clear()
+            _MENTION_CACHE[key] = (time.monotonic(), mentions, complete)
+        for row in untagged:
+            names = sorted(mentions.get(row['job_id']) or ())
+            if row['campaign_id'] is not None or not names:
+                continue
+            if len(names) == 1:
+                row['campaign_id'], row['attribution'] = names[0], 'workspace_mention'
+            else:
+                row['attribution'], row['candidates'] = 'ambiguous', names
+    for row in rows:
+        row.pop('_paths', None)
+    rows.sort(key=lambda row: (str(row.get('created_at') or ''), row['job_id']))
+    return {'jobs': rows, 'attribution_complete': complete}
+
+
+def default_roots(environ: dict[str, str] | None = None) -> list[tuple[str, Path]]:
+    from .local_compute import default_queue_root as local_root
+
+    env = os.environ if environ is None else environ
+    return [('ailab', default_queue_root(env)), ('local', local_root(env))]
+
+
+# ------------------------------------------------------------------- withdraw
+
+WITHDRAWN_BY_SUBMITTER = 'WITHDRAWN.by-submitter'
+# The bridge (tools/remote-compute/bridge.py) takes a job by writing state "running"
+# to status.json (after hashing the payload) and opening transport.log; it keeps READY
+# until the job ends. The local dispatcher likewise writes "running" before starting.
+# A job is withdrawn by renaming READY away; a dispatcher that had already picked it up
+# shows itself within this many seconds, and the withdrawal is then rolled back.
+WITHDRAW_SETTLE_SECONDS = 5.0
+EXIT_NOT_WITHDRAWN = 5
+
+
+def _taken(directory: Path) -> str | None:
+    """Why the dispatcher already owns this job (None: still only queued)."""
+    status = _read_json(directory / 'status.json')
+    state = status.get('state') if isinstance(status, dict) else None
+    if state != 'queued':
+        return f'state is {state or "unreadable"}'
+    if (directory / 'transport.log').exists():
+        return 'the bridge has started transferring it (transport.log)'
+    return None
+
+
+def withdraw(job_ids: Sequence[str], *, reason: str = '', any_topic: bool = False,
+             queue_root: Path | None = None, local_root: Path | None = None,
+             environ: dict[str, str] | None = None,
+             attribution_roots: Sequence[Path] | None = None,
+             settle_seconds: float = WITHDRAW_SETTLE_SECONDS,
+             sleep: Callable[[float], None] = time.sleep) -> list[dict[str, Any]]:
+    """Withdraw still-queued jobs before a dispatcher takes them.
+
+    Per job: refuse unless it is queued with READY, not withdrawn, not in transfer, and
+    (without ``any_topic``) not tagged or attributed to another topic than the caller's
+    ``OPENLABS_CAMPAIGN_ID``. Then write ``WITHDRAWN.by-submitter`` (who, when, why) and
+    atomically rename READY -> READY.withdrawn; after ``settle_seconds`` re-check, and
+    roll a job back (READY restored, marker removed) if a dispatcher took it meanwhile.
+    Returns one ``{job_id, withdrawn, ...}`` record per id.
+    """
+    from .local_compute import default_queue_root as local_default, locate
+
+    env = os.environ if environ is None else environ
+    remote_root = Path(queue_root) if queue_root is not None else default_queue_root(env)
+    local_root = Path(local_root) if local_root is not None else local_default(env)
+    me = submitter(env)
+    results: list[dict[str, Any]] = []
+    pending: list[tuple[dict[str, Any], Path]] = []
+    attributed: dict[str, dict[str, Any]] | None = None
+    for job_id in job_ids:
+        outcome: dict[str, Any] = {'job_id': job_id, 'withdrawn': False}
+        results.append(outcome)
+        if not isinstance(job_id, str) or not JOB_ID_RE.match(job_id):
+            outcome['error'] = 'job id must be 32 lowercase hex characters'
+            continue
+        backend, directory = locate(job_id, remote_root, local_root)
+        outcome['backend'] = backend
+        if not (directory / 'request.json').is_file():
+            outcome['error'] = 'no such job in either queue'
+            continue
+        if any(directory.glob('WITHDRAWN*')):
+            outcome['error'] = 'already withdrawn'
+            continue
+        taken = _taken(directory)
+        if taken:
+            outcome['error'] = (f'not withdrawable: {taken}; a running or finished job is '
+                                'not stopped by withdraw')
+            continue
+        if not (directory / 'READY').is_file():
+            outcome['error'] = 'not withdrawable: not dispatchable (no READY)'
+            continue
+        record = _read_json(directory / SUBMITTER_FILE)
+        owner = record.get('campaign_id') if isinstance(record, dict) else None
+        how = 'submitter' if owner else 'unknown'
+        if not owner:
+            if attributed is None:
+                listing = queue_jobs([('ailab', remote_root), ('local', local_root)],
+                                     attribution_roots=attribution_roots, environ=env)
+                attributed = {row['job_id']: row for row in listing['jobs']}
+            row = attributed.get(job_id) or {}
+            owner, how = row.get('campaign_id'), row.get('attribution') or 'unknown'
+        outcome['campaign_id'], outcome['attribution'] = owner, how
+        if (not any_topic and me is not None and owner is not None
+                and owner != me['campaign_id']):
+            outcome['error'] = (f'job belongs to another topic ({owner}, by {how}); '
+                                'pass --any-topic only if that is intended')
+            continue
+        marker = directory / WITHDRAWN_BY_SUBMITTER
+        _write_private_atomic(marker, _json_bytes({
+            'job_id': job_id, 'withdrawn_at': utc_now(), 'backend': backend,
+            'by': me or {'campaign_id': None},
+            'reason': reason, 'campaign_id': owner, 'attribution': how,
+        }))
+        try:
+            os.rename(directory / 'READY', directory / 'READY.withdrawn')
+        except OSError:
+            marker.unlink(missing_ok=True)
+            outcome['error'] = 'not withdrawable: READY vanished (taken or withdrawn concurrently)'
+            continue
+        pending.append((outcome, directory))
+    if pending and settle_seconds > 0:
+        sleep(settle_seconds)
+    for outcome, directory in pending:
+        taken = _taken(directory)
+        if taken:
+            (directory / WITHDRAWN_BY_SUBMITTER).unlink(missing_ok=True)
+            try:
+                os.rename(directory / 'READY.withdrawn', directory / 'READY')
+            except OSError:
+                pass
+            outcome['error'] = f'taken by the dispatcher while withdrawing ({taken}); left as is'
+            continue
+        outcome['withdrawn'] = True
+    return results
+
+
+def _short_campaign(campaign: str | None) -> str:
+    if not campaign:
+        return '-'
+    match = re.search(r'candidate-topic-([0-9a-f]+)', campaign)
+    return f'topic-{match.group(1)[:8]}' if match else campaign[:40]
 
 
 def campaign_limit_problem(cpu_threads: int, environ: dict[str, str] | None = None,
@@ -520,7 +876,8 @@ def campaign_limit_problem(cpu_threads: int, environ: dict[str, str] | None = No
     if roots is None:
         from .local_compute import default_queue_root as local_root
         roots = (default_queue_root(env), local_root(env))
-    load = campaign_queue_load(record['campaign_id'], roots)
+    load = campaign_queue_load(record['campaign_id'], roots, infer=True,
+                               attribution_roots=default_attribution_roots(env))
     if load['cpu_threads'] == 0 or load['cpu_threads'] + cpu_threads <= limit:
         return None
     shown = ', '.join(load['job_ids'][:6]) + (' ...' if len(load['job_ids']) > 6 else '')
@@ -531,7 +888,9 @@ def campaign_limit_problem(cpu_threads: int, environ: dict[str, str] | None = No
         f'asks for {cpu_threads}. Not submitted. Do not retry in a loop: wait for those jobs '
         f'(openlabs-remote wait JOB_ID, or end the seat as awaiting_remote with their ids: '
         f'{shown}) and submit the next batch from their results. Split large profile or '
-        f'sweep sets into batches, coarse first, so each batch decides the next.'
+        f'sweep sets into batches, coarse first, so each batch decides the next. '
+        f'`openlabs-remote list --mine` shows them; `openlabs-remote withdraw JOB_ID... '
+        f'--reason TEXT` takes back queued ones that matter less.'
     )
 
 
@@ -624,7 +983,67 @@ def _parser() -> argparse.ArgumentParser:
     w = sub.add_parser('wait')
     w.add_argument('job_id')
     w.add_argument('--timeout-seconds', type=float, default=None)
+    ls = sub.add_parser('list', help='queued and running jobs of both queues, by topic')
+    who = ls.add_mutually_exclusive_group()
+    who.add_argument('--mine', action='store_true',
+                     help=f'only this seat\'s topic (${CAMPAIGN_ENV})')
+    who.add_argument('--campaign', metavar='ID')
+    ls.add_argument('--json', action='store_true')
+    wd = sub.add_parser('withdraw', help='take back still-queued jobs (not running ones)')
+    wd.add_argument('job_ids', nargs='+', metavar='JOB_ID')
+    wd.add_argument('--reason', default='')
+    wd.add_argument('--any-topic', action='store_true',
+                    help='allow jobs tagged or attributed to another topic')
     return parser
+
+
+def _list_command(args: argparse.Namespace) -> int:
+    campaign = args.campaign
+    if args.mine:
+        record = submitter()
+        if record is None:
+            print(f'openlabs-remote list --mine: {CAMPAIGN_ENV} is not set', file=sys.stderr)
+            return EXIT_INVALID
+        campaign = record['campaign_id']
+    listing = queue_jobs(default_roots())
+    rows = [row for row in listing['jobs'] if campaign is None or row['campaign_id'] == campaign]
+    if args.json:
+        _print_json({'campaign_id': campaign, 'jobs': rows,
+                     'attribution_complete': listing['attribution_complete']})
+        return EXIT_OK
+    print(f'{"JOB_ID":32}  {"BACKEND":7} {"STATE":7} {"THR":>3} {"MEM_MIB":>7}  '
+          f'{"CREATED":25} {"TOPIC":14} {"BY":17} SOURCE')
+    for row in rows:
+        print(f'{row["job_id"]:32}  {row["backend"]:7} {row["state"]:7} '
+              f'{row["cpu_threads"]:>3} {row["memory_mib"]:>7}  '
+              f'{str(row["created_at"] or "-")[:25]:25} {_short_campaign(row["campaign_id"]):14} '
+              f'{row["attribution"]:17} {row["source"] or " ".join(row["argv"])}')
+    totals: dict[str | None, list[int]] = {}
+    for row in rows:
+        total = totals.setdefault(row['campaign_id'], [0, 0, 0])
+        total[0] += 1
+        total[1] += row['state'] == 'queued'
+        total[2] += row['cpu_threads']
+    print()
+    for key, (jobs, queued, threads) in sorted(totals.items(), key=lambda item: str(item[0])):
+        print(f'{key or "unattributed"}: {jobs} job(s), {queued} queued, {threads} thread(s)')
+    limit = str(os.environ.get(CAMPAIGN_LIMIT_ENV) or '').strip()
+    if args.mine and limit:
+        print(f'limit: {limit} thread(s) queued + running for this topic ({CAMPAIGN_LIMIT_ENV})')
+    if not listing['attribution_complete']:
+        print('note: the workspace scan for untagged jobs stopped at its time budget',
+              file=sys.stderr)
+    return EXIT_OK
+
+
+def _withdraw_command(args: argparse.Namespace) -> int:
+    results = withdraw(args.job_ids, reason=args.reason, any_topic=args.any_topic)
+    for outcome in results:
+        if outcome['withdrawn']:
+            print(f'withdrawn: {outcome["job_id"]} ({outcome.get("backend")})')
+        else:
+            print(f'not withdrawn: {outcome["job_id"]}: {outcome.get("error")}', file=sys.stderr)
+    return EXIT_OK if all(item['withdrawn'] for item in results) else EXIT_NOT_WITHDRAWN
 
 
 def _submit_routed(args: argparse.Namespace, command: list[str]) -> int | None:
@@ -709,6 +1128,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f'job_dir: {result.job_dir}')
             print('backend: ailab')
             return EXIT_OK
+        if args.action == 'list':
+            return _list_command(args)
+        if args.action == 'withdraw':
+            return _withdraw_command(args)
         if args.action == 'status':
             _print_json(read_status(args.job_id))
             return EXIT_OK
