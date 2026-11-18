@@ -437,7 +437,8 @@ def test_decision_moves_to_lead_gpt_inside_fable_reserve(tmp_path) -> None:
     settings = _settings()
     _record(db, settings, "lead_gpt", {"seven_day": 0.6})
     _fable(db, settings, 0.5)
-    _enqueue(db, "d1", "c1", runner=None, task_type="topic_admission")
+    # A lead-tier decision type (admission moved to the worker tier on 2026-11-18).
+    _enqueue(db, "d1", "c1", runner=None, task_type="portfolio_planning")
     task, _router = _claim(db, settings)
     assert task["runner"] == "lead_claude"  # Fable leads while above its reserve
     _fable(db, settings, 0.8)
@@ -453,8 +454,14 @@ def test_decision_moves_to_lead_gpt_inside_fable_reserve(tmp_path) -> None:
 
 def test_no_lead_available_pauses_admission_and_scans_only(tmp_path, clock, monkeypatch) -> None:
     paths, db = _setup(tmp_path)
-    settings = replace(_settings(), reserve_cpu_threads=0, reserve_memory_mib=0,
-                       reserve_scratch_mib=0, auto_continue=False)
+    # The pause guards admission while admission needs a lead; configure it so
+    # (since 2026-11-18 the default admission tier is worker and nothing pauses).
+    base = _settings()
+    lead_admission = {"topic_admission": "lead", "portfolio_review:topic_admission": "lead"}
+    settings = replace(base, reserve_cpu_threads=0, reserve_memory_mib=0,
+                       reserve_scratch_mib=0, auto_continue=False,
+                       routing=replace(base.routing, task_tiers={
+                           **base.routing.task_tiers, **lead_admission}))
     _record(db, settings, "lead_gpt", {"seven_day": 1.0})
     _fable(db, settings, 1.0)
     _enqueue(db, "admit", "c1", runner=None, task_type="topic_admission", priority=9)

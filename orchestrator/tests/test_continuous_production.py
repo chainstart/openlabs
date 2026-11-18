@@ -212,7 +212,7 @@ def test_idle_binding_failure_is_repaired_without_repeating_science(tmp_path) ->
     assert successor is not None
     assert successor["campaign_epoch"] == 1
     assert successor["task_type"] == "replan"
-    assert successor["runner"] == "frontier"
+    assert successor["runner"] == "balanced"  # worker tier since 2026-11-18
     assert successor["routing_reason"] == "production_gate_repair"
     assert successor["session_mode"] == "resume"
     assert successor["session_source_task_id"] == "rejected-result"

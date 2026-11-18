@@ -12,6 +12,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from .download_window import ProxyDownloadWindow, load_window
+
 _ENVIRONMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _ZENODO_ENVIRONMENT_NAMES = frozenset(
     {
@@ -293,7 +295,8 @@ class OwnerSettings:
     # one (CLAUDE_CODE_SUBAGENT_MODEL); an explicit Agent `model` still wins.
     claude_subagent_model: str | None = "claude-opus-5-5"
     # Weaker GPT model the brief offers through `codex exec` / Codex spawn_agent.
-    codex_helper_model: str = "gpt-6.1-sol"
+    # User 2026-11-18 ("所有模型都选用最新版本"): the newest sol (was gpt-6.1-sol).
+    codex_helper_model: str = "gpt-6.2-sol"
     codex_light_model: str = "gpt-6-luna"
     # Recompute review (2026-11-16): a manuscript the owner returns as ready_for_review
     # first goes to an independent reviewer (other model family; same family, other
@@ -363,18 +366,45 @@ OWNER_TASK_TYPE = "topic_owner"
 # Pre-provider runner names. They request a tier, never a model family: with a
 # ``[runners]`` table configured, a task carrying one of them is routed.
 LEGACY_RUNNER_TIERS: dict[str, str] = {"frontier": "lead", "balanced": "worker", "cheap": "light"}
+# The legacy runner name a dispatch point writes for a tier (``dispatch_runner``).
+TIER_RUNNER_ALIASES: dict[str, str] = {tier: alias for alias, tier in LEGACY_RUNNER_TIERS.items()}
 
+# Task type (optionally ``task_type:routing_reason``) -> tier. This is the one
+# table of who does what; ``[routing.task_tiers]`` overrides single entries. A
+# ``task_type:routing_reason`` entry wins over the plain ``task_type`` entry;
+# a type with no entry keeps the tier its runner name requests.
+#
+# User decision 2026-11-18 ("opus和sol各自负责这三个功能，fable和astra只做最最重要的
+# 关键节点"): admission, the owner's recompute review, replanning, candidate
+# maturation and the other portfolio reviews run on the worker tier (Claude Opus /
+# gpt-sol); the lead tier (Claude Fable / gpt-astra) keeps the direction decisions.
+# The formal pre-delivery review panel is configured in the data repository
+# (registry/settings.yaml review.roles), not here. Reviews keep their independence
+# within the tier: the router excludes the author's family (sol <-> Opus).
 DEFAULT_TASK_TIERS: dict[str, str] = {
-    # lead: portfolio planning, admission, direction and review decisions.
+    # lead: the key decisions.
+    "direction_decision": "lead",
+    "portfolio_planning": "lead",
+    "failure_diagnosis": "lead",
+    # Unified-review carriers outside the owner flow (legacy paper path) and the
+    # generic review types.
     "paper_review": "lead",
     "independent_review": "lead",
     "review": "lead",
-    "portfolio_review": "lead",
-    "portfolio_planning": "lead",
-    "direction_decision": "lead",
-    "topic_admission": "lead",
-    "failure_diagnosis": "lead",
-    "replan": "lead",
+    # worker since 2026-11-18 (were lead).
+    "portfolio_review": "worker",
+    "portfolio_review:topic_admission": "worker",
+    "portfolio_review:new_project_results_review": "worker",
+    "topic_admission": "worker",
+    "paper_review:owner_recompute_review": "worker",
+    # Carriers of the unified review: the agent runs `paper-writing review
+    # unified-run` (whose editor/referees come from settings.yaml) plus the literal
+    # pre-registration check, so its own session is worker-sized.
+    "paper_review:owner_review": "worker",
+    "paper_review:release_full_review": "worker",
+    "replan": "worker",
+    "paper_revision:direction_retarget": "worker",
+    "paper_readiness:direction_retarget": "worker",
     # An owner seat is pinned to a concrete runner ([program.owner].runners).
     "topic_owner": "lead",
     # worker: code, experiments, analysis, writing.
@@ -406,6 +436,119 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
     "format_fix": "light",
     "figure_redraw": "light",
 }
+# Routing reasons the orchestrator dispatches; a ``task_type:routing_reason``
+# key of ``[routing.task_tiers]`` must name one of them (typos would otherwise be
+# silently ignored). Keep in step with the constants of the dispatching modules
+# (test_task_tiers checks it).
+KNOWN_ROUTING_REASONS: frozenset[str] = frozenset({
+    # program_flow
+    "topic_admission", "program_slot_open", "topic_card_repair", "topic_revision",
+    # portfolio
+    "new_project_results_review", "reviewer_selected_candidate_maturation",
+    # owner
+    "owner_first_seat", "owner_continue", "owner_converted", "owner_review",
+    "owner_review_returned", "owner_recompute_review", "owner_recompute_returned",
+    "owner_retry", "owner_reopened",
+    # program_autonomy
+    "direction_decision", "direction_targeted_analysis", "direction_retarget",
+    "release_format_fix", "release_full_review",
+    # engine
+    "gate_replan", "infrastructure_retry", "production_idle_reseed", "production_rollover",
+    "production_gate_repair", "remote_wait", "role_handoff", "independent_restart",
+    "validated_continuation", "review_evidence_completed", "readiness_evidence_completed",
+    "paper_evidence_audit", "independent_audit_passed", "paper_review_scope_selection",
+    "review_text_revision", "review_evidence_remediation",
+    # assets
+    "topic_retrospective",
+})
+_TASK_TIER_PART = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def task_tier_key(task_type: str, routing_reason: str | None = None) -> str:
+    """``[routing.task_tiers]`` key of a task type, optionally narrowed by its routing reason."""
+
+    return f"{task_type}:{routing_reason}" if routing_reason else task_type
+
+
+def lookup_task_tier(
+    task_tiers: dict[str, str], task_type: Any, routing_reason: Any = None
+) -> str | None:
+    """Configured tier of a task: ``type:reason`` first, then ``type``; None when unlisted."""
+
+    kind = str(task_type or "")
+    reason = str(routing_reason or "")
+    if reason:
+        tier = task_tiers.get(task_tier_key(kind, reason))
+        if tier is not None:
+            return tier
+    return task_tiers.get(kind)
+
+
+def dispatch_runner(
+    settings: "FactorySettings",
+    task_type: str,
+    routing_reason: str | None,
+    default: str,
+) -> str:
+    """Runner name a dispatch point writes: the configured tier's legacy alias.
+
+    ``default`` (a legacy alias or tier) applies only when the table has no entry
+    for the task. With ``[runners]`` configured the router resolves the same table
+    again (``QuotaRouter.required_tier``); without it the alias picks the argv.
+    """
+
+    tier = lookup_task_tier(settings.routing.task_tiers, task_type, routing_reason)
+    if tier is None:
+        return default
+    return TIER_RUNNER_ALIASES[tier]
+
+
+def parse_task_tiers(payload: Any, defaults: dict[str, str]) -> dict[str, str]:
+    """``[routing.task_tiers]`` merged over ``defaults``, with clear errors.
+
+    Keys: ``task_type`` (any task type, custom ones included) or
+    ``task_type:routing_reason`` (a known task type and a known routing reason).
+    Values: ``lead``, ``worker`` or ``light`` (the legacy ``frontier``, ``balanced``
+    and ``cheap`` are accepted and normalized).
+    """
+
+    merged = dict(defaults)
+    if payload is None:
+        return merged
+    if not isinstance(payload, dict):
+        raise ValueError("[routing.task_tiers] must be a table of task type -> tier")
+    known_types = {key.split(":", 1)[0] for key in defaults} | {OWNER_TASK_TYPE}
+    for raw_key, raw_value in payload.items():
+        key = str(raw_key).strip()
+        value = str(raw_value).strip()
+        value = LEGACY_RUNNER_TIERS.get(value, value)
+        if value not in TIERS:
+            raise ValueError(
+                f"[routing.task_tiers].{key!r} = {raw_value!r}: tier must be one of "
+                f"{', '.join(TIERS)}"
+            )
+        parts = key.split(":")
+        if len(parts) > 2 or not all(_TASK_TIER_PART.fullmatch(part) for part in parts):
+            raise ValueError(
+                f"[routing.task_tiers].{key!r}: key must be task_type or "
+                "task_type:routing_reason (lowercase letters, digits, underscores)"
+            )
+        if len(parts) == 2:
+            kind, reason = parts
+            if kind not in known_types:
+                raise ValueError(
+                    f"[routing.task_tiers].{key!r}: unknown task type {kind!r} "
+                    f"(known: {', '.join(sorted(known_types))})"
+                )
+            if reason not in KNOWN_ROUTING_REASONS:
+                raise ValueError(
+                    f"[routing.task_tiers].{key!r}: unknown routing reason {reason!r} "
+                    f"(known: {', '.join(sorted(KNOWN_ROUTING_REASONS))})"
+                )
+        merged[key] = value
+    return merged
+
+
 DEFAULT_ROLE_TIERS: dict[str, str] = {
     "reviewer": "lead",
     "researcher": "worker",
@@ -660,6 +803,9 @@ class FactorySettings:
     no_progress_escalate_after: int = 8
     no_progress_backoff_minutes: tuple[int, ...] = (60, 240, 1440)
     archive_result_receipts: bool = True
+    # User rule 2026-11-18: large proxy-route downloads only 02:00-14:00 Asia/Shanghai
+    # ([factory] proxy_download_*; download_window.py).
+    proxy_download: ProxyDownloadWindow = field(default_factory=ProxyDownloadWindow)
     max_cpu_fraction_of_host: float = 0.75
     reserve_cpu_threads: int = 2
     reserve_memory_mib: int = 8_192
@@ -689,10 +835,17 @@ class ModelPrice:
 # Prices used by the 2026-11-16 cost review (maintenance/20261116-cost-review section 1):
 # the Claude rows from the claude-api model table (2026-11-03), the OpenAI rows from the
 # GPT-6.1 Sol announcement and public price trackers (2026-11-16), short-context tier.
+# gpt-6.2-sol / gpt-6.2-astra (released 2026-11-17): Standard tier, prompts up to 272K,
+# as reported from OpenAI's pricing page by eesel.ai ("GPT-6.2 Sol pricing", "GPT-6.2
+# Astra pricing") and computingforgeeks.com ("GPT-6.2 Astra and Sol: Pricing and API"),
+# read 2026-11-18; cache write = the 30-minute write (12-hour writes are not split out).
 DEFAULT_MODEL_PRICES: dict[str, ModelPrice] = {
     "claude-fable-5-2": ModelPrice(8.0, 0.20, 40.0, 10.0, 16.0),
     "claude-opus-5-5": ModelPrice(4.0, 0.20, 20.0, 5.0, 8.0),
     "claude-haiku-5-5": ModelPrice(0.10, 0.01, 0.50, 0.125, 0.20),
+    "gpt-6.2-sol": ModelPrice(2.0, 0.10, 10.0, 2.5),
+    "gpt-6.2-astra": ModelPrice(8.0, 0.40, 40.0, 10.0),
+    # Earlier versions stay priced for attempts recorded under them.
     "gpt-6.1-sol": ModelPrice(2.0, 0.10, 10.0, 2.5),
     "gpt-6-astra": ModelPrice(10.0, 1.0, 50.0, 12.5),
     "gpt-6-luna": ModelPrice(0.10, 0.01, 0.50, 0.125),
@@ -1352,12 +1505,7 @@ def parse_provider_ceilings(
 def load_routing_settings(payload: Any) -> RoutingSettings:
     routing = payload if isinstance(payload, dict) else {}
     defaults = RoutingSettings()
-    task_tiers = dict(defaults.task_tiers)
-    if isinstance(routing.get("task_tiers"), dict):
-        for key, value in routing["task_tiers"].items():
-            if str(value) not in TIERS:
-                raise ValueError(f"[routing.task_tiers].{key} must be one of {TIERS}")
-            task_tiers[str(key)] = str(value)
+    task_tiers = parse_task_tiers(routing.get("task_tiers"), defaults.task_tiers)
     role_tiers = dict(defaults.role_tiers)
     if isinstance(routing.get("role_tiers"), dict):
         for key, value in routing["role_tiers"].items():
@@ -1566,6 +1714,7 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
             if factory.get("no_progress_backoff_minutes") is not None else (60, 240, 1440)
         ),
         archive_result_receipts=bool(retention.get("archive_result_receipts", True)),
+        proxy_download=load_window(factory),
         max_cpu_fraction_of_host=_fraction(resources.get("max_cpu_fraction_of_host"), 0.75),
         reserve_cpu_threads=_nonnegative_int(resources.get("reserve_cpu_threads"), 2),
         reserve_memory_mib=_nonnegative_int(resources.get("reserve_memory_mib"), 8_192),

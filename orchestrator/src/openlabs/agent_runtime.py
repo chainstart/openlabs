@@ -67,8 +67,14 @@ def configure_codex_runtime(
     output_path: Path,
     skill_dirs: Iterable[Path],
     available_skill_dirs: Iterable[Path] = (),
+    proxy_download: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Install available Skills while activating only the protocol-selected subset."""
+    """Install available Skills while activating only the protocol-selected subset.
+
+    ``proxy_download`` (``ProxyDownloadWindow.to_dict()``): adds a PreToolUse hook
+    that refuses large proxy-route downloads outside the off-peak window (user rule
+    2026-11-18) -- always for Claude Code, for Codex only with ``codex_hook``.
+    """
 
     workspace = campaign_workspace.resolve()
     result = output_path.resolve()
@@ -201,8 +207,28 @@ def configure_codex_runtime(
             argv.extend(["--adapter", adapter])
         return shlex.join(argv)
 
+    def download_window_hooks(adapter: str) -> dict[str, Any]:
+        if proxy_download is None or (adapter == "codex" and not proxy_download.get("codex_hook")):
+            return {}
+        policy = {key: proxy_download.get(key) for key in
+                  ("window", "timezone", "large_file_mib", "large_batch_mib")}
+        argv = [
+            "/usr/bin/env", f"PYTHONPATH={package_source_root}", sys.executable, "-m",
+            "openlabs.download_window", "pre-tool-use", "--adapter", adapter,
+            "--policy", json.dumps(policy, sort_keys=True),
+        ]
+        return {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash" if adapter == "claude" else ".*",
+                    "hooks": [{"type": "command", "command": shlex.join(argv), "timeout": 10}],
+                }
+            ]
+        }
+
     def lifecycle_hooks(adapter: str) -> dict[str, Any]:
         return {
+            **download_window_hooks(adapter),
             "SessionStart": [
                 {
                     "matcher": "startup|resume|clear|compact",

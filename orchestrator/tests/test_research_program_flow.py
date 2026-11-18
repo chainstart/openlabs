@@ -427,7 +427,7 @@ def test_invalid_cards_are_rejected_with_their_missing_fields(tmp_path, monkeypa
 # --------------------------------------------------------------------------- admission gate
 
 
-def test_admission_goes_to_another_family_lead_and_keeps_independence(tmp_path, monkeypatch):
+def test_admission_goes_to_another_family_worker_and_keeps_independence(tmp_path, monkeypatch):
     paths = _paths(tmp_path)
     _install_program(paths)
     db = _db(paths)
@@ -441,7 +441,8 @@ def test_admission_goes_to_another_family_lead_and_keeps_independence(tmp_path, 
     assert admission["exclude_provider"] == scout_provider
     assert report.program["admissions_scheduled"][0]["task_id"] == admission["task_id"]
     routed = RUNNERS[db.task(admission["task_id"])["runner"]]
-    assert routed.tier == "lead" and routed.provider != scout_provider
+    # Worker tier since 2026-11-18 (Opus <-> sol), still the other family.
+    assert routed.tier == "worker" and routed.provider != scout_provider
     packet = _packet(admission)
     assert packet["program"] is True and len(packet["topic_cards"]) == 1
     assert {item["label"] for item in packet["read_resources"]} >= {
@@ -813,7 +814,10 @@ def test_lead_shortage_pauses_the_admission_gate(tmp_path) -> None:
 
     paths = _paths(tmp_path)
     db = _db(paths)
-    settings = _settings()
+    base = _settings()
+    # Admission configured on the lead tier (the default is worker since 2026-11-18).
+    settings = replace(base, routing=replace(base.routing, task_tiers={
+        **base.routing.task_tiers, "portfolio_review:topic_admission": "lead"}))
     router = budget_control.QuotaRouter.build(db, settings)
     router.lead_short = True
     task = {"task_id": "gate", "task_type": "portfolio_review", "routing_reason": "topic_admission",

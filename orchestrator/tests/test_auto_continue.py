@@ -297,7 +297,8 @@ def test_needs_replan_escalates_but_needs_human_stops(tmp_path) -> None:
     successor = db.task(report.enqueued[0])
     assert successor is not None
     assert successor["task_type"] == "replan"
-    assert successor["runner"] == "frontier"
+    # Replanning runs on the worker tier since 2026-11-18 ([routing.task_tiers]).
+    assert successor["runner"] == "balanced"
     assert successor["agent_role"] == "researcher"
     assert successor["session_mode"] == "fresh"
     assert successor["agent_session_id"] is None

@@ -83,7 +83,9 @@ def test_unknown_producer_model_is_labelled(tmp_path) -> None:
     _enqueue(db, "admit", "c", runner="frontier", task_type="portfolio_review",
              exclude_provider=GPT, agent_role="reviewer")
     task, _router = _claim(db, settings)
-    assert task["runner"] == "lead_gpt"
+    # Admission is a worker-tier task since 2026-11-18; with the author unknown the
+    # family's worker takes it and the event says so.
+    assert task["runner"] == "worker_gpt"
     assert _routed_events(db, "admit")[0]["independence"] == "same_family_model_unknown"
 
 
@@ -145,7 +147,10 @@ def test_admission_falls_back_to_another_gpt_model_when_claude_is_out(tmp_path) 
     assert event["producer_model"] == "gpt-6.1-sol" and event["model"] == "gpt-6-astra"
     assert event["excluded_provider"] == GPT
     assert event["unavailable_providers"] == [CLAUDE]
-    assert event["other_family_quota_reasons"] == ["ceiling"]
+    # The admission asks for the worker tier (2026-11-18): Opus, on Fable's shared
+    # windows, is held back by Fable's decision reserve before the hard ceiling.
+    assert event["other_family_quota_reasons"] == ["lead_reserve"]
+    assert event["requested_tier"] == "worker" and event["tier"] == "lead"
     assert event["other_family_resume_at"] == budget_control._iso(NOW + timedelta(days=2))
     assert "额度不可用" in event["reason"]
 
@@ -202,7 +207,7 @@ def test_routing_returns_across_families_once_claude_recovers(tmp_path) -> None:
                                "seven_day_overage_included": 0.1}, observed=later)
     _admission(paths, db, "admit2")
     task, _router = _claim(db, settings, now=later)
-    assert task["task_id"] == "admit2" and task["runner"] == "lead_claude"
+    assert task["task_id"] == "admit2" and task["runner"] == "worker_claude"
     assert "independence" not in _routed_events(db, "admit2")[0]
     assert db.task("admit1")["runner"] == "lead_gpt"
 

@@ -14,7 +14,7 @@ Mechanics, all keyed on ``[program].owner_mode``:
 
 * a ``topic_owner`` task is one *seat* (one agent process, a few hours). It is
   pinned to a concrete runner chosen from ``[program.owner].runners`` (Fable,
-  then Opus 5.5, then gpt-6-astra) and keeps that runner seat after seat (the session
+  then Opus 5.5, then gpt-astra; configurable) and keeps that runner seat after seat (the session
   only within the limits below);
 * the owner ends a seat with a small packet (``continuing``, ``awaiting_remote``
   with job ids, ``ready_for_review``, ``frozen`` or ``blocked_human``) that
@@ -58,7 +58,7 @@ from pathlib import Path
 from typing import Any
 
 from . import budget as budget_control
-from .config import OWNER_TASK_TYPE, FactorySettings, WorkspacePaths
+from .config import OWNER_TASK_TYPE, FactorySettings, WorkspacePaths, dispatch_runner
 from .contracts import (
     IDENTIFIER,
     PRIMARY_ENDPOINT_VERDICTS,
@@ -1192,7 +1192,7 @@ def _enqueue_review(
         objective=_review_objective(packet, topic, state),
         input_path=str(result_path),
         skill_path="openlabs-paper-review",
-        runner="frontier",
+        runner=dispatch_runner(settings, "paper_review", ROUTING_REVIEW, "frontier"),
         routing_reason=ROUTING_REVIEW,
         parent_task_id=str(task["task_id"]),
         agent_role="reviewer",
@@ -1396,7 +1396,7 @@ def _enqueue_recompute_review(
         objective=_recompute_objective(round_number, max_rounds),
         input_path=str(packet_path),
         skill_path=RECOMPUTE_SKILL,
-        runner="frontier",
+        runner=dispatch_runner(settings, "paper_review", ROUTING_RECOMPUTE, "frontier"),
         routing_reason=ROUTING_RECOMPUTE,
         parent_task_id=str(task["task_id"]),
         agent_role="reviewer",
@@ -1978,6 +1978,7 @@ def render_brief(
     """The owner's whole brief: goal, resources, tools, hard limits (about 4 KB)."""
 
     owner = settings.program.owner
+    window = settings.proxy_download
     state = _read_json(Path(str(campaign.get("workstream_state_path") or "")))
     prereg = state.get("preregistration") if isinstance(state.get("preregistration"),
                                                         Mapping) else {}
@@ -2061,7 +2062,9 @@ def render_brief(
         "",
         "## Hard limits",
         "1. Downloads: bridge only, always `--route auto` (`--route proxy` needs user approval; "
-        "slow is not failed). Never change network, proxy or firewall settings.",
+        f"slow is not failed); large proxy downloads (>= {window.large_file_mib} MB file or "
+        f"{window.large_batch_mib} MB batch) only {window.start}-{window.end} {window.timezone}, "
+        "never split. Never change network, proxy or firewall settings.",
         "2. Never print, copy or send credentials.",
         "3. Heavy work on ailab/the queue or in the resource guard; GPU only through its lock.",
         "4. Never fabricate data, results, citations or reviews; never pass simulated or "

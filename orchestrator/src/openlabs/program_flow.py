@@ -38,7 +38,7 @@ from typing import Any
 from . import assets as asset_library
 from . import budget as budget_control
 from . import card_precheck as card_checks
-from .config import FactorySettings, WorkspacePaths
+from .config import FactorySettings, WorkspacePaths, dispatch_runner
 from .utilization import compute_backlog
 from .contracts import (
     ADMISSION_POLICY_VERSION,
@@ -957,7 +957,7 @@ def _schedule_one_scout(
         ),
         input_path=str(packet_path),
         skill_path=SCOUT_SKILL,
-        runner="balanced",
+        runner=dispatch_runner(settings, SCOUT_TASK_TYPE, SCOUT_ROUTING_REASON, "balanced"),
         routing_reason=SCOUT_ROUTING_REASON,
         agent_role="researcher",
         session_mode="fresh",
@@ -1150,14 +1150,17 @@ def _card_metadata(
     *,
     source_task_id: str | None,
     provider: str,
+    proposer_task_id: str | None = None,
 ) -> dict[str, Any]:
     venues = card.get("venues") if isinstance(card.get("venues"), Mapping) else {}
     line = str(card.get("research_line") or "").strip()
+    author = proposer_task_id or source_task_id
     return {
         **({"research_line": line} if line else {}),
         "program_project_id": project.project_id,
         "source_task_id": source_task_id,
         "proposer_provider": provider,
+        **({"proposer_task_id": author} if author else {}),
         "routine_fallback": venues.get("routine") if isinstance(venues, Mapping) else None,
         "cost_estimate": card.get("cost_estimate"),
     }
@@ -1289,8 +1292,13 @@ def intake_card(
     receipt_digests: set[str] | None,
     repair_of: str | None = None,
     revises: str | None = None,
+    proposer_task_id: str | None = None,
 ) -> dict[str, Any]:
     """Validate one card and register it; return ``{topic_id, status, reason, errors}``.
+
+    ``proposer_task_id``: the task that wrote the card's content when it is not
+    ``source_task_id`` (a repaired card keeps its scout as author, so admission
+    independence is judged against the scout's model, not the repair model's).
 
     A format-invalid card from a scout or revision task is recorded with
     ``card_repair.status = pending`` (one automatic repair follows); a card that
@@ -1328,7 +1336,8 @@ def intake_card(
     warnings: list[str] = []
     errors = card_problems(paths, settings, card, receipt_digests=receipt_digests,
                            ledger_document=ledger.read(), warnings=warnings)
-    metadata = _card_metadata(project, card, source_task_id=source_task_id, provider=provider)
+    metadata = _card_metadata(project, card, source_task_id=source_task_id, provider=provider,
+                              proposer_task_id=proposer_task_id)
     if normalized or warnings:
         # Mechanical fixes and non-blocking gaps travel with the card to the gate.
         metadata["card_check"] = {"normalized": normalized[:20], "warnings": warnings[:40]}
@@ -1551,11 +1560,21 @@ def register_scout_results(
         digests = set(artifact_digests(payload).values())
         task_type = str(task.get("task_type") or "")
         follow_up: dict[str, Any] = {}
+        author_task_id: str | None = None
         if task_type != SCOUT_TASK_TYPE:
             follow_up = _follow_up_packet(task)
             # A repair or revision returns one card; it may reuse the original receipt.
             cards = cards[:1]
             digests |= {str(item) for item in follow_up.get("receipt_digests") or []}
+        if task_type == REPAIR_TASK_TYPE and follow_up.get("repair_of"):
+            # A format repair (light tier, possibly the other family) does not make the
+            # repair model the card's author: admission stays independent of the scout.
+            original = find_topic(open_topic_ledger(paths, settings.program).read(),
+                                  str(follow_up["repair_of"]))
+            if original is not None:
+                provider = str(original.get("proposer_provider") or provider)
+                author_task_id = (str(original.get("proposer_task_id")
+                                      or original.get("source_task_id") or "") or None)
         task_outcomes = [
             {"source_task_id": task_id, **intake_card(
                 db, paths, settings, project, card, decided_by=task_id, provider=provider,
@@ -1565,6 +1584,7 @@ def register_scout_results(
                     follow_up.get("revision_of") if task_type == REVISION_TASK_TYPE
                     else follow_up.get("revises")
                 ),
+                proposer_task_id=author_task_id,
             )}
             for card in cards
         ]
@@ -1815,6 +1835,7 @@ def schedule_card_repairs(
                 db, paths, settings, project, card, decided_by=f"card-repair:{topic_id}",
                 provider=provider, source_task_id=source_task_id, receipt_digests=digests,
                 repair_of=topic_id, revises=str(card.get("revises") or "") or None,
+                proposer_task_id=str(topic.get("proposer_task_id") or "") or None,
             )
             status = "resubmitted" if outcome["status"] == "proposed" else "failed"
             _note_state(db, ledger, topic_id, "card_repair",
@@ -1915,7 +1936,7 @@ def _enqueue_card_repair(
         ),
         input_path=str(packet_path),
         skill_path=SCOUT_SKILL,
-        runner="cheap",
+        runner=dispatch_runner(settings, REPAIR_TASK_TYPE, REPAIR_ROUTING_REASON, "cheap"),
         routing_reason=REPAIR_ROUTING_REASON,
         agent_role="researcher",
         session_mode="fresh",
@@ -2082,7 +2103,8 @@ def _enqueue_revision(
         ),
         input_path=str(packet_path),
         skill_path=SCOUT_SKILL,
-        runner="balanced",
+        runner=dispatch_runner(settings, REVISION_TASK_TYPE, REVISION_ROUTING_REASON,
+                               "balanced"),
         routing_reason=REVISION_ROUTING_REASON,
         agent_role="researcher",
         session_mode="fresh",
@@ -2268,14 +2290,15 @@ def schedule_topic_admission(
     if cap > 0 and len(in_flight) >= cap:
         return ReviewSchedule(reason="max_concurrent_admissions")
     pending.sort(key=lambda item: (_proposal_time(item), str(item["topic_id"])))
-    provider = str(pending[0].get("proposer_provider") or HUMAN_PROVIDER)
+    snapshot_document = ledger.read()
+    authors = {str(topic["topic_id"]): card_author(topic, snapshot_document)
+               for topic in pending}
+    provider = authors[str(pending[0]["topic_id"])][0]
     batch_size = max(1, int(workstream_policy(campaign).get("review_batch_size") or 8))
     batch = [
-        topic for topic in pending
-        if str(topic.get("proposer_provider") or HUMAN_PROVIDER) == provider
+        topic for topic in pending if authors[str(topic["topic_id"])][0] == provider
     ][:batch_size]
     entries: list[dict[str, Any]] = []
-    snapshot_document = ledger.read()
     for topic in batch:
         card_path = Path(str(topic.get("card_path") or ""))
         if not card_path.is_file():
@@ -2344,7 +2367,8 @@ def schedule_topic_admission(
             "proposer_provider": provider,
             "exclude_provider": exclude,
             # Read by the router when only one model family is configured.
-            "producer_model": _proposer_model(db, settings, batch),
+            **_proposer_models_fields(
+                db, settings, [authors[str(topic["topic_id"])][1] for topic in batch]),
             "admission_policy": ADMISSION_POLICY_VERSION,
             **(
                 {"research_lines": {line: line_summary(lines_document, line)
@@ -2430,7 +2454,8 @@ def schedule_topic_admission(
         ),
         input_path=str(packet_path),
         skill_path=ADMISSION_SKILL,
-        runner="frontier",
+        runner=dispatch_runner(settings, "portfolio_review", ADMISSION_ROUTING_REASON,
+                               "frontier"),
         routing_reason=ADMISSION_ROUTING_REASON,
         agent_role="reviewer",
         session_mode="fresh",
@@ -2452,20 +2477,56 @@ def schedule_topic_admission(
     return ReviewSchedule(task_id=task_id)
 
 
-def _proposer_model(
-    db: FactoryDB, settings: FactorySettings, topics: list[Mapping[str, Any]]
-) -> str | None:
-    """The one model that proposed every card of a batch (scout task runners), if known."""
+def card_author(
+    topic: Mapping[str, Any], document: Mapping[str, Any] | None = None
+) -> tuple[str, str | None]:
+    """``(provider, task_id)`` of the model that wrote a card's content.
+
+    ``proposer_task_id`` when recorded; a repaired card registered before it
+    existed is followed back through ``repair_of`` to its scout (a light-tier
+    repair only fixes format errors and must not become the author whose
+    family and model the admission review excludes).
+    """
+
+    current: Mapping[str, Any] = topic
+    seen: set[str] = set()
+    while (
+        not current.get("proposer_task_id") and current.get("repair_of")
+        and document is not None and str(current["repair_of"]) not in seen
+    ):
+        seen.add(str(current["repair_of"]))
+        original = find_topic(document, str(current["repair_of"]))
+        if original is None:
+            break
+        current = original
+    provider = str(current.get("proposer_provider") or HUMAN_PROVIDER)
+    task_id = str(current.get("proposer_task_id") or current.get("source_task_id") or "")
+    return provider, task_id or None
+
+
+def _proposer_models_fields(
+    db: FactoryDB, settings: FactorySettings, author_task_ids: list[str | None]
+) -> dict[str, Any]:
+    """Packet fields naming the models that wrote a batch's cards (author task runners).
+
+    ``producer_model``: the one model when every card's author is known and they
+    agree, else None (read by older routers). ``producer_models``: every known
+    author model, so a quota fallback inside the producer family avoids all of them.
+    """
 
     models: set[str] = set()
-    for topic in topics:
-        task = db.task(str(topic.get("source_task_id") or "")) if topic.get(
-            "source_task_id") else None
+    complete = True
+    for author in author_task_ids:
+        task = db.task(author) if author else None
         spec = settings.runners.get(str((task or {}).get("runner") or ""))
         if spec is None or not spec.model:
-            return None
+            complete = False
+            continue
         models.add(spec.model)
-    return models.pop() if len(models) == 1 else None
+    return {
+        "producer_model": next(iter(models)) if complete and len(models) == 1 else None,
+        "producer_models": sorted(models),
+    }
 
 
 def _attempt_task_id(attempt: Any) -> str:

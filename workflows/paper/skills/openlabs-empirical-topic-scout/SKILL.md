@@ -136,7 +136,10 @@ two strong cards there rather than many.
    other real-world interaction, because the program cannot carry it out.
 5. Confirm you can actually obtain the decisive data: download or query a sample, record what you
    got (source, version, row counts, date) in a small receipt file, and add that file as a
-   hash-bound artifact of your result. "The data is public" is not a receipt.
+   hash-bound artifact of your result. "The data is public" is not a receipt. Downloads go through
+   the bridge with `--route auto`; a large download that would need the proxy route (a file of
+   200 MB or more, a batch of 1 GB or more) runs only 02:00-14:00 Asia/Shanghai, so say so in
+   the card's cost estimate when the decisive data depends on it.
 6. Design the decisive analysis to run first. The team's failure mode was a decisive analysis run
    last that showed the contribution was too small. Pick the cheapest check that would kill the
    topic (for example 20-50 structures through two MLIPs plus small DFT; one published light-curve

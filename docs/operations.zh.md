@@ -228,6 +228,73 @@ Stop hook 与 `dontAsk` 在本机都可用。之后再用一个有界任务检�
 `runtime.adapter == "claude"`、`runtime.hooks.stop_passed == true`、`runtime.session_id`、
 `runtime.quota_snapshot` 与 `runtime.filesystem_sandbox == "bubblewrap"`。
 
+### 经代理的大体量下载只在闲时（2026-11-18）
+
+用户 2026-11-18：“通过代理节点下载较大的数据时候，在闲时进行，是2：00-14：00这个时段，这个规则既落到
+整个容器里，也特别加到产线上”。经代理节点（下载桥 `--route proxy`，或明知全部靠代理兜底的批量取数）
+下载较大的数据只在北京时间 02:00–14:00 进行；较大 = 单个文件 ≥ 200 MB 或同一批合计 ≥ 1 GB；小文件与
+`--route auto`（先走直连）不受限。时段外不提交大体量代理下载，安排到窗口开始，期间做不依赖该数据的工作；
+不得拆小绕过；跨过 14:00 未完成的批量下载暂停补提交，下个窗口续传。走代理本身仍需直连失败的证据或用户
+明确批准，本条只管时段。
+
+- 配置：`[factory]` 的 `proxy_download_window = ["02:00", "14:00"]`、`proxy_download_timezone =
+  "Asia/Shanghai"`、`proxy_download_large_file_mib = 200`、`proxy_download_large_batch_mib = 1024`、
+  `proxy_download_codex_hook = false`（实现：`orchestrator/src/openlabs/download_window.py`）。
+- 负责人简报的 Hard limits 第 1 条写入这条规则（数值读配置）；`AGENTS.md`、出题技能同步。
+- 硬保险：lab runner 启动的 Claude Code 会话在生成的 `.claude/openlabs-settings.json` 里带 PreToolUse
+  钩子（匹配 Bash），时段外拒绝不带 `PROXY_SMALL_OK=1` 声明的 `download-submit … --route proxy`。
+  Codex 0.166 支持 PreToolUse，但尚未在产线会话里实测；`hooks.json` 若被 Codex 拒绝会连带丢失结果门禁的
+  Stop 钩子（引擎随即 fail closed），所以 Codex 的同一钩子默认关闭，用一个有界任务实测后再置
+  `proxy_download_codex_hook = true`。钩子只看得到命令文本：脚本内部调用桥的批量下载必须自己判断时段
+  （`python -m openlabs.download_window status`，窗口内退出码 0、窗口外 3）。
+- 最可靠的落点是 WSL 侧下载桥本身：建议桥在接收 `route=proxy` 任务时按同一窗口与体量界线排队
+  （窗口外只入队、到 02:00 再开始，14:00 暂停未完成的分片），这样任何会话、脚本都绕不过去；这需要 WSL 侧改桥。
+
+### 模型分工：哪类任务用哪一档（2026-11-18）
+
+三档 runner 各司其职（用户 2026-11-18：“opus和sol各自负责这三个功能，fable和astra只做最最重要的
+关键节点”）：
+
+| 档位 | Claude / GPT | 做什么 |
+| --- | --- | --- |
+| lead | Claude Fable 5.2 / gpt-6.2-astra | 只做关键节点：方向决策（`direction_decision`）、组合规划、失败诊断、非负责人流程里的统一评审承载任务；交付前正式评审的审稿人由数据仓库 `registry/settings.yaml#review.roles` 单独配置 |
+| worker | Claude Opus 5.5 / gpt-6.2-sol | 负责人坐席、实验与写作，以及立项评审（`portfolio_review:topic_admission`）、负责人稿件的重算式复审（`paper_review:owner_recompute_review`）、重规划（`replan`）、候选成熟（`candidate_maturation`）、其他组合评审、改投时的修订与就绪评估、负责人流程与发布流水线里的统一评审承载任务（`paper_review:owner_review`、`paper_review:release_full_review`：它们只运行 `paper-writing review unified-run` 并做一次预注册原文核对，真正的编辑与审稿人由 settings.yaml 决定） |
+| light | Claude Haiku 5.5 / gpt-6-luna | 修卡、文献筛选、数据下载、格式修正、复盘入库 |
+
+**单一的分工表**是 `orchestrator/src/openlabs/config.py` 的 `DEFAULT_TASK_TIERS`：键是任务类型，可以细到
+`任务类型:routing_reason`（细分键优先于类型键），值是档位。所有派发点写入的 runner 名都由这张表
+（`config.dispatch_runner`）给出，路由器再按同一张表（`budget.requested_tier`）选档，所以两处不会不一致；
+表里没有的任务类型才沿用它的 runner 名（`frontier/balanced/cheap`）或角色。
+
+**调整**：在实例配置里写 `[routing.task_tiers]`，只写要改的条目，例如
+
+```toml
+[routing.task_tiers]
+"portfolio_review:topic_admission" = "lead"   # 立项评审升回 Fable / astra
+replan = "worker"
+```
+
+档位只能是 `lead`/`worker`/`light`（旧名 `frontier`/`balanced`/`cheap` 会被换算）；`类型:原因` 键的
+类型和原因都必须是代码已知的（`config.KNOWN_ROUTING_REASONS`），写错会在加载配置时报错并列出可选值；
+单独的任务类型键可以是自定义类型。下一轮 tick 生效，已排队的任务在被领取时按新表选档。
+`program utilization` 的 `division_of_labour` 段列出当前每档的两家模型、各档任务，以及实例相对代码默认
+改了哪些条目（`overrides`）；`argv_model_mismatch` 列出 `[runners.<name>].model` 与
+`OPENLABS_AGENT_COMMAND_<NAME>_JSON` 里 `-m/--model` 不一致的 runner——前者是路由、独立性比较和成本核算
+的依据，后者才是实际启动的模型，升级模型时两处要一起改。
+
+**独立性在同档内成立**：评审与决策类任务排除作者的模型族，worker 档的评审因此落到另一家的 worker
+（sol 写的由 Opus 审，Opus 写的由 sol 审）。另一家因额度不可用时回退到“同族不同模型”，先试请求档位，再
+往上、最后才往下，并跳过作者自己的模型：作者是 sol 时回退到 astra，作者是 Opus 时回退到 Fable；路由事件带
+`independence: same_family_different_model` 与 `tier_changed_for_independence`。立项评审的作者是出题的
+scout：修卡任务（light 档）只改格式，修好的卡片保留原 scout 为作者（`proposer_task_id`、
+`proposer_provider`），评审不会因为修卡换了模型而落到与出题方相同的模型上；同一批卡片的作者模型都写进
+评审包的 `producer_models`。
+
+**额度类别**：降到 worker 档的决策类任务（立项评审等，`decision_task_types` 里的类型）按 review 类
+计额度：90% 硬上限并配速，不得动用 Fable 在共享窗口上的 `lead_decision_reserve`；若因独立性回退落到
+Fable，再受 `lead_review_ceiling`。仍在 lead 档的方向决策照旧按 decision 类。立项评审不再需要 lead，
+所以 lead 额度紧张时 `lead_shortage_paused` 不再暂停出题与立项（立项评审改回 lead 时自动恢复暂停）。
+
 ## 研究计划：自动选题与立项关口
 
 研究计划默认关闭（`config/openlabs.toml` 的 `[program] enabled = false`），关闭时 tick 与以前

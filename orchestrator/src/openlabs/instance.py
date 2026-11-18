@@ -64,9 +64,9 @@ RESEARCH_LINES: tuple[tuple[str, str], ...] = (
 )
 
 RUNNERS: dict[str, dict[str, str]] = {
-    "lead_gpt": {"provider": "openai-codex", "tier": "lead", "model": "gpt-6-astra"},
+    "lead_gpt": {"provider": "openai-codex", "tier": "lead", "model": "gpt-6.2-astra"},
     "lead_claude": {"provider": "anthropic", "tier": "lead", "model": "claude-fable-5-2"},
-    "worker_gpt": {"provider": "openai-codex", "tier": "worker", "model": "gpt-6.1-sol"},
+    "worker_gpt": {"provider": "openai-codex", "tier": "worker", "model": "gpt-6.2-sol"},
     "worker_claude": {"provider": "anthropic", "tier": "worker", "model": "claude-opus-5-5"},
     "light_gpt": {"provider": "openai-codex", "tier": "light", "model": "gpt-6-luna"},
     "light_claude": {"provider": "anthropic", "tier": "light", "model": "claude-haiku-5-5"},

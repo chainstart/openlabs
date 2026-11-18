@@ -78,3 +78,29 @@ def test_changed_receipt_refuses(tmp_path, monkeypatch):
     (tmp_path / "owner.json").write_text("{}")
     with pytest.raises(ValueError, match="missing or changed"):
         basis(tmp_path, monkeypatch, ADDED, meta)
+
+
+def test_ready_review_under_the_previous_panel_keeps_its_delta_basis(tmp_path, monkeypatch):
+    """2026-11-18 model upgrade: a ready review made under the outgoing panel is still a basis."""
+    old_roles = {"referee_a": {"model": "gpt-6-astra"}}
+    run = tmp_path / "reviews" / BASIS
+    run.mkdir(parents=True)
+    (run / "manuscript-expanded.tex").write_text(OLD)
+    base = {"merged": {"outcome": "ready"}, "referee_reports": {"referee_a": {}},
+            "editor_screen": {"decision": "send_to_review"}, "run_id": BASIS, "_path": run / "decision.json",
+            "review_track": {"track": "routine"}, "started_at": "2026-11-18T10:47:51+00:00",
+            "active_referee_roles": ["referee_a"]}
+    monkeypatch.setattr(flow, "scientific_rounds", lambda *a: [base])
+    monkeypatch.setattr(flow, "review_policy_matches", lambda record, config, *a, **k: config["roles"] == old_roles)
+    monkeypatch.setattr(flow, "rejection_context_blockers", lambda *a: [])
+    config = {"referee_roles": ["referee_a"], "roles": {"referee_a": {"model": "gpt-6.2-astra"}},
+              "previous_panels": [{"roles": old_roles, "referee_roles": ["referee_a"],
+                                   "valid_for_reviews_started_before": "2026-11-18T13:46:00+00:00"}]}
+    metadata = {"paper_id": P, "version": V, "target_journal": T}
+    result = flow.delta_review_basis(tmp_path, P, T, {"metadata": metadata, "expanded": OLD}, config,
+                                     {"track": "routine"}, None, None)
+    assert not any("review policy changed" in reason for reason in result["reasons"])
+    # Without the recorded earlier panel the same basis is refused.
+    result = flow.delta_review_basis(tmp_path, P, T, {"metadata": metadata, "expanded": OLD},
+                                     dict(config, previous_panels=[]), {"track": "routine"}, None, None)
+    assert any("review policy changed" in reason for reason in result["reasons"])

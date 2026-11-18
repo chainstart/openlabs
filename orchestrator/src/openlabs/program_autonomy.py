@@ -36,7 +36,7 @@ from typing import Any
 
 from . import assets as asset_library
 from . import budget as budget_control
-from .config import FactorySettings, WorkspacePaths
+from .config import FactorySettings, WorkspacePaths, dispatch_runner
 from .contracts import (
     FREEZE_REASON_CLASSES,
     REOPEN_BASIS_TYPES,
@@ -621,7 +621,8 @@ def schedule_direction_decision(
         ),
         input_path=str(packet_path),
         skill_path=DIRECTION_SKILL,
-        runner="frontier",
+        runner=dispatch_runner(settings, DIRECTION_TASK_TYPE, DIRECTION_ROUTING_REASON,
+                               "frontier"),
         routing_reason=DIRECTION_ROUTING_REASON,
         agent_role="reviewer",
         session_mode="fresh",
@@ -1205,7 +1206,7 @@ def _enqueue_targeted_analysis(db, settings, *, campaign, decision, decision_tas
         ),
         input_path=str(input_path),
         skill_path=str(campaign.get("primary_skill") or "") or None,
-        runner="balanced",
+        runner=dispatch_runner(settings, "evidence_remediation", TARGETED_ROUTING, "balanced"),
         routing_reason=TARGETED_ROUTING,
         parent_task_id=source_task_id if source else None,
         agent_role="researcher",
@@ -1280,7 +1281,7 @@ def _enqueue_retarget(db, settings, *, topic, campaign, decision, decision_task_
                 objective=objective,
                 input_path=str(input_path),
                 skill_path=_paper_skill(domain),
-                runner="frontier",
+                runner=dispatch_runner(settings, "paper_revision", RETARGET_ROUTING, "frontier"),
                 routing_reason=RETARGET_ROUTING,
                 parent_task_id=source_task_id,
                 agent_role="writer",
@@ -1310,7 +1311,7 @@ def _enqueue_retarget(db, settings, *, topic, campaign, decision, decision_task_
             ),
             input_path=str(input_path),
             skill_path=_paper_skill(domain),
-            runner="frontier",
+            runner=dispatch_runner(settings, "paper_readiness", RETARGET_ROUTING, "frontier"),
             routing_reason=RETARGET_ROUTING,
             parent_task_id=source_task_id if db.task(source_task_id) else None,
             agent_role="reviewer",
@@ -2003,7 +2004,9 @@ class _ReleasePipeline:
                 ),
                 input_path=str(packet_path),
                 skill_path=_paper_skill(domain) or "openlabs-paper-writing",
-                runner="cheap", routing_reason=RELEASE_FIX_ROUTING, agent_role="writer",
+                runner=dispatch_runner(self.settings, RELEASE_FIX_TASK_TYPE,
+                                       RELEASE_FIX_ROUTING, "cheap"),
+                routing_reason=RELEASE_FIX_ROUTING, agent_role="writer",
                 session_mode="fresh",
                 priority=int(self.topic.get("priority") or 0) + 1,
                 max_attempts=self.settings.max_attempts,
@@ -2057,7 +2060,9 @@ class _ReleasePipeline:
                         "direction_context, decision_record, decision_record_sha256, paper_id)."
                     ),
                     input_path=evidence[0]["path"], skill_path="openlabs-paper-review",
-                    runner="frontier", routing_reason=RELEASE_REVIEW_ROUTING,
+                    runner=dispatch_runner(self.settings, "paper_review",
+                                           RELEASE_REVIEW_ROUTING, "frontier"),
+                    routing_reason=RELEASE_REVIEW_ROUTING,
                     parent_task_id=parent if parent and self.db.task(parent) else None,
                     agent_role="reviewer", session_mode="fresh",
                     priority=int(campaign.get("priority") or 0) + 1,

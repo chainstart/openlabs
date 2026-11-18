@@ -238,6 +238,13 @@ def test_invalid_card_gets_one_repair_task_and_the_fixed_card_is_proposed(tmp_pa
     new = ledger.topic(registered[0]["topic_id"])
     assert new["status"] in {"proposed"} and new["repair_of"] == original_id
     original = ledger.topic(original_id)
+    # The repair only fixed the format: the scout stays the author the admission
+    # review must be independent of, whichever model ran the repair.
+    assert new["source_task_id"] == task["task_id"]
+    assert new["proposer_task_id"] == original["source_task_id"]
+    assert new["proposer_provider"] == original["proposer_provider"]
+    assert pf.card_author(new, ledger.read()) == (
+        original["proposer_provider"], original["source_task_id"])
     assert original["card_repair"]["status"] == "resubmitted"
     assert original["card_repair"]["topic_id"] == new["topic_id"]
     # Nothing is repaired twice.

@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .config import FactorySettings, WorkspacePaths
+from .config import FactorySettings, WorkspacePaths, dispatch_runner
 from .contracts import atomic_write_json, canonical_json_bytes, sha256_file
 from .db import FactoryDB
 from .labs import discover_labs, lab_for_domain
@@ -366,7 +366,8 @@ def schedule_portfolio_review(
         objective=objective,
         input_path=str(packet_path),
         skill_path=str(campaign.get("primary_skill") or ""),
-        runner="frontier",
+        runner=dispatch_runner(settings, "portfolio_review", "new_project_results_review",
+                               "frontier"),
         routing_reason="new_project_results_review",
         agent_role="reviewer",
         session_mode="fresh",
@@ -708,7 +709,8 @@ def materialize_candidate(
         ),
         input_path=str(result_path),
         skill_path=project.primary_skill,
-        runner="frontier",
+        runner=dispatch_runner(settings, "candidate_maturation",
+                               "reviewer_selected_candidate_maturation", "frontier"),
         routing_reason="reviewer_selected_candidate_maturation",
         agent_role="researcher",
         session_mode="fresh",

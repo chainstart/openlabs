@@ -55,7 +55,7 @@ _REF = re.compile(r"\\(?:[cC]ref|[aA]utoref|eqref|ref|pageref)\*?\{([^}]*)\}")
 _BIBKEY = re.compile(r"@[A-Za-z]+\s*\{\s*([^,\s]+)\s*,")
 _BIBITEM = re.compile(r"\\bibitem(?:\[[^\]]*\])?\{([^}]*)\}")
 DEFAULT_ROLES = {
-    "gpt": {"provider": "openai-codex", "tool": "Codex", "model": "gpt-6.1-sol"},
+    "gpt": {"provider": "openai-codex", "tool": "Codex", "model": "gpt-6.2-sol"},
     "opus": {"provider": "anthropic", "tool": "Claude Code", "model": "claude-opus-5-5"},
 }
 

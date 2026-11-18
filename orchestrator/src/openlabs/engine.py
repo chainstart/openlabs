@@ -38,7 +38,7 @@ from .attempts import (
     rollback_attempt_promotion,
     settle_unlisted_staging,
 )
-from .config import LEGACY_RUNNER_TIERS, FactorySettings, WorkspacePaths
+from .config import LEGACY_RUNNER_TIERS, FactorySettings, WorkspacePaths, dispatch_runner
 from .contracts import (
     IDENTIFIER,
     TASK_SCHEMA,
@@ -2423,7 +2423,7 @@ def _replenish_continuous_campaign(
     if action.runner is not None:
         runner = action.runner
     elif status == "needs_replan":
-        runner = "frontier"
+        runner = dispatch_runner(settings, "replan", None, "frontier")
     elif latest:
         runner = _inherited_runner(latest)
     else:
@@ -2538,7 +2538,7 @@ def _enqueue_paper_task(
         objective=objective,
         input_path=input_path,
         skill_path=skill_path,
-        runner="frontier",
+        runner=dispatch_runner(settings, task_type, routing_reason, "frontier"),
         routing_reason=routing_reason,
         parent_task_id=str(parent["task_id"]),
         agent_role=agent_role,
@@ -3620,7 +3620,8 @@ def ingest_results(
                         skill_path=(str(task["skill_path"]) if task.get("skill_path") else None),
                         runner=(
                             next_plan.runner
-                            or ("frontier" if is_replan else _inherited_runner(task))
+                            or (dispatch_runner(settings, "replan", None, "frontier")
+                                if is_replan else _inherited_runner(task))
                         ),
                         routing_reason=(
                             "production_rollover"
@@ -3852,6 +3853,7 @@ def _write_task_spec(
         output_path=output_path,
         skill_dirs=skill_dirs,
         available_skill_dirs=available_skill_dirs,
+        proxy_download=(settings or FactorySettings()).proxy_download.to_dict(),
     )
     validation = validate_task(payload)
     if not validation.valid:

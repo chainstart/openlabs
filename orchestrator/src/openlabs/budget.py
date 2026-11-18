@@ -46,6 +46,7 @@ from .config import (
     LEGACY_RUNNER_TIERS,
     OWNER_TASK_TYPE,
     TIERS,
+    lookup_task_tier,
     BudgetSettings,
     FactorySettings,
     RoutingSettings,
@@ -858,6 +859,33 @@ def estimate_stale_readings(
 # --------------------------------------------------------------- availability
 
 
+def requested_tier(settings: FactorySettings, task: Mapping[str, Any]) -> str:
+    """Tier a task asks for, before availability and independence are considered.
+
+    An escalation (``runner_request`` holding a tier) first; then
+    ``[routing.task_tiers]`` (``task_type:routing_reason``, then ``task_type``); then
+    the tier of its runner name (legacy alias or a ``[runners]`` entry); then its
+    agent role.
+    """
+
+    routing = settings.routing
+    request = str(task.get("runner_request") or "")
+    if request in TIERS:  # an escalation
+        return request
+    configured = lookup_task_tier(
+        routing.task_tiers, task.get("task_type"), task.get("routing_reason")
+    )
+    if configured is not None:
+        return configured
+    alias = request or normalize_runner(task.get("runner"))
+    if alias in LEGACY_RUNNER_TIERS:
+        return LEGACY_RUNNER_TIERS[alias]
+    spec = settings.runners.get(alias)
+    if spec is not None:
+        return spec.tier
+    return routing.role_tiers.get(str(task.get("agent_role") or ""), "worker")
+
+
 def task_class(settings: FactorySettings, task: Mapping[str, Any]) -> str:
     """``decision`` (admission/direction/portfolio), ``review``, ``owner`` or ``ordinary``."""
 
@@ -868,7 +896,11 @@ def task_class(settings: FactorySettings, task: Mapping[str, Any]) -> str:
         # ceiling does not apply (``protection_limit``).
         return OWNER_CLASS
     if task_type in routing.decision_task_types:
-        return "decision"
+        # A decision type moved below the lead tier ([routing.task_tiers]; admission
+        # since 2026-11-18) is judged as a review: it no longer may spend the
+        # protected lead's decision reserve on shared windows, and on Fable (an
+        # independence fallback) it stops at lead_review_ceiling.
+        return "decision" if requested_tier(settings, task) == "lead" else "review"
     if task_type in routing.review_task_types or str(task.get("agent_role") or "") == "reviewer":
         return "review"
     return "ordinary"
@@ -1604,20 +1636,25 @@ class QuotaRouter:
         return assumed if state.abundance is None else min(state.abundance, assumed)
 
     def required_tier(self, task: Mapping[str, Any]) -> str:
-        routing = self.settings.routing
-        request = str(task.get("runner_request") or "")
-        if request in TIERS:  # an escalation
-            return request
-        task_type = str(task.get("task_type") or "")
-        if task_type in routing.task_tiers:
-            return routing.task_tiers[task_type]
-        alias = request or normalize_runner(task.get("runner"))
-        if alias in LEGACY_RUNNER_TIERS:
-            return LEGACY_RUNNER_TIERS[alias]
-        spec = self.settings.runners.get(alias)
-        if spec is not None:
-            return spec.tier
-        return routing.role_tiers.get(str(task.get("agent_role") or ""), "worker")
+        return requested_tier(self.settings, task)
+
+    def _lead_gate_active(self, task_type: str, reason: str) -> bool:
+        """Whether ``lead_shortage_paused`` still guards this task.
+
+        The pause exists because topic admission needed a lead runner. With
+        admission on a lower tier ([routing.task_tiers], 2026-11-18) a lead
+        shortage no longer blocks the cards the scouts produce, so scouting and
+        admission keep going; a paused type that itself requests the lead tier
+        stays paused.
+        """
+
+        admission = requested_tier(
+            self.settings, {"task_type": "portfolio_review", "routing_reason": "topic_admission"}
+        )
+        if admission == "lead":
+            return True
+        own = requested_tier(self.settings, {"task_type": task_type, "routing_reason": reason})
+        return own == "lead"
 
     def rank(self, task: Mapping[str, Any]) -> int:
         routing = self.settings.routing
@@ -1674,27 +1711,42 @@ class QuotaRouter:
         providers = {s.provider for s in self.settings.runners.values() if s.tier == tier}
         return producer if providers - {producer} else None
 
-    def _producer_model(self, task: Mapping[str, Any]) -> str | None:
-        """Model that produced what a review/decision task judges, when it can be known.
+    def _producer_models(self, task: Mapping[str, Any]) -> frozenset[str]:
+        """Models that produced what a review/decision task judges, when they can be known.
 
-        The parent task's runner first; otherwise the ``producer_model`` field the
-        control plane writes into decision and admission packets (input path).
+        The parent task's runner first; otherwise the ``producer_models`` list or
+        the ``producer_model`` field the control plane writes into decision and
+        admission packets (input path). Empty when unknown.
         """
 
         parent = self._task(task.get("parent_task_id"))
         if parent is not None:
             spec = self.settings.runners.get(normalize_runner(parent.get("runner")))
             if spec is not None and spec.model:
-                return spec.model
+                return frozenset({spec.model})
         path = str(task.get("input_path") or "").strip()
         if not path.endswith(".json"):
-            return None
+            return frozenset()
         try:
             packet = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return None
-        value = packet.get("producer_model") if isinstance(packet, Mapping) else None
-        return str(value).strip() or None if value else None
+            return frozenset()
+        if not isinstance(packet, Mapping):
+            return frozenset()
+        models = {
+            str(item).strip() for item in packet.get("producer_models") or []
+            if isinstance(packet.get("producer_models"), list) and str(item).strip()
+        }
+        single = str(packet.get("producer_model") or "").strip()
+        if single:
+            models.add(single)
+        return frozenset(models)
+
+    def _producer_model(self, task: Mapping[str, Any]) -> str | None:
+        """The single producer model, when exactly one is known."""
+
+        models = self._producer_models(task)
+        return next(iter(models)) if len(models) == 1 else None
 
     def _single_family(self, task: Mapping[str, Any], klass: str,
                        excluded: str | None) -> str | None:
@@ -1740,14 +1792,32 @@ class QuotaRouter:
         ``resume_at``...) is added to the decision or the deferral.
         """
 
-        producer_model = self._producer_model(task)
-        order = [tier, *(level for level in ("lead", "worker", "light") if level != tier)]
-        for level in order:
-            pool = [
+        producer_models = self._producer_models(task)
+        producer_model = (
+            next(iter(producer_models)) if len(producer_models) == 1
+            else sorted(producer_models) or None
+        )
+        # The requested tier, then the stronger tiers nearest first: a worker review
+        # whose author is the family's worker model goes up to the lead (sol ->
+        # astra, Opus -> Fable). Weaker tiers only when no requested-or-stronger
+        # model other than the author's is configured at all (a lead-tier review of
+        # the family's only lead model goes to its worker); a stronger model that is
+        # merely out of quota is waited for, not replaced by a light model.
+        strength = {level: index for index, level in enumerate(("light", "worker", "lead"))}
+        stronger = sorted((t for t in TIERS if strength[t] > strength[tier]), key=strength.get)
+        weaker = sorted((t for t in TIERS if strength[t] < strength[tier]),
+                        key=strength.get, reverse=True)
+        pools = {
+            level: [
                 spec for spec in self.settings.runners.values()
                 if spec.provider == provider and spec.tier == level
-                and (producer_model is None or spec.model != producer_model)
+                and spec.model not in producer_models
             ]
+            for level in TIERS
+        }
+        order = [level for level in (tier, *stronger) if pools[level]] or weaker
+        for level in order:
+            pool = pools[level]
             if not pool:
                 continue
             chosen = self._choose(pool, klass, active_by_runner, manual=manual)
@@ -1760,6 +1830,8 @@ class QuotaRouter:
                 "same_family_different_model" if producer_model else "same_family_model_unknown"
             )
             decision["producer_model"] = producer_model
+            if spec.tier != tier:
+                decision["tier_changed_for_independence"] = {"from": tier, "to": spec.tier}
             if fallback:
                 decision.update(fallback)
                 decision["reason"] = (
@@ -1942,9 +2014,10 @@ class QuotaRouter:
         manual = self.is_manual(task)
         # The admission gate runs as a portfolio_review task whose routing reason
         # names the paused decision type.
+        reason = str(task.get("routing_reason") or "")
         if self.lead_short and not manual and (
-            task_type in paused or str(task.get("routing_reason") or "") in paused
-        ):
+            task_type in paused or reason in paused
+        ) and self._lead_gate_active(task_type, reason):
             self._defer(task, "lead_quota_short")
             return None
         pinned = self._pinned(task)
@@ -2196,8 +2269,12 @@ class QuotaRouter:
         leads = [spec for spec in self.settings.runners.values() if spec.tier == "lead"]
         return {
             "short": self.lead_short,
+            # Only the entries the pause still applies to (_lead_gate_active).
             "paused_task_types": (
-                list(self.settings.routing.lead_shortage_paused) if self.lead_short else []
+                [
+                    name for name in self.settings.routing.lead_shortage_paused
+                    if self._lead_gate_active(name, name)
+                ] if self.lead_short else []
             ),
             "runners": {
                 spec.name: {

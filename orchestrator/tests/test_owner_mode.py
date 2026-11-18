@@ -510,15 +510,18 @@ def test_brief_is_short_has_the_four_parts_and_forces_no_skill(tmp_path, monkeyp
     # About 4.3 KB in production (shorter roots); the test roots are long tmp paths. The
     # recompute-review goal and the handover rule (2026-11-16) added about 0.3 KB; the
     # quota-authorization line (2026-11-17) about 50 B; the compute capacity, queue
-    # snapshot and per-topic thread limit lines (2026-11-18) about 0.3 KB.
-    assert len(body.encode("utf-8")) <= 5_100, len(body.encode("utf-8"))
+    # snapshot and per-topic thread limit lines (2026-11-18) about 0.3 KB; the off-peak
+    # proxy-download window (2026-11-18) about 90 B.
+    assert len(body.encode("utf-8")) <= 5_200, len(body.encode("utf-8"))
+    assert "large proxy downloads (>= 200 MB file or 1024 MB batch) only 02:00-14:00 " \
+        "Asia/Shanghai, never split" in body
     assert "Capacity: ailab" in body and "<= 8 thr" in body
     assert "independent recompute review" in body and owner.HANDOVER_NAME in body
     for heading in ("## Goal", "## Resources", "## Tools", "## Hard limits", "## Ending a seat"):
         assert heading in request
     assert "Invoke" not in request and "Skill tool" not in request
     assert topic["preregistration_sha256"] in request
-    assert "codex exec -m gpt-6.1-sol" in request and "Agent tool" in request
+    assert "codex exec -m gpt-6.2-sol" in request and "Agent tool" in request
     assert "program utilization" in request and "download-submit" in request
     assert block["claude_subagent_model"] == "claude-opus-5-5"
     assert (Path(spec["transaction"]["staged_campaign_workspace"]) / owner.BRIEF_NAME).is_file()

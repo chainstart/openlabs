@@ -137,6 +137,9 @@ TOPIC_FIELDS = (
     "program_project_id",
     "source_task_id",
     "proposer_provider",
+    # The task whose model wrote the card's content: the scout, also for a card
+    # a light-tier repair task returned (the repair only fixes format errors).
+    "proposer_task_id",
     "card_path",
     "card_errors",
     "routine_fallback",
@@ -895,6 +898,7 @@ _METADATA_FIELDS = frozenset(
         "research_line",
         "source_task_id",
         "proposer_provider",
+        "proposer_task_id",
         "card_path",
         "card_errors",
         "card_check",

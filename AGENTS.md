@@ -49,6 +49,14 @@ parallel, multi-process, large-memory, long-running, build and install work goes
 `RESOURCE_GUARD.md` ("What must run inside the guard"). Never commit credentials, tokens or
 private keys.
 
+Files come only through the download bridge (`/workspace/.download-bridge/download-submit`,
+`--route auto`). Large downloads through the proxy route (`--route proxy`, or a batch known to
+fall back to the proxy: a file of 200 MB or more, or a batch of 1 GB or more) run only
+02:00-14:00 Asia/Shanghai (user rule 2026-11-18; `[factory] proxy_download_*`); outside it,
+schedule them for the window and work on what does not need the data, and never split a
+download to get around it. `python -m openlabs.download_window status` tells a script whether
+the window is open (exit 0) or not (exit 3).
+
 ## Where computation runs
 
 Agents run in the container. Choose where an experiment runs by what it needs, and state

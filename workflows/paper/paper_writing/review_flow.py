@@ -325,10 +325,17 @@ def policy_for_record(record: Mapping[str, Any], config: Mapping[str, Any]) -> d
     configured when they started; those stay bound to the historical panel they used.
     """
     started = _parse_time(record.get("started_at"))
-    for panel in config.get("previous_panels", []):
+    active = list(record.get("active_referee_roles") or [])
+    candidates = []
+    for index, panel in enumerate(config.get("previous_panels", [])):
         until = _parse_time(panel["valid_for_reviews_started_before"])
-        if started and started < until and list(record.get("active_referee_roles") or []) == list(panel["referee_roles"]):
-            return dict(config, roles=dict(panel["roles"]), referee_roles=list(panel["referee_roles"]))
+        if started and started < until and active == list(panel["referee_roles"]):
+            candidates.append((until, index, panel))
+    if candidates:
+        # The panel in force when the review started: the earliest cut-off after its
+        # start, whatever order the entries are listed in.
+        panel = min(candidates, key=lambda item: (item[0], item[1]))[2]
+        return dict(config, roles=dict(panel["roles"]), referee_roles=list(panel["referee_roles"]))
     return dict(config)
 
 
@@ -1992,7 +1999,10 @@ def delta_review_basis(root: Path, paper_id: str, target: str, pre: Mapping[str,
     if not old_path.is_file():
         return None
     reasons = []
-    if not review_policy_matches(base, config, root, history_policy, round_limit):
+    # A ready review made under a panel that was in force when it started (a recorded
+    # previous_panels entry, e.g. before a model-version upgrade) keeps its basis.
+    if not review_policy_matches(base, policy_for_record(base, config), root, history_policy,
+                                 round_limit):
         reasons.append("review policy changed since the ready review")
     if set(base["referee_reports"]) != set(config["referee_roles"]):
         reasons.append("the referee panel changed since the ready review")

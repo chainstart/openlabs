@@ -1591,6 +1591,26 @@ def test_records_without_formal_verifier_keep_editor_binding_and_policy_hash():
     assert flow.formal_role(flow.policy_for_record(later, new)['roles']) == VERIFIER_MODEL
 
 
+def test_model_upgrade_keeps_each_record_on_the_panel_it_started_under():
+    """2026-11-18: a version upgrade appends the outgoing panel; order of entries does not matter."""
+    first = {'editor': dict(EDITOR_MODEL, model='gpt-6.1-sol'), 'referee_b': dict(REFEREE_MODEL, model='gpt-6.1-sol')}
+    second = {'editor': dict(EDITOR_MODEL, model='gpt-6-astra'), 'referee_b': dict(REFEREE_MODEL, model='gpt-6-astra')}
+    current = {'editor': dict(EDITOR_MODEL, model='gpt-6.2-astra'), 'referee_b': dict(REFEREE_MODEL, model='gpt-6.2-astra')}
+    entries = [{'roles': first, 'referee_roles': ['referee_b'], 'valid_for_reviews_started_before': '2026-11-11T12:00:00+00:00'},
+               {'roles': second, 'referee_roles': ['referee_b'], 'valid_for_reviews_started_before': '2026-11-18T13:46:00+00:00'}]
+    for previous in (entries, list(reversed(entries))):
+        config = _panel_config(current, previous=previous)
+        def roles(started):
+            return flow.policy_for_record({'started_at': started, 'active_referee_roles': ['referee_b']}, config)['roles']
+        assert roles('2026-11-10T08:00:00+00:00') == first
+        assert roles('2026-11-18T10:47:51+00:00') == second
+        assert roles('2026-11-18T14:00:00+00:00') == current
+        # The record's hash, taken under the panel it started with, still matches.
+        assert flow.review_policy_sha256(flow.policy_for_record(
+            {'started_at': '2026-11-18T10:47:51+00:00', 'active_referee_roles': ['referee_b']}, config)) == (
+            flow.review_policy_sha256(_panel_config(second)))
+
+
 @pytest.mark.parametrize('started,expected', [('2026-11-10T08:00:00+00:00', 'editor'),
                                               ('2026-11-13T08:00:00+00:00', 'verifier')])
 def test_apply_revalidates_formal_report_against_the_record_policy_role(tmp_path, monkeypatch, started, expected):

@@ -46,7 +46,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from . import budget as budget_control
-from .config import FactorySettings, WorkspacePaths
+from .config import FactorySettings, WorkspacePaths, dispatch_runner
 from .contracts import (
     ASSET_KINDS,
     IDENTIFIER,
@@ -1064,7 +1064,8 @@ def _schedule_retrospective(db: FactoryDB, paths: WorkspacePaths, settings: Fact
         ),
         input_path=str(packet_path),
         skill_path=RETROSPECTIVE_SKILL,
-        runner="cheap",
+        runner=dispatch_runner(settings, RETROSPECTIVE_TASK_TYPE, RETROSPECTIVE_ROUTING_REASON,
+                               "cheap"),
         routing_reason=RETROSPECTIVE_ROUTING_REASON,
         agent_role="researcher",
         session_mode="fresh",

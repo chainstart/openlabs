@@ -572,6 +572,70 @@ class ReadOnlyFactoryDB(FactoryDB):
         return _connection()
 
 
+def argv_model(runner: str, environment: Mapping[str, str] | None = None) -> str | None:
+    """Model named by ``-m``/``--model`` in ``OPENLABS_AGENT_COMMAND_<RUNNER>_JSON``, if any."""
+
+    env = os.environ if environment is None else environment
+    raw = env.get(f"OPENLABS_AGENT_COMMAND_{runner.upper()}_JSON")
+    if not raw:
+        return None
+    try:
+        argv = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(argv, list):
+        return None
+    for index, item in enumerate(argv):
+        text = str(item)
+        if text in {"-m", "--model"} and index + 1 < len(argv):
+            return str(argv[index + 1])
+        if text.startswith("--model="):
+            return text.split("=", 1)[1]
+    return None
+
+
+def division_of_labour(
+    settings: FactorySettings, environment: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """Current task -> tier -> model table (``[routing.task_tiers]`` over the defaults).
+
+    Per tier: each provider's model and the task keys on that tier
+    (``task_type`` or ``task_type:routing_reason``); ``overrides`` lists the
+    entries the instance configuration changed from the code defaults.
+    """
+
+    from .config import DEFAULT_TASK_TIERS, TIERS
+
+    table = settings.routing.task_tiers
+    tiers: dict[str, Any] = {}
+    mismatches: dict[str, Any] = {}
+    for tier in TIERS:
+        models: dict[str, str] = {}
+        for spec in sorted(settings.runners.values(), key=lambda item: item.name):
+            if spec.tier != tier:
+                continue
+            models[spec.provider] = spec.model or spec.name
+            launched = argv_model(spec.name, environment)
+            if launched is not None and spec.model and launched != spec.model:
+                mismatches[spec.name] = {"configured": spec.model, "argv": launched}
+        tiers[tier] = {
+            "models": models,
+            "tasks": sorted(key for key, value in table.items() if value == tier),
+        }
+    return {
+        "tiers": tiers,
+        # [runners.<name>].model is what routing, independence and cost accounting
+        # assume; the agent command's -m/--model is what actually runs.
+        "argv_model_mismatch": mismatches,
+        "overrides": {
+            key: {"tier": value, "default": DEFAULT_TASK_TIERS.get(key)}
+            for key, value in sorted(table.items()) if DEFAULT_TASK_TIERS.get(key) != value
+        },
+        "note": ("task_type:routing_reason wins over task_type; reviews and decisions "
+                 "exclude the author's model family within the tier"),
+    }
+
+
 def utilization_report(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -685,6 +749,7 @@ def utilization_report(
             }
         ),
         "parallel": parallel,
+        "division_of_labour": division_of_labour(settings),
         "admission": admission,
         "program": program,
     }

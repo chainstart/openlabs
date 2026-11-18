@@ -198,7 +198,8 @@ def test_valid_paper_candidate_enqueues_one_frontier_readiness_task(tmp_path) ->
     paper_task = db.task("research-1:paper-readiness")
     assert paper_task is not None
     assert paper_task["skill_path"] == "openlabs-math-paper"
-    assert paper_task["runner"] == "frontier"
+    # The runner name follows [routing.task_tiers]: paper_readiness is a worker task.
+    assert paper_task["runner"] == "balanced"
     assert paper_task["agent_role"] == "reviewer"
     assert paper_task["session_mode"] == "fresh"
     assert paper_task["agent_session_id"] is None
