@@ -77,6 +77,15 @@ EXIT_JOB_FAILED = 1
 EXIT_INVALID = 2
 EXIT_STATUS_ERROR = 3
 EXIT_TIMEOUT = 124
+EXIT_CAMPAIGN_LIMIT = 4
+
+# Who submitted a job (written beside request.json, never inside it, so the bridge and
+# the ailab gateway see an unchanged request). An agent seat's environment carries
+# OPENLABS_CAMPAIGN_ID (set by the lab runner); OPENLABS_CAMPAIGN_COMPUTE_THREADS is the
+# topic's limit on CPU threads its queued + running jobs may declare at once.
+SUBMITTER_FILE = 'submitter.json'
+CAMPAIGN_ENV = 'OPENLABS_CAMPAIGN_ID'
+CAMPAIGN_LIMIT_ENV = 'OPENLABS_CAMPAIGN_COMPUTE_THREADS'
 
 
 class RemoteComputeError(Exception):
@@ -403,6 +412,7 @@ def submit(
         _write_private_atomic(directory / 'status.json', _json_bytes({
             'job_id': job_id, 'state': 'queued', 'updated_at': request['created_at'],
         }))
+        write_submitter(directory)
         # READY last: its presence tells the bridge the job directory is complete.
         _write_private_atomic(directory / 'READY', (job_id + '\n').encode('ascii'))
     except BaseException:
@@ -418,6 +428,111 @@ def _remove_incomplete_job(directory: Path) -> None:
         if child.is_file() and not child.is_symlink():
             child.unlink()
     directory.rmdir()
+
+
+# ------------------------------------------------------- per-topic queue limit
+
+def submitter(environ: dict[str, str] | None = None) -> dict[str, str] | None:
+    """The submitting topic from the agent environment (None outside an agent seat)."""
+    env = os.environ if environ is None else environ
+    campaign = str(env.get(CAMPAIGN_ENV) or '').strip()
+    if not campaign:
+        return None
+    record = {'campaign_id': campaign}
+    task = str(env.get('OPENLABS_TASK_ID') or '').strip()
+    if task:
+        record['task_id'] = task
+    return record
+
+
+def write_submitter(directory: Path, environ: dict[str, str] | None = None) -> None:
+    record = submitter(environ)
+    if record is not None:
+        _write_private_atomic(directory / SUBMITTER_FILE,
+                              _json_bytes({**record, 'submitted_at': utc_now()}))
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+
+
+def campaign_queue_load(campaign_id: str, roots: Sequence[Path]) -> dict[str, Any]:
+    """Jobs of one topic still in the given queues (queued with READY, or running).
+
+    A withdrawn ailab copy (moved to the local queue, abandoned) is not counted; the
+    local copy of a moved job is.
+    """
+    load: dict[str, Any] = {'jobs': 0, 'queued': 0, 'running': 0, 'cpu_threads': 0,
+                            'job_ids': []}
+    for root in roots:
+        try:
+            directories = sorted(item for item in (Path(root) / 'jobs').iterdir()
+                                 if item.is_dir())
+        except OSError:
+            continue
+        for directory in directories:
+            record = _read_json(directory / SUBMITTER_FILE)
+            if not isinstance(record, dict) or record.get('campaign_id') != campaign_id:
+                continue
+            status = _read_json(directory / 'status.json')
+            state = status.get('state') if isinstance(status, dict) else None
+            if state not in ('queued', 'running'):
+                continue
+            try:
+                if any(directory.glob('WITHDRAWN*')):
+                    continue
+            except OSError:
+                continue
+            if state == 'queued' and not (directory / 'READY').is_file():
+                continue
+            request = _read_json(directory / 'request.json')
+            resources = request.get('resources') if isinstance(request, dict) else None
+            try:
+                threads = int((resources or {}).get('cpu_threads') or 0)
+            except (TypeError, ValueError):
+                threads = 0
+            load['jobs'] += 1
+            load[state] += 1
+            load['cpu_threads'] += threads
+            load['job_ids'].append(directory.name)
+    return load
+
+
+def campaign_limit_problem(cpu_threads: int, environ: dict[str, str] | None = None,
+                           roots: Sequence[Path] | None = None) -> str | None:
+    """Why this topic may not queue another job now (None: it may).
+
+    The limit counts the CPU threads declared by the topic's jobs still queued or
+    running on ailab and in the local queue. A topic with nothing in the queues may
+    always submit one job, however large.
+    """
+    env = os.environ if environ is None else environ
+    record = submitter(env)
+    try:
+        limit = int(str(env.get(CAMPAIGN_LIMIT_ENV) or '0').strip() or 0)
+    except ValueError:
+        limit = 0
+    if record is None or limit <= 0:
+        return None
+    if roots is None:
+        from .local_compute import default_queue_root as local_root
+        roots = (default_queue_root(env), local_root(env))
+    load = campaign_queue_load(record['campaign_id'], roots)
+    if load['cpu_threads'] == 0 or load['cpu_threads'] + cpu_threads <= limit:
+        return None
+    shown = ', '.join(load['job_ids'][:6]) + (' ...' if len(load['job_ids']) > 6 else '')
+    return (
+        f'per-topic compute limit: this topic already has {load["jobs"]} job(s) in the '
+        f'queues ({load["running"]} running, {load["queued"]} queued) declaring '
+        f'{load["cpu_threads"]} CPU thread(s); limit {limit} ({CAMPAIGN_LIMIT_ENV}), this job '
+        f'asks for {cpu_threads}. Not submitted. Do not retry in a loop: wait for those jobs '
+        f'(openlabs-remote wait JOB_ID, or end the seat as awaiting_remote with their ids: '
+        f'{shown}) and submit the next batch from their results. Split large profile or '
+        f'sweep sets into batches, coarse first, so each batch decides the next.'
+    )
 
 
 # --------------------------------------------------------------- status/wait
@@ -571,6 +686,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(args_list)
 
     try:
+        if args.action == 'submit':
+            problem = campaign_limit_problem(args.cpus)
+            if problem is not None:
+                print(f'openlabs-remote: {problem}', file=sys.stderr)
+                return EXIT_CAMPAIGN_LIMIT
         if args.action == 'submit' and args.backend != 'ailab':
             routed = _submit_routed(args, command)
             if routed is not None:

@@ -2070,20 +2070,35 @@ def _transaction_sandbox(
 
 
 def _agent_environment(task: Mapping[str, Any], adapter: str | None) -> dict[str, str] | None:
-    """The agent's environment: inherited, plus an owner seat's sub-agent default model.
+    """The agent's environment: inherited, plus the task's topic identity (and an owner
+    seat's per-topic compute-thread limit) and an owner seat's sub-agent default model.
 
     ``CLAUDE_CODE_SUBAGENT_MODEL`` sets the model of Claude sub-agents started without
     an explicit ``model`` (an explicit Agent ``model`` still wins; verified with
     claude 2.1.325 on 2026-11-14). ``None`` keeps the plain inherited environment.
     """
 
+    extra: dict[str, str] = {}
+    # Compute jobs the agent submits are tagged with its topic (openlabs-remote writes
+    # submitter.json), and an owner seat's per-topic thread limit is enforced there.
+    for key, name in (("campaign_id", "OPENLABS_CAMPAIGN_ID"), ("task_id", "OPENLABS_TASK_ID")):
+        value = str(task.get(key) or "").strip()
+        if value:
+            extra[name] = value
     owner = task.get("owner")
-    if adapter != "claude" or not isinstance(owner, Mapping):
+    if isinstance(owner, Mapping):
+        try:
+            limit = int(owner.get("campaign_compute_threads") or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        if limit > 0:
+            extra["OPENLABS_CAMPAIGN_COMPUTE_THREADS"] = str(limit)
+        model = str(owner.get("claude_subagent_model") or "").strip()
+        if adapter == "claude" and model:
+            extra["CLAUDE_CODE_SUBAGENT_MODEL"] = model
+    if not extra:
         return None
-    model = str(owner.get("claude_subagent_model") or "").strip()
-    if not model:
-        return None
-    return {**os.environ, "CLAUDE_CODE_SUBAGENT_MODEL": model}
+    return {**os.environ, **extra}
 
 
 def _run_agent(

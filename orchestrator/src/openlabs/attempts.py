@@ -1281,6 +1281,269 @@ def attempt_started(workspace: AttemptWorkspace) -> float | None:
     return _attempt_started(workspace)
 
 
+# --------------------------------------------------------------------------- unlisted staging
+#
+# A file left in artifact staging but absent from result.artifacts is a registration
+# matter the control plane settles, not a reason to refuse the whole result (2026-11-16,
+# await:f501e220: an owner left two remote-job packing directories in staging, 66 copies
+# of the line's solver code plus run.sh, and the commit refused the seat).
+#
+# - A *job bundle* (a staging directory holding a byte-identical copy of shared code, e.g.
+#   ``profile_job_0/`` containing ``astrosolve/fit.py`` from ``build/lines/*/solver``),
+#   interpreter caches (``__pycache__``, ``*.pyc``), undeclared scripts (``*.py``/``*.sh``
+#   need a replay closure only their author can declare) and anything over the size
+#   limits are not archived file by file: each group gets one manifest (file count, total
+#   bytes, per-file sha256, manifest hash) registered as ``staging_unlisted_manifest``, and
+#   its files move to ``<attempt>/staging-unlisted/`` beside the staging root.
+# - Every other undeclared file is registered as a ``staging_unlisted`` artifact with an
+#   id and sha256 the control plane computes.
+# - Still refused by publish_staged_artifacts: symlinks, protected (credential) names in
+#   staging, and new files written outside staging.
+
+STAGING_UNLISTED_KIND = "staging_unlisted"
+STAGING_UNLISTED_MANIFEST_KIND = "staging_unlisted_manifest"
+STAGING_UNLISTED_MANIFEST_SCHEMA = "openlabs.staging_unlisted_manifest.v1"
+STAGING_UNLISTED_DIR = "_openlabs_unlisted"
+STAGING_UNLISTED_ASIDE = "staging-unlisted"
+# Shared code whose byte-identical copies mark a job packing directory.
+SHARED_CODE_GLOBS = ("/workspace/openlabs/build/lines/*/solver",)
+# Individually registered unlisted files: per file, in total, and by count.
+UNLISTED_MAX_FILE_BYTES = 64 * 1024 * 1024
+UNLISTED_MAX_TOTAL_BYTES = 256 * 1024 * 1024
+UNLISTED_MAX_FILES = 200
+_SHARED_INDEX_MAX_BYTES = 8 * 1024 * 1024
+
+
+def shared_code_index(roots: Any = None) -> dict[str, list[str]]:
+    """``sha256 -> [relative path under its root, ...]`` for the shared code roots.
+
+    ``roots`` is an iterable of directories or globs (default :data:`SHARED_CODE_GLOBS`).
+    """
+
+    import glob
+
+    index: dict[str, list[str]] = {}
+    for pattern in SHARED_CODE_GLOBS if roots is None else roots:
+        for root_text in sorted(glob.glob(str(pattern))):
+            root = Path(root_text)
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if path.is_symlink() or not path.is_file() or _generated_cache(
+                        path.relative_to(root)):
+                    continue
+                try:
+                    if path.stat().st_size > _SHARED_INDEX_MAX_BYTES:
+                        continue
+                    digest = sha256_file(path)
+                except OSError:
+                    continue
+                index.setdefault(digest, []).append(path.relative_to(root).as_posix())
+    return index
+
+
+_SENSITIVE_STAGED_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".kdbx", ".gpg", ".age")
+
+
+def sensitive_staged_path(relative: Path) -> bool:
+    """A credential-like name in staging: never registered, the commit refuses it.
+
+    The external-reference refusal list (gates) without its database suffixes: a
+    ``.sqlite`` result is ordinary staged output.
+    """
+
+    from .gates import (
+        PROTECTED_REFERENCE_NAMES,
+        PROTECTED_REFERENCE_PARTS,
+        PROTECTED_REFERENCE_PREFIXES,
+    )
+
+    name = relative.name.lower()
+    return (
+        any(part in PROTECTED_REFERENCE_PARTS for part in relative.parts[:-1])
+        or name in PROTECTED_REFERENCE_NAMES
+        or name.startswith(PROTECTED_REFERENCE_PREFIXES)
+        or name.endswith(_SENSITIVE_STAGED_SUFFIXES)
+    )
+
+
+def _bundle_root(relative: Path, matches: list[str]) -> Path:
+    """The directory that received a copied shared-code tree (``""`` = staging root)."""
+
+    for match in sorted(matches, key=lambda text: -len(text)):
+        parts = Path(match).parts
+        if len(relative.parts) >= len(parts) and relative.parts[-len(parts):] == parts:
+            return Path(*relative.parts[: len(relative.parts) - len(parts)])
+    return relative.parent
+
+
+def classify_unlisted_staging(
+    staging_root: Path | None,
+    declared: Any,
+    *,
+    shared_index: Mapping[str, list[str]] | None = None,
+    max_file_bytes: int = UNLISTED_MAX_FILE_BYTES,
+    max_total_bytes: int = UNLISTED_MAX_TOTAL_BYTES,
+    max_files: int = UNLISTED_MAX_FILES,
+) -> dict[str, Any]:
+    """Sort the undeclared files in staging; nothing is changed on disk.
+
+    Returns ``individual`` (``[(path, sha256)]`` to register one by one), ``groups``
+    (``{group: [{path, relative, bytes, sha256, class, shared_code}]}`` to collapse into
+    one manifest each) and ``refused`` (relative paths left for the commit to refuse).
+    """
+
+    plan: dict[str, Any] = {"individual": [], "groups": {}, "refused": []}
+    if staging_root is None or not staging_root.is_dir():
+        return plan
+    staging = staging_root.resolve()
+    declared_paths: set[Path] = set()
+    for item in declared if isinstance(declared, list) else []:
+        uri = item.get("uri") if isinstance(item, Mapping) else item
+        if isinstance(uri, str) and uri.startswith("file:"):
+            try:
+                declared_paths.add(_artifact_path(uri))
+            except AttemptWorkspaceError:
+                continue
+    index = shared_code_index() if shared_index is None else shared_index
+    files: list[tuple[Path, Path, int, str]] = []
+    for candidate in sorted(staging.rglob("*")):
+        if candidate.is_symlink() or not candidate.is_file():
+            continue  # a symlink stays and the commit refuses it
+        resolved = candidate.resolve()
+        if resolved in declared_paths:
+            continue
+        relative = candidate.relative_to(staging)
+        if sensitive_staged_path(relative):
+            plan["refused"].append(relative.as_posix())
+            continue
+        files.append((resolved, relative, candidate.stat().st_size, sha256_file(resolved)))
+    bundles: set[Path] = set()
+    for _resolved, relative, _size, digest in files:
+        if digest in index:
+            root = _bundle_root(relative, index[digest])
+            if root.parts:
+                bundles.add(root)
+
+    def _bundle_of(relative: Path) -> Path | None:
+        for root in sorted(bundles, key=lambda item: len(item.parts)):
+            if relative.parts[: len(root.parts)] == root.parts:
+                return root
+        return None
+
+    total = 0
+    for resolved, relative, size, digest in files:
+        entry = {"path": resolved, "relative": relative.as_posix(), "bytes": size,
+                 "sha256": digest, "shared_code": sorted(index.get(digest, []))[:1] or None}
+        bundle = _bundle_of(relative)
+        group: str | None = None
+        if bundle is not None:
+            group, entry["class"] = f"job-bundle:{bundle.as_posix()}", "job_bundle"
+        elif _generated_cache(relative):
+            group, entry["class"] = "interpreter-cache", "cache"
+        elif digest in index:
+            group, entry["class"] = "shared-code-copy", "shared_code_copy"
+        elif executable_artifact({"uri": resolved.as_uri()}):
+            group, entry["class"] = "unlisted-scripts", "script"
+        elif (size > max_file_bytes or total + size > max_total_bytes
+              or len(plan["individual"]) >= max_files):
+            group, entry["class"] = "over-limit", "over_limit"
+        if group is None:
+            total += size
+            plan["individual"].append((resolved, digest))
+        else:
+            plan["groups"].setdefault(group, []).append(entry)
+    return plan
+
+
+def unlisted_artifact(path: Path, digest: str, ids: set[str]) -> dict[str, Any]:
+    """A ``staging_unlisted`` artifact entry with a control-plane id unique in ``ids``."""
+
+    artifact_id = f"staged-{digest[:16]}"
+    suffix = 1
+    while artifact_id in ids:
+        suffix += 1
+        artifact_id = f"staged-{digest[:16]}-{suffix}"
+    ids.add(artifact_id)
+    return {"artifact_id": artifact_id, "kind": STAGING_UNLISTED_KIND,
+            "uri": path.resolve().as_uri(), "sha256": digest,
+            "registered_by": "control_plane"}
+
+
+def settle_unlisted_staging(
+    payload: Mapping[str, Any],
+    staging_root: Path | None,
+    *,
+    shared_index: Mapping[str, list[str]] | None = None,
+    max_file_bytes: int = UNLISTED_MAX_FILE_BYTES,
+    max_total_bytes: int = UNLISTED_MAX_TOTAL_BYTES,
+    max_files: int = UNLISTED_MAX_FILES,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Register (or collapse into manifests) every undeclared file in attempt staging.
+
+    Returns the payload with the added artifacts and a record for the runtime and the
+    event log (``None`` when staging had nothing undeclared). See the section comment.
+    """
+
+    result = dict(payload)
+    artifacts = payload.get("artifacts")
+    if staging_root is None or not staging_root.is_dir() or not isinstance(artifacts, list):
+        return result, None
+    staging = staging_root.resolve()
+    plan = classify_unlisted_staging(
+        staging, artifacts, shared_index=shared_index, max_file_bytes=max_file_bytes,
+        max_total_bytes=max_total_bytes, max_files=max_files,
+    )
+    if not plan["individual"] and not plan["groups"] and not plan["refused"]:
+        return result, None
+    settled = list(artifacts)
+    ids = {str(item.get("artifact_id") or "") for item in settled if isinstance(item, Mapping)}
+    registered = []
+    for path, digest in plan["individual"]:
+        entry = unlisted_artifact(path, digest, ids)
+        settled.append(entry)
+        registered.append({"artifact_id": entry["artifact_id"],
+                           "path": path.relative_to(staging).as_posix(), "sha256": digest})
+    aside = staging.parent / STAGING_UNLISTED_ASIDE
+    manifests = []
+    for group, members in sorted(plan["groups"].items()):
+        listing = [{key: member[key] for key in
+                    ("relative", "bytes", "sha256", "class", "shared_code")}
+                   for member in members]
+        listing_sha256 = hashlib.sha256(
+            json.dumps(listing, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        record = {
+            "schema_version": STAGING_UNLISTED_MANIFEST_SCHEMA,
+            "group": group,
+            "file_count": len(listing),
+            "total_bytes": sum(int(member["bytes"]) for member in listing),
+            "listing_sha256": listing_sha256,
+            "archived": False,
+            "moved_to": str(aside),
+            "files": listing,
+        }
+        name = f"{_token(group, prefix='group')}-{listing_sha256[:12]}.json"
+        manifest = atomic_write_json(staging / STAGING_UNLISTED_DIR / name, record)
+        for member in members:
+            target = aside / member["relative"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                target = target.with_name(f"{target.name}.{member['sha256'][:8]}")
+            os.replace(member["path"], target)
+        digest = sha256_file(manifest)
+        entry = unlisted_artifact(manifest, digest, ids)
+        entry["kind"] = STAGING_UNLISTED_MANIFEST_KIND
+        settled.append(entry)
+        manifests.append({"artifact_id": entry["artifact_id"], "group": group,
+                          "file_count": record["file_count"],
+                          "total_bytes": record["total_bytes"],
+                          "manifest_sha256": digest, "listing_sha256": listing_sha256})
+    result["artifacts"] = settled
+    return result, {"registered": registered, "manifests": manifests,
+                    "refused": plan["refused"]}
+
+
 def publish_staged_artifacts(
     paths: WorkspacePaths,
     source_payload: Mapping[str, Any],
@@ -1306,6 +1569,15 @@ def publish_staged_artifacts(
     declared_staged = {path for path in declared if _inside(path, staging)}
     undeclared = [path for path in staged_files if path not in declared_staged]
     if undeclared:
+        # settle_unlisted_staging registers every other undeclared file at ingest;
+        # what is left here is a credential-like name or bypassed the ingest.
+        sensitive = [path.relative_to(staging).as_posix() for path in undeclared
+                     if sensitive_staged_path(path.relative_to(staging))]
+        if sensitive:
+            raise AttemptWorkspaceError(
+                "artifact staging contains protected (credential-like) files: "
+                + ", ".join(sensitive[:8])
+            )
         relative = [path.relative_to(staging).as_posix() for path in undeclared[:8]]
         raise AttemptWorkspaceError(
             "artifact staging contains files absent from result.artifacts: " + ", ".join(relative)

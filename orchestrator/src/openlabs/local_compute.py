@@ -53,8 +53,10 @@ from .remote_compute import (
     JOB_ID_RE,
     RemoteComputeError,
     SourceScan,
+    SUBMITTER_FILE,
     _write_private_atomic,
     safe_arcname,
+    write_submitter,
     scan_source,
     validate_argv,
     validate_resources,
@@ -525,6 +527,7 @@ def submit(source: Path, argv: Sequence[str], *, cpu_threads: int, memory_mib: i
         request['path_rewrites'] = rewrites
     if routing:
         request['routing'] = dict(routing)
+    write_submitter(directory, environ)  # type: ignore[arg-type]
     _publish(directory, request)
     return job_id
 
@@ -602,6 +605,10 @@ def adopt_remote(job_id: str, *, remote_root: Path, queue_root: Path | None = No
                            'created_at': request.get('created_at'), 'reason': reason}}
         if rewrites:
             local_request['path_rewrites'] = rewrites
+        submitted_by = remote / SUBMITTER_FILE
+        if submitted_by.is_file() and not submitted_by.is_symlink():
+            # The topic keeps counting the moved job against its queue limit.
+            _write_private_atomic(directory / SUBMITTER_FILE, submitted_by.read_bytes())
         _publish(directory, local_request, ready=False)
     except BaseException:
         shutil.rmtree(directory, ignore_errors=True)

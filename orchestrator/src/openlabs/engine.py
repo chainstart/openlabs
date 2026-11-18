@@ -22,6 +22,7 @@ from . import budget as budget_control
 from .agent_runtime import HOOK_GATED_ADAPTERS, configure_codex_runtime
 from .attempts import (
     AttemptWorkspace,
+    AttemptWorkspaceError,
     attempt_artifact_policy,
     attempt_output_path,
     attempt_started,
@@ -35,6 +36,7 @@ from .attempts import (
     quarantine_attempt_workspace,
     recover_attempt_promotion,
     rollback_attempt_promotion,
+    settle_unlisted_staging,
 )
 from .config import LEGACY_RUNNER_TIERS, FactorySettings, WorkspacePaths
 from .contracts import (
@@ -154,6 +156,44 @@ def _bind_external_references(
         payload, allowed_roots=roots, started=started,
         control_plane_inputs={job_packet: cutoff},
     )
+
+
+def _settle_unlisted_staging(
+    db: FactoryDB,
+    payload: Mapping[str, Any],
+    *,
+    task_id: str,
+    attempt_id: str,
+    workspace: AttemptWorkspace | None,
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    """Register or collapse undeclared staged files (attempts.settle_unlisted_staging).
+
+    A registration matter, not a replan: the record goes to runtime
+    ``staging_unlisted`` and the event ``staging_unlisted_registered``. A failure here
+    leaves the payload as it was, so the commit's own check still decides.
+    """
+
+    if workspace is None or attempt_artifact_policy(workspace) is None:
+        return dict(payload)
+    try:
+        settled, record = settle_unlisted_staging(payload, workspace.artifact_staging_root)
+    except (OSError, AttemptWorkspaceError) as exc:
+        runtime["staging_unlisted_error"] = str(exc)[:500]
+        return dict(payload)
+    if record is not None:
+        runtime["staging_unlisted"] = {
+            "registered": record["registered"][:100],
+            "registered_count": len(record["registered"]),
+            "manifests": record["manifests"],
+            "refused": record["refused"][:20],
+        }
+        db.record_event_once(
+            "task", task_id, "staging_unlisted_registered",
+            {"attempt_id": attempt_id, **runtime["staging_unlisted"]},
+            event_key=f"staging-unlisted:{attempt_id}",
+        )
+    return settled
 
 
 @dataclass(frozen=True)
@@ -2739,6 +2779,10 @@ def ingest_results(
                         else None
                     ),
                 )
+                normalized = _settle_unlisted_staging(
+                    db, normalized, task_id=task_id, attempt_id=attempt_id,
+                    workspace=attempt_workspace, runtime=runtime,
+                )
                 # Staged files are frozen now and bound to the frozen hash; a log that
                 # grew after the owner (or the Stop hook) hashed it is corrected.
                 normalized, corrected = owner_mode.settle_staged_artifacts(
@@ -2754,6 +2798,15 @@ def ingest_results(
                         {"attempt_id": attempt_id, "corrections": corrected},
                         event_key=f"staged-hash:{attempt_id}",
                     )
+                if normalized != payload:
+                    atomic_write_json(result_path, normalized)
+                    actual_sha = sha256_file(result_path)
+                    payload = normalized
+            elif attempt_workspace is not None:
+                normalized = _settle_unlisted_staging(
+                    db, payload, task_id=task_id, attempt_id=attempt_id,
+                    workspace=attempt_workspace, runtime=runtime,
+                )
                 if normalized != payload:
                     atomic_write_json(result_path, normalized)
                     actual_sha = sha256_file(result_path)

@@ -362,6 +362,56 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   逐请求实测 37 美元；全期 Codex 输入 token 由原始相加的 6,812M 校正为 1,365M，实测 1,471M）；单次请求超过
   长上下文阈值的加价未计。精确核算仍用 `maintenance/20261116-cost-review/` 的逐请求脚本。
 
+### 算力节奏：计算积压闸门与每题在队线程上限（2026-11-18）
+
+起因：2026-11-16 重启后 10 小时立项 9 个课题，负责人按模板每题提交几十到上百个剖面作业（一次两批各 135 个），
+ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量的 11.9 倍，课题都在等计算。两道限制，都不新增流程：
+
+- **计算积压闸门**（`[program].compute_backlog_gate`，默认 true；`utilization.compute_backlog`）。每个
+  tick 读 ailab 队列（`/workspace/.openlabs-remote/jobs`）与本机队列（`/workspace/.openlabs-local-compute/jobs`）
+  的状态文件，统计**排队中**（READY、未撤回）的作业数与申报线程数；容量 = ailab `cpu_threads`
+  （`config/remote-compute.json`）+ 本机队列 `max_cpus`（`config/local-compute.json`）。排队线程数超过
+  `compute_backlog_ratio`（默认 2.0）× 容量，或排队作业数超过 `compute_backlog_max_queued_jobs`（默认 0，不按作业数）
+  时，暂停新的出题（scout）、立项评审（admission）和已立项题目的建 campaign（materialize）；在研课题不受影响。
+  tick 报告 `production_blocked` 写 `{"reason": "compute_backlog", "detail": ...}`，`program.compute_backlog`
+  给完整快照（排队/运行线程、容量、阈值、两个队列各自的数），`program.scout_blocked` 为 `compute_backlog`。
+  积压回落后下一个 tick 自动恢复，不需要人工解除。队列读不出来时不拦。
+- **每题在队线程上限**（`[program].campaign_compute_threads`，默认 8，约一个 ailab；0 关闭）。负责人简报
+  “Resources”一段写明 ailab 真实容量（8 线程、约 61 GB；4 物理核，两个 4 进程作业同时跑各慢约 1.6 倍）、本机
+  队列容量、坐席开始时两个队列的排队/运行作业与线程数和本题在队数，以及这条限制和“大批量剖面分批提交、先粗后细、
+  前一批结果决定下一批”。硬保险在提交入口：lab runner 给 agent 进程设 `OPENLABS_CAMPAIGN_ID`、
+  `OPENLABS_TASK_ID`（所有任务）和 `OPENLABS_CAMPAIGN_COMPUTE_THREADS`（负责人坐席）；`openlabs-remote submit`
+  （天文线 `solver/submit.sh`、toolkit `qprofile_run` 都经它）把提交者写进作业目录的 `submitter.json`
+  （不改 `request.json`，桥与 ailab 网关看到的请求不变；移到本机的作业随之复制），提交前统计本题在两个队列里
+  排队+运行作业的申报线程，加上本次超过上限即拒绝（退出码 4，不写任何作业文件），提示里写明在队作业数、线程数、
+  上限、作业号和建议做法（等这些作业 / 以 awaiting_remote 结束坐席，分批提交）。本题队列为空时单个作业总能提交。
+  没有 `OPENLABS_CAMPAIGN_ID` 的会话（人工、ad-hoc）不受限；2026-11-18 之前提交的作业没有 `submitter.json`，
+  不计入任何题目。
+
+建议取值见 `config/openlabs.toml` 的注释；重启时按 ailab 8 线程、本机 12 线程（与智能体共用）、单星课题
+60–120 核时估计。
+
+### 暂存区未登记文件由控制面补登记（2026-11-18）
+
+起因：2026-11-16T19:44Z 负责人尝试 `await:f501e220`（课题 7504c471）把两个远程作业打包目录
+（`profile_job_0/`、`profile_job_1/`：天文线 `astrosolve`/`contact_photometry` 代码副本 66 个 `.py`、`run.sh`、
+`plan.json`、光变曲线和 53 MB 通带表）留在产物暂存区；Stop 钩子按旧规则登记了其中的非脚本文件，脚本留给负责人，
+提交关口因“暂存区有未登记文件”把整个结果判为 needs_replan。现在入库时（`attempts.settle_unlisted_staging`，
+所有带产物策略的任务；负责人坐席在 Stop 钩子里用同一套分类 `classify_unlisted_staging`）：
+
+- **作业打包目录**：暂存区里某目录含有与 `/workspace/openlabs/build/lines/*/solver` 下文件字节相同的副本
+  （按哈希与相对路径后缀确定复制根），整个目录的未登记文件合为一条清单；Python 缓存（`__pycache__`、`*.pyc`）、
+  未登记脚本（`.py`/`.sh` 需要重放闭包，只能作者登记）和超限文件也各合为一条清单。清单（`_openlabs_unlisted/*.json`，
+  schema `openlabs.staging_unlisted_manifest.v1`：文件数、总字节、逐文件 sha256 与匹配的共享代码路径、
+  `listing_sha256`）登记为 `staging_unlisted_manifest` 产物；对应文件移到暂存区旁的
+  `<attempt>/staging-unlisted/`，不进产物库。
+- **其余未登记文件**逐个登记为 `staging_unlisted` 产物（id `staged-<sha16>`、sha256 由控制面计算），上限单个
+  64 MiB、合计 256 MiB、200 个，超出的进 `over-limit` 清单。
+- 仍然拒绝：暂存区里的符号链接、像凭据的文件名（`.ssh` 等目录、`id_rsa*`、`.env`、`*.pem`/`*.key` 等，提交时报
+  “protected (credential-like) files”）、在暂存区与 campaign 工作区之外新写的文件。
+- 记录：runtime `staging_unlisted`（登记的文件、各清单的文件数/字节/哈希、拒绝的路径）与事件
+  `staging_unlisted_registered`。负责人自己登记的文件不受影响。
+
 ### 负责人模式：一直负责到复审“小修/接受”（2026-11-14，2026-11-16 扩展）
 
 `[program].owner_mode` 打开后，立项的题目由一个负责人 agent（`topic_owner` 坐席，一次一个进程，按

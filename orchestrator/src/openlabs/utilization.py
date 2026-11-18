@@ -701,3 +701,78 @@ def utilization_report(
         admission=admission,
     )
     return payload
+
+
+# ------------------------------------------------------------ compute backlog
+
+
+def compute_backlog(
+    settings: FactorySettings,
+    *,
+    remote_root: Path | None = None,
+    local_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Queued compute against capacity for the ``[program]`` backlog gate.
+
+    Counts READY jobs still queued on ailab (``/workspace/.openlabs-remote``; withdrawn
+    copies excluded) and in the local overflow queue, and the CPU threads they declare.
+    Capacity is ailab's ``cpu_threads`` (``config/remote-compute.json``, when enabled)
+    plus the local queue's ``max_cpus``. ``backlogged`` is true while the queued threads
+    exceed ``compute_backlog_ratio`` x capacity, or more than
+    ``compute_backlog_max_queued_jobs`` jobs are queued (0 = no job-count limit).
+    None when the gate is off or the queues cannot be read.
+    """
+
+    program = settings.program
+    if not program.compute_backlog_gate:
+        return None
+    from . import local_compute, remote_compute
+
+    try:
+        caps = json.loads(local_compute.REMOTE_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        caps = {}
+    remote_on = isinstance(caps, Mapping) and caps.get("enabled") is True
+    try:
+        ailab = (
+            local_compute.ailab_load(
+                remote_root if remote_root is not None else remote_compute.default_queue_root(),
+                caps,
+            )
+            if remote_on else {}
+        )
+        local = local_compute.local_load(local_root)
+        local_settings = local_compute.load_settings()
+    except Exception:  # noqa: BLE001 - advisory: an unreadable queue never blocks
+        return None
+    ailab_capacity = int(ailab.get("capacity_cpu_threads") or 0) if remote_on else 0
+    local_capacity = int(local_settings.get("max_cpus") or 0)
+    capacity = ailab_capacity + local_capacity
+    queued_threads = int(ailab.get("queued_cpus") or 0) + int(local.get("queued_cpus") or 0)
+    queued_jobs = int(ailab.get("queued") or 0) + int(local.get("queued") or 0)
+    running_threads = int(ailab.get("running_cpus") or 0) + int(local.get("running_cpus") or 0)
+    threshold = program.compute_backlog_ratio * capacity
+    reasons = []
+    if capacity > 0 and queued_threads > threshold:
+        reasons.append(
+            f"queued jobs declare {queued_threads} CPU threads > "
+            f"{program.compute_backlog_ratio:g} x capacity {capacity}"
+        )
+    if program.compute_backlog_max_queued_jobs and (
+            queued_jobs > program.compute_backlog_max_queued_jobs):
+        reasons.append(
+            f"{queued_jobs} jobs queued > {program.compute_backlog_max_queued_jobs}"
+        )
+    return {
+        "backlogged": bool(reasons),
+        "detail": "; ".join(reasons),
+        "queued_jobs": queued_jobs,
+        "queued_threads": queued_threads,
+        "running_threads": running_threads,
+        "capacity_threads": capacity,
+        "threshold_threads": threshold,
+        "ailab": {key: ailab.get(key) for key in ("running", "queued", "running_cpus",
+                                                  "queued_cpus")} if remote_on else None,
+        "local": {key: local.get(key) for key in ("running", "queued", "running_cpus",
+                                                  "queued_cpus")},
+    }

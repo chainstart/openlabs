@@ -62,6 +62,20 @@ it is released once with a note, and a second yield on the same jobs stops the t
 for a human. A `needs_replan` result that names a still queued/running job is parked
 the same way. The topic's 28-day calendar deadline is unaffected.
 
+## Per-topic queue limit (2026-11-18)
+
+An agent seat's environment carries `OPENLABS_CAMPAIGN_ID` and `OPENLABS_TASK_ID`
+(set by the lab runner); `submit` records them in `jobs/JOB_ID/submitter.json`, beside
+`request.json` (which is unchanged, so the bridge and the ailab gateway are not
+affected; a job moved to the local queue keeps its tag). An owner seat also carries
+`OPENLABS_CAMPAIGN_COMPUTE_THREADS` (`[program].campaign_compute_threads`, default 8):
+before writing anything, `submit` sums the CPU threads declared by the topic's queued
+(READY, not withdrawn) and running jobs in both queues and refuses a job that would go
+past the limit, with exit code 4 and a message naming the jobs, the limit and what to do
+(wait for them or end the seat `awaiting_remote`, then submit the next batch). A topic
+with nothing in the queues may always submit one job. Sessions without the topic
+variable are not limited.
+
 ## Local overflow (2026-11-14)
 
 ailab is preferred and should be kept full, but it is not the only place to work

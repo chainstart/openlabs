@@ -66,7 +66,6 @@ from .contracts import (
     RESULT_SCHEMA,
     SHA256,
     atomic_write_json,
-    executable_artifact,
     sha256_file,
 )
 from .db import FactoryDB, utc_now
@@ -256,43 +255,29 @@ def _with_staged(
     seen_ids: set[str] | None = None,
     seen_paths: set[Path] | None = None,
 ) -> list[dict[str, Any]]:
-    """``artifacts`` plus every staged non-script file it does not declare yet.
+    """``artifacts`` plus each staged file the control plane registers one by one.
 
     The commit rejects staged files absent from ``result.artifacts``; owners staged
-    logs and forgot to list them (2026-11-14), so the control plane lists them.
+    logs and forgot to list them (2026-11-14), so the control plane lists them. Which
+    files are listed singly is :func:`attempts.classify_unlisted_staging`'s rule; job
+    bundles, caches, scripts and over-limit files are left for the ingest
+    (:func:`attempts.settle_unlisted_staging`) to collapse into manifests.
     """
+
+    from .attempts import classify_unlisted_staging, unlisted_artifact
 
     result = list(artifacts)
     ids = set(seen_ids or ()) | {str(item.get("artifact_id") or "") for item in result
                                  if isinstance(item, Mapping)}
-    paths = set(seen_paths or ())
-    for item in result:
-        if isinstance(item, Mapping) and str(item.get("uri") or "").startswith("file:"):
-            path = _uri_path(str(item["uri"]))
-            if path is not None:
-                paths.add(path)
     if staging_root is None or not staging_root.is_dir():
         return result
-    for candidate in sorted(staging_root.rglob("*")):
-        if candidate.is_symlink() or not candidate.is_file():
-            continue
-        resolved = candidate.resolve()
-        if resolved in paths:
-            continue
-        entry = {"uri": resolved.as_uri(), "kind": "data"}
-        if executable_artifact(entry):
-            # Scripts need a replay closure the owner must declare itself.
-            continue
-        digest = sha256_file(resolved)
-        artifact_id = f"staged-{digest[:16]}"
-        # Two files with the same bytes (empty logs) are still two staged files;
-        # skipping the second left it undeclared and the commit refused it.
-        suffix = 1
-        while artifact_id in ids:
-            suffix += 1
-            artifact_id = f"staged-{digest[:16]}-{suffix}"
-        ids.add(artifact_id)
-        result.append({"artifact_id": artifact_id, **entry, "sha256": digest})
+    declared = [item for item in result if isinstance(item, Mapping)]
+    declared += [{"uri": path.as_uri()} for path in seen_paths or ()]
+    plan = classify_unlisted_staging(staging_root, declared)
+    # Two files with the same bytes (empty logs) are still two staged files and get
+    # distinct ids; skipping the second left it undeclared and the commit refused it.
+    for path, digest in plan["individual"]:
+        result.append(unlisted_artifact(path, digest, ids))
     return result
 
 
@@ -1938,6 +1923,47 @@ def _owner_ceiling_text(settings: FactorySettings) -> str:
     return " / ".join(f"{value:.0%} ({provider})" for provider, value in values.items())
 
 
+# Measured on ailab (2026-11-14/17, astro standard solves): 4 physical cores, 8 threads;
+# two 4-process jobs side by side each run about 1.6x slower than alone.
+AILAB_HOST_NOTE = "4 cores; 2 jobs x 4 proc: each ~1.6x slower"
+
+
+def compute_brief_lines(settings: FactorySettings, campaign_id: str) -> list[str]:
+    """Capacity, the queue snapshot at seat start, and the per-topic thread limit."""
+
+    from . import local_compute, remote_compute
+    from .utilization import compute_backlog
+
+    limit = settings.program.campaign_compute_threads
+    try:
+        caps = json.loads(local_compute.REMOTE_CONFIG_PATH.read_text(encoding="utf-8"))
+        local = local_compute.load_settings()
+        remote_root = remote_compute.default_queue_root()
+        ailab = local_compute.ailab_load(remote_root, caps)
+        here = local_compute.local_load()
+        mine = remote_compute.campaign_queue_load(
+            campaign_id, (remote_root, local_compute.default_queue_root()))
+    except Exception:  # noqa: BLE001 - the snapshot is advisory
+        return []
+    memory_gb = round(int(caps.get("memory_mib") or 0) / 1024)
+    lines = [
+        f"  - Capacity: ailab {caps.get('cpu_threads')} thr/{memory_gb} GB ({AILAB_HOST_NOTE});"
+        f" local {local.get('max_jobs')} jobs/{local.get('max_cpus')} thr, shared with agents."
+        f" Queued jobs/thr: ailab {ailab.get('queued')}/{ailab.get('queued_cpus')} "
+        f"(+{ailab.get('running_cpus')} running), local {here.get('queued')}/"
+        f"{here.get('queued_cpus')} (+{here.get('running_cpus')}); this topic "
+        f"{mine['jobs']}/{mine['cpu_threads']}.",
+    ]
+    if limit > 0:
+        lines.append(
+            f"  - Limit: this topic's queued+running jobs <= {limit} thr; submit refuses more. "
+            "Big sweeps: in batches, coarse first, each deciding the next.")
+    backlog = compute_backlog(settings)
+    if backlog and backlog.get("backlogged"):
+        lines.append("  - The queues are backlogged; no new topics start until they drain.")
+    return lines
+
+
 def render_brief(
     paths: WorkspacePaths,
     settings: FactorySettings,
@@ -2010,11 +2036,12 @@ def render_brief(
         "",
         "## Resources",
         f"CODE={code}, DATA={paths.data}.",
-        "- Compute: ailab first, keep it full: `CODE/bin/openlabs-remote submit --source DIR "
-        "--cpus N --memory-mib M --timeout-seconds S -- CMD` (overflows here itself; "
-        "CODE/docs/REMOTE_COMPUTE.md). GPU, no approval: `CODE/bin/openlabs-resource-guard "
+        "- Compute: `CODE/bin/openlabs-remote submit --source DIR --cpus N --memory-mib M "
+        "--timeout-seconds S -- CMD` (ailab first; CODE/docs/REMOTE_COMPUTE.md). GPU, no "
+        "approval: `CODE/bin/openlabs-resource-guard "
         "--task-type gpu --gpu-memory-mib N --gpu-device 0 -- CMD`. Do not wait in the session "
         "for long jobs: end the seat awaiting_remote; it resumes when they finish.",
+        *compute_brief_lines(settings, str(campaign.get("campaign_id") or "")),
         "- Models: use sub-agents or another model whenever it is worth it.",
         models,
         "- Quota: a dispatched seat is authorized; the control plane manages quota. Work "
@@ -2179,6 +2206,7 @@ def spec_block(
         "preregistration_sha256": sha if SHA256.fullmatch(sha) else None,
         "artifact_staging_root": where["staging"] or None,
         "claude_subagent_model": settings.program.owner.claude_subagent_model,
+        "campaign_compute_threads": settings.program.campaign_compute_threads,
         "deadline": deadline.isoformat().replace("+00:00", "Z"),
     }
 

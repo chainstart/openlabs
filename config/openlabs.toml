@@ -172,6 +172,20 @@ message = "{action}: {paper_id} v{version}"
 # card_precheck_max_seconds = 900
 # card_compute_floor = true
 
+# Compute pacing (2026-11-18; docs/operations.zh.md "算力节奏"). While the CPU threads
+# declared by QUEUED jobs of the ailab and local compute queues exceed
+# compute_backlog_ratio x (ailab cpu_threads + local max_cpus), or more than
+# compute_backlog_max_queued_jobs jobs are queued (0 = no job-count limit), no new scout,
+# admission review or topic campaign starts; topics in research run on, and the gate lifts
+# by itself once the backlog falls (tick report: production_blocked reason compute_backlog).
+# With ailab 8 + local 12 threads the default holds new topics above 40 queued threads.
+# compute_backlog_gate = true
+# compute_backlog_ratio = 2.0
+# compute_backlog_max_queued_jobs = 0
+# CPU threads one topic's queued + running jobs may declare at once (owner brief; and
+# openlabs-remote refuses a submission beyond it). 8 = about one ailab; 0 = no limit.
+# campaign_compute_threads = 8
+
 # Per-topic direction-decision choices that keep a topic alive; afterwards only
 # freeze is accepted (an exhausted choice is refused and the topic frozen).
 [program.direction_limits]

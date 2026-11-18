@@ -509,8 +509,10 @@ def test_brief_is_short_has_the_four_parts_and_forces_no_skill(tmp_path, monkeyp
     body = request.split("\n---\n")[0]
     # About 4.3 KB in production (shorter roots); the test roots are long tmp paths. The
     # recompute-review goal and the handover rule (2026-11-16) added about 0.3 KB; the
-    # quota-authorization line (2026-11-17) about 50 B.
-    assert len(body.encode("utf-8")) <= 4_800, len(body.encode("utf-8"))
+    # quota-authorization line (2026-11-17) about 50 B; the compute capacity, queue
+    # snapshot and per-topic thread limit lines (2026-11-18) about 0.3 KB.
+    assert len(body.encode("utf-8")) <= 5_100, len(body.encode("utf-8"))
+    assert "Capacity: ailab" in body and "<= 8 thr" in body
     assert "independent recompute review" in body and owner.HANDOVER_NAME in body
     for heading in ("## Goal", "## Resources", "## Tools", "## Hard limits", "## Ending a seat"):
         assert heading in request

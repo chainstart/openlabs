@@ -39,6 +39,7 @@ from . import assets as asset_library
 from . import budget as budget_control
 from . import card_precheck as card_checks
 from .config import FactorySettings, WorkspacePaths
+from .utilization import compute_backlog
 from .contracts import (
     ADMISSION_POLICY_VERSION,
     admission_conditions,
@@ -1017,6 +1018,8 @@ def schedule_scouts(
         return [], "admission_paused"
     if status.free_slots <= 0:
         return [], "no_free_slot"
+    if compute_backlogged(settings):
+        return [], COMPUTE_BACKLOG_REASON
     all_projects = program_projects(paths)
     # No scout for a line whose environment is not ready, and its waiting cards do
     # not fill the pool for the lines that can run (they wait for the environment).
@@ -2212,6 +2215,9 @@ def schedule_topic_admission(
         return ReviewSchedule(reason="program_disabled")
     if not budget_control.routing_enabled(settings):
         return ReviewSchedule(reason="admission_requires_provider_routing")
+    if compute_backlogged(settings):
+        # Admissions wait while the compute queues are backlogged (compute_backlog).
+        return ReviewSchedule(reason=COMPUTE_BACKLOG_REASON)
     campaign_id = str(campaign["campaign_id"])
     project = load_project(str(campaign["project_config_path"]))
     ledger = open_topic_ledger(paths, settings.program)
@@ -2889,6 +2895,9 @@ def materialize_waiting_topics(
 
     campaign_ids: list[str] = []
     task_ids: list[str] = []
+    if compute_backlogged(settings):
+        # Admitted topics wait for their campaign until the compute backlog falls.
+        return CandidateSpawn(campaign_ids=(), task_ids=())
     ledger = open_topic_ledger(paths, settings.program)
     parked = parked_program_projects(paths)
     skipped: set[str] = set()
@@ -3057,6 +3066,18 @@ def backfill_grandfathered(
     }
 
 
+# --------------------------------------------------------------------------- compute backlog
+
+COMPUTE_BACKLOG_REASON = "compute_backlog"
+
+
+def compute_backlogged(settings: FactorySettings) -> bool:
+    """Whether the ``[program]`` compute backlog gate holds new topics this moment."""
+
+    backlog = compute_backlog(settings)
+    return bool(backlog and backlog["backlogged"])
+
+
 # --------------------------------------------------------------------------- tick
 
 
@@ -3071,6 +3092,15 @@ def run_program_pipeline(
     if not settings.program.enabled:
         return
     info = report.program
+    backlog = compute_backlog(settings)
+    if backlog is not None:
+        info["compute_backlog"] = backlog
+        if backlog["backlogged"]:
+            # New scouts, admissions and materializations wait; topics in research run on.
+            report.production_blocked.append({
+                "campaign_id": "", "reason": COMPUTE_BACKLOG_REASON,
+                "detail": str(backlog["detail"]),
+            })
     try:
         outcomes = register_scout_results(db, paths, settings)
         info["cards_registered"] = [item for item in outcomes if item["status"] == "proposed"]

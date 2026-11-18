@@ -240,6 +240,19 @@ class ProgramSettings:
     card_precheck: bool = True
     card_precheck_max_seconds: int = 900
     card_compute_floor: bool = True
+    # Compute backlog gate (2026-11-18, after 9 topics in 10 hours left ailab with 21
+    # queued jobs declaring 11x its threads): while the CPU threads declared by queued
+    # jobs of the ailab and local compute queues exceed compute_backlog_ratio x their
+    # combined capacity (or more than compute_backlog_max_queued_jobs jobs are queued,
+    # 0 = no job-count limit), no new scout, admission review or materialization starts.
+    # Topics already in research are not affected; the gate lifts by itself once the
+    # backlog falls. Reported as production_blocked reason compute_backlog.
+    compute_backlog_gate: bool = True
+    compute_backlog_ratio: float = 2.0
+    compute_backlog_max_queued_jobs: int = 0
+    # Brief limit per topic (owner seats): CPU threads its queued + running compute jobs
+    # may declare at once; openlabs-remote refuses a submission beyond it (0 = off).
+    campaign_compute_threads: int = 8
 
 
 DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_gpt")
@@ -1057,6 +1070,12 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         card_precheck=program.get("card_precheck", True) is not False,
         card_precheck_max_seconds=_positive_int(program.get("card_precheck_max_seconds"), 900),
         card_compute_floor=program.get("card_compute_floor", True) is not False,
+        compute_backlog_gate=program.get("compute_backlog_gate", True) is not False,
+        compute_backlog_ratio=_positive_float(program.get("compute_backlog_ratio"), 2.0),
+        compute_backlog_max_queued_jobs=_nonnegative_int(
+            program.get("compute_backlog_max_queued_jobs"), 0
+        ),
+        campaign_compute_threads=_nonnegative_int(program.get("campaign_compute_threads"), 8),
         **_git_settings(program.get("git")),
     )
 
