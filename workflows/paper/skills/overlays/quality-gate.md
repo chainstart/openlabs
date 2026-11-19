@@ -179,14 +179,39 @@ have not happened, say so and keep the blocker.
 
 ## Voice and readability
 
-Apply `../openlabs-paper-readability/SKILL.md` for every domain: contribution, structure and
-argument before sentence polish, preserving meaning. The final manuscript is neutral and
+Apply `../openlabs-paper-readability/SKILL.md` for every domain; its rules bind the writer
+(story line, main text versus appendix, abstract, one layer of qualification, no revision
+history, revisions that do not grow the main text): contribution, structure and argument before
+sentence polish, preserving meaning. The final manuscript is neutral and
 impersonal; revision negotiation, self-review responses and predictions about editorial
 interest stay in private revision records. Referees reconstruct problem, result, scope,
 literature difference and argument with locations (`openlabs-paper-review/references/`);
 substantial exposition problems are required changes, not minor revision. `style-check` is
 mechanical and does not assess readability, logic or novelty; with
 `quality_gate.editorial_voice.blocking: true` its voice warnings become delivery errors.
+
+## Narrative check and reader check
+
+`paper-writing narrative-check --paper-id <paper_id>` (also run inside `style-check`) counts the
+main text from the end of the abstract to the first appendix, back-matter heading or bibliography
+(captions count; tables, displayed mathematics and in-body declarations do not). Failures: the
+main text over `max_body_words` (or `max_body_pages` when set), and revision-history wording
+anywhere in the abstract, main text or appendix; both stop the unified review preflight and
+delivery. Warnings, reported as `narrative` preparation advisories: abstract words, numbers, test
+statistics and parentheticals; hedge density; sentences with stacked qualifiers; conclusion
+sentences with more than one layer of qualification; empty transitions; main-text growth since
+the last reviewed snapshot without a `placement: main_text` request. Limits, weakest first:
+code defaults by article type (`narrative_check.ARTICLE_TYPE_LIMITS`),
+`settings.yaml#quality_gate.narrative` (same keys, plus `article_types.<type>`), the research
+line's `paper_narrative` (`research-lines.yaml`, used when the paper record names
+`research_line`), the paper record's `narrative_limits` (the venue's own limit belongs here);
+`warnings_blocking: true` makes every warning a failure.
+
+`paper-writing reader-check --paper-id <paper_id>` runs a one-pass reader (fresh process, tools
+off, model `quality_gate.reader_check.role`, else `review.roles.formal_verifier`) on the title,
+abstract and main text and saves `papers/<paper_id>/writing/reader-check.{md,json}`; the decision
+letter step of the unified review receives it as `author_reader_check`. It is the writer's own
+check and never a gate.
 
 ## style-check and support-check
 

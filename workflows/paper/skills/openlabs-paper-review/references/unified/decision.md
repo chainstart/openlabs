@@ -11,3 +11,12 @@ from what must be done, together with the optional suggestions. If the fixed dec
 `next_action` is `direction_decision`, state the editor's strongest reason and the closest prior work plainly;
 when both referees recommended reject, state each referee's principal reason instead of the editor's. Be specific and brief; no
 praise padding. Return only the JSON object required by the schema.
+
+The packet also gives `main_text_length` (the deterministic main-text word count, its limit and,
+after an earlier round, the count of the last reviewed version) and possibly
+`author_reader_check` (the authors' own one-pass reader check: advice, not a review). In the
+letter, check that the main text has not grown through revision: if it is over its limit or grew
+since the last round without a main-text request (`placement: main_text`), say so and ask for the
+cuts. For each required item, keep its placement: additions marked `appendix_or_response` go to
+the appendix or the response letter, not into the main text. Include cut requests among what must
+be done when they concern the main line.

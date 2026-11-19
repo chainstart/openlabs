@@ -87,3 +87,9 @@ free text identifying the actual cited statement. Every required check field
 must contain a substantive explanation; for a definition or a boundary case,
 explain its assumptions and meaning rather than leaving a field empty. Preserve
 gap, error or unchecked whenever the mathematics actually warrants that status.
+
+PLACEMENT: Judge the manuscript as a whole, main text plus appendices and supplement. A
+qualification, condition, check or derivation step stated in an appendix or supplement counts
+as stated: do not mark a gap or error because the main text does not repeat it. When you report
+a gap whose repair is an added step or qualification, say in the finding that it belongs in the
+appendix or supplement unless the main result cannot be read correctly without it.

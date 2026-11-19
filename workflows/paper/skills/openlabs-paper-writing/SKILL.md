@@ -32,9 +32,16 @@ assigned reviewer role. Repository rules override vendored instructions.
 
 ## Write
 
+Read `../openlabs-paper-readability/SKILL.md` before drafting and again before every revision.
+Its rules are binding, not a reference: a one-page story line before the first sentence, a main
+text that carries only the problem-method-experiment-result line (robustness, resolution,
+sensitivity and secondary checks in the appendix), a plain abstract, one layer of qualification
+per conclusion, no revision history, and revisions that do not grow the main text.
+
 1. Build or update the claim–evidence map before strengthening any claim or adding numbers.
 2. Fix one main conclusion and its contribution boundary against the closest published work,
-   then revise the canonical LaTeX. Apply `../openlabs-paper-readability/SKILL.md`.
+   write `papers/<paper_id>/writing/storyline.md` (reader, main result, three or four support
+   points, the main limitation, what goes to the appendix), then write the canonical LaTeX from it.
 3. Keep negative, mixed, null and incomplete results. Do not choose an analysis after seeing
    which result is favorable; record design, exclusions, uncertainty, seeds and versions.
 4. Verify each citation's metadata and its support for the specific sentence; a search hit or
@@ -75,21 +82,30 @@ Handling a rejection: `docs/JOURNAL_HISTORY.md#handling-a-rejection`.
 ## Check, prepare support, hand off
 
 1. Compile the real manuscript; run repository validation, `paper-writing style-check` and the
-   declaration checks under the resource guard. The review only reports these findings as
-   preparation advisories, but delivery requires them clean, so fix them while drafting.
-2. Unless the record is `not_required` with a reason, prepare the Zenodo draft
+   declaration checks under the resource guard. The review only reports most of these findings
+   as preparation advisories, but delivery requires them clean, so fix them while drafting. The
+   narrative part of `style-check` (`paper-writing narrative-check --paper-id <id>` for the full
+   report with line numbers) fails a main text over its length limit and any revision-history
+   wording; those two stop the unified review before a round is spent.
+2. Run `paper-writing reader-check --paper-id <id>` (a one-pass reader in a fresh model process,
+   your own tool call, not a review) and compare its one-sentence summary and main result with
+   the story line; fix what it shows before handing off.
+3. Unless the record is `not_required` with a reason, prepare the Zenodo draft
    (`paper-writing zenodo prepare`, code-first per `docs/ZENODO_GUIDE.md`), cite its Version DOI
    in the bibliography, first substantive support mention and availability statement with
    wording that stays true after publication, then run `zenodo verify-draft` and
    `support-check`. Use the configured default licence without asking; surface a real licence
    conflict instead of changing files or licence silently.
-3. Run the editor-facing rewrite pass (`paper-writing rewrite run <paper_id>`,
+4. Run the editor-facing rewrite pass (`paper-writing rewrite run <paper_id>`,
    `settings.yaml#quality_gate.editorial_rewrite`) once per target before its first review; its
    verdict is advice.
-4. In a factory `writer` task, stop at the frozen `paper_candidate`; never run or impersonate a
+5. In a factory `writer` task, stop at the frozen `paper_candidate`; never run or impersonate a
    reviewer. The scheduler starts a fresh `$openlabs-paper-review` task. On `paper_revision`,
    apply only the declared request; new evidence goes through `evidence_remediation` first.
-5. After a passing gate, run `paper-writing zenodo release` under the standing authorization,
+   Requested qualifications, checks and explanations go to the appendix and the response letter
+   by default; the main text changes by at most one sentence per item and does not grow net
+   unless a referee placed the request in the main text (readability skill, section 5).
+6. After a passing gate, run `paper-writing zenodo release` under the standing authorization,
    commit the DOI/receipt, then `paper-writing handoff release` (research-program papers are
    delivered by the orchestrator when `[program] auto_handoff` is on). None of this submits the
    paper, creates a journal event, or authorizes spending; those stay with a human.

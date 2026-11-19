@@ -1219,6 +1219,21 @@ def _enqueue_review(
     return review_id
 
 
+# The writing rules every seat reads (user decision 2026-11-19): one writer, one session, held
+# to the readability skill and the narrative check rather than to extra tasks.
+WRITING_RULES = (
+    "Writing rules (binding): read CODE/workflows/paper/skills/openlabs-paper-readability/"
+    "SKILL.md before drafting and every revision; story line first, checks to the appendix; "
+    "`paper-writing narrative-check` and `reader-check` before ready_for_review."
+)
+REVISION_RULE = (
+    " Placement (readability skill, section 5): put added qualifications, checks and explanations "
+    "in the appendix or supplement and answer in the response letter; change the main text by at "
+    "most one sentence per item, do the requested cuts, and do not let the main text grow unless "
+    "the reviewer placed the item in the main text. Rerun `paper-writing narrative-check`."
+)
+
+
 def _review_note(payload: Mapping[str, Any], result_path: Path) -> str:
     outcome = payload.get("review_outcome") if isinstance(payload.get("review_outcome"),
                                                          Mapping) else {}
@@ -1236,6 +1251,7 @@ def _review_note(payload: Mapping[str, Any], result_path: Path) -> str:
         + (f" Requested: {str(requested)[:1500]}" if requested else "")
         + " Address it in the manuscript or the evidence as you judge right, keep contrary "
         "results, and return ready_for_review when it is ready for the re-review."
+        + REVISION_RULE
     )
 
 
@@ -1541,7 +1557,7 @@ def _after_recompute(
                                "whole manuscript for consistency yourself (numbers against the "
                                "scripts that produce them, abstract/text/tables/figures), write "
                                f"{RESPONSE_NAME} (item -> change) and return ready_for_review: "
-                               "it then goes to the unified review."))
+                               "it then goes to the unified review." + REVISION_RULE))
         return True
     trigger = TRIGGER_REVIEW_REJECTED if verdict == "reject" else (
         TRIGGER_REVIEW_ROUNDS if round_number >= max_rounds else None)
@@ -1554,7 +1570,7 @@ def _after_recompute(
                                f"awaiting_remote), answer every required item in {RESPONSE_NAME} "
                                "(item -> what changed or why not, with evidence), then return "
                                f"ready_for_review for round {round_number + 1} with a fresh "
-                               "reviewer."))
+                               "reviewer." + REVISION_RULE))
         return True
     topic = _topic(paths, settings, campaign_id)
     scheduled = None
@@ -2104,7 +2120,8 @@ def render_brief(
         "`/workspace/.download-bridge/download-submit --url URL --output /workspace/... "
         "--route auto --wait`.",
         "- Manuscripts: `paper-writing` CLI (CODE/workflows/paper/skills/openlabs-paper-writing/"
-        "SKILL.md). Skills and CODE/AGENTS.md are optional references and checklists.",
+        "SKILL.md). Other skills and CODE/AGENTS.md are optional references and checklists.",
+        f"- {WRITING_RULES}",
         "",
         "## Hard limits",
         "1. Downloads: bridge only, always `--route auto` (`--route proxy` needs user approval; "

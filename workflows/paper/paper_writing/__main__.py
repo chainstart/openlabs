@@ -96,6 +96,36 @@ def build_parser() -> argparse.ArgumentParser:
     style_check.add_argument("--root", default=str(default_repo_root()))
     style_check.add_argument("--json", action="store_true")
 
+    narrative = subparsers.add_parser(
+        "narrative-check",
+        help="Main-text length, abstract, hedging, stacked qualifiers, revision history and empty "
+             "transitions, with line numbers (also part of style-check).",
+    )
+    narrative_target = narrative.add_mutually_exclusive_group(required=True)
+    narrative_target.add_argument("--paper-id")
+    narrative_target.add_argument("--tex", help="Check one TeX file (with its inputs) without a registry record.")
+    narrative.add_argument("--root", default=str(default_repo_root()))
+    narrative.add_argument("--line", help="Research line whose paper_narrative limits apply.")
+    narrative.add_argument("--json", action="store_true")
+    narrative.add_argument("--out", help="Also write the Markdown report to this file.")
+
+    reader = subparsers.add_parser(
+        "reader-check",
+        help="One-pass simulated reader of the main text in a fresh model process (writer's own "
+             "check; saved to papers/<id>/writing/reader-check.md).",
+    )
+    reader.add_argument("--paper-id", required=True)
+    reader.add_argument("--root", default=str(default_repo_root()))
+    reader.add_argument("--provider", help="anthropic or openai-codex (with --tool and --model).")
+    reader.add_argument("--tool", help="Claude Code or Codex.")
+    reader.add_argument("--model")
+    reader.add_argument("--timeout", type=int, default=1800)
+    reader_mode = reader.add_mutually_exclusive_group()
+    reader_mode.add_argument("--prompt-only", action="store_true",
+                             help="Write the reader packet for a sub-agent instead of calling a model.")
+    reader_mode.add_argument("--record", help="File a sub-agent's JSON answer to the --prompt-only packet.")
+    reader.add_argument("--json", action="store_true")
+
     formal_check = subparsers.add_parser("formal-check", help="Inspect or run mandatory reference/prerequisite verification without changing a paper gate.")
     formal_check.add_argument("--paper-id", required=True)
     formal_check.add_argument("--root", default=str(default_repo_root()))
@@ -571,7 +601,46 @@ def main(argv: list[str] | None = None) -> int:
                 if issue.get("line") is not None:
                     location = f"{location}:{issue['line']}"
                 print(f"ERROR {issue['code']}: {location}: {issue['message']}")
+            for issue in result.get("narrative_warnings", []):
+                location = f"{issue.get('path', '')}:{issue.get('line')}" if issue.get("path") else ""
+                print(f"WARNING {issue['code']}: {location}: {issue['message']}")
+            metrics = (result.get("narrative") or {}).get("metrics") or {}
+            limits = (result.get("narrative") or {}).get("limits") or {}
+            if metrics:
+                print(f"Main text: {metrics.get('body_words')} words (limit {limits.get('max_body_words')}); "
+                      "full report: paper-writing narrative-check --paper-id " + args.paper_id)
         return 0 if result["valid"] else 1
+    if args.command == "narrative-check":
+        from paper_writing import narrative_check
+
+        if args.paper_id:
+            result = narrative_check.check_paper(args.paper_id, root=args.root, line_id=args.line)
+        else:
+            tex = Path(args.tex).resolve()
+            line = narrative_check._research_line(Path(args.root), args.line) if args.line else None
+            limits, sources = narrative_check.resolve_limits({}, line=line)
+            result = {"main_tex": str(tex), "limit_sources": sources,
+                      **narrative_check.analyze(narrative_check.flatten_tex(tex, tex.parent), limits)}
+        report = narrative_check.render_report(result)
+        if args.out:
+            Path(args.out).write_text(report, encoding="utf-8")
+        print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else report, end="" if not args.json else "\n")
+        return 0 if result["valid"] else 1
+    if args.command == "reader-check":
+        from paper_writing import reader_check
+
+        role = ({"provider": args.provider, "tool": args.tool, "model": args.model}
+                if args.model else None)
+        result = reader_check.run(args.paper_id, root=args.root, role=role, prompt_only=args.prompt_only,
+                                  record=args.record, timeout=args.timeout)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif "answer" in result:
+            print(reader_check.render(result), end="")
+            print("Saved: " + ", ".join(result["paths"]))
+        else:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     if args.command == "bundle":
         result = validate_result_bundle(args.path).to_dict()
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else _bundle_summary(result))

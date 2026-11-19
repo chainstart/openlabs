@@ -44,6 +44,11 @@ journal would decline the paper.
    The AI-use declaration is governed by the authors' disclosure policy: it must name every
    tool and model actually used. Do not ask to remove or shorten that list; judge only that the
    declaration is factual and free of preparation chronology.
+   Judge length and focus too. The packet gives a deterministic main-text word count and its
+   limit for this paper. A main text that walks through every robustness check and caveat, or
+   that grew from round to round by added qualifications, is a presentation failure: name what
+   should move to the appendix or be cut. Each presentation problem says whether the fix is in
+   the main text, a cut, or the appendix/response letter; additions default to the latter.
    In `presentation_problems`, list only concrete, actionable defects present in this
    current manuscript. Before naming a countable or checkable defect (title or abstract length,
    tense, a missing statement), check it in the supplied text and quote what you counted. Positive observations belong in the contribution or rationale

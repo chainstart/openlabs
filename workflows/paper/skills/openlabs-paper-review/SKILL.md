@@ -37,7 +37,9 @@ keep internal review negotiation and claims about editor approval outside the pa
 1. Deterministic preflight. It stops the review only when a review would be meaningless: the
    manuscript does not build, the registration or an evidence/data hash binding is broken, the
    target violates the venue policy, a declared source points at a missing bibliography key, or
-   the editor-facing rewrite pass has not run once for this target. Style, AI-declaration,
+   the editor-facing rewrite pass has not run once for this target, or the narrative check
+   fails (main text over its length limit, revision-history wording; `paper-writing
+   narrative-check`). Style, AI-declaration,
    abstract-format, unused-source, support-record and unpackaged claim-evidence-map
    (no Zenodo draft of the current version yet) findings are recorded as
    `preparation_advisories`; they are enforced at the delivery exit (handoff and Zenodo
@@ -99,7 +101,12 @@ them.
 
 Fix what the letter asks. Answer a "claim too strong" point by changing the claim or the
 structure, never by adding a disclaimer ("we do not claim ..."): referees are instructed to
-treat such patches as unresolved. Never put process narration (scripts, versions, review rounds,
+treat such patches as unresolved. Every referee item carries a `placement`: `appendix_or_response`
+(the default) goes to the appendix, supplement or response letter with at most a one-sentence
+pointer in the main text; `main_text` changes the main text; `cut` removes text. The main text
+must not grow net through a revision except for `main_text` items; the editor checks the
+deterministic main-text count against the last reviewed version (`main_text_length` in the
+letter packet). Rules: `../openlabs-paper-readability/SKILL.md`. Never put process narration (scripts, versions, review rounds,
 verification history) in the paper. Then run `paper start-revision` before editing if not already
 open, rebuild, and run the review again with `--response`.
 

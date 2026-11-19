@@ -511,8 +511,9 @@ def test_brief_is_short_has_the_four_parts_and_forces_no_skill(tmp_path, monkeyp
     # recompute-review goal and the handover rule (2026-11-16) added about 0.3 KB; the
     # quota-authorization line (2026-11-17) about 50 B; the compute capacity, queue
     # snapshot and per-topic thread limit lines (2026-11-18) about 0.3 KB; the off-peak
-    # proxy-download window (2026-11-18) about 90 B.
-    assert len(body.encode("utf-8")) <= 5_200, len(body.encode("utf-8"))
+    # proxy-download window (2026-11-18) about 90 B; the binding writing-rules line
+    # (2026-11-19) about 0.25 KB.
+    assert len(body.encode("utf-8")) <= 5_500, len(body.encode("utf-8"))
     assert "large proxy downloads (>= 200 MB file or 1024 MB batch) only 02:00-14:00 " \
         "Asia/Shanghai, never split" in body
     assert "Capacity: ailab" in body and "<= 8 thr" in body

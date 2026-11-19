@@ -49,6 +49,7 @@ PROMPTS = Path(__file__).resolve().parents[1] / "skills" / "openlabs-paper-revie
 CLEAN_SOURCE_SUFFIXES = {".tex", ".sty", ".cls", ".bst", ".bib", ".eps", ".png", ".jpg", ".jpeg", ".svg",
                          ".tikz", ".pgf", ".clo", ".def", ".fd", ".cfg"}
 
+PLACEMENTS = ("main_text", "appendix_or_response", "cut")
 _TEXT = {"type": "string"}
 _TEXT_LIST = {"type": "array", "items": _TEXT}
 EDITOR_SCHEMA: dict[str, Any] = {
@@ -103,11 +104,15 @@ REFEREE_SCHEMA: dict[str, Any] = {
         "scientific_blockers": _TEXT_LIST,
         "required_changes": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
-            "required": ["change", "type", "location", "main_claim"],
+            "required": ["change", "type", "location", "main_claim", "placement"],
             "properties": {"change": _TEXT, "type": {"type": "string", "enum": list(CHANGE_TYPES)}, "location": _TEXT,
                            # True when the item concerns a headline conclusion (title, abstract,
                            # stated main result). Only then can claim_narrowing block readiness.
-                           "main_claim": {"type": "boolean"}}}},
+                           "main_claim": {"type": "boolean"},
+                           # Where the change belongs (user decision 2026-11-19): added checks,
+                           # qualifications and explanations default to the appendix or the
+                           # response letter; main_text only when the main line needs it.
+                           "placement": {"type": "string", "enum": list(PLACEMENTS)}}}},
         "optional_suggestions": _TEXT_LIST,
         "previous_items": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["item", "resolved", "evidence"],
@@ -1316,7 +1321,53 @@ def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> st
             + ("\n## Current selected supporting-material claim-evidence maps\n"
                + _claim_map_text(pre['support_claim_evidence_maps']) + "\n"
                if pre.get('support_claim_evidence_maps') else "")
-            + str(pre.get('formal_check_packet') or ""))
+            + str(pre.get('formal_check_packet') or "")
+            + _body_length_packet(pre))
+
+
+def body_length_block(paper_id: str, root: Path) -> dict[str, Any]:
+    """Main-text length now and at the last reviewed snapshot (``narrative_check``)."""
+    from paper_writing.narrative_check import check_paper
+
+    try:
+        result = check_paper(paper_id, root=root)
+    except (OSError, ValueError) as exc:
+        return {"error": str(exc)}
+    metrics = result.get("metrics") or {}
+    limits = result.get("limits") or {}
+    return {"main_text_words": metrics.get("body_words"), "limit_words": limits.get("max_body_words"),
+            "estimated_pages": metrics.get("body_pages_estimate"), "appendix_words": metrics.get("appendix_words"),
+            "previous_reviewed_main_text_words": metrics.get("previous_body_words"),
+            "growth_since_previous_review": metrics.get("body_growth"),
+            "growth_note": metrics.get("body_growth_note"),
+            "limit_sources": result.get("limit_sources"),
+            "findings": [f"{i.get('code')}: {i.get('message')}" for i in
+                         (*result.get("errors", []), *result.get("warnings", []))
+                         if not i.get("context")][:12]}
+
+
+def _body_length_packet(pre: Mapping[str, Any]) -> str:
+    block = pre.get("body_length")
+    if not block:
+        return ""
+    return ("\n## Main-text length (deterministic count; appendices, tables and displayed mathematics "
+            "excluded)\n" + json.dumps(block, ensure_ascii=False, indent=2) + "\n")
+
+
+def _reader_check_packet(paper_id: str, root: Path, metadata: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The writer's saved one-pass reader check, marked whether it matches the current text."""
+    from paper_writing import reader_check
+
+    try:
+        digest = reader_check.packet(paper_id, root)[1]
+    except (OSError, ValueError):
+        digest = None
+    record = reader_check.current_record(reader_check.notes_dir(paper_id, root), digest)
+    if record is None:
+        return None
+    return {"note": "author-side self-check by a one-pass reader model; advice, not a review",
+            "matches_current_main_text": record.get("matches_current_main_text"),
+            "manuscript_version": record.get("manuscript_version"), "answer": record.get("answer")}
 
 
 def _history_policy_packet(pre: Mapping[str, Any]) -> str:
@@ -2267,6 +2318,8 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
 
     decisions = prior_decisions(paper_id, metadata, root)
     _json_dump(run / "prior-decisions.json", decisions)
+    pre = dict(pre, body_length=body_length_block(paper_id, root))
+    record["body_length"] = pre["body_length"]
     editor, editor_receipt = run_role(role_name="editor", role=roles["editor"],
                                       system_prompt=(PROMPTS / "editor.md").read_text(),
                                       user_prompt=editor_packet(pre, decisions), schema=editor_schema_for_policy(history_policy),
@@ -2300,9 +2353,12 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     merged |= stalled_signal(rounds, referees, merged)
     consumes_round = not (formal_blockers and formal_summary is not None
                           and not merged['scientific_blockers'] and not history_blockers)
+    reader = _reader_check_packet(paper_id, root, metadata)
     letter_packet = json.dumps({"fixed_decision": merged, "editor_screen": editor, "referee_reports": referees,
                                "formal_check": record.get("formal_check"),
-                               "formal_check_report": pre.get("formal_check_packet")},
+                               "formal_check_report": pre.get("formal_check_packet"),
+                               "main_text_length": pre.get("body_length"),
+                               "author_reader_check": reader},
                                indent=2, ensure_ascii=False)
     letter, letter_receipt = run_role(role_name="decision_letter", role=roles["editor"],
                                       system_prompt=(PROMPTS / "decision.md").read_text(), user_prompt=letter_packet,

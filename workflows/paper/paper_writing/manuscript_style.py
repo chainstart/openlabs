@@ -21,6 +21,7 @@ from paper_writing.ai_disclosure import (
 )
 from paper_writing.editorial_voice import editorial_voice_issues
 from paper_writing.funding import ineligible_funding
+from paper_writing.narrative_check import HARD_CODES as NARRATIVE_HARD_CODES
 from paper_writing.registry import load_paper_metadata, load_registry
 
 
@@ -209,6 +210,9 @@ BLACKLIST_CODES = frozenset(code for code, _, _ in PROHIBITED_BODY_PATTERNS) | {
 # treated as blocking so that a new check is never silently weakened.
 REVIEW_BLOCKING_CODES = frozenset({
     "STYLE-MANUSCRIPT-MISSING",          # nothing to review
+    # Main text over its length limit, or revision-history narration (user decision
+    # 2026-11-19): the writer cuts before a review round is spent on the draft.
+    *NARRATIVE_HARD_CODES,
     "STYLE-ARTWORK-PROVENANCE",          # hash-bound artwork generation evidence
     "STYLE-FUNDING-AUTHOR-ELIGIBILITY",  # registered funding-eligibility policy
 })
@@ -970,6 +974,15 @@ def audit_manuscript_style(
                     )
                 )
     result["errors"].extend(funding_issues)
+    # Narrative check (main-text length, revision history: failures; abstract, hedging,
+    # stacked qualifiers, empty transitions, growth since the last review: warnings).
+    from paper_writing.narrative_check import check_paper
+
+    narrative = check_paper(paper_id, root=repo_root)
+    result["errors"].extend(narrative.get("errors", []))
+    result["narrative_warnings"] = list(narrative.get("warnings", []))
+    result["narrative"] = {key: narrative.get(key) for key in
+                           ("article_type", "limits", "limit_sources", "metrics")}
     result["valid"] = not result["errors"]
     result["paper_id"] = paper_id
     return result
@@ -1025,4 +1038,6 @@ def manuscript_style_review_findings(result: Mapping[str, Any]) -> tuple[list[st
                    for issue in result.get("blacklist_findings", []) if isinstance(issue, Mapping)]
     advisories += [advisory_record("manuscript_style", issue, kind="unverifiable")
                    for issue in result.get("notes", []) if isinstance(issue, Mapping)]
+    advisories += [advisory_record("narrative_check", issue, kind="narrative")
+                   for issue in result.get("narrative_warnings", []) if isinstance(issue, Mapping)]
     return manuscript_style_blockers({"errors": blocking}), advisories

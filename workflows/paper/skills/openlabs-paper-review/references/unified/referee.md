@@ -88,7 +88,24 @@ only takes effect when you substantiate it with an item of the first kind, so st
 - Advisory: wording, organization, tense, length, citation presentation and similar requests are
   `text` items (`main_claim: false`). Optional ideas go in `optional_suggestions`.
 
-Every item in `required_changes` must say what to change and where.
+Every item in `required_changes` must say what to change and where, and where the change
+belongs (`placement`):
+
+- `appendix_or_response` (the default): an added check, robustness test, numerical-resolution
+  test, sensitivity analysis, qualification or explanation. It goes in the appendix or
+  supplement, or is answered in the response letter; the main text gets at most one sentence
+  pointing to it. Most requests belong here.
+- `main_text`: only when the main line of the paper (question, method, key experiment, main
+  result, the one limitation that changes how the result is read) cannot be followed or
+  trusted without it. Say why in the change itself.
+- `cut`: text to delete or move out of the main text.
+
+The main text should read as one line from problem through method and experiment to result.
+You may and should ask for cuts: passages that repeat a limitation already stated, stack
+caveats on a conclusion, narrate how the analysis changed between versions, or walk through
+secondary checks in the main text. A long paper is not more convincing; a clear one is. A
+limitation stated once (in the limitations paragraph or the appendix) is stated; do not ask
+for it to be repeated next to every result.
 
 Before you raise a factual point about the text, such as a word count, a title or abstract length,
 the tense used, or whether a sentence, number or citation is present, check it in the supplied

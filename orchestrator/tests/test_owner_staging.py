@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from openlabs import codex_hook, owner
 from openlabs.attempts import _ARTIFACT_ONLY_SUFFIXES
@@ -112,6 +113,24 @@ def test_brief_says_where_files_go(tmp_path, monkeypatch) -> None:
         paths, settings, task=seat, campaign=db.campaign(topic["campaign_id"]), topic=topic,
         adapter_family=None, deadline=__import__("datetime").datetime(2026, 11, 14))
     assert "small text" in text and "large-outputs dir" in text and "moved there" in text
+
+
+def test_brief_and_review_notes_carry_the_writing_rules(tmp_path, monkeypatch) -> None:
+    # User decision 2026-11-19: the readability skill binds the one writer; it is read before
+    # drafting and before every revision, and review requests default to appendix/response.
+    from test_owner_mode import _latest, _owner_program
+
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    seat = _latest(db, topic["campaign_id"])
+    text = owner.render_brief(
+        paths, settings, task=seat, campaign=db.campaign(topic["campaign_id"]), topic=topic,
+        adapter_family=None, deadline=__import__("datetime").datetime(2026, 11, 14))
+    assert "openlabs-paper-readability/SKILL.md" in text and "binding" in text
+    assert "narrative-check" in text and "reader-check" in text
+    assert (Path(owner.__file__).parents[3]
+            / "workflows/paper/skills/openlabs-paper-readability/SKILL.md").is_file()
+    note = owner._review_note({"review_outcome": {"status": "revise"}}, Path("/r.json"))
+    assert "appendix" in note and "response letter" in note and "narrative-check" in note
 
 
 def test_runner_logs_under_results_and_runtime_dirs_stay_put(tmp_path) -> None:

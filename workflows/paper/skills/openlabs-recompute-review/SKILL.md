@@ -30,6 +30,13 @@ with the author's response.
    `scripts`. Long jobs go to ailab (`bin/openlabs-remote`) like any other heavy work.
 5. Out of scope here: the literal pre-registration comparison and the venue/editor screen (the
    unified review does them).
+6. Say where each required fix belongs. Start every `required` and `optional` item with
+   `[main text]`, `[appendix/response]` or `[cut]`. The default is `[appendix/response]`: an
+   added check, sensitivity analysis, error-budget detail or qualification goes in the appendix
+   or the author's response, with at most one sentence in the main text. Use `[main text]` only
+   when a core number or conclusion as printed in the main text is wrong or cannot be read
+   correctly without the change. Do not fail or downgrade a manuscript because the main text does
+   not repeat a condition already stated in its appendix or supplement; you may ask for cuts.
 
 ## Verdict
 

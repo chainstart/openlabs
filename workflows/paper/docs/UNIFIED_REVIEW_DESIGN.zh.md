@@ -35,7 +35,8 @@
 ```
 
 **投前检查（确定性）。** 只拦截让评审失去意义的问题：稿件无法编译、登记或证据哈希绑定损坏、
-目标期刊违反选刊政策、声明的来源指向不存在的参考文献键、该目标还没跑过一次面向编辑重写。
+目标期刊违反选刊政策、声明的来源指向不存在的参考文献键、该目标还没跑过一次面向编辑重写，
+或叙事检查失败（正文超过篇幅上限、含修订史用语，见 [WRITING_STYLE.zh.md](WRITING_STYLE.zh.md)）。
 风格、AI 声明、摘要格式、未使用源文件、支撑记录等形式问题记为 `preparation_advisories`，
 在交付出口（handoff、`zenodo release`）强制执行，不消耗科学轮次。内部术语黑名单只报告所在
 句子，由人判断。重写环节每个目标跑一次，结论只作建议。
@@ -50,7 +51,10 @@ significance | readership | novelty_unclear | presentation | incremental`）和�
 **审稿人。** 各自全新进程，读完整冻结稿、补充材料和支撑包，给出期刊词汇的建议
 （`accept | minor_revision | major_revision | reject`）、`scientific_blockers` 和带类型的
 `required_changes`（`evidence | claim_narrowing | text`，后者另标 `main_claim`）。凡以免责
-段落回应“结论过强”，视为未解决。
+段落回应“结论过强”，视为未解决。每个必改项另标落点 `placement`（2026-11-19）：
+`appendix_or_response`（默认，进附录/补充材料或回复信）、`main_text`（主线离不开时）、`cut`（删减）；
+审稿人可以并应当提出删减意见。编辑初审和决定信都收到确定性的正文词数与上限，决定信另收上一轮的
+正文词数和写稿者的一遍读者自查（`author_reader_check`），并核对正文没有因修订膨胀。
 
 **书目与核心数学核验。** 科学结论允许继续时才运行，由 `review.roles.formal_verifier`（未配置
 时为编辑模型）执行：每条参考文献对照权威元数据，定理、证明、展示公式和行内推导按数学核对。

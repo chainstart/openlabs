@@ -42,7 +42,11 @@ Every post-basic-draft target must satisfy `registry/settings.yaml#journal_targe
 canonical venue format, evidence-backed fit); field details are in
 [quality-gate.md](skills/overlays/quality-gate.md).
 `style-check` and `support-check` findings are advisories during review and hard requirements
-at delivery (handoff and `zenodo release`). See
+at delivery (handoff and `zenodo release`). The narrative part of `style-check`
+(`narrative-check`: main text over its length limit, revision-history wording) also stops the
+review preflight; `reader-check` is the writer's one-pass reader. Writing rules:
+[openlabs-paper-readability](skills/openlabs-paper-readability/SKILL.md); design notes (Chinese):
+[docs/WRITING_STYLE.zh.md](docs/WRITING_STYLE.zh.md). See
 [`docs/ZENODO_GUIDE.md`](../../docs/ZENODO_GUIDE.md) for controlled support-material publication.
 
 Remote handoff and pre-gate Zenodo mutations are disabled by default and need

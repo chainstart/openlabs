@@ -522,6 +522,12 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   过期（最长 1 小时）后把整段旧上下文重新写入缓存（续接一个四小时坐席后的会话，常见一次几美元的缓存写入）；
   Codex runner 新会话是新的 thread，不再每次请求重读累计的旧上下文，`total_token_usage` 也从零计。负责人在
   坐席内自己开的子 agent 不受此影响。
+- **写作规范（2026-11-19）**：简报的 Tools 段有一行“Writing rules (binding, not optional)”（`owner.WRITING_RULES`），
+  要求负责人动笔前、每次改稿前读 `workflows/paper/skills/openlabs-paper-readability/SKILL.md`，先写
+  `papers/<id>/writing/storyline.md`，交 ready_for_review 前跑 `paper-writing narrative-check`（正文超限、修订史用语为失败）
+  和 `paper-writing reader-check`（一遍读者自查，写稿者会话内的工具调用，不是新任务）。重算式复审与统一评审意见回到负责人时
+  附 `owner.REVISION_RULE`：补充内容默认进附录和回复信，正文不得净增。写稿仍由一个负责人从头写到尾，没有新增任务类型。
+  细节见 `workflows/paper/docs/WRITING_STYLE.zh.md`。
 - 状态包可带 `phase`（`precheck`/`solving`/`writing`），只用于上面的 `topic_economics`。
 - 配置（`[program.owner]`）：`recompute_review`（默认 true；false 时 ready_for_review 直接进统一评审，
   即 2026-11-16 之前的行为）、`review_max_rounds`（默认 3）、`session_max_seats`（默认 1）、
