@@ -248,6 +248,16 @@ review_max_rounds = 3
 session_max_seats = 1
 session_max_tokens_read = 0
 handover_max_bytes = 8192
+# Manuscript writer (user decision 2026-11-19). Unset: the owner writes. Set: when the
+# owner's packet declares the research done (phase "writing", or a first ready_for_review
+# before any review), this runner writes the whole paper from OWNER_HANDOVER.md and every
+# revision after it; reviews avoid its family. Its seats do not count against
+# max_topics_per_runner; at most max_writing_topics of them run at once. A writing seat
+# waits for the writer (quota, pacing, slot) up to writing_wait_hours, then the original
+# owner writes (noted on the topic). docs/operations.zh.md ("写稿者交接").
+# writing_runner = "worker_claude"
+# max_writing_topics = 2
+# writing_wait_hours = 12
 
 # Token cost in the tick report (token_cost, topic_economics) and `program
 # utilization`. Prices in USD per million tokens (list-price equivalent, not a bill);

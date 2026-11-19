@@ -321,6 +321,17 @@ class OwnerSettings:
     session_max_tokens_read: int = 0
     # Size limit of the owner's handover file; a larger one is cut for the next brief.
     handover_max_bytes: int = 8_192
+    # Writer of the manuscript (user decision 2026-11-19): once the owner declares the
+    # research done (packet ``phase: writing``, or a first ``ready_for_review``), this
+    # runner writes the whole paper and every revision after it, from the owner's
+    # OWNER_HANDOVER.md. None/empty: the owner writes (behaviour before 2026-11-19).
+    writing_runner: str | None = None
+    # Writing seats of the writer running at once (the owner cap max_topics_per_runner
+    # does not apply to them); further writing seats wait for a slot.
+    max_writing_topics: int = 2
+    # A writing seat waits for its writer (quota, pacing or a slot) this long before the
+    # original owner writes instead; the fallback is noted on the topic.
+    writing_wait_hours: float = 12.0
 
 
 DEFAULT_DIRECTION_LIMITS: dict[str, int] = {
@@ -1325,6 +1336,11 @@ def _owner_settings(value: Any) -> OwnerSettings:
                                                  defaults.session_max_tokens_read),
         handover_max_bytes=_positive_int(value.get("handover_max_bytes"),
                                          defaults.handover_max_bytes),
+        writing_runner=str(value.get("writing_runner") or "").strip() or None,
+        max_writing_topics=_positive_int(value.get("max_writing_topics"),
+                                         defaults.max_writing_topics),
+        writing_wait_hours=_nonnegative_float(value.get("writing_wait_hours"),
+                                              defaults.writing_wait_hours),
     )
 
 

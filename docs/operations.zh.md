@@ -528,7 +528,28 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   和 `paper-writing reader-check`（一遍读者自查，写稿者会话内的工具调用，不是新任务）。重算式复审与统一评审意见回到负责人时
   附 `owner.REVISION_RULE`：补充内容默认进附录和回复信，正文不得净增。写稿仍由一个负责人从头写到尾，没有新增任务类型。
   细节见 `workflows/paper/docs/WRITING_STYLE.zh.md`。
-- 状态包可带 `phase`（`precheck`/`solving`/`writing`），只用于上面的 `topic_economics`。
+- **写稿者交接（2026-11-19）**：`[program.owner].writing_runner`（如 `"worker_claude"`，缺省为空 = 负责人自己写，
+  行为不变）。求解仍由原负责人做；写稿与之后所有改稿由写稿者一个模型完成，直到交付。
+  - **切换点**：负责人某个坐席成功交回、其状态包写明求解完成——`phase: "writing"`（status `continuing`），或在任何评审
+    之前就交 `ready_for_review`——从下一个坐席起换成写稿者（新会话，routing `owner_writing_handover`，objective 说明
+    “你是写稿者、整篇自己写、不拆给多个模型”）。判定在 `owner.writing_switch_due`，用的是交回前的 owner 状态。
+  - **不换人的在研课题**：此前已记录 `phase: writing`（稿件已由原负责人开写，例如本设置上线前）、已有复审轮次或评审历史
+    （`review_round`、`review_stage`、`review_history`，即稿件已在复审/修改中）、已交接或已回退过、或负责人本就是写稿者。
+  - **交接**：配置了写稿者时，求解者的简报有 “## Writing” 一段，要求求解完成后不动笔，把结果清单（数值及产出它的文件/
+    脚本）、可用图表、终点判定、负结果、已知局限、未完成事项、paper_id 与目标刊写进 `OWNER_HANDOVER.md`，再以
+    `continuing` + `phase: writing` 结束坐席；写稿者的简报写明它的角色。交接记录在 owner 状态的 `writing` 字段
+    （`status: active|fallback`、`runner`、`solver_runner`、`trigger`、`trigger_task_id`），并作为 `writing_handover`
+    记在课题台账历史里。
+  - **评审独立性**：写稿者在位时，重算式复审和统一评审任务带 `exclude_provider` = 写稿者的模型族（不再只看父坐席），
+    所以 Opus 写的稿件由另一族复审；另一族额度不可用时“同族换模型并标注”的既有回退规则照旧，且不会选写稿者本身的模型。
+  - **名额**：写稿坐席不计入 `max_topics_per_runner`（`current_owners` 跳过写稿课题），也不被 `supervise` 按
+    `switch_after_minutes` 挪给其他负责人；同时运行的写稿坐席至多 `max_writing_topics`（缺省 2），多出的排队坐席以
+    `not_before` 每 15 分钟复查。
+  - **额度等待与回退**：写稿者额度不可用（达到上限或被配速，坐席被路由器按 pinned runner 推迟）或名额满时坐席等待，
+    不回退给 sol；连续等待满 `writing_wait_hours`（缺省 12 小时）才改派回原负责人（新会话），owner 状态改为
+    `fallback`，课题台账记 `writing_fallback`。此后由原负责人写；回退后评审按交回稿件的坐席避开其模型族（既有规则）。
+  - 名额与回退检查在 `owner.supervise_writing`，随路由开启时的 tick 运行（`[routing]` 关闭时不做名额限制，也不会有额度等待）。
+- 状态包可带 `phase`（`precheck`/`solving`/`writing`），只用于上面的 `topic_economics` 和写稿者交接。
 - 配置（`[program.owner]`）：`recompute_review`（默认 true；false 时 ready_for_review 直接进统一评审，
   即 2026-11-16 之前的行为）、`review_max_rounds`（默认 3）、`session_max_seats`（默认 1）、
   `session_max_tokens_read`（默认 0，不按 token 切）、`handover_max_bytes`（默认 8192）。其余键见

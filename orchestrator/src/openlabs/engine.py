@@ -4191,7 +4191,7 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
         budget_control.record_lead_shortage(db, router)
         budget_control.record_quota_pause(db, router, report.quota_pause)
         try:
-            owner_mode.supervise(db, settings, report, router, now=budget_now)
+            owner_mode.supervise(db, settings, report, router, now=budget_now, paths=paths)
         except Exception as exc:  # noqa: BLE001 - a switch is retried next tick.
             report.errors.append(f"owner runner supervision failed: {exc}")
     launch_limit = _supervise_throughput(

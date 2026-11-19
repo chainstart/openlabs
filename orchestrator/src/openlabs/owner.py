@@ -45,6 +45,12 @@ Owner through minor revision (2026-11-16):
   (``session_max_seats``, ``session_max_tokens_read``); otherwise it is a fresh session
   that starts from the owner's own ``OWNER_HANDOVER.md`` (:func:`handover_text`).
 
+Writer hand-over (2026-11-19, ``[program.owner].writing_runner``): the owner solves; from
+the first seat whose packet says the research is done (:func:`writing_switch_due`) one
+writer runner writes the manuscript and every revision (:func:`start_writing`); reviews
+avoid the writer's family (:func:`writer_provider`); writer seats have their own slot
+limit and wait for the writer before falling back to the owner (:func:`supervise_writing`).
+
 With ``owner_mode = "off"`` none of this runs and every path is unchanged.
 """
 
@@ -95,6 +101,12 @@ ROUTING_REVIEWED = "owner_review_returned"
 ROUTING_RECOMPUTE = "owner_recompute_review"
 ROUTING_RECOMPUTED = "owner_recompute_returned"
 ROUTING_RETRY = "owner_retry"
+# The first seat of the manuscript writer (``[program.owner].writing_runner``).
+ROUTING_WRITING = "owner_writing_handover"
+WRITING_ACTIVE = "active"
+WRITING_FALLBACK = "fallback"
+# A writing seat over the writer's slot limit is re-checked this often.
+_WRITING_SLOT_RECHECK_MINUTES = 15
 RECOMPUTE_PACKET_SCHEMA = "openlabs.recompute_review_packet.v1"
 RECOMPUTE_SKILL = "openlabs-recompute-review"
 RECOMPUTE_VERDICTS = ("accept", "minor", "major", "reject")
@@ -644,8 +656,14 @@ def current_owners(db: FactoryDB, *, exclude_campaign: str | None = None) -> dic
     for row in rows:
         latest[str(row["campaign_id"])] = str(row["runner"] or "")
     for campaign_id, runner in latest.items():
-        if campaign_id != exclude_campaign and runner:
-            owners.setdefault(runner, set()).add(campaign_id)
+        if campaign_id == exclude_campaign or not runner:
+            continue
+        writing = writing_state(db, campaign_id)
+        if writing.get("status") == WRITING_ACTIVE and writing.get("runner") == runner:
+            # A writer's seat is not an owner's: max_topics_per_runner does not count it
+            # (the writer has its own limit, max_writing_topics).
+            continue
+        owners.setdefault(runner, set()).add(campaign_id)
     return owners
 
 
@@ -712,6 +730,140 @@ def choose_runner(
     return candidates[0]
 
 
+# --------------------------------------------------------------------------- writer
+
+
+def writing_state(db: FactoryDB, campaign_id: str) -> dict[str, Any]:
+    """The topic's writer record (``owner_state.writing``), empty before any hand-over."""
+
+    value = owner_state(db, campaign_id).get("writing")
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def active_writer(db: FactoryDB, settings: FactorySettings, campaign_id: str) -> str | None:
+    """Runner that writes this topic's manuscript now, or None (the owner writes)."""
+
+    writing = writing_state(db, campaign_id)
+    runner = str(writing.get("runner") or "")
+    if writing.get("status") != WRITING_ACTIVE or not runner:
+        return None
+    if settings.runners and runner not in settings.runners:
+        return None
+    return runner
+
+
+def writer_provider(db: FactoryDB, settings: FactorySettings, campaign_id: str) -> str | None:
+    """Model family a review of this topic's manuscript must avoid (the active writer's)."""
+
+    spec = settings.runners.get(active_writer(db, settings, campaign_id) or "")
+    return spec.provider if spec is not None else None
+
+
+def writing_switch_due(
+    settings: FactorySettings,
+    before: Mapping[str, Any],
+    packet: Mapping[str, Any],
+    task: Mapping[str, Any],
+    *,
+    successful: bool,
+) -> str | None:
+    """Why this finished seat hands the topic to the writer, or None.
+
+    The switch point is the first promoted seat whose packet says the research is done:
+    ``phase: writing`` (status ``continuing``), or a ``ready_for_review`` before any
+    review. Never when the writer is unset or unknown, the seat already ran on the
+    writer, the topic was handed over (or fell back) before, the topic had already
+    declared ``phase: writing`` before this seat (its manuscript was begun by the
+    owner, e.g. before the setting existed), or a review round exists (a manuscript by
+    another model is in review or revision): those topics keep their writer.
+    """
+
+    writer = settings.program.owner.writing_runner
+    if not writer or not successful or writer not in settings.runners:
+        return None
+    if str(task.get("runner") or "") == writer or before.get("writing"):
+        return None
+    status = str(packet.get("status") or "").strip().lower()
+    phase = str(packet.get("phase") or "").strip().lower()
+    if status not in {"continuing", "ready_for_review"}:
+        return None
+    if phase != "writing" and status != "ready_for_review":
+        return None
+    if str(before.get("phase") or "") == "writing":
+        return None
+    if _history(before) or before.get("review_round") or before.get("review_stage"):
+        return None
+    return "phase_writing" if phase == "writing" else "ready_for_review"
+
+
+def _topic_note(paths: WorkspacePaths | None, settings: FactorySettings, db: FactoryDB,
+                campaign_id: str, *, event_type: str, reason: str, decided_by: str,
+                detail: Mapping[str, Any]) -> None:
+    """Note a writer change on the topic's ledger entry (best effort, never blocking)."""
+
+    if paths is None:
+        return
+    try:
+        from .program import record_topic_note
+        from .program_autonomy import _ledger
+
+        topic = _topic(paths, settings, campaign_id)
+        if topic is None:
+            return
+        record_topic_note(_ledger(paths, settings), str(topic["topic_id"]), db=db,
+                          event_type=event_type, reason=reason, decided_by=decided_by,
+                          detail=detail)
+    except Exception:  # noqa: BLE001 - the owner state and the event keep the record.
+        return
+
+
+def _writer_note(solver: str, trigger: str) -> str:
+    return (
+        "You are the writer of this topic from now on (user decision 2026-11-19): the research "
+        f"is done (owner {solver}, {trigger.replace('_', ' ')}). Start from OWNER_HANDOVER.md, "
+        "research_state.json and OWNER_LOG.md. Write the whole manuscript yourself, from the "
+        "story line to the last section; do not split the writing among models or sub-agents "
+        "(sub-agents may check numbers, citations or builds). Any earlier draft in the "
+        "workspace is material, not a text to polish. Do not redo the research: run only what "
+        "you need to report it correctly. You also own every revision after the recompute "
+        "and unified reviews until delivery. Record writer_model/writer_provider in the paper "
+        "record."
+    )
+
+
+def start_writing(
+    db: FactoryDB,
+    paths: WorkspacePaths | None,
+    settings: FactorySettings,
+    report: Any,
+    *,
+    task: Mapping[str, Any],
+    campaign: Mapping[str, Any],
+    trigger: str,
+    result_path: Path,
+) -> str | None:
+    """Hand the topic to the writer: record it, then queue the writer's first seat."""
+
+    campaign_id = str(campaign["campaign_id"])
+    writer = str(settings.program.owner.writing_runner)
+    solver = str(task.get("runner") or "")
+    record = {"status": WRITING_ACTIVE, "runner": writer, "solver_runner": solver,
+              "trigger": trigger, "trigger_task_id": str(task["task_id"]),
+              "started_at": utc_now()}
+    update_state(db, campaign_id, "owner_writing_handover", record, writing=record)
+    reset_streak(db, campaign_id, reason="writing_handover")
+    seat = enqueue_seat(db, settings, report, campaign=campaign, parent=task,
+                        note=_writer_note(solver, trigger), routing_reason=ROUTING_WRITING,
+                        input_path=str(result_path), runner_override=writer)
+    _topic_note(paths, settings, db, campaign_id, event_type="writing_handover",
+                reason=f"research done ({trigger}); {writer} writes the manuscript",
+                decided_by=str(task["task_id"]), detail=record)
+    if report is not None:
+        report.program.setdefault("owner_writing", []).append(
+            {"campaign_id": campaign_id, "kind": "handover", "seat": seat, **record})
+    return seat
+
+
 # --------------------------------------------------------------------------- seats
 
 
@@ -738,8 +890,14 @@ def enqueue_seat(
     last_error: str | None = None,
     not_before: str | None = None,
     router: budget_control.QuotaRouter | None = None,
+    runner_override: str | None = None,
 ) -> str | None:
-    """Queue the next seat of a topic: same runner; same session while ``keep_session``."""
+    """Queue the next seat of a topic: same runner; same session while ``keep_session``.
+
+    While a writer holds the topic (:func:`active_writer`) every seat goes to it, and
+    ``runner_override`` pins one seat explicitly; a change of runner starts a fresh
+    session from the hand-over file.
+    """
 
     campaign_id = str(campaign["campaign_id"])
     identifier = task_id or _seat_id(campaign_id, str((parent or {}).get("task_id") or "seed"))
@@ -760,7 +918,12 @@ def enqueue_seat(
     elif is_owner_task(parent):
         # No recorded session (the CLI reported none): same owner, fresh session.
         runner = str((parent or {}).get("runner") or "") or None
-    if runner is not None and settings.runners and runner not in settings.program.owner.runners:
+    pinned = runner_override or active_writer(db, settings, campaign_id)
+    if pinned is not None:
+        if runner != pinned:
+            runner = pinned
+            session_mode, session_source, session_reason = "fresh", None, "writing_handover"
+    elif runner is not None and settings.runners and runner not in settings.program.owner.runners:
         # The owner list changed (e.g. owners moved to the worker tier): the next seat goes to
         # a listed runner with a fresh session and the hand-over file.
         runner = None
@@ -1197,6 +1360,7 @@ def _enqueue_review(
         objective=_review_objective(packet, topic, state),
         input_path=str(result_path),
         skill_path="openlabs-paper-review",
+        exclude_provider=writer_provider(db, settings, str(task["campaign_id"])),
         runner=dispatch_runner(settings, "paper_review", ROUTING_REVIEW, "frontier"),
         routing_reason=ROUTING_REVIEW,
         parent_task_id=str(task["task_id"]),
@@ -1420,6 +1584,8 @@ def _enqueue_recompute_review(
         runner=dispatch_runner(settings, "paper_review", ROUTING_RECOMPUTE, "frontier"),
         routing_reason=ROUTING_RECOMPUTE,
         parent_task_id=str(task["task_id"]),
+        # Never the writer's family (the parent seat's family otherwise, as before).
+        exclude_provider=writer_provider(db, settings, campaign_id),
         agent_role="reviewer",
         session_mode="fresh",
         priority=int(campaign.get("priority") or 0) + 1,
@@ -1683,9 +1849,15 @@ def after_result(
                      routing_reason=ROUTING_CONVERTED, input_path=str(result_path))
         return True
     packet = packet_of(payload)
+    before = owner_state(db, str(task["campaign_id"]))
     state = record_seat(db, task=task, payload=payload, final_status=final_status,
                         workspace_root=workspace_root, promoted=successful,
                         handover_max_bytes=limit, short_seat_seconds=short_limit)
+    trigger = writing_switch_due(settings, before, packet, task, successful=successful)
+    if trigger is not None:
+        start_writing(db, paths, settings, report, task=task, campaign=campaign,
+                      trigger=trigger, result_path=result_path)
+        return True
     status = str(packet.get("status") or "")
     if successful and status == "ready_for_review":
         verdict = str(packet.get("primary_endpoint_verdict") or "").strip().lower()
@@ -1792,6 +1964,103 @@ def _blocked_since(db: FactoryDB, task_id: str) -> datetime | None:
     return budget_control.parse_time(db.meta_get(BLOCKED_META_PREFIX + task_id))
 
 
+def _writing_seats(db: FactoryDB, writer: str, statuses: tuple[str, ...]) -> list[dict[str, Any]]:
+    marks = ",".join("?" for _ in statuses)
+    with db.connect() as connection:
+        rows = [dict(row) for row in connection.execute(
+            f"SELECT * FROM tasks WHERE task_type=? AND runner=? AND status IN ({marks}) "
+            "ORDER BY created_at, rowid", (OWNER_TASK_TYPE, writer, *statuses),
+        ).fetchall()]
+    return [row for row in rows if active_writer_seat(db, row)]
+
+
+def active_writer_seat(db: FactoryDB, task: Mapping[str, Any]) -> bool:
+    """Whether a seat is a writer's seat (its topic is handed to exactly this runner)."""
+
+    writing = writing_state(db, str(task.get("campaign_id") or ""))
+    return writing.get("status") == WRITING_ACTIVE and writing.get("runner") == task.get("runner")
+
+
+def supervise_writing(
+    db: FactoryDB,
+    settings: FactorySettings,
+    report: Any,
+    router: budget_control.QuotaRouter | None,
+    *,
+    now: datetime | None = None,
+    paths: WorkspacePaths | None = None,
+) -> list[dict[str, Any]]:
+    """Writer seats wait for their writer; after ``writing_wait_hours`` the owner writes.
+
+    A queued writer seat starts when the writer is usable (quota, pacing) and fewer than
+    ``max_writing_topics`` writer seats run; otherwise it waits (over the slot limit it is
+    held with ``not_before``). It never moves to another runner before the wait is over:
+    then it goes back to the topic's original owner, fresh session, and the fallback is
+    recorded in the owner state and on the topic.
+    """
+
+    owner = settings.program.owner
+    writer = owner.writing_runner
+    if not writer or writer not in settings.runners:
+        return []
+    moment = now or datetime.now(UTC)
+    admitted = len(_writing_seats(db, writer, ("leased", "running")))
+    moves: list[dict[str, Any]] = []
+    for task in _writing_seats(db, writer, ("queued",)):
+        task_id = str(task["task_id"])
+        not_before = budget_control.parse_time(task.get("not_before"))
+        if not_before is not None and not_before > moment:
+            continue
+        usable = router is None or runner_usable(settings, router, writer)
+        slot = admitted < owner.max_writing_topics
+        if usable and slot:
+            admitted += 1
+            if db.meta_get(BLOCKED_META_PREFIX + task_id) is not None:
+                db.update_meta({BLOCKED_META_PREFIX + task_id: None})
+            continue
+        since = _blocked_since(db, task_id)
+        if since is None:
+            db.update_meta({BLOCKED_META_PREFIX + task_id: budget_control._iso(moment)})
+            since = moment
+        reason = "writer_slots_full" if usable else "writer_unavailable"
+        campaign_id = str(task["campaign_id"])
+        if moment - since < timedelta(hours=owner.writing_wait_hours):
+            if not slot:
+                db.hold_queued_task(
+                    task_id, not_before=budget_control._iso(
+                        moment + timedelta(minutes=_WRITING_SLOT_RECHECK_MINUTES)),
+                    event_type="owner_writing_slot_wait",
+                    detail={"runner": writer, "running": admitted,
+                            "max_writing_topics": owner.max_writing_topics})
+            continue
+        writing = writing_state(db, campaign_id)
+        target = str(writing.get("solver_runner") or "")
+        if target not in settings.runners:
+            target = choose_runner(db, settings, campaign_id=campaign_id, exclude=[writer],
+                                   router=router) or ""
+        if not target:
+            continue
+        detail = {"from_runner": writer, "to_runner": target, "reason": reason,
+                  "blocked_since": budget_control._iso(since),
+                  "waited_hours": round((moment - since).total_seconds() / 3600, 2)}
+        if not db.reassign_queued_task(task_id, runner=target, fresh_session=True,
+                                       event="owner_writing_fallback", detail=detail):
+            continue
+        db.update_meta({BLOCKED_META_PREFIX + task_id: None})
+        record = {**writing, "status": WRITING_FALLBACK, "fallback_at": budget_control._iso(moment),
+                  "fallback_runner": target, "fallback_reason": reason}
+        update_state(db, campaign_id, "owner_writing_fallback", detail, writing=record)
+        _topic_note(paths, settings, db, campaign_id, event_type="writing_fallback",
+                    reason=(f"writer {writer} could not start for {owner.writing_wait_hours:g} h "
+                            f"({reason}); the owner {target} writes"),
+                    decided_by=task_id, detail=detail)
+        moves.append({"task_id": task_id, **detail})
+    if moves and report is not None:
+        report.program.setdefault("owner_writing", []).extend(
+            {"kind": "fallback", **move} for move in moves)
+    return moves
+
+
 def supervise(
     db: FactoryDB,
     settings: FactorySettings,
@@ -1799,11 +2068,18 @@ def supervise(
     router: budget_control.QuotaRouter | None,
     *,
     now: datetime | None = None,
+    paths: WorkspacePaths | None = None,
 ) -> list[dict[str, Any]]:
-    """Move a queued seat to the next usable runner once its own is blocked too long."""
+    """Move a queued seat to the next usable runner once its own is blocked too long.
 
-    if not mode_enabled(settings) or router is None:
+    Writer seats are handled by :func:`supervise_writing` (they wait for the writer).
+    """
+
+    if not mode_enabled(settings):
         return []
+    writing_moves = supervise_writing(db, settings, report, router, now=now, paths=paths)
+    if router is None:
+        return writing_moves
     moment = now or datetime.now(UTC)
     owner = settings.program.owner
     moves: list[dict[str, Any]] = []
@@ -1815,6 +2091,8 @@ def supervise(
         task_id = str(task["task_id"])
         not_before = budget_control.parse_time(task.get("not_before"))
         if not_before is not None and not_before > moment:
+            continue
+        if active_writer_seat(db, task):
             continue
         runner = str(task.get("runner") or "")
         owners = current_owners(db, exclude_campaign=str(task["campaign_id"]))
@@ -1853,7 +2131,7 @@ def supervise(
             moves.append({"task_id": task_id, **detail})
     if moves:
         report.program.setdefault("owner_switches", []).extend(moves)
-    return moves
+    return writing_moves + moves
 
 
 # --------------------------------------------------------------------------- the brief
@@ -2035,6 +2313,7 @@ def render_brief(
     adapter_family: str | None,
     deadline: datetime,
     handover: str | None = None,
+    writing: Mapping[str, Any] | None = None,
 ) -> str:
     """The owner's whole brief: goal, resources, tools, hard limits (about 4 KB)."""
 
@@ -2156,9 +2435,39 @@ def render_brief(
         "- Frozen for a line-level fact? Add `reopen_when` (CODE/orchestrator/src/openlabs/"
         "reopen.py): all true -> reopened once, same pre-registration.",
     ]
+    role = writing_brief_lines(settings, task=task, writing=writing)
+    if role:
+        lines += ["", "## Writing", *role]
     if handover:
         lines += ["", "## This seat", handover]
     return "\n".join(lines) + "\n"
+
+
+def writing_brief_lines(settings: FactorySettings, *, task: Mapping[str, Any],
+                        writing: Mapping[str, Any] | None) -> list[str]:
+    """Who writes the manuscript, and what the owner hands over (writing_runner set)."""
+
+    owner = settings.program.owner
+    writer = owner.writing_runner
+    writing = writing or {}
+    runner = str(task.get("runner") or "")
+    if writing.get("status") == WRITING_ACTIVE and runner == writing.get("runner"):
+        return [f"You are this topic's writer (research by {writing.get('solver_runner')}): write "
+                "the whole manuscript yourself and every revision after review, until delivery. "
+                "Do not split the writing among models."]
+    if writing.get("status") == WRITING_FALLBACK:
+        return [f"The writer {writing.get('runner')} could not start for "
+                f"{owner.writing_wait_hours:g} h; you write the manuscript and its revisions."]
+    if not writer or writing or runner == writer or writer not in settings.runners:
+        return []
+    return [
+        f"{writer} writes this topic's manuscript (user decision 2026-11-19). When the research "
+        f"is complete, do not draft the paper: write {HANDOVER_NAME} for the writer - every "
+        "result to report with its value and the file or script that produces it, the figures "
+        "and tables available, the endpoint verdict, negative results, known limitations, open "
+        "items, paper_id and venue (point to files for detail) - then end the seat with status "
+        "continuing and phase writing. The writer takes over from there."
+    ]
 
 
 def handover_text(
@@ -2257,8 +2566,10 @@ def spec_block(
                 f"{previous['task_id']}) ran this topic. {note}\n\n"
                 + handover_text(db, settings, campaign, canonical=where["canonical"])
             )
-        request = render_brief(paths, settings, task=spec_view, campaign=campaign, topic=topic,
-                               adapter_family=family, deadline=deadline, handover=handover)
+        request = render_brief(paths, settings, task={**spec_view, "runner": task.get("runner")},
+                               campaign=campaign, topic=topic, adapter_family=family,
+                               deadline=deadline, handover=handover,
+                               writing=writing_state(db, str(campaign["campaign_id"])))
         brief_file = Path(where["brief"])
         if brief_file.parent.is_dir():
             brief_file.write_text(request, encoding="utf-8")
