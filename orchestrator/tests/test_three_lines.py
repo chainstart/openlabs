@@ -502,3 +502,68 @@ def test_owner_brief_names_the_line_tier_rules(tmp_path, monkeypatch) -> None:
         tmp_path / "t", seat["task_id"]), campaign=campaign, wall_seconds=600,
         db=db)["request"]
     assert "`research_line: line-x`" in body and "[1] routine targets" in body
+
+
+def test_gpu_queue_findings_on_the_real_card(local_queue, tmp_path, monkeypatch):
+    """2026-11-19 real-GPU test: an over-limit job looped forever, refused jobs were retried
+    every dispatch, and a GPU job waited behind CPU overflow jobs holding every local CPU."""
+
+    monkeypatch.setattr(local_compute, "gpu_ceiling_mib", lambda device=0: 11004)
+    with pytest.raises(local_compute.RemoteComputeError, match="device ceiling 11004"):
+        local_compute.submit(_src(tmp_path, "over"), ["python3", "run.py"], cpu_threads=1,
+                             memory_mib=1024, wall_seconds=60, queue_root=local_queue,
+                             gpu_memory_mib=11500)
+    with pytest.raises(local_compute.RemoteComputeError, match="at most 4 CPUs"):
+        local_compute.submit(_src(tmp_path, "wide"), ["python3", "run.py"], cpu_threads=8,
+                             memory_mib=1024, wall_seconds=60, queue_root=local_queue,
+                             gpu_memory_mib=2048)
+    # CPU jobs fill max_cpus (12); the GPU job still starts in its own slot.
+    started: list = []
+    monkeypatch.setattr(local_compute.subprocess, "Popen", lambda argv, **k: started.append(argv))
+    cpu = [local_compute.submit(_src(tmp_path, f"c{n}"), ["python3", "run.py"], cpu_threads=4,
+                                memory_mib=2048, wall_seconds=600, queue_root=local_queue)
+           for n in range(4)]
+    gpu = local_compute.submit(_src(tmp_path, "g"), ["python3", "run.py"], cpu_threads=2,
+                               memory_mib=2048, wall_seconds=600, queue_root=local_queue,
+                               gpu_memory_mib=2048)
+    summary = local_compute.dispatch(local_queue)
+    assert gpu in summary["started"] and cpu[3] not in summary["started"]
+    assert len([job for job in summary["started"] if job in cpu]) == 3
+
+
+def test_refused_gpu_jobs_wait_and_a_memory_refusal_gives_up(local_queue, tmp_path, monkeypatch):
+    monkeypatch.setattr(local_compute, "gpu_ceiling_mib", lambda device=0: None)
+
+    def guard_saying(message: str) -> None:
+        code_root = _fake_guard(tmp_path / str(abs(hash(message))),
+                                f'echo "OpenLabs GPU guard: STOP: {message}" >&2\nexit 75\n')
+        monkeypatch.setattr(local_compute, "CODE_ROOT", code_root)
+
+    job = local_compute.submit(_src(tmp_path, "m"), ["python3", "run.py"], cpu_threads=1,
+                               memory_mib=512, wall_seconds=60, queue_root=local_queue,
+                               gpu_memory_mib=4096)
+    status_path = local_queue / "jobs" / job / "status.json"
+    guard_saying("GPU reservation rejected: baseline=9000, requested=4096, ceiling=11004 MiB")
+    assert local_compute.run(job, local_queue) == 0
+    status = json.loads(status_path.read_text())
+    assert status["state"] == "queued" and status["last_gpu_refusal_kind"] == "memory"
+    # The next dispatch does not try it again before gpu_retry_after.
+    with monkeypatch.context() as patched:
+        patched.setattr(local_compute.subprocess, "Popen", lambda *a, **k: None)
+        assert local_compute.dispatch(local_queue)["started"] == []
+    status["gpu_memory_refusals"] = local_compute.GPU_MEMORY_REFUSALS_MAX - 1
+    status_path.write_text(json.dumps(status))
+    assert local_compute.run(job, local_queue) == 0
+    final = json.loads(status_path.read_text())
+    assert final["state"] == "failed" and "smaller --gpu-memory-mib" in final["error"]
+    # A held lock is waited for without a limit.
+    held = local_compute.submit(_src(tmp_path, "l"), ["python3", "run.py"], cpu_threads=1,
+                                memory_mib=512, wall_seconds=60, queue_root=local_queue,
+                                gpu_memory_mib=2048)
+    guard_saying("GPU already reserved by another research job; retry after it finishes")
+    path = local_queue / "jobs" / held / "status.json"
+    for _ in range(local_compute.GPU_MEMORY_REFUSALS_MAX + 2):
+        assert local_compute.run(held, local_queue) == 0
+    status = json.loads(path.read_text())
+    assert status["state"] == "queued" and status["last_gpu_refusal_kind"] == "lock"
+    assert status["gpu_requeues"] == local_compute.GPU_MEMORY_REFUSALS_MAX + 2

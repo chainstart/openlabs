@@ -3,7 +3,8 @@
 #   bin/openlabs-local submit --source DIR --cpus N --memory-mib N --timeout-seconds N -- COMMAND [ARGS...]
 #   bin/openlabs-local submit --gpu-memory-mib N [--gpu-device 0] --source DIR ... -- COMMAND
 #       GPU job: runs in the resource guard with that reservation, one GPU job at a time;
-#       a reservation held outside the queue sends it back to the queue (2026-11-19).
+#       a reservation held outside the queue sends it back to the queue (2026-11-19); at most
+#       4 CPUs; a request above the device ceiling is refused at submission.
 #   bin/openlabs-local status JOB_ID | dispatch | summary
 #   bin/openlabs-local adopt-ailab JOB_ID [--reason TEXT]   # move a queued ailab job here, same id
 # bin/openlabs-remote submit (default --backend auto) already overflows here when ailab is

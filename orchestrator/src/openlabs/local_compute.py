@@ -52,7 +52,7 @@ import subprocess
 import sys
 import tarfile
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -109,9 +109,20 @@ ABSOLUTE_PATH = re.compile(
 MAX_GPU_JOBS = 1
 # A GPU job whose guard refused the reservation within this time is queued again.
 GPU_ADMISSION_SECONDS = 120
-GPU_ADMISSION_REFUSALS = ('GPU already reserved', 'GPU reservation rejected',
-                          'GPU headroom changed during admission',
-                          'insufficient GPU headroom')
+# Guard refusals (gpu_guard.py messages, exit 75): the lock is held by another job (wait as
+# long as it takes), or the device has too little free memory right now (wait, at most
+# GPU_MEMORY_REFUSALS_MAX times). A request above the device ceiling never fits: refused
+# at submission (measured 2026-11-19: an 11500 MiB job requeued every dispatch forever).
+GPU_LOCK_REFUSALS = ('GPU already reserved', 'GPU headroom changed during admission')
+GPU_MEMORY_REFUSALS = ('GPU reservation rejected', 'insufficient GPU headroom')
+GPU_ADMISSION_REFUSALS = GPU_LOCK_REFUSALS + GPU_MEMORY_REFUSALS
+GPU_MEMORY_REFUSALS_MAX = 20
+# A refused GPU job is not tried again before this many seconds.
+GPU_RETRY_SECONDS = 60
+# GPU jobs keep their own slot outside max_jobs/max_cpus (the CPU overflow jobs fill those
+# by design; measured 2026-11-19: 12 of 12 local CPUs held by astro jobs) and may declare at
+# most this many CPUs.
+MAX_GPU_JOB_CPUS = 4
 
 
 def utc_now() -> str:
@@ -329,6 +340,18 @@ def _jobs(root: Path) -> list[tuple[Path, dict[str, Any], dict[str, Any]]]:
         rows.append((directory, request, status))
     rows.sort(key=lambda row: str(row[1].get('created_at') or ''))
     return rows
+
+
+def gpu_ceiling_mib(device: int = 0) -> int | None:
+    """The guard's VRAM ceiling of ``device`` (None when telemetry is unavailable)."""
+
+    try:
+        from . import gpu_guard
+
+        rows = [gpu for gpu in gpu_guard.snapshot() if gpu.index == device]
+    except Exception:  # noqa: BLE001 - no telemetry: the guard decides at run time
+        return None
+    return int(rows[0].ceiling) if rows else None
 
 
 def gpu_request(request: Mapping[str, Any]) -> dict[str, int] | None:
@@ -552,6 +575,15 @@ def submit(source: Path, argv: Sequence[str], *, cpu_threads: int, memory_mib: i
                                      '(the guard keeps 768 MiB for the CUDA context)')
         if isinstance(gpu_device, bool) or not isinstance(gpu_device, int) or gpu_device < 0:
             raise RemoteComputeError('gpu_device must be a non-negative integer')
+        if resources['cpu_threads'] > MAX_GPU_JOB_CPUS:
+            raise RemoteComputeError(
+                f'a GPU job declares at most {MAX_GPU_JOB_CPUS} CPUs (run CPU-heavy parts as a '
+                'separate CPU job)')
+        ceiling = gpu_ceiling_mib(gpu_device)
+        if ceiling is not None and gpu_memory_mib > ceiling:
+            raise RemoteComputeError(
+                f'gpu_memory_mib {gpu_memory_mib} exceeds the device ceiling {ceiling} MiB '
+                '(it could never be reserved)')
         resources.update(gpu_memory_mib=gpu_memory_mib, gpu_device=gpu_device)
     source = Path(source).resolve()
     if not source.is_dir():
@@ -712,7 +744,7 @@ def dispatch(queue_root: Path | None = None, *, max_jobs: int | None = None,
     max_cpus = max_cpus or current['max_cpus']
     max_memory_mib = max_memory_mib or current['max_memory_mib']
     summary_: dict[str, Any] = {'started': [], 'reaped': [], 'running': 0, 'queued': 0}
-    running_cpus = running_memory = running = running_gpu = 0
+    running_cpus = running_memory = running = running_gpu = running_gpu_cpus = 0
     queued: list[tuple[Path, dict[str, Any]]] = []
     for directory, request, status in _jobs(root):
         state = status.get('state')
@@ -730,15 +762,21 @@ def dispatch(queue_root: Path | None = None, *, max_jobs: int | None = None,
             running += 1
             running_cpus += cpus
             running_memory += memory
-            running_gpu += 1 if gpu_request(request) else 0
+            if gpu_request(request):
+                running_gpu += 1
+                running_gpu_cpus += cpus
         elif state == 'queued':
+            retry = str(status.get('gpu_retry_after') or '')
+            if retry and datetime.fromisoformat(retry) > datetime.now(timezone.utc):
+                continue  # a refused GPU job waits before its next try
             queued.append((directory, request))
     for directory, request in queued:
         cpus, memory = _resources(request)
         gpu = gpu_request(request) is not None
-        if (not launch or running >= max_jobs or running_cpus + cpus > max_cpus
-                or running_memory + memory > max_memory_mib
-                or (gpu and running_gpu >= MAX_GPU_JOBS)):
+        cpu_full = running - running_gpu >= max_jobs or (
+            running_cpus - running_gpu_cpus + cpus > max_cpus)
+        if (not launch or running_memory + memory > max_memory_mib
+                or (gpu and running_gpu >= MAX_GPU_JOBS) or (not gpu and cpu_full)):
             continue
         # Mark it before spawning: the runner records its own pid and its end, so a fast
         # job's terminal state is never overwritten by this process.
@@ -755,7 +793,9 @@ def dispatch(queue_root: Path | None = None, *, max_jobs: int | None = None,
         running += 1
         running_cpus += cpus
         running_memory += memory
-        running_gpu += 1 if gpu else 0
+        if gpu:
+            running_gpu += 1
+            running_gpu_cpus += cpus
         summary_['started'].append(directory.name)
     summary_['running'] = running
     summary_['queued'] = sum(1 for _, _, status in _jobs(root) if status.get('state') == 'queued')
@@ -848,15 +888,23 @@ def run(job_id: str, queue_root: Path | None = None) -> int:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-    if gpu is not None and code == 75 and _gpu_admission_refused(
-            result / 'stderr.log', started):
-        # The guard refused the reservation (the GPU is held outside this queue): the job
-        # never ran; it waits for a later dispatch.
-        previous = _json(directory / 'status.json') or {}
+    refusal = _gpu_admission_refused(result / 'stderr.log', started) if (
+        gpu is not None and code == 75) else None
+    previous = _json(directory / 'status.json') or {}
+    memory_refusals = int(previous.get('gpu_memory_refusals') or 0) + (
+        1 if refusal == 'memory' else 0)
+    if refusal == 'lock' or (refusal == 'memory' and memory_refusals < GPU_MEMORY_REFUSALS_MAX):
+        # The guard refused the reservation (GPU held by another job, or too little free
+        # memory now): the job never ran; it waits and is tried again later.
+        retry = datetime.now(timezone.utc) + timedelta(seconds=GPU_RETRY_SECONDS)
         _write_status(directory, state='queued', runner_pid=None,
                       gpu_requeues=int(previous.get('gpu_requeues') or 0) + 1,
-                      last_gpu_refusal=utc_now())
+                      gpu_memory_refusals=memory_refusals, last_gpu_refusal=utc_now(),
+                      last_gpu_refusal_kind=refusal, gpu_retry_after=retry.isoformat())
         return 0
+    if refusal == 'memory':
+        error = (f'GPU memory reservation refused {memory_refusals} times '
+                 '(not enough free VRAM); resubmit with a smaller --gpu-memory-mib')
     state = 'succeeded' if code == 0 else 'failed'
     try:
         receipt = _receipt(directory, request, code, error)
@@ -868,16 +916,20 @@ def run(job_id: str, queue_root: Path | None = None) -> int:
     return 0
 
 
-def _gpu_admission_refused(stderr: Path, started: datetime) -> bool:
-    """Whether the guard refused the GPU reservation (fast, with its admission message)."""
+def _gpu_admission_refused(stderr: Path, started: datetime) -> str | None:
+    """``lock`` or ``memory`` when the guard refused the reservation at admission, else None."""
 
     if (datetime.now(timezone.utc) - started).total_seconds() > GPU_ADMISSION_SECONDS:
-        return False
+        return None
     try:
         text = stderr.read_bytes()[-4000:].decode('utf-8', errors='ignore')
     except OSError:
-        return False
-    return any(marker in text for marker in GPU_ADMISSION_REFUSALS)
+        return None
+    if any(marker in text for marker in GPU_LOCK_REFUSALS):
+        return 'lock'
+    if any(marker in text for marker in GPU_MEMORY_REFUSALS):
+        return 'memory'
+    return None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
