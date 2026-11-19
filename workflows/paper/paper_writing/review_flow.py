@@ -1249,7 +1249,7 @@ def review_track(metadata: Mapping[str, Any], root: Path | None = None) -> dict[
     settings = load_registry_settings(root) if root and settings_path(root).is_file() else {}
     policy = settings.get("journal_target_policy") or {}
     config = venue_policy.eligibility_config(policy)
-    escalation = bool(config) and venue_policy.is_escalation_venue(metadata, policy)
+    escalation = bool(config) and venue_policy.is_escalation_venue(metadata, policy, root=root)
     if not escalation:
         return {"track": "routine", "minimum_overall_score": None}
     # A valid owner score waiver (target_escalation.score_waiver) lowers the bar for this

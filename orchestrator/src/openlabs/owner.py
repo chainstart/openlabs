@@ -1884,6 +1884,13 @@ def _line_tools(paths: WorkspacePaths, settings: FactorySettings, line: str | No
     if entry.get("review_checklist"):
         items.append("independent recompute checklist: `review_checklist` (run it on your own "
                      "results before ready_for_review)")
+    venues = entry.get("venues") if isinstance(entry.get("venues"), Mapping) else {}
+    rules = venues.get("tier_rules")
+    if isinstance(rules, Mapping):
+        items.append(
+            f"venue tiers: set `research_line: {line}` in the paper's registry record; the line's "
+            f"venues.tier_rules make CAS zones {rules.get('routine_tiers')} routine targets and "
+            f"{rules.get('fallback_tiers')} fee-free fallbacks for it (not the escalation track)")
     return items
 
 

@@ -170,3 +170,54 @@ def test_conference_fallback_evidence_follows_the_conference_rules() -> None:
         fallback_venue="Example Conference", policy=policy)
     assert any("routine CCF rank" in p for p in problems)
     assert any("missing page_charge" in p for p in problems)
+
+
+def _line_root(tmp_path, tier_rules=None):
+    import yaml
+
+    venues = {"tier_policy": "Zone 1 targets, Zone 2 fee-free fallback"}
+    if tier_rules is not None:
+        venues["tier_rules"] = tier_rules
+    path = tmp_path / "registry" / "research-lines.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(yaml.safe_dump({"lines": [{"id": "power-market-backtest", "venues": venues}]}))
+    return tmp_path
+
+
+def test_line_tier_rules_make_zone_one_routine_for_the_lines_papers(tmp_path) -> None:
+    """2026-11-19: the engineering lines target Zone 1 as routine and Zone 2 as fallback."""
+
+    root = _line_root(tmp_path, {"routine_tiers": [1], "fallback_tiers": [2]})
+    zone_one = journal(target_journal_tier=1, research_line="power-market-backtest")
+    venue_policy.validate_journal_eligibility(zone_one, paper_id="p", policy=POLICY, root=root)
+    assert not venue_policy.is_escalation_venue(zone_one, POLICY, root=root)
+    assert venue_policy.escalation_minimum(zone_one, POLICY, paper_id="p", root=root) is None
+    # The global default still holds without a line, without rules, or without the root.
+    with pytest.raises(ValueError, match="escalation track"):
+        venue_policy.validate_journal_eligibility(journal(target_journal_tier=1), paper_id="p",
+                                                  policy=POLICY, root=root)
+    with pytest.raises(ValueError, match="escalation track"):
+        venue_policy.validate_journal_eligibility(zone_one, paper_id="p", policy=POLICY)
+    plain = _line_root(tmp_path / "plain")
+    with pytest.raises(ValueError, match="escalation track"):
+        venue_policy.validate_journal_eligibility(zone_one, paper_id="p", policy=POLICY, root=plain)
+    # The fee rule is unchanged: a paid route stays out.
+    with pytest.raises(ValueError, match="fee-free"):
+        venue_policy.validate_journal_eligibility(
+            {**zone_one, "target_journal_fee_policy": "apc"}, paper_id="p", policy=POLICY, root=root)
+    # A Zone 2 fallback is eligible for the line, still not by default.
+    evidence = {"venue": "Energy Policy", "venue_type": "journal", "checked_at": "2026-11-19",
+                "indexing": {"indexes": ["SCIE"], "source": "https://mjl.clarivate.com/x",
+                             "checked_at": "2026-11-19"},
+                "ranking_year": 2025, "ranking_scope": "major_category", "tier": 2,
+                "ranking_category": "经济学", "ranking_source": "https://www.fenqubiao.com/x",
+                "fee_policy": "no_mandatory_author_fee", "fee_source": "https://www.elsevier.com/x",
+                "fee_charges_checked": ["page_charge", "colour_charge", "submission_fee"],
+                "fee_evidence": "subscription route without charges"}
+    rules = venue_policy.line_tier_rules(zone_one, root)
+    assert venue_policy.fallback_eligibility_problems(
+        evidence, fallback_venue="Energy Policy", policy=POLICY, line_rules=rules) == []
+    assert any("routine CAS zone" in p for p in venue_policy.fallback_eligibility_problems(
+        evidence, fallback_venue="Energy Policy", policy=POLICY))
+    with pytest.raises(ValueError, match="tier_rules"):
+        venue_policy.line_tier_rules(zone_one, _line_root(tmp_path / "bad", {"routine_tiers": [0]}))

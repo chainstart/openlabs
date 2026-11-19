@@ -464,3 +464,41 @@ def test_new_lines_in_the_repository_direction_file_are_complete() -> None:
         assert {"analysis_package", "control_receipt", "data", "sop"} <= set(resources)
     phm = next(item for item in document["lines"] if item["id"] == "phm-evaluation-audit")
     assert line_uses_gpu(phm) and card_precheck.compute_floor(phm, {})["gpu_hours"] == 40
+
+
+# --------------------------------------------------------------------------- 2026-11-19 fixes
+
+
+def test_host_view_without_local_compute(local_queue, tmp_path, monkeypatch) -> None:
+    from openlabs.config import load_budget_settings
+
+    monkeypatch.setattr(local_compute.subprocess, "Popen", lambda *a, **k: None)
+    for n in range(3):
+        local_compute.submit(_src(tmp_path, f"j{n}"), ["python3", "run.py"], cpu_threads=4,
+                             memory_mib=4096, wall_seconds=3600, queue_root=local_queue)
+    local_compute.dispatch(local_queue)
+    host = {"cpu_limit": 15.0, "cpu_fraction": 0.96, "memory_fraction": 0.5}
+    view = utilization.without_local_compute(host, local_queue)
+    assert view["cpu_fraction"] == round(0.96 - 12 / 15, 4) and view["local_compute_cpus"] == 12
+    assert view["memory_fraction"] == 0.5 and host["cpu_fraction"] == 0.96
+    assert utilization.without_local_compute({"cpu_limit": 15.0}, local_queue) == {"cpu_limit": 15.0}
+    assert load_budget_settings({}).host_load_excludes_local_compute is False
+    assert load_budget_settings(
+        {"host_load_excludes_local_compute": True}).host_load_excludes_local_compute is True
+
+
+def test_owner_brief_names_the_line_tier_rules(tmp_path, monkeypatch) -> None:
+    import test_owner_mode as owner_tests
+    from openlabs import owner
+
+    paths, db, settings, (topic,) = owner_tests._owner_program(tmp_path, monkeypatch)
+    campaign = db.campaign(topic["campaign_id"])
+    seat = owner_tests._latest(db, topic["campaign_id"])
+    entry = {**PMB_ENTRY, "id": "line-x",
+             "venues": {"tier_rules": {"routine_tiers": [1], "fallback_tiers": [2]}}}
+    _lines_document(paths, [entry])
+    monkeypatch.setattr(owner, "campaign_line", lambda _campaign: "line-x")
+    body = owner.spec_block(paths, settings, task=seat, spec=owner_tests._spec(
+        tmp_path / "t", seat["task_id"]), campaign=campaign, wall_seconds=600,
+        db=db)["request"]
+    assert "`research_line: line-x`" in body and "[1] routine targets" in body

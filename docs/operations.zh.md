@@ -656,6 +656,12 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   台账里已被课题占用的条目（按卡片 `candidate_queue_entry.entry_id`），可抽取数也扣除它们；格式错误或机械预检不过而被
   拒的卡片对应的条目可以再抽。同一个队列文件被多个模板共用时，每个模板只数 `card_fields.paper_template` 是自己的条目，
   从共用队列抽到卡片不算其他模板的空抽。
+- **线级期刊分层进入选刊校验**（2026-11-19）：线条目 `venues.tier_rules: {routine_tiers: [1], fallback_tiers: [2]}`
+  是 `tier_policy` 的机器形式。论文登记记录写 `research_line: <线>` 时，`paper_writing.venue_policy` 按该线的分层判断：
+  1 区目标刊是常规目标（不走升级通道、不要求 target_escalation 与 7 分门槛），2 区可作兜底刊；收费规则不变。没写
+  `research_line` 或线没有 `tier_rules` 时照旧按 `settings.yaml#journal_target_policy` 的全局默认。负责人简报会提示写这个字段。
+- **智能体并发不被本机溢出作业压住**（可选，2026-11-19）：`[budget].host_load_excludes_local_compute = true` 时，自适应
+  并发上限看的 CPU 负载扣除本机队列运行中作业申报的 CPU（这些作业按设计占满容器、上限为 `max_cpus`）。默认关闭。
 - 新线的计划项目用 `python -m openlabs program init-instance --instance-dir <dir>`（先 dry-run，再 `--write`）补建：
   它只新建缺少的项目文件，已有文件一律不覆盖；不要同时加 `--set-research-lines`（那会把 `research_lines` 改成全部八条线）。
 

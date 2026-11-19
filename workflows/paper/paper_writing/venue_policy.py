@@ -10,6 +10,15 @@ explicit escalation track for results that cleared a stronger internal review.
 
 The policy applies only to targets verified on or after ``effective_from`` and to papers
 created on or after it, so historical targets and ongoing submissions remain truthful.
+
+Line-level tiers (2026-11-19): a paper record naming its ``research_line`` follows that
+line's ``venues.tier_rules`` in ``registry/research-lines.yaml`` when the line declares
+them (``routine_tiers``, ``fallback_tiers``; CAS 2025 major-category zones). The two
+engineering lines built on the owner's 2026-11-16 request target Zone 1 journals as their
+routine venues and Zone 2 journals as fee-free fallbacks, so for their papers those zones
+are routine work, not the escalation track; the fee rules are unchanged (a fee-free route,
+an APC only in Zone 1). Papers without a line, and lines without tier_rules, keep the
+global ``venue_eligibility`` tiers.
 """
 
 from __future__ import annotations
@@ -116,6 +125,52 @@ def eligibility_config(policy: Mapping[str, Any] | None) -> dict[str, Any]:
     }
 
 
+LINE_TIER_KEYS = ("routine_tiers", "fallback_tiers")
+
+
+def line_tier_rules(paper: Mapping[str, Any],
+                    root: str | Path | None) -> dict[str, set[int]] | None:
+    """The paper's research line ``venues.tier_rules`` (None: no line or no rules).
+
+    ``{"routine_tiers": {...}, "fallback_tiers": {...}}`` from ``registry/research-lines.yaml``
+    under ``root`` for the line the paper record names in ``research_line``.
+    """
+
+    line = str(paper.get("research_line") or "").strip()
+    if not line or root is None:
+        return None
+    path = Path(root) / "registry" / "research-lines.yaml"
+    try:
+        import yaml
+
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, ImportError, ValueError):
+        return None
+    entries = document.get("lines") if isinstance(document, Mapping) else None
+    entry = next((item for item in entries or [] if isinstance(item, Mapping)
+                  and str(item.get("id") or "") == line), None)
+    venues = entry.get("venues") if isinstance(entry, Mapping) else None
+    rules = venues.get("tier_rules") if isinstance(venues, Mapping) else None
+    if not isinstance(rules, Mapping):
+        return None
+    result: dict[str, set[int]] = {}
+    for key in LINE_TIER_KEYS:
+        values = rules.get(key) or []
+        if not isinstance(values, list) or any(
+                type(value) is not int or value not in {1, 2, 3, 4} for value in values):
+            raise ValueError(f"research line {line} venues.tier_rules.{key} must list CAS zones 1-4")
+        result[key] = set(values)
+    return result
+
+
+def _line_routine(paper: Mapping[str, Any], root: str | Path | None) -> bool:
+    """Whether the paper's journal zone is routine work for its research line."""
+
+    rules = line_tier_rules(paper, root)
+    tier = paper.get("target_journal_tier")
+    return bool(rules) and tier in rules["routine_tiers"] | rules["fallback_tiers"]
+
+
 def _applies(checked_at: Any, config: Mapping[str, Any]) -> bool:
     checked = _date(checked_at)
     return checked is not None and checked >= config["effective_from"]
@@ -208,7 +263,7 @@ def escalation_minimum(paper: Mapping[str, Any], policy: Mapping[str, Any] | Non
     An invalid waiver raises ``ValueError`` rather than silently falling back."""
 
     config = eligibility_config(policy)
-    if not config or not is_escalation_venue(paper, policy):
+    if not config or not is_escalation_venue(paper, policy, root=root):
         return None
     minimum = config["escalation"]["minimum_internal_score"]
     record = paper.get("target_escalation")
@@ -295,12 +350,12 @@ def validate_journal_eligibility(paper: Mapping[str, Any], *, paper_id: str,
         )
     if rules["require_no_mandatory_author_fee"] and paper.get("target_journal_fee_policy") != "no_mandatory_author_fee":
         raise ValueError(f"target_journal must have a fee-free publication route for {paper_id}")
-    if tier in config["escalation"]["journal_tiers"]:
+    if tier in config["escalation"]["journal_tiers"] and not _line_routine(paper, root):
         _validate_escalation(paper, paper_id=paper_id, venue=str(paper["target_journal"]), config=config,
                              root=root)
     else:
         _validate_executed_fallback(paper, paper_id=paper_id, venue=str(paper["target_journal"]),
-                                    policy=policy)
+                                    policy=policy, line_rules=line_tier_rules(paper, root))
 
 
 def validate_conference_eligibility(paper: Mapping[str, Any], *, paper_id: str,
@@ -345,7 +400,8 @@ def validate_conference_eligibility(paper: Mapping[str, Any], *, paper_id: str,
 
 
 def fallback_eligibility_problems(evidence: Any, *, fallback_venue: str,
-                                  policy: Mapping[str, Any] | None) -> list[str]:
+                                  policy: Mapping[str, Any] | None,
+                                  line_rules: Mapping[str, set[int]] | None = None) -> list[str]:
     """Why ``evidence`` does not show that ``fallback_venue`` is eligible (``[]``: it does).
 
     The record mirrors a registered target: dated SCIE indexing, the 2025 CAS upgraded
@@ -391,10 +447,15 @@ def fallback_eligibility_problems(evidence: Any, *, fallback_venue: str,
                 "table (ranking_year, ranking_scope: major_category)"
             )
         tier = evidence.get("tier")
-        if type(tier) is not int or tier not in rules["routine_tiers"]:
+        routine = set(rules["routine_tiers"])
+        if line_rules:
+            # The paper's research line names its own routine and fallback zones.
+            routine |= set(line_rules.get("routine_tiers") or ()) | set(
+                line_rules.get("fallback_tiers") or ())
+        if type(tier) is not int or tier not in routine:
             problems.append(
                 f"{prefix}: fallback_eligibility.tier must be a routine CAS zone "
-                f"{sorted(rules['routine_tiers'])}"
+                f"{sorted(routine)}"
             )
         if not _filled(evidence.get("ranking_category")) or not _http(evidence.get("ranking_source")):
             problems.append(f"{prefix}: fallback_eligibility needs ranking_category and an HTTP(S) ranking_source")
@@ -442,14 +503,17 @@ def fallback_eligibility_problems(evidence: Any, *, fallback_venue: str,
 
 
 def validate_fallback_eligibility(evidence: Any, *, fallback_venue: str,
-                                  policy: Mapping[str, Any] | None) -> None:
-    problems = fallback_eligibility_problems(evidence, fallback_venue=fallback_venue, policy=policy)
+                                  policy: Mapping[str, Any] | None,
+                                  line_rules: Mapping[str, set[int]] | None = None) -> None:
+    problems = fallback_eligibility_problems(evidence, fallback_venue=fallback_venue, policy=policy,
+                                             line_rules=line_rules)
     if problems:
         raise ValueError("; ".join(problems))
 
 
 def _validate_executed_fallback(paper: Mapping[str, Any], *, paper_id: str, venue: str,
-                                policy: Mapping[str, Any] | None) -> None:
+                                policy: Mapping[str, Any] | None,
+                                line_rules: Mapping[str, set[int]] | None = None) -> None:
     """A paper now targeting its registered fallback venue must have passed the fallback check.
 
     Older escalation records without ``fallback_eligibility`` stay loadable while the
@@ -465,7 +529,8 @@ def _validate_executed_fallback(paper: Mapping[str, Any], *, paper_id: str, venu
     if str(record.get("venue") or "").strip().casefold() == fallback.casefold():
         return
     problems = fallback_eligibility_problems(
-        record.get("fallback_eligibility"), fallback_venue=fallback, policy=policy
+        record.get("fallback_eligibility"), fallback_venue=fallback, policy=policy,
+        line_rules=line_rules,
     )
     if problems:
         raise ValueError(
@@ -532,7 +597,7 @@ def provisional_escalation_blockers(paper: Mapping[str, Any], policy: Mapping[st
     if not isinstance(record, Mapping) or record.get("status") != "provisional":
         return []
     config = eligibility_config(policy)
-    if not config or not is_escalation_venue(paper, policy):
+    if not config or not is_escalation_venue(paper, policy, root=root):
         return []
     try:
         minimum = escalation_minimum(paper, policy, paper_id=paper_id, root=root)
@@ -555,10 +620,13 @@ def provisional_escalation_blockers(paper: Mapping[str, Any], policy: Mapping[st
     return []
 
 
-def is_escalation_venue(paper: Mapping[str, Any], policy: Mapping[str, Any] | None) -> bool:
+def is_escalation_venue(paper: Mapping[str, Any], policy: Mapping[str, Any] | None,
+                        *, root: str | Path | None = None) -> bool:
     config = eligibility_config(policy)
     if not config:
         return False
+    if not paper.get("target_conference") and _line_routine(paper, root):
+        return False  # routine work for the paper's research line (venues.tier_rules)
     if paper.get("target_conference"):
         ccf = paper.get("target_conference_ccf")
         return isinstance(ccf, Mapping) and str(ccf.get("rank") or "").upper() in config["escalation"]["ccf_ranks"]

@@ -4299,6 +4299,9 @@ def _supervise_throughput(
     try:
         host = utilization.host_usage(db, now=now, record=True)
         report.host_usage = host
+        if settings.budget.host_load_excludes_local_compute:
+            host = utilization.without_local_compute(host)
+            report.host_usage = {**report.host_usage, "agent_view": host}
         entry = utilization.adaptive_launch_limit(
             db, settings, router, hard=hard, active=db.active_count(),
             runnable=utilization.runnable_count(db, now=now), host=host, now=now,

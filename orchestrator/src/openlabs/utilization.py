@@ -314,6 +314,30 @@ def _history(db: FactoryDB) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
+def without_local_compute(host: Mapping[str, Any],
+                          local_root: Path | None = None) -> dict[str, Any]:
+    """``host`` with the CPU declared by running local-queue jobs taken out of cpu_fraction.
+
+    The local overflow queue fills the container by design (bounded by its max_cpus);
+    agent launches are judged by what is left. A local job is assumed to use the CPUs it
+    declared; the result never goes below 0. Memory is unchanged.
+    """
+
+    from . import local_compute
+
+    view = dict(host)
+    try:
+        running = int(local_compute.local_load(local_root).get("running_cpus") or 0)
+    except Exception:  # noqa: BLE001 - advisory: an unreadable queue leaves the reading
+        return view
+    limit = float(host.get("cpu_limit") or 0)
+    cpu = host.get("cpu_fraction")
+    if limit > 0 and isinstance(cpu, (int, float)) and running:
+        view["cpu_fraction"] = round(max(0.0, float(cpu) - running / limit), 4)
+        view["local_compute_cpus"] = running
+    return view
+
+
 def adaptive_launch_limit(
     db: FactoryDB,
     settings: FactorySettings,

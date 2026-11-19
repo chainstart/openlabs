@@ -357,6 +357,10 @@ class BudgetSettings:
     # Declared ailab load the agents are encouraged to fill (reported only;
     # the bridge does the admission).
     ailab_utilization_target: float = 0.9
+    # 2026-11-19: judge the host load for agent launches without the CPU the local overflow
+    # queue's running jobs declared (they fill the container by design, bounded by
+    # config/local-compute.json max_cpus; agent sessions are light). Off by default.
+    host_load_excludes_local_compute: bool = False
     # Consecutive agent_quota results one task may defer before ordinary failure
     # handling takes over (guards against a misclassified real failure).
     quota_retry_limit: int = 8
@@ -1412,6 +1416,8 @@ def load_budget_settings(payload: Any) -> BudgetSettings:
         adaptive_step=_positive_int(budget.get("adaptive_step"), 2),
         host_utilization_target=_fraction(budget.get("host_utilization_target"), 0.8),
         ailab_utilization_target=_fraction(budget.get("ailab_utilization_target"), 0.9),
+        host_load_excludes_local_compute=budget.get(
+            "host_load_excludes_local_compute", False) is True,
     )
 
 
