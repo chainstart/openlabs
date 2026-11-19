@@ -24,6 +24,13 @@ environment variables ``OPENLABS_LOCAL_MAX_JOBS``/``_MAX_CPUS``/``_MAX_MEMORY_MI
 override it). Each job runs detached inside ``bin/openlabs-resource-guard --task-type
 cpu`` with no GPU visible, and records its own end and a receipt.
 
+GPU jobs (2026-11-19, ``submit --gpu-memory-mib N [--gpu-device D]``; only through this
+entry, never by automatic overflow) run inside ``bin/openlabs-resource-guard --task-type gpu``
+with that reservation, at most ``MAX_GPU_JOBS`` (one) at a time. The guard's host-wide GPU
+lock also refuses a reservation held outside this queue; such a job goes back to the queue
+(``gpu_requeues`` counts it) and starts at a later dispatch. A topic owner can therefore end a
+seat ``awaiting_remote`` on a long GPU run like on any queued job.
+
 Automatic overflow only takes a job that can run here unchanged: CPU task type (math
 keeps its own rules), default storage, and a source whose scripts neither install nor
 download anything nor use a path this container lacks. Registered environment aliases
@@ -96,6 +103,15 @@ ABSOLUTE_PATH = re.compile(
     r'(?<![\w.$}/~-])(/(?:data|usr|opt|srv|home|mnt|scratch|workspace|bin|sbin|lib|lib64)'
     r'(?:/[^\s\'"`;|&<>(){}\[\],:=$*?]*)?)'
 )
+
+
+# GPU jobs of this queue running at once (the host has one GPU; its guard lock is shared).
+MAX_GPU_JOBS = 1
+# A GPU job whose guard refused the reservation within this time is queued again.
+GPU_ADMISSION_SECONDS = 120
+GPU_ADMISSION_REFUSALS = ('GPU already reserved', 'GPU reservation rejected',
+                          'GPU headroom changed during admission',
+                          'insufficient GPU headroom')
 
 
 def utc_now() -> str:
@@ -315,6 +331,18 @@ def _jobs(root: Path) -> list[tuple[Path, dict[str, Any], dict[str, Any]]]:
     return rows
 
 
+def gpu_request(request: Mapping[str, Any]) -> dict[str, int] | None:
+    """``{gpu_memory_mib, gpu_device}`` of a GPU job, None for a CPU job."""
+
+    resources = request.get('resources') or {}
+    try:
+        memory = int(resources.get('gpu_memory_mib') or 0)
+        device = int(resources.get('gpu_device') or 0)
+    except (TypeError, ValueError):
+        return None
+    return {'gpu_memory_mib': memory, 'gpu_device': device} if memory > 0 else None
+
+
 def _resources(request: Mapping[str, Any]) -> tuple[int, int]:
     resources = request.get('resources') or {}
     try:
@@ -328,13 +356,18 @@ def local_load(queue_root: Path | None = None) -> dict[str, Any]:
 
     root = Path(queue_root) if queue_root is not None else default_queue_root()
     load = {'running': 0, 'queued': 0, 'running_cpus': 0, 'running_memory_mib': 0,
-            'queued_cpus': 0, 'queued_memory_mib': 0}
+            'queued_cpus': 0, 'queued_memory_mib': 0, 'running_gpu': 0, 'queued_gpu': 0,
+            'queued_gpu_cpus': 0}
     for _, request, status in _jobs(root):
         state = status.get('state')
         if state not in ('running', 'queued'):
             continue
         cpus, memory = _resources(request)
         load[state] += 1
+        if gpu_request(request):
+            load[f'{state}_gpu'] += 1
+            if state == 'queued':
+                load['queued_gpu_cpus'] += cpus
         load[f'{state}_cpus'] += cpus
         load[f'{state}_memory_mib'] += memory
     return load
@@ -502,11 +535,24 @@ def _publish(directory: Path, request: dict[str, Any], *, ready: bool = True) ->
 def submit(source: Path, argv: Sequence[str], *, cpu_threads: int, memory_mib: int,
            wall_seconds: int, queue_root: Path | None = None,
            scan: SourceScan | None = None, routing: Mapping[str, Any] | None = None,
-           environ: Mapping[str, str] | None = None) -> str:
-    """Snapshot ``source`` into the local queue (not started; see ``dispatch``)."""
+           environ: Mapping[str, str] | None = None,
+           gpu_memory_mib: int | None = None, gpu_device: int = 0) -> str:
+    """Snapshot ``source`` into the local queue (not started; see ``dispatch``).
+
+    ``gpu_memory_mib`` makes it a GPU job: it runs with that guard reservation on
+    ``gpu_device``, one GPU job at a time.
+    """
 
     argv = validate_argv(list(argv))
-    resources = validate_resources(cpu_threads, memory_mib, wall_seconds)
+    resources: dict[str, Any] = validate_resources(cpu_threads, memory_mib, wall_seconds)
+    if gpu_memory_mib is not None:
+        if isinstance(gpu_memory_mib, bool) or not isinstance(gpu_memory_mib, int) or not (
+                1024 < gpu_memory_mib <= 65536):
+            raise RemoteComputeError('gpu_memory_mib must be an integer above 1024 '
+                                     '(the guard keeps 768 MiB for the CUDA context)')
+        if isinstance(gpu_device, bool) or not isinstance(gpu_device, int) or gpu_device < 0:
+            raise RemoteComputeError('gpu_device must be a non-negative integer')
+        resources.update(gpu_memory_mib=gpu_memory_mib, gpu_device=gpu_device)
     source = Path(source).resolve()
     if not source.is_dir():
         raise RemoteComputeError(f'source is not a directory: {source}')
@@ -666,7 +712,7 @@ def dispatch(queue_root: Path | None = None, *, max_jobs: int | None = None,
     max_cpus = max_cpus or current['max_cpus']
     max_memory_mib = max_memory_mib or current['max_memory_mib']
     summary_: dict[str, Any] = {'started': [], 'reaped': [], 'running': 0, 'queued': 0}
-    running_cpus = running_memory = running = 0
+    running_cpus = running_memory = running = running_gpu = 0
     queued: list[tuple[Path, dict[str, Any]]] = []
     for directory, request, status in _jobs(root):
         state = status.get('state')
@@ -684,12 +730,15 @@ def dispatch(queue_root: Path | None = None, *, max_jobs: int | None = None,
             running += 1
             running_cpus += cpus
             running_memory += memory
+            running_gpu += 1 if gpu_request(request) else 0
         elif state == 'queued':
             queued.append((directory, request))
     for directory, request in queued:
         cpus, memory = _resources(request)
+        gpu = gpu_request(request) is not None
         if (not launch or running >= max_jobs or running_cpus + cpus > max_cpus
-                or running_memory + memory > max_memory_mib):
+                or running_memory + memory > max_memory_mib
+                or (gpu and running_gpu >= MAX_GPU_JOBS)):
             continue
         # Mark it before spawning: the runner records its own pid and its end, so a fast
         # job's terminal state is never overwritten by this process.
@@ -706,6 +755,7 @@ def dispatch(queue_root: Path | None = None, *, max_jobs: int | None = None,
         running += 1
         running_cpus += cpus
         running_memory += memory
+        running_gpu += 1 if gpu else 0
         summary_['started'].append(directory.name)
     summary_['running'] = running
     summary_['queued'] = sum(1 for _, _, status in _jobs(root) if status.get('state') == 'queued')
@@ -751,15 +801,23 @@ def run(job_id: str, queue_root: Path | None = None) -> int:
     scratch = directory / 'scratch'
     scratch.mkdir(exist_ok=True)
     threads = str(resources.get('cpu_threads') or 1)
+    gpu = gpu_request(request)
     env = {**os.environ, 'OPENLABS_OUTPUT_DIR': str(result / 'outputs'),
            'OPENLABS_SCRATCH_DIR': str(scratch), 'TMPDIR': str(scratch),
            'OMP_NUM_THREADS': os.environ.get('OMP_NUM_THREADS', '1'),
            'OPENLABS_JOB_CPUS': threads, 'OPENLABS_JOB_ID': job_id,
-           'OPENLABS_COMPUTE_BACKEND': 'local',
-           # CPU jobs only: GPU work reserves the device through the guard explicitly.
-           'CUDA_VISIBLE_DEVICES': ''}
-    command = [str(CODE_ROOT / 'bin' / 'openlabs-resource-guard'), '--task-type', 'cpu', '--',
+           'OPENLABS_COMPUTE_BACKEND': 'local'}
+    if gpu is None:
+        # CPU jobs see no GPU; a GPU job reserves its device through the guard below.
+        env['CUDA_VISIBLE_DEVICES'] = ''
+        guard = ['--task-type', 'cpu']
+    else:
+        env.pop('CUDA_VISIBLE_DEVICES', None)
+        guard = ['--task-type', 'gpu', '--gpu-memory-mib', str(gpu['gpu_memory_mib']),
+                 '--gpu-device', str(gpu['gpu_device'])]
+    command = [str(CODE_ROOT / 'bin' / 'openlabs-resource-guard'), *guard, '--',
                *request.get('argv', [])]
+    started = datetime.now(timezone.utc)
     _write_status(directory, state='running', runner_pid=os.getpid(), started_at=utc_now())
 
     def interrupted(signum: int, _frame: Any) -> None:
@@ -790,6 +848,15 @@ def run(job_id: str, queue_root: Path | None = None) -> int:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+    if gpu is not None and code == 75 and _gpu_admission_refused(
+            result / 'stderr.log', started):
+        # The guard refused the reservation (the GPU is held outside this queue): the job
+        # never ran; it waits for a later dispatch.
+        previous = _json(directory / 'status.json') or {}
+        _write_status(directory, state='queued', runner_pid=None,
+                      gpu_requeues=int(previous.get('gpu_requeues') or 0) + 1,
+                      last_gpu_refusal=utc_now())
+        return 0
     state = 'succeeded' if code == 0 else 'failed'
     try:
         receipt = _receipt(directory, request, code, error)
@@ -799,6 +866,18 @@ def run(job_id: str, queue_root: Path | None = None) -> int:
                   **({'receipt_sha256': receipt} if receipt else {}),
                   **({'error': error or f'exit code {code}'} if code else {}))
     return 0
+
+
+def _gpu_admission_refused(stderr: Path, started: datetime) -> bool:
+    """Whether the guard refused the GPU reservation (fast, with its admission message)."""
+
+    if (datetime.now(timezone.utc) - started).total_seconds() > GPU_ADMISSION_SECONDS:
+        return False
+    try:
+        text = stderr.read_bytes()[-4000:].decode('utf-8', errors='ignore')
+    except OSError:
+        return False
+    return any(marker in text for marker in GPU_ADMISSION_REFUSALS)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -817,6 +896,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     s.add_argument('--cpus', required=True, type=int)
     s.add_argument('--memory-mib', required=True, type=int)
     s.add_argument('--timeout-seconds', required=True, type=int)
+    s.add_argument('--gpu-memory-mib', type=int, default=None,
+                   help='GPU job: guard reservation in MiB (one GPU job runs at a time)')
+    s.add_argument('--gpu-device', type=int, default=0)
     st = sub.add_parser('status')
     st.add_argument('job_id')
     sub.add_parser('dispatch')
@@ -830,8 +912,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(args_list)
     try:
         if args.action == 'submit':
+            from .remote_compute import campaign_limit_problem
+
+            problem = campaign_limit_problem(args.cpus)
+            if problem:
+                print(f'openlabs-local: {problem}', file=sys.stderr)
+                return 4
             job_id = submit(Path(args.source), command, cpu_threads=args.cpus,
-                            memory_mib=args.memory_mib, wall_seconds=args.timeout_seconds)
+                            memory_mib=args.memory_mib, wall_seconds=args.timeout_seconds,
+                            gpu_memory_mib=args.gpu_memory_mib, gpu_device=args.gpu_device)
             directory = default_queue_root() / 'jobs' / job_id
             problems = portability_problems(
                 directory_texts(directory / 'source', command), command)
@@ -840,6 +929,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f'job_id: {job_id}')
             print(f'job_dir: {directory}')
             print('backend: local')
+            if args.gpu_memory_mib is not None:
+                print(f'gpu: {args.gpu_memory_mib} MiB on device {args.gpu_device} '
+                      '(one GPU job at a time)')
             print('starts at the next orchestrator tick (bin/openlabs-local dispatch)')
             return 0
         if args.action == 'status':

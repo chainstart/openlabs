@@ -78,6 +78,7 @@ from .program import (
     note_admission_attempt,
     open_topic_ledger,
     parked_program_projects,
+    paused_topic_campaigns,
     propose_topic,
     record_rejected_card,
     record_topic_note,
@@ -376,6 +377,34 @@ def _proposed_pool(document: Mapping[str, Any]) -> list[dict[str, Any]]:
     return topics_by_status(document, *POOL_STATUSES)
 
 
+LINE_SLOTS_FULL_REASON = "line_slots_full"
+
+
+def line_scout_room(status: Any, document: Mapping[str, Any], line: Any) -> int | None:
+    """Cards a scout of ``line`` may still usefully add (None: the line has no own limit).
+
+    The line's free slots (``[program].line_max_active_topics`` minus its admitted,
+    active and in-review topics) less its cards already waiting for admission.
+    """
+
+    free = status.line_free_slots(line) if hasattr(status, "line_free_slots") else None
+    if free is None:
+        return None
+    key = str(line or "").strip()
+    waiting = sum(1 for topic in _proposed_pool(document)
+                  if str(topic.get("research_line") or "").strip() == key)
+    return free - waiting
+
+
+def lines_without_scout_room(status: Any, document: Mapping[str, Any]) -> frozenset[str]:
+    """Limited lines that get no scout now (no free slot left after their waiting cards)."""
+
+    limits = getattr(status, "line_limits", None) or {}
+    return frozenset(line for line in limits
+                     if (room := line_scout_room(status, document, line)) is not None
+                     and room <= 0)
+
+
 def admission_sequence(db: FactoryDB) -> dict[str, int]:
     """Topic id -> id of its ``topic_admitted`` event (a strict admission order)."""
 
@@ -489,6 +518,8 @@ def queue_scout_instruction(
     queues: Mapping[str, str],
     held_released: Mapping[str, bool] | None = None,
     supply: Mapping[str, Mapping[str, Any]] | None = None,
+    *,
+    taken: Mapping[str, str] | None = None,
 ) -> str:
     """Scout objective addition for templates with an enumerated candidate queue.
 
@@ -519,6 +550,14 @@ def queue_scout_instruction(
             + (f", {item['empty_draws']} empty draw(s) since it last changed - skip it unless "
                "an entry is free" if item.get("empty_draws") else "")
             for template, item in sorted(supply.items())) + "."
+    if taken:
+        state += (
+            " Entries without `ledger_occupancy` are checked against the topic ledger by "
+            "their candidate_queue_entry.entry_id; already taken (skip them unless the entry "
+            "carries `reopens`): "
+            + ", ".join(f"{entry} ({status})" for entry, status in sorted(taken.items())[:40])
+            + "."
+        )
     return (
         ". Templates with a candidate_queue ("
         + ", ".join(f"{template}: {path}" for template, path in sorted(queues.items()))
@@ -574,7 +613,9 @@ def held_queue_releases(
 def _queue_instruction(paths: WorkspacePaths, settings: FactorySettings, line: str,
                        db: FactoryDB | None = None) -> str:
     queues = queued_templates(research_lines_document(paths, settings), line)
-    supply = template_supply(queues)
+    taken = (ledger_queue_entries(open_topic_ledger(paths, settings.program).read(), line)
+             if _queues_without_occupancy(queues) else {})
+    supply = template_supply(queues, taken)
     if db is not None:
         counts = _supply_state(db, line).get("templates") or {}
         for template, item in supply.items():
@@ -582,12 +623,75 @@ def _queue_instruction(paths: WorkspacePaths, settings: FactorySettings, line: s
             if isinstance(entry, Mapping) and int(entry.get("count") or 0):
                 item["empty_draws"] = int(entry["count"])
     return queue_scout_instruction(queues, held_queue_releases(paths, settings, line, queues),
-                                   supply)
+                                   supply, taken=taken)
 
 
-def template_supply(queues: Mapping[str, str]) -> dict[str, dict[str, Any]]:
-    """Per queued template: queue digest and drawable entries (free or reopenable)."""
+def _queues_without_occupancy(queues: Mapping[str, str]) -> bool:
+    """Whether any queue lists a candidate without the enumerator's ``ledger_occupancy``."""
 
+    for path in queues.values():
+        try:
+            queue = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        candidates = queue.get("candidates") if isinstance(queue, Mapping) else None
+        if any(isinstance(item, Mapping) and not isinstance(item.get("ledger_occupancy"), Mapping)
+               for item in candidates or []):
+            return True
+    return False
+
+
+# Ledger outcomes after which a queue entry is not drawn again by an ordinary card (a
+# card rejected for its format or by the line's mechanical precheck may be drawn again).
+_REDRAWABLE_REJECTIONS = frozenset({"card_invalid", "card_precheck_failed"})
+
+
+def ledger_queue_entries(document: Mapping[str, Any], line: str | None) -> dict[str, str]:
+    """``{queue entry id: topic status}`` of the line's ledger topics (from their cards).
+
+    For queues whose entries carry no ``ledger_occupancy`` (only the astro enumerator
+    writes it), this is what tells a scout which entries are already taken.
+    """
+
+    from .program import last_rejection_reason
+
+    if not line:
+        return {}
+    taken: dict[str, str] = {}
+    for topic in document.get("topics") or []:
+        if not isinstance(topic, Mapping) or str(topic.get("research_line") or "") != line:
+            continue
+        status = str(topic.get("status") or "")
+        if status == "rejected" and last_rejection_reason(topic) in _REDRAWABLE_REJECTIONS:
+            continue
+        try:
+            card = _read_object(Path(str(topic.get("card_path") or "")))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        entry_id = card_checks.entry_id_of(card)
+        if entry_id and (entry_id not in taken or status != "rejected"):
+            taken[entry_id] = status
+    return taken
+
+
+def _entry_template(item: Mapping[str, Any]) -> str | None:
+    """The paper template a queue entry's card_fields name (None: not stated)."""
+
+    fields = item.get("card_fields")
+    value = fields.get("paper_template") if isinstance(fields, Mapping) else None
+    return str(value) if value else None
+
+
+def template_supply(queues: Mapping[str, str],
+                    taken: Mapping[str, str] | None = None) -> dict[str, dict[str, Any]]:
+    """Per queued template: queue digest and drawable entries (free or reopenable).
+
+    An entry without ``ledger_occupancy`` counts as drawable unless ``taken`` (see
+    :func:`ledger_queue_entries`) names its ``entry_id``. A queue shared by several
+    templates counts, for each, only the entries whose ``card_fields.paper_template`` is it.
+    """
+
+    taken = taken or {}
     result: dict[str, dict[str, Any]] = {}
     for template, path in sorted(queues.items()):
         entry: dict[str, Any] = {"digest": _file_digest(path)}
@@ -599,8 +703,11 @@ def template_supply(queues: Mapping[str, str]) -> dict[str, dict[str, Any]]:
         if isinstance(candidates, list):
             entry["drawable"] = sum(
                 1 for item in candidates if isinstance(item, Mapping)
-                and str((item.get("ledger_occupancy") or {}).get("state") or "free")
-                in {"free", "reopenable"})
+                and _entry_template(item) in (None, template)
+                and (str(item["ledger_occupancy"].get("state") or "free")
+                     in {"free", "reopenable"}
+                     if isinstance(item.get("ledger_occupancy"), Mapping)
+                     else str(item.get("entry_id") or "") not in taken))
         result[template] = entry
     return result
 
@@ -783,9 +890,12 @@ def _record_template_draws(
         drawn.add(str(card.get("paper_template") or ""))
     previous = state.get("templates") if isinstance(state.get("templates"), dict) else {}
     templates: dict[str, Any] = {}
+    # Templates sharing one queue file (power-market-backtest: one queue, entries carry
+    # their own template): a draw from the shared queue is no empty draw for the others.
+    drawn_queues = {queues.get(template) for template in drawn if queues.get(template)}
     for template, item in template_supply(queues).items():
         old = previous.get(template) if isinstance(previous.get(template), Mapping) else {}
-        if template in drawn:
+        if template in drawn or queues.get(template) in drawn_queues:
             templates[template] = {"count": 0, "digest": item.get("digest")}
             continue
         same = old.get("digest") == item.get("digest")
@@ -884,6 +994,11 @@ def _schedule_one_scout(
             "research_line": line,
             "research_line_summary": line_summary(research_lines_document(paths, settings), line),
         }
+        room = line_scout_room(status, document, line)
+        if room is not None:
+            # A line with its own slot limit asks for no more cards than it can admit.
+            max_cards = max(1, min(max_cards, room))
+            line_fields["line_free_slots"] = status.line_free_slots(line)
     # The campaign's task count keeps two scouts of one domain scheduled within
     # the same second apart.
     sequence = db.task_count(campaign_id)
@@ -1013,7 +1128,8 @@ def schedule_scouts(
         return [], "provider_routing_not_configured"
     ledger = open_topic_ledger(paths, program)
     document = ledger.read()
-    status = slot_status(document, program, parked_program_projects(paths))
+    status = slot_status(document, program, parked_program_projects(paths),
+                         paused_topic_campaigns(db))
     if status.admission_paused:
         return [], "admission_paused"
     if status.free_slots <= 0:
@@ -1028,16 +1144,27 @@ def schedule_scouts(
         [project.research_line for project in all_projects]
         + [topic.get("research_line") for topic in _proposed_pool(document)],
     )
-    projects = [project for project in all_projects
-                if not project.research_line or project.research_line not in blocked_lines]
+    ready_projects = [project for project in all_projects
+                      if not project.research_line or project.research_line not in blocked_lines]
+    # A line at its own slot limit (or whose waiting cards already fill its free slots)
+    # gets no scout, and its waiting cards do not hold the pool against the other lines.
+    full_lines = lines_without_scout_room(status, document)
+    projects = [project for project in ready_projects
+                if not project.research_line or project.research_line not in full_lines]
     pool = len([topic for topic in _proposed_pool(document)
-                if str(topic.get("research_line") or "") not in blocked_lines])
+                if str(topic.get("research_line") or "") not in blocked_lines
+                and str(topic.get("research_line") or "") not in full_lines])
     if pool >= program.candidate_pool_low_water:
         return [], "candidate_pool_at_low_water"
     if lead_short:
         return [], "lead_quota_short"
-    if all_projects and not projects:
+    if all_projects and not ready_projects:
         return [], "research_line_environment_not_ready"
+    configured_lines = set(program.research_lines)
+    rotating = [project for project in ready_projects
+                if not configured_lines or project.research_line in configured_lines]
+    if rotating and all(project.research_line in full_lines for project in rotating):
+        return [], LINE_SLOTS_FULL_REASON
     in_flight = _program_tasks(db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?",
                                parameters=(SCOUT_TASK_TYPE,))
     moment = now or _now_moment()
@@ -1982,11 +2109,15 @@ def schedule_revisions(
         pending.append(topic)
     if not pending:
         return [], "no_revisable_topic"
-    status = slot_status(document, program, parked_program_projects(paths))
+    status = slot_status(document, program, parked_program_projects(paths),
+                         paused_topic_campaigns(db))
     if status.admission_paused:
         return [], "admission_paused"
     if status.free_slots <= 0:
         return [], "no_free_slot"
+    pending = [topic for topic in pending if not status.line_full(topic.get("research_line"))]
+    if not pending:
+        return [], LINE_SLOTS_FULL_REASON
     if lead_short:
         return [], "lead_quota_short"
     in_flight = _program_tasks(db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?",
@@ -2289,12 +2420,22 @@ def schedule_topic_admission(
     cap = settings.program.max_concurrent_admissions
     if cap > 0 and len(in_flight) >= cap:
         return ReviewSchedule(reason="max_concurrent_admissions")
-    pending.sort(key=lambda item: (_proposal_time(item), str(item["topic_id"])))
     snapshot_document = ledger.read()
+    # A line with its own slot limit reviews no more cards than it has free slots
+    # (cards already in a review count against them); a full line's cards wait.
+    line_free = slot_status(snapshot_document, settings.program,
+                            parked_program_projects(paths),
+                            paused_topic_campaigns(db)).line_free_slots(
+        project.research_line)
+    if line_free is not None and line_free - reviewing <= 0:
+        return ReviewSchedule(reason=LINE_SLOTS_FULL_REASON)
+    pending.sort(key=lambda item: (_proposal_time(item), str(item["topic_id"])))
     authors = {str(topic["topic_id"]): card_author(topic, snapshot_document)
                for topic in pending}
     provider = authors[str(pending[0]["topic_id"])][0]
     batch_size = max(1, int(workstream_policy(campaign).get("review_batch_size") or 8))
+    if line_free is not None:
+        batch_size = min(batch_size, line_free - reviewing)
     batch = [
         topic for topic in pending if authors[str(topic["topic_id"])][0] == provider
     ][:batch_size]
@@ -2437,18 +2578,27 @@ def schedule_topic_admission(
                 "target may sit in two templates' queues, which are different topics) and the "
                 "card copies its card_fields (occupancy_search may be newer when re-run); a "
                 "template with `card_rules`: the card follows them and has none of its "
-                "forbidden_conditions; a single-target entry has verdict "
+                "forbidden_conditions; the entry's novelty verdict is one the template's "
+                "novelty_rule admits. Astro single-target entries: verdict "
                 "`unreported` or `batch_only`; "
                 "for `batch_only` the card cites every batch table of the entry in closest prior "
                 "work and plans a parameter-by-parameter comparison with it - parameters in "
                 "automated batch catalogues are not a published solution (owner decision "
-                "2026-11-13) and are no reason to reject; (2) re-run one of its queries yourself: "
-                "a dedicated photometric solution of this target (an individual or small-sample "
-                "light-curve study) is a reason to reject, a batch table is not; (3) the plan "
+                "2026-11-13) and are no reason to reject. Other lines use their own verdicts "
+                "(e.g. `keep`, or `needs_differentiation`, where the card names its increment "
+                "over every screened competitor in closest_prior_work); (2) re-run one of its "
+                "queries yourself: a prior report of the same combination as the template's "
+                "novelty_rule defines it is a reason to reject (astro: a dedicated photometric "
+                "solution of this target - an individual or small-sample light-curve study - is, "
+                "a batch table is not); (3) the plan "
                 "covers the template's minimum_content and the line's minimum_validation; (4) the "
                 "routine venues are the template's and their fee route is verified; (5) cost and "
                 "compute plan match the template. Admit when all pass; otherwise reject or hold "
-                "naming the failed item."
+                "naming the failed item. A line whose `venues.tier_policy` fixes its own tiers "
+                "(e.g. CAS major-category Zone 1 journals as the line's routine targets, Zone 2 "
+                "journals only as a fee-free subscription-route fallback) is judged by that "
+                "policy, not by the default Zones 3-4: its routine venues are the line's targets "
+                "(target_tier routine) and its fallback venues stay the stated fallback."
                 if line_ids else ""
             )
         ),
@@ -2961,15 +3111,19 @@ def materialize_waiting_topics(
         return CandidateSpawn(campaign_ids=(), task_ids=())
     ledger = open_topic_ledger(paths, settings.program)
     parked = parked_program_projects(paths)
+    paused = paused_topic_campaigns(db)
     skipped: set[str] = set()
     while True:
         document = ledger.read()
-        if not slot_status(document, settings.program, parked).can_materialize:
+        status = slot_status(document, settings.program, parked, paused)
+        if not status.can_materialize:
             break
-        # Admitted topics of a paused program project wait until it is active again.
+        # Admitted topics of a paused program project wait until it is active again;
+        # those of a line at its own slot limit wait for that line's slot.
         queue = [topic for topic in waiting_admitted(document, admission_sequence(db))
                  if str(topic["topic_id"]) not in skipped
-                 and str(topic.get("program_project_id") or "") not in parked]
+                 and str(topic.get("program_project_id") or "") not in parked
+                 and status.line_can_materialize(topic.get("research_line"))]
         if not queue:
             break
         topic = queue[0]
@@ -3237,7 +3391,8 @@ def run_program_pipeline(
             str(t["topic_id"]) for t in waiting_admitted(document, admission_sequence(db))
         ]
         info.update(slot_status(
-            document, settings.program, parked_program_projects(paths)).to_dict())
+            document, settings.program, parked_program_projects(paths),
+            paused_topic_campaigns(db)).to_dict())
         info.setdefault("admissions_scheduled", [])
         info.setdefault("admission_decisions", [])
     except (OSError, TopicLedgerError, KeyError, TypeError, ValueError,

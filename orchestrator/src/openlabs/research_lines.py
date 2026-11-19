@@ -124,6 +124,101 @@ def template_summaries(entry: Mapping[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _dig(entry: Mapping[str, Any], *keys: str) -> Any:
+    value: Any = entry
+    for key in keys:
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(key)
+    return value
+
+
+def _first_text(entry: Mapping[str, Any], *paths: tuple[str, ...]) -> str | None:
+    for keys in paths:
+        value = _dig(entry, *keys)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, Mapping):
+            for key in ("path", "entry", "receipt"):
+                if isinstance(value.get(key), str) and value[key].strip():
+                    return value[key].strip()
+    return None
+
+
+def line_resources(entry: Mapping[str, Any] | None) -> dict[str, str]:
+    """The line's own working resources, read from its entry (for the owner brief).
+
+    Keys (each only when the entry declares it): ``standard_entry`` (the shared entry
+    point: ``environment.standard_solver.entry``, ``environment.tools``,
+    ``standard_tools.path``), ``analysis_library``, ``activate``, ``analysis_package``
+    (path; its ``entry`` appended), ``control_receipt`` (``environment.standard_solver.
+    control_receipt``, ``environment.control_receipt``, ``control.receipt``), ``data``
+    (``environment.data``, else ``environment.data_access``), ``sop``,
+    ``compute_placement`` and ``gpu`` (``environment.gpu``: text, or an object with
+    ``usage``/``memory_mib``/``rule``). Every value is a pointer or a short rule written
+    by the line, never a copy of its SOP.
+    """
+
+    if not isinstance(entry, Mapping):
+        return {}
+    result: dict[str, str] = {}
+    found = _first_text(entry, ("environment", "standard_solver", "entry"),
+                        ("environment", "tools"), ("environment", "standard_tools"),
+                        ("standard_tools",))
+    if found:
+        result["standard_entry"] = found
+    found = _first_text(entry, ("environment", "standard_solver", "analysis_library"))
+    if found:
+        result["analysis_library"] = found
+    found = _first_text(entry, ("environment", "activate"))
+    if found:
+        result["activate"] = found
+    package = entry.get("analysis_package")
+    if isinstance(package, Mapping) and isinstance(package.get("path"), str):
+        text = str(package["path"]).strip()
+        if result.get("standard_entry", "").split(" ")[0].rstrip("/") == text.rstrip("/"):
+            result.pop("standard_entry")  # the same tools: name them once
+        if isinstance(package.get("entry"), str) and package["entry"].strip():
+            text += f"; {package['entry'].strip()}"
+        result["analysis_package"] = text
+    found = _first_text(entry, ("environment", "standard_solver", "control_receipt"),
+                        ("environment", "control_receipt"), ("control", "receipt"))
+    if found:
+        result["control_receipt"] = found
+    found = _first_text(entry, ("environment", "data"), ("environment", "data_access"))
+    if found:
+        result["data"] = found
+    found = _first_text(entry, ("environment", "sop"))
+    if found:
+        result["sop"] = found
+    found = _first_text(entry, ("environment", "compute_placement"))
+    if found:
+        result["compute_placement"] = found
+    gpu = _dig(entry, "environment", "gpu")
+    if not line_uses_gpu(entry):
+        return result
+    if isinstance(gpu, str) and gpu.strip():
+        result["gpu"] = gpu.strip()
+    elif isinstance(gpu, Mapping):
+        parts = [str(gpu[key]).strip() for key in ("usage", "rule") if str(
+            gpu.get(key) or "").strip()]
+        if gpu.get("memory_mib"):
+            parts.append(f"declare --gpu-memory-mib {gpu['memory_mib']}")
+        if parts:
+            result["gpu"] = "; ".join(parts)
+    return result
+
+
+def line_uses_gpu(entry: Mapping[str, Any] | None) -> bool:
+    """Whether the line declares GPU work (``environment.gpu`` other than none/0)."""
+
+    gpu = _dig(entry or {}, "environment", "gpu")
+    if isinstance(gpu, Mapping):
+        return gpu.get("required", True) is not False
+    text = str(gpu or "").strip().lower()
+    return bool(text) and text not in {"none", "no", "0", "false"}
+
+
 def queued_templates(document: Mapping[str, Any] | None, line_id: str) -> dict[str, str]:
     """``{template id: candidate_queue path}`` for the line's templates that name a queue."""
 

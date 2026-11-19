@@ -40,7 +40,9 @@ venues and how its novelty is judged. The owner wants these papers; they are the
 proposal of a line, ahead of re-audits.
 
 A template with a `candidate_queue` is enumerated: draw its queue's `candidates` in `rank`
-order (skip entries whose `ledger_occupancy` is blocked), copy each entry's `card_fields` into
+order (skip entries whose `ledger_occupancy` is blocked; a queue without `ledger_occupancy`
+is checked against the entries the task objective lists as already taken, by
+`candidate_queue_entry.entry_id`), copy each entry's `card_fields` into
 the card with every key unchanged (`reopens` and `reopen_basis` included: they reopen a frozen
 topic under the new template version), and write the rest by the template's `card_rules`. Each
 queued template has its own queue and rules; the same target in two templates is two topics.
@@ -172,7 +174,10 @@ Each field is there because the gate needs it to decide:
   {"name": "New Astronomy"}]` (a template's `venues.routine` lists bare names; write each as
   `{"name": ...}`); optional `escalation` (`name`, or `venues: [...]` for alternatives, with the
   `condition` that would justify it). The routine pair is the
-  fallback the campaign keeps.
+  fallback the campaign keeps. A line whose entry sets `venues.tier_policy` uses its own tiers
+  (for example CAS Zone 1 targets as `routine` and Zone 2 subscription-route journals under
+  the card key the line names, such as `fallback_zone2_subscription_no_fee`); follow the line,
+  and copy queue `card_fields.venues` unchanged.
 - `cost_estimate` — `agent_seconds`, `tokens`, `gpu_hours`, `calendar_days`, and `basis`: what
   the estimate rests on (a reusable pipeline, a comparable past campaign, a dry run). The gate
   weighs cost against the tier the result can reach; an expensive topic with an uncertain payoff

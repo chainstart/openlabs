@@ -195,6 +195,11 @@ message = "{action}: {paper_id} v{version}"
 # CPU threads one topic's queued + running jobs may declare at once (owner brief; and
 # openlabs-remote refuses a submission beyond it). 8 = about one ailab; 0 = no limit.
 # campaign_compute_threads = 8
+# Per-line research slots (admitted + active + in-review topics of the line); a full line
+# gets no scout, no admission review and no new campaign; max_active_topics still caps the
+# total. Topics whose campaign is paused on purpose (research_state.json status "paused")
+# hold no slot. Example (three-line trial, 2026-11-19):
+# line_max_active_topics = { "astro-survey-photometry" = 2, "power-market-backtest" = 2, "phm-evaluation-audit" = 1 }
 
 # Per-topic direction-decision choices that keep a topic alive; afterwards only
 # freeze is accepted (an exhausted choice is refused and the topic frozen).

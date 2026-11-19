@@ -43,11 +43,14 @@ read from the exit code and the JSON object the command prints on stdout:
     card_compute_floor:
       ailab_core_hours: 60          # cpus x hours of cost_estimate.compute_plan.ailab
       agent_hours: 6                # cost_estimate.agent_seconds / 3600
+      gpu_hours: 40                 # cost_estimate.gpu_hours of a card that uses the GPU
 
 Without it the lower bound of ``per_paper_cost`` is used when it is a plain number or
 range (``ailab_core_hours``/``cpu_core_hours``: "60-120 ..." -> 60; ``agent_hours``:
-"6-10" -> 6; "< 5" sets no floor). A tighter card is corrected (hours raised, agent
-seconds raised) and the correction is recorded in ``card_check.normalized``, so the
+"6-10" -> 6; ``gpu_hours_lower_bound``/``gpu_hours``: "40-200 ..." -> 40; "< 5" and 0
+set no floor). A tighter card is corrected (hours raised, agent seconds raised, GPU
+hours raised when the card's compute plan names ``container_gpu`` or it already
+declares GPU hours) and the correction is recorded in ``card_check.normalized``, so the
 topic does not freeze at execution for a budget the line already knew was too small.
 """
 
@@ -254,7 +257,10 @@ def _lower_bound(value: Any) -> float | None:
 
 def compute_floor(line_entry: Mapping[str, Any],
                   template_entry: Mapping[str, Any]) -> dict[str, Any]:
-    """``{"core_hours", "agent_seconds", "source"}`` the line asks of a card (may be empty)."""
+    """``{"core_hours", "agent_seconds", "gpu_hours", "source"}`` the line asks of a card.
+
+    Any key may be missing (the result may be empty).
+    """
 
     for source_name, source in (("template", template_entry), ("line", line_entry)):
         explicit = source.get("card_compute_floor")
@@ -262,10 +268,13 @@ def compute_floor(line_entry: Mapping[str, Any],
             floor: dict[str, Any] = {"source": f"{source_name} card_compute_floor"}
             core = _lower_bound(explicit.get("ailab_core_hours", explicit.get("core_hours")))
             agent = _lower_bound(explicit.get("agent_hours"))
+            gpu = _lower_bound(explicit.get("gpu_hours"))
             if core:
                 floor["core_hours"] = core
             if agent:
                 floor["agent_seconds"] = int(agent * 3600)
+            if gpu:
+                floor["gpu_hours"] = gpu
             return floor
     for source_name, source in (("template", template_entry), ("line", line_entry)):
         cost = source.get("per_paper_cost")
@@ -275,10 +284,14 @@ def compute_floor(line_entry: Mapping[str, Any],
         core = _lower_bound(cost.get("ailab_core_hours")) or _lower_bound(
             cost.get("cpu_core_hours"))
         agent = _lower_bound(cost.get("agent_hours"))
+        gpu = _lower_bound(cost.get("gpu_hours_lower_bound")) or _lower_bound(
+            cost.get("gpu_hours"))
         if core:
             floor["core_hours"] = core
         if agent:
             floor["agent_seconds"] = int(agent * 3600)
+        if gpu:
+            floor["gpu_hours"] = gpu
         if len(floor) > 1:
             return floor
     return {}
@@ -311,6 +324,17 @@ def apply_compute_floor(card: Mapping[str, Any],
                 f"cost_estimate.compute_plan.ailab.hours raised from {hours} to "
                 f"{ailab['hours']} ({cpus} CPUs): the {source} floor is {core:g} core-hours"
             )
+    gpu = floor.get("gpu_hours")
+    declared = cost.get("gpu_hours")
+    uses_gpu = (isinstance(locations, list) and "container_gpu" in locations) or (
+        isinstance(declared, (int, float)) and not isinstance(declared, bool) and declared > 0)
+    if gpu and uses_gpu and (
+        declared is None or (isinstance(declared, (int, float))
+                             and not isinstance(declared, bool) and declared < gpu)
+    ):
+        cost["gpu_hours"] = int(gpu) if float(gpu).is_integer() else gpu
+        notes.append(f"cost_estimate.gpu_hours raised from {declared} to {cost['gpu_hours']} "
+                     f"(the {source} floor is {gpu:g} GPU hours)")
     agent = floor.get("agent_seconds")
     seconds = cost.get("agent_seconds")
     if agent and isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and (

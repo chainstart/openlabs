@@ -255,6 +255,11 @@ class ProgramSettings:
     # Brief limit per topic (owner seats): CPU threads its queued + running compute jobs
     # may declare at once; openlabs-remote refuses a submission beyond it (0 = off).
     campaign_compute_threads: int = 8
+    # Per-line research slots (2026-11-19, three-line comparison): {line id: limit}. A
+    # line at its limit (admitted + active + in-review topics of the line) gets no scout,
+    # no admission review and no new campaign; ``max_active_topics`` still caps the
+    # total. Lines not listed are bounded by the global limit only.
+    line_max_active_topics: dict[str, int] = field(default_factory=dict)
 
 
 DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_gpt")
@@ -1229,8 +1234,28 @@ def load_program_settings(payload: Any) -> ProgramSettings:
             program.get("compute_backlog_max_queued_jobs"), 0
         ),
         campaign_compute_threads=_nonnegative_int(program.get("campaign_compute_threads"), 8),
+        line_max_active_topics=_line_limits(program.get("line_max_active_topics")),
         **_git_settings(program.get("git")),
     )
+
+
+def _line_limits(value: Any) -> dict[str, int]:
+    """``[program].line_max_active_topics``: ``{line id: non-negative int}``."""
+
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("[program].line_max_active_topics must be a table of line = limit")
+    limits: dict[str, int] = {}
+    for key, raw in value.items():
+        line = str(key or "").strip()
+        if not line:
+            raise ValueError("[program].line_max_active_topics keys must be line ids")
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+            raise ValueError(
+                f"[program].line_max_active_topics.{line} must be a non-negative integer")
+        limits[line] = raw
+    return limits
 
 
 def _owner_mode(value: Any) -> str | tuple[str, ...]:

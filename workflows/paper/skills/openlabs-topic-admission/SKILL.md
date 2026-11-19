@@ -57,7 +57,11 @@ several adjacent systems sharing one pipeline) is admitted at the routine tier w
    (neural-network or pipeline catalogues; queue verdict `batch_only`) are not a report (owner
    decision 2026-11-13) and no reason to reject, provided the card cites each table in closest
    prior work and plans a parameter-by-parameter comparison with it; a dedicated
-   (individual or small-sample) light-curve solution of the target is a report;
+   (individual or small-sample) light-curve solution of the target is a report. Other lines
+   define a report in their template's `novelty_rule` (for example the same market x rule x
+   question in the last three years; the same audit of the same practice) and their queues use
+   their own verdicts (`keep`, `needs_differentiation`: the card names its increment over every
+   screened competitor);
 2. **it meets the template's minimum content and hard gates** (for example phonon and AIMD
    stability, hybrid-functional gaps or an explicit statement of the PBE limitation, NEB barriers,
    a reproduced published solution) at the template's stated cost;
@@ -179,6 +183,13 @@ validation against the strongest baseline; a positive result would change practi
 understanding, not just a number; and the cost estimate leaves room for the extra work
 (another cohort, mechanism analysis, ablations) that such venues expect. Explain the choice in
 `tier_rationale`.
+
+A research line may fix its own tiers in `venues.tier_policy` (registry/research-lines.yaml;
+2026-11-19: `power-market-backtest` and `phm-evaluation-audit` target CAS 2025 major-category
+Zone 1 journals as their routine venues, with Zone 2 hybrids only as a fee-free
+subscription-route fallback). For such a line, judge the card by the line's policy: its routine
+venues are the line's targets and `target_tier: routine` means them; the escalation conditions
+above do not apply to reaching them, and the fallback venues stay the stated fallback.
 
 ## Verdicts
 

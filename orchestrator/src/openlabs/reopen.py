@@ -61,6 +61,7 @@ from .program import (
     find_topic,
     open_topic_ledger,
     parked_program_projects,
+    paused_topic_campaigns,
     slot_status,
     topics_by_status,
     transition_topic,
@@ -393,7 +394,9 @@ def reopen_ready_topics(
             outcomes.append({**outcome, "outcome": "budget_exhausted"})
             continue
         current = ledger.read()
-        if not slot_status(current, settings.program, parked).can_materialize:
+        slots = slot_status(current, settings.program, parked, paused_topic_campaigns(db))
+        if not slots.can_materialize or not slots.line_can_materialize(
+                topic.get("research_line")):
             outcomes.append({**outcome, "outcome": "waiting_for_slot"})
             continue
         evidence = [item["evidence"] for item in results if item.get("evidence")]

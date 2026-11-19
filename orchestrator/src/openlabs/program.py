@@ -422,6 +422,44 @@ class SlotStatus:
     status_counts: dict[str, int] = field(default_factory=dict)
     # Admitted/active/in-review topics of paused program projects (not counted above).
     parked: int = 0
+    # Per research line (``[program].line_max_active_topics``): the configured limits,
+    # the line's slot-holding topics (admitted + active + in review) and the ones in
+    # research (active + in review), parked projects excluded as above.
+    line_limits: dict[str, int] = field(default_factory=dict)
+    line_occupied: dict[str, int] = field(default_factory=dict)
+    line_researching: dict[str, int] = field(default_factory=dict)
+    # Slot-holding topics whose own campaign is paused (not counted above), and admitted
+    # topics that wait only for their own line's slot (not counted in ``admitted``).
+    paused: int = 0
+    line_waiting: int = 0
+
+    def line_limit(self, line: Any) -> int | None:
+        key = str(line or "").strip()
+        return self.line_limits.get(key) if key else None
+
+    def line_free_slots(self, line: Any) -> int | None:
+        """Free slots of a limited line (None: the line has no own limit)."""
+
+        limit = self.line_limit(line)
+        if limit is None:
+            return None
+        return max(0, limit - self.line_occupied.get(str(line).strip(), 0))
+
+    def line_full(self, line: Any) -> bool:
+        """A limited line whose slots are all held: no scout, no admission review."""
+
+        free = self.line_free_slots(line)
+        return free is not None and free <= 0
+
+    def line_can_materialize(self, line: Any) -> bool:
+        """Whether an admitted topic of ``line`` may start its campaign (line limit only)."""
+
+        limit = self.line_limit(line)
+        return limit is None or self.line_researching.get(str(line).strip(), 0) < limit
+
+    @property
+    def full_lines(self) -> frozenset[str]:
+        return frozenset(line for line in self.line_limits if self.line_full(line))
 
     @property
     def occupied(self) -> int:
@@ -469,6 +507,14 @@ class SlotStatus:
             "research_free_slots": self.research_free_slots,
             "status_counts": dict(self.status_counts),
             "parked_topics": self.parked,
+            "paused_topics": self.paused,
+            "line_waiting_admitted": self.line_waiting,
+            **({"lines": {
+                line: {"limit": limit, "occupied": self.line_occupied.get(line, 0),
+                       "researching": self.line_researching.get(line, 0),
+                       "free_slots": self.line_free_slots(line)}
+                for line, limit in sorted(self.line_limits.items())
+            }} if self.line_limits else {}),
         }
 
 
@@ -479,33 +525,96 @@ def slot_status(
     ledger: Mapping[str, Any],
     settings: ProgramSettings,
     parked_projects: Iterable[str] = (),
+    paused_campaigns: Iterable[str] = (),
 ) -> SlotStatus:
     """Count research slots from a ledger document (pure; no I/O).
 
     Topics of ``parked_projects`` (program projects an operator paused, see
     ``parked_program_projects``) keep their ledger status but take no slot while
-    paused, so the projects still running can admit and materialize topics.
+    paused, so the projects still running can admit and materialize topics. The same
+    holds for topics whose own campaign is paused (``paused_campaigns``, see
+    ``paused_topic_campaigns``: research_state.json status ``paused``), 2026-11-19.
+
+    With ``[program].line_max_active_topics``, each listed line also counts its own
+    slot-holding topics. An admitted topic waiting only for its own line's slot (the
+    line already has as many topics in research as its limit) holds no global slot:
+    it cannot start before its line frees one, so it must not block the other lines.
     """
 
     parked_ids = frozenset(parked_projects)
+    paused_ids = frozenset(paused_campaigns)
     counts = {status: 0 for status in TOPIC_STATUSES}
     parked = 0
+    paused = 0
+    limits = dict(getattr(settings, "line_max_active_topics", None) or {})
+    line_occupied = {line: 0 for line in limits}
+    line_researching = {line: 0 for line in limits}
+    line_admitted = {line: 0 for line in limits}
     for topic in ledger.get("topics") or []:
         status = str(topic.get("status"))
         if status in SLOT_STATUSES and str(topic.get("program_project_id") or "") in parked_ids:
             parked += 1
             continue
+        if status in SLOT_STATUSES and str(topic.get("campaign_id") or "") in paused_ids:
+            paused += 1
+            continue
         counts[status] = counts.get(status, 0) + 1
+        line = str(topic.get("research_line") or "").strip()
+        if line in limits and status in SLOT_STATUSES:
+            line_occupied[line] += 1
+            if status == "admitted":
+                line_admitted[line] += 1
+            else:
+                line_researching[line] += 1
+    line_waiting = sum(line_admitted[line] for line, limit in limits.items()
+                       if line_researching[line] >= limit)
     return SlotStatus(
         max_active_topics=settings.max_active_topics,
         max_ready_unsubmitted=settings.max_ready_unsubmitted,
-        admitted=counts["admitted"],
+        admitted=counts["admitted"] - line_waiting,
         active=counts["active"],
         in_review=counts["in_review"],
         ready_unsubmitted=counts["ready_queue"],
         status_counts={key: value for key, value in counts.items() if value},
         parked=parked,
+        line_limits=limits,
+        line_occupied=line_occupied,
+        line_researching=line_researching,
+        paused=paused,
+        line_waiting=line_waiting,
     )
+
+
+def paused_topic_campaigns(db: Any) -> frozenset[str]:
+    """Topic campaigns paused on purpose: campaign ``production_paused`` and its
+    research_state.json ``status`` ``paused`` (an operator or owner hold).
+
+    Such a topic keeps its ledger status (``active``) and its pre-registration, but holds
+    no research slot until its state is set back to ``active`` (2026-11-19: the astro line
+    paused four topics to make room for the three-line trial). A campaign paused for any
+    other reason (an invalid binding, a protocol hook) still holds its slot.
+    """
+
+    try:
+        with db.connect() as connection:
+            rows = connection.execute(
+                "SELECT campaign_id, workstream_state_path FROM campaigns "
+                "WHERE status='production_paused'"
+            ).fetchall()
+    except Exception:  # noqa: BLE001 - advisory: an unreadable view never frees a slot
+        return frozenset()
+    paused: set[str] = set()
+    for row in rows:
+        path = str(row["workstream_state_path"] or "").strip()
+        if not path:
+            continue
+        try:
+            state = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(state, Mapping) and str(state.get("status") or "") == "paused":
+            paused.add(str(row["campaign_id"]))
+    return frozenset(paused)
 
 
 def parked_program_projects(paths: WorkspacePaths) -> frozenset[str]:
@@ -1433,7 +1542,8 @@ def run_program_controller(
         document = ledger.read()
         frozen, cancelled = reconcile_frozen_campaigns(db, document)
         report.cancelled.extend(cancelled)
-        status = slot_status(document, settings, parked_program_projects(paths))
+        status = slot_status(document, settings, parked_program_projects(paths),
+                             paused_topic_campaigns(db))
         report.program.update({
             "enabled": True,
             "ledger_path": str(ledger.path),

@@ -622,6 +622,43 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   先看 dry-run，再加 `--write`。它只新增缺少的产线项目，并在实例 TOML 的 `[program]` 里写入
   `research_lines`（其余键与注释不动，旧文件留 `.bak`），不改题目台账。回滚：恢复 `.bak`。
 
+### 多线并行：按线在研上限、暂停课题、GPU 本地队列（2026-11-19）
+
+起因：用户 2026-11-19 要求天文、电力市场（`power-market-backtest`，quant 实验室承载）、故障诊断评测审计
+（`phm-evaluation-audit`，ai 实验室承载）三条线同时试做，比较哪条线更容易出成果；合计在研不超过 5 个。
+
+- **按线在研上限** `[program].line_max_active_topics = { "<线>" = N, ... }`（默认空表，不按线限）。每条列出的线单独数
+  自己的 admitted + active + in_review 课题：满额（或空位已被等待立项的卡片填满）的线不出题、不送立项评审，立项评审一批
+  最多送该线剩余空位张卡；该线已立项的课题在研数达到上限时不建 campaign（保持 admitted 排队，不丢弃）。全局
+  `max_active_topics` 照旧生效；**只因本线满额而等待的 admitted 课题不占全局名额**，否则它会把别的线也堵住。
+  出题包里有 `line_free_slots`，`max_cards` 不超过本线剩余空位。tick 报告 `program.lines.<线>` 给
+  `{limit, occupied, researching, free_slots}`，出题被拦的原因为 `line_slots_full`。
+- **暂停的课题不占名额**（全局与按线都一样）：campaign 为 `production_paused` 且其 `research_state.json` 的
+  `status` 为 `paused`（人工或负责人有意暂停）的课题，台账里仍是 active、预注册不变，但不计入任何上限
+  （`program.paused_topics`）；把状态改回 `active` 后重新计数。因绑定错误、协议钩子等其他原因暂停的 campaign 照旧占名额。
+  2026-11-19 修正前，天文线 4 个暂停课题仍占名额，全局占用 12 个、上限 7，任何线都无法立项。
+- **线条目的资源字段**（负责人简报“Tools”段只读这些，不写死任何一条线的文字；`research_lines.line_resources`）：
+  `environment.standard_solver.entry` / `environment.tools` / `standard_tools.path`（标准入口；与分析包同路径时只列一次）、
+  `environment.activate`、`analysis_package.path`+`entry`、对照回执（`environment.standard_solver.control_receipt`、
+  `environment.control_receipt` 或 `control.receipt`）、`environment.data`（无则 `data_access`）、`environment.sop`、
+  `environment.gpu`（文字，或 `{usage, memory_mib}`；`none` 表示不用 GPU）。声明了 GPU 的线，简报“Resources”段多一条
+  GPU 规则（一块卡、一次一个作业、长作业走本地队列并以 awaiting_remote 结束坐席）。
+- **线自定期刊分层** `venues.tier_policy`：电力线与 PHM 线以中科院 2025 大类 1 区刊为常规目标刊，大类 2 区混合刊只作订阅路径、
+  不付费的兜底刊；立项评审按线的分层判断，不套默认的 3–4 区（`settings.yaml#journal_target_policy` 对其他线不变）。
+- **卡片 GPU 时下限**：`card_compute_floor.gpu_hours`（或模板 `per_paper_cost.gpu_hours_lower_bound` / `gpu_hours` 的下界）。
+  计算计划含 `container_gpu` 或已申报 GPU 时的卡片，`cost_estimate.gpu_hours` 低于下限时上调并记入 `card_check.normalized`。
+- **GPU 作业进本地队列**：`bin/openlabs-local submit --gpu-memory-mib N [--gpu-device 0] --source DIR --cpus N --memory-mib M
+  --timeout-seconds S -- CMD`。作业在 `openlabs-resource-guard --task-type gpu` 内按该显存预约运行，队列同时只跑一个 GPU 作业；
+  GPU 被队列外的作业占着时守护进程立即拒绝（退出码 75），作业退回排队（`gpu_requeues` 计数）而不是失败。互斥本身由
+  守护进程的主机级 GPU 锁保证（`RESOURCE_GUARD.md`：每个 GPU 一个声明作业，第二个预约立即失败），队列只负责排队与续等。
+  排队中的 GPU 作业不计入 CPU 计算积压闸门（它们等的是 GPU，不是 CPU），报告里单列 `local.queued_gpu`。
+- **没有 `ledger_occupancy` 的队列**（电力、PHM 线的队列由各自脚本生成，只有天文线的枚举器写占用）：出题说明列出
+  台账里已被课题占用的条目（按卡片 `candidate_queue_entry.entry_id`），可抽取数也扣除它们；格式错误或机械预检不过而被
+  拒的卡片对应的条目可以再抽。同一个队列文件被多个模板共用时，每个模板只数 `card_fields.paper_template` 是自己的条目，
+  从共用队列抽到卡片不算其他模板的空抽。
+- 新线的计划项目用 `python -m openlabs program init-instance --instance-dir <dir>`（先 dry-run，再 `--write`）补建：
+  它只新建缺少的项目文件，已有文件一律不覆盖；不要同时加 `--set-research-lines`（那会把 `research_lines` 改成全部八条线）。
+
 ### 发布流水线（评审 ready → 交付）
 
 每个 tick 对每篇 ready 论文先运行 `paper-writing program release-status`（只读），再走下一步；

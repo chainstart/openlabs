@@ -1872,29 +1872,41 @@ def _line_tools(paths: WorkspacePaths, settings: FactorySettings, line: str | No
 
     if not line:
         return []
-    from .research_lines import line_entry, read_lines_or_none
+    from .research_lines import line_entry, line_resources, read_lines_or_none
 
     entry = line_entry(read_lines_or_none(paths.data / settings.program.research_lines_path),
                        line) or {}
-    environment = entry.get("environment") if isinstance(entry.get("environment"), Mapping) else {}
+    resources = line_resources(entry)
     items: list[str] = []
-    solver = environment.get("standard_solver")
-    if isinstance(solver, Mapping):
-        for key in ("entry", "analysis_library"):
-            if isinstance(solver.get(key), str):
-                items.append(f"{key.replace('_', ' ')}: {_short(solver[key], 100)}")
-    for key in ("sop",):
-        if isinstance(environment.get(key), str):
-            items.append(f"{key}: {_short(environment[key], 140)}")
-    package = entry.get("analysis_package")
-    if isinstance(package, Mapping) and isinstance(package.get("path"), str):
-        items.append(f"analysis package (use it): {_short(package['path'], 120)}"
-                     + (f"; {_short(package['entry'], 80)}" if isinstance(
-                         package.get("entry"), str) else ""))
+    for key, label, limit in _LINE_RESOURCE_LABELS:
+        if key in resources:
+            items.append(f"{label}: {_short(resources[key], limit)}")
     if entry.get("review_checklist"):
         items.append("independent recompute checklist: `review_checklist` (run it on your own "
                      "results before ready_for_review)")
     return items
+
+
+# (line_resources key, brief label, character limit): the line's own pointers, in order.
+_LINE_RESOURCE_LABELS: tuple[tuple[str, str, int], ...] = (
+    ("standard_entry", "standard entry (shared; do not fork)", 140),
+    ("analysis_library", "analysis library", 120),
+    ("activate", "environment", 140),
+    ("analysis_package", "analysis package (use it)", 170),
+    ("control_receipt", "control receipt (cite it, never rerun)", 140),
+    ("data", "data", 130),
+    ("sop", "sop", 140),
+    ("gpu", "GPU (this line)", 170),
+)
+
+
+def _line_gpu(paths: WorkspacePaths, settings: FactorySettings, line: str | None) -> bool:
+    if not line:
+        return False
+    from .research_lines import line_entry, line_uses_gpu, read_lines_or_none
+
+    return line_uses_gpu(line_entry(
+        read_lines_or_none(paths.data / settings.program.research_lines_path), line))
 
 
 def brief_paths(task: Mapping[str, Any]) -> dict[str, str]:
@@ -1932,6 +1944,17 @@ def _owner_ceiling_text(settings: FactorySettings) -> str:
 # Measured on ailab (2026-11-14/17, astro standard solves): 4 physical cores, 8 threads;
 # two 4-process jobs side by side each run about 1.6x slower than alone.
 AILAB_HOST_NOTE = "4 cores; 2 jobs x 4 proc: each ~1.6x slower"
+
+
+# Brief lines for a line that declares GPU work (``environment.gpu``): the host has one GPU,
+# shared by every line and agent; the guard's lock admits one reservation at a time.
+GPU_BRIEF_LINES = (
+    "  - GPU: one device for every line and agent, one job at a time (a second reservation "
+    "fails at once: \"GPU already reserved\", no retry loop). Runs over a few minutes: "
+    "`CODE/bin/openlabs-local submit --gpu-memory-mib N --source DIR --cpus N --memory-mib M "
+    "--timeout-seconds S -- CMD` (queued, one GPU job at a time), then end the seat "
+    "awaiting_remote with its job id.",
+)
 
 
 def compute_brief_lines(settings: FactorySettings, campaign_id: str) -> list[str]:
@@ -2057,6 +2080,7 @@ def render_brief(
         "approval: `CODE/bin/openlabs-resource-guard "
         "--task-type gpu --gpu-memory-mib N --gpu-device 0 -- CMD`. Do not wait in the session "
         "for long jobs: end the seat awaiting_remote; it resumes when they finish.",
+        *(GPU_BRIEF_LINES if _line_gpu(paths, settings, line) else ()),
         *compute_brief_lines(settings, str(campaign.get("campaign_id") or "")),
         "- Models: use sub-agents or another model whenever it is worth it.",
         models,

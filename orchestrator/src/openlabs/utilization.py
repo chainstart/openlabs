@@ -682,11 +682,17 @@ def utilization_report(
     program: dict[str, Any] = {}
     if settings.program.enabled:
         try:
-            from .program import open_topic_ledger, parked_program_projects, slot_status
+            from .program import (
+                open_topic_ledger,
+                parked_program_projects,
+                paused_topic_campaigns,
+                slot_status,
+            )
 
             document = open_topic_ledger(paths, settings.program).read()
             program = slot_status(
-                document, settings.program, parked_program_projects(paths)).to_dict()
+                document, settings.program, parked_program_projects(paths),
+                paused_topic_campaigns(db)).to_dict()
         except Exception:  # noqa: BLE001 - the ledger view is advisory.
             program = {}
     admission = _admission_pass_rate(db)
@@ -813,8 +819,12 @@ def compute_backlog(
     ailab_capacity = int(ailab.get("capacity_cpu_threads") or 0) if remote_on else 0
     local_capacity = int(local_settings.get("max_cpus") or 0)
     capacity = ailab_capacity + local_capacity
-    queued_threads = int(ailab.get("queued_cpus") or 0) + int(local.get("queued_cpus") or 0)
-    queued_jobs = int(ailab.get("queued") or 0) + int(local.get("queued") or 0)
+    # Queued GPU jobs of the local queue wait for the one GPU (they run one at a time),
+    # not for CPU capacity: they are reported, not counted against it (2026-11-19).
+    gpu_queued = int(local.get("queued_gpu") or 0)
+    queued_threads = int(ailab.get("queued_cpus") or 0) + int(local.get("queued_cpus") or 0) - int(
+        local.get("queued_gpu_cpus") or 0)
+    queued_jobs = int(ailab.get("queued") or 0) + int(local.get("queued") or 0) - gpu_queued
     running_threads = int(ailab.get("running_cpus") or 0) + int(local.get("running_cpus") or 0)
     threshold = program.compute_backlog_ratio * capacity
     reasons = []
@@ -839,5 +849,6 @@ def compute_backlog(
         "ailab": {key: ailab.get(key) for key in ("running", "queued", "running_cpus",
                                                   "queued_cpus")} if remote_on else None,
         "local": {key: local.get(key) for key in ("running", "queued", "running_cpus",
-                                                  "queued_cpus")},
+                                                  "queued_cpus", "running_gpu",
+                                                  "queued_gpu")},
     }

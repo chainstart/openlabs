@@ -61,6 +61,11 @@ RESEARCH_LINES: tuple[tuple[str, str], ...] = (
     ("microbial-genomics-gem", "biology"),
     ("ml-evaluation-protocols", "ai"),
     ("molecular-property-screening", "materials"),
+    # 2026-11-19: energy-market backtests run in the quant lab (pre-registered trials,
+    # multiple testing, backtest audit); PHM evaluation audits in the ai lab (as
+    # ml-evaluation-protocols). Both lines bring their own environments.
+    ("power-market-backtest", "quant"),
+    ("phm-evaluation-audit", "ai"),
 )
 
 RUNNERS: dict[str, dict[str, str]] = {
