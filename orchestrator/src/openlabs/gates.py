@@ -133,6 +133,35 @@ def fill_control_plane_fields(
 # to the wrong place and is still refused, as is a missing file or a protected path.
 
 EXTERNAL_REFERENCE_SCHEMA = "openlabs.external_reference.v1"
+
+# Live run-state documents (2026-11-20). The topic ledger, the reusable-asset index and the
+# team rejection ledger are rewritten by scheduler ticks; a line's queue.json is rebuilt by
+# its enumerator; last-tick.json is replaced every tick. An agent that cites one as context
+# cites a moving document, so a byte-for-byte hash taken minutes earlier cannot be expected
+# to hold (topic-scout:716673eb was refused for "topic-ledger SHA-256 mismatch" and
+# "topic-queue ... was written during this attempt" after the queue was rebuilt mid-run).
+# Such a citation is bound by existence: the control plane records the hash the agent
+# declared and the hash it observed, and the immutable archive keeps a copy of the bytes
+# as they were at ingest. The packet a dispatch hands the agent (scout and direction
+# packets) already carries its own frozen ledger snapshot. Every other artifact keeps the
+# strict hash rule.
+VOLATILE_STATE_SCHEMA = "openlabs.volatile_state_reference.v1"
+VOLATILE_REGISTRY_NAMES = frozenset({
+    "topic-ledger.json", "reusable-assets.json", "journal-rejections.json",
+})
+
+
+def volatile_state_file(path: Path) -> bool:
+    """Whether ``path`` names a run-state document rewritten while agents run."""
+
+    name = path.name
+    if name in VOLATILE_REGISTRY_NAMES:
+        return "registry" in path.parts[:-1]
+    if name == "queue.json":
+        return path.parent.name == "queue"
+    return name == "last-tick.json"
+
+
 # Protected locations: never accepted as evidence, whatever their age.
 PROTECTED_REFERENCE_ROOTS = (
     "/workspace/secret-key",
@@ -250,8 +279,47 @@ def bind_external_references(
             rewritten.append(artifact)
             continue
         item = {k: v for k, v in artifact.items()
-                if k not in {"external_reference", "external_reference_refused"}}
+                if k not in {"external_reference", "external_reference_refused",
+                             "volatile_state"}}
         path = _local_path(item.get("uri"))
+        if (
+            path is not None
+            and volatile_state_file(path)
+            and not protected_reference(path)
+            and path.is_file()
+        ):
+            inside = _inside_any(path, roots)
+            digest = sha256_file(path)
+            declared = str(item.get("sha256") or "")
+            stat = path.stat()
+            marker: dict[str, Any] = {
+                "schema_version": VOLATILE_STATE_SCHEMA,
+                "path": str(path),
+                "bytes": stat.st_size,
+                "sha256": digest,
+                "mtime": stat.st_mtime,
+                "basis": "volatile_runtime_state",
+            }
+            if declared != digest:
+                marker["declared_sha256"] = declared or None
+            if started is not None and stat.st_mtime >= started:
+                marker["modified_during_attempt"] = True
+            item["sha256"] = digest
+            item["volatile_state"] = marker
+            if not inside:
+                # Outside the roots it is also an external reference, so the immutable
+                # archive snapshots it like any other cited input.
+                item["external_reference"] = {
+                    "schema_version": EXTERNAL_REFERENCE_SCHEMA,
+                    **{key: marker[key] for key in ("path", "bytes", "sha256", "mtime")},
+                    "basis": "volatile_runtime_state",
+                    **({"declared_sha256": marker["declared_sha256"]}
+                       if "declared_sha256" in marker else {}),
+                }
+            records.append({"artifact_id": item.get("artifact_id"), "inside_roots": inside,
+                            **{k: v for k, v in marker.items() if k != "schema_version"}})
+            rewritten.append(item)
+            continue
         if path is None or _inside_any(path, roots):
             rewritten.append(item)
             continue
@@ -299,6 +367,26 @@ def _verified_external_reference(artifact: Mapping[str, Any], path: Path) -> boo
     )
 
 
+def volatile_state_marker(artifact: Mapping[str, Any], path: Path) -> Mapping[str, Any] | None:
+    """The control plane's volatile-state binding of ``artifact`` at ``path``, if valid.
+
+    Only a run-state document (``volatile_state_file``) at the bound path qualifies, so a
+    forged mark on any other artifact changes nothing.
+    """
+
+    marker = artifact.get("volatile_state")
+    if (
+        isinstance(marker, Mapping)
+        and marker.get("schema_version") == VOLATILE_STATE_SCHEMA
+        and str(marker.get("path") or "") == str(path)
+        and volatile_state_file(path)
+        and not protected_reference(path)
+        and path.is_file()
+    ):
+        return marker
+    return None
+
+
 def evaluate_result_bundle(
     payload: Mapping[str, Any],
     *,
@@ -326,6 +414,8 @@ def evaluate_result_bundle(
             if not any(path == root or path.is_relative_to(root) for root in roots):
                 if _verified_external_reference(artifact, path):
                     pass  # a cited input, bound by the control plane
+                elif volatile_state_marker(artifact, path) is not None:
+                    pass  # live run state: bound by existence (VOLATILE_STATE_SCHEMA)
                 else:
                     refused = artifact.get("external_reference_refused")
                     if isinstance(refused, str) and refused:
@@ -339,6 +429,8 @@ def evaluate_result_bundle(
             elif not path.is_file():
                 blockers.append(f"artifact {artifact_id} does not exist")
                 failure_classes.add("artifact_binding")
+            elif volatile_state_marker(artifact, path) is not None:
+                pass  # live run state: bound by existence, snapshotted by the archive
             elif artifact.get("sha256") and sha256_file(path) != artifact.get("sha256"):
                 blockers.append(f"artifact {artifact_id} SHA-256 mismatch")
                 failure_classes.add("artifact_binding")

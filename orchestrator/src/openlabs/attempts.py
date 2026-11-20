@@ -32,6 +32,7 @@ from urllib.parse import unquote, urlparse
 
 from .config import WorkspacePaths
 from .contracts import atomic_write_json, executable_artifact, sha256_file
+from .gates import volatile_state_marker
 from .reproduction import materialize_reproduction
 
 ATTEMPT_SCHEMA = "openlabs.attempt_workspace.v1"
@@ -202,6 +203,20 @@ def _copy_file(source: Path, target: Path) -> None:
     except Exception:
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+def _volatile_snapshot(archive: Path, source: Path) -> Path:
+    """A private copy of a live run-state document, taken once (gates.VOLATILE_STATE_SCHEMA)."""
+
+    archive.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".volatile-", dir=archive)
+    os.close(descriptor)
+    try:
+        shutil.copyfile(source, temporary)
+    except Exception:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+    return Path(temporary)
 
 
 def _link_or_copy_file(source: Path, target: Path) -> None:
@@ -1119,7 +1134,19 @@ def freeze_result_bundle(
         item = dict(artifact)
         source = _artifact_path(item.get("uri"))
         digest = str(item.get("sha256") or "")
-        if not source.is_file() or sha256_file(source) != digest:
+        volatile = volatile_state_marker(item, source)
+        snapshot: Path | None = None
+        if volatile is not None:
+            # Live run state may have been rewritten since it was bound: archive the
+            # bytes as they are now, hashed from the copy itself.
+            snapshot = _volatile_snapshot(archive, source)
+            digest = sha256_file(snapshot)
+            volatile = {**volatile, "sha256": digest, "archived_at": _utc_now()}
+            item["volatile_state"] = volatile
+            item["sha256"] = digest
+            if isinstance(item.get("external_reference"), Mapping):
+                item["external_reference"] = {**item["external_reference"], "sha256": digest}
+        elif not source.is_file() or sha256_file(source) != digest:
             raise AttemptWorkspaceError(
                 f"Artifact changed before immutable snapshot: {item.get('artifact_id')}"
             )
@@ -1127,7 +1154,7 @@ def freeze_result_bundle(
         if isinstance(reference, Mapping):
             reference = dict(reference)
             reference["source_uri"] = source.as_uri()
-            if source.stat().st_size > EXTERNAL_SNAPSHOT_MAX_BYTES:
+            if snapshot is None and source.stat().st_size > EXTERNAL_SNAPSHOT_MAX_BYTES:
                 # A large cited input stays where it is, bound by path, size and hash.
                 reference["snapshot"] = False
                 item["external_reference"] = reference
@@ -1135,7 +1162,11 @@ def freeze_result_bundle(
                 continue
             reference["snapshot"] = True
             item["external_reference"] = reference
-        content_object = _content_object(paths, source, digest)
+        if snapshot is not None:
+            content_object = _content_object(paths, snapshot, digest)
+            snapshot.unlink(missing_ok=True)
+        else:
+            content_object = _content_object(paths, source, digest)
         suffix = source.suffix[:24]
         target = archive / "artifacts" / f"{index:03d}-{digest}{suffix}"
         if target.is_file():
@@ -1598,6 +1629,8 @@ def publish_staged_artifacts(
             continue
         if any(_inside(source, root) for root in immutable_roots):
             continue
+        if any(volatile_state_marker(item, source) is not None for item in declared[source]):
+            continue  # cited live run state; the archive holds the copy taken at ingest
         if started is not None and source.is_file() and source.stat().st_mtime < started:
             # Cited, not produced: a file unchanged since before the attempt began
             # (the task's own input packet, an earlier attempt's evidence). The

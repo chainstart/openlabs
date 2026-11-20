@@ -130,6 +130,8 @@ def result_products(payload: Mapping[str, Any] | None) -> set[str]:
     for item in payload.get("artifacts") or []:
         if not isinstance(item, Mapping) or item.get("external_reference"):
             continue  # a cited input from outside the roots is not a product
+        if item.get("volatile_state"):
+            continue  # nor is cited live run state, whose hash changes every tick
         kind = str(item.get("kind") or "").lower()
         digest = str(item.get("sha256") or "")
         if digest and not any(word in kind for word in SOURCE_KINDS):

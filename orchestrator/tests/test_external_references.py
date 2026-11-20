@@ -72,7 +72,10 @@ def _setup(tmp_path: Path):
     _db, task = _leased_task(paths)
     workspace = prepare_attempt_workspace(paths, task, {})
     attempt_id = str(task["current_attempt_id"])
-    line_queue = tmp_path / "build" / "lines" / "astro-survey-photometry" / "queue" / "queue.json"
+    # A stable line input. (queue.json itself is live run state since 2026-11-20 and is
+    # bound by existence: test_volatile_state_evidence.py.)
+    line_queue = (tmp_path / "build" / "lines" / "astro-survey-photometry" / "queue"
+                  / "candidates.json")
     line_queue.parent.mkdir(parents=True)
     line_queue.write_text(json.dumps({"candidates": []}), encoding="utf-8")
     _age(line_queue, HOUR)  # written by the line's enumerator long before the attempt
