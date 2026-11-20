@@ -197,7 +197,27 @@ def test_large_generated_zip_uses_artifact_binding_but_contains_full_payload(bou
 
 def test_small_archive_keeps_original_git_path_contract(bound):
     root, cache, _, _ = bound
+    (root / ".gitignore").write_text("*.npz\n")  # the ZIP itself is not ignored
+    commit(root, ".gitignore")
     record = {"paper_id": "20260906-physics-test-artifact-support", "version": "1.0.0",
               "title": "Test", "support": {"publication": {"license": "cc-by-4.0"}}}
     package = support.build_support_archive(record, [cache], repo_root=root, origin_commit=support.git_head(root))
     assert package["artifact_manifest"] is None
+
+
+def test_small_ignored_archive_is_bound_like_a_large_one(bound):
+    """A ZIP under the Git payload limit that Git ignores can only be frozen by a binding."""
+    root, cache, source_manifest, _ = bound
+    commit(root, source_manifest)
+    record = {"paper_id": "20260906-physics-test-artifact-support", "version": "1.0.0",
+              "title": "Test", "support": {"publication": {"license": "cc-by-4.0"}}}
+    package = support.build_support_archive(record, [cache], repo_root=root, origin_commit=support.git_head(root))
+    assert package["archive_size"] <= support.GIT_PAYLOAD_LIMIT_BYTES
+    assert package["artifact_manifest"] == package["archive"].with_suffix(".artifacts.json")
+    entry = json.loads(package["artifact_manifest"].read_text())["files"][0]
+    assert entry["sha256"] == package["archive_sha256"]
+    with pytest.raises(support.SupportPackageError):
+        support.validate_git_frozen_paths(root, [package["archive"]])
+    commit(root, package["artifact_manifest"], package["checksum"])
+    support.validate_git_frozen_paths(root, [cache, package["archive"], package["checksum"]],
+                                     artifact_manifests=[source_manifest, package["artifact_manifest"]])

@@ -1075,12 +1075,18 @@ def test_legacy_cli_cannot_bypass_production_release_gate(
     assert "Direct production publish is disabled" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("artifact_backed_package", [False, True])
+@pytest.mark.parametrize("package_mode", ["git", "large", "ignored_small"])
 def test_prepare_and_publish_release_bind_gate_git_and_remote_files(
     tmp_path: Path,
     monkeypatch: Any,
-    artifact_backed_package: bool,
+    package_mode: str,
 ) -> None:
+    # "large": the ZIP exceeds the Git payload limit; "ignored_small": a ZIP under the
+    # limit that the data repository ignores (``**/*.zip``). Both bind the ZIP through
+    # a content-addressed manifest; "git" commits it.
+    artifact_backed_package = package_mode == "large"
+    if package_mode == "ignored_small":
+        (tmp_path / ".gitignore").write_text("**/*.zip\n", encoding="utf-8")
     if artifact_backed_package:
         import paper_writing.support as support_module
         monkeypatch.setattr(support_module, "GIT_PAYLOAD_LIMIT_BYTES", 1)
@@ -1260,6 +1266,13 @@ support:
     assert prepared_record["support"]["publication"]["package_sha256"]
     if artifact_backed_package:
         assert len(prepared_record["support"]["publication"]["artifact_manifests"]) == 2
+    elif package_mode == "ignored_small":
+        archive_path = tmp_path / prepared["archive"]
+        assert archive_path.stat().st_size < 5 * 1024 * 1024
+        assert prepared_record["support"]["publication"]["artifact_manifests"] == [
+            archive_path.with_suffix(".artifacts.json").relative_to(tmp_path).as_posix()]
+    else:
+        assert "artifact_manifests" not in prepared_record["support"]["publication"]
     assert "verification_files" not in prepared_record["support"]["publication"]
     assert (
         prepared_record["support"]["publication"]["version_doi"]

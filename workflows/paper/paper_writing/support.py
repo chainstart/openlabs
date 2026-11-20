@@ -592,7 +592,10 @@ def build_support_archive(
     checksum_path = archive.with_suffix(archive.suffix + ".sha256")
     checksum_path.write_text(f"{archive_sha256}  {archive.name}\n", encoding="utf-8")
     artifact_manifest = None
-    if archive.stat().st_size > GIT_PAYLOAD_LIMIT_BYTES:
+    # A ZIP over the Git payload limit, or one the data repository ignores
+    # (``**/*.zip``), can never be Git-frozen: bind it through a content-addressed
+    # manifest instead, which ``zenodo prepare`` registers in artifact_manifests.
+    if archive.stat().st_size > GIT_PAYLOAD_LIMIT_BYTES or _git_ignored(root, archive):
         artifact_manifest = write_support_artifact_manifest(
             root, [archive], archive.with_suffix(".artifacts.json")
         )
@@ -612,6 +615,17 @@ def build_support_archive(
         "file_count": len(entries),
         "artifact_manifest": artifact_manifest,
     }
+
+
+def _git_ignored(root: Path, path: Path) -> bool:
+    """True when Git ignores the untracked ``path`` (a tracked file is never ignored)."""
+    try:
+        completed = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--",
+                                    path.relative_to(root).as_posix()],
+                                   capture_output=True, check=False)
+    except (OSError, ValueError):
+        return False
+    return completed.returncode == 0
 
 
 def verify_support_archive(path: str | Path) -> dict[str, Any]:
