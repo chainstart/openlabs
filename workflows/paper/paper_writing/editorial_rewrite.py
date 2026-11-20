@@ -164,6 +164,20 @@ def _date(value: Any) -> date | None:
 
 # --------------------------------------------------------------------------- configuration
 
+def _single_family_authorization(settings: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The user's recorded one-family decision (review.cross_model basis ``model`` with an
+    authorization naming actor, date and quote), or None."""
+
+    cross = (settings.get("review") or {}).get("cross_model") or {}
+    if not isinstance(cross, Mapping) or str(cross.get("basis") or "") != "model":
+        return None
+    receipt = cross.get("basis_authorization")
+    if not isinstance(receipt, Mapping) or any(
+            not str(receipt.get(key) or "").strip() for key in ("actor", "date", "quote")):
+        return None
+    return dict(receipt)
+
+
 def rewrite_config(root: Path) -> dict[str, Any]:
     settings = load_registry_settings(root) if settings_path(root).is_file() else {}
     raw = dict((settings.get("quality_gate") or {}).get("editorial_rewrite") or {})
@@ -172,13 +186,27 @@ def rewrite_config(root: Path) -> dict[str, Any]:
     for group in (rewriters, judges):
         if not isinstance(group, Mapping) or not group:
             raise ValueError("editorial_rewrite rewriters/judges must be non-empty mappings")
+    single_family = _single_family_authorization(settings)
     if len({str(role.get("provider")) for role in judges.values()}) < 2:
-        raise ValueError("editorial_rewrite judges must come from at least two model families "
-                         "(a single family prefers its own text)")
+        if single_family is None:
+            raise ValueError("editorial_rewrite judges must come from at least two model families "
+                             "(a single family prefers its own text)")
+        # One-family setup under the recorded user decision of review.cross_model (basis
+        # ``model``): the two-family rule holds at model granularity instead. At least two
+        # distinct judge models, so no model is the only judge of its own rewrite, and at
+        # least one judge always differs from the drafting model, whichever it is.
+        models = {str(role.get("model") or "").strip().lower() for role in judges.values()}
+        models.discard("")
+        if len(models) < 2:
+            raise ValueError("editorial_rewrite judges of one model family must use at least two "
+                             "different models (review.cross_model.basis: model)")
     return {"enabled": bool(raw.get("enabled", True)), "required": bool(raw.get("required", False)),
             "required_from": _date(raw.get("required_from")),
             "rewriters": {str(k): dict(v) for k, v in rewriters.items()},
             "judges": {str(k): dict(v) for k, v in judges.items()},
+            "judge_independence": ("cross_family"
+                                   if len({str(r.get("provider")) for r in judges.values()}) >= 2
+                                   else "same_family_different_model"),
             "length_tolerance": float(raw.get("length_tolerance", 0.25)),
             "length_hard_limit": float(raw.get("length_hard_limit", 0.5)),
             "timeout_seconds": int(raw.get("timeout_seconds", 3600))}

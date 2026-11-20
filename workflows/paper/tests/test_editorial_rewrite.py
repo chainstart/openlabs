@@ -538,3 +538,52 @@ def test_same_family_basis_needs_a_recorded_authorization(tmp_path, monkeypatch)
     review["cross_model"]["basis"] = "anything"
     with pytest.raises(ValueError, match="basis must be one of"):
         flow.review_config(tmp_path)
+
+
+def _one_family_settings(root, judges, authorization=True):
+    cross = {"required": True, "basis": "model"}
+    if authorization:
+        cross["basis_authorization"] = {"actor": "user", "date": "2026-11-20",
+                                        "quote": "后面的活都派给gpt"}
+    (root / "registry/settings.yaml").write_text(yaml.safe_dump({
+        "schema_version": "ara.paper_writing.registry.v1",
+        "review": {"cross_model": cross},
+        "quality_gate": {"editorial_rewrite": {"judges": judges}}}))
+
+
+SOL = {"provider": "openai-codex", "tool": "Codex", "model": "gpt-6.2-sol"}
+ASTRA = {"provider": "openai-codex", "tool": "Codex", "model": "gpt-6.2-astra"}
+
+
+def test_one_family_judges_need_the_users_model_basis_authorization(tmp_path):
+    root = make_root(tmp_path)
+    _one_family_settings(root, {"gpt": SOL, "astra": ASTRA})
+    config = er.rewrite_config(root)
+    assert set(config["judges"]) == {"gpt", "astra"}
+    assert config["judge_independence"] == "same_family_different_model"
+    _one_family_settings(root, {"gpt": SOL, "astra": ASTRA}, authorization=False)
+    with pytest.raises(ValueError, match="two model families"):
+        er.rewrite_config(root)
+
+
+def test_one_family_judges_must_be_two_different_models(tmp_path):
+    root = make_root(tmp_path)
+    _one_family_settings(root, {"a": SOL, "b": dict(SOL)})
+    with pytest.raises(ValueError, match="at least two different models"):
+        er.rewrite_config(root)
+
+
+def test_incomplete_authorization_keeps_the_two_family_rule(tmp_path):
+    root = make_root(tmp_path)
+    (root / "registry/settings.yaml").write_text(yaml.safe_dump({
+        "schema_version": "ara.paper_writing.registry.v1",
+        "review": {"cross_model": {"basis": "model",
+                                   "basis_authorization": {"actor": "user", "date": "2026-11-20"}}},
+        "quality_gate": {"editorial_rewrite": {"judges": {"gpt": SOL, "astra": ASTRA}}}}))
+    with pytest.raises(ValueError, match="two model families"):
+        er.rewrite_config(root)
+
+
+def test_two_family_judges_are_labelled_cross_family(tmp_path):
+    root = make_root(tmp_path)
+    assert er.rewrite_config(root)["judge_independence"] == "cross_family"
