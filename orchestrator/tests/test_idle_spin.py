@@ -371,3 +371,27 @@ def test_owner_seats_without_progress_count_as_zero_output(tmp_path):
     assert seats["zero_output_agent_hours"] == round(72 / 3600, 2)
     # Still neutral for the generic chain guard (the owner breaker owns that).
     assert spin_guard.no_progress_streak(db, "campaign-o")[0] == 0
+
+
+def test_a_scout_whose_result_was_not_accepted_is_no_empty_draw(tmp_path, monkeypatch):
+    """A scout result the control plane refused (needs_replan: an artifact outside the
+    staging area, a hash mismatch) says nothing about the line's supply: no backoff."""
+
+    paths, _queue = _queued_line(tmp_path)
+    db = flow._db(paths)
+    settings = flow._settings(scout_min_interval_hours=0)
+    first = flow._tick(paths, settings, monkeypatch)
+    task_id = first.program["scouts_scheduled"][0]["task_id"]
+    bogus = tmp_path / "outside.json"
+    bogus.write_text("{}", encoding="utf-8")
+    flow._complete(db, paths, task_id, extra={
+        "topic_cards": [{"question": "a card the gate never saw"}],
+        "artifacts": [{"artifact_id": "queue", "kind": "data", "uri": bogus.resolve().as_uri(),
+                       "sha256": "0" * 64}]},
+        receipt_files={"data-access.json": flow.RECEIPT})
+    report = flow._tick(paths, settings, monkeypatch)
+    assert db.task(task_id)["status"] != "succeeded"
+    assert not [item for item in report.program.get("scout_outcomes") or []
+                if item.get("event") == "topic_scout_empty"], report.program
+    assert report.program["scout_blocked"] != "scout_empty_backoff"
+    assert not report.program.get("scout_supply_blocked")

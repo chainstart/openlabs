@@ -852,8 +852,12 @@ def record_scout_outcomes(
                                 "task_id": marker[1], "previous_empty_draws": state["count"]})
             state.update(count=0, fingerprint=None, reason=None, last_summary=None)
             continue
-        if cards is None and str(task.get("status")) != "succeeded":
-            continue  # no readable result: neither empty nor productive
+        if str(task.get("status")) != "succeeded":
+            # The control plane did not accept the result (needs_replan: an artifact outside
+            # the staging area, a hash mismatch, a failed commit; needs_human): its cards never
+            # reached intake, so it says nothing about the line's supply. Neither empty nor
+            # productive; the minimum scout interval still spaces the next attempt.
+            continue
         if key not in fingerprints:
             fingerprints[key] = scout_supply_fingerprint(paths, settings, project, document)
             queued[key] = bool(project.research_line and queued_templates(
