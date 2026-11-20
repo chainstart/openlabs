@@ -534,9 +534,16 @@ def build_parser() -> argparse.ArgumentParser:
              "release-artifacts.json (content-addressed copies; commit before delivery).",
     )
     program_bind.add_argument("--paper-id", required=True)
+    program_bind_payloads = program_commands.add_parser(
+        "bind-oversize-payloads",
+        help="Keep the paper's files over the Git payload limit (5 MiB) out of Git: copy them "
+             "to the content-addressed artifact store, record path/size/SHA-256/URI in "
+             "papers/<id>/production/payload-artifacts.json and ignore the local copies.",
+    )
+    program_bind_payloads.add_argument("--paper-id", required=True)
     for command in (program_escalation, program_fallback, program_confirm, program_deliver,
                     program_assign, program_status, program_adopt, program_waive, program_bind,
-                    program_unwaive):
+                    program_unwaive, program_bind_payloads):
         command.add_argument("--root", default=str(default_repo_root()))
         command.add_argument("--json", action="store_true", help="Print one JSON object.")
     return parser
@@ -910,6 +917,10 @@ def _run_program(args: argparse.Namespace) -> int:
             from paper_writing.program_adopt import bind_release_artifacts
 
             result = bind_release_artifacts(args.paper_id, root=args.root)
+        elif args.program_command == "bind-oversize-payloads":
+            from paper_writing.program_adopt import bind_oversize_payloads
+
+            result = bind_oversize_payloads(args.paper_id, root=args.root)
         elif args.program_command == "unwaive-support":
             from paper_writing.program_adopt import unwaive_support
 

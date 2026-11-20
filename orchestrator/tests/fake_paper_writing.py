@@ -153,6 +153,7 @@ def main(argv: list[str]) -> int:
             "issues": paper["issues"], "notes": paper.get("notes", []),
             "writer_scope": "Fix only the listed problems.",
             "release_artifacts_unbound": paper.get("unbound_artifacts", []),
+            "oversize_payloads_unbound": paper.get("oversize_payloads", []),
             "commit_paths": _paths(root, args.paper_id),
             "git": {"dirty": _git_dirty(root, _paths(root, args.paper_id))},
             # Delivered means: the current version (a newer one needs a new delivery).
@@ -170,6 +171,20 @@ def main(argv: list[str]) -> int:
         paper["submission_package"] = {"artifact_manifest": {"path": str(manifest.relative_to(root))}}
         save()
         print(json.dumps({"status": "bound" if files else "not_needed", "files": files,
+                          "manifest": str(manifest.relative_to(root))}))
+        return 0
+    if command == "program bind-oversize-payloads":
+        assert not external
+        files = paper.pop("oversize_payloads", [])
+        manifest = root / "papers" / args.paper_id / "production" / "payload-artifacts.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({"files": [{"path": item} for item in files]}))
+        for item in files:
+            ignore = (root / item).parent / ".gitignore"
+            ignore.write_text("/" + Path(item).name + "\n")
+        save()
+        print(json.dumps({"status": "bound" if files else "not_needed",
+                          "files": [{"path": item} for item in files],
                           "manifest": str(manifest.relative_to(root))}))
         return 0
     if command == "program waive-support":

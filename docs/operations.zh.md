@@ -821,6 +821,13 @@ APC/版面费/彩图费/投稿费、证据（URL 或本地文件）、核实日�
   `commit-before-zenodo-release`（不做存档时随 `release-ready`）提交。已有清单但当前 PDF/.bbl 不在其中或
   SHA-256 不符（交付旧版本后出了新版本）时视为未绑定，按全部当前候选文件重写清单并更新登记指针。
   只含 `artifact_manifest` 的 `submission_package` 不视为已配置期刊源码包，交付用规范源文件清单。
+- 超限文件：数据仓库的 pre-commit 钩子拒收大于 5 MiB 的 blob。`release-status` 的
+  `oversize_payloads_unbound` 列出本论文提交路径下新进 Git（未跟踪且未忽略，或被拒的提交留在暂存区）且超过
+  5 MiB 的文件（例如 formal-check 的证据正文 `.body`）。流水线在任何提交之前跑
+  `paper-writing program bind-oversize-payloads`：复制到 `openlabs-artifacts/paper-support/sha256/<SHA-256>/`，
+  把路径、大小、SHA-256 与 artifact URI 写进 `papers/<id>/production/payload-artifacts.json`，在文件所在目录的
+  `.gitignore` 加锚定条目，并去掉暂存区里的残留条目；磁盘上的字节不动，复核照旧读原文件。清单和 `.gitignore`
+  随下一次提交入库。绑定后字节变化的文件会再次列出并重新绑定。
 - `support_release`（默认 `"zenodo"`，即上表的 Zenodo 步骤）：设为 `"none"` 时从不建 Zenodo 或其他公开记录。
   支撑记录仍是 `planned` 的论文由 `paper-writing program waive-support` 写入
   `support.publication.mode: not_required` 和 `support_none_reason`（写明不做公开存档）；已有 Zenodo 记录

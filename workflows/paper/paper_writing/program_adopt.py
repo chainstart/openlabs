@@ -29,6 +29,7 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import tarfile
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
@@ -567,6 +568,90 @@ def bind_release_artifacts(paper_id: str, *, root: str | Path) -> dict[str, Any]
                                     "sha256": _sha256(manifest.read_bytes())}
     write_paper_metadata(paper_id, {**metadata, "submission_package": package}, repo_root)
     return {**result, "status": "bound", "files": files, "manifest": relative}
+
+
+PAYLOAD_BIND_SCHEMA = "openlabs.oversize_payload_binding.v1"
+_IGNORE_HEADER = ("# Over the Git payload limit: bound by path, size and SHA-256 in "
+                  "papers/{paper_id}/production/payload-artifacts.json (openlabs-artifacts).")
+
+
+def _ignore_next_to(root: Path, relative: str, paper_id: str) -> str:
+    """Add an anchored entry for ``relative`` to the .gitignore in its own directory."""
+
+    path = root / relative
+    ignore = path.parent / ".gitignore"
+    entry = "/" + path.name.replace("\\", "\\\\").replace("*", "\\*").replace(
+        "?", "\\?").replace("[", "\\[")
+    lines = ignore.read_text(encoding="utf-8").splitlines() if ignore.is_file() else []
+    if entry not in lines:
+        if not lines:
+            lines.append(_IGNORE_HEADER.format(paper_id=paper_id))
+        lines.append(entry)
+        ignore.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return ignore.relative_to(root).as_posix()
+
+
+def bind_oversize_payloads(paper_id: str, *, root: str | Path) -> dict[str, Any]:
+    """Keep a paper's over-limit files out of Git; bind them to the artifact store instead.
+
+    The data repository refuses blobs over 5 MiB (pre-commit hook). Each file
+    ``release_pipeline.oversize_payloads`` lists (a formal-check evidence body, a large
+    record) is copied to the content-addressed ``openlabs-artifacts/paper-support/
+    sha256/<SHA-256>/<name>`` store and recorded with its path, size, SHA-256 and
+    artifact URI in ``papers/<id>/production/payload-artifacts.json``; an anchored
+    entry in the .gitignore of its own directory keeps the local copy out of Git, and
+    an index entry an earlier refused commit left staged is dropped. The bytes on disk
+    are not touched, so every check that reads them (formal-check evidence hashes,
+    adopt) sees exactly what was reviewed. The manifest and the .gitignore files are
+    committed by the next release commit; nothing here commits.
+    """
+
+    from paper_writing.release_pipeline import (PAYLOAD_MANIFEST_TEMPLATE, _bound_payloads,
+                                                commit_paths, oversize_payloads)
+    from paper_writing.support import SupportPackageError, write_support_artifact_manifest
+
+    repo_root = Path(root).resolve()
+    metadata = load_paper_metadata(paper_id, repo_root)
+    result = {"schema_version": PAYLOAD_BIND_SCHEMA, "paper_id": paper_id}
+    files = oversize_payloads(paper_id, commit_paths(paper_id, metadata, repo_root), repo_root)
+    if not files:
+        return {**result, "status": "not_needed", "files": []}
+    for name in files:
+        relative = _safe_relative(name)
+        if relative is None or (repo_root / relative).is_symlink():
+            raise AdoptError(f"refusing to bind an unsafe payload path: {name}")
+    # Earlier bindings that still exist stay in the manifest (rewritten as a whole).
+    keep = [name for name in _bound_payloads(paper_id, repo_root)
+            if name not in files and (repo_root / name).is_file()]
+    manifest_name = PAYLOAD_MANIFEST_TEMPLATE.format(paper_id=paper_id)
+    try:
+        manifest = write_support_artifact_manifest(repo_root, sorted({*keep, *files}),
+                                                   manifest_name)
+    except SupportPackageError as exc:
+        raise AdoptError(f"oversize payloads could not be bound: {exc}") from exc
+    ignores = sorted({_ignore_next_to(repo_root, name, paper_id) for name in files})
+    unstaged = []
+    for name in files:
+        staged = subprocess.run(["git", "ls-files", "--cached", "--", name], cwd=repo_root,
+                                capture_output=True, text=True, check=False)
+        if staged.stdout.strip():
+            dropped = subprocess.run(["git", "update-index", "--force-remove", "--", name],
+                                     cwd=repo_root, capture_output=True, text=True, check=False)
+            if dropped.returncode != 0:
+                raise AdoptError(f"could not unstage {name}: {dropped.stderr.strip()[-300:]}")
+            unstaged.append(name)
+        ignored = subprocess.run(["git", "check-ignore", "-q", "--", name], cwd=repo_root,
+                                 capture_output=True, check=False)
+        if ignored.returncode != 0:
+            raise AdoptError(f"{name} is still not ignored by Git after binding")
+    content = json.loads(manifest.read_text(encoding="utf-8"))
+    entries = {item["path"]: item for item in content.get("files") or []}
+    return {**result, "status": "bound", "manifest": manifest_name,
+            "manifest_sha256": _sha256(manifest.read_bytes()),
+            "files": [{key: entries[name][key] for key in ("path", "size", "sha256",
+                                                           "artifact_uri")}
+                      for name in files],
+            "gitignore": ignores, "unstaged": unstaged}
 
 
 UNWAIVE_SCHEMA = "openlabs.support_unwaiver.v1"

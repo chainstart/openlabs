@@ -54,6 +54,10 @@ HUMAN_CODES = frozenset({"DELIVERY-CHECK-FAILED", "STYLE-MANUSCRIPT-MISSING"})
 # Release build products Git ignores; delivery freezes them through
 # papers/<id>/production/release-artifacts.json (``program bind-release-artifacts``).
 RELEASE_ARTIFACT_SUFFIXES = frozenset({".pdf", ".bbl"})
+# Paper files over the Git payload limit (formal-check evidence bodies, large records):
+# kept out of Git by an anchored .gitignore entry next to each file and bound here by
+# path, size, SHA-256 and content-addressed artifact URI (``program bind-oversize-payloads``).
+PAYLOAD_MANIFEST_TEMPLATE = "papers/{paper_id}/production/payload-artifacts.json"
 # What the writer is told it may touch for each class of problem.
 WRITER_SCOPE = (
     "Fix only the listed delivery-exit formal problems: unresolved TODO/draft markers, "
@@ -170,6 +174,62 @@ def unbound_release_artifacts(paper_id: str, metadata: Mapping[str, Any], root: 
         if bound.get(item) != current:
             stale.append(item)
     return stale
+
+
+def _bound_payloads(paper_id: str, root: Path) -> dict[str, str]:
+    """``{path: sha256}`` of ``papers/<id>/production/payload-artifacts.json`` (empty: none)."""
+    manifest = root / PAYLOAD_MANIFEST_TEMPLATE.format(paper_id=paper_id)
+    try:
+        content = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    files = content.get("files") if isinstance(content, Mapping) else None
+    return {str(item.get("path")): str(item.get("sha256"))
+            for item in files or [] if isinstance(item, Mapping)}
+
+
+def oversize_payloads(paper_id: str, paths: list[str], root: Path) -> list[str]:
+    """Files of this paper the release commit would take in but the data repository refuses.
+
+    The data repository's pre-commit hook refuses any blob over the Git payload limit
+    (5 MiB). A file under the paper's commit paths that is new to Git (untracked and
+    not ignored, or staged but absent from HEAD) and larger than that limit cannot be
+    committed (2026-11-20: an 8 MB formal-check evidence body stopped the PMB-13B
+    release three times). ``program bind-oversize-payloads`` moves such files out of
+    Git into the content-addressed artifact store. A bound file whose bytes changed
+    afterwards is listed again so its binding is renewed.
+    """
+    from paper_writing.support import GIT_PAYLOAD_LIMIT_BYTES, sha256_file
+
+    if not paths:
+        return []
+    try:
+        untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z", "--", *paths)
+    except (OSError, ValueError):
+        return []
+    try:
+        # Left staged by an earlier commit attempt the pre-commit hook refused.
+        staged_new = _git(root, "diff", "--cached", "--name-only", "--diff-filter=A", "-z",
+                          "HEAD", "--", *paths)
+    except (OSError, ValueError):
+        staged_new = ""  # no HEAD yet: everything is untracked
+    names = {item for item in (untracked + "\0" + staged_new).split("\0") if item}
+    found = []
+    for name in sorted(names):
+        path = root / name
+        if path.is_file() and not path.is_symlink() and path.stat().st_size > GIT_PAYLOAD_LIMIT_BYTES:
+            found.append(name)
+    bound = _bound_payloads(paper_id, root)
+    for name, digest in sorted(bound.items()):
+        path = root / name
+        if name in found or not path.is_file():
+            continue
+        try:
+            if sha256_file(path) != digest:
+                found.append(name)
+        except OSError:
+            continue
+    return found
 
 
 def _package_stale(metadata: Mapping[str, Any], root: Path) -> str | None:
@@ -325,6 +385,9 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "release_artifacts_unbound": ([] if manuscript_missing
                                       else unbound_release_artifacts(paper_id, metadata, repo_root)),
         "commit_paths": paths,
+        # Files the release commit would refuse (over the Git payload limit); the
+        # pipeline binds them to the artifact store before its next commit.
+        "oversize_payloads_unbound": oversize_payloads(paper_id, paths, repo_root),
         "git": git,
         "delivered": bool(delivery.get("package_id")) and str(delivery.get("version") or "") == version,
         "delivery": dict(delivery) if delivery else None,

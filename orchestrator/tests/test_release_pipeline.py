@@ -822,6 +822,30 @@ def test_ignored_release_products_are_bound_before_the_zenodo_release(tmp_path, 
                                                                                   before)
 
 
+def test_an_over_limit_evidence_file_is_bound_before_the_first_commit(tmp_path, monkeypatch):
+    """PMB-13B, 2026-11-20: an 8 MB formal-check evidence body made every commit fail."""
+    body = f"reviews/unified/{PAPER_ID}/run/formal-check/evidence/S71c226eba714f63bcbed.body"
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support="not_required",
+                                             paper_extra={"oversize_payloads": [body]})
+    target = paths.data / body
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"x" * (5 * 1024 * 1024 + 1))
+    (target.parent / "S71c226eba714f63bcbed.text").write_text("text\n")
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert report.errors == [], report.errors
+    assert _commands(log) == ["program release-status", "program bind-oversize-payloads",
+                              "program release-status", "program deliver"]
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["handoff"]["status"] == "delivered"
+    ready = next(c["sha"] for c in final["release"]["commits"] if c["action"] == "release-ready")
+    files = _commit_files(paths.data, ready)
+    assert body not in files
+    assert f"papers/{PAPER_ID}/production/payload-artifacts.json" in files
+    assert str(target.parent.relative_to(paths.data) / ".gitignore") in files
+    assert "release_payloads_bound" in _events(db, topic["topic_id"])
+    assert target.stat().st_size == 5 * 1024 * 1024 + 1  # the reviewed bytes stay in place
+
+
 def test_unsupported_workspace_layout_waits_for_the_owner(tmp_path, monkeypatch):
     paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support_release="none")
     workspace = program_autonomy.asset_library.topic_workspace(db, paths, topic)

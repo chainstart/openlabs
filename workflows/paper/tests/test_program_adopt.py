@@ -494,3 +494,78 @@ def test_availability_statement_must_name_a_location(tmp_path, statement, flagge
     assert bool(issues) is flagged
     if flagged:
         assert issues[0]["code"] == "DATA-AVAILABILITY-LOCATION"
+
+
+def test_bind_oversize_payloads_moves_an_over_limit_evidence_body_out_of_git(tmp_path):
+    """PMB-13B, 2026-11-20: an 8 MB formal-check evidence body refused by the blob limit.
+
+    The file stays on disk byte for byte, is copied to the content-addressed store and
+    recorded with its SHA-256, the .gitignore next to it keeps it out of Git, and the index
+    entry the refused commit left staged is dropped; the next commit then passes a
+    pre-commit hook that refuses blobs over 5 MiB.
+    """
+    import subprocess
+
+    from paper_writing.program_adopt import bind_oversize_payloads
+    from paper_writing.release_pipeline import commit_paths, oversize_payloads
+    from paper_writing.registry import load_paper_metadata
+    from paper_writing.support import GIT_PAYLOAD_LIMIT_BYTES
+
+    root = tmp_path / "openlabs-data"
+    _workspace(root)
+    git = ["git", "-C", str(root), "-c", "user.name=T", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "base"], check=True)
+    hook = root / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\ngit diff --cached --name-only -z --diff-filter=AM | "
+                    f"xargs -0 -r -I{{}} sh -c 'test $(wc -c < \"{{}}\") -le "
+                    f"{GIT_PAYLOAD_LIMIT_BYTES} || {{ echo refusing {{}}; exit 1; }}'\n")
+    hook.chmod(0o755)
+
+    evidence = root / RUN / "formal-check" / "evidence"
+    evidence.mkdir(parents=True)
+    big = evidence / "S71c226eba714f63bcbed.body"
+    payload = b"%PDF-1.7\n" + b"x" * (GIT_PAYLOAD_LIMIT_BYTES + 1024)
+    big.write_bytes(payload)
+    (evidence / "S71c226eba714f63bcbed.text").write_text("extracted text\n")
+    big_name = big.relative_to(root).as_posix()
+    # The refused commit attempt left everything staged.
+    subprocess.run([*git, "add", "-A", "--", "reviews"], check=True)
+    refused = subprocess.run([*git, "commit", "-qm", "release", "--", "reviews"],
+                             capture_output=True, text=True)
+    assert refused.returncode != 0
+
+    metadata = load_paper_metadata(PAPER, root)
+    paths = commit_paths(PAPER, metadata, root)
+    assert oversize_payloads(PAPER, paths, root) == [big_name]
+
+    result = bind_oversize_payloads(PAPER, root=root)
+    assert result["status"] == "bound" and result["unstaged"] == [big_name]
+    entry = result["files"][0]
+    assert entry["path"] == big_name and entry["sha256"] == _sha(payload)
+    assert entry["size"] == len(payload)
+    stored = (tmp_path / "openlabs-artifacts" / "paper-support" / "sha256" / _sha(payload)
+              / big.name)
+    assert stored.read_bytes() == payload and big.read_bytes() == payload
+    manifest = json.loads((root / result["manifest"]).read_text())
+    assert manifest["files"][0]["artifact_uri"] == stored.resolve().as_uri()
+    assert result["gitignore"] == [f"{RUN}/formal-check/evidence/.gitignore"]
+    assert oversize_payloads(PAPER, paths, root) == []
+    assert bind_oversize_payloads(PAPER, root=root)["status"] == "not_needed"
+
+    present = [item for item in paths if (root / item).exists()]
+    subprocess.run([*git, "add", "-A", "--", *present], check=True)
+    subprocess.run([*git, "commit", "-qm", "release", "--", *present], check=True)
+    tracked = subprocess.run([*git, "ls-files"], capture_output=True, text=True).stdout
+    assert big_name not in tracked
+    assert f"{RUN}/formal-check/evidence/S71c226eba714f63bcbed.text" in tracked
+    assert f"papers/{PAPER}/production/payload-artifacts.json" in tracked
+
+    # Changed bytes after binding: listed again and rebound to the new content.
+    changed = payload + b"more"
+    big.write_bytes(changed)
+    assert oversize_payloads(PAPER, paths, root) == [big_name]
+    again = bind_oversize_payloads(PAPER, root=root)
+    assert again["files"][0]["sha256"] == _sha(changed)
+    assert oversize_payloads(PAPER, paths, root) == []

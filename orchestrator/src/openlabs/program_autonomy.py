@@ -2036,6 +2036,14 @@ def run_paper_adopt(paths: WorkspacePaths, settings: FactorySettings, paper_id: 
     return _run_paper_command(paths, settings, arguments)
 
 
+def run_oversize_payload_binding(paths: WorkspacePaths, settings: FactorySettings,
+                                 paper_id: str) -> dict[str, Any]:
+    """``program bind-oversize-payloads``: files over the Git blob limit go to artifacts."""
+
+    return _run_paper_command(paths, settings,
+                              ["program", "bind-oversize-payloads", "--paper-id", paper_id])
+
+
 def run_release_artifact_binding(paths: WorkspacePaths, settings: FactorySettings,
                                  paper_id: str) -> dict[str, Any]:
     """``program bind-release-artifacts``: freeze the ignored release PDF/.bbl."""
@@ -2317,6 +2325,21 @@ class _ReleasePipeline:
         if (self.settings.program.support_release == "none" and support.get("required")
                 and not support.get("published")):
             self.waive_support()
+            return True
+        if status.get("oversize_payloads_unbound"):
+            # The data repository refuses blobs over 5 MiB; such a file (an 8 MB
+            # formal-check evidence body stopped PMB-13B, 2026-11-20) is bound to the
+            # artifact store by path, size and SHA-256 and ignored before any commit.
+            self.stage = "bind_payloads"
+            result = run_oversize_payload_binding(self.paths, self.settings, self.paper_id)
+            if result.get("status") not in {"bound", "not_needed"}:
+                raise ReleaseError("oversize payload binding failed: "
+                                   f"{str(result.get('error') or result)[:400]}")
+            self.save("release_payloads_bound", "oversize_files_bound_to_artifacts",
+                      stage=self.stage, status="running",
+                      detail={"files": result.get("files"), "manifest": result.get("manifest"),
+                              "manifest_sha256": result.get("manifest_sha256")})
+            self.entry("payloads_bound", files=len(result.get("files") or []))
             return True
         human = [item for item in issues if item.get("remedy") == "human"]
         if human:
