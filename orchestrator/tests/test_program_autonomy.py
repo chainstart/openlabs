@@ -599,6 +599,20 @@ def test_direction_decision_goes_to_the_lead_tier_of_another_family(tmp_path, mo
     assert packet["routine_fallback"] and packet["budget"]["topic_max_agent_seconds"] == 259_200
 
 
+def _assert_resume_or_model_drop(db, task) -> None:
+    """A queued writer resumes its session unless the router moved it to another model."""
+
+    if task["session_mode"] == "resume":
+        return
+    with db.connect() as connection:
+        rows = connection.execute(
+            "SELECT payload_json FROM events WHERE entity_id=? AND event_type='task_routed'",
+            (task["task_id"],)).fetchall()
+    routed = [json.loads(row["payload_json"]) for row in rows]
+    assert routed and routed[-1].get("session_dropped") == "model_changed", routed
+    assert task["agent_session_id"] is None
+
+
 def test_targeted_analysis_runs_then_returns_to_the_writer(tmp_path, monkeypatch):
     paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
     review = _review_direction(paths, db, settings, monkeypatch, topic)
@@ -618,7 +632,9 @@ def test_targeted_analysis_runs_then_returns_to_the_writer(tmp_path, monkeypatch
     after = _tick(paths, settings, monkeypatch)
     revision = [db.task(t) for t in after.enqueued if db.task(t)["agent_role"] == "writer"]
     assert revision and revision[0]["task_type"] == "paper_revision"
-    assert revision[0]["session_mode"] == "resume"
+    # The writer's session was queued for resumption; routed to a runner of another model it
+    # starts fresh (prompt caches are per model, 2026-11-20).
+    _assert_resume_or_model_drop(db, revision[0])
     assert revision[0]["routing_reason"] == "review_evidence_completed"
 
 
@@ -633,7 +649,7 @@ def test_retarget_resumes_the_writer_and_escalation_defaults_to_the_fallback(
     revision = db.task(report.program["direction_decisions"][-1]["executed_task_id"])
     assert revision["task_type"] == "paper_revision" and revision["agent_role"] == "writer"
     assert revision["routing_reason"] == "direction_retarget"
-    assert revision["session_mode"] == "resume"
+    _assert_resume_or_model_drop(db, revision)
     assert "handoff_kind=retarget" in revision["objective"]
     assert "Journal of Biomedical Informatics" in revision["objective"]
     # The new target's indexing, zone and every mandatory charge are verified first.
