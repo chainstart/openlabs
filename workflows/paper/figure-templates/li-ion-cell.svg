@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="470" height="318" viewBox="0 0 470 318"
+     font-family="TeX Gyre Heros, Arial, Helvetica, sans-serif" font-size="10.67" fill="#222222">
+  <!-- Stylized object drawn in code (layer 3 of the figure design): a lithium-ion cell in
+       cross-section during discharge. Gradients give the materials a physical look; all
+       shapes stay vector (no filters, which Chromium would rasterize). 1 px = 0.75 pt,
+       470 px = 124 mm. Reuse the gradient defs for other device cross-sections. -->
+  <defs>
+    <linearGradient id="al" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#9da3a8"/><stop offset="0.45" stop-color="#eef0f2"/><stop offset="1" stop-color="#8c9297"/>
+    </linearGradient>
+    <linearGradient id="cu" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#a5552a"/><stop offset="0.5" stop-color="#f0a46c"/><stop offset="1" stop-color="#93461f"/>
+    </linearGradient>
+    <linearGradient id="electrolyte" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#e3f1fb"/><stop offset="1" stop-color="#c6e2f5"/>
+    </linearGradient>
+    <radialGradient id="oxide" cx="0.35" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#7fa7c9"/><stop offset="0.55" stop-color="#2f5f8a"/><stop offset="1" stop-color="#173a5c"/>
+    </radialGradient>
+    <linearGradient id="graphite" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#8b8f94"/><stop offset="0.5" stop-color="#4b4f54"/><stop offset="1" stop-color="#2c2f33"/>
+    </linearGradient>
+    <radialGradient id="ion" cx="0.35" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#ffe9a8"/><stop offset="1" stop-color="#E69F00"/>
+    </radialGradient>
+    <pattern id="sep" width="5" height="5" patternUnits="userSpaceOnUse">
+      <rect width="5" height="5" fill="#f7f7f7"/><circle cx="2.5" cy="2.5" r="0.8" fill="#b5b5b5"/>
+    </pattern>
+    <marker id="head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/>
+    </marker>
+    <marker id="headInk" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222222"/>
+    </marker>
+    <marker id="headIon" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b87a00"/>
+    </marker>
+  </defs>
+
+  <!-- external circuit with the load -->
+  <path d="M 62 84 V 34 H 196" fill="none" stroke="#222222" stroke-width="1.6"/>
+  <path d="M 274 34 H 410 V 84" fill="none" stroke="#222222" stroke-width="1.6"/>
+  <rect x="196" y="22" width="78" height="24" rx="4" fill="#ffffff" stroke="#222222" stroke-width="1.2"/>
+  <path d="M 206 34 l 6 -7 l 8 14 l 8 -14 l 8 14 l 8 -14 l 8 14 l 8 -14 l 4 7" fill="none" stroke="#222222" stroke-width="1"/>
+  <text x="235" y="14" text-anchor="middle" font-size="9.33">load</text>
+  <line x1="372" y1="34" x2="330" y2="34" stroke="#222222" stroke-width="1.6" marker-end="url(#headInk)"/>
+  <line x1="150" y1="34" x2="108" y2="34" stroke="#222222" stroke-width="1.6" marker-end="url(#headInk)"/>
+  <text x="351" y="27" text-anchor="middle" font-size="9.33">e⁻</text>
+  <text x="129" y="27" text-anchor="middle" font-size="9.33">e⁻</text>
+  <text x="25" y="78" text-anchor="middle" font-size="12" font-weight="bold">+</text>
+  <text x="446" y="78" text-anchor="middle" font-size="12" font-weight="bold">−</text>
+
+  <!-- cell body: soft shadow, electrolyte, separator -->
+  <rect x="58" y="88" width="362" height="168" rx="3" fill="#000000" fill-opacity="0.10" transform="translate(3 3)"/>
+  <rect x="68" y="88" width="334" height="168" fill="url(#electrolyte)"/>
+  <rect x="226" y="88" width="16" height="168" fill="url(#sep)" stroke="#b5b5b5" stroke-width="0.6"/>
+
+  <!-- current collectors -->
+  <rect x="54" y="84" width="14" height="176" rx="1.5" fill="url(#al)" stroke="#6e7378" stroke-width="0.6"/>
+  <rect x="402" y="84" width="14" height="176" rx="1.5" fill="url(#cu)" stroke="#7a3a18" stroke-width="0.6"/>
+
+  <!-- cathode: layered-oxide particles -->
+  <g stroke="#173a5c" stroke-width="0.5">
+    <circle cx="84" cy="104" r="12" fill="url(#oxide)"/><circle cx="112" cy="110" r="13" fill="url(#oxide)"/>
+    <circle cx="142" cy="102" r="11" fill="url(#oxide)"/><circle cx="170" cy="112" r="12" fill="url(#oxide)"/>
+    <circle cx="200" cy="104" r="11" fill="url(#oxide)"/><circle cx="90" cy="134" r="11" fill="url(#oxide)"/>
+    <circle cx="124" cy="140" r="12" fill="url(#oxide)"/><circle cx="156" cy="136" r="10" fill="url(#oxide)"/>
+    <circle cx="186" cy="142" r="13" fill="url(#oxide)"/><circle cx="212" cy="132" r="9" fill="url(#oxide)"/>
+    <circle cx="84" cy="168" r="12" fill="url(#oxide)"/><circle cx="114" cy="172" r="11" fill="url(#oxide)"/>
+    <circle cx="146" cy="168" r="13" fill="url(#oxide)"/><circle cx="178" cy="176" r="11" fill="url(#oxide)"/>
+    <circle cx="206" cy="166" r="10" fill="url(#oxide)"/><circle cx="92" cy="202" r="13" fill="url(#oxide)"/>
+    <circle cx="126" cy="206" r="11" fill="url(#oxide)"/><circle cx="158" cy="200" r="12" fill="url(#oxide)"/>
+    <circle cx="190" cy="208" r="12" fill="url(#oxide)"/><circle cx="214" cy="196" r="8" fill="url(#oxide)"/>
+    <circle cx="82" cy="238" r="11" fill="url(#oxide)"/><circle cx="112" cy="238" r="12" fill="url(#oxide)"/>
+    <circle cx="144" cy="236" r="11" fill="url(#oxide)"/><circle cx="176" cy="240" r="12" fill="url(#oxide)"/>
+    <circle cx="206" cy="234" r="11" fill="url(#oxide)"/>
+  </g>
+
+  <!-- anode: graphite flakes with visible layers -->
+  <g stroke="#1f2124" stroke-width="0.5">
+    <rect x="252" y="96" width="62" height="18" rx="5" fill="url(#graphite)"/>
+    <rect x="322" y="100" width="70" height="20" rx="5" fill="url(#graphite)"/>
+    <rect x="258" y="126" width="74" height="20" rx="5" fill="url(#graphite)"/>
+    <rect x="340" y="132" width="56" height="18" rx="5" fill="url(#graphite)"/>
+    <rect x="250" y="158" width="58" height="19" rx="5" fill="url(#graphite)"/>
+    <rect x="316" y="162" width="78" height="20" rx="5" fill="url(#graphite)"/>
+    <rect x="262" y="192" width="70" height="19" rx="5" fill="url(#graphite)"/>
+    <rect x="340" y="196" width="54" height="18" rx="5" fill="url(#graphite)"/>
+    <rect x="252" y="226" width="60" height="19" rx="5" fill="url(#graphite)"/>
+    <rect x="320" y="228" width="74" height="20" rx="5" fill="url(#graphite)"/>
+  </g>
+  <g stroke="#c3c7cc" stroke-width="0.45" stroke-opacity="0.8">
+    <path d="M257 102 h52 M257 108 h52 M327 106 h60 M327 113 h60 M263 132 h64 M263 139 h64
+             M345 138 h46 M345 144 h46 M255 164 h48 M255 171 h48 M321 168 h68 M321 175 h68
+             M267 198 h60 M267 205 h60 M345 202 h44 M345 208 h44 M257 232 h50 M257 239 h50
+             M325 234 h64 M325 241 h64"/>
+  </g>
+
+  <!-- Li+ ions travelling from anode to cathode during discharge -->
+  <g stroke="#b87a00" stroke-width="1.3" fill="none">
+    <path d="M 304 150 C 278 150, 262 120, 220 122" marker-end="url(#headIon)"/>
+    <path d="M 300 186 C 270 186, 250 186, 222 184" marker-end="url(#headIon)"/>
+    <path d="M 304 220 C 278 220, 262 250, 222 248" marker-end="url(#headIon)"/>
+  </g>
+  <g stroke="#b87a00" stroke-width="0.6">
+    <circle cx="312" cy="150" r="5.2" fill="url(#ion)"/><circle cx="308" cy="186" r="5.2" fill="url(#ion)"/>
+    <circle cx="312" cy="220" r="5.2" fill="url(#ion)"/>
+  </g>
+  <text x="276" y="80" text-anchor="middle" font-size="9.33" fill="#8a5c00" font-weight="bold">Li⁺ ions</text>
+  <line x1="276" y1="83" x2="300" y2="143" stroke="#b87a00" stroke-width="0.6"/>
+
+  <!-- labels with leaders -->
+  <g font-size="9.33" text-anchor="middle">
+    <line x1="61" y1="260" x2="61" y2="276" stroke="#666666" stroke-width="0.6"/>
+    <text x="61" y="288">Al foil</text>
+    <line x1="146" y1="256" x2="146" y2="276" stroke="#666666" stroke-width="0.6"/>
+    <text x="146" y="288">Cathode</text><text x="146" y="300" fill="#666666">layered oxide (LiMO₂)</text>
+    <line x1="234" y1="256" x2="234" y2="276" stroke="#666666" stroke-width="0.6"/>
+    <text x="234" y="288">Separator</text><text x="234" y="300" fill="#666666">porous polymer</text>
+    <line x1="322" y1="256" x2="322" y2="276" stroke="#666666" stroke-width="0.6"/>
+    <text x="322" y="288">Anode</text><text x="322" y="300" fill="#666666">graphite (LiₓC₆)</text>
+    <line x1="409" y1="260" x2="409" y2="276" stroke="#666666" stroke-width="0.6"/>
+    <text x="409" y="288">Cu foil</text>
+  </g>
+  <text x="235" y="316" text-anchor="middle" font-size="9.33" fill="#666666">Discharge: Li⁺ crosses the electrolyte, electrons take the external circuit</text>
+</svg>

@@ -67,6 +67,16 @@ Check, in this order:
    the described files match the text; do not require the DOI to resolve yet, and do not ask
    for draft-status wording in the manuscript or README, which cite the DOI as the published
    record it becomes.
+6. Figures. The images attached to the packet are the figures as typeset; the packet lists them
+   in order and marks those changed since the previous round. Check that each figure agrees with
+   the text, tables and numbers it illustrates, that axes, units, labels and legends are readable,
+   and whether a key mechanism, geometry, method or design that the text struggles to convey
+   lacks a clear schematic. A missing or unclear schematic, or a figure that restates the prose
+   in boxes, is presentation: a `text` item (`main_claim: false`) or an optional suggestion. A
+   figure that contradicts the reported results, or shows something the evidence does not
+   support, bears on the conclusions: report it as `evidence` or `claim_narrowing`, or as a
+   scientific blocker when it concerns a main result. If the packet says the figures could not
+   be rendered, state which judgments that limits.
 
 Recommend in the journal's vocabulary: `accept`, `minor_revision`, `major_revision`, `reject`.
 `minor_revision` means only local text changes are needed and no new argument, computation or

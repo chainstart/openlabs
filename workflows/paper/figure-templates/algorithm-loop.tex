@@ -1,0 +1,43 @@
+% Algorithm principle: the iteration as a flow (left) next to the pseudo-code it
+% implements (right); numbered badges tie each step to its line. The decision
+% shows the actual stopping rule, and the loop-back edge carries the update.
+\begin{tikzpicture}[node distance=4.5mm]
+  % ---- flow
+  \node[ol/terminal] (start) {Start: $\theta^{(0)}$ from least squares, $k=0$};
+  \node[ol/process=olBlue, below=of start, text width=44mm] (res)
+    {Residuals $r_i = y_i - x_i^{\top}\theta^{(k)}$\\ scale $s = \mathrm{MAD}(r)/0.6745$};
+  \node[ol/process=olBlue, below=of res, text width=44mm] (w)
+    {Weights $w_i = \min\{1,\ c\,s/|r_i|\}$\\{\olfigsmall Huber, $c = 1.345$}};
+  \node[ol/process=olBlue, below=of w, text width=44mm] (wls)
+    {Weighted least squares\\ $\theta^{(k+1)} = (X^{\top}WX)^{-1}X^{\top}Wy$};
+  \node[ol/decision, below=4.5mm of wls, text width=21mm] (conv)
+    {change in $\theta$\\ below $10^{-6}$?};
+  \node[ol/terminal, below=4.5mm of conv, fill=olGreen!15, draw=olGreen!70!black] (stop)
+    {Return $\theta^{(k+1)}$ and weights};
+  \draw[ol/flow] (start) -- (res);
+  \draw[ol/flow] (res) -- (w);
+  \draw[ol/flow] (w) -- (wls);
+  \draw[ol/flow] (wls) -- (conv);
+  \draw[ol/flow] (conv) -- node[ol/edge label, right=0.8mm] {yes} (stop);
+  \draw[ol/flow] (conv.west) -- node[ol/edge label, above=0.6mm] {no} ($(conv.west -| res.west)+(-5mm,0)$)
+    |- node[ol/edge label, pos=0.22, left=0.6mm] {$k \leftarrow k+1$} (res.west);
+  % ---- badges
+  \foreach \n/\num in {res/1, w/2, wls/3, conv/4} {
+    \node[ol/badge] at (\n.north east) {\num};
+  }
+  % ---- pseudo-code panel
+  \node[ol/panel, fill=olPaper, anchor=north west, text width=50mm, align=left, font=\olfigsmall]
+    (code) at ($(start.north -| wls.east)+(8mm,0)$) {%
+    \textbf{Algorithm 1}\ \ IRLS for Huber regression\\[3pt]
+    \textbf{input}\ \ $X$, $y$, tuning $c$, tolerance $\varepsilon$\\
+    $\theta \leftarrow (X^{\top}X)^{-1}X^{\top}y$\\
+    \textbf{repeat}\\[1pt]
+    \hspace*{2mm}\olstep{1}\ $r \leftarrow y - X\theta$\\
+    \hspace*{7.3mm}$s \leftarrow \mathrm{MAD}(r)/0.6745$\\[1pt]
+    \hspace*{2mm}\olstep{2}\ $w_i \leftarrow \min\{1,\ c\,s/|r_i|\}$\\[1pt]
+    \hspace*{2mm}\olstep{3}\ $\theta' \leftarrow \arg\min_\theta \sum_i w_i (y_i - x_i^{\top}\theta)^2$\\[1pt]
+    \hspace*{2mm}\olstep{4}\ \textbf{until}\ $\lVert\theta' - \theta\rVert < \varepsilon$,\ \ $\theta \leftarrow \theta'$\\[1pt]
+    \textbf{return}\ \ $\theta$, $w$};
+  \node[ol/note, anchor=north west, text width=50mm] at ($(code.south west)+(0,-3mm)$)
+    {Step 2 is $\psi(u)/u$ for the Huber function: a residual beyond $c\,s$ is down-weighted in proportion to its size, all others keep weight one.};
+\end{tikzpicture}

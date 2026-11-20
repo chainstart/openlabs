@@ -892,6 +892,9 @@ def build_handoff_package(
         files = [path for path in files if path.resolve() != supplement_source]
     files = [path for path in files if (
         (path.suffix.casefold() in CLEAN_SOURCE_SUFFIXES or path.resolve() == word_source)
+        # figure-src/ holds the drawing sources of figures/*.pdf (paper-writing figures);
+        # the journal receives the rendered PDFs, the sources stay in the repository.
+        and (manuscript / "figure-src") not in path.parents
         and not (
             path.parent == manuscript
             and path.suffix.casefold() == ".pdf"

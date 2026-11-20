@@ -1,0 +1,45 @@
+% Concept contrast: method A vs method B on the same toy problem, side by side,
+% with the one difference that matters marked in both panels.
+% Example: random vs blocked (forward-in-time) cross-validation on one series.
+\begin{tikzpicture}[x=1mm, y=1mm]
+  \def\n{20}
+  \def\cw{3.4}
+  % \cvrow{y}{last train cell}{test cells}{gap cells}: cells after the last listed
+  % cell of any kind are unused in that fold.
+  \newcommand{\cvrow}[4]{%
+    \foreach \i in {1,...,\n} {\draw[olLight, line width=0.4pt] ({(\i-1)*\cw+0.25},#1) rectangle ({\i*\cw-0.25},#1+3.2);}
+    \foreach \i in {1,...,#2} {\fill[olBlue!85] ({(\i-1)*\cw+0.25},#1) rectangle ({\i*\cw-0.25},#1+3.2);}
+    \foreach \i in {#3} {\fill[olOrange] ({(\i-1)*\cw+0.25},#1) rectangle ({\i*\cw-0.25},#1+3.2);}
+    \foreach \i in {#4} {\ifnum\i>0 \fill[ol/hatch=olGray] ({(\i-1)*\cw+0.25},#1) rectangle ({\i*\cw-0.25},#1+3.2);\fi}
+  }
+  % ---- panel a: random folds
+  \node[ol/panel label] at (-5,25) {a};
+  \node[font=\olfigfont\bfseries, anchor=west] at (0,23.6) {Random $k$-fold};
+  \cvrow{12}{20}{3,8,14,19}{0}
+  \cvrow{6}{20}{1,6,11,17}{0}
+  \cvrow{0}{20}{4,9,13,20}{0}
+  \foreach \y/\k in {12/1, 6/2, 0/3} {\node[ol/note, anchor=west] at (\n*\cw+1.5,\y+1.6) {fold \k};}
+  \draw[->, olVermilion, line width=0.8pt] (12.5*\cw,16) to[out=150, in=30]
+    node[pos=0.5, above, font=\olfigsmall, text=olVermilion] {later data trains the model} (8.5*\cw,16);
+  % ---- panel b: forward-in-time folds with a gap
+  \begin{scope}[xshift=88mm]
+    \node[ol/panel label] at (-5,25) {b};
+    \node[font=\olfigfont\bfseries, anchor=west] at (0,23.6) {Blocked, forward in time};
+    \cvrow{12}{9}{11,12,13}{10}
+    \cvrow{6}{12}{14,15,16}{13}
+    \cvrow{0}{15}{17,18,19}{16}
+    \foreach \y/\k in {12/1, 6/2, 0/3} {\node[ol/note, anchor=west] at (\n*\cw+1.5,\y+1.6) {fold \k};}
+    \node[font=\olfigsmall, text=olVermilion, anchor=south, align=center] at (10*\cw-1.7,16)
+      {gap: no training data next to the test block};
+    \draw[->, olVermilion, line width=0.6pt] (10*\cw-1.7,16) -- (10*\cw-1.7,15.6);
+  \end{scope}
+  % ---- legend and time axis
+  \fill[olBlue!85] (0,-7.4) rectangle ++(3.2,3.2);
+  \fill[olOrange] (17,-7.4) rectangle ++(3.2,3.2);
+  \fill[ol/hatch=olGray] (32,-7.4) rectangle ++(3.2,3.2);
+  \draw[olLight, line width=0.4pt] (57,-7.4) rectangle ++(3.2,3.2);
+  \foreach \x/\lab in {0/train, 17/test, 32/gap (excluded), 57/not used} {
+    \node[font=\olfigsmall, anchor=west] at (\x+4.2,-5.8) {\lab};
+  }
+  \draw[ol/flow] (88,-5.8) -- node[font=\olfigsmall, above=0.3mm] {time} (88+\n*\cw,-5.8);
+\end{tikzpicture}

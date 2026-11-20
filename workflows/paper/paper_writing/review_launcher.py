@@ -182,6 +182,21 @@ def _validate_against_schema(value: Any, schema: Mapping[str, Any], path: str = 
             raise LaunchError(f"{path}: expected boolean")
 
 
+IMAGE_MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+
+
+def claude_image_message(text: str, images: list[Path]) -> str:
+    """One stream-json user message: the prompt text followed by base64 image blocks."""
+    import base64
+
+    content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    for path in images:
+        content.append({"type": "image", "source": {
+            "type": "base64", "media_type": IMAGE_MEDIA_TYPES[path.suffix.lower()],
+            "data": base64.b64encode(path.read_bytes()).decode("ascii")}})
+    return json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
+
+
 def run_role(
     *,
     role_name: str,
@@ -191,8 +206,14 @@ def run_role(
     schema: Mapping[str, Any],
     workdir: Path,
     timeout: int = 3600,
+    images: list[Path] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run one role and return (validated result, receipt). Files are kept in ``workdir``."""
+    """Run one role and return (validated result, receipt). Files are kept in ``workdir``.
+
+    ``images`` (PNG/JPEG figure renderings) are attached to the prompt: Codex takes
+    them with ``--image``; Claude, whose tools stay disabled, receives one
+    stream-json user message whose content holds the text and the images.
+    """
     runtime = role_runtime(role)
     model = str(role["model"])
     workdir.mkdir(parents=True, exist_ok=False)
@@ -206,6 +227,11 @@ def run_role(
     out_path = workdir / "output.json"
     env = {k: v for k, v in os.environ.items() if not k.startswith(("ARA_", "ZENODO_", "SDJU_", "IMAP_", "SMTP_"))}
 
+    attached = [Path(p).resolve() for p in images or []]  # the process runs in an empty cwd
+    for path in attached:
+        if path.suffix.lower() not in IMAGE_MEDIA_TYPES or not path.is_file():
+            raise LaunchError(f"{role_name}: unsupported or missing image {path}")
+    stdin_text = prompt
     if runtime == "claude":
         command = [_executable("claude"), "-p", "--setting-sources", "project", "--strict-mcp-config",
                    "--model", model, "--tools", "", "--no-session-persistence",
@@ -213,14 +239,20 @@ def run_role(
                    # the ``rate_limit_event`` lines give the reviewer's quota reading.
                    "--output-format", "stream-json", "--verbose", "--json-schema", schema_text,
                    "--system-prompt", system_prompt]
+        if attached:
+            command[2:2] = ["--input-format", "stream-json"]
+            stdin_text = claude_image_message(prompt, attached)
     else:
-        command = [_executable("codex"), "exec", "-m", model, "-s", "read-only", "--skip-git-repo-check",
-                   "--ephemeral", "--output-schema", str(workdir / "schema.json"), "-o", str(out_path),
-                   "-C", str(sandbox), "-"]
+        command = [_executable("codex"), "exec"]
+        for path in attached:
+            command += ["--image", str(path)]
+        command += ["-m", model, "-s", "read-only", "--skip-git-repo-check",
+                    "--ephemeral", "--output-schema", str(workdir / "schema.json"), "-o", str(out_path),
+                    "-C", str(sandbox), "-"]
     started = _now()
     clock = time.monotonic()
     try:
-        proc = subprocess.run(command, input=prompt, text=True, capture_output=True, cwd=sandbox,
+        proc = subprocess.run(command, input=stdin_text, text=True, capture_output=True, cwd=sandbox,
                               env=env, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise LaunchError(f"{role_name}: timed out after {timeout}s") from exc
@@ -268,5 +300,8 @@ def run_role(
         "schema_sha256": _sha256(schema_text.encode()),
         "output_sha256": _sha256(out_path.read_bytes()),
     }
+    if attached:
+        receipt["images"] = [{"file": path.name, "sha256": _sha256(path.read_bytes())} for path in attached]
+        receipt["image_transport"] = "codex --image" if runtime == "codex" else "claude stream-json image blocks"
     (workdir / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return result, receipt

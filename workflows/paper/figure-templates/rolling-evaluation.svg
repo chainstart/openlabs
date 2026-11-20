@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="604" height="214" viewBox="0 0 604 214"
+     font-family="TeX Gyre Heros, Arial, Helvetica, sans-serif" font-size="10.67" fill="#222222">
+  <!-- Time-window evaluation protocol: one fixed train/validation/holdout split and the
+       rolling-origin backtest that is run inside the development period. 1 px = 0.75 pt;
+       604 px = 160 mm. Years run from x = 130 (2015) in steps of 46 px. Edit the rows,
+       keep every window on the shared calendar axis. -->
+  <defs>
+    <pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="4" height="4" fill="#ffffff"/>
+      <line x1="0" y1="0" x2="0" y2="4" stroke="#8a8a8a" stroke-width="1.1"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222222"/>
+    </marker>
+  </defs>
+
+  <!-- calendar grid -->
+  <g stroke="#E4E4E4" stroke-width="0.8">
+    <line x1="130" y1="30" x2="130" y2="176"/><line x1="176" y1="30" x2="176" y2="176"/>
+    <line x1="222" y1="30" x2="222" y2="176"/><line x1="268" y1="30" x2="268" y2="176"/>
+    <line x1="314" y1="30" x2="314" y2="176"/><line x1="360" y1="30" x2="360" y2="176"/>
+    <line x1="406" y1="30" x2="406" y2="176"/><line x1="452" y1="30" x2="452" y2="176"/>
+    <line x1="498" y1="30" x2="498" y2="176"/><line x1="544" y1="30" x2="544" y2="176"/>
+    <line x1="590" y1="30" x2="590" y2="176"/>
+  </g>
+  <g font-size="9.33" text-anchor="middle" fill="#444444">
+    <text x="153" y="24">2015</text><text x="199" y="24">2016</text><text x="245" y="24">2017</text>
+    <text x="291" y="24">2018</text><text x="337" y="24">2019</text><text x="383" y="24">2020</text>
+    <text x="429" y="24">2021</text><text x="475" y="24">2022</text><text x="521" y="24">2023</text>
+    <text x="567" y="24">2024</text>
+  </g>
+
+  <!-- row 1: the fixed split -->
+  <text x="0" y="47" font-weight="bold">Fixed split</text>
+  <text x="0" y="59" font-size="9.33" fill="#666666">selection, then one test</text>
+  <rect x="130" y="40" width="276" height="16" fill="#0072B2" fill-opacity="0.75"/>
+  <rect x="406" y="40" width="46" height="16" fill="#A9D4F2"/>
+  <rect x="452" y="40" width="138" height="16" fill="#882255"/>
+  <text x="268" y="51.5" text-anchor="middle" fill="#ffffff" font-size="9.33">train 2015–2020</text>
+  <text x="429" y="51.5" text-anchor="middle" font-size="9.33">validate</text>
+  <text x="521" y="51.5" text-anchor="middle" fill="#ffffff" font-size="9.33">holdout, opened once</text>
+
+  <!-- rows 2-5: rolling origin inside the development period (2015-2021) -->
+  <text x="0" y="95" font-weight="bold">Rolling origin</text>
+  <text x="0" y="107" font-size="9.33" fill="#666666">refit at each origin,</text>
+  <text x="0" y="119" font-size="9.33" fill="#666666">forecast 12 months</text>
+  <g font-size="9.33">
+    <rect x="130" y="80" width="138" height="12" fill="#0072B2" fill-opacity="0.75"/>
+    <rect x="268" y="80" width="4" height="12" fill="url(#hatch)"/>
+    <rect x="272" y="80" width="46" height="12" fill="#E69F00"/>
+    <rect x="130" y="98" width="184" height="12" fill="#0072B2" fill-opacity="0.75"/>
+    <rect x="314" y="98" width="4" height="12" fill="url(#hatch)"/>
+    <rect x="318" y="98" width="46" height="12" fill="#E69F00"/>
+    <rect x="130" y="116" width="230" height="12" fill="#0072B2" fill-opacity="0.75"/>
+    <rect x="360" y="116" width="4" height="12" fill="url(#hatch)"/>
+    <rect x="364" y="116" width="46" height="12" fill="#E69F00"/>
+    <rect x="130" y="134" width="276" height="12" fill="#0072B2" fill-opacity="0.75"/>
+    <rect x="406" y="134" width="4" height="12" fill="url(#hatch)"/>
+    <rect x="410" y="134" width="46" height="12" fill="#E69F00"/>
+    <g fill="#666666">
+      <text x="324" y="89.5">origin 1</text><text x="370" y="107.5">origin 2</text>
+      <text x="416" y="125.5">origin 3</text><text x="462" y="143.5">origin 4</text>
+    </g>
+  </g>
+  <!-- the holdout stays closed during the backtest -->
+  <rect x="452" y="74" width="138" height="78" fill="#882255" fill-opacity="0.08" stroke="#882255" stroke-width="0.8" stroke-dasharray="3 2"/>
+  <text x="521" y="104" text-anchor="middle" font-size="9.33" fill="#882255">holdout not</text>
+  <text x="521" y="116" text-anchor="middle" font-size="9.33" fill="#882255">touched</text>
+
+  <!-- time arrow -->
+  <line x1="130" y1="166" x2="588" y2="166" stroke="#222222" stroke-width="0.9" marker-end="url(#arrow)"/>
+  <text x="590" y="162" text-anchor="end" font-size="9.33">time</text>
+
+  <!-- legend -->
+  <g font-size="9.33">
+    <rect x="130" y="186" width="12" height="10" fill="#0072B2" fill-opacity="0.75"/><text x="147" y="195">training window</text>
+    <rect x="236" y="186" width="12" height="10" fill="#A9D4F2"/><text x="253" y="195">validation</text>
+    <rect x="318" y="186" width="12" height="10" fill="#E69F00"/><text x="335" y="195">forecast window</text>
+    <rect x="426" y="186" width="12" height="10" fill="url(#hatch)" stroke="#8a8a8a" stroke-width="0.5"/><text x="443" y="195">1-month gap</text>
+    <rect x="512" y="186" width="12" height="10" fill="#882255"/><text x="529" y="195">holdout</text>
+  </g>
+</svg>

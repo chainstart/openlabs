@@ -155,6 +155,55 @@ def build_parser() -> argparse.ArgumentParser:
     reader_mode.add_argument("--record", help="File a sub-agent's JSON answer to the --prompt-only packet.")
     reader.add_argument("--json", action="store_true")
 
+    figures = subparsers.add_parser(
+        "figures",
+        help="Figure sources in manuscript/figure-src/ -> vector PDFs in manuscript/figures/ "
+             "(build, check, sheet, new; writer's own tools, not a gate).",
+    )
+    figure_commands = figures.add_subparsers(dest="figures_command", required=True)
+
+    def _figure_target(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument("paper_id", nargs="?", help="Paper id (registry record or papers/<id>/manuscript).")
+        sub.add_argument("--root", default=str(default_repo_root()))
+        sub.add_argument("--manuscript", help="A manuscript directory instead of a paper id (no manifest).")
+        sub.add_argument("--preview-dir", help="Where PNG previews go (default papers/<id>/build/figures).")
+        sub.add_argument("--json", action="store_true")
+
+    figures_build = figure_commands.add_parser(
+        "build", help="Render every source (or --only NAME) to manuscript/figures/<stem>.pdf, write PNG "
+                      "previews and refresh production/figure-artifacts.json.")
+    _figure_target(figures_build)
+    figures_build.add_argument("--only", action="append", help="Figure stem (repeatable).")
+    figures_build.add_argument("--no-manifest", action="store_true",
+                               help="Do not refresh production/figure-artifacts.json.")
+    figures_check = figure_commands.add_parser(
+        "check", help="Source and rebuild, vector, printed font size, text overlap/clipping, internal "
+                      "words, caption and citation, colour-only cues, asset licences.")
+    _figure_target(figures_check)
+    figures_check.add_argument("--no-rebuild", action="store_true", help="Skip the rebuild comparison.")
+    figures_check.add_argument("--text-width", help="Printed text width (e.g. 160mm) instead of probing.")
+    figures_check.add_argument("--min-font", type=float, default=6.0)
+    figures_check.add_argument("--out", help="Also write the JSON result to this file.")
+    figures_sheet = figure_commands.add_parser("sheet", help="One contact-sheet PNG of all figures.")
+    _figure_target(figures_sheet)
+    figures_sheet.add_argument("--out", help="PNG path (default <preview-dir>/contact-sheet.png).")
+    figures_new = figure_commands.add_parser("new", help="Start figure-src/fig-NAME.* from a template.")
+    figures_new.add_argument("paper_id", nargs="?")
+    figures_new.add_argument("name", nargs="?")
+    figures_new.add_argument("--root", default=str(default_repo_root()))
+    figures_new.add_argument("--manuscript")
+    figures_new.add_argument("--kind", choices=["tikz", "py", "svg", "html"])
+    figures_new.add_argument("--template")
+    figures_new.add_argument("--force", action="store_true")
+    figures_new.add_argument("--list", action="store_true", help="List the templates and exit.")
+    figures_new.add_argument("--json", action="store_true")
+    figures_recolor = figure_commands.add_parser(
+        "recolor", help="Map an SVG asset's colours onto the shared palette.")
+    figures_recolor.add_argument("source")
+    figures_recolor.add_argument("target")
+    figures_recolor.add_argument("--map", action="append", default=[],
+                                 help="Explicit mapping '#ff0000=vermilion' (repeatable).")
+
     formal_check = subparsers.add_parser("formal-check", help="Inspect or run mandatory reference/prerequisite verification without changing a paper gate.")
     formal_check.add_argument("--paper-id", required=True)
     formal_check.add_argument("--root", default=str(default_repo_root()))
@@ -725,6 +774,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
+    if args.command == "figures":
+        return _figures_command(args)
     if args.command == "bundle":
         result = validate_result_bundle(args.path).to_dict()
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else _bundle_summary(result))
@@ -1147,6 +1198,63 @@ def _run_handoff(args: argparse.Namespace) -> int:
     except (HandoffError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"Handoff error: {exc}")
         return 2
+
+
+
+
+def _figures_command(args: argparse.Namespace) -> int:
+    from paper_writing import figures as fig
+
+    try:
+        if args.figures_command == "recolor":
+            mapping = dict(item.split("=", 1) for item in args.map)
+            print(fig.recolor_file(Path(args.source), Path(args.target), mapping))
+            return 0
+        if args.figures_command == "new" and args.list:
+            for entry in fig.template_catalog():
+                print(f"{entry['name']:<28} {Path(entry['file']).suffix:<6} {entry['use_when']}")
+            return 0
+        paper_id = args.paper_id
+        if args.figures_command == "new" and args.manuscript and args.name is None:
+            paper_id, args.name = None, args.paper_id  # `new --manuscript DIR NAME`
+        ws = fig.workspace(None if args.manuscript else paper_id, root=args.root, manuscript=args.manuscript,
+                           preview_dir=getattr(args, "preview_dir", None))
+        if args.figures_command == "build":
+            result = fig.build(ws, only=args.only, manifest=not args.no_manifest)
+            if args.json:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                for item in result["built"]:
+                    print(f"built {item['figure']}: {item['width_mm']} x {item['height_mm']} mm -> {item['pdf']}")
+                    print(f"      preview {item['preview']}" + "".join(f"; {n}" for n in item["notes"]))
+                for item in result["failed"]:
+                    print(f"FAILED {item['figure']}: {item['error']}")
+                if result.get("manifest"):
+                    print(f"manifest {result['manifest']}")
+                print("Look at each preview PNG, then run: paper-writing figures check")
+            return 0 if not result["failed"] else 1
+        if args.figures_command == "check":
+            result = fig.check(ws, rebuild=not args.no_rebuild, text_width=args.text_width,
+                               min_font_pt=args.min_font)
+            if args.out:
+                Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+            print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else fig.render_check(result),
+                  end="" if not args.json else "\n")
+            return 0 if result["valid"] else 1
+        if args.figures_command == "sheet":
+            print(fig.contact_sheet(ws, Path(args.out) if args.out else None))
+            return 0
+        if args.figures_command == "new":
+            if not args.name:
+                raise fig.FigureToolError("Give the figure NAME (and --template or --kind)")
+            result = fig.new_figure(ws, args.name, template=args.template, kind=args.kind, force=args.force)
+            print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else
+                  f"created {result['source']}\n        {result['sidecar']} (fill in purpose and key_point)")
+            return 0
+    except fig.FigureToolError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+    return 2
 
 
 if __name__ == "__main__":

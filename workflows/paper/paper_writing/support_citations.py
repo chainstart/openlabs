@@ -297,6 +297,7 @@ def _formal_tex_files(manuscript: Path) -> list[Path]:
         path
         for path in manuscript.rglob("*.tex")
         if "supplement" not in path.relative_to(manuscript).parts
+        and "figure-src" not in path.relative_to(manuscript).parts  # figure sources, not text
     )
 
 

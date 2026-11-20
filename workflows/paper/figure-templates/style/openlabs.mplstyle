@@ -1,0 +1,63 @@
+# openlabs.mplstyle -- shared matplotlib style for OpenLabs manuscript figures.
+# Applied automatically by `paper-writing figures build` to .py figure sources.
+# Size figures at their final printed width (openlabs_fig.SINGLE_COLUMN_IN etc.);
+# text is 7.5 pt and never below 6.5 pt at that width.
+
+figure.figsize: 3.46, 2.4
+figure.dpi: 150
+figure.constrained_layout.use: True
+figure.constrained_layout.h_pad: 0.03
+figure.constrained_layout.w_pad: 0.03
+savefig.dpi: 600
+savefig.format: pdf
+savefig.bbox: standard
+savefig.transparent: False
+pdf.fonttype: 42
+svg.fonttype: none
+
+font.family: sans-serif
+font.sans-serif: Arial, Helvetica, Nimbus Sans, TeX Gyre Heros, Liberation Sans, DejaVu Sans
+font.size: 7.5
+mathtext.fontset: custom
+mathtext.rm: sans
+mathtext.it: sans:italic
+mathtext.bf: sans:bold
+mathtext.sf: sans
+
+axes.titlesize: 8
+axes.titleweight: bold
+axes.titlelocation: left
+axes.labelsize: 7.5
+axes.linewidth: 0.6
+axes.edgecolor: 222222
+axes.labelcolor: 222222
+axes.spines.top: False
+axes.spines.right: False
+axes.grid: False
+axes.prop_cycle: cycler('color', ['0072B2', 'E69F00', '882255', '009E73', '56B4E9', 'D55E00', 'CC79A7', '666666'])
+
+grid.color: E4E4E4
+grid.linewidth: 0.5
+
+lines.linewidth: 1.1
+lines.markersize: 3.5
+patch.linewidth: 0.6
+hatch.linewidth: 0.5
+
+xtick.labelsize: 6.5
+ytick.labelsize: 6.5
+xtick.color: 222222
+ytick.color: 222222
+xtick.major.width: 0.6
+ytick.major.width: 0.6
+xtick.major.size: 2.5
+ytick.major.size: 2.5
+xtick.direction: out
+ytick.direction: out
+
+legend.fontsize: 6.5
+legend.frameon: False
+legend.handlelength: 1.6
+legend.borderaxespad: 0.3
+
+text.color: 222222

@@ -56,6 +56,14 @@ journal would decline the paper.
    repaired defect from an earlier version without identifying what still fails in
    the supplied current text. Preserve necessary hypotheses, negative results,
    provenance limitations and truthful disclosure when proposing consolidation.
+   Judge the figures too. The packet attaches them as typeset (or states that there are none).
+   As an editor at this journal would on first reading, ask whether the reader gets the figure
+   needed to grasp the key mechanism, geometry, method or study design (a schematic, framework,
+   flow or timeline), whether each figure helps the reader catch the main point, and whether it
+   is legible at print size and consistent with the text. A missing necessary schematic, a
+   figure that only restates the prose in boxes, or an unreadable figure is a presentation
+   problem: name the figure (or what the missing one should show) in `presentation_problems`.
+   Do not ask for a number of figures or for decorative ones.
 5. Read every prior editorial decision in the packet. For each, say whether the current
    manuscript actually answers the concern. Moving to another journal, rewording, or adding a
    paragraph does not answer a concern about significance or readership; only a stronger result

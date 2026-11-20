@@ -37,7 +37,9 @@ material local unless external processing is authorized and compatible with the 
 Load at most the three vendored components that `../profiles.yaml` declares for the domain,
 from `workflows/paper/skills/vendor/`: the primary writing skill always, the domain component
 (statistical-analysis or sympy) only when the paper needs it, and peer-review only in an
-assigned reviewer role. Repository rules override vendored instructions.
+assigned reviewer role. Repository rules override vendored instructions; in particular the
+`scientific-writing` sentence that it "does not generate images or schematics" is replaced by
+`../openlabs-paper-figures/SKILL.md`: OpenLabs writers draw their schematics.
 
 ## Write
 
@@ -51,6 +53,11 @@ per conclusion, no revision history, and revisions that do not grow the main tex
 2. Fix one main conclusion and its contribution boundary against the closest published work,
    write `papers/<paper_id>/writing/storyline.md` (reader, main result, three or four support
    points, the main limitation, what goes to the appendix), then write the canonical LaTeX from it.
+   The figure plan is part of the story line: list each figure with the one point it shows the
+   reader -- usually one entry schematic (mechanism, geometry, framework or study design) that
+   carries structure prose cannot, plus the result figures for the primary endpoint. Draw them as
+   vector figures from source with `paper-writing figures` and the templates and style rules in
+   `../openlabs-paper-figures/SKILL.md`; look at every rendered PNG before handing over.
 3. Keep negative, mixed, null and incomplete results. Do not choose an analysis after seeing
    which result is favorable; record design, exclusions, uncertainty, seeds and versions.
 4. Verify each citation's metadata and its support for the specific sentence; a search hit or

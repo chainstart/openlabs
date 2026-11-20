@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="332" height="120" viewBox="0 0 332 120"
+     font-family="TeX Gyre Heros, Arial, Helvetica, sans-serif" font-size="10.67" fill="#222222">
+  <!-- <one sentence: what the reader should see>. 1 px = 0.75 pt; 332 px = 88 mm
+       (single column), 453 px = 120 mm, 680 px = 180 mm. Text >= 8.67 px (6.5 pt).
+       Palette: #0072B2 #E69F00 #882255 #009E73 #56B4E9 #D55E00; ink #222222.
+       No filters (blur/drop-shadow): Chromium rasterizes them. -->
+  <rect x="10" y="40" width="120" height="40" rx="3" fill="#0072B2" fill-opacity="0.13" stroke="#005685"/>
+  <text x="70" y="64" text-anchor="middle">First step</text>
+  <rect x="200" y="40" width="120" height="40" rx="3" fill="#E69F00" fill-opacity="0.15" stroke="#ad7700"/>
+  <text x="260" y="64" text-anchor="middle">Second step</text>
+  <line x1="132" y1="60" x2="194" y2="60" stroke="#222222" stroke-width="1"/>
+  <path d="M194,56 L200,60 L194,64 z" fill="#222222"/>
+</svg>

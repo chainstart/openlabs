@@ -1,0 +1,47 @@
+% Study design / data flow: sources -> processing -> estimation -> endpoint,
+% with the sample size after every step and the parameters that define it.
+% Replace the example numbers by the values in the claim-evidence map.
+\begin{tikzpicture}
+  \def\gap{8mm}
+  % ---- data sources
+  \node[ol/data=olBlue, text width=30mm, anchor=north west] (s1) at (0,0)
+    {Surveillance isolates\\{\olfigsmall 2009--2023, \olN{4\,812}}};
+  \node[ol/data=olBlue, text width=30mm, below=6mm of s1] (s2)
+    {Reference genomes\\{\olfigsmall 6 host sources, \olN{1\,206}}};
+  % ---- processing
+  \path ($(s1.east)!0.5!(s2.east)$) ++(\gap,0) node[ol/process=olBlue, text width=24mm, anchor=west] (qc)
+    {Quality filter\\{\olfigsmall coverage $\geq$\,30$\times$,\\ $\leq$\,300 contigs}};
+  \node[ol/note, align=center, text width=24mm, below=4mm of qc] (drop)
+    {excluded \olN{312}\\low coverage or mixed};
+  \draw[ol/feedback] (qc.south) -- (drop.north);
+  % ---- time split
+  \path (qc.east) ++(\gap,0) coordinate (split);
+  \node[ol/process=olOrange, text width=31mm, anchor=west] (train) at ($(split |- s1.east)$)
+    {Fit attribution model\\{\olfigsmall train 2009--2018, \olN{3\,360}}};
+  \node[ol/process=olGreen, text width=31mm, anchor=west] (test) at ($(split |- s2.east)$)
+    {Forward validation\\{\olfigsmall test 2019--2023, \olN{1\,140}}};
+  % ---- endpoint
+  \path ($(train.east)!0.5!(test.east)$) ++(\gap,0)
+    node[ol/endpoint, text width=24mm, anchor=west] (end)
+    {\textbf{Primary endpoint}\\{\olfigsmall top-1 accuracy\\vs.\ frequency baseline}};
+  % ---- flows (orthogonal, merging on a shared bus)
+  \draw[ol/flow] (s1.east) -- ++(\gap/2,0) |- (qc.west);
+  \draw[ol/flow] (s2.east) -- ++(\gap/2,0) |- (qc.west);
+  \draw[ol/flow] (qc.east) -- ++(\gap/2,0) |- (train.west);
+  \draw[ol/flow] (qc.east) -- ++(\gap/2,0) |- (test.west);
+  \draw[ol/flow] (train.south) -- node[ol/edge label, right=1mm] {frozen} (test.north);
+  \draw[ol/flow] (train.east) -- ++(\gap/2,0) |- (end.west);
+  \draw[ol/flow] (test.east) -- ++(\gap/2,0) |- (end.west);
+  % ---- phase groups of equal height, titles on one line
+  \coordinate (top) at ($(s1.north)+(0,2.5mm)$);
+  \coordinate (bot) at ($(drop.south)+(0,-1mm)$);
+  \begin{scope}[on background layer]
+    \node[ol/group, inner xsep=2.5mm, inner ysep=0pt, fit=(s1)(s2)(s1.west |- top)(s1.west |- bot)] (g1) {};
+    \node[ol/group, inner xsep=2.5mm, inner ysep=0pt, fit=(qc)(drop)(qc.west |- top)(qc.west |- bot)] (g2) {};
+    \node[ol/group, inner xsep=2.5mm, inner ysep=0pt, fit=(train)(test)(train.west |- top)(train.west |- bot)] (g3) {};
+  \end{scope}
+  \foreach \g/\t in {g1/Data, g2/Processing, g3/Time-split estimation} {
+    \node[ol/group title, anchor=south] at (\g.north) [yshift=0.8mm] {\t};
+  }
+  \node[ol/group title, anchor=south] at (end.north |- g1.north) [yshift=0.8mm] {Endpoint};
+\end{tikzpicture}

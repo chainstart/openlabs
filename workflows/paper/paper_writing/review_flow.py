@@ -735,7 +735,8 @@ def unused_source_files(manuscript: Path, used: set[str]) -> list[str]:
             continue
         if rel.as_posix() == "references.bib":
             continue  # canonical bibliography record read by support-check, even with an inline bibliography
-        if rel.parts[0].lower() in {"supplement", "supplementary", "supplements", "support-materials", "build"}:
+        if rel.parts[0].lower() in {"supplement", "supplementary", "supplements", "support-materials", "build",
+                                    "figure-src"}:  # figure-src: drawing sources of figures/*.pdf
             continue
         if rel.as_posix() not in used and rel.with_suffix("").as_posix() not in used:
             unused.append(rel.as_posix())
@@ -875,9 +876,17 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
         rewrite_advice = rewrite_advisory(metadata, root, paper_id)
     except (ValueError, OSError) as exc:  # advice must never stop the review
         rewrite_advice = {"notes": [f"rewrite record unreadable: {exc}"], "blocking": False}
+    try:
+        from paper_writing.figures import review_figure_files
+
+        figure_files = review_figure_files(manuscript, used)
+    except OSError as exc:  # figure hashes inform the delta rule; never stop the review
+        advisories.append(_preparation_advisory("figures", "FIGURE-FILES-UNREADABLE", str(exc)))
+        figure_files = []
     return {"blockers": blockers, "fingerprints": fingerprints, "expanded": expanded,
             "editorial_rewrite_advisory": rewrite_advice, "preparation_advisories": advisories,
-            "build_inputs": sorted(used),
+            "build_inputs": sorted(used), "figure_files": figure_files,
+            "manuscript_path": str(manuscript),
             "bibliography": bibliography, "metadata": metadata, "target": target,
             "support_claim_evidence_maps": claim_maps, "formal_inventory": formal_inventory,
             "active_revision_context": revision_context,
@@ -1322,7 +1331,8 @@ def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> st
                + _claim_map_text(pre['support_claim_evidence_maps']) + "\n"
                if pre.get('support_claim_evidence_maps') else "")
             + str(pre.get('formal_check_packet') or "")
-            + _body_length_packet(pre))
+            + _body_length_packet(pre)
+            + str(pre.get('figure_packet') or ""))
 
 
 def body_length_block(paper_id: str, root: Path) -> dict[str, Any]:
@@ -1615,6 +1625,7 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
     text += _active_revision_packet(pre)
     text += _history_policy_packet(pre)
     text += str(pre.get('formal_check_packet') or "")
+    text += str(pre.get('figure_packet') or "")
     return text
 
 
@@ -1944,8 +1955,9 @@ def stalled_signal(rounds: list[Mapping[str, Any]], referees: Mapping[str, Mappi
 DELTA_RULE = ("Reuse the last ready full review only when, after removing comments, layout "
               "commands and DOI/version identifiers inside an inline reference list, the title, abstract, introduction, theorem-like statements, every table, every "
               "results/evaluation/discussion/conclusion section and the multiset of numbers in the "
-              "document bodies are identical, and at most {fraction:.0%} of lines changed. Figure image "
-              "files are not compared. The mandatory reference/core verification always reruns.")
+              "document bodies are identical, at most {fraction:.0%} of lines changed, and every figure "
+              "file the build reads has the SHA-256 recorded by that review (a changed figure is shown "
+              "to the referees in a full review). The mandatory reference/core verification always reruns.")
 DELTA_MAX_CHANGED_FRACTION = 0.15
 _DELTA_HEADINGS = re.compile(r"\b(results?|findings?|experiments?|empirical|numerical|evaluation|"
                              r"discussion|conclusions?|concluding|summary)\b", re.I)
@@ -2068,6 +2080,12 @@ def delta_review_basis(root: Path, paper_id: str, target: str, pre: Mapping[str,
     if context:
         reasons.append("rejection history changed: " + context[0])
     delta = substantive_delta(old_path.read_text(), pre["expanded"])
+    changed_figures = figure_changes(base, pre)
+    if changed_figures:
+        reasons.append("figure files changed: " + ", ".join(changed_figures[:8]))
+    delta["summary"]["figures_changed"] = changed_figures
+    if "figure_files" not in base:
+        delta["summary"]["figures_compared"] = False  # ready review recorded before figure hashes
     owner = None
     number_reasons = [r for r in delta["reasons"] if r.startswith("numbers changed")]
     if (not reasons and number_reasons and len(number_reasons) == len(delta["reasons"])
@@ -2085,6 +2103,48 @@ def delta_review_basis(root: Path, paper_id: str, target: str, pre: Mapping[str,
         result["owner_directed"] = dict(owner, numbers_added=delta["numbers_added"],
                                         waived_reasons=delta["reasons"])
     return result
+
+
+def figure_changes(base: Mapping[str, Any], pre: Mapping[str, Any]) -> list[str]:
+    """Figure files (manuscript-relative) added, removed or changed since ``base`` recorded them.
+
+    A review recorded before figure hashes existed has nothing to compare and returns [].
+    """
+    if "figure_files" not in base:
+        return []
+    old = {item["path"]: item["sha256"] for item in base.get("figure_files") or []}
+    new = {item["path"]: item["sha256"] for item in pre.get("figure_files") or []}
+    return sorted(path for path in set(old) | set(new) if old.get(path) != new.get(path))
+
+
+def figure_review_packet(pre: Mapping[str, Any], run: Path, changed: list[str]) -> tuple[str, list[Path], dict]:
+    """Render the figures for the reviewers; returns (packet text, image paths, record)."""
+    from paper_writing.figures import review_images
+
+    files = list(pre.get("figure_files") or [])
+    if not files:
+        return ("\n## Figures\nThe manuscript contains no figures.\n", [],
+                {"images": [], "notes": [], "changed_since_previous_round": []})
+    result = review_images(Path(pre["manuscript_path"]), files, run / "figures")
+    images = [Path(item["png"]) for item in result["images"]]
+    lines = ["", "## Figures"]
+    if images and len(images) == len(files):
+        lines.append(f"The {len(images)} images attached to this message are the manuscript's figures as "
+                     "typeset, in this order (judge them together with the text, captions and results):")
+        for index, item in enumerate(files, start=1):
+            lines.append(f"{index}. {item['path']}" + (" -- changed since the previous review round"
+                                                       if item["path"] in changed else ""))
+    elif images:
+        lines.append("The attached image is a contact sheet of all figures, labelled by file: "
+                     + ", ".join(item["path"] + (" (changed)" if item["path"] in changed else "")
+                                 for item in files))
+    else:
+        lines.append("The figure files could not be rendered for this review (" + "; ".join(result["notes"])
+                     + "); judge the figures from their captions and references only, and say so.")
+    record = {"images": [{"figure": item["figure"], "sha256": item["sha256"], "png_sha256": item["png_sha256"],
+                          "png": Path(item["png"]).relative_to(run).as_posix()} for item in result["images"]],
+              "notes": result["notes"], "changed_since_previous_round": changed}
+    return "\n".join(lines) + "\n", images, record
 
 
 OWNER_DIRECTED_DELTA_KIND = "owner_directed_revision_without_rereview"
@@ -2284,6 +2344,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
         # Unpackaged maps are bound by fingerprints.support_sources_sha256 only.
         record["support_claim_evidence_maps"] = claim_map_provenance(pre["support_claim_evidence_maps"])
     record["build_inputs"] = list(pre.get("build_inputs", []))
+    record["figure_files"] = list(pre.get("figure_files", []))
     if pre["blockers"]:
         record |= {"stage_reached": "preflight", "merged": {"outcome": "preflight_failed",
                    "preflight_blockers": pre["blockers"], "next_action": "text_revision"}}
@@ -2320,10 +2381,15 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     _json_dump(run / "prior-decisions.json", decisions)
     pre = dict(pre, body_length=body_length_block(paper_id, root))
     record["body_length"] = pre["body_length"]
+    last = rounds[-1] if rounds else None
+    changed = figure_changes(last, pre) if last is not None else []
+    figure_packet, figure_images, record["figure_review"] = figure_review_packet(pre, run, changed)
+    pre = dict(pre, figure_packet=figure_packet)
+    with_images = {"images": figure_images} if figure_images else {}
     editor, editor_receipt = run_role(role_name="editor", role=roles["editor"],
                                       system_prompt=(PROMPTS / "editor.md").read_text(),
                                       user_prompt=editor_packet(pre, decisions), schema=editor_schema_for_policy(history_policy),
-                                      workdir=run / "editor", timeout=config["timeout_seconds"])
+                                      workdir=run / "editor", timeout=config["timeout_seconds"], **with_images)
     referees: dict[str, Any] = {}
     receipts = {"editor": editor_receipt}
     history_blockers = rejection_clearance_blockers(editor, decisions, history_policy)
@@ -2336,7 +2402,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
             futures = {name: pool.submit(run_role, role_name=name, role=roles[name],
                                          system_prompt=(PROMPTS / "referee.md").read_text(), user_prompt=packet,
                                          schema=schema, workdir=run / name,
-                                         timeout=config["timeout_seconds"])
+                                         timeout=config["timeout_seconds"], **with_images)
                        for name in panel}
             for name, future in futures.items():
                 referees[name], receipts[name] = future.result()

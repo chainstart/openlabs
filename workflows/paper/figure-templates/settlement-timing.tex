@@ -1,0 +1,52 @@
+% Market settlement timing: what one settlement interval pays under two rules.
+% Six five-minute dispatch prices form one half-hour; the bars are the prices the
+% battery is paid under each rule, the strip below is its dispatch. Replace the
+% price list and the dispatch pattern with a real interval from the data.
+\begin{tikzpicture}[x=1mm, y=1mm]
+  \def\prices{62, 58, 71, 940, 85, 66}   % AUD/MWh, dispatch intervals 1..6
+  \def\mean{213.7}                         % arithmetic mean of the six
+  \def\ys{0.032}                           % mm per AUD/MWh on the price axis
+  \def\w{11}                               % mm per five-minute interval
+  % ---- axes
+  \draw[ol/link] (0,0) -- (6*\w+2,0);
+  \draw[ol/link] (0,0) -- (0,32);
+  \foreach \v in {0, 250, 500, 750, 1000} {
+    \draw[ol/link] (-0.8,\v*\ys) -- (0,\v*\ys);
+    \node[font=\olfigtiny, anchor=east] at (-1,\v*\ys) {\v};
+  }
+  \node[font=\olfigsmall, rotate=90, anchor=south] at (-8,16) {Price (AUD/MWh)};
+  % ---- five-minute prices (paid under five-minute settlement)
+  \foreach \p [count=\i] in \prices {
+    \fill[olBlue!75] ({(\i-1)*\w+1.2}, 0) rectangle ({\i*\w-1.2}, \p*\ys);
+  }
+  \node[ol/value=olBlue, anchor=south] at (3.5*\w, 940*\ys) {940};
+  % ---- half-hour mean (paid under half-hour settlement)
+  \draw[olOrange, line width=1.3pt] (0.4,\mean*\ys) -- (6*\w-0.4,\mean*\ys);
+  \node[ol/value=olOrange, anchor=south west, align=left] at (4*\w+1.5, \mean*\ys+0.5) {half-hour mean\\213.7};
+  % ---- interval ticks and labels
+  \foreach \i in {1,...,6} {
+    \node[font=\olfigtiny, anchor=north] at ({(\i-0.5)*\w}, -0.8) {:\pgfmathparse{int(5*\i)}\ifnum\pgfmathresult<10 0\fi\pgfmathresult};
+  }
+  \node[font=\olfigsmall, anchor=north] at (3*\w,-4.5) {Dispatch interval end (minutes past the hour)};
+  % ---- battery dispatch strip
+  \begin{scope}[yshift=-17mm]
+    \node[font=\olfigsmall\bfseries, anchor=east, align=right] at (-1,3) {Battery\\[-1pt]{\olfigtiny\mdseries in = charge, out = discharge}};
+    \foreach \i/\a in {1/0, 2/-1, 3/0, 4/1, 5/0, 6/0} {
+      \ifnum\a=1 \fill[olWine!80] ({(\i-1)*\w+1.2},1) rectangle ({\i*\w-1.2},5);
+        \node[font=\olfigtiny\bfseries, text=white] at ({(\i-0.5)*\w},3) {out};\fi
+      \ifnum\a=-1 \fill[olGreen!70] ({(\i-1)*\w+1.2},1) rectangle ({\i*\w-1.2},5);
+        \node[font=\olfigtiny\bfseries, text=white] at ({(\i-0.5)*\w},3) {in};\fi
+      \ifnum\a=0 \draw[olLight, line width=0.5pt] ({(\i-1)*\w+1.2},1) rectangle ({\i*\w-1.2},5);\fi
+    }
+  \end{scope}
+  % ---- revenue comparison
+  \begin{scope}[xshift=6*\w*1mm+10mm]
+    \node[ol/box, draw=olBlue!80!black, fill=olBlue!10, text width=43mm, align=left, anchor=north west] (five) at (0,31)
+      {\textbf{Five-minute settlement}\\{\olfigsmall charge at 58, discharge at 940\\[1pt]
+       margin \textbf{61.8} $=(0.85\cdot 940-58)/12$}};
+    \node[ol/box, draw=olOrange!80!black, fill=olOrange!12, text width=43mm, align=left, below=3mm of five] (half)
+      {\textbf{Half-hour settlement}\\{\olfigsmall both legs priced at 213.7\\[1pt]
+       margin \textbf{$-$2.7} $=(0.85-1)\cdot 213.7/12$}};
+    \node[ol/note, text width=43mm, below=2mm of half] {Charge 1\,MW for one interval, discharge the stored energy at 85\,\% round-trip efficiency; AUD per event.};
+  \end{scope}
+\end{tikzpicture}

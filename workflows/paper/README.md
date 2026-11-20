@@ -46,7 +46,11 @@ at delivery (handoff and `zenodo release`). The narrative part of `style-check`
 (`narrative-check`: main text over its length limit, revision-history wording) also stops the
 review preflight; `reader-check` is the writer's one-pass reader. Writing rules:
 [openlabs-paper-readability](skills/openlabs-paper-readability/SKILL.md); design notes (Chinese):
-[docs/WRITING_STYLE.zh.md](docs/WRITING_STYLE.zh.md). See
+[docs/WRITING_STYLE.zh.md](docs/WRITING_STYLE.zh.md). Figures: `paper-writing figures
+build|check|sheet|new` renders `manuscript/figure-src/` to vector PDFs; guide, templates and
+shared styles in [openlabs-paper-figures](skills/openlabs-paper-figures/SKILL.md) and
+[figure-templates/](figure-templates/catalog.yaml). The unified review attaches the rendered
+figures for the editor and referees. See
 [`docs/ZENODO_GUIDE.md`](../../docs/ZENODO_GUIDE.md) for controlled support-material publication.
 
 Remote handoff and pre-gate Zenodo mutations are disabled by default and need

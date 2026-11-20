@@ -1,0 +1,11 @@
+% <one sentence: what the reader should see in this figure>
+% Draw at the printed width (\olSingleColumn 88 mm, \olOneHalfColumn 120 mm,
+% \olDoubleColumn 180 mm); styles: ol/process, ol/data, ol/io, ol/decision,
+% ol/endpoint, ol/group, ol/flow, ol/feedback, ol/edge label, ol/note, ol/badge.
+% Extra preamble lines start with %!preamble, e.g.
+%!preamble \usetikzlibrary{graphs}
+\begin{tikzpicture}[node distance=5mm and 8mm]
+  \node[ol/process] (a) {First step\\{\olfigsmall what defines it}};
+  \node[ol/process, right=of a] (b) {Second step};
+  \draw[ol/flow] (a) -- node[ol/edge label, above=0.6mm] {interface} (b);
+\end{tikzpicture}

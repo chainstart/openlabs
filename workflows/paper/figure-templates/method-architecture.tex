@@ -1,0 +1,30 @@
+% Method framework / system architecture: layered modules with the interface
+% (what flows between modules, with its shape or unit) written on every arrow.
+% The training-only path is dashed so the deployed path reads at a glance.
+\begin{tikzpicture}[x=1mm, y=1mm]
+  % ---- layer bands (full width, drawn first)
+  \foreach \y/\name/\c in {0/Input/olGray, -18/Model/olBlue, -36/Calibration/olOrange, -54/Output/olWine} {
+    \fill[\c!7] (3,\y+7) rectangle (146,\y-7);
+    \node[font=\olfigsmall\bfseries, text=\c!75!black, rotate=90, anchor=south] at (3,\y) {\name};
+  }
+  % ---- modules
+  \node[ol/io=olGray, text width=27mm] (x) at (26,0) {Sensor window\\{\olfigsmall 96 steps $\times$ 12 channels}};
+  \node[ol/io=olGray, text width=23mm] (m) at (64,0) {Site metadata\\{\olfigsmall 8 covariates}};
+  \node[ol/process=olBlue, text width=29mm] (enc) at (26,-18) {Temporal encoder\\{\olfigsmall 4 dilated convolution blocks}};
+  \node[ol/process=olBlue, text width=23mm] (emb) at (64,-18) {Fusion\\{\olfigsmall concatenate + linear}};
+  \node[ol/process=olBlue, text width=27mm] (head) at (102,-18) {Quantile head\\{\olfigsmall 19 levels, $\tau=0.05$ to $0.95$}};
+  \node[ol/box, draw=olGray, text=olGray, text width=18mm, dash pattern=on 2pt off 1.2pt] (loss) at (134,-18)
+    {Pinball loss\\{\olfigsmall training only}};
+  \node[ol/data=olOrange, text width=25mm] (calset) at (48,-36) {Calibration set\\{\olfigsmall 40 held-out sites}};
+  \node[ol/process=olOrange, text width=30mm] (cal) at (102,-36) {Conformal adjustment\\{\olfigsmall split, $\alpha = 0.1$}};
+  \node[ol/strong=olWine, text width=34mm] (out) at (102,-54) {90\,\% prediction interval\\{\olfigsmall\mdseries per site and hour}};
+  % ---- interfaces
+  \draw[ol/flow] (x) -- node[ol/edge label, right=0.8mm] {$\mathbf{X}$: $96\times12$} (enc);
+  \draw[ol/flow] (m) -- node[ol/edge label, right=0.8mm] {$\mathbf{s}$: 8} (emb);
+  \draw[ol/flow] (enc) -- node[ol/edge label, above=0.8mm] {$\mathbf{z}$: 64} (emb);
+  \draw[ol/flow] (emb) -- node[ol/edge label, above=0.8mm] {72} (head);
+  \draw[ol/feedback] (head) -- (loss);
+  \draw[ol/flow] (head) -- node[ol/edge label, right=0.8mm] {$\hat q_\tau$: 19} (cal);
+  \draw[ol/flow] (calset) -- node[ol/edge label, above=0.8mm] {residual scores} (cal);
+  \draw[ol/flow strong=olWine] (cal) -- node[ol/edge label, right=0.8mm] {$[\hat\ell,\ \hat u]$} (out);
+\end{tikzpicture}

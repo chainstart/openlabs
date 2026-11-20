@@ -1470,8 +1470,9 @@ def _enqueue_review(
 # to the readability skill and the narrative check rather than to extra tasks.
 WRITING_RULES = (
     "Writing rules (binding): read CODE/workflows/paper/skills/openlabs-paper-readability/"
-    "SKILL.md before drafting and every revision; story line first, checks to the appendix; "
-    "`paper-writing narrative-check` and `reader-check` before ready_for_review."
+    "SKILL.md before each draft and revision; story line first, checks to appendix; "
+    "`paper-writing narrative-check`, `reader-check` before ready_for_review; figures: "
+    "openlabs-paper-figures."
 )
 REVISION_RULE = (
     " Placement (readability skill, section 5): put added qualifications, checks and explanations "
@@ -2538,7 +2539,8 @@ def writing_brief_lines(settings: FactorySettings, *, task: Mapping[str, Any],
     if writing.get("status") == WRITING_ACTIVE and runner == writing.get("runner"):
         return [f"You are this topic's writer (research by {writing.get('solver_runner')}): write "
                 "the whole manuscript yourself and every revision after review, until delivery. "
-                "Do not split the writing among models."]
+                "Do not split the writing among models. Plan the figures in the story line and "
+                "draw them with `paper-writing figures`."]
     if writing.get("status") == WRITING_FALLBACK:
         return [f"The writer {writing.get('runner')} could not start for "
                 f"{owner.writing_wait_hours:g} h; you write the manuscript and its revisions."]
@@ -2548,8 +2550,9 @@ def writing_brief_lines(settings: FactorySettings, *, task: Mapping[str, Any],
         f"{writer} writes this topic's manuscript (user decision 2026-11-19). When the research "
         f"is complete, do not draft the paper: write {HANDOVER_NAME} for the writer - every "
         "result to report with its value and the file or script that produces it, the figures "
-        "and tables available, the endpoint verdict, negative results, known limitations, open "
-        "items, paper_id and venue (point to files for detail) - then end the seat with status "
+        "and tables available, schematics to draw, the endpoint verdict, negative results, "
+        "known limitations, open items, paper_id and venue (files for detail) - then end the "
+        "seat with status "
         "continuing and phase writing. The writer takes over from there."
     ]
 
