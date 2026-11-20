@@ -367,6 +367,10 @@ class OwnerSettings:
     # the next usable runner (fresh session, or the same session when the new
     # runner is of the same provider and keep_session_within_provider is true).
     switch_after_minutes: float = 120.0
+    # Keep the session on such a move only when the new runner runs the same model
+    # (2026-11-20: prompt caches are per model, so a Fable session continued on Opus
+    # re-read its whole context uncached - 7 cross-model resumes cost about $21). The
+    # name is kept for existing configs; a different model always starts fresh.
     keep_session_within_provider: bool = True
     # Topics one runner may own at once (unlisted runners: no limit). Default:
     # Fable owns at most one topic.
@@ -407,6 +411,21 @@ class OwnerSettings:
     # Tokens read (uncached + cached input) by one session above which the next seat
     # starts fresh even below session_max_seats; 0 = no token threshold.
     session_max_tokens_read: int = 0
+    # Short continuation (2026-11-20, cache-cost review): a seat queued right after the
+    # last one may resume its session even past session_max_seats when all hold: the
+    # last seat's final context (last request's input) is below
+    # short_resume_context_tokens, the gap since it finished is at most
+    # short_resume_gap_minutes (well inside the 1-hour prompt cache), both run the same
+    # model, and the session has read less than short_resume_max_tokens_read in total
+    # (stops snowballing). A queued short resume that does not start within the gap is
+    # turned back into a fresh seat. 0 disables it: on gpt-6.2-sol owner seats (fresh
+    # first request ~20 K tokens, ~64 % cached) carrying 40-100 K of old context through
+    # every later request cost more than the fresh start saved (11-18..11-20 replay:
+    # 22 eligible seats, about -$2), so it stays off by default; suggested values when
+    # enabled: 100_000 / 10 / 1_000_000.
+    short_resume_context_tokens: int = 0
+    short_resume_gap_minutes: float = 10.0
+    short_resume_max_tokens_read: int = 1_000_000
     # Size limit of the owner's handover file; a larger one is cut for the next brief.
     handover_max_bytes: int = 8_192
     # Writer of the manuscript (user decision 2026-11-19): once the owner declares the
@@ -1490,6 +1509,12 @@ def _owner_settings(value: Any) -> OwnerSettings:
                                            defaults.session_max_seats),
         session_max_tokens_read=_nonnegative_int(value.get("session_max_tokens_read"),
                                                  defaults.session_max_tokens_read),
+        short_resume_context_tokens=_nonnegative_int(
+            value.get("short_resume_context_tokens"), defaults.short_resume_context_tokens),
+        short_resume_gap_minutes=_nonnegative_float(
+            value.get("short_resume_gap_minutes"), defaults.short_resume_gap_minutes),
+        short_resume_max_tokens_read=_nonnegative_int(
+            value.get("short_resume_max_tokens_read"), defaults.short_resume_max_tokens_read),
         handover_max_bytes=_positive_int(value.get("handover_max_bytes"),
                                          defaults.handover_max_bytes),
         writing_runner=str(value.get("writing_runner") or "").strip() or None,

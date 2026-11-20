@@ -233,6 +233,12 @@ def run_role(
             raise LaunchError(f"{role_name}: unsupported or missing image {path}")
     stdin_text = prompt
     if runtime == "claude":
+        # One request per role, no session: the default 1-hour cache write (2x input)
+        # is rarely read back (Fable referees: 37 runs, 14 % hits, 2.33 M tokens written).
+        # Claude Code 2.1.329 honours FORCE_PROMPT_CACHING_5M (checked 2026-11-20: the
+        # write moved from ephemeral_1h to ephemeral_5m), 1.25x, and a second request of
+        # the same role (structured-output retry) still reads it.
+        env.setdefault("FORCE_PROMPT_CACHING_5M", "1")
         command = [_executable("claude"), "-p", "--setting-sources", "project", "--strict-mcp-config",
                    "--model", model, "--tools", "", "--no-session-persistence",
                    # stream-json: the final ``result`` event is the former json envelope;

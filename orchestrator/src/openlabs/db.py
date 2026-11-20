@@ -2327,6 +2327,16 @@ class FactoryDB:
                         """,
                         (chosen, now, task_id),
                     )
+                if decision.get("fresh_session"):
+                    # Routed to another model: its session cannot reuse the cache.
+                    connection.execute(
+                        """
+                        UPDATE tasks SET session_mode='fresh', agent_session_id=NULL,
+                            session_source_task_id=NULL, updated_at=?
+                        WHERE task_id=? AND status='queued'
+                        """,
+                        (now, task_id),
+                    )
                 self._event(connection, "task", task_id, "task_routed", dict(decision))
             attempt_id = str(uuid.uuid4())
             attempt_number = int(row["attempt"]) + 1

@@ -2000,8 +2000,26 @@ class QuotaRouter:
     ) -> dict[str, Any] | None:
         decision = self._route(task, active_by_runner)
         if decision is not None:
+            if self._session_model_changed(task, str(decision.get("runner") or "")):
+                # Prompt caches are per model (2026-11-20): a session continued on
+                # another model of the same family re-reads its whole context uncached.
+                decision = {**decision, "fresh_session": True,
+                            "session_dropped": "model_changed"}
             self.decisions[str(task["task_id"])] = decision
         return decision
+
+    def _session_model_changed(self, task: Mapping[str, Any], runner: str) -> bool:
+        """A resumed task routed to a runner of another model than its session's."""
+
+        if str(task.get("session_mode") or "") != "resume" or not task.get("agent_session_id"):
+            return False
+        source = self._task(task.get("session_source_task_id"))
+        before = str((source or {}).get("runner") or task.get("runner") or "")
+        if not before or before == runner:
+            return False
+        old = self.settings.runners.get(normalize_runner(before))
+        new = self.settings.runners.get(normalize_runner(runner))
+        return old is not None and new is not None and old.model != new.model
 
     def _route(
         self,

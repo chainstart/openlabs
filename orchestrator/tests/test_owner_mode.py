@@ -14,6 +14,7 @@ from openlabs import codex_hook, owner, remote_wait
 from openlabs.config import (
     OWNER_TASK_TYPE,
     OwnerSettings,
+    RunnerSpec,
     load_program_settings,
 )
 from openlabs.contracts import (
@@ -389,9 +390,12 @@ def test_blocked_owner_moves_to_the_next_runner_after_the_threshold(tmp_path, mo
     assert owner.supervise(db, settings, report, object(), now=now) == []
     assert owner.supervise(db, settings, report, object(), now=now + timedelta(minutes=90)) == []
     moves = owner.supervise(db, settings, report, object(), now=now + timedelta(minutes=121))
-    assert moves and moves[0]["to_runner"] == "worker_claude" and moves[0]["keep_session"]
+    # Fable -> Opus: same provider, another model; prompt caches are per model, so the
+    # session is not kept (2026-11-20).
+    assert moves and moves[0]["to_runner"] == "worker_claude" and not moves[0]["keep_session"]
     moved = db.task(queued["task_id"])
-    assert moved["runner"] == "worker_claude" and moved["agent_session_id"] == "s1"
+    assert moved["runner"] == "worker_claude" and moved["agent_session_id"] is None
+    assert moved["session_mode"] == "fresh"
     blocked.add("worker_claude")
     later = now + timedelta(minutes=121)
     owner.supervise(db, settings, report, object(), now=later)
@@ -512,8 +516,16 @@ def test_brief_is_short_has_the_four_parts_and_forces_no_skill(tmp_path, monkeyp
     # quota-authorization line (2026-11-17) about 50 B; the compute capacity, queue
     # snapshot and per-topic thread limit lines (2026-11-18) about 0.3 KB; the off-peak
     # proxy-download window (2026-11-18) about 90 B; the binding writing-rules line
-    # (2026-11-19) about 0.25 KB.
-    assert len(body.encode("utf-8")) <= 5_500, len(body.encode("utf-8"))
+    # (2026-11-19) about 0.25 KB. 2026-11-20 (cache-cost review): the context-economy line
+    # about 0.3 KB, and the static-first order (the "## This topic" block) about 50 B.
+    assert len(body.encode("utf-8")) <= 5_850, len(body.encode("utf-8"))
+    # Static rules first, this topic and this seat last (prompt caching): the topic id,
+    # budget, deadline and queue snapshot all come after "## Ending a seat".
+    static_end = body.index("## Ending a seat")
+    for dynamic in (topic["topic_id"], "Agent seconds used", "Capacity: ailab",
+                    topic["preregistration_sha256"]):
+        assert body.index(dynamic) > static_end, dynamic
+    assert body.startswith("# Topic owner\n") and "Context: every output stays" in body
     assert "large proxy downloads (>= 200 MB file or 1024 MB batch) only 02:00-14:00 " \
         "Asia/Shanghai, never split" in body
     assert "Capacity: ailab" in body and "<= 8 thr" in body
@@ -579,6 +591,9 @@ def test_stop_hook_completes_the_packet_and_passes(tmp_path) -> None:
     message = codex_hook._session_context(context, "claude")["hookSpecificOutput"]
     assert "owner seat" in message["additionalContext"] and "Invoke" not in message[
         "additionalContext"]
+    # Fixed wording first; the seat's ids and paths after it (prompt caching).
+    text = message["additionalContext"]
+    assert text.index("t1") > text.index("This seat:") and str(workspace) in text
 
 
 def test_workspace_digest_ignores_the_log_and_outputs(tmp_path) -> None:
@@ -806,3 +821,29 @@ def test_brief_authorizes_quota_and_forbids_pace_stops(tmp_path, monkeypatch):
     assert "never stop or idle on pace/over signals" in request
     assert "dispatch_allowed" in request
     assert "Work stops at" not in request
+
+
+def test_blocked_owner_keeps_its_session_only_on_the_same_model(tmp_path, monkeypatch):
+    runners = {
+        "lead_claude": RunnerSpec("lead_claude", "anthropic", "lead", "claude-fable-5-2"),
+        "spare_claude": RunnerSpec("spare_claude", "anthropic", "lead", "claude-fable-5-2"),
+    }
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch, owner_settings=OwnerSettings(
+            session_max_seats=0, runners=("lead_claude", "spare_claude"),
+            max_topics_per_runner={}))
+    settings = replace(settings, runners=runners)
+    seat = _first_seat(paths, db, settings, monkeypatch, topic)
+    _seat_packet(db, paths, seat["task_id"], {"status": "continuing"}, session="s1",
+                 artifact=True)
+    _tick(paths, replace(settings, launch_jobs=False), monkeypatch)
+    queued = _latest(db, topic["campaign_id"])
+    assert queued["runner"] == "lead_claude" and queued["session_mode"] == "resume"
+    monkeypatch.setattr(owner, "runner_usable",
+                        lambda _settings, _router, name: name != "lead_claude")
+    now = datetime.now(UTC)
+    owner.supervise(db, settings, engine_report(), object(), now=now)
+    moves = owner.supervise(db, settings, engine_report(), object(),
+                            now=now + timedelta(minutes=121))
+    assert moves and moves[0]["to_runner"] == "spare_claude" and moves[0]["keep_session"]
+    assert db.task(queued["task_id"])["agent_session_id"] == "s1"

@@ -41,14 +41,16 @@ def _read_event() -> dict[str, Any]:
 
 def _owner_session_context(context: Mapping[str, Any]) -> dict[str, Any]:
     owner = context.get("owner") if isinstance(context.get("owner"), Mapping) else {}
+    # Fixed wording first, the seat's ids and paths after it (2026-11-20, prompt caching).
     message = (
-        f"OpenLabs owner seat {context.get('expected_result', {}).get('task_id')}: you own "
-        "this topic and decide the next step yourself. Work only in the private campaign "
-        f"workspace {context.get('agent_workspace')}; never modify the canonical campaign "
-        f"{context.get('canonical_campaign_workspace')}. Keep the work log "
-        f"{owner.get('work_log')} and OWNER_HANDOVER.md next to it current and, before the "
-        "seat ends "
-        f"({owner.get('deadline')}), write the status JSON to {context.get('result_path')}."
+        "OpenLabs owner seat: you own this topic and decide the next step yourself. Work "
+        "only in the private campaign workspace; never modify the canonical campaign. Keep "
+        "the work log and OWNER_HANDOVER.md next to it current and, before the seat ends, "
+        "write the status JSON to the result path. This seat: "
+        f"{context.get('expected_result', {}).get('task_id')}; workspace "
+        f"{context.get('agent_workspace')}; canonical campaign "
+        f"{context.get('canonical_campaign_workspace')}; work log {owner.get('work_log')}; "
+        f"ends {owner.get('deadline')}; result path {context.get('result_path')}."
     )
     return {
         "hookSpecificOutput": {

@@ -532,6 +532,14 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   过期（最长 1 小时）后把整段旧上下文重新写入缓存（续接一个四小时坐席后的会话，常见一次几美元的缓存写入）；
   Codex runner 新会话是新的 thread，不再每次请求重读累计的旧上下文，`total_token_usage` 也从零计。负责人在
   坐席内自己开的子 agent 不受此影响。
+  短续写续接（2026-11-20，缓存成本复盘）：`short_resume_context_tokens > 0` 时，紧接上一坐席排队的坐席在超过
+  `session_max_seats` 后仍可续接原会话，条件全部满足：上一坐席最终上下文（最后一次请求的输入，运行记录
+  `last_context_tokens`）小于该值；距上一坐席结束不超过 `short_resume_gap_minutes`（默认 10 分钟，在 1 小时缓存
+  有效期内）；同一模型；同一课题；该会话累计读入小于 `short_resume_max_tokens_read`（默认 1M，防滚雪球）。
+  排队超过间隔仍未启动的续接坐席由 `owner.supervise` 改回新会话。远程作业唤醒坐席不走此规则。默认 0（关）：
+  11-18 至 11-20 的 sol 负责人坐席回放显示，新会话首请求约 20K token 且约 64% 命中缓存，续接带入的 40–100K 旧
+  上下文在后续每次请求里重读，净多花。换 runner 时（`switch_after_minutes`）只有同一模型才保留会话；普通任务
+  经额度路由换到同提供方的另一模型时也改为新会话（缓存按模型隔离）。
 - **写作规范（2026-11-19）**：简报的 Tools 段有一行“Writing rules (binding, not optional)”（`owner.WRITING_RULES`），
   要求负责人动笔前、每次改稿前读 `workflows/paper/skills/openlabs-paper-readability/SKILL.md`，先写
   `papers/<id>/writing/storyline.md`，交 ready_for_review 前跑 `paper-writing narrative-check`（正文超限、修订史用语为失败）

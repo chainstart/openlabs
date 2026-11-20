@@ -282,8 +282,8 @@ runners = ["lead_claude", "worker_claude", "lead_gpt"]
 # still caps it.
 seat_wall_seconds = 14400
 # A queued seat whose runner cannot start it this long moves to the next usable
-# runner (same provider: the session is kept; other provider: fresh session that
-# starts from the owner's work log).
+# runner (same model: the session is kept; another model, even of the same provider,
+# starts a fresh session from the owner's handover - prompt caches are per model).
 switch_after_minutes = 120
 keep_session_within_provider = true
 # Topics one runner may own at once (unlisted: no limit).
@@ -312,6 +312,15 @@ review_max_rounds = 3
 # OWNER_HANDOVER.md (1 = always fresh, 0 = no limit); optional token threshold.
 session_max_seats = 1
 session_max_tokens_read = 0
+# Short continuation (2026-11-20): a seat queued right after the last one resumes its
+# session even past session_max_seats when the last seat's final context is below
+# short_resume_context_tokens, it finished at most short_resume_gap_minutes ago, the model
+# is the same and the session read less than short_resume_max_tokens_read in total; not
+# started within the gap -> fresh. 0 = off (default: on sol the carried context cost more
+# than the fresh start saved). Suggested when enabled: 100000 / 10 / 1000000.
+short_resume_context_tokens = 0
+short_resume_gap_minutes = 10
+short_resume_max_tokens_read = 1000000
 handover_max_bytes = 8192
 # Manuscript writer (user decision 2026-11-19). Unset: the owner writes. Set: when the
 # owner's packet declares the research done (phase "writing", or a first ready_for_review

@@ -310,6 +310,25 @@ def test_launcher_records_reported_model_and_hashes(tmp_path, monkeypatch):
     assert receipt["tools_enabled"] is False and receipt["prior_scores_supplied"] is False
 
 
+def test_claude_roles_write_the_five_minute_cache(tmp_path, monkeypatch):
+    """One request per role: the 1-hour cache write (2x) is not worth it (2026-11-20)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "claude"
+    seen = tmp_path / "env.txt"
+    payload = {"structured_output": {"answer": "ok"}, "modelUsage": {"claude-fable-5-2": {}}}
+    script.write_text("#!/bin/sh\ncat >/dev/null\necho \"$FORCE_PROMPT_CACHING_5M\" > "
+                      f"{seen}\necho '" + json.dumps(payload) + "'\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("FORCE_PROMPT_CACHING_5M", raising=False)
+    run_role(role_name="referee_a", role={"provider": "anthropic", "tool": "Claude Code",
+                                          "model": "claude-fable-5-2"},
+             system_prompt="s", user_prompt="u", schema={"type": "object"},
+             workdir=tmp_path / "run")
+    assert seen.read_text().strip() == "1"
+
+
 def test_launcher_rejects_model_substitution(tmp_path, monkeypatch):
     _fake_claude(tmp_path, monkeypatch, "some-other-model")
     with pytest.raises(LaunchError, match="reported models"):

@@ -92,6 +92,8 @@ HANDOVER_NAME = "OWNER_HANDOVER.md"
 RESPONSE_NAME = "REVIEW_RESPONSE.md"
 STATE_META_PREFIX = "owner_state:"
 BLOCKED_META_PREFIX = "owner_blocked:"
+# Queued short-continuation seats (:func:`short_resume`): value = the source seat's finish.
+SHORT_RESUME_META_PREFIX = "owner_short_resume:"
 TRIGGER_NO_PROGRESS = "owner_no_progress"
 TRIGGER_REVIEW_REJECTED = "owner_review_rejected"
 TRIGGER_REVIEW_ROUNDS = "owner_review_rounds_exhausted"
@@ -669,14 +671,81 @@ def session_tasks(db: FactoryDB, source: Mapping[str, Any]) -> list[dict[str, An
     return found
 
 
+def _session_read(db: FactoryDB, source: Mapping[str, Any],
+                  chain: list[dict[str, Any]]) -> int:
+    """Input tokens (uncached + cached + cache writes) read by the seats of ``chain``."""
+
+    from .usage import normalized_attempts, tokens_read
+
+    ids = {str(item["task_id"]) for item in chain}
+    return sum(
+        tokens_read(item["runtime"])
+        for item in normalized_attempts(db, campaign_ids=[str(source["campaign_id"])])
+        if str(item["task_id"]) in ids
+    )
+
+
+def _last_attempt(db: FactoryDB, task_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(attempt row, runtime) of a task's latest attempt; empty when there is none."""
+
+    attempts = db.task_attempts(task_id)
+    if not attempts:
+        return {}, {}
+    row = dict(attempts[-1])
+    runtime = row.get("runtime")
+    return row, dict(runtime) if isinstance(runtime, Mapping) else {}
+
+
+def runner_model(settings: FactorySettings, runner: Any) -> str | None:
+    """Configured model of a runner (None: unknown runner or the CLI's default model)."""
+
+    spec = settings.runners.get(str(runner or ""))
+    return spec.model if spec is not None else None
+
+
+def short_resume(
+    db: FactoryDB, settings: FactorySettings, source: Mapping[str, Any],
+    chain: list[dict[str, Any]], *, now: datetime | None = None,
+) -> tuple[bool, str]:
+    """Whether a seat queued now may resume ``source``'s session as a short continuation.
+
+    All of ``[program.owner].short_resume_*`` must hold (see :class:`OwnerSettings`): the
+    last seat's final context below the limit, finished within the gap, the session's total
+    read below its cap. The same model is checked by the caller once the runner is known.
+    """
+
+    owner = settings.program.owner
+    limit = owner.short_resume_context_tokens
+    if not limit:
+        return False, "short_resume_off"
+    row, runtime = _last_attempt(db, str(source["task_id"]))
+    context = runtime.get("last_context_tokens")
+    if not isinstance(context, int) or isinstance(context, bool) or context <= 0:
+        return False, "short_resume:context_unknown"
+    if context >= limit:
+        return False, f"short_resume:context:{context}"
+    finished = budget_control.parse_time(row.get("finished_at"))
+    moment = now or datetime.now(UTC)
+    if finished is None or moment - finished > timedelta(minutes=owner.short_resume_gap_minutes):
+        return False, "short_resume:gap"
+    if owner.short_resume_max_tokens_read:
+        read = _session_read(db, source, chain)
+        if read >= owner.short_resume_max_tokens_read:
+            return False, f"short_resume:read:{read}"
+    return True, f"short_resume:{context}"
+
+
 def keep_session(
-    db: FactoryDB, settings: FactorySettings, source: Mapping[str, Any]
+    db: FactoryDB, settings: FactorySettings, source: Mapping[str, Any], *,
+    allow_short: bool = False, now: datetime | None = None,
 ) -> tuple[bool, str]:
     """Whether the next seat resumes ``source``'s session, and why (not).
 
     ``[program.owner].session_max_seats`` seats per session (0: no limit) and, when set,
     ``session_max_tokens_read`` input tokens read by the session; past either the next
-    seat is a fresh session that starts from the owner's handover.
+    seat is a fresh session that starts from the owner's handover. ``allow_short``: a seat
+    queued right now may still resume as a short continuation (:func:`short_resume`);
+    wake-ups after a wait never do (their start time is unknown).
     """
 
     owner = settings.program.owner
@@ -684,19 +753,59 @@ def keep_session(
     if not chain:
         return False, "no_session"
     if owner.session_max_seats and len(chain) >= owner.session_max_seats:
+        if allow_short:
+            short, why = short_resume(db, settings, source, chain, now=now)
+            if short:
+                return True, why
         return False, f"session_max_seats:{len(chain)}"
     if owner.session_max_tokens_read:
-        from .usage import normalized_attempts, tokens_read
-
-        ids = {str(item["task_id"]) for item in chain}
-        read = sum(
-            tokens_read(item["runtime"])
-            for item in normalized_attempts(db, campaign_ids=[str(source["campaign_id"])])
-            if str(item["task_id"]) in ids
-        )
+        read = _session_read(db, source, chain)
         if read >= owner.session_max_tokens_read:
             return False, f"session_max_tokens_read:{read}"
     return True, "resume"
+
+
+def _seat_model(settings: FactorySettings, source: Mapping[str, Any]) -> str | None:
+    """Model a seat's session ran on: its runner's configured model.
+
+    The configured model, not the reported one, so it compares with the next runner's
+    configuration (a reported id may carry a date or suffix).
+    """
+
+    return runner_model(settings, source.get("runner"))
+
+
+def expire_short_resumes(db: FactoryDB, settings: FactorySettings, report: Any = None, *,
+                         now: datetime | None = None) -> list[str]:
+    """A short-continuation seat still queued past the gap starts a fresh session.
+
+    The resume was granted for a warm cache (:func:`short_resume`); a seat that waited for
+    quota or a slot longer than ``short_resume_gap_minutes`` gets the full brief instead.
+    """
+
+    marks = db.meta_items(SHORT_RESUME_META_PREFIX)
+    if not marks:
+        return []
+    moment = now or datetime.now(UTC)
+    gap = timedelta(minutes=settings.program.owner.short_resume_gap_minutes)
+    expired: list[str] = []
+    for task_id, finished_text in marks.items():
+        task = db.task(task_id)
+        if task is None or task.get("status") != "queued" or task.get("session_mode") != "resume":
+            db.update_meta({SHORT_RESUME_META_PREFIX + task_id: None})
+            continue
+        finished = budget_control.parse_time(finished_text)
+        if finished is not None and moment - finished <= gap:
+            continue
+        detail = {"reason": "short_resume_expired", "source_finished_at": finished_text}
+        if db.reassign_queued_task(task_id, runner=str(task.get("runner") or ""),
+                                   fresh_session=True, event="owner_short_resume_expired",
+                                   detail=detail):
+            expired.append(task_id)
+        db.update_meta({SHORT_RESUME_META_PREFIX + task_id: None})
+    if expired and report is not None:
+        report.program.setdefault("owner_short_resume_expired", []).extend(expired)
+    return expired
 
 
 def park_session_mode(
@@ -1092,7 +1201,9 @@ def enqueue_seat(
     session_reason = "no_session"
     if source is not None:
         runner = str(source.get("runner") or "") or None
-        keep, session_reason = keep_session(db, settings, source)
+        keep, session_reason = keep_session(
+            db, settings, source,
+            allow_short=initial_status == "queued" and not_before is None)
         if keep:
             session_mode = "resume"
             session_source = str(source["task_id"])
@@ -1111,6 +1222,11 @@ def enqueue_seat(
         session_mode, session_source, session_reason = "fresh", None, "owner_runner_not_listed"
     if runner is None:
         runner = choose_runner(db, settings, campaign_id=campaign_id, router=router) or "frontier"
+    if session_mode == "resume" and source is not None and _seat_model(
+        settings, source
+    ) != runner_model(settings, runner):
+        # Prompt caches are per model: another model re-reads the whole context uncached.
+        session_mode, session_source, session_reason = "fresh", None, "model_changed"
     resources = task_resources(source) if source else default_task_resources(settings)
     db.enqueue_task(
         task_id=identifier,
@@ -1136,6 +1252,9 @@ def enqueue_seat(
         not_before=not_before,
         **resources.to_dict(),
     )
+    if session_reason.startswith("short_resume:") and session_mode == "resume" and source:
+        row, _runtime = _last_attempt(db, str(source["task_id"]))
+        db.update_meta({SHORT_RESUME_META_PREFIX + identifier: str(row.get("finished_at") or "")})
     if report is None:
         return identifier
     report.enqueued.append(identifier)
@@ -1728,6 +1847,15 @@ def _enqueue_review(
 
 # The writing rules every seat reads (user decision 2026-11-19): one writer, one session, held
 # to the readability skill and the narrative check rather than to extra tasks.
+# Context economy (2026-11-20, cache-cost review): every tool output stays in the session
+# and is re-read by each later request; whole JSON states, receipts, SKILL/SOP files and logs
+# were most of the owner sessions' context.
+CONTEXT_RULE = (
+    "Context: every output stays in this session and is re-read at each later step. Locate "
+    "with `rg -n`/`jq`, read slices (`sed -n A,Bp`, `tail -50`); never dump whole JSON "
+    "states, receipts, logs or SKILL/SOP files; keep outputs small (Codex "
+    "`max_output_tokens` <= 2000); bulk reading -> a sub-agent that returns a summary."
+)
 WRITING_RULES = (
     "Writing rules (binding): read CODE/workflows/paper/skills/openlabs-paper-readability/"
     "SKILL.md before each draft and revision; story line first, checks to appendix; "
@@ -2458,6 +2586,7 @@ def supervise(
 
     if not mode_enabled(settings):
         return []
+    expire_short_resumes(db, settings, report, now=now)
     writing_moves = supervise_writing(db, settings, report, router, now=now, paths=paths)
     if router is None:
         return writing_moves
@@ -2498,10 +2627,11 @@ def supervise(
             continue
         old = settings.runners.get(runner)
         new = settings.runners[target]
+        # Only the same model keeps the session (prompt caches are per model).
         keep = bool(
             owner.keep_session_within_provider and old is not None
-            and old.provider == new.provider and task.get("session_mode") == "resume"
-            and task.get("agent_session_id")
+            and old.provider == new.provider and old.model == new.model
+            and task.get("session_mode") == "resume" and task.get("agent_session_id")
         )
         detail = {"from_runner": runner, "to_runner": target, "keep_session": keep,
                   "blocked_since": budget_control._iso(since),
@@ -2733,8 +2863,11 @@ def render_brief(
         )
     precheck = (" The card's feasibility_precheck (research_state.json) decides first whether "
                 "the topic goes on." if state.get("feasibility_precheck") else "")
+    topic_name = (topic or {}).get("topic_id") or state.get("topic_id") or campaign["campaign_id"]
+    # Static rules first, this topic and this seat last (2026-11-20, prompt caching): a
+    # fresh seat's prefix stays cacheable across topics and seats up to the topic block.
     lines = [
-        f"# Topic owner: {(topic or {}).get('topic_id') or state.get('topic_id') or campaign['campaign_id']}",
+        "# Topic owner",
         "",
         "You own this admitted topic end to end; how to get there is your decision.",
         "",
@@ -2746,17 +2879,7 @@ def render_brief(
          "review and a human decide. Run the recompute checklist on your results first."
          if owner.recompute_review else
          "One manuscript, on the research line's paper template, that a venue on the line's "
-         "list would publish - or an early, honest verdict that it cannot be done, and why.")
-        + precheck,
-        f"- Question: {_short(state.get('question') or campaign.get('title') or '', 220)}",
-        f"- Pre-registered primary endpoint (sha256 {sha}): "
-        f"{_short(prereg.get('primary_endpoint') or prereg, 240)} (full: research_state.json "
-        "`preregistration`).",
-        f"- Target: {state.get('target_tier') or 'routine'}; venues: {routine}"
-        + (f"; escalation: {escalation}" if escalation else "") + f". Admission conditions: "
-        f"{len(conditions) if isinstance(conditions, list) else 0} (`admission_conditions`).",
-        f"- Budget: {used}/{maximum} Agent seconds used; this seat ends by "
-        f"{deadline.strftime('%Y-%m-%d %H:%M')} UTC.",
+         "list would publish - or an early, honest verdict that it cannot be done, and why."),
         "",
         "## Resources",
         f"CODE={code}, DATA={paths.data}.",
@@ -2766,7 +2889,6 @@ def render_brief(
         "--task-type gpu --gpu-memory-mib N --gpu-device 0 -- CMD`. Do not wait in the session "
         "for long jobs: end the seat awaiting_remote; it resumes when they finish.",
         *(GPU_BRIEF_LINES if _line_gpu(paths, settings, line) else ()),
-        *compute_brief_lines(settings, str(campaign.get("campaign_id") or "")),
         "- Models: use sub-agents or another model whenever it is worth it.",
         models,
         "- Quota: a dispatched seat is authorized; the control plane manages quota. Work "
@@ -2784,6 +2906,7 @@ def render_brief(
         "- Manuscripts: `paper-writing` CLI (CODE/workflows/paper/skills/openlabs-paper-writing/"
         "SKILL.md). Other skills and CODE/AGENTS.md are optional references and checklists.",
         f"- {WRITING_RULES}",
+        f"- {CONTEXT_RULE}",
         "",
         "## Hard limits",
         "1. Downloads: bridge only, always `--route auto` (`--route proxy` needs user approval; "
@@ -2817,6 +2940,20 @@ def render_brief(
         "strays are moved there).",
         "- Frozen for a line-level fact? Add `reopen_when` (CODE/orchestrator/src/openlabs/"
         "reopen.py): all true -> reopened once, same pre-registration.",
+        "",
+        f"## This topic: {topic_name}",
+        *([precheck.strip()] if precheck else []),
+        f"- Question: {_short(state.get('question') or campaign.get('title') or '', 220)}",
+        f"- Pre-registered primary endpoint (sha256 {sha}): "
+        f"{_short(prereg.get('primary_endpoint') or prereg, 240)} (full: research_state.json "
+        "`preregistration`).",
+        f"- Target: {state.get('target_tier') or 'routine'}; venues: {routine}"
+        + (f"; escalation: {escalation}" if escalation else "") + f". Admission conditions: "
+        f"{len(conditions) if isinstance(conditions, list) else 0} (`admission_conditions`).",
+        f"- Budget: {used}/{maximum} Agent seconds used; this seat ends by "
+        f"{deadline.strftime('%Y-%m-%d %H:%M')} UTC.",
+        *(["- Compute now:", *queue] if (queue := compute_brief_lines(
+            settings, str(campaign.get("campaign_id") or ""))) else []),
     ]
     role = writing_brief_lines(settings, task=task, writing=writing, state=state)
     if role:

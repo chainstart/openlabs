@@ -1387,6 +1387,9 @@ def _jsonl_runtime(path: Path) -> dict[str, Any]:
             value = event.get(key)
             if isinstance(value, (str, int, float)) and not isinstance(value, bool):
                 runtime[key] = value
+        context = _claude_request_context(event)
+        if context:
+            runtime["last_context_tokens"] = context
         usage = event.get("usage")
         if isinstance(usage, Mapping):
             found = _usage_counters(usage)
@@ -1402,6 +1405,43 @@ def _jsonl_runtime(path: Path) -> dict[str, Any]:
         runtime.update(sums)
         runtime["result_segments"] = segments
     return runtime
+
+
+def _claude_request_context(event: Mapping[str, Any]) -> int | None:
+    """Input tokens of one main-session Claude request (its context size), else None.
+
+    Sub-agent messages (``parent_tool_use_id`` set) are other conversations. Counted:
+    uncached input + cache reads + cache writes - everything the request read.
+    """
+
+    if event.get("type") != "assistant" or event.get("parent_tool_use_id"):
+        return None
+    message = event.get("message")
+    usage = message.get("usage") if isinstance(message, Mapping) else None
+    if not isinstance(usage, Mapping):
+        return None
+    total = 0
+    for key in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            total += value
+    return total or None
+
+
+def codex_session_last_context(path: Path) -> int | None:
+    """Input tokens of the last request in a Codex session file (its final context size)."""
+
+    text = _read_tail(path, _CODEX_SESSION_TAIL_BYTES)
+    for event in reversed(_jsonl_events(text)):
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping) or payload.get("type") != "token_count":
+            continue
+        info = payload.get("info")
+        last = info.get("last_token_usage") if isinstance(info, Mapping) else None
+        value = last.get("input_tokens") if isinstance(last, Mapping) else None
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+    return None
 
 
 def _usage_counters(usage: Mapping[str, Any]) -> dict[str, int]:
@@ -2383,6 +2423,16 @@ def _run_agent(
             # Claude stores transcripts per working directory; surface a failed
             # lookup instead of an anonymous process failure.
             runtime["resume_error"] = "session_not_found"
+    if adapter_name == "codex" and runtime.get("session_id"):
+        # Final context size, for the owner's short-continuation rule (2026-11-20);
+        # ``codex exec --json`` reports only running totals.
+        try:
+            session_file = find_codex_session_file(str(runtime["session_id"]))
+            context = codex_session_last_context(session_file) if session_file else None
+        except (OSError, ValueError):
+            context = None
+        if context:
+            runtime["last_context_tokens"] = context
     if adapter_name in ADAPTER_PROVIDERS:
         runtime["provider_family"] = ADAPTER_PROVIDERS[adapter_name]
         snapshot = _agent_quota_snapshot(
