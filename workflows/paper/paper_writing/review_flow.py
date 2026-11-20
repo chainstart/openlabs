@@ -27,6 +27,7 @@ from typing import Any, Mapping
 from paper_writing.registry import (load_paper_metadata, load_registry, load_registry_settings, paper_metadata_path,
                                      require_not_frozen, write_paper_metadata)
 from paper_writing.review_launcher import LaunchError, role_runtime, run_role
+from paper_writing import review_sandbox
 from paper_writing import formal_checks
 from paper_writing import temporary_panels
 
@@ -2454,11 +2455,16 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     if editor["decision"] == "send_to_review" and not history_blockers:
         packet = referee_packet(pre, root, previous, decisions)
         schema = referee_schema_for_previous(previous)
+        # The registered support sources the referees may open and run: under Codex's
+        # bubblewrap sandbox in place, otherwise in a hashed read-only copy (review_sandbox).
+        materials = review_sandbox.materials_from_support(
+            metadata, root, registered_sha256=(pre.get("fingerprints") or {}).get("support_sources_sha256"))
+        with_materials = {"materials": materials} if materials is not None else {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(panel)) as pool:
             futures = {name: pool.submit(run_role, role_name=name, role=roles[name],
                                          system_prompt=(PROMPTS / "referee.md").read_text(), user_prompt=packet,
                                          schema=schema, workdir=run / name,
-                                         timeout=config["timeout_seconds"], **with_images)
+                                         timeout=config["timeout_seconds"], **with_images, **with_materials)
                        for name in panel}
             for name, future in futures.items():
                 referees[name], receipts[name] = future.result()

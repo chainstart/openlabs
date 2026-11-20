@@ -184,6 +184,35 @@ def support_sources_snapshot_sha256(
                 f"Support sources collide after version normalization: {name}"
             )
         logical[name] = path
+    return support_sources_digest(logical)
+
+
+def support_sources_logical_paths(
+    record: Mapping[str, Any],
+    *,
+    repo_root: str | Path,
+) -> dict[str, Path]:
+    """``{logical name: resolved file}`` of the registered support sources (no binding check)."""
+
+    root = Path(repo_root).resolve()
+    logical: dict[str, Path] = {}
+    for path in resolve_support_sources(record, repo_root=root):
+        name = _review_logical_support_path(path, root)
+        if name in logical:
+            raise SupportPackageError(
+                f"Support sources collide after version normalization: {name}"
+            )
+        logical[name] = path
+    return logical
+
+
+def support_sources_digest(logical: Mapping[str, Path]) -> str:
+    """The ``support_sources_sha256`` of ``{logical name: file}`` (names and exact bytes).
+
+    Shared by the review fingerprint and by checks that re-hash a copy of the same files
+    (the referees' read-only copy), so both bind to one registered value.
+    """
+
     digest = hashlib.sha256(b"ara.paper_writing.support_sources.v1\0")
     for name, path in sorted(logical.items()):
         encoded = name.encode("utf-8")

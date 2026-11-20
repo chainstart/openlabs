@@ -16,7 +16,12 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+from paper_writing import review_sandbox
+
+if TYPE_CHECKING:
+    from paper_writing.review_sandbox import ReviewMaterials
 
 PROVIDERS = {
     ("anthropic", "Claude Code"): "claude",
@@ -207,12 +212,19 @@ def run_role(
     workdir: Path,
     timeout: int = 3600,
     images: list[Path] | None = None,
+    materials: "ReviewMaterials | None" = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run one role and return (validated result, receipt). Files are kept in ``workdir``.
 
     ``images`` (PNG/JPEG figure renderings) are attached to the prompt: Codex takes
     them with ``--image``; Claude, whose tools stay disabled, receives one
     stream-json user message whose content holds the text and the images.
+
+    ``materials`` (the registered files a Codex role may inspect, see
+    :mod:`paper_writing.review_sandbox`) select the isolation: the native ``-s read-only``
+    sandbox when bubblewrap works, otherwise a write-protected copy outside the workspace
+    that is hashed before and after the run (a change raises ``LaunchError``). Without
+    materials, or for Claude (tools disabled), the role runs as before.
     """
     runtime = role_runtime(role)
     model = str(role["model"])
@@ -232,6 +244,11 @@ def run_role(
         if path.suffix.lower() not in IMAGE_MEDIA_TYPES or not path.is_file():
             raise LaunchError(f"{role_name}: unsupported or missing image {path}")
     stdin_text = prompt
+    copy: review_sandbox.ReadonlyCopy | None = None
+    copy_record: dict[str, Any] | None = None
+    copy_record_sha: str | None = None
+    copy_violation: review_sandbox.ReadonlyCopyViolation | None = None
+    sandbox_probe: dict[str, Any] | None = None
     if runtime == "claude":
         # One request per role, no session: the default 1-hour cache write (2x input)
         # is rarely read back (Fable referees: 37 runs, 14 % hits, 2.33 M tokens written).
@@ -249,21 +266,59 @@ def run_role(
             command[2:2] = ["--input-format", "stream-json"]
             stdin_text = claude_image_message(prompt, attached)
     else:
-        command = [_executable("codex"), "exec"]
+        codex = _executable("codex")
+        sandbox_mode, sandbox_probe = (review_sandbox.select_mode(codex) if materials is not None
+                                       else (review_sandbox.NATIVE, None))
+        if sandbox_mode == review_sandbox.READONLY_COPY:
+            try:
+                copy = review_sandbox.ReadonlyCopy(materials, role_name)
+            except (review_sandbox.ReadonlyCopyViolation, OSError) as exc:
+                raise LaunchError(f"{role_name}: read-only copy unavailable: {exc}") from exc
+            try:
+                copy.create()
+            except (review_sandbox.ReadonlyCopyViolation, OSError) as exc:
+                copy.write_record(workdir)
+                copy.release()
+                raise LaunchError(f"{role_name}: {exc}") from exc
+            prompt = copy.prompt(prompt)
+            (workdir / "prompt.txt").write_text(prompt)
+            stdin_text = prompt
+            env = copy.env(env)
+            sandbox = copy.inputs
+        command = [codex, "exec"]
         for path in attached:
             command += ["--image", str(path)]
-        command += ["-m", model, "-s", "read-only", "--skip-git-repo-check",
+        command += ["-m", model, "-s",
+                    "danger-full-access" if copy is not None else "read-only",
+                    "--skip-git-repo-check",
                     "--ephemeral", "--output-schema", str(workdir / "schema.json"), "-o", str(out_path),
                     "-C", str(sandbox), "-"]
     started = _now()
     clock = time.monotonic()
+    proc = None
     try:
         proc = subprocess.run(command, input=stdin_text, text=True, capture_output=True, cwd=sandbox,
                               env=env, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        raise LaunchError(f"{role_name}: timed out after {timeout}s") from exc
-    (workdir / "stdout.txt").write_text(proc.stdout)
-    (workdir / "stderr.txt").write_text(proc.stderr)
+        timed_out: Exception | None = exc
+    else:
+        timed_out = None
+    finally:
+        if copy is not None:
+            # Hash check before anything else is trusted; the copy is discarded either way.
+            try:
+                copy_record = copy.verify()
+            except review_sandbox.ReadonlyCopyViolation as exc:
+                copy_violation = exc
+            copy_record_sha = copy.write_record(workdir)
+            copy.release()
+    if proc is not None:
+        (workdir / "stdout.txt").write_text(proc.stdout)
+        (workdir / "stderr.txt").write_text(proc.stderr)
+    if copy_violation is not None:
+        raise LaunchError(f"{role_name}: {copy_violation}") from copy_violation
+    if timed_out is not None or proc is None:
+        raise LaunchError(f"{role_name}: timed out after {timeout}s") from timed_out
     if proc.returncode != 0:
         raise LaunchError(f"{role_name}: process exited {proc.returncode}; see {workdir / 'stderr.txt'}")
 
@@ -298,7 +353,8 @@ def run_role(
         # that sandbox does not disable tools, even when none are requested.
         "tools_enabled": runtime == 'codex',
         "tools_requested": False,
-        "sandbox_mode": 'read-only' if runtime == 'codex' else 'tools-disabled',
+        "sandbox_mode": ((review_sandbox.READONLY_COPY if copy is not None else 'read-only')
+                         if runtime == 'codex' else 'tools-disabled'),
         "author_conversation_supplied": False,
         "prior_scores_supplied": False,
         "system_prompt_sha256": _sha256(system_prompt.encode()),
@@ -306,6 +362,19 @@ def run_role(
         "schema_sha256": _sha256(schema_text.encode()),
         "output_sha256": _sha256(out_path.read_bytes()),
     }
+    if runtime == "codex" and materials is not None:
+        # "readonly-copy": bubblewrap was unavailable; the role ran with danger-full-access
+        # inside a write-protected copy, hashed before and after (see review_sandbox).
+        receipt["isolation"] = ("readonly_copy_danger_full_access" if copy is not None
+                                else "codex_bwrap_read_only")
+        receipt["native_sandbox_probe"] = sandbox_probe
+    if copy_record is not None:
+        receipt["readonly_copy"] = {
+            "record": review_sandbox.MANIFEST_FILE, "record_sha256": copy_record_sha,
+            "file_count": copy_record["file_count"], "valid": copy_record["valid"],
+            "registered_sources": copy_record["post_run"]["registered_sources"],
+            "outputs": len(copy_record.get("outputs") or []),
+        }
     if attached:
         receipt["images"] = [{"file": path.name, "sha256": _sha256(path.read_bytes())} for path in attached]
         receipt["image_transport"] = "codex --image" if runtime == "codex" else "claude stream-json image blocks"

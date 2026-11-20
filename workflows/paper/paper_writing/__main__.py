@@ -305,6 +305,21 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Only the post-ready delta review; report full_review_required instead of "
                               "starting the editor and referees.")
     unified.add_argument("--root", default=str(default_repo_root()))
+    runtime_preflight = review_commands.add_parser(
+        "runtime-preflight",
+        help="Check that an independent referee runtime can open the registered materials, "
+             "match their checksums and run the verifier (no review, no decision).",
+    )
+    runtime_preflight.add_argument("--paper-id", required=True)
+    runtime_preflight.add_argument("--attachment", help="Frozen attachment ZIP with a SHA256SUMS member.")
+    runtime_preflight.add_argument("--verifier", default="python verify_primary.py",
+                                   help="Verifier command the runtime runs in the replication directory.")
+    runtime_preflight.add_argument("--registered-sha256",
+                                   help="Registered support_sources_sha256 (default: latest unified decision).")
+    runtime_preflight.add_argument("--role", default=None,
+                                   help="Review role whose model runs the preflight (default: first Codex referee).")
+    runtime_preflight.add_argument("--out", help="Output directory (default: reviews/runtime-preflight/...).")
+    runtime_preflight.add_argument("--root", default=str(default_repo_root()))
     calibration = review_commands.add_parser(
         "calibration",
         help="Compare unified editor decisions with real journal outcomes (read-only).",
@@ -871,6 +886,26 @@ def main(argv: list[str] | None = None) -> int:
             summary["unverifiable_source_access"] = sorted((access.get("references") or {}))
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
+    if args.command == "review" and args.review_command == "runtime-preflight":
+        from datetime import UTC, datetime
+        from paper_writing.review_flow import review_config
+        from paper_writing.review_preflight import run_preflight
+        root = Path(args.root).resolve()
+        config = review_config(root)
+        names = [args.role] if args.role else [*config["referee_roles"], "referee_a", "referee_b"]
+        role = next((config["roles"][n] for n in names
+                     if (config["roles"].get(n) or {}).get("provider") == "openai-codex"), None)
+        if role is None:
+            raise ValueError("runtime-preflight needs a Codex review role")
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        out = Path(args.out) if args.out else root / "reviews/runtime-preflight" / args.paper_id / stamp
+        record = run_preflight(args.paper_id, root, out, role=role,
+                               attachment=Path(args.attachment) if args.attachment else None,
+                               verifier=args.verifier, registered_sha256=args.registered_sha256,
+                               timeout=int(config["timeout_seconds"]))
+        print(json.dumps({k: v for k, v in record.items() if k not in {"receipt", "report"}} | {"out": str(out)},
+                         ensure_ascii=False, indent=2))
+        return 0 if record["ok"] else 1
     if args.command == "review" and args.review_command == "calibration":
         from paper_writing.review_flow import calibration as review_calibration
 

@@ -408,6 +408,20 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
 - **台账对账**（2026-11-20）：`python3 -m openlabs program reconcile` 默认只读，列出每个课题或任务记录的现状态、建议状态和依据。加 `--apply` 才通过 `transition_topic`、`freeze_topic`、`mark_topic_delivered`、`close_needs_human` 写入，规则见 `program_reconcile.py`。停滞判据为 `[program].reconcile_stale_days`（默认 5 天）。
 - **人工重排被隔离的任务**（2026-11-20）：`python3 -m openlabs program requeue TASK_ID --reason "<修好了什么>" [--by NAME]`。只接受 `quarantined` 的任务（`needs_human` 要另加 `--allow-needs-human`），所属 campaign 须为 active；任务回到 `queued`，多给一次 attempt，写一条 `manual_requeue` 事件（谁、为什么、原状态与次数）。用于基础设施分流不会自动重试的失败，例如评审因配置错误三次失败被隔离。tick 报告 `program.topics_without_next_step` 里，若课题最新任务是这类被隔离/needs_human 的任务，会附 `blocked_task` 和 `suggested_command`。
 - **评审面板的加载校验**（2026-11-20）：两位审稿人模型必须不同，这条规则在加载 `settings.yaml` 时就检查（`review_flow.check_referee_models`，与 `unified-run` 运行时同一个函数），改错面板会立刻报错，不会等到每次评审启动才失败。
+- **审稿人的只读运行环境**（2026-11-20）：Codex 审稿人原用 `-s read-only`，它依赖 bubblewrap；容器的 seccomp
+  禁止用户命名空间时，审稿人的每条命令都在启动前失败（"bwrap: No permissions to create new namespace"），
+  打不开登记的复现文件。`review_launcher.run_role` 现在对带登记材料的审稿人（统一评审的 referee，材料即
+  `support.publication.source_files`）每个进程探测一次 `codex sandbox -- true`：能起就照旧用原生只读沙箱；
+  起不来则改用“只读副本模式”（`paper_writing/review_sandbox.py`）：把登记文件复制到工作区之外的新目录
+  （`OPENLABS_REVIEW_COPY_ROOT` / `OPENLABS_SCRATCH_DIR` / 系统临时目录），去掉全部写权限，审稿人以
+  `danger-full-access` 在副本里运行，提示词里的路径改指副本，只允许写单独的输出目录。运行前后对副本逐文件
+  哈希、对副本重算登记的 `support_sources_sha256`、运行后复核原文件；有任何改动则本次评审无效（`LaunchError`）。
+  回执写 `sandbox_mode: readonly-copy`、`isolation: readonly_copy_danger_full_access` 和 `readonly_copy`
+  摘要，完整清单在角色目录的 `readonly-copy.json`；副本用完即弃。容器换成允许用户命名空间的 seccomp 后探测
+  成功，自动回到原生沙箱。`OPENLABS_REVIEW_SANDBOX=native|readonly_copy` 可强制模式。编辑与决定信不带材料，
+  行为不变。`paper-writing review runtime-preflight --paper-id P [--attachment ZIP] [--verifier CMD] [--out DIR]`
+  按同一方式起一个审稿人进程，只核对登记文件与附件 `SHA256SUMS` 的校验值并运行复现脚本，写 `preflight.json`
+  （`ok` 等平铺字段可直接用作 `reopen-register` 的 `control_receipt` 条件），不做评审、不记决定。
 - **空转指标**：每个 tick 报告带 `idle_metrics`：最近 24 小时每个任务类型的 `attempts`、`zero_output`
   （任务按上面的口径无进展；scout 为无有效卡片）、`agent_hours` 与 `zero_output_agent_hours`，以及合计。
   例：`tail -1 state/ticks.jsonl | jq .report.idle_metrics`。
