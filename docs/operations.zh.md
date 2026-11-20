@@ -727,7 +727,7 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
 |---|---|---|
 | 形式修正（确定性） | `zenodo prepare`（重建支撑包身份：回执、版本、DOI、记录标题） | 计次重试 |
 | 形式修正（文字） | 轻活档 `format_fix` writer，只改列出的问题，不改数字、表格、结论和标题 | 轮次用尽即停 |
-| 差异复核 | `review unified-run --delta-only`（不调编辑和审稿人、不计轮次） | 超出差异规则：题目回 `in_review`，排一次完整 `paper_review` |
+| 差异复核 | `review unified-run --delta-only`（不调编辑和审稿人、不计轮次） | 超出差异规则（`full_review_required`）：题目回 `in_review`，排一次完整 `paper_review`；预检/核验类结果（`preflight_failed`、`formal_check_blocked` 等）按失败计次重试，用尽后等人处理 |
 | 提交 | 本地 `git commit --only`，只含本论文的登记、`papers/<id>/`、评审记录和台账 | 无身份时等待 |
 | 支撑材料发布 | `support-check` → `zenodo release` | 计次重试 |
 | 交付 | `program deliver`（无投稿人），随后再提交一次 `delivery` 块 | `handoff_max_attempts` |

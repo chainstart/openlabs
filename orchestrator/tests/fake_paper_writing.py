@@ -155,6 +155,11 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "review unified-run":
         assert args.delta_only
+        if paper.get("delta_outcome"):
+            # A preflight/verification result (preflight_failed, formal_check_blocked, ...).
+            print(json.dumps({"outcome": paper["delta_outcome"], "review_mode": "delta",
+                              "run_dir": "reviews/unified/blocked"}))
+            return 0
         if not paper.get("delta_eligible", True):
             print(json.dumps({"outcome": "full_review_required", "review_mode": "delta_check",
                               "full_review_reasons": ["title changed"], "run_dir": "reviews/unified/x"}))

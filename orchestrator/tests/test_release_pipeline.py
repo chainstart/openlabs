@@ -275,6 +275,33 @@ def test_delta_review_needing_a_full_review_returns_the_topic_to_review(tmp_path
     assert again["status"] == "ready_queue" and again["handoff"]["status"] == "delivered"
 
 
+@pytest.mark.parametrize("outcome", ["preflight_failed", "formal_check_blocked"])
+def test_delta_review_blocked_by_a_check_is_retried_not_sent_back_to_review(
+        tmp_path, monkeypatch, outcome):
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, support="not_required", issues=[WRITER_ISSUE],
+        release_max_attempts=2, paper_extra={"delta_outcome": outcome})
+    _ready(paths, db, settings, monkeypatch, topic)
+    writer = _topic(paths, settings, topic["topic_id"])["release"]["writer_task_id"]
+    _finish_writer(paths, settings, monkeypatch, db, writer)
+    _tick(paths, settings, monkeypatch)
+    state = _topic(paths, settings, topic["topic_id"])
+    assert state["status"] == "ready_queue"
+    assert state["release"]["status"] == "failed" and state["release"]["stage"] == "delta_review"
+    assert state["release"]["attempts"] == {"delta_review": 1}
+    assert f"outcome='{outcome}'" in state["release"]["last_error"]
+    assert "run_dir='reviews/unified/blocked'" in state["release"]["last_error"]
+    # No full review was queued.
+    assert db.latest_task(topic["campaign_id"]).get("routing_reason") != "release_full_review"
+    report = _tick(paths, settings, monkeypatch)
+    state = _topic(paths, settings, topic["topic_id"])
+    assert state["status"] == "ready_queue" and state["release"]["status"] == "exhausted"
+    assert any("a human must resolve" in error for error in report.errors)
+    assert state["handoff"]["status"] != "returned_to_review"
+    assert _commands(log).count("review unified-run") == 2
+    assert "program deliver" not in _commands(log)
+
+
 def test_git_commit_without_identity_fails_with_a_hint(tmp_path, monkeypatch):
     paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support="not_required",
                                              identity=False)

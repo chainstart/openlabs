@@ -1935,12 +1935,19 @@ class _ReleasePipeline:
                                   "decision_sha256": result.get("decision_sha256")})
                 self.entry("delta_review_ready", run_dir=result.get("run_dir"))
                 return True
-            self.return_to_review(status, {
-                "reason": "the post-ready change needs a full review",
-                "outcome": result.get("outcome"), "review_mode": result.get("review_mode"),
-                "run_dir": result.get("run_dir"),
-                "full_review_reasons": result.get("full_review_reasons") or []})
-            return False
+            if result.get("outcome") == "full_review_required":
+                # The change is outside the delta rule: only a full review can judge it.
+                self.return_to_review(status, {
+                    "reason": "the post-ready change needs a full review",
+                    "outcome": result.get("outcome"), "review_mode": result.get("review_mode"),
+                    "run_dir": result.get("run_dir"),
+                    "full_review_reasons": result.get("full_review_reasons") or []})
+                return False
+            # preflight_failed, formal_check_blocked, ...: a preflight, environment or
+            # verification problem, not a scientific one; retried, then left to a human.
+            raise ReleaseError(
+                f"delta review did not pass: outcome={result.get('outcome')!r} "
+                f"review_mode={result.get('review_mode')!r} run_dir={result.get('run_dir')!r}")
         if status.get("release_artifacts_unbound"):
             # `zenodo release` and delivery take only Git-frozen release files; the
             # ignored PDF/.bbl are frozen through a content-addressed manifest instead,
