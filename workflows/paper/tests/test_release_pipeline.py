@@ -170,8 +170,24 @@ def test_release_status_lists_ignored_release_products_to_bind(tmp_path, monkeyp
         tmp_path / 'papers/p/manuscript', files[-1], files))
     assert rp.release_status('p', root=tmp_path)['release_artifacts_unbound'] == [
         'papers/p/manuscript/main.bbl', 'papers/p/manuscript/main.pdf']
+    # A manifest that does not exist binds nothing.
     metadata['submission_package'] = {'artifact_manifest': {'path': 'x', 'sha256': '0' * 64}}
+    assert rp.release_status('p', root=tmp_path)['release_artifacts_unbound'] == [
+        'papers/p/manuscript/main.bbl', 'papers/p/manuscript/main.pdf']
+    from paper_writing.support import sha256_file
+    manifest = tmp_path / 'papers/p/production/release-artifacts.json'
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps({'files': [
+        {'path': f'papers/p/manuscript/{name}',
+         'sha256': sha256_file(tmp_path / 'papers/p/manuscript' / name)}
+        for name in ('main.bbl', 'main.pdf')]}))
+    metadata['submission_package'] = {'artifact_manifest': {
+        'path': 'papers/p/production/release-artifacts.json', 'sha256': '0' * 64}}
     assert rp.release_status('p', root=tmp_path)['release_artifacts_unbound'] == []
+    # A rebuilt PDF is no longer what the manifest freezes.
+    (tmp_path / 'papers/p/manuscript/main.pdf').write_bytes(b'%PDF-1.4\nrebuilt\n%%EOF\n')
+    assert rp.release_status('p', root=tmp_path)['release_artifacts_unbound'] == [
+        'papers/p/manuscript/main.pdf']
 
 
 def test_an_artifact_only_submission_package_configures_no_journal_archive(tmp_path):

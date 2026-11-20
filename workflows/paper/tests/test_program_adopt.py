@@ -403,6 +403,55 @@ def test_bind_release_artifacts_freezes_the_ignored_pdf(tmp_path, monkeypatch):
     assert bind_release_artifacts(PAPER, root=root)["status"] == "not_needed"
 
 
+def test_bind_release_artifacts_rebinds_a_stale_manifest_after_a_new_build(tmp_path, monkeypatch):
+    """A later version rebuilds main.pdf/main.bbl: the old manifest no longer covers them."""
+    import subprocess
+
+    from paper_writing import handoff
+    from paper_writing.program_adopt import bind_release_artifacts
+    from paper_writing.release_pipeline import unbound_release_artifacts
+    from paper_writing.registry import load_paper_metadata
+
+    root = tmp_path / "openlabs-data"
+    _workspace(root)
+    manuscript = root / "papers" / PAPER / "manuscript"
+    (manuscript / "main.pdf").write_bytes(b"%PDF-1.4\nv0.1.5\n%%EOF\n")
+    (root / ".gitignore").write_text("**/*.pdf\n**/*.bbl\n")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=T", "-c", "user.email=t@t",
+                    "commit", "-qm", "base"], check=True)
+    files = [manuscript / "main.tex", manuscript / "references.bib", manuscript / "main.pdf"]
+    monkeypatch.setattr(handoff, "_release_paths", lambda *a: (manuscript, files[2], files))
+    first = bind_release_artifacts(PAPER, root=root)
+    assert first["status"] == "bound"
+    assert unbound_release_artifacts(PAPER, load_paper_metadata(PAPER, root), root) == []
+
+    # The next version: a new PDF and a new .bbl that the old manifest never saw.
+    (manuscript / "main.pdf").write_bytes(b"%PDF-1.4\nv0.1.6\n%%EOF\n")
+    (manuscript / "main.bbl").write_text("\\begin{thebibliography}{1}\\end{thebibliography}\n")
+    files.append(manuscript / "main.bbl")
+    pdf, bbl = f"papers/{PAPER}/manuscript/main.pdf", f"papers/{PAPER}/manuscript/main.bbl"
+    assert unbound_release_artifacts(PAPER, load_paper_metadata(PAPER, root), root) == [bbl, pdf]
+
+    second = bind_release_artifacts(PAPER, root=root)
+    assert second["status"] == "bound" and second["files"] == [bbl, pdf]
+    manifest = root / second["manifest"]
+    entries = {item["path"]: item["sha256"] for item in json.loads(manifest.read_text())["files"]}
+    assert entries == {pdf: _sha((manuscript / "main.pdf").read_bytes()),
+                       bbl: _sha((manuscript / "main.bbl").read_bytes())}
+    package = load_paper_metadata(PAPER, root)["submission_package"]
+    assert package["artifact_manifest"] == {"path": second["manifest"],
+                                            "sha256": _sha(manifest.read_bytes())}
+    assert bind_release_artifacts(PAPER, root=root)["status"] == "not_needed"
+
+    # Only the PDF changes again: the rewrite still binds every current candidate.
+    (manuscript / "main.pdf").write_bytes(b"%PDF-1.4\nv0.1.7\n%%EOF\n")
+    assert unbound_release_artifacts(PAPER, load_paper_metadata(PAPER, root), root) == [pdf]
+    third = bind_release_artifacts(PAPER, root=root)
+    assert third["files"] == [bbl, pdf]
+
+
 # --------------------------------------------------------------------------- unwaive, availability
 
 

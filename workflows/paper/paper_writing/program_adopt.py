@@ -544,15 +544,17 @@ def bind_release_artifacts(paper_id: str, *, root: str | Path) -> dict[str, Any]
     registry still have to be committed before ``handoff release`` accepts them.
     """
 
-    from paper_writing.release_pipeline import unbound_release_artifacts
+    from paper_writing.release_pipeline import release_artifact_candidates, unbound_release_artifacts
     from paper_writing.support import write_support_artifact_manifest
 
     repo_root = Path(root).resolve()
     metadata = load_paper_metadata(paper_id, repo_root)
     result = {"schema_version": RELEASE_BIND_SCHEMA, "paper_id": paper_id}
-    files = unbound_release_artifacts(paper_id, metadata, repo_root)
-    if not files:
+    if not unbound_release_artifacts(paper_id, metadata, repo_root):
         return {**result, "status": "not_needed", "files": []}
+    # A stale manifest (a new build after an earlier delivery) is rewritten for every
+    # current candidate, not only the changed ones, so no old binding survives.
+    files = release_artifact_candidates(paper_id, metadata, repo_root)
     relative = f"papers/{paper_id}/production/release-artifacts.json"
     from paper_writing.support import SupportPackageError
 

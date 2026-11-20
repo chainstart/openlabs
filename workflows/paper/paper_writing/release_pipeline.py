@@ -109,16 +109,10 @@ def commit_paths(paper_id: str, metadata: Mapping[str, Any], root: Path) -> list
     return paths
 
 
-def unbound_release_artifacts(paper_id: str, metadata: Mapping[str, Any], root: Path) -> list[str]:
-    """Release build products (PDF/.bbl) Git ignores and no artifact manifest freezes yet.
-
-    ``handoff release`` requires every release file to be in Git or bound through
-    ``submission_package.artifact_manifest``; an empty list means nothing to bind.
-    """
+def release_artifact_candidates(paper_id: str, metadata: Mapping[str, Any], root: Path) -> list[str]:
+    """Every current release build product (PDF/.bbl) that Git ignores and does not track."""
     from paper_writing.handoff import _release_paths
 
-    if (metadata.get("submission_package") or {}).get("artifact_manifest"):
-        return []
     try:
         manuscript, _, files = _release_paths(paper_id, root, metadata)
     except Exception:  # noqa: BLE001 - reported by the review/issue checks instead
@@ -136,6 +130,46 @@ def unbound_release_artifacts(paper_id: str, metadata: Mapping[str, Any], root: 
                                capture_output=True, text=True, check=False)
     ignored = set(completed.stdout.split())
     return [item for item in untracked if item in ignored]
+
+
+def _bound_release_artifacts(paper_id: str, pointer: Any, root: Path) -> dict[str, str]:
+    """``{path: sha256}`` recorded in the release artifact manifest (empty when unreadable)."""
+    name = (pointer.get("path") if isinstance(pointer, Mapping) else None) \
+        or f"papers/{paper_id}/production/release-artifacts.json"
+    manifest = root / str(name)
+    try:
+        content = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    files = content.get("files") if isinstance(content, Mapping) else None
+    return {str(item.get("path")): str(item.get("sha256"))
+            for item in files or [] if isinstance(item, Mapping)}
+
+
+def unbound_release_artifacts(paper_id: str, metadata: Mapping[str, Any], root: Path) -> list[str]:
+    """Release build products (PDF/.bbl) Git ignores and the artifact manifest does not freeze.
+
+    ``handoff release`` requires every release file to be in Git or bound through
+    ``submission_package.artifact_manifest``; an empty list means nothing to bind.
+    With a manifest already recorded (an earlier delivery), a candidate is unbound
+    when the manifest lacks it or records other bytes (a new build after a revision).
+    """
+    from paper_writing.support import sha256_file
+
+    candidates = release_artifact_candidates(paper_id, metadata, root)
+    pointer = (metadata.get("submission_package") or {}).get("artifact_manifest")
+    if not pointer or not candidates:
+        return candidates
+    bound = _bound_release_artifacts(paper_id, pointer, root)
+    stale = []
+    for item in candidates:
+        try:
+            current = sha256_file(root / item)
+        except OSError:
+            current = None
+        if bound.get(item) != current:
+            stale.append(item)
+    return stale
 
 
 def _package_stale(metadata: Mapping[str, Any], root: Path) -> str | None:
