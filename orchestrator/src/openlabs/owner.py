@@ -3055,7 +3055,8 @@ def render_seat_footer(task: Mapping[str, Any], *, deadline: datetime) -> str:
         f"{deadline.strftime('%Y-%m-%d %H:%M')} UTC.\n"
         f"- result path (the status JSON): `{where['result']}`\n"
         f"- writable campaign workspace: `{where['staged']}` (promoted when the result passes)\n"
-        f"- large outputs (datasets, chains, archives): `{where['staging']}`\n"
+        f"- large outputs (datasets, chains, archives, logs, downloaded PDFs; declared for "
+        f"you): `{where['staging']}`\n"
         f"- canonical campaign, read-only: `{where['canonical']}`\n"
         f"- input of this seat: `{task.get('input_path')}`\n"
     )

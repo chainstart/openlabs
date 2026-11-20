@@ -138,7 +138,12 @@ two strong cards there rather than many.
    other real-world interaction, because the program cannot carry it out.
 5. Confirm you can actually obtain the decisive data: download or query a sample, record what you
    got (source, version, row counts, date) in a small receipt file, and add that file as a
-   hash-bound artifact of your result. "The data is public" is not a receipt. Downloads go through
+   hash-bound artifact of your result. "The data is public" is not a receipt. Keep the receipt
+   and other small text notes (<= 5 MB) in the campaign workspace; put every downloaded document
+   (a PDF specification or paper, a data sample, a log, an archive) under the task's
+   `transaction.artifact_staging_root` and declare it in `result.artifacts` with its `file://` URI
+   and SHA-256. A PDF or log in the workspace (for example under `evidence/`) fails promotion, and
+   a file left in `/tmp` or your home directory cannot be cited. Downloads go through
    the bridge with `--route auto`; a large download that would need the proxy route (a file of
    200 MB or more, a batch of 1 GB or more) runs only 02:00-14:00 Asia/Shanghai, so say so in
    the card's cost estimate when the decisive data depends on it.

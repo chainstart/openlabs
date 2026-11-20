@@ -82,6 +82,13 @@ def _session_context(context: Mapping[str, Any], adapter: str = "codex") -> dict
         f"{context.get('canonical_campaign_workspace')}. Before stopping, atomically write the "
         f"required result bundle to {context.get('result_path')}."
     )
+    if context.get("artifact_staging_root"):
+        message += (
+            " The workspace takes only small text files (<= 5 MB). Put downloaded documents "
+            "(PDF specifications, papers), logs, archives and other payloads under "
+            f"{context.get('artifact_staging_root')} and declare each in result.artifacts "
+            "with its file:// URI and SHA-256; files elsewhere (/tmp, home) cannot be cited."
+        )
     return {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
@@ -135,6 +142,49 @@ def _program_problems(
     if not expected:
         return [], []
     return preregistration_blockers(payload, str(expected)), preregistration_advisories(payload)
+
+
+def _data_boundary_problems(context: Mapping[str, Any]) -> list[str]:
+    """Campaign files the promotion would refuse, while the agent can still move them.
+
+    The same rule as ``attempts.enforce_campaign_data_boundary`` at ingest, where a
+    violation discards the whole attempt (2026-11-20: a power scout's AEMO
+    specification PDF under evidence/; astro and power reviewers' main.pdf and
+    preflight-build.log). Owner seats have their strays moved by ``hook_normalize``
+    first, so only what is left is reported.
+    """
+
+    from .attempts import ATTEMPT_SCHEMA, AttemptWorkspaceError, campaign_data_boundary_violations
+
+    raw_root = str(context.get("attempt_root") or "").strip()
+    if not raw_root:
+        return []
+    metadata_path = Path(raw_root).expanduser() / "attempt-workspace.json"
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(metadata, Mapping) or metadata.get("schema_version") != ATTEMPT_SCHEMA:
+        return []
+    campaign = Path(str(metadata.get("staged_campaign_root") or context.get(
+        "agent_workspace") or "")).expanduser()
+    if not campaign.is_dir():
+        return []
+    try:
+        _changed, violations = campaign_data_boundary_violations(campaign, metadata)
+    except (AttemptWorkspaceError, OSError) as exc:
+        return [f"campaign data boundary could not be checked: {exc}"]
+    if not violations:
+        return []
+    staging = str(context.get("artifact_staging_root") or metadata.get(
+        "artifact_staging_root") or "the artifact staging root")
+    return [
+        "campaign data boundary: the workspace takes only small text files (<= 5 MB; notes, "
+        "JSON, CSV, scripts, receipts); move these to the artifact staging root "
+        f"{staging} (same relative path), declare each in result.artifacts with its "
+        "file:// URI and SHA-256, and update any path that cites them (an access_receipt "
+        "stays a small text file in the workspace): " + "; ".join(violations[:8])
+    ]
 
 
 def _stop_gate_advisories(context: Mapping[str, Any]) -> list[str]:
@@ -194,6 +244,7 @@ def _stop_gate_problems(context: Mapping[str, Any]) -> list[str]:
                 problems.extend(_protocol_gate_problems(context))
     elif payload is not None:
         problems.append("result bundle must be a JSON object")
+    problems.extend(_data_boundary_problems(context))
     return problems
 
 

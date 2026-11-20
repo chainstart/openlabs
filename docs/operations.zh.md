@@ -991,7 +991,10 @@ adapter 仍由 worker 使用 bubblewrap 只开放本 attempt；本机缺少 bubb
 归档的节点，才会发布 `objects/sha256/` 对象与 `experiments/.../manifest.json`，并以目录交换
 方式把小型 campaign 状态及 `artifact-references/*.json` 提升到正式 data。门禁拒绝超过
 5 MiB 的单个新 campaign 文件、artifact-only 格式、超过 1000 个变更文件或 50 MiB 变更总量，
-也拒绝 artifact-stage 中未声明、哈希不符、符号链接逃逸或发布后改变的文件。数据库确认入库
+也拒绝 artifact-stage 中未声明、哈希不符、符号链接逃逸或发布后改变的文件。同一条数据边界规则在
+Stop 钩子里先查一次（`attempts.campaign_data_boundary_violations`）：有违规时第一次 Stop 被拦下，提示
+把文件移到 artifact-stage（写明路径）并在 `result.artifacts` 声明，避免整次运行在入库时才被拒（2026-11-20
+电力线侦察把 AEMO 规格 PDF 放进 `evidence/`）；SessionStart 也写明 artifact-stage 的位置。数据库确认入库
 前保留原目录作为回滚副本；确认后清理成功 attempt 的临时 payload。取消、超时、失败和门禁
 拒绝的 attempt 只留下带原因的隔离 checkpoint。tick 与
 `halt-production` 共用跨进程排他锁，因此截止停机不能与结果提升交错执行。

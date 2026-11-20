@@ -1106,7 +1106,12 @@ def _schedule_one_scout(
             "reusable-asset index when present. Return up to "
             f"{max_cards} topic cards in the result bundle field `topic_cards`, each following "
             "openlabs.topic_card.v1. Verify access to the decisive data yourself and add the "
-            "access receipt as a hash-bound result artifact. An empty `topic_cards` array is a "
+            "access receipt as a hash-bound result artifact. Evidence files: the receipt and "
+            "other small text notes (<= 5 MB) go in the campaign workspace; downloaded "
+            "documents (PDF specifications, papers, data samples), logs and archives go under "
+            "the task's transaction.artifact_staging_root, each declared in result.artifacts "
+            "with its file:// URI and SHA-256 (a PDF in the workspace fails promotion). An "
+            "empty `topic_cards` array is a "
             "valid outcome when nothing clears the bar. Do not start the research itself."
         ),
         input_path=str(packet_path),

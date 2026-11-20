@@ -175,6 +175,10 @@ def configure_codex_runtime(
         "skill_source_root": str(skills_root),
         "claude_skill_source_root": str(claude_skills_root),
         "hook_receipt_path": str(hook_receipt_path),
+        # The attempt's isolation roots: the Stop gate checks the campaign data boundary
+        # (attempt-workspace.json baseline) and names where payloads belong.
+        "attempt_root": task.get("transaction", {}).get("attempt_root"),
+        "artifact_staging_root": task.get("transaction", {}).get("artifact_staging_root"),
     }
     owner = task.get("owner")
     if isinstance(owner, Mapping):

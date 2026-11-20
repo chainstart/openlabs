@@ -1728,17 +1728,24 @@ def publish_staged_artifacts(
     return reference
 
 
-def enforce_campaign_data_boundary(workspace: AttemptWorkspace) -> tuple[str, ...]:
-    """Reject new bulk/generated payloads before the staged campaign is promoted."""
+def campaign_data_boundary_violations(
+    campaign_root: Path, metadata: Mapping[str, Any]
+) -> tuple[tuple[str, ...], list[str]]:
+    """``(changed files, violations)`` of a staged campaign against its attempt baseline.
 
-    policy = attempt_artifact_policy(workspace)
-    if policy is None:
-        return ()
-    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    The rule the promotion enforces, usable before it: the Stop hook reports the same
+    violations to the agent while it can still move the files (2026-11-20: a scout put
+    an AEMO specification PDF into the campaign evidence directory and lost the run
+    at ingest). Empty violations when the attempt predates the artifact policy.
+    """
+
+    policy = metadata.get("artifact_policy")
+    if not isinstance(policy, Mapping) or policy.get("schema_version") != ARTIFACT_POLICY_SCHEMA:
+        return (), []
     baseline = metadata.get("baseline")
     if not isinstance(baseline, Mapping):
         raise AttemptWorkspaceError("Attempt baseline is missing")
-    current = _tree_manifest(workspace.campaign_root)
+    current = _tree_manifest(campaign_root)
     changed = sorted(
         relative
         for relative, digest in current.items()
@@ -1755,7 +1762,7 @@ def enforce_campaign_data_boundary(workspace: AttemptWorkspace) -> tuple[str, ..
     violations: list[str] = []
     total_bytes = 0
     for relative in changed:
-        path = workspace.campaign_root / relative
+        path = campaign_root / relative
         size = path.stat().st_size
         total_bytes += size
         lowered = relative.lower()
@@ -1767,9 +1774,19 @@ def enforce_campaign_data_boundary(workspace: AttemptWorkspace) -> tuple[str, ..
         violations.append(f"campaign changed {len(changed)} files (limit {max_files})")
     if total_bytes > max_bytes:
         violations.append(f"campaign changed {total_bytes} bytes (limit {max_bytes})")
+    return tuple(changed), violations
+
+
+def enforce_campaign_data_boundary(workspace: AttemptWorkspace) -> tuple[str, ...]:
+    """Reject new bulk/generated payloads before the staged campaign is promoted."""
+
+    if attempt_artifact_policy(workspace) is None:
+        return ()
+    metadata = json.loads(workspace.metadata_path.read_text(encoding="utf-8"))
+    changed, violations = campaign_data_boundary_violations(workspace.campaign_root, metadata)
     if violations:
         raise AttemptWorkspaceError(
             "campaign data boundary rejected payload; use artifact_staging_root: "
             + "; ".join(violations[:12])
         )
-    return tuple(changed)
+    return changed
