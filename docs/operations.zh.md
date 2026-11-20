@@ -738,7 +738,13 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
 `python -m openlabs program release-retry --paper-id <id> --by <name> --reason <处理了什么>`：
 `release.status` 回到 `pending`、清零停下那一阶段的 attempts（写作阶段还清零 writer_rounds），交付用尽的
 `handoff` 回到 `queued`；原错误、阶段和次数记在 `release.retries`，并写一条 `release_retry` 事件，下个 tick
-从实际状态重新判断。不要手改台账。提交只含 Git 会跟踪的路径：数据仓库有意忽略且未跟踪的实例台账
+从实际状态重新判断。同一命令还处理两种情形（同样要 `--by`/`--reason`，记在 `release.retries` 和
+`release_retry` 记录里）：一是已交付旧版本后论文出了新版本（`release-status` 的 `delivered` 为 false 且登记
+`delivery.version` 与当前 `version` 不同），`handoff` 回到 `queued`（保留 `previous_package_id`、
+`previous_delivered_version`），`release` 回到 `pending`/`check`；当前版本已交付、登记没有交付版本时拒绝。
+二是流水线退回评审（`release.status: returned_to_review`）但论文其实 ready 且 current：课题回
+`ready_queue`，暂停其 campaign（取消排队中的 `release-review:` 完整评审，结果列出被取消的任务），交付重新排队；
+评审不是 ready+current、或该完整评审已在运行（leased/running）时拒绝。不要手改台账。提交只含 Git 会跟踪的路径：数据仓库有意忽略且未跟踪的实例台账
 （运行时状态，如 `registry/instances/cc-sg/topic-ledger.json`）不随提交，也不 `-f` 强加。
 
 - `auto_release`（默认 false）：为 false 时流水线停在第一次 Zenodo 写入之前，`release.status`

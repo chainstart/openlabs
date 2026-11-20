@@ -107,7 +107,10 @@ def main(argv: list[str]) -> int:
             "release_artifacts_unbound": paper.get("unbound_artifacts", []),
             "commit_paths": _paths(root, args.paper_id),
             "git": {"dirty": _git_dirty(root, _paths(root, args.paper_id))},
-            "delivered": bool(paper.get("delivery")), "delivery": paper.get("delivery"),
+            # Delivered means: the current version (a newer one needs a new delivery).
+            "delivered": bool((paper.get("delivery") or {}).get("package_id"))
+                         and paper["delivery"].get("version") == paper["version"],
+            "delivery": paper.get("delivery"),
         }))
         return 0
     if command == "program bind-release-artifacts":
@@ -198,10 +201,11 @@ def main(argv: list[str]) -> int:
         if dirty or paper["issues"] or support["status"] not in {"published", "not_required"}:
             print(json.dumps({"status": "failed", "error": f"not deliverable: {dirty}"}))
             return 1
-        paper["delivery"] = {"awaiting_owner_review": True, "package_id": "pkg-1",
+        package = f"pkg-{paper['version']}" if paper.get("delivery") else "pkg-1"
+        paper["delivery"] = {"awaiting_owner_review": True, "package_id": package,
                              "version": paper["version"], "submission_handler": None}
         save()
-        print(json.dumps({"status": "delivered", "paper_id": args.paper_id, "package_id": "pkg-1",
+        print(json.dumps({"status": "delivered", "paper_id": args.paper_id, "package_id": package,
                           "awaiting_owner_review": True, "submission_handler": None}))
         return 0
     print(f"unsupported fake command {command}")

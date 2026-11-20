@@ -198,7 +198,10 @@ def _parser() -> argparse.ArgumentParser:
     release_retry = program_commands.add_parser(
         "release-retry",
         help="After resolving the cause, let a ready paper's exhausted release pipeline (or "
-        "delivery) try again: clears the stopped stage's attempts, records who and why",
+        "delivery) try again: clears the stopped stage's attempts, records who and why. Also "
+        "re-queues delivery of a paper delivered at an older version that now has a newer one, "
+        "and returns a topic the pipeline sent back to review to the ready queue when its "
+        "review is ready and current (pausing its campaign cancels the queued full review)",
     )
     release_retry.add_argument("--paper-id", required=True)
     release_retry.add_argument("--reason", required=True, help="What was resolved")

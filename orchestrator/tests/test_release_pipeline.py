@@ -648,6 +648,140 @@ def test_release_retry_resets_an_exhausted_delivery(tmp_path, monkeypatch):
     assert _topic(paths, settings, topic["topic_id"])["handoff"]["status"] == "delivered"
 
 
+def test_release_retry_requeues_delivery_of_a_newer_paper_version(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support="not_required")
+    _ready(paths, db, settings, monkeypatch, topic)
+    delivered = _topic(paths, settings, topic["topic_id"])
+    assert delivered["handoff"]["status"] == "delivered"
+    assert delivered["handoff"]["package_id"] == "pkg-1"
+    # The current version is delivered: nothing to retry.
+    with pytest.raises(program_autonomy.DeliveryError, match="already delivered"):
+        program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID, by="op",
+                                       reason="new version")
+    # The paper moves on to a new version; the ledger still says "delivered".
+    paper = _paper(paths)
+    paper["version"] = "1.1.0"
+    _write_paper(paths, paper)
+    calls = len(_calls(log))
+    _tick(paths, settings, monkeypatch)
+    assert len(_calls(log)) == calls  # a delivered topic is never looked at by the tick
+    seq = int(delivered["release"].get("seq") or 0)
+    result = program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID,
+                                            by="operator", reason="v1.1.0 is ready")
+    assert result["kind"] == "new_version" and result["handoff_reset"] is True
+    assert result["previous_delivered_version"] == "1.0.0" and result["version"] == "1.1.0"
+    reset = _topic(paths, settings, topic["topic_id"])
+    assert reset["status"] == "ready_queue"
+    assert reset["handoff"]["status"] == "queued" and reset["handoff"]["attempts"] == 0
+    assert reset["handoff"]["previous_package_id"] == "pkg-1"
+    assert reset["handoff"]["previous_delivered_version"] == "1.0.0"
+    assert reset["release"]["status"] == "pending" and reset["release"]["stage"] == "check"
+    assert reset["release"]["seq"] == seq + 1
+    retry = reset["release"]["retries"][-1]
+    assert retry["by"] == "manual:operator" and retry["reason"] == "v1.1.0 is ready"
+    assert retry["kind"] == "new_version"
+    note = [h for h in reset["history"] if h.get("kind") == "release_retry"][-1]
+    assert note["detail"]["kind"] == "new_version" and note["reason"] == "new_paper_version"
+    report = _tick(paths, settings, monkeypatch)
+    assert report.errors == [], report.errors
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["handoff"]["status"] == "delivered" and final["release"]["status"] == "done"
+    assert final["handoff"]["package_id"] == "pkg-1.1.0"
+    assert _paper(paths)["delivery"]["version"] == "1.1.0"
+    assert _commands(log).count("program deliver") == 2
+    with pytest.raises(program_autonomy.DeliveryError, match="already delivered"):
+        program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID, by="op",
+                                       reason="again")
+
+
+def _returned_to_review(tmp_path, monkeypatch):
+    """A writer's fix falls outside the delta rule: the pipeline queues a full review."""
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, support="not_required", issues=[WRITER_ISSUE],
+        paper_extra={"delta_eligible": False})
+    _ready(paths, db, settings, monkeypatch, topic)
+    writer = _topic(paths, settings, topic["topic_id"])["release"]["writer_task_id"]
+    _finish_writer(paths, settings, monkeypatch, db, writer)
+    # No worker free in this tick: the full review stays queued.
+    from openlabs.db import FactoryDB
+
+    with monkeypatch.context() as patch:
+        patch.setattr(FactoryDB, "claim_next_task", lambda self, **kwargs: None)
+        _tick(paths, settings, monkeypatch)
+    returned = _topic(paths, settings, topic["topic_id"])
+    assert returned["status"] == "in_review"
+    review = db.latest_task(topic["campaign_id"])
+    assert review["task_id"].startswith("release-review:") and review["status"] == "queued"
+    return paths, db, settings, topic, log, review
+
+
+def _bind_review_to_current_manuscript(paths) -> None:
+    """The registered ready review already covers the current manuscript (e.g. owner-directed)."""
+    import hashlib
+
+    paper = _paper(paths)
+    paper["review"]["snapshot"] = hashlib.sha256(
+        (paths.data / "papers" / PAPER_ID / "main.tex").read_bytes()).hexdigest()
+    _write_paper(paths, paper)
+
+
+def test_release_retry_returns_a_ready_current_paper_from_review(tmp_path, monkeypatch):
+    paths, db, settings, topic, log, review = _returned_to_review(tmp_path, monkeypatch)
+    # The ready decision is not bound to the rewritten manuscript: refused.
+    with pytest.raises(program_autonomy.DeliveryError, match="not ready and current"):
+        program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID, by="op",
+                                       reason="review is current")
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "in_review"
+    assert db.task(review["task_id"])["status"] == "queued"
+
+    _bind_review_to_current_manuscript(paths)
+    result = program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID,
+                                            by="operator", reason="review is current")
+    assert result["kind"] == "returned_review_ready"
+    assert review["task_id"] in result["cancelled_tasks"]
+    assert result["release_review_cancelled"] == [review["task_id"]]
+    assert result["release_review_tasks"] == {review["task_id"]: "cancelled"}
+    assert db.task(review["task_id"])["status"] == "cancelled"
+    assert db.campaign(topic["campaign_id"])["status"] == "production_paused"
+    back = _topic(paths, settings, topic["topic_id"])
+    assert back["status"] == "ready_queue"
+    assert [h.get("to") for h in back["history"] if "to" in h][-1] == "ready_queue"
+    assert back["handoff"]["status"] == "queued" and back["handoff"]["paper_id"] == PAPER_ID
+    assert back["release"]["status"] == "pending" and back["release"]["stage"] == "check"
+    retry = back["release"]["retries"][-1]
+    assert retry["kind"] == "returned_review_ready" and retry["by"] == "manual:operator"
+    note = [h for h in back["history"] if h.get("kind") == "release_retry"][-1]
+    assert note["detail"]["cancelled_tasks"] == result["cancelled_tasks"]
+    report = _tick(paths, settings, monkeypatch)
+    assert report.errors == [], report.errors
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["handoff"]["status"] == "delivered" and final["release"]["status"] == "done"
+    assert db.task(review["task_id"])["status"] == "cancelled"  # the full review never ran
+
+
+def test_release_retry_refuses_while_the_full_review_runs(tmp_path, monkeypatch):
+    paths, db, settings, topic, log, review = _returned_to_review(tmp_path, monkeypatch)
+    _bind_review_to_current_manuscript(paths)
+    _lease(paths, settings, monkeypatch, db, review["task_id"])
+    with pytest.raises(program_autonomy.DeliveryError, match="already running"):
+        program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID, by="op",
+                                       reason="review is current")
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "in_review"
+
+
+def test_release_retry_refuses_an_in_review_topic_not_returned_by_the_pipeline(
+        tmp_path, monkeypatch):
+    paths, db, settings, topic, log, review = _returned_to_review(tmp_path, monkeypatch)
+    _bind_review_to_current_manuscript(paths)
+    program_autonomy.record_topic_note(
+        program_autonomy._ledger(paths, settings), topic["topic_id"], db=db,
+        event_type="test_note", reason="test", decided_by="test",
+        updates={"release": {"status": "pending"}})
+    with pytest.raises(program_autonomy.DeliveryError, match="not 'returned_to_review'"):
+        program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID, by="op",
+                                       reason="review is current")
+
+
 # --------------------------------------------------------------------------- layout, artifacts
 
 

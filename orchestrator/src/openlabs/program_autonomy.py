@@ -2313,22 +2313,36 @@ def retry_release(
     delivery (``handoff``) goes back to ``queued`` with its attempts cleared. The
     previous error, stage and attempts are kept in ``release.retries``. Nothing else
     changes; the next tick re-reads the paper's actual state.
+
+    Two more cases (see ``_retry_new_version`` and ``_retry_returned_review``): a
+    topic delivered at an earlier version whose paper has a newer one, and a topic
+    the pipeline returned to review although its paper is ready and current.
     """
 
     reason = str(reason or "").strip()
     if not reason:
         raise DeliveryError("a release retry needs its reason")
     ledger = _ledger(paths, settings)
-    topic = next((item for item in topics_by_status(ledger.read(), "ready_queue")
+    document = ledger.read()
+    topic = next((item for item in topics_by_status(document, "ready_queue")
                   if paper_id in {str(item.get("paper_id") or ""),
                                   str((item.get("handoff") or {}).get("paper_id") or "")}), None)
     if topic is None:
-        raise DeliveryError(f"no ready-queued topic holds paper {paper_id}")
+        returned = next((item for item in topics_by_status(document, "in_review")
+                         if str((item.get("handoff") or {}).get("paper_id") or "") == paper_id),
+                        None)
+        if returned is not None:
+            return _retry_returned_review(db, paths, settings, ledger, returned,
+                                          paper_id=paper_id, by=by, reason=reason)
+        raise DeliveryError(f"no ready-queued or returned-to-review topic holds paper {paper_id}")
     topic_id = str(topic["topic_id"])
     release = dict(topic.get("release") or {})
     handoff = dict(topic.get("handoff") or {})
     release_stopped = release.get("status") in {"exhausted", "failed"}
     handoff_stopped = handoff.get("status") in {"exhausted", "failed"}
+    if not release_stopped and not handoff_stopped and handoff.get("status") == "delivered":
+        return _retry_new_version(db, paths, settings, ledger, topic,
+                                  paper_id=paper_id, by=by, reason=reason)
     if not release_stopped and not handoff_stopped:
         raise DeliveryError(
             f"paper {paper_id}: release is {release.get('status') or 'pending'!r} and delivery "
@@ -2363,6 +2377,148 @@ def retry_release(
     return {"schema_version": "openlabs.program_release_retry.v1", "topic_id": topic_id,
             "paper_id": paper_id, "stage": stage, "release_reset": release_stopped,
             "handoff_reset": handoff_stopped}
+
+
+def _reset_release(release: Mapping[str, Any], retry: Mapping[str, Any]) -> dict[str, Any]:
+    """A fresh ``pending``/``check`` release state that keeps its history and its seq order.
+
+    ``seq`` keeps increasing (never back to 0): the pipeline's history keys contain it,
+    and a repeated key would be taken as already written.
+    """
+
+    return {**dict(release), "status": "pending", "stage": "check", "attempts": {},
+            "writer_rounds": 0, "last_error": None, "waiting_for": None,
+            "retries": [*list(release.get("retries") or []), dict(retry)][-10:],
+            "seq": int(release.get("seq") or 0) + 1, "updated_at": utc_now()}
+
+
+def _retry_new_version(db, paths, settings, ledger, topic, *, paper_id: str, by: str,
+                       reason: str) -> dict[str, Any]:
+    """A delivered topic whose paper has a newer version: queue its delivery again.
+
+    Refused when the paper's release status shows the current version delivered, or
+    when the registry records no earlier delivered version to compare with.
+    """
+
+    topic_id = str(topic["topic_id"])
+    release = dict(topic.get("release") or {})
+    handoff = dict(topic.get("handoff") or {})
+    status = run_release_status(paths, settings, paper_id)
+    version = str(status.get("version") or "")
+    delivered_version = str((status.get("delivery") or {}).get("version") or "")
+    if status.get("frozen"):
+        raise DeliveryError(f"paper {paper_id} is frozen: {status['frozen']}")
+    if status.get("delivered"):
+        raise DeliveryError(
+            f"paper {paper_id}: version {version} is already delivered "
+            f"(package {(status.get('delivery') or {}).get('package_id')}); nothing stopped to retry")
+    if not delivered_version:
+        raise DeliveryError(
+            f"paper {paper_id}: the topic's delivery is recorded but the paper registry has no "
+            "delivered version; a human must reconcile the two first")
+    if delivered_version == version:
+        raise DeliveryError(
+            f"paper {paper_id}: version {version} has a delivery block without a package id; "
+            "a human must reconcile it first")
+    decided_by = f"manual:{by}"
+    retry = {"at": utc_now(), "by": decided_by, "reason": reason, "kind": "new_version",
+             "stage": release.get("stage"), "previous_status": release.get("status"),
+             "previous_delivered_version": delivered_version, "version": version}
+    new_handoff = {**handoff, "status": "queued", "attempts": 0, "last_error": None,
+                   "previous_package_id": handoff.get("package_id"),
+                   "previous_delivered_version": delivered_version,
+                   "package_id": None, "receipt": None, "delivered_at": None}
+    new_release = _reset_release(release, retry)
+    record_topic_note(
+        ledger, topic_id, db=db, event_type="release_retry", reason="new_paper_version",
+        decided_by=decided_by,
+        detail={"paper_id": paper_id, "reason": reason, "kind": "new_version",
+                "previous_delivered_version": delivered_version, "version": version,
+                "previous_package_id": handoff.get("package_id")},
+        updates={"release": new_release, "handoff": new_handoff},
+        key=f"release_retry:{topic_id}:new_version:{version}:{new_release['seq']}",
+    )
+    return {"schema_version": "openlabs.program_release_retry.v1", "topic_id": topic_id,
+            "paper_id": paper_id, "kind": "new_version", "stage": "check",
+            "release_reset": True, "handoff_reset": True,
+            "previous_delivered_version": delivered_version, "version": version}
+
+
+def _retry_returned_review(db, paths, settings, ledger, topic, *, paper_id: str, by: str,
+                           reason: str) -> dict[str, Any]:
+    """The pipeline sent the topic back to review, yet the paper is ready and current.
+
+    The topic goes ``in_review -> ready_queue``; its campaign is paused again, which
+    cancels the queued ``release-review:`` full review; delivery is queued. Refused
+    unless the release was returned to review, the registered review is ready and
+    bound to the current manuscript, and no such full review is running.
+    """
+
+    topic_id = str(topic["topic_id"])
+    release = dict(topic.get("release") or {})
+    handoff = dict(topic.get("handoff") or {})
+    if release.get("status") != "returned_to_review":
+        raise DeliveryError(
+            f"topic {topic_id} holds paper {paper_id} in review, but its release is "
+            f"{release.get('status') or 'pending'!r}, not 'returned_to_review'; nothing to retry")
+    status = run_release_status(paths, settings, paper_id)
+    review = dict(status.get("review") or {})
+    if status.get("frozen"):
+        raise DeliveryError(f"paper {paper_id} is frozen: {status['frozen']}")
+    if not (review.get("ready") and review.get("current")):
+        problems = "; ".join(str(item) for item in review.get("problems") or [])[:400]
+        raise DeliveryError(
+            f"paper {paper_id}: the registered review is not ready and current "
+            f"(ready={bool(review.get('ready'))}, current={bool(review.get('current'))}"
+            f"{': ' + problems if problems else ''}); the full review has to decide")
+    review_tasks = list(dict.fromkeys(
+        str((entry.get("detail") or {}).get("review_task_id") or "")
+        for entry in topic.get("history") or []
+        if entry.get("kind") == "release_returned_to_review"
+        and (entry.get("detail") or {}).get("review_task_id")))
+    running = [task_id for task_id in review_tasks
+               if (db.task(task_id) or {}).get("status") in {"leased", "running"}]
+    if running:
+        raise DeliveryError(
+            f"paper {paper_id}: the full review {', '.join(running)} is already running; let it "
+            "finish (a ready result queues delivery) or stop it through the control plane first")
+    decided_by = f"manual:{by}"
+    evidence = [_write_evidence(paths, topic_id, "release-retry-ready", {
+        "paper_id": paper_id, "reason": reason, "by": decided_by, "version": status.get("version"),
+        "review": {key: review.get(key) for key in ("ready", "current", "review_mode",
+                                                    "decision_record", "version")}})]
+    mark_topic_ready(ledger, topic_id, db=db, decided_by=decided_by, paper_id=paper_id,
+                     evidence=evidence)
+    campaign_id = str(topic.get("campaign_id") or "")
+    cancelled: list[str] = []
+    if campaign_id and db.campaign(campaign_id) is not None:
+        cancelled = list(db.pause_production_campaign(campaign_id, reason="release_retry_ready"))
+    # pause cancels queued and awaiting-remote work; nothing else is left pending
+    # (running reviews were refused above), so every release review is now settled.
+    review_task_status = {task_id: (db.task(task_id) or {}).get("status") for task_id in review_tasks}
+    retry = {"at": utc_now(), "by": decided_by, "reason": reason, "kind": "returned_review_ready",
+             "stage": release.get("stage"), "previous_status": release.get("status"),
+             "cancelled_tasks": cancelled}
+    new_release = _reset_release(release, retry)
+    new_handoff = {**handoff, "status": "queued", "attempts": 0, "paper_id": paper_id,
+                   "last_error": None, "queued_at": utc_now()}
+    record_topic_note(
+        ledger, topic_id, db=db, event_type="release_retry", reason="review_ready_and_current",
+        decided_by=decided_by,
+        detail={"paper_id": paper_id, "reason": reason, "kind": "returned_review_ready",
+                "campaign_id": campaign_id or None, "cancelled_tasks": cancelled,
+                "release_review_tasks": review_task_status},
+        evidence=evidence, updates={"release": new_release, "handoff": new_handoff},
+        key=f"release_retry:{topic_id}:returned_review:{new_release['seq']}",
+    )
+    return {"schema_version": "openlabs.program_release_retry.v1", "topic_id": topic_id,
+            "paper_id": paper_id, "kind": "returned_review_ready", "stage": "check",
+            "release_reset": True, "handoff_reset": True, "campaign_id": campaign_id or None,
+            "campaign_paused": bool(campaign_id and db.campaign(campaign_id) is not None),
+            "cancelled_tasks": cancelled,
+            "release_review_cancelled": [task_id for task_id in review_tasks
+                                         if task_id in cancelled],
+            "release_review_tasks": review_task_status}
 
 
 def assign_submission_handler(
