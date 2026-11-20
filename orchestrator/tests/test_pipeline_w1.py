@@ -712,3 +712,95 @@ def test_a_card_drawn_from_a_held_entry_waits_for_its_capability(tmp_path, monke
     entry["environment"]["standard_solver"]["spot_config"] = {"validated": True}
     assert supply_screen.capability_problems(
         None, None, card, entry, {"candidate_queue": str(queue_file)}) == []
+
+
+def _aemo_rows_zip(path: Path, columns: list[str], values: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = ("C,NEMP.WORLD,DVD_DISPATCHLOAD,AEMO,PUBLIC\n"
+            "I,DISPATCH,UNIT_SOLUTION,5," + ",".join(columns) + "\n"
+            + "".join("D,DISPATCH,UNIT_SOLUTION,5," + ",".join(values) + "\n" for _ in range(3)))
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(path.stem + ".CSV", body)
+
+
+def test_nonblank_requirement_counts_only_files_whose_column_has_values(tmp_path):
+    folder = tmp_path / "DISPATCHLOAD"
+    _aemo_rows_zip(folder / "202307_FILE01_X_202307010000.zip", ["DUID", "UIGF"], ["A", ""])
+    _aemo_rows_zip(folder / "202309_FILE01_X_202309010000.zip", ["DUID", "UIGF"], ["A", "12.5"])
+    cache = supply_screen.HeaderCache(tmp_path / "headers.json")
+    item = {"name": "UIGF", "glob": str(folder / "*.zip"), "columns": ["UIGF"],
+            "header": "aemo_mms"}
+    assert supply_screen.requirement_coverage(item, data_root=tmp_path, cache=cache)["ok"]
+    row = supply_screen.requirement_coverage({**item, "nonblank": True}, data_root=tmp_path,
+                                             cache=cache)
+    assert not row["ok"] and row["covered"] == 1
+    assert row["files_missing_columns"] == ["202307_FILE01_X_202307010000.zip"]
+    narrow = {**item, "nonblank": True, "months": {"from": "2023-09"}}
+    assert supply_screen.requirement_coverage(narrow, data_root=tmp_path, cache=cache)["ok"]
+    cache.save()
+    stored = json.loads((tmp_path / "headers.json").read_text())
+    assert all(key.endswith("|v2") for key in stored)
+    csv = tmp_path / "plain.csv"
+    csv.write_text("unit,rms,label\n1,,\n2,0.5,\n")
+    assert supply_screen.file_profile(csv, "csv") == {"columns": ["UNIT", "RMS", "LABEL"],
+                                                      "valued": ["RMS", "UNIT"]}
+
+
+def test_presence_only_requirement_with_a_file_count(tmp_path):
+    folder = tmp_path / "mat"
+    folder.mkdir()
+    for index in range(3):
+        # Binary content without line breaks must not be read as a header.
+        (folder / f"B{index}.mat").write_bytes(
+            bytes(value for value in range(256) if value not in (10, 13)) * 4096)
+    (folder / "subdir.mat").mkdir()
+    cache = supply_screen.HeaderCache(None)
+    item = {"name": "bearings", "glob": str(folder / "*.mat"), "header": "none", "min_files": 3}
+    row = supply_screen.requirement_coverage(item, data_root=tmp_path, cache=cache)
+    assert row["files"] == 4 and row["covered"] == 3 and row["unreadable"] == ["subdir.mat"]
+    assert not row["ok"]  # the directory is not a data file: 3/4 < min_fraction 1.0
+    row = supply_screen.requirement_coverage({**item, "min_fraction": 0.75}, data_root=tmp_path,
+                                             cache=cache)
+    assert row["ok"]
+    row = supply_screen.requirement_coverage({**item, "min_files": 5, "min_fraction": 0.5},
+                                             data_root=tmp_path, cache=cache)
+    assert not row["ok"] and "5 required" in row["error"]
+    bad = supply_screen.requirement_coverage({**item, "header": "parquet"}, data_root=tmp_path,
+                                             cache=cache)
+    assert not bad["ok"] and "header must be" in bad["error"]
+    # A csv reading of a binary file stops at the bounded line length.
+    lines = supply_screen._header_lines(folder / "B0.mat")
+    assert len(lines) == 1 and len(lines[0]) <= supply_screen.HEADER_LINE_CHARS
+
+
+def test_queue_entry_data_requirements_join_the_card_screen(tmp_path):
+    folder = tmp_path / "DISPATCHLOAD"
+    _aemo_rows_zip(folder / "202101_FILE01_X_202101010000.zip", ["DUID"], ["A"])
+    queue_file = tmp_path / "queue.json"
+    need = {"name": "UIGF", "glob": str(folder / "*.zip"), "columns": ["UIGF"],
+            "header": "aemo_mms"}
+    queue_file.write_text(json.dumps({"candidates": [
+        {"entry_id": "PMB-90", "card_fields": {"data_requirements": [need]}},
+        {"entry_id": "PMB-91", "data_requirements": [{**need, "columns": ["DUID"]}]},
+        {"entry_id": "PMB-92"}]}))
+
+    class _Paths:
+        program_control = tmp_path / "program-control"
+        data = tmp_path
+
+    template = {"candidate_queue": str(queue_file)}
+
+    def problems(entry_id: str) -> tuple[list[str], list[dict]]:
+        card = {"candidate_queue_entry": {"entry_id": entry_id, "queue": str(queue_file)}}
+        return supply_screen.data_problems(_Paths, None, card, {}, template)
+
+    failed, rows = problems("PMB-90")
+    assert len(failed) == 1 and "0/1 files" in failed[0] and rows[0]["name"] == "UIGF"
+    failed, rows = problems("PMB-91")
+    assert failed == [] and rows[0]["covered"] == 1
+    assert problems("PMB-92") == ([], [])
+    # A card-level item of the same name overrides the entry's.
+    card = {"candidate_queue_entry": {"entry_id": "PMB-90", "queue": str(queue_file)},
+            "data_requirements": [{"name": "UIGF", "columns": ["DUID"]}]}
+    failed, rows = supply_screen.data_problems(_Paths, None, card, {}, template)
+    assert failed == [] and rows[0]["columns"] == ["DUID"]

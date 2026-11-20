@@ -25,12 +25,20 @@ Data availability (item 2)
           - name: DISPATCHLOAD unit-level UIGF
             glob: /abs/path/data/nem/mmsdm/DISPATCHLOAD/*.zip   # or relative to the data repo
             columns: [UIGF]
-            header: aemo_mms          # csv (first row) | aemo_mms (``I,`` rows)
+            header: aemo_mms          # csv (first row) | aemo_mms (``I,`` rows) | none
+            nonblank: true            # optional: the columns also carry a value in the sample
             months: {from: "2021-01", to: "2024-12"}   # optional: YYYYMM in the file name
             min_fraction: 1.0         # share of the matched files that must have the columns
+            min_files: 105            # optional: fewer matched files fail the requirement
 
     Only the first lines of each file are read (zip members included), cached by path,
-    size and mtime. Too little coverage rejects the card (``card_data_unavailable``).
+    size and mtime; ``header: none`` reads nothing and counts matched files (binary data
+    such as .mat or .h5). ``nonblank`` counts a file only when every listed column has a
+    non-empty value in at least one sampled data row (an AEMO table can carry a column
+    whose values start months later, e.g. DISPATCHLOAD.UIGF from 2023-09). The line's
+    candidate queue entry may list its own ``data_requirements`` (at the top level or in
+    ``card_fields``); they are merged with the line's, the template's and the card's by
+    ``name``. Too little coverage rejects the card (``card_data_unavailable``).
 
 Pilot gate (item 3)
     A template (or the line) declares ``admission_pilot``::
@@ -94,6 +102,9 @@ AVAILABLE_WORDS = frozenset({"available", "ready", "validated", "yes", "true", "
 PILOT_WAITING = frozenset({"pending", "submitted"})
 STAGE_TIMEOUT_SECONDS = 300
 HEADER_LINES = 64
+# A header line longer than this is not a text header (binary file read as csv).
+HEADER_LINE_CHARS = 1 << 16
+HEADER_KINDS = frozenset({"csv", "aemo_mms", "none"})
 _MONTH = re.compile(r"(?<!\d)(20\d{2})(0[1-9]|1[0-2])(?!\d)")
 _VOLATILE_ENTRY_KEYS = frozenset({"ledger_occupancy", "rank", "draw_order", "score_rank"})
 
@@ -245,10 +256,12 @@ def _header_lines(path: Path) -> list[str]:
         text = io.TextIOWrapper(stream, encoding="utf-8", errors="replace")
         lines = []
         for _ in range(HEADER_LINES):
-            line = text.readline()
+            line = text.readline(HEADER_LINE_CHARS)
             if not line:
                 break
             lines.append(line.rstrip("\r\n"))
+            if len(line) >= HEADER_LINE_CHARS and not line.endswith("\n"):
+                break  # no line break in sight: not a text table
         return lines
 
     name = path.name.lower()
@@ -266,23 +279,39 @@ def _header_lines(path: Path) -> list[str]:
         return first(stream)  # type: ignore[arg-type]
 
 
-def file_columns(path: Path, header: str) -> list[str]:
-    """Column names a file declares (``csv``: first row; ``aemo_mms``: ``I,`` rows)."""
+def file_profile(path: Path, header: str) -> dict[str, list[str]]:
+    """``{columns, valued}`` of a file: declared column names and those with a value in
+    at least one sampled data row (``csv``: first row then data rows; ``aemo_mms``:
+    ``I,`` rows declare, ``D,`` rows of the same table carry values)."""
 
     lines = _header_lines(path)
     columns: list[str] = []
-    for line in lines:
-        fields = [field.strip().strip('"').upper() for field in line.split(",")]
+    valued: set[str] = set()
+    current: list[str] = []
+    for index, line in enumerate(lines):
+        fields = [field.strip().strip('"') for field in line.split(",")]
         if header == "aemo_mms":
             if fields and fields[0] == "I":
-                columns.extend(fields[4:])
+                current = [field.upper() for field in fields[4:]]
+                columns.extend(current)
+            elif fields and fields[0] == "D" and current:
+                valued.update(name for name, value in zip(current, fields[4:]) if value)
+        elif index == 0:
+            current = [field.upper() for field in fields]
+            columns = list(current)
         else:
-            return fields
-    return columns
+            valued.update(name for name, value in zip(current, fields) if value)
+    return {"columns": columns, "valued": sorted(valued)}
+
+
+def file_columns(path: Path, header: str) -> list[str]:
+    """Column names a file declares (``csv``: first row; ``aemo_mms``: ``I,`` rows)."""
+
+    return file_profile(path, header)["columns"]
 
 
 class HeaderCache:
-    """Column lists by (path, size, mtime), persisted between ticks."""
+    """Column profiles by (path, size, mtime), persisted between ticks."""
 
     def __init__(self, path: Path | None) -> None:
         self.path = path
@@ -295,19 +324,26 @@ class HeaderCache:
             except (OSError, ValueError):
                 self.data = {}
 
-    def columns(self, path: Path, header: str) -> list[str] | None:
+    def profile(self, path: Path, header: str) -> dict[str, list[str]] | None:
         try:
             stat = path.stat()
         except OSError:
             return None
-        key = f"{path}|{stat.st_size}|{int(stat.st_mtime)}|{header}"
-        if key not in self.data:
+        key = f"{path}|{stat.st_size}|{int(stat.st_mtime)}|{header}|v2"
+        value = self.data.get(key)
+        if not isinstance(value, dict):
             try:
-                self.data[key] = file_columns(path, header)
+                value = file_profile(path, header)
             except (OSError, zipfile.BadZipFile, EOFError, ValueError):
                 return None
+            self.data[key] = value
             self.changed = True
-        return list(self.data[key])
+        return {"columns": list(value.get("columns") or []),
+                "valued": list(value.get("valued") or [])}
+
+    def columns(self, path: Path, header: str) -> list[str] | None:
+        found = self.profile(path, header)
+        return None if found is None else found["columns"]
 
     def save(self) -> None:
         if self.path is None or not self.changed:
@@ -341,35 +377,72 @@ def requirement_coverage(requirement: Mapping[str, Any], *, data_root: Path,
     columns = [str(item).strip().upper() for item in requirement.get("columns") or []
                if str(item).strip()]
     header = str(requirement.get("header") or "csv").strip().lower()
+    if header not in HEADER_KINDS:
+        return {"name": requirement.get("name") or pattern, "glob": pattern, "ok": False,
+                "files": 0, "covered": 0, "columns": columns,
+                "error": f"header must be one of {sorted(HEADER_KINDS)}"}
+    nonblank = requirement.get("nonblank") is True
     files = sorted(Path(item) for item in globbing.glob(pattern)
                    if _in_months(Path(item), requirement.get("months")))
     missing: list[str] = []
     unreadable: list[str] = []
     for path in files:
-        found = cache.columns(path, header)
+        if header == "none":
+            if not path.is_file():
+                unreadable.append(path.name)
+            continue
+        found = cache.profile(path, header)
         if found is None:
             unreadable.append(path.name)
-        elif any(column not in found for column in columns):
+            continue
+        present = found["valued"] if nonblank else found["columns"]
+        if any(column not in present for column in columns):
             missing.append(path.name)
     try:
         wanted = float(requirement.get("min_fraction", 1.0))
     except (TypeError, ValueError):
         wanted = 1.0
+    try:
+        min_files = max(1, int(requirement.get("min_files", 1)))
+    except (TypeError, ValueError):
+        min_files = 1
     covered = len(files) - len(missing) - len(unreadable)
     fraction = covered / len(files) if files else 0.0
-    return {
+    row = {
         "name": requirement.get("name") or pattern, "glob": pattern, "columns": columns,
         "files": len(files), "covered": covered, "fraction": round(fraction, 4),
-        "min_fraction": wanted, "ok": bool(files) and fraction + 1e-9 >= wanted,
+        "min_fraction": wanted, "min_files": min_files,
+        "ok": len(files) >= min_files and fraction + 1e-9 >= wanted,
         "files_missing_columns": missing[:20], "unreadable": unreadable[:20],
     }
+    if nonblank:
+        row["nonblank"] = True
+    if len(files) < min_files:
+        row["error"] = f"{len(files)} files match, {min_files} required"
+    return row
+
+
+def _entry_requirements(template_entry: Mapping[str, Any], card: Mapping[str, Any]
+                        ) -> list[Any]:
+    """The ``data_requirements`` the card's candidate queue entry declares."""
+
+    from .card_precheck import entry_id_of
+
+    _name, entry = _queue_entry(template_entry.get("candidate_queue"), entry_id_of(card))
+    if not isinstance(entry, Mapping):
+        return []
+    fields = entry.get("card_fields") if isinstance(entry.get("card_fields"), Mapping) else {}
+    found: list[Any] = []
+    for source in (entry.get("data_requirements"), fields.get("data_requirements")):
+        found.extend(source if isinstance(source, list) else [])
+    return found
 
 
 def _requirements(card: Mapping[str, Any], template_entry: Mapping[str, Any],
                   line_entry: Mapping[str, Any]) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
     for source in (line_entry.get("data_requirements"), template_entry.get("data_requirements"),
-                   card.get("data_requirements")):
+                   _entry_requirements(template_entry, card), card.get("data_requirements")):
         for index, item in enumerate(source if isinstance(source, list) else []):
             if isinstance(item, Mapping):
                 key = str(item.get("name") or item.get("glob") or index)
@@ -806,7 +879,7 @@ __all__ = [
     "CAPABILITY_REJECTION", "DATA_REJECTION", "MECHANICAL_REJECTIONS", "PILOT_REJECTION",
     "PILOT_UNAVAILABLE", "REPEAT_REJECTION", "SCREEN_REJECTIONS", "advance_pilots",
     "capability_problems", "capability_status", "data_problems", "entry_digest",
-    "failed_targets", "file_columns", "initial_pilot", "pilot_budget", "pilot_held",
-    "pilot_spec", "repeat_failure", "requirement_coverage", "screen_card", "target_key",
+    "failed_targets", "file_columns", "file_profile", "initial_pilot", "pilot_budget",
+    "pilot_held", "pilot_spec", "repeat_failure", "requirement_coverage", "screen_card", "target_key",
     "target_registry",
 ]
