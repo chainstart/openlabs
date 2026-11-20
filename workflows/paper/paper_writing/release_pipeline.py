@@ -188,6 +188,16 @@ def _bound_payloads(paper_id: str, root: Path) -> dict[str, str]:
             for item in files or [] if isinstance(item, Mapping)}
 
 
+def _unadopted_support_sources(paper_id: str, metadata: Mapping[str, Any],
+                               root: Path) -> list[tuple[str, str]]:
+    from paper_writing.program_adopt import unadopted_support_sources
+
+    try:
+        return unadopted_support_sources(paper_id, metadata, root)
+    except Exception:  # noqa: BLE001 - a malformed record is reported by other checks
+        return []
+
+
 def oversize_payloads(paper_id: str, paths: list[str], root: Path) -> list[str]:
     """Files of this paper the release commit would take in but the data repository refuses.
 
@@ -388,6 +398,11 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         # Files the release commit would refuse (over the Git payload limit); the
         # pipeline binds them to the artifact store before its next commit.
         "oversize_payloads_unbound": oversize_payloads(paper_id, paths, repo_root),
+        # Support sources still registered at their campaign-workspace path although
+        # adopt copied them under papers/<id>/support-materials/ (program
+        # relocate-support-sources rewrites them before zenodo prepare).
+        "support_sources_unadopted": [registered for registered, _copy in
+                                      _unadopted_support_sources(paper_id, metadata, repo_root)],
         "git": git,
         "delivered": bool(delivery.get("package_id")) and str(delivery.get("version") or "") == version,
         "delivery": dict(delivery) if delivery else None,

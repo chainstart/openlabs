@@ -570,6 +570,79 @@ def bind_release_artifacts(paper_id: str, *, root: str | Path) -> dict[str, Any]
     return {**result, "status": "bound", "files": files, "manifest": relative}
 
 
+SUPPORT_RELOCATE_SCHEMA = "openlabs.support_source_relocation.v1"
+
+
+def unadopted_support_sources(paper_id: str, metadata: Mapping[str, Any],
+                              root: Path) -> list[tuple[str, str]]:
+    """``(registered, copy)`` for support sources that only exist as adopt's copy.
+
+    ``program adopt`` copies a support source registered outside the paper tree
+    (``decisive/solve.py``, relative to the campaign workspace) to
+    ``papers/<id>/support-materials/<path>``; the registry still names the workspace
+    path, which does not exist in the data repository (2026-11-20: PMB-13B's
+    ``zenodo prepare`` stopped on ``decisive/dispatch-stability.json``).
+    """
+
+    publication = ((metadata.get("support") or {}).get("publication") or {})
+    sources = publication.get("source_files") if isinstance(publication, Mapping) else None
+    found = []
+    for raw in sources if isinstance(sources, list) else []:
+        text = str(raw)
+        relative = _safe_relative(text)
+        if relative is None or text.startswith(f"papers/{paper_id}/"):
+            continue
+        if (root / relative).exists():
+            continue
+        copy = PurePosixPath("papers") / paper_id / SUPPORT_COPY_DIR / relative
+        target = root / copy
+        if target.is_file() and not target.is_symlink():
+            found.append((text, copy.as_posix()))
+    return found
+
+
+def relocate_support_sources(paper_id: str, *, root: str | Path) -> dict[str, Any]:
+    """Point ``support.publication.source_files`` at the copies ``program adopt`` made.
+
+    Each rewritten entry is recorded in ``support.publication.adopted_sources``
+    (current path -> registered path), which ``support_sources_snapshot_sha256`` uses as
+    the logical name: the same bytes under their reviewed names give the same digest,
+    so the ready decision stays bound. Reports whether the digest equals the one the
+    ready decision recorded. Writes only the registry record.
+    """
+
+    from paper_writing.support import SupportPackageError, support_sources_snapshot_sha256
+
+    repo_root = Path(root).resolve()
+    metadata = load_paper_metadata(paper_id, repo_root)
+    result = {"schema_version": SUPPORT_RELOCATE_SCHEMA, "paper_id": paper_id}
+    moves = unadopted_support_sources(paper_id, metadata, repo_root)
+    if not moves:
+        return {**result, "status": "not_needed", "relocated": []}
+    support = dict(metadata.get("support") or {})
+    publication = dict(support.get("publication") or {})
+    mapping = dict(moves)
+    publication["source_files"] = [mapping.get(str(item), item)
+                                   for item in publication.get("source_files") or []]
+    aliases = dict(publication.get("adopted_sources") or {})
+    aliases.update({copy: registered for registered, copy in moves})
+    publication["adopted_sources"] = aliases
+    support["publication"] = publication
+    updated = {**metadata, "support": support}
+    try:
+        digest = support_sources_snapshot_sha256(updated, repo_root=repo_root)
+    except (SupportPackageError, OSError, ValueError) as exc:
+        raise AdoptError(f"relocated support sources do not resolve: {exc}") from exc
+    write_paper_metadata(paper_id, updated, repo_root)
+    release = metadata.get("writing_release") or {}
+    reviewed = (release.get("support_sources_sha256")
+                if isinstance(release, Mapping) else None)
+    return {**result, "status": "relocated",
+            "relocated": [{"from": registered, "to": copy} for registered, copy in moves],
+            "support_sources_sha256": digest, "reviewed_support_sources_sha256": reviewed,
+            "matches_review": (digest == reviewed) if reviewed else None}
+
+
 PAYLOAD_BIND_SCHEMA = "openlabs.oversize_payload_binding.v1"
 _IGNORE_HEADER = ("# Over the Git payload limit: bound by path, size and SHA-256 in "
                   "papers/{paper_id}/production/payload-artifacts.json (openlabs-artifacts).")

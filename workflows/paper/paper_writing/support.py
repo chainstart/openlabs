@@ -142,10 +142,19 @@ def resolve_support_sources(
     return [resolved[key] for key in sorted(resolved)]
 
 
-def _review_logical_support_path(path: Path, root: Path) -> str:
-    """Return a version-insensitive but filename-sensitive support path."""
+def _review_logical_support_path(path: Path, root: Path,
+                                 aliases: Mapping[str, str] | None = None) -> str:
+    """Return a version-insensitive but filename-sensitive support path.
 
-    parts = list(path.relative_to(root).parts)
+    ``aliases`` (``support.publication.adopted_sources``: current path -> the path the
+    review saw) keeps a source that ``program adopt`` moved out of a campaign workspace
+    under its reviewed name, so relocating identical bytes does not unbind the review.
+    """
+
+    relative = path.relative_to(root).as_posix()
+    if aliases and relative in aliases:
+        relative = str(aliases[relative])
+    parts = list(Path(relative).parts)
     for index, part in enumerate(parts):
         if re.fullmatch(r"public-support-v[0-9][A-Za-z0-9._-]*", part, re.IGNORECASE):
             parts[index] = "public-support-v*"
@@ -176,9 +185,12 @@ def support_sources_snapshot_sha256(
         binding = bindings.get(path.relative_to(root).as_posix())
         if binding is not None:
             _verify_artifact_binding(root, path, binding)
+    raw_aliases = publication.get("adopted_sources")
+    aliases = ({str(key): str(value) for key, value in raw_aliases.items()}
+               if isinstance(raw_aliases, Mapping) else None)
     logical: dict[str, Path] = {}
     for path in paths:
-        name = _review_logical_support_path(path, root)
+        name = _review_logical_support_path(path, root, aliases)
         if name in logical:
             raise SupportPackageError(
                 f"Support sources collide after version normalization: {name}"

@@ -154,6 +154,7 @@ def main(argv: list[str]) -> int:
             "writer_scope": "Fix only the listed problems.",
             "release_artifacts_unbound": paper.get("unbound_artifacts", []),
             "oversize_payloads_unbound": paper.get("oversize_payloads", []),
+            "support_sources_unadopted": paper.get("unadopted_sources", []),
             "commit_paths": _paths(root, args.paper_id),
             "git": {"dirty": _git_dirty(root, _paths(root, args.paper_id))},
             # Delivered means: the current version (a newer one needs a new delivery).
@@ -172,6 +173,14 @@ def main(argv: list[str]) -> int:
         save()
         print(json.dumps({"status": "bound" if files else "not_needed", "files": files,
                           "manifest": str(manifest.relative_to(root))}))
+        return 0
+    if command == "program relocate-support-sources":
+        assert not external
+        moved = paper.pop("unadopted_sources", [])
+        save()
+        print(json.dumps({"status": "relocated" if moved else "not_needed",
+                          "relocated": [{"from": item, "to": item} for item in moved],
+                          "matches_review": True if moved else None}))
         return 0
     if command == "program bind-oversize-payloads":
         assert not external

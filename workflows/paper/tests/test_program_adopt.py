@@ -593,3 +593,49 @@ def test_config_default_follows_root_not_the_workspace_environment(tmp_path, mon
     code = cli.main(["zenodo", "plan", "--paper-id", PAPER, "--root", str(root)])
     assert code == 0
     assert seen["config"] == str(root / "registry" / "settings.yaml")
+
+
+def test_relocated_support_sources_keep_the_reviewed_support_digest(tmp_path):
+    """PMB-13B: support sources registered relative to the campaign workspace."""
+    from paper_writing.program_adopt import relocate_support_sources, unadopted_support_sources
+    from paper_writing.registry import load_paper_metadata, write_paper_metadata
+    from paper_writing.support import support_sources_snapshot_sha256
+
+    sources = [f"papers/{PAPER}/evidence/map.md", "decisive/solve.py", "precheck/farms.csv"]
+    contents = {sources[0]: b"# map\n", sources[1]: b"print(1)\n", sources[2]: b"a,b\n1,2\n"}
+    workspace, root = tmp_path / "workspace", tmp_path / "openlabs-data"
+    record = {"paper_id": PAPER, "workspace": f"papers/{PAPER}",
+              "manuscript_dir": f"papers/{PAPER}/manuscript", "version": "0.1.0",
+              "support": {"publication": {"mode": "zenodo_only", "source_files": sources}}}
+    for base in (workspace, root):
+        (base / "registry/papers").mkdir(parents=True)
+        write_paper_metadata(PAPER, record, base)
+    for name, data in contents.items():
+        target = workspace / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        copy = root / (name if name.startswith("papers/")
+                       else f"papers/{PAPER}/support-materials/{name}")
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes(data)
+    reviewed = support_sources_snapshot_sha256(load_paper_metadata(PAPER, workspace),
+                                               repo_root=workspace)
+    metadata = load_paper_metadata(PAPER, root)
+    metadata["writing_release"] = {"support_sources_sha256": reviewed}
+    write_paper_metadata(PAPER, metadata, root)
+    assert [item[0] for item in unadopted_support_sources(PAPER, metadata, root)] == sources[1:]
+
+    result = relocate_support_sources(PAPER, root=root)
+    assert result["status"] == "relocated" and result["matches_review"] is True
+    after = load_paper_metadata(PAPER, root)
+    publication = after["support"]["publication"]
+    assert publication["source_files"] == [
+        sources[0], f"papers/{PAPER}/support-materials/decisive/solve.py",
+        f"papers/{PAPER}/support-materials/precheck/farms.csv"]
+    assert publication["adopted_sources"][
+        f"papers/{PAPER}/support-materials/decisive/solve.py"] == "decisive/solve.py"
+    assert support_sources_snapshot_sha256(after, repo_root=root) == reviewed
+    assert relocate_support_sources(PAPER, root=root)["status"] == "not_needed"
+    # Changed bytes are not hidden by the alias: the digest moves.
+    (root / f"papers/{PAPER}/support-materials/decisive/solve.py").write_bytes(b"print(2)\n")
+    assert support_sources_snapshot_sha256(after, repo_root=root) != reviewed

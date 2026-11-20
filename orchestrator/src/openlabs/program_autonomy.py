@@ -2036,6 +2036,14 @@ def run_paper_adopt(paths: WorkspacePaths, settings: FactorySettings, paper_id: 
     return _run_paper_command(paths, settings, arguments)
 
 
+def run_support_source_relocation(paths: WorkspacePaths, settings: FactorySettings,
+                                  paper_id: str) -> dict[str, Any]:
+    """``program relocate-support-sources``: registry paths to adopt's support copies."""
+
+    return _run_paper_command(paths, settings,
+                              ["program", "relocate-support-sources", "--paper-id", paper_id])
+
+
 def run_oversize_payload_binding(paths: WorkspacePaths, settings: FactorySettings,
                                  paper_id: str) -> dict[str, Any]:
     """``program bind-oversize-payloads``: files over the Git blob limit go to artifacts."""
@@ -2325,6 +2333,24 @@ class _ReleasePipeline:
         if (self.settings.program.support_release == "none" and support.get("required")
                 and not support.get("published")):
             self.waive_support()
+            return True
+        if status.get("support_sources_unadopted"):
+            # Owner papers register support sources relative to their campaign workspace;
+            # adopt copies them under papers/<id>/support-materials/ and the registry is
+            # pointed there (reviewed names kept, so the review binding holds) before
+            # zenodo prepare reads them (PMB-13B, 2026-11-20).
+            self.stage = "relocate_support"
+            result = run_support_source_relocation(self.paths, self.settings, self.paper_id)
+            if result.get("status") not in {"relocated", "not_needed"}:
+                raise ReleaseError("support source relocation failed: "
+                                   f"{str(result.get('error') or result)[:400]}")
+            self.save("release_support_sources_relocated", "adopted_support_sources",
+                      stage=self.stage, status="running",
+                      detail={"relocated": result.get("relocated"),
+                              "matches_review": result.get("matches_review")})
+            self.entry("support_sources_relocated",
+                       files=len(result.get("relocated") or []),
+                       matches_review=result.get("matches_review"))
             return True
         if status.get("oversize_payloads_unbound"):
             # The data repository refuses blobs over 5 MiB; such a file (an 8 MB

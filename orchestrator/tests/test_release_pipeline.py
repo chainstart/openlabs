@@ -846,6 +846,20 @@ def test_an_over_limit_evidence_file_is_bound_before_the_first_commit(tmp_path, 
     assert target.stat().st_size == 5 * 1024 * 1024 + 1  # the reviewed bytes stay in place
 
 
+def test_workspace_support_sources_are_relocated_before_zenodo_prepare(tmp_path, monkeypatch):
+    """PMB-13B, 2026-11-20: zenodo prepare refused decisive/... (a workspace path)."""
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, paper_extra={"unadopted_sources": ["decisive/solve.py"]})
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert report.errors == [], report.errors
+    commands = _commands(log)
+    assert commands[:3] == ["program release-status", "program relocate-support-sources",
+                            "program release-status"]
+    assert commands.index("program relocate-support-sources") < commands.index("zenodo prepare")
+    assert "release_support_sources_relocated" in _events(db, topic["topic_id"])
+    assert _topic(paths, settings, topic["topic_id"])["handoff"]["status"] == "delivered"
+
+
 def test_unsupported_workspace_layout_waits_for_the_owner(tmp_path, monkeypatch):
     paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support_release="none")
     workspace = program_autonomy.asset_library.topic_workspace(db, paths, topic)
