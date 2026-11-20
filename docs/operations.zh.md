@@ -833,6 +833,27 @@ APC/版面费/彩图费/投稿费、证据（URL 或本地文件）、核实日�
 6. 数据仓库的 git 身份或 `[program.git]`；`paper_writing_command` 在 tick 环境里可执行。
 7. 依次打开 `enabled`、`auto_handoff`，确认首篇停在 `auto_release_off` 后再打开 `auto_release`。
 
+### 选题供给与早筛（2026-11-20，改造 W1）
+
+配置在 `[program.supply]`（默认全开，见 `config/openlabs.toml`）；实现见
+`orchestrator/src/openlabs/line_facts.py` 与 `supply_screen.py`。
+
+- **线级共享事实**：负责人请求 `feasibility_precheck_failed` 冻结时，若失败依据是该线的共享参照
+  （`environment.standard_solver.control_receipt` 的作业号/标签、线条目 `shared_references`、或同线其他课题也引用的作业），
+  不冻结课题：该线被阻塞（不侦察、不评审、不开新 campaign），代表课题排一次方向决策（`line_reference_review`），
+  其他引用同一参照的课题进入等待。结果里仍在排队/运行的作业 → 停泊等作业，不冻结（每题至多 `reference_wait_max` 次）。
+  差距小于测量不确定度（无不确定度时 ≤ 容差 × `borderline_relative_margin`）→ 方向决策 `criterion_borderline`。
+  负责人在 `gate_result.failed_criteria` 中逐项声明 `{name, delta, tolerance, uncertainty, reference}` 最准确。
+  `python -m openlabs program line-block` 列出/`--clear LINE --reason ...` 解除阻塞；
+  `python -m openlabs program line-reopen-report` 只读列出按新规则属于线级问题的已冻结课题（不重开）。
+- **能力表与数据**：线条目 `capabilities`，卡片/模板 `required_capabilities`；卡片/模板 `data_requirements`
+  （`glob`、`columns`、`header: csv|aemo_mms`、`months`、`min_fraction`）。不满足 → `card_capability_missing` / `card_data_unavailable`。
+- **试算关口**：模板 `admission_pilot`（`stage`、`cpus`、`memory_mib`、`timeout_seconds`、`core_hours`、`verdict_file`），
+  在 ailab 上运行，单作业 ≤ `pilot_max_threads`（≤8）线程、≤ `pilot_core_hours_max` 核时；预算与结论写入台账 `card_check.pilot`。
+- **目标记忆**：同一 (线, entry_id) 因机械原因失败且队列条目未变、或有冻结课题而新卡未 `reopens` → `card_target_repeat_failure`。
+- **侦察退避**：队列无可抽条目时不派侦察（`candidate_queue_empty`）；空跑退避超出列表后翻倍至 `scout_backoff_max_hours`；
+  调度报告 `program.line_supply` 给出“题源枯竭”信号。
+
 ## 可复用资产库
 
 研究计划启用后可再打开资产库（`config/openlabs.toml` 的 `[program.assets]`，两个开关默认都关，

@@ -101,6 +101,11 @@ TRIGGER_FREEZE_CLASS = {
     # Owner recompute review loop (owner.py).
     "owner_review_rounds_exhausted": "review_stalled",
     "owner_review_rejected": "review_stalled",
+    # Line-level shared facts (line_facts.py): a decision that runs out of choices freezes
+    # the topic for the precheck it could not pass.
+    "line_reference_review": "feasibility_precheck_failed",
+    "criterion_borderline": "feasibility_precheck_failed",
+    "line_block_expired": "feasibility_precheck_failed",
 }
 CHOICE_FREEZE_CLASS = {
     "targeted_core_analysis": "contribution_insufficient",
@@ -299,9 +304,25 @@ def pending_decision(db: FactoryDB, campaign_id: str) -> str | None:
 
 
 def campaign_on_hold(db: FactoryDB, settings: FactorySettings, campaign_id: str) -> bool:
-    """A topic campaign waits for its direction decision: no successors meanwhile."""
+    """A topic campaign waits for its direction decision, or for a line-level block on the
+    shared reference its precheck failed against (``line_facts``): no successors meanwhile."""
 
-    return settings.program.enabled and pending_decision(db, campaign_id) is not None
+    if not settings.program.enabled:
+        return False
+    from . import line_facts
+
+    return pending_decision(db, campaign_id) is not None or line_facts.campaign_waiting(
+        db, campaign_id)
+
+
+def hold_reason(db: FactoryDB, settings: FactorySettings, campaign_id: str) -> str:
+    """Why :func:`campaign_on_hold` holds a campaign (for the tick report)."""
+
+    from . import line_facts
+
+    if line_facts.campaign_waiting(db, campaign_id) and pending_decision(db, campaign_id) is None:
+        return "line_block_wait"
+    return "direction_decision_pending"
 
 
 def held_campaigns(paths: WorkspacePaths, settings: FactorySettings) -> set[str]:
@@ -397,7 +418,12 @@ def _trigger_reason_text(trigger: str, detail: Mapping[str, Any]) -> str:
             "whether one targeted step continues the topic or it is frozen."
         ),
     }
-    return texts.get(trigger, f"Direction decision trigger: {trigger}.")
+    if trigger in texts:
+        return texts[trigger]
+    from . import line_facts
+
+    return line_facts.trigger_reason_text(trigger, detail) or (
+        f"Direction decision trigger: {trigger}.")
 
 
 def _context_reasons(context: Any) -> list[str]:
@@ -787,7 +813,8 @@ def on_result(
     evidence = [_evidence(result_path, result_sha256)]
     if role in RESEARCH_ROLES:
         return _on_research_result(db, paths, settings, report, topic=topic, task=task,
-                                   payload=payload, evidence=evidence)
+                                   payload=payload, evidence=evidence,
+                                   result_path=result_path, result_sha256=result_sha256)
     if role == "reviewer" and task_type == "paper_review" and str(
         task.get("routing_reason") or ""
     ) == "owner_recompute_review":
@@ -800,7 +827,10 @@ def on_result(
     return None
 
 
-def _on_research_result(db, paths, settings, report, *, topic, task, payload, evidence):
+def _on_research_result(db, paths, settings, report, *, topic, task, payload, evidence,
+                        result_path=None, result_sha256=None):
+    from . import line_facts
+
     topic_id = str(topic["topic_id"])
     task_id = str(task["task_id"])
     gate_result = payload.get("gate_result")
@@ -822,6 +852,19 @@ def _on_research_result(db, paths, settings, report, *, topic, task, payload, ev
             note = {"reason_class_inferred": True, "declared_reason_class": declared or None,
                     "primary_endpoint_verdict": verdict or None}
         declared_evidence = _freeze_evidence(gate_result)
+        # A precheck that failed on the line's shared reference, while a named job is still
+        # queued, or by less than the measurement's uncertainty is not frozen here.
+        try:
+            intercepted = line_facts.intercept_precheck_freeze(
+                db, paths, settings, report, topic=topic, task=task, payload=payload,
+                evidence=[*declared_evidence, *evidence], reason_class=reason_class,
+                result_path=result_path, result_sha256=result_sha256,
+            )
+        except Exception as exc:  # noqa: BLE001 - the requested freeze still applies
+            intercepted = None
+            report.errors.append(f"Line-fact check of {task_id} failed: {exc}")
+        if intercepted is not None:
+            return intercepted
         if not declared_evidence:
             note = {**(note or {}), "evidence_missing": True}
         _freeze(
@@ -831,6 +874,10 @@ def _on_research_result(db, paths, settings, report, *, topic, task, payload, ev
             reopen_when=gate_result.get("reopen_when"),
         )
         return "handled"
+    try:
+        line_facts.on_progress(db, paths, settings, report, topic=topic, payload=payload)
+    except Exception as exc:  # noqa: BLE001 - advisory: the block stays until released
+        report.errors.append(f"Line-block progress check of {task_id} failed: {exc}")
     if campaign_on_hold(db, settings, str(topic["campaign_id"])):
         return "handled"
     if (
@@ -1068,6 +1115,13 @@ def apply_direction_decision(
     def finish(outcome: str, detail: Mapping[str, Any]) -> str:
         _set_decision(db, task_id, {**record, "status": "resolved", "outcome": outcome,
                                     "resolved_at": utc_now()})
+        from . import line_facts
+
+        try:
+            line_facts.after_decision(db, paths, settings, report, topic_id=topic_id,
+                                      trigger=trigger, outcome=outcome)
+        except Exception as exc:  # noqa: BLE001 - advisory
+            report.errors.append(f"Line-block update after {task_id} failed: {exc}")
         _info(report, "direction_decisions").append(
             {"topic_id": topic_id, "task_id": task_id, "trigger": trigger, "outcome": outcome,
              **dict(detail)}

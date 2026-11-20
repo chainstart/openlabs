@@ -2162,9 +2162,11 @@ def _replenish_continuous_campaign(
         # Scheduled by a controller (the research-program topic scout) only.
         return
     if program_autonomy.campaign_on_hold(db, settings, campaign_id):
-        # The topic waits for its direction decision; it decides what runs next.
+        # The topic waits for its direction decision (it decides what runs next) or for
+        # a line-level block on the shared reference its precheck failed against.
         report.production_blocked.append(
-            {"campaign_id": campaign_id, "reason": "direction_decision_pending"}
+            {"campaign_id": campaign_id,
+             "reason": program_autonomy.hold_reason(db, settings, campaign_id)}
         )
         return
     latest_status = str(latest.get("status") or "") if latest else ""

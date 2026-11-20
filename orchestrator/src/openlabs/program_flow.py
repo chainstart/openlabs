@@ -38,6 +38,8 @@ from typing import Any
 from . import assets as asset_library
 from . import budget as budget_control
 from . import card_precheck as card_checks
+from . import line_facts
+from . import supply_screen
 from .config import FactorySettings, WorkspacePaths, dispatch_runner
 from .utilization import compute_backlog
 from .contracts import (
@@ -221,6 +223,8 @@ def lines_not_ready(
     paths: WorkspacePaths,
     settings: FactorySettings,
     lines: Any,
+    *,
+    db: FactoryDB | None = None,
 ) -> dict[str, str]:
     """``{line: environment status}`` of the given research lines that are not ready.
 
@@ -232,13 +236,17 @@ def lines_not_ready(
     wanted = sorted({str(line).strip() for line in lines if str(line or "").strip()})
     if not wanted:
         return {}
+    # A line blocked on its shared reference (line_facts.py) opens no new topic either.
+    blocked = {line: status for line, status in line_facts.blocked_lines(db).items()
+               if line in wanted} if settings.program.supply.line_facts else {}
     document = research_lines_document(paths, settings)
     if document is None:
         # Without a readable direction file nothing is known to be unready; the
         # admission-time hold still keeps such a topic from starting.
-        return {}
+        return blocked
     statuses = {line: environment_status(document, line) for line in wanted}
-    return {line: status for line, status in statuses.items() if status != ENVIRONMENT_READY}
+    return {**{line: status for line, status in statuses.items()
+               if status != ENVIRONMENT_READY}, **blocked}
 
 
 def program_projects(paths: WorkspacePaths) -> list[ProjectConfig]:
@@ -622,8 +630,18 @@ def _queue_instruction(paths: WorkspacePaths, settings: FactorySettings, line: s
             entry = counts.get(template) if isinstance(counts, Mapping) else None
             if isinstance(entry, Mapping) and int(entry.get("count") or 0):
                 item["empty_draws"] = int(entry["count"])
-    return queue_scout_instruction(queues, held_queue_releases(paths, settings, line, queues),
+    text = queue_scout_instruction(queues, held_queue_releases(paths, settings, line, queues),
                                    supply, taken=taken)
+    if text and settings.program.supply.target_memory:
+        failed = supply_screen.failed_targets(open_topic_ledger(paths, settings.program).read(),
+                                              line, queues)
+        if failed:
+            # Target memory: the intake rejects these again without running the precheck.
+            text += (" Targets that already failed and whose queue entry has not changed "
+                     "since (do not draw them; a frozen one only with `reopens`): "
+                     + ", ".join(f"{key} ({why})" for key, why in sorted(failed.items())[:60])
+                     + ".")
+    return text
 
 
 def _queues_without_occupancy(queues: Mapping[str, str]) -> bool:
@@ -930,6 +948,19 @@ def scout_supply_blocks(
         seen.add(key)
         state = _supply_state(db, key)
         count = int(state.get("count") or 0)
+        if program.supply.scout_skip_empty_queue and project.research_line:
+            # Nothing drawable in the line's queues: no scout is spent on finding that out.
+            empty = queue_supply_empty(paths, settings, project.research_line, document)
+            if empty is not None:
+                blocks[key] = {
+                    "research_line": project.research_line, "domain": project.domain,
+                    "campaign_id": scout_workstream_id(project), "empty_draws": count,
+                    "reason": "candidate_queue_empty", **empty,
+                    "release_when": "an entry of the line's candidate queue becomes drawable "
+                                    "(queue regenerated, a topic released, a held capability "
+                                    "met)",
+                }
+                continue
         if count <= 0:
             continue
         fingerprint = scout_supply_fingerprint(paths, settings, project, document)
@@ -961,6 +992,10 @@ def scout_supply_blocks(
             continue
         hours = program.scout_empty_backoff_hours
         delay = hours[min(count, len(hours)) - 1] if hours else 0.0
+        if hours and count > len(hours) and delay > 0:
+            # Past the configured steps the wait keeps doubling, up to the cap.
+            delay = min(delay * 2 ** (count - len(hours)),
+                        max(delay, program.supply.scout_backoff_max_hours))
         last = budget_control.parse_time(state.get("last_at"))
         if last is None or delay <= 0:
             continue
@@ -1143,6 +1178,7 @@ def schedule_scouts(
         paths, settings,
         [project.research_line for project in all_projects]
         + [topic.get("research_line") for topic in _proposed_pool(document)],
+        db=db,
     )
     ready_projects = [project for project in all_projects
                       if not project.research_line or project.research_line not in blocked_lines]
@@ -1247,9 +1283,61 @@ def schedule_scouts(
 def _supply_block_reason(blocks: Mapping[str, Mapping[str, Any]]) -> str:
     """``candidates_exhausted`` when every blocked line is exhausted, else the backoff."""
 
-    if blocks and all(item.get("reason") == "candidates_exhausted" for item in blocks.values()):
+    if blocks and all(item.get("reason") in EXHAUSTED_REASONS for item in blocks.values()):
+        if all(item.get("reason") == "candidate_queue_empty" for item in blocks.values()):
+            return "candidate_queue_empty"
         return "candidates_exhausted"
     return "scout_empty_backoff"
+
+
+# A line whose supply is used up: reported as such (tick report program.line_supply).
+EXHAUSTED_REASONS = frozenset({"candidates_exhausted", "candidate_queue_empty"})
+
+
+def queue_supply_empty(
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    line: str,
+    document: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Why a line's enumerated queues offer a scout nothing to draw (None: they do).
+
+    Only for a line whose every paper template draws from a candidate queue (a scout of a
+    template without one may still search). An entry counts as drawable when its
+    ``ledger_occupancy`` is free or reopenable (or, without one, the ledger has no topic
+    of it), the target memory does not hold it (``supply_screen.failed_targets``), or it is a
+    held entry whose capability is met this tick.
+    """
+
+    lines_document = research_lines_document(paths, settings)
+    templates = [str(item.get("id") or "") for item in line_templates(lines_document, line)]
+    queues = queued_templates(lines_document, line)
+    if not queues or any(template not in queues for template in templates if template):
+        return None
+    if any(held_queue_releases(paths, settings, line, queues).values()):
+        return None
+    taken = ledger_queue_entries(document, line) if _queues_without_occupancy(queues) else {}
+    failed = (supply_screen.failed_targets(document, line, queues)
+              if settings.program.supply.target_memory else {})
+    drawable = 0
+    for path in sorted(set(queues.values())):
+        try:
+            queue = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None  # unreadable: let the scout find out
+        for item in (queue.get("candidates") if isinstance(queue, Mapping) else None) or []:
+            if not isinstance(item, Mapping):
+                continue
+            entry_id = str(item.get("entry_id") or item.get("batch_id") or "")
+            occupancy = item.get("ledger_occupancy")
+            free = (str(occupancy.get("state") or "free") in {"free", "reopenable"}
+                    if isinstance(occupancy, Mapping) else entry_id not in taken)
+            if free and entry_id.upper() not in failed:
+                drawable += 1
+    if drawable:
+        return None
+    return {"drawable": 0, "templates": sorted(queues), "failed_targets": len(failed),
+            "queues": sorted(set(queues.values()))}
 
 
 def maybe_schedule_scout(
@@ -1475,6 +1563,20 @@ def intake_card(
         return _record_invalid(db, paths, ledger, project, card, errors=errors,
                                decided_by=decided_by, metadata=metadata, repairable=repairable)
     metadata["card_path"] = str(_store_card(paths, project, card))
+    # Early screens (2026-11-20, W1): target memory, capability table, data coverage.
+    rejection, screen_errors, screen_fields = supply_screen.screen_card(
+        paths, settings, card, line_entry, template_entry, ledger.read())
+    if screen_fields:
+        metadata["card_check"] = {**metadata.get("card_check", {"normalized": [],
+                                                               "warnings": []}),
+                                  **screen_fields}
+    if rejection is not None:
+        outcome = _record_invalid(
+            db, paths, ledger, project, card, errors=screen_errors, decided_by=decided_by,
+            metadata=metadata, repairable=False, reason=rejection,
+            not_repairable_reason=rejection,
+        )
+        return {**outcome, "screen": rejection}
     precheck = _run_card_precheck(paths, settings, project.project_id, card, line_entry,
                                   card_path=Path(metadata["card_path"]))
     if precheck is not None:
@@ -1492,6 +1594,14 @@ def intake_card(
             return {**outcome, "precheck": "fail"}
         # An erroring precheck (infrastructure) leaves the card proposed but held from the
         # admission review; schedule_topic_admission retries it and reports it each tick.
+    pilot = supply_screen.pilot_spec(line_entry, template_entry,
+                                     str(card.get("paper_template") or "")) if (
+        settings.program.supply.pilot) else None
+    if pilot is not None:
+        # The card waits for its ailab pilot (advance_pilots) before the admission review.
+        metadata["card_check"] = {**metadata.get("card_check", {"normalized": [],
+                                                               "warnings": []}),
+                                  "pilot": supply_screen.initial_pilot(pilot, settings)}
     try:
         decision = propose_topic(ledger, card, db=db, decided_by=decided_by, metadata=metadata)
     except TopicLedgerError as exc:
@@ -2382,7 +2492,7 @@ def schedule_topic_admission(
     # A card of a line whose environment is not ready stays proposed, unreviewed:
     # an admit could not start its precheck, so the review would only be held.
     blocked_lines = lines_not_ready(
-        paths, settings, [topic.get("research_line") for topic in proposed])
+        paths, settings, [topic.get("research_line") for topic in proposed], db=db)
     waiting_for_line = [topic for topic in proposed
                         if str(topic.get("research_line") or "") in blocked_lines]
     proposed = [topic for topic in proposed if topic not in waiting_for_line]
@@ -2390,6 +2500,9 @@ def schedule_topic_admission(
     # (retry_held_prechecks); it is neither admitted unchecked nor rejected.
     waiting_for_precheck = [topic for topic in proposed if precheck_held(topic)]
     proposed = [topic for topic in proposed if topic not in waiting_for_precheck]
+    # A card whose ailab pilot is pending or running waits for its verdict (advance_pilots).
+    waiting_for_pilot = [topic for topic in proposed if supply_screen.pilot_held(topic)]
+    proposed = [topic for topic in proposed if topic not in waiting_for_pilot]
     in_flight = {
         str(task["task_id"]): task
         for task in _program_tasks(db, statuses=IN_FLIGHT_STATUSES,
@@ -2415,6 +2528,7 @@ def schedule_topic_admission(
             reason="admission_batches_in_flight" if reviewing
             else "research_line_environment_not_ready" if waiting_for_line
             else "admission_precheck_error" if waiting_for_precheck
+            else "admission_pilot_pending" if waiting_for_pilot
             else "awaiting_topic_cards"
         )
     cap = settings.program.max_concurrent_admissions
@@ -3112,7 +3226,11 @@ def materialize_waiting_topics(
     ledger = open_topic_ledger(paths, settings.program)
     parked = parked_program_projects(paths)
     paused = paused_topic_campaigns(db)
-    skipped: set[str] = set()
+    # Admitted topics of a line blocked on its shared reference wait for the block.
+    skipped: set[str] = {
+        str(topic["topic_id"]) for topic in topics_by_status(ledger.read(), "admitted")
+        if str(topic.get("research_line") or "") in line_facts.blocked_lines(db)
+    } if settings.program.supply.line_facts else set()
     while True:
         document = ledger.read()
         status = slot_status(document, settings.program, parked, paused)
@@ -3152,7 +3270,10 @@ def materialize_waiting_topics(
                 " Before that, run the card's feasibility_precheck (research_state.json) as the "
                 "first task and nothing else; if it misses its pass criterion, return gate_result "
                 "{promotion_decision: freeze, freeze_reason_class: feasibility_precheck_failed} "
-                "with the precheck evidence. Its budget counts active agent time "
+                "with the precheck evidence, and list each missed criterion in "
+                "gate_result.failed_criteria [{name, delta, tolerance, uncertainty, reference: "
+                "{id, job_id} when it is the line's shared reference}]. Its budget counts "
+                "active agent time "
                 "(research_state.json precheck_clock), not time waiting for queued remote jobs: "
                 "while those are pending, end with awaiting_remote instead of declaring the "
                 "precheck inconclusive. Follow the research line's SOP and environment "
@@ -3329,6 +3450,7 @@ def run_program_pipeline(
             "this_tick": [{"topic_id": item["topic_id"], "status": item["precheck"]}
                           for item in outcomes if item.get("precheck")],
             "retried": retry_held_prechecks(db, paths, settings, report),
+            "pilots": supply_screen.advance_pilots(db, paths, settings, report),
             "by_line": precheck_statistics(open_topic_ledger(paths, settings.program).read()),
         }
         if not any(info["card_prechecks"].values()):
@@ -3338,6 +3460,8 @@ def run_program_pipeline(
             str(item["task_id"]) for item in info["card_repairs"] if item.get("task_id")
         )
         info["holds_released"] = release_ready_holds(db, paths, settings)
+        # Line-level blocks: release on a changed receipt, expire long waits, report.
+        line_facts.tick(db, paths, settings, report)
         info["scout_outcomes"] = record_scout_outcomes(
             db, paths, settings, open_topic_ledger(paths, settings.program).read()
         )
@@ -3366,14 +3490,25 @@ def run_program_pipeline(
             open_topic_ledger(paths, settings.program).read(), moment=_now_moment(),
         )
         info["scout_supply_blocked"] = list(supply.values())
+        info["line_supply"] = [
+            {"research_line": item.get("research_line") or item.get("domain"),
+             "signal": ("supply_exhausted" if item["reason"] in EXHAUSTED_REASONS
+                        else "scout_backoff"),
+             "reason": item["reason"], "empty_draws": item.get("empty_draws"),
+             **({"drawable": item["drawable"]} if "drawable" in item else {}),
+             **({"until": item["until"]} if item.get("until") else {}),
+             "release_when": item.get("release_when")}
+            for item in supply.values()
+        ]
         for item in supply.values():
-            if item["reason"] == "candidates_exhausted":
+            if item["reason"] in EXHAUSTED_REASONS:
                 report.production_blocked.append({
                     **{k: v for k, v in item.items() if v is not None},
                     "campaign_id": str(item.get("campaign_id") or ""),
                 })
         info["lines_environment_not_ready"] = lines_not_ready(
-            paths, settings, [project.research_line for project in program_projects(paths)])
+            paths, settings, [project.research_line for project in program_projects(paths)],
+            db=db)
         revisions, revision_blocked = schedule_revisions(
             db, paths, settings, lead_short=lead_quota_short(db, settings)
         )

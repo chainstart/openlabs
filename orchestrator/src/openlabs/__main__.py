@@ -253,6 +253,21 @@ def _parser() -> argparse.ArgumentParser:
         "reopen-check",
         help="Evaluate every frozen topic's auto_reopen conditions now (read-only)",
     )
+    program_commands.add_parser(
+        "line-reopen-report",
+        help="Dry run (read-only): which frozen topics the line-level rules of 2026-11-20 "
+        "would have treated as line problems (a shared reference that missed by less than "
+        "its uncertainty, or was still queued at the precheck end) and could be reopened; "
+        "nothing is reopened or written",
+    )
+    line_block = program_commands.add_parser(
+        "line-block",
+        help="List the research lines blocked on a shared reference (line_facts), or clear "
+        "one (--clear LINE): its waiting topics get their next owner seat",
+    )
+    line_block.add_argument("--clear", metavar="LINE", help="Research line to release")
+    line_block.add_argument("--reason", help="Why the block is cleared (recorded)")
+    line_block.add_argument("--by", default="operator", help="Who cleared it (provenance)")
     instance = program_commands.add_parser(
         "init-instance",
         help="Create a separate orchestrator instance (own database, settings and projects; "
@@ -549,6 +564,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps({**result, "counts": planned.get("counts")}, ensure_ascii=False,
                          indent=2, sort_keys=True))
         return 1 if result["errors"] else 0
+    if args.command == "program" and args.program_command == "line-reopen-report":
+        # Read-only: the topic ledger and result bundles are read; nothing is written.
+        from .line_facts import reopen_report
+
+        print(json.dumps(reopen_report(paths, load_settings(paths)), ensure_ascii=False,
+                         indent=2, sort_keys=True, default=str))
+        return 0
     if args.command == "program" and args.program_command == "utilization":
         # Read-only: the database is opened with mode=ro and nothing is created.
         from .utilization import ReadOnlyFactoryDB, utilization_report
@@ -597,6 +619,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False),
                       file=sys.stderr)
                 return 1
+        elif args.program_command == "line-block":
+            from . import line_facts
+
+            if args.clear:
+                if not args.reason:
+                    print(json.dumps({"status": "refused", "error": "--clear needs --reason"},
+                                     ensure_ascii=False), file=sys.stderr)
+                    return 1
+                if line_facts.block_of(db, args.clear) is None:
+                    print(json.dumps({"status": "refused",
+                                      "error": f"line {args.clear} is not blocked"},
+                                     ensure_ascii=False), file=sys.stderr)
+                    return 1
+                payload = {"schema_version": "openlabs.program_line_block.v1",
+                           "released": line_facts.release(
+                               db, paths, settings, None, line=args.clear,
+                               reason=args.reason, by=f"manual:{args.by}")}
+            else:
+                payload = {"schema_version": "openlabs.program_line_block.v1",
+                           "blocks": line_facts.blocks(db), "waits": line_facts.waits(db)}
         elif args.program_command == "backfill":
             payload = backfill_grandfathered(db, paths, settings, write=args.write)
         elif args.program_command == "reopen-grant":

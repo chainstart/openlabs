@@ -274,6 +274,8 @@ class ProgramSettings:
     # list of research-line ids applies it to the topics of those lines only.
     owner_mode: str | tuple[str, ...] = "off"
     owner: OwnerSettings = field(default_factory=lambda: OwnerSettings())
+    # [program.supply] (2026-11-20, W1): topic supply and early screening.
+    supply: SupplySettings = field(default_factory=lambda: SupplySettings())
     # Automatic reopens per frozen topic whose recorded line-level conditions
     # (``auto_reopen``: shared control receipt, line capability) came true; a
     # topic may ask for fewer. 0 turns automatic reopening off.
@@ -310,6 +312,45 @@ class ProgramSettings:
 
 
 DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_gpt")
+
+
+@dataclass(frozen=True)
+class SupplySettings:
+    """``[program.supply]`` (2026-11-20, pipeline overhaul W1): topic supply and early screens.
+
+    Every switch defaults to on; a research line that declares none of the fields these
+    screens read (``capabilities``/``required_capabilities``, ``data_requirements``,
+    ``admission_pilot``) is unaffected by items 2 and 3.
+    """
+
+    # 1. Line-level shared facts: a feasibility-precheck freeze caused by a shared line
+    # reference (control receipt) blocks the line instead of freezing each topic; a
+    # freeze while a named compute job is still queued/running parks the topic on the
+    # job (at most reference_wait_max times per topic); a borderline miss (the excess
+    # over the tolerance is below the measurement's uncertainty, or without one at most
+    # borderline_relative_margin x the tolerance) goes to a direction decision.
+    line_facts: bool = True
+    borderline_relative_margin: float = 0.05
+    reference_wait_max: int = 2
+    # Days a line block may hold its waiting topics before each gets its own direction
+    # decision.
+    line_block_max_days: float = 7.0
+    # 2. Capability table and data availability screens at card intake.
+    capability_screen: bool = True
+    data_screen: bool = True
+    # 3. Pilot gate: a template's declared admission_pilot runs on ailab before review.
+    pilot: bool = True
+    pilot_core_hours_max: float = 16.0
+    pilot_max_threads: int = 8
+    pilot_max_concurrent: int = 2
+    pilot_max_attempts: int = 2
+    # 4. Target memory: a target that failed for a mechanical reason with unchanged
+    # input, or that has a frozen topic the card does not reopen, gets no new card.
+    target_memory: bool = True
+    # 5. Scouts: no scout for a line whose enumerated queues have nothing drawable;
+    # the empty-draw backoff keeps doubling past scout_empty_backoff_hours up to this.
+    scout_skip_empty_queue: bool = True
+    scout_backoff_max_hours: float = 48.0
 
 
 @dataclass(frozen=True)
@@ -1310,6 +1351,7 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         compute_locations=_compute_locations(program.get("compute_locations")),
         owner_mode=_owner_mode(program.get("owner_mode")),
         owner=_owner_settings(program.get("owner")),
+        supply=_supply_settings(program.get("supply")),
         auto_reopen_max=_nonnegative_int(program.get("auto_reopen_max"), 1),
         operator_reopen_max=_nonnegative_int(program.get("operator_reopen_max"), 1),
         card_precheck=program.get("card_precheck", True) is not False,
@@ -1356,6 +1398,45 @@ def _owner_mode(value: Any) -> str | tuple[str, ...]:
     if isinstance(value, list):
         return _domain_list(value, "owner_mode")
     raise ValueError('[program].owner_mode must be "off", "all" or an array of line ids')
+
+
+def _supply_settings(value: Any) -> SupplySettings:
+    """``[program.supply]``; absent keys keep their (enabled) defaults."""
+
+    if value is None:
+        return SupplySettings()
+    if not isinstance(value, dict):
+        raise ValueError("[program.supply] must be a table")
+    defaults = SupplySettings()
+
+    def switch(key: str) -> bool:
+        return value.get(key, getattr(defaults, key)) is not False
+
+    margin = _nonnegative_float(value.get("borderline_relative_margin"),
+                                defaults.borderline_relative_margin)
+    return SupplySettings(
+        line_facts=switch("line_facts"),
+        borderline_relative_margin=min(margin, 1.0),
+        reference_wait_max=_nonnegative_int(value.get("reference_wait_max"),
+                                            defaults.reference_wait_max),
+        line_block_max_days=_positive_float(value.get("line_block_max_days"),
+                                            defaults.line_block_max_days),
+        capability_screen=switch("capability_screen"),
+        data_screen=switch("data_screen"),
+        pilot=switch("pilot"),
+        pilot_core_hours_max=_positive_float(value.get("pilot_core_hours_max"),
+                                             defaults.pilot_core_hours_max),
+        pilot_max_threads=min(8, _positive_int(value.get("pilot_max_threads"),
+                                               defaults.pilot_max_threads)),
+        pilot_max_concurrent=_positive_int(value.get("pilot_max_concurrent"),
+                                           defaults.pilot_max_concurrent),
+        pilot_max_attempts=_positive_int(value.get("pilot_max_attempts"),
+                                         defaults.pilot_max_attempts),
+        target_memory=switch("target_memory"),
+        scout_skip_empty_queue=switch("scout_skip_empty_queue"),
+        scout_backoff_max_hours=_positive_float(value.get("scout_backoff_max_hours"),
+                                                defaults.scout_backoff_max_hours),
+    )
 
 
 def _owner_settings(value: Any) -> OwnerSettings:
