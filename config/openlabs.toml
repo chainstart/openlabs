@@ -146,6 +146,12 @@ handoff_max_attempts = 3
 # standing_production_release_authorization is true and ZENODO_ACCESS_TOKEN is
 # set; OPENLABS_ENABLE_EXTERNAL_WRITES=1 is set for that one child process only.
 auto_release = false
+# "zenodo" (default): the Zenodo steps above. "none": never create a Zenodo or
+# other public record; a paper whose support record is only planned gets
+# support.publication.mode not_required with support_none_reason (it waits for
+# the owner when a record exists or its data-availability section names one).
+# support_release = "zenodo"
+# support_none_reason = "No Zenodo record or other public deposit is made ..."
 # Failures per pipeline stage, and formal-fix writer rounds, before the paper
 # stops for a human (listed under release_exhausted in the tick report).
 release_max_attempts = 3

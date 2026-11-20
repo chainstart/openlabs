@@ -120,6 +120,30 @@ DEFAULT_RESEARCH_LINES_PATH = "registry/research-lines.yaml"
 
 DEFAULT_GIT_MESSAGE = "{action}: {paper_id} v{version}"
 GIT_MESSAGE_FIELDS = ("action", "paper_id", "version", "topic_id")
+SUPPORT_RELEASE_MODES = ("zenodo", "none")
+DEFAULT_SUPPORT_NONE_REASON = (
+    "No Zenodo record or other public deposit is made for this version ([program] "
+    "support_release = \"none\"). The registered support source files stay in the OpenLabs data "
+    "repository; whether they are provided as journal supplementary material is decided at "
+    "submission."
+)
+
+
+def _support_release(value: Any) -> str:
+    if value is None:
+        return "zenodo"
+    text = str(value).strip().lower()
+    if text not in SUPPORT_RELEASE_MODES:
+        raise ValueError(f"[program].support_release must be one of {list(SUPPORT_RELEASE_MODES)}")
+    return text
+
+
+def _nonempty_text(value: Any, default: str, name: str) -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"[program].{name} must be a non-empty string")
+    return value.strip()
 
 
 @dataclass(frozen=True)
@@ -206,6 +230,14 @@ class ProgramSettings:
     # registry/settings.yaml#support_publication. False: stop before the first
     # Zenodo write and wait for a human.
     auto_release: bool = False
+    # How a ready paper's support material is released before delivery. "zenodo":
+    # the Zenodo steps above. "none": no Zenodo (or other public) record is ever
+    # created; a paper whose support record is still only planned gets
+    # support.publication.mode not_required with ``support_none_reason`` (refused,
+    # and the pipeline waits for the owner, when a record exists or the
+    # manuscript's data-availability section names a Zenodo deposit).
+    support_release: str = "zenodo"
+    support_none_reason: str = DEFAULT_SUPPORT_NONE_REASON
     # Failures per release stage, and writer rounds for formal fixes, before the
     # pipeline stops for a human.
     release_max_attempts: int = 3
@@ -1232,6 +1264,9 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         paper_writing_command=_command(program.get("paper_writing_command"), ("paper-writing",)),
         handoff_max_attempts=_positive_int(program.get("handoff_max_attempts"), 3),
         auto_release=program.get("auto_release", False) is True,
+        support_release=_support_release(program.get("support_release")),
+        support_none_reason=_nonempty_text(program.get("support_none_reason"),
+                                           DEFAULT_SUPPORT_NONE_REASON, "support_none_reason"),
         release_max_attempts=_positive_int(program.get("release_max_attempts"), 3),
         release_review_timeout_seconds=_positive_int(
             program.get("release_review_timeout_seconds"), 7_200

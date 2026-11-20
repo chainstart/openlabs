@@ -1115,7 +1115,13 @@ def issue_summary(findings: list[dict[str, Any]]) -> dict[str, Any]:
 
 def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[str, str]],
                  inv: Mapping[str, Any], sources: list[dict[str, Any]], *, root: Path | None = None,
-                 artifacts: Mapping[str, Any] | None = None) -> str:
+                 artifacts: Mapping[str, Any] | None = None,
+                 evidence_root: str | None = None) -> str:
+    """One formal-role batch prompt.
+
+    ``evidence_root`` replaces the ``root`` label only (re-verification of a review that
+    ran in another checkout); it never changes what is read.
+    """
     keys = ({r["key"] for r in batch} if group == "references" else
             {c["key"] for p in batch for c in p["citations"]})
     # Route bodies by cited keys or explicit implicit-dependency selectors.
@@ -1128,11 +1134,23 @@ def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[s
     scoped_urls = {s["url"] for s in selected if s.get("extraction_pages")}
     selected = [s for s in selected if s["url"] not in scoped_urls or s.get("extraction_pages")]
     return json.dumps({"scope": group, "items": batch, "complete_manuscript": documents,
-        "evidence_root": str(root.resolve()) if root else None,
+        "evidence_root": evidence_root if evidence_root is not None else (str(root.resolve()) if root else None),
         "deterministic_preparation_inventory": artifacts or {},
         "complete_bibliography": inv["references"], "retrieved_sources": selected,
         "available_source_catalog": [{k: v for k, v in s.items() if k != "text"} for s in sources]},
         ensure_ascii=False, separators=(',', ':'))
+
+
+def _recorded_evidence_root(prompt: str, system_text: str) -> str | None:
+    """The ``evidence_root`` a stored batch prompt was built with (None: not readable)."""
+    prefix = system_text + "\n\n"
+    if not prompt.startswith(prefix):
+        return None
+    try:
+        value = json.loads(prompt[len(prefix):]).get("evidence_root")
+    except (ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) and value else None
 
 
 def packet_batches(group: str, documents: list[dict[str, str]], inv: Mapping[str, Any],
@@ -1510,8 +1528,15 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             # not compared with today's prompt file: prompt edits are governed by
             # POLICY_VERSION, while the manuscript batch must still match exactly.
             system_text = _safe_file(root, workdir + "/system.txt").read_text()
+            stored_prompt = _safe_file(root, workdir + "/prompt.txt").read_text()
             expected_prompt = system_text + "\n\n" + batch_packet(group, batch, documents, result["inventory"], result["sources"], root=root, artifacts=result['artifact_inventory'])
-            if _safe_file(root, workdir + "/prompt.txt").read_text() != expected_prompt:
+            recorded_root = _recorded_evidence_root(stored_prompt, system_text)
+            if stored_prompt != expected_prompt and recorded_root not in (None, str(root.resolve())):
+                # The review ran in another checkout (an attempt's review scratch root) and the
+                # paper was then adopted into this one: only the evidence-root label may differ;
+                # every manuscript, batch and source byte must still match exactly.
+                expected_prompt = system_text + "\n\n" + batch_packet(group, batch, documents, result["inventory"], result["sources"], root=root, artifacts=result['artifact_inventory'], evidence_root=recorded_root)
+            if stored_prompt != expected_prompt:
                 raise ValueError("Formal role did not inspect the exact bound manuscript, batch and source evidence")
             output = json.loads(_safe_file(root, workdir + "/output.json").read_text())
             _validate_against_schema(output, schema)

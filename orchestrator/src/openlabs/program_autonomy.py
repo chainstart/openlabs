@@ -1612,6 +1612,27 @@ def run_zenodo_step(paths: WorkspacePaths, settings: FactorySettings, action: st
                               json_flag=False)
 
 
+def run_paper_adopt(paths: WorkspacePaths, settings: FactorySettings, paper_id: str,
+                    source: Path, manifests: list[str]) -> dict[str, Any]:
+    """``program adopt``: copy a campaign-workspace paper into the data repository."""
+
+    arguments = ["program", "adopt", "--paper-id", paper_id, "--source", str(source)]
+    for manifest in manifests:
+        arguments += ["--artifact-manifest", manifest]
+    return _run_paper_command(paths, settings, arguments)
+
+
+def run_support_waiver(paths: WorkspacePaths, settings: FactorySettings,
+                       paper_id: str) -> dict[str, Any]:
+    """``program waive-support``: support.publication.mode not_required (no deposit)."""
+
+    return _run_paper_command(paths, settings, [
+        "program", "waive-support", "--paper-id", paper_id,
+        "--reason", settings.program.support_none_reason,
+        "--decided-by", "orchestrator:support_release=none",
+    ])
+
+
 def run_support_check(paths: WorkspacePaths, settings: FactorySettings,
                       paper_id: str) -> dict[str, Any]:
     return _run_paper_command(paths, settings, ["support-check", "--paper-id", paper_id],
@@ -1843,6 +1864,8 @@ class _ReleasePipeline:
 
         if self.writer_pending():
             return False
+        if self.adopt_if_needed():
+            return True
         self.stage = "check"
         status = run_release_status(self.paths, self.settings, self.paper_id)
         self.version = str(status.get("version") or "")
@@ -1856,6 +1879,10 @@ class _ReleasePipeline:
             self.return_to_review(status, {"reason": "writing_release is no longer ready",
                                            "problems": review.get("problems") or []})
             return False
+        if (self.settings.program.support_release == "none" and support.get("required")
+                and not support.get("published")):
+            self.waive_support()
+            return True
         human = [item for item in issues if item.get("remedy") == "human"]
         if human:
             raise ReleaseWait("form_fix", "needs_owner",
@@ -1921,7 +1948,63 @@ class _ReleasePipeline:
 
     # ------------------------------------------------------------------ steps
 
+    def adopt_if_needed(self) -> bool:
+        """Copy the paper from its campaign workspace when the data root lacks it.
+
+        Owner-mode papers are written and reviewed in the campaign workspace (not
+        tracked by Git); delivery and commits work on the data repository root.
+        True: adopted in this step.
+        """
+
+        registry = self.paths.data / "registry" / "papers"
+        if any((registry / f"{self.paper_id}{suffix}").is_file()
+               for suffix in (".yaml", ".yml", ".json")):
+            return False
+        self.stage = "adopt"
+        workspace = asset_library.topic_workspace(self.db, self.paths, self.topic)
+        if workspace is None or not any(
+                (workspace / "registry" / "papers" / f"{self.paper_id}{suffix}").is_file()
+                for suffix in (".yaml", ".yml", ".json")):
+            raise ReleaseWait("adopt", "paper_not_found", {
+                "hint": f"no registry record for {self.paper_id} in the data repository or in "
+                        f"the topic's campaign workspace {workspace}"})
+        review_task = str(self.handoff.get("review_task_id") or "")
+        bundle = self.db.result_bundle_path(review_task) if review_task else None
+        result = run_paper_adopt(self.paths, self.settings, self.paper_id, workspace,
+                                 [bundle] if bundle else [])
+        if result.get("status") != "adopted":
+            raise ReleaseError(f"adopt failed: {str(result.get('error') or result)[:400]}")
+        detail = {"source": str(workspace), "review_bundle": bundle,
+                  **{key: result.get(key) for key in (
+                      "copied", "evidence_restored", "evidence_missing", "pdf_restored",
+                      "support_sources_copied_to", "support_sources_missing")}}
+        self.save("release_paper_adopted", "workspace_paper_adopted", stage=self.stage,
+                  status="running", detail=detail)
+        self.entry("adopted", copied=result.get("copied"), pdf_restored=result.get("pdf_restored"),
+                   evidence_missing=len(result.get("evidence_missing") or []))
+        return True
+
+    def waive_support(self) -> None:
+        """``support_release = "none"``: record that no public deposit is made."""
+
+        self.stage = "support_waiver"
+        result = run_support_waiver(self.paths, self.settings, self.paper_id)
+        outcome = str(result.get("status") or "")
+        if outcome == "blocked":
+            raise ReleaseWait(self.stage, str(result.get("reason") or "support_waiver_blocked"),
+                              {"detail": str(result.get("detail") or "")[:400],
+                               "hint": "[program] support_release = \"none\": the owner decides"})
+        if outcome not in {"waived", "unchanged"}:
+            raise ReleaseError(f"support waiver failed: {str(result.get('error') or result)[:400]}")
+        self.save("release_support_waived", "support_release_none", stage=self.stage,
+                  status="running", detail={"mode": "not_required", "outcome": outcome,
+                                            "reason": result.get("reason")})
+        self.entry("support_waived", waiver=outcome)
+
     def require_zenodo(self, support: Mapping[str, Any]) -> None:
+        if self.settings.program.support_release == "none":
+            raise ReleaseWait(self.stage, "support_release_none",
+                              {"hint": "[program] support_release = \"none\": no Zenodo step"})
         if not self.settings.program.auto_release:
             raise ReleaseWait(self.stage, "auto_release_off",
                               {"hint": "[program] auto_release = false: run the Zenodo step by hand"})

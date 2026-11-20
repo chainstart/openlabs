@@ -424,8 +424,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read-only: what is left between review ready and delivery (release pipeline).",
     )
     program_status.add_argument("--paper-id", required=True)
+    program_adopt = program_commands.add_parser(
+        "adopt",
+        help="Copy a campaign-workspace paper into the data repository (never overwrites).",
+    )
+    program_adopt.add_argument("--paper-id", required=True)
+    program_adopt.add_argument("--source", required=True, help="Campaign workspace root.")
+    program_adopt.add_argument(
+        "--artifact-manifest", action="append", default=[],
+        help="Archived result-bundle manifest.json of the review task (repeatable); hash-bound "
+             "files missing from the workspace (PDF, formal-check evidence) are restored from it.",
+    )
+    program_waive = program_commands.add_parser(
+        "waive-support",
+        help="Record support.publication.mode not_required (no public deposit) with its reason.",
+    )
+    program_waive.add_argument("--paper-id", required=True)
+    program_waive.add_argument("--reason", required=True)
+    program_waive.add_argument("--decided-by", required=True)
     for command in (program_escalation, program_fallback, program_confirm, program_deliver,
-                    program_assign, program_status):
+                    program_assign, program_status, program_adopt, program_waive):
         command.add_argument("--root", default=str(default_repo_root()))
         command.add_argument("--json", action="store_true", help="Print one JSON object.")
     return parser
@@ -748,6 +766,7 @@ def main(argv: list[str] | None = None) -> int:
 def _run_program(args: argparse.Namespace) -> int:
     from paper_writing import program_delivery
     from paper_writing.handoff import HandoffError, ManageApiClient
+    from paper_writing.program_adopt import AdoptError
 
     try:
         if args.program_command == "register-escalation":
@@ -765,6 +784,16 @@ def _run_program(args: argparse.Namespace) -> int:
             from paper_writing.release_pipeline import release_status
 
             result = release_status(args.paper_id, root=args.root)
+        elif args.program_command == "adopt":
+            from paper_writing.program_adopt import adopt
+
+            result = adopt(args.paper_id, root=args.root, source=args.source,
+                           artifact_manifests=args.artifact_manifest)
+        elif args.program_command == "waive-support":
+            from paper_writing.program_adopt import waive_support
+
+            result = waive_support(args.paper_id, root=args.root, reason=args.reason,
+                                   decided_by=args.decided_by)
         elif args.program_command == "confirm-escalation":
             result = program_delivery.confirm_escalation(args.paper_id, root=args.root)
         elif args.program_command == "deliver":
@@ -786,7 +815,7 @@ def _run_program(args: argparse.Namespace) -> int:
                 args.paper_id, root=args.root, handler=args.handler
             )
     except (HandoffError, program_delivery.ProgramDeliveryError, OSError, ValueError,
-            KeyError) as exc:
+            KeyError, AdoptError) as exc:
         print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=None if args.json else 2))

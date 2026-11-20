@@ -719,6 +719,18 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   为 `waiting`、`waiting_for: auto_release_off`；为 true 时还要求
   `settings.yaml#support_publication.standing_production_release_authorization: true` 和
   `ZENODO_ACCESS_TOKEN`，外部写开关只对该子进程设置。
+- 登记（adopt）：负责人模式的稿件在题目的 campaign 工作区里写作和评审（数据仓库不跟踪该目录）。
+  数据仓库根下没有 `registry/papers/<id>.yaml` 时，第一步运行 `paper-writing program adopt`：把登记、
+  `papers/<id>/`、`reviews/unified/<id>/`、`reviews/formal-check/<id>/` 复制到根下，登记的支撑源文件复制到
+  `papers/<id>/support-materials/`；已存在且内容不同的文件一律不覆盖（报错计次）。attempt 归档没放进工作区的
+  文件从 ready 评审任务的结果包恢复：形式核查证据只按报告绑定的 SHA-256 恢复，PDF 只取能复现 ready 决定
+  所绑定的稿件快照的那一份。形式核查复验允许评审时的 `evidence_root` 路径标签与当前根不同，其余字节必须一致。
+  两处都找不到登记时等待（`paper_not_found`），不计次。
+- `support_release`（默认 `"zenodo"`，即上表的 Zenodo 步骤）：设为 `"none"` 时从不建 Zenodo 或其他公开记录。
+  支撑记录仍是 `planned` 的论文由 `paper-writing program waive-support` 写入
+  `support.publication.mode: not_required` 和 `support_none_reason`（写明不做公开存档）；已有 Zenodo 记录
+  （draft/published）或稿件数据可得性一节提到 Zenodo 存档时不改，等待负责人
+  （`support_record_exists` / `manuscript_cites_deposit`）。此时 `auto_release` 不起作用，可保持 false。
 - `[program.git]`：`user_name`、`user_email`（缺省用数据仓库自己的 git 配置，都没有则等待并
   在报告里提示）和提交标题 `message`（字段 `{action} {paper_id} {version} {topic_id}`）。只提交、
   不 push；工作区里与该论文无关的改动保持原样。

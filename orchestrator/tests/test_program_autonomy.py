@@ -742,6 +742,8 @@ def _deliverable(monkeypatch) -> None:
         "paper_id": paper_id, "version": "1.0.0", "review": {"ready": True, "current": True},
         "support": {"required": False}, "issues": [], "commit_paths": [], "delivered": False})
     monkeypatch.setattr(program_autonomy, "commit_paper_paths", lambda *_a, **_k: None)
+    # The paper counts as registered in the data repository (nothing to adopt).
+    monkeypatch.setattr(program_autonomy._ReleasePipeline, "adopt_if_needed", lambda _self: False)
 
 
 def test_auto_handoff_without_handler_retries_a_failure(tmp_path, monkeypatch):

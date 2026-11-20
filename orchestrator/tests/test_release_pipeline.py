@@ -417,3 +417,109 @@ def test_ready_queue_only_returns_to_review(tmp_path, monkeypatch) -> None:
         transition_topic(open_topic_ledger(paths, settings.program), topic["topic_id"], "active",
                          db=db, reason="x", decided_by="test")
     assert _commands(log) == []  # auto_handoff off: the pipeline never runs
+
+
+# --------------------------------------------------------------------------- no public deposit
+
+
+def test_support_release_setting_defaults_to_zenodo_and_rejects_unknown_values() -> None:
+    program = load_program_settings({})
+    assert program.support_release == "zenodo" and "No Zenodo record" in program.support_none_reason
+    custom = load_program_settings({"support_release": "none", "support_none_reason": "Owner: none."})
+    assert custom.support_release == "none" and custom.support_none_reason == "Owner: none."
+    with pytest.raises(ValueError, match="support_release must be one of"):
+        load_program_settings({"support_release": "github"})
+    with pytest.raises(ValueError, match="support_none_reason"):
+        load_program_settings({"support_none_reason": " "})
+
+
+def _no_zenodo(calls: list[dict]) -> None:
+    assert not any(c["command"].startswith("zenodo") or c["command"] == "support-check"
+                   for c in calls)
+    assert [c["command"] for c in calls if c["external_writes"]] in ([], ["program deliver"])
+
+
+def test_support_release_none_waives_the_deposit_and_delivers_without_zenodo(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("ZENODO_ACCESS_TOKEN", raising=False)
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, issues=[PREPARE_ISSUE], auto_release=False,
+        support_release="none", support_none_reason="Owner 2026-11-20: no Zenodo records.")
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert report.errors == [], report.errors
+    assert _commands(log) == ["program release-status", "program waive-support",
+                              "program release-status", "program deliver"]
+    _no_zenodo(_calls(log))
+    waiver = next(c for c in _calls(log) if c["command"] == "program waive-support")
+    assert "Owner 2026-11-20: no Zenodo records." in waiver["argv"]
+    support = _paper(paths)["support"]
+    assert support["status"] == "not_required"
+    assert support["not_required_recorded_by"] == "orchestrator:support_release=none"
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["handoff"]["status"] == "delivered" and final["release"]["status"] == "done"
+    assert [c["action"] for c in final["release"]["commits"]] == ["release-ready",
+                                                                  "record-delivery"]
+    assert {"release_support_waived", "handoff_delivered"} <= set(_events(db, topic["topic_id"]))
+
+
+def test_support_release_none_waits_for_the_owner_when_a_record_exists(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support="draft",
+                                             support_release="none")
+    _ready(paths, db, settings, monkeypatch, topic)
+    _no_zenodo(_calls(log))
+    release = _topic(paths, settings, topic["topic_id"])["release"]
+    assert release["status"] == "waiting" and release["waiting_for"] == "support_record_exists"
+    assert release["stage"] == "support_waiver" and release.get("attempts") == {}
+    assert "program deliver" not in _commands(log)
+
+
+def test_support_release_none_waits_when_the_manuscript_cites_a_deposit(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support_release="none",
+                                             paper_extra={"cites_deposit": True})
+    _ready(paths, db, settings, monkeypatch, topic)
+    _no_zenodo(_calls(log))
+    release = _topic(paths, settings, topic["topic_id"])["release"]
+    assert release["waiting_for"] == "manuscript_cites_deposit"
+    assert "program deliver" not in _commands(log)
+
+
+def test_workspace_paper_is_adopted_into_the_data_repository_then_delivered(
+    tmp_path, monkeypatch
+):
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, auto_release=False,
+                                             support_release="none")
+    # Owner mode: the paper exists only in the topic's campaign workspace.
+    workspace = program_autonomy.asset_library.topic_workspace(db, paths, topic)
+    for relative in (f"registry/papers/{PAPER_ID}.json", f"papers/{PAPER_ID}"):
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        (paths.data / relative).rename(target)
+    _git(paths.data, "add", "-A", "--", f"registry/papers/{PAPER_ID}.json", f"papers/{PAPER_ID}")
+    _git(paths.data, "-c", "user.name=Base", "-c", "user.email=base@example.invalid", "commit",
+         "-qm", "paper lives in the workspace")
+
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert report.errors == [], report.errors
+    commands = _commands(log)
+    assert commands[:2] == ["program adopt", "program release-status"]
+    adopt = _calls(log)[0]
+    assert adopt["argv"][adopt["argv"].index("--source") + 1] == str(workspace)
+    assert "program deliver" in commands
+    _no_zenodo(_calls(log))
+    assert (paths.data / "registry" / "papers" / f"{PAPER_ID}.json").is_file()
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["release"]["status"] == "done"
+    assert "release_paper_adopted" in _events(db, topic["topic_id"])
+    # The adopted paper is committed with the release.
+    assert _git(paths.data, "status", "--porcelain", "--", f"registry/papers/{PAPER_ID}.json",
+                f"papers/{PAPER_ID}") == ""
+
+
+def test_missing_paper_waits_instead_of_failing(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support_release="none")
+    (paths.data / "registry" / "papers" / f"{PAPER_ID}.json").unlink()
+    _ready(paths, db, settings, monkeypatch, topic)
+    release = _topic(paths, settings, topic["topic_id"])["release"]
+    assert release["waiting_for"] == "paper_not_found" and release.get("attempts") == {}
+    assert _commands(log) == []

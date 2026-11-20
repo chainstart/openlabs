@@ -1978,6 +1978,15 @@ class FactoryDB:
             ).fetchone()
         return dict(row) if row else None
 
+    def result_bundle_path(self, task_id: str) -> str | None:
+        """Path of the task's ingested (archived) result bundle, if any."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT path FROM result_bundles WHERE task_id=?", (task_id,),
+            ).fetchone()
+        return str(row["path"]) if row is not None and row["path"] else None
+
     def result_runtime(self, task_id: str) -> dict[str, Any]:
         with self.connect() as connection:
             row = connection.execute(

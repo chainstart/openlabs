@@ -43,15 +43,38 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--confirm-production", action="store_true")
     parser.add_argument("--confirm-paper-id")
     parser.add_argument("--delta-only", action="store_true")
+    parser.add_argument("--source")
+    parser.add_argument("--artifact-manifest", action="append", default=[])
+    parser.add_argument("--reason")
+    parser.add_argument("--decided-by")
     args = parser.parse_args(argv)
     root = Path(args.root)
     command = " ".join(args.words)
     registry = root / "registry" / "papers" / f"{args.paper_id}.json"
-    paper = json.loads(registry.read_text())
     external = os.environ.get("OPENLABS_ENABLE_EXTERNAL_WRITES") == "1"
     with open(os.environ["FAKE_PAPER_LOG"], "a", encoding="utf-8") as log:
         log.write(json.dumps({"command": command, "external_writes": external,
                               "argv": argv}) + "\n")
+    if command == "program adopt":
+        # The paper lives in the campaign workspace: copy it (registry + paper tree).
+        source = Path(args.source)
+        if not (source / "registry" / "papers" / f"{args.paper_id}.json").is_file():
+            print(json.dumps({"status": "failed", "error": "no workspace registry record"}))
+            return 1
+        import shutil
+
+        for relative in (f"registry/papers/{args.paper_id}.json", f"papers/{args.paper_id}"):
+            origin, target = source / relative, root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if origin.is_dir():
+                shutil.copytree(origin, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(origin, target)
+        print(json.dumps({"status": "adopted", "paper_id": args.paper_id, "copied": 2,
+                          "evidence_restored": 0, "evidence_missing": [],
+                          "pdf_restored": None}))
+        return 0
+    paper = json.loads(registry.read_text())
     failures = paper.get("fail", {})
     if failures.get(command, 0) > 0:
         failures[command] -= 1
@@ -81,6 +104,25 @@ def main(argv: list[str]) -> int:
             "git": {"dirty": _git_dirty(root, _paths(root, args.paper_id))},
             "delivered": bool(paper.get("delivery")), "delivery": paper.get("delivery"),
         }))
+        return 0
+    if command == "program waive-support":
+        assert not external and args.reason and args.decided_by
+        if support["status"] == "not_required":
+            print(json.dumps({"status": "unchanged", "mode": "not_required"}))
+            return 0
+        if support["status"] != "planned":
+            print(json.dumps({"status": "blocked", "reason": "support_record_exists",
+                              "detail": f"support status {support['status']}"}))
+            return 0
+        if paper.get("cites_deposit"):
+            print(json.dumps({"status": "blocked", "reason": "manuscript_cites_deposit",
+                              "detail": "the data-availability section names a Zenodo deposit"}))
+            return 0
+        support.update({"status": "not_required", "not_required_reason": args.reason,
+                        "not_required_recorded_by": args.decided_by})
+        paper["issues"] = [i for i in paper["issues"] if i["remedy"] != "zenodo_prepare"]
+        save()
+        print(json.dumps({"status": "waived", "mode": "not_required", "reason": args.reason}))
         return 0
     if command == "zenodo prepare":
         assert external and args.confirm_production and args.environment == "production"
