@@ -265,6 +265,11 @@ def load_registry(
             venue_policy.validate_empirical_data_sources(paper, paper_id=paper_id, policy=target_policy)
         _validate_research_outcomes(paper, paper_id=paper_id)
         _validate_freeze_decision(paper, paper_id=paper_id)
+        layout = paper_layout_problems(paper_id, paper)
+        if layout:
+            raise ValueError(f"{paper_id}: registry paths must use the papers/{paper_id}/ layout "
+                             "(create the record with `paper-writing paper create`): "
+                             + "; ".join(layout))
         workspace =str(paper.pop("workspace", f"papers/{paper_id}")).strip("/")
         paper.setdefault("manuscript_dir", f"{workspace}/manuscript")
         source = repo_root / paper["manuscript_dir"] / "main.tex"
@@ -767,6 +772,28 @@ def _iso_date(value: str) -> bool:
     except ValueError:
         return False
     return year >= 2000 and 1 <= month <= 12 and 1 <= day <= 31
+
+
+LAYOUT_PATH_FIELDS = ("manuscript_dir", "latest_pdf", "latest_source", "latest_supplementary_pdf")
+
+
+def paper_layout_problems(paper_id: str, paper: Mapping[str, Any]) -> list[str]:
+    """Registry paths outside the canonical ``papers/<paper_id>/`` layout (empty: canonical).
+
+    A record laid out relative to a private root (``workspace: .``, ``manuscript_dir:
+    manuscript``) cannot be adopted into the data repository without rewriting it.
+    """
+
+    canonical = f"papers/{paper_id}"
+    problems = []
+    workspace = str(paper.get("workspace") or "").strip().strip("/")
+    if "workspace" in paper and workspace != canonical:
+        problems.append(f"workspace is {paper.get('workspace')!r}, not {canonical!r}")
+    for key in LAYOUT_PATH_FIELDS:
+        value = str(paper.get(key) or "").strip()
+        if value and not value.startswith(f"{canonical}/"):
+            problems.append(f"{key} is {value!r}, outside {canonical}/")
+    return problems
 
 
 def load_paper_metadata(paper_id: str, root: str | Path | None = None) -> dict[str, Any]:

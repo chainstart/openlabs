@@ -751,9 +751,19 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   `papers/<id>/support-materials/`；已存在且内容不同的文件一律不覆盖（报错计次）。attempt 归档没放进工作区的
   文件从 ready 评审任务的结果包恢复：形式核查证据只按报告绑定的 SHA-256 恢复，PDF 只取能复现 ready 决定
   所绑定的稿件快照的那一份。形式核查复验允许评审时的 `evidence_root` 路径标签与当前根不同，其余字节必须一致。
-  两处都找不到登记时等待（`paper_not_found`），不计次。登记里的路径不在 `papers/<id>/` 规范布局下
-  （例如 `workspace: .`、`manuscript_dir: manuscript`，相对工作区根）时一个文件也不复制，等待负责人
-  （`layout_unsupported`）：改写这些路径会改动评审绑定的登记内容。
+  两处都找不到登记时等待（`paper_not_found`），不计次。登记写成 `workspace: .`（稿件在工作区根下的
+  `manuscript/`、`evidence/` 等）时 adopt 迁移：登记里点名的根层目录整体移到 `papers/<id>/` 下，只改写这些
+  路径字段和 `workspace`，逐文件 SHA-256 对照记在 `papers/<id>/production/workspace-relocation.json`
+  （登记 `relocation` 指向它），复制后再逐个核对；稿件字节不变，ready 决定绑定的稿件快照（相对稿件目录）
+  照样复现，不需要重新评审。其他非规范布局一个文件也不复制，等待负责人（`layout_unsupported`）。
+  恢复归档文件时依次用 ready 评审任务和该 campaign 其余任务的结果包；稿件快照所需的图、`.bbl`/`.aux`
+  与 PDF 只在组合后快照与决定完全一致时保留。新稿件一律 `paper-writing paper create`（`load_registry`
+  拒绝不在 `papers/<id>/` 下的登记路径）。
+- 撤销支撑材料豁免：`paper-writing program unwaive-support --paper-id <id> --by <name> --reason <理由>`，
+  恢复 `settings.yaml#support_publication.default_mode`（或 `--mode`），原豁免与撤销记在
+  `support.publication.waiver_history`。
+- 数据可得性：交付出口检查 `DATA-AVAILABILITY-LOCATION`，可得性一节既无 DOI/URL/引用，也没有
+  supplementary/supporting material，也没有“全部在文中/未用数据”时报问题（writer 修文字）。
 - 稿件源缺失（登记的稿件目录或 `main.tex` 不存在）时所有形式问题判为 `human`，等待负责人，不排文字 writer；
   `format_fix` writer 不跑实验室运行环境准备（与 direction_decision 一样只改文字）。
 - 冻结构建产物：交付只接受 Git 冻结的发布文件。被忽略的 PDF/.bbl 在交付前由

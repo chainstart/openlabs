@@ -505,6 +505,13 @@ def test_workspace_paper_is_adopted_into_the_data_repository_then_delivered(
     assert commands[:2] == ["program adopt", "program release-status"]
     adopt = _calls(log)[0]
     assert adopt["argv"][adopt["argv"].index("--source") + 1] == str(workspace)
+    # The ready review's bundle first, then the campaign's other archived results, once each.
+    manifests = [adopt["argv"][i + 1] for i, a in enumerate(adopt["argv"])
+                 if a == "--artifact-manifest"]
+    review = db.result_bundle_path(str(_topic(paths, settings, topic["topic_id"])["handoff"]
+                                       ["review_task_id"]))
+    assert manifests and manifests[0] == review and len(manifests) == len(set(manifests))
+    assert set(db.campaign_result_bundle_paths(topic["campaign_id"])) <= set(manifests)
     assert "program deliver" in commands
     _no_zenodo(_calls(log))
     assert (paths.data / "registry" / "papers" / f"{PAPER_ID}.json").is_file()

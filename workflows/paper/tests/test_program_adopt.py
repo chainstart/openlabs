@@ -197,19 +197,126 @@ def test_waive_support_refuses_an_existing_record(tmp_path):
     assert result["status"] == "blocked" and result["reason"] == "support_record_exists"
 
 
-def test_adopt_refuses_a_workspace_root_layout_and_copies_nothing(tmp_path):
+def test_adopt_refuses_an_unknown_layout_and_copies_nothing(tmp_path):
     workspace, data = tmp_path / "workspace", tmp_path / "data"
     data.mkdir()
     _workspace(workspace)
     path = workspace / "registry/papers" / f"{PAPER}.yaml"
     metadata = yaml.safe_load(path.read_text())
-    metadata.update({"workspace": ".", "manuscript_dir": "manuscript",
-                     "latest_pdf": "manuscript/main.pdf"})
+    metadata.update({"workspace": "drafts/paper", "manuscript_dir": "drafts/paper/manuscript"})
     path.write_text(yaml.safe_dump(metadata))
     result = adopt(PAPER, root=data, source=workspace)
     assert result["status"] == "blocked" and result["reason"] == "layout_unsupported"
-    assert "manuscript_dir" in result["detail"] and "workspace" in result["detail"]
+    assert "only '.' can be relocated" in result["detail"]
     assert list(data.iterdir()) == []
+
+
+def _root_layout_workspace(root):
+    """A paper registered in a private review root: workspace '.', root-level manuscript/."""
+
+    evidence, pdf_bytes = _workspace(root)
+    canonical = root / "papers" / PAPER
+    (canonical / "manuscript").rename(root / "manuscript")
+    (root / "evidence").mkdir()
+    (root / "evidence" / "runtime.json").write_text('{"model": "m"}\n')
+    (canonical / "writing").mkdir(parents=True)
+    (canonical / "writing" / "storyline.md").write_text("story\n")
+    path = root / "registry/papers" / f"{PAPER}.yaml"
+    metadata = yaml.safe_load(path.read_text())
+    metadata.update({"workspace": ".", "manuscript_dir": "manuscript",
+                     "latest_source": "manuscript/main.tex", "latest_pdf": "manuscript/main.pdf",
+                     "subdomain": "manuscript",  # a bare word, not a *_dir field: untouched
+                     "declarations": {"ai_use": {"model_usage": [
+                         {"evidence": {"path": "evidence/runtime.json",
+                                       "json_pointer": "/model"}}]}}})
+    metadata["support"]["publication"]["source_files"] = ["analysis/primary.py"]
+    path.write_text(yaml.safe_dump(metadata))
+    return evidence, pdf_bytes
+
+
+def test_adopt_relocates_a_workspace_root_layout_byte_for_byte(tmp_path):
+    workspace, data = tmp_path / "workspace", tmp_path / "data"
+    data.mkdir()
+    evidence, pdf_bytes = _root_layout_workspace(workspace)
+    bundle = _bundle(tmp_path / "bundle", evidence, pdf_bytes)
+    result = adopt(PAPER, root=data, source=workspace, artifact_manifests=[bundle])
+    assert result["status"] == "adopted", result
+    # Every top-level workspace entry the registry names moves; support sources included.
+    assert result["relocated"]["segments"] == ["analysis", "evidence", "manuscript"]
+    canonical = f"papers/{PAPER}"
+    registry = yaml.safe_load((data / "registry/papers" / f"{PAPER}.yaml").read_text())
+    assert registry["workspace"] == canonical
+    assert registry["manuscript_dir"] == f"{canonical}/manuscript"
+    assert registry["latest_pdf"] == f"{canonical}/manuscript/main.pdf"
+    assert registry["declarations"]["ai_use"]["model_usage"][0]["evidence"] == {
+        "path": f"{canonical}/evidence/runtime.json", "json_pointer": "/model"}
+    assert registry["subdomain"] == "manuscript"
+    assert registry["relocation"]["record"] == f"{canonical}/production/workspace-relocation.json"
+    record = json.loads((data / registry["relocation"]["record"]).read_text())
+    for item in record["files"]:
+        assert _sha(workspace.joinpath(item["from"]).read_bytes()) == item["sha256"]
+        assert _sha(data.joinpath(item["to"]).read_bytes()) == item["sha256"]
+    assert {f["field"] for f in record["rewritten_fields"]} >= {
+        "/manuscript_dir", "/workspace", "/declarations/ai_use/model_usage/0/evidence/path"}
+    # The manuscript bytes are unchanged, so the reviewed snapshot is reproduced.
+    assert result["pdf_restored"] == f"{canonical}/manuscript/main.pdf"
+    assert (data / canonical / "writing/storyline.md").is_file()
+    assert registry["support"]["publication"]["source_files"] == [f"{canonical}/analysis/primary.py"]
+    assert (data / canonical / "analysis/primary.py").is_file()
+    # Idempotent: the same relocation again changes nothing.
+    again = adopt(PAPER, root=data, source=workspace, artifact_manifests=[bundle])
+    assert again["status"] == "adopted" and again["copied"] == 0
+
+
+def test_snapshot_restore_uses_an_archived_review_root(tmp_path):
+    """Figures and build products only in an owner's archived review root are restored together."""
+
+    workspace, data = tmp_path / "workspace", tmp_path / "data"
+    data.mkdir()
+    evidence, _ = _workspace(workspace)
+    manuscript = workspace / "papers" / PAPER / "manuscript"
+    figure, bbl, pdf = b"%PDF figure\n", b"\\begin{thebibliography}{0}\\end{thebibliography}\n", b"%PDF review build\n"
+    (manuscript / "figures").mkdir()
+    (manuscript / "figures/fit.pdf").write_bytes(figure)
+    (manuscript / "main.bbl").write_bytes(bbl)
+    (manuscript / "main.pdf").write_bytes(pdf)
+    snapshot = manuscript_snapshot_sha256(manuscript, manuscript / "main.pdf")
+    for name in ("figures/fit.pdf", "main.bbl", "main.pdf"):
+        (manuscript / name).unlink()
+    (workspace / RUN / "decision.json").write_text(json.dumps(
+        {"fingerprints": {"manuscript_snapshot_sha256": snapshot}}))
+    # Owner bundle: a private review root with the figure and .bbl but an older PDF.
+    owner = tmp_path / "owner"
+    (owner / "artifacts").mkdir(parents=True)
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name, data_bytes in (("./manuscript/figures/fit.pdf", figure),
+                                 ("./manuscript/main.bbl", bbl),
+                                 ("./manuscript/main.pdf", b"%PDF older\n")):
+            info = tarfile.TarInfo(name)
+            info.size = len(data_bytes)
+            archive.addfile(info, io.BytesIO(data_bytes))
+    (owner / "artifacts/root.tar.gz").write_bytes(buffer.getvalue())
+    (owner / "manifest.json").write_text(json.dumps({"artifacts": [
+        {"artifact_id": "private-review-root", "sha256": _sha(buffer.getvalue()),
+         "uri": (owner / "artifacts/root.tar.gz").resolve().as_uri()}]}))
+    review = _bundle(tmp_path / "review", evidence, pdf)
+    result = adopt(PAPER, root=data, source=workspace,
+                   artifact_manifests=[review, owner / "manifest.json"])
+    target = data / "papers" / PAPER / "manuscript"
+    assert result["pdf_restored"] == f"papers/{PAPER}/manuscript/main.pdf"
+    assert (target / "main.pdf").read_bytes() == pdf
+    assert (target / "figures/fit.pdf").read_bytes() == figure
+    assert manuscript_snapshot_sha256(target, target / "main.pdf") == snapshot
+
+
+def test_registry_rejects_a_non_canonical_layout(tmp_path):
+    from paper_writing.registry import paper_layout_problems
+
+    assert paper_layout_problems(PAPER, {"workspace": f"papers/{PAPER}",
+                                         "manuscript_dir": f"papers/{PAPER}/manuscript"}) == []
+    problems = paper_layout_problems(PAPER, {"workspace": ".", "manuscript_dir": "manuscript"})
+    assert len(problems) == 2
 
 
 def test_bind_release_artifacts_freezes_the_ignored_pdf(tmp_path, monkeypatch):
@@ -240,3 +347,47 @@ def test_bind_release_artifacts_freezes_the_ignored_pdf(tmp_path, monkeypatch):
     assert package == {"artifact_manifest": {"path": result["manifest"],
                                              "sha256": _sha(manifest.read_bytes())}}
     assert bind_release_artifacts(PAPER, root=root)["status"] == "not_needed"
+
+
+# --------------------------------------------------------------------------- unwaive, availability
+
+
+def test_unwaive_support_restores_the_deposit_mode_and_keeps_the_history(tmp_path):
+    from paper_writing.program_adopt import unwaive_support
+
+    _workspace(tmp_path)
+    (tmp_path / "registry/settings.yaml").write_text(
+        "schema_version: ara.paper_writing.registry.v1\nsupport_publication:\n  default_mode: zenodo_only\n")
+    waive_support(PAPER, root=tmp_path, reason="pipeline waiver", decided_by="orchestrator:x")
+    with pytest.raises(AdoptError, match="--reason and --by"):
+        unwaive_support(PAPER, root=tmp_path, reason=" ", by="op")
+    result = unwaive_support(PAPER, root=tmp_path, reason="user wants a public deposit",
+                             by="coordinator")
+    assert result == {"schema_version": "openlabs.support_unwaiver.v1", "paper_id": PAPER,
+                      "status": "restored", "mode": "zenodo_only"}
+    publication = yaml.safe_load((tmp_path / "registry/papers" / f"{PAPER}.yaml").read_text())[
+        "support"]["publication"]
+    assert publication["mode"] == "zenodo_only" and publication["status"] == "planned"
+    assert "not_required_reason" not in publication
+    history = publication["waiver_history"][-1]
+    assert history["waived_reason"] == "pipeline waiver" and history["waived_by"] == "orchestrator:x"
+    assert history["reverted_by"] == "coordinator" and history["restored_mode"] == "zenodo_only"
+    assert unwaive_support(PAPER, root=tmp_path, reason="again", by="op")["status"] == "unchanged"
+
+
+@pytest.mark.parametrize("statement,flagged", [
+    ("The replication files include the input manifest and the analysis code.", True),
+    ("Code and manifests are archived at \\url{https://doi.org/10.5281/zenodo.1}.", False),
+    ("The supporting materials \\citep{support2026} contain the code.", False),
+    ("The supplementary material contains the scripts.", False),
+    ("All proofs are included in this article. No external dataset is required.", False),
+])
+def test_availability_statement_must_name_a_location(tmp_path, statement, flagged):
+    from paper_writing.review_flow import availability_location_issues
+
+    _workspace(tmp_path, availability=statement)
+    metadata = yaml.safe_load((tmp_path / "registry/papers" / f"{PAPER}.yaml").read_text())
+    issues = availability_location_issues(PAPER, metadata, tmp_path)
+    assert bool(issues) is flagged
+    if flagged:
+        assert issues[0]["code"] == "DATA-AVAILABILITY-LOCATION"

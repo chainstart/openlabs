@@ -2000,8 +2000,15 @@ class _ReleasePipeline:
                         f"the topic's campaign workspace {workspace}"})
         review_task = str(self.handoff.get("review_task_id") or "")
         bundle = self.db.result_bundle_path(review_task) if review_task else None
-        result = run_paper_adopt(self.paths, self.settings, self.paper_id, workspace,
-                                 [bundle] if bundle else [])
+        # The ready review's bundle first, then the campaign's other archived results
+        # (an owner seat's private review root holds the figures and build products the
+        # snapshot binds); adopt keeps only hash- or snapshot-verified files.
+        manifests = [bundle] if bundle else []
+        campaign_id = str(self.topic.get("campaign_id") or "")
+        for path in (self.db.campaign_result_bundle_paths(campaign_id) if campaign_id else []):
+            if path not in manifests:
+                manifests.append(path)
+        result = run_paper_adopt(self.paths, self.settings, self.paper_id, workspace, manifests)
         if result.get("status") == "blocked":
             raise ReleaseWait("adopt", str(result.get("reason") or "adopt_blocked"), {
                 "detail": str(result.get("detail") or "")[:400], "source": str(workspace),

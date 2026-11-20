@@ -1987,6 +1987,17 @@ class FactoryDB:
             ).fetchone()
         return str(row["path"]) if row is not None and row["path"] else None
 
+    def campaign_result_bundle_paths(self, campaign_id: str, limit: int = 80) -> list[str]:
+        """Archived result bundles of a campaign's tasks, newest first."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT result_bundles.path FROM result_bundles JOIN tasks USING(task_id) "
+                "WHERE tasks.campaign_id=? ORDER BY result_bundles.ingested_at DESC LIMIT ?",
+                (campaign_id, int(limit)),
+            ).fetchall()
+        return [str(row["path"]) for row in rows if row["path"]]
+
     def result_runtime(self, task_id: str) -> dict[str, Any]:
         with self.connect() as connection:
             row = connection.execute(

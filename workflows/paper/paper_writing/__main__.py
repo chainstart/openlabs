@@ -442,6 +442,14 @@ def build_parser() -> argparse.ArgumentParser:
     program_waive.add_argument("--paper-id", required=True)
     program_waive.add_argument("--reason", required=True)
     program_waive.add_argument("--decided-by", required=True)
+    program_unwaive = program_commands.add_parser(
+        "unwaive-support",
+        help="Undo a not_required support waiver (back to the configured public deposit mode).",
+    )
+    program_unwaive.add_argument("--paper-id", required=True)
+    program_unwaive.add_argument("--reason", required=True)
+    program_unwaive.add_argument("--by", required=True)
+    program_unwaive.add_argument("--mode", help="Default: settings support_publication.default_mode")
     program_bind = program_commands.add_parser(
         "bind-release-artifacts",
         help="Freeze the ignored release PDF/.bbl through papers/<id>/production/"
@@ -449,7 +457,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     program_bind.add_argument("--paper-id", required=True)
     for command in (program_escalation, program_fallback, program_confirm, program_deliver,
-                    program_assign, program_status, program_adopt, program_waive, program_bind):
+                    program_assign, program_status, program_adopt, program_waive, program_bind,
+                    program_unwaive):
         command.add_argument("--root", default=str(default_repo_root()))
         command.add_argument("--json", action="store_true", help="Print one JSON object.")
     return parser
@@ -799,6 +808,11 @@ def _run_program(args: argparse.Namespace) -> int:
             from paper_writing.program_adopt import bind_release_artifacts
 
             result = bind_release_artifacts(args.paper_id, root=args.root)
+        elif args.program_command == "unwaive-support":
+            from paper_writing.program_adopt import unwaive_support
+
+            result = unwaive_support(args.paper_id, root=args.root, reason=args.reason,
+                                     by=args.by, mode=args.mode)
         elif args.program_command == "waive-support":
             from paper_writing.program_adopt import waive_support
 

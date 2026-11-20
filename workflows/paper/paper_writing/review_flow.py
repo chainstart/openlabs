@@ -2518,6 +2518,7 @@ def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
                   "message": str(p), "text": f"Venue abstract format: {p}"}
                  for p in abstract_findings(metadata, root, paper_id)]
     problems += claim_map_delivery_issues(metadata, root)
+    problems += availability_location_issues(paper_id, metadata, root)
     if record is not None:
         used = record.get("build_inputs")
         manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
@@ -2534,6 +2535,37 @@ def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
         # Decisions written before build_inputs existed were made by a preflight that
         # still rejected unused source files, and their snapshot is bound: nothing to add.
     return problems
+
+
+AVAILABILITY_LOCATION_CODE = "DATA-AVAILABILITY-LOCATION"
+_AVAILABILITY_LOCATION = re.compile(
+    # A DOI/URL, a citation of the archived record, or supplementary/supporting material.
+    r"\\url\s*\{|\\href\s*\{|https?://|\bdoi\b|10\.\d{4,9}/|supplementar|supplement\b"
+    r"|\\cite[a-zA-Z]*\*?\s*[\[{]|supporting[- ]materials?"
+    # ... or that nothing needs a location: everything is in the article / no data used.
+    r"|(?:contained|included|given) in (?:this|the) (?:article|paper)"
+    r"|\bno (?:[a-z-]+ ){0,2}(?:data|datasets?)\b",
+    re.IGNORECASE)
+
+
+def availability_location_issues(paper_id: str, metadata: Mapping[str, Any],
+                                 root: Path) -> list[dict[str, Any]]:
+    """Delivery exit: a data/code availability statement must say where the material is.
+
+    A statement with neither a DOI/URL nor a reference to supplementary material
+    ("The replication files include ...") tells a reader nothing they can reach.
+    Manuscripts without such a section are not judged here.
+    """
+    from paper_writing.program_adopt import _availability_text
+
+    text = _availability_text(metadata, root, paper_id)
+    if not text.strip() or _AVAILABILITY_LOCATION.search(text):
+        return []
+    message = ("The data/code availability statement gives no reachable location: cite the "
+               "archived support record (DOI or URL) or the journal's supplementary material")
+    return [{"source": "review_flow", "code": AVAILABILITY_LOCATION_CODE,
+             "location": str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript"),
+             "message": message, "text": f"{AVAILABILITY_LOCATION_CODE}: {message}"}]
 
 
 def claim_map_delivery_issues(metadata: Mapping[str, Any], root: Path) -> list[dict[str, Any]]:
