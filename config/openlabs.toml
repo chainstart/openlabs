@@ -140,6 +140,12 @@ auto_handoff = false
 # paper_writing_command = ["paper-writing"]
 # Delivery attempts per ready paper, one per tick; then it waits for a human.
 handoff_max_attempts = 3
+# Credentials of the release pipeline without exporting them into the tick (research
+# seats inherit the tick's environment): an absolute path to a NAME=VALUE file, owned
+# by this user, mode 0600 or stricter, kept outside every Git repository. Only
+# ARA_PAPER_MANAGE_API_URL, ARA_PAPER_MANAGE_API_KEY and ZENODO_ACCESS_TOKEN are read,
+# and only into the delivery / Zenodo child process; the environment still wins.
+# credentials_file = "/path/outside/git/pipeline-credentials.env"
 # false: the pipeline stops before the first Zenodo write (zenodo prepare /
 # zenodo release) and marks the paper as waiting for a human. true: it runs them
 # on production, but only while settings.yaml#support_publication.

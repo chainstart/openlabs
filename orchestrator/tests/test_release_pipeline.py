@@ -850,3 +850,90 @@ def test_paper_command_error_keeps_the_json_error_behind_a_stderr_banner(tmp_pat
         program_autonomy._run_paper_command(
             type("P", (), {"data": tmp_path})(), FactorySettings(program=ProgramSettings()),
             ["program", "deliver"])
+
+
+# --------------------------------------------------------------------------- credentials file
+
+
+def _credentials_file(tmp_path: Path, mode: int = 0o600) -> Path:
+    path = tmp_path / "secrets" / "pipeline.env"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# test credentials\nexport ARA_PAPER_MANAGE_API_URL='https://file.invalid'\n"
+                    "ARA_PAPER_MANAGE_API_KEY=\"file-key\"\nZENODO_ACCESS_TOKEN=file-token\n"
+                    "UNRELATED_SECRET=not-read\n", encoding="utf-8")
+    path.chmod(mode)
+    return path
+
+
+def _drop_credentials(monkeypatch) -> None:
+    for name in ("ARA_PAPER_MANAGE_API_URL", "ARA_PAPER_MANAGE_API_KEY", "ZENODO_ACCESS_TOKEN",
+                 "UNRELATED_SECRET"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_credentials_file_reaches_only_the_delivery_and_zenodo_children(tmp_path, monkeypatch):
+    import os
+
+    secrets = _credentials_file(tmp_path)
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch,
+                                             credentials_file=str(secrets))
+    _drop_credentials(monkeypatch)
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert report.errors == [], report.errors
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["handoff"]["status"] == "delivered" and final["release"]["status"] == "done"
+    calls = {c["command"]: c for c in _calls(log)}
+    assert calls["program deliver"]["credentials"] == ["ARA_PAPER_MANAGE_API_KEY",
+                                                       "ARA_PAPER_MANAGE_API_URL"]
+    assert calls["program deliver"]["api_url"] == "https://file.invalid"
+    assert calls["zenodo release"]["credentials"] == ["ZENODO_ACCESS_TOKEN"]
+    # Every other child (and the tick itself) never sees them.
+    for command, call in calls.items():
+        if command not in {"program deliver", "zenodo prepare", "zenodo release"}:
+            assert call["credentials"] == [], command
+    for name in ("ARA_PAPER_MANAGE_API_URL", "ARA_PAPER_MANAGE_API_KEY", "ZENODO_ACCESS_TOKEN",
+                 "UNRELATED_SECRET"):
+        assert name not in os.environ
+
+
+def test_environment_wins_over_the_credentials_file(tmp_path, monkeypatch):
+    secrets = _credentials_file(tmp_path)
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch,
+                                             credentials_file=str(secrets))
+    _ready(paths, db, settings, monkeypatch, topic)
+    deliver = next(c for c in _calls(log) if c["command"] == "program deliver")
+    assert deliver["api_url"] == "https://manage.invalid"
+
+
+@pytest.mark.parametrize("mode", [0o640, 0o604])
+def test_a_credentials_file_open_to_others_is_refused(tmp_path, monkeypatch, mode):
+    secrets = _credentials_file(tmp_path, mode)
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, issues=[],
+                                             support="published",
+                                             credentials_file=str(secrets))
+    _drop_credentials(monkeypatch)
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert "program deliver" not in _commands(log)
+    waiting = [h for h in report.program.get("handoffs", [])
+               if h.get("outcome") == "waiting_credentials"]
+    assert waiting and waiting[0]["credentials_file"] == "credentials_file_mode_not_0600"
+    assert "file-key" not in json.dumps(report.program)
+
+
+def test_missing_credentials_file_waits_without_error(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, support="published",
+        credentials_file=str(tmp_path / "absent.env"))
+    _drop_credentials(monkeypatch)
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert "program deliver" not in _commands(log)
+    waiting = [h for h in report.program.get("handoffs", [])
+               if h.get("outcome") == "waiting_credentials"]
+    assert waiting and waiting[0]["credentials_file"] == "credentials_file_missing"
+
+
+def test_credentials_file_setting_must_be_absolute() -> None:
+    assert load_program_settings({}).credentials_file is None
+    assert load_program_settings({"credentials_file": "/x/y.env"}).credentials_file == "/x/y.env"
+    with pytest.raises(ValueError, match="credentials_file must be an absolute path"):
+        load_program_settings({"credentials_file": "relative.env"})

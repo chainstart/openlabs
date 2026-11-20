@@ -747,6 +747,12 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
 评审不是 ready+current、或该完整评审已在运行（leased/running）时拒绝。不要手改台账。提交只含 Git 会跟踪的路径：数据仓库有意忽略且未跟踪的实例台账
 （运行时状态，如 `registry/instances/cc-sg/topic-ledger.json`）不随提交，也不 `-f` 强加。
 
+- 凭据（2026-11-20）：交付要 `ARA_PAPER_MANAGE_API_URL`/`ARA_PAPER_MANAGE_API_KEY`，Zenodo 步骤要
+  `ZENODO_ACCESS_TOKEN`。先看 tick 进程环境；缺的再从 `[program] credentials_file`（绝对路径，NAME=VALUE，
+  属当前用户、权限 0600 或更严、不放在任何 Git 仓库里）读，只读这三个名字，只放进交付/Zenodo 那一个子进程的
+  环境，不写进 tick 的 `os.environ`：研究坐席继承 tick 的环境，看不到这些值。文件缺失、权限过宽、属主不对时不读，
+  流水线照旧 `waiting_credentials`，事件和 tick 报告里多一项 `credentials_file`（只说原因，不含值）。配置每个
+  tick 重新读取，改这一项不用重启循环。
 - `auto_release`（默认 false）：为 false 时流水线停在第一次 Zenodo 写入之前，`release.status`
   为 `waiting`、`waiting_for: auto_release_off`；为 true 时还要求
   `settings.yaml#support_publication.standing_production_release_authorization: true` 和

@@ -54,7 +54,14 @@ def main(argv: list[str]) -> int:
     external = os.environ.get("OPENLABS_ENABLE_EXTERNAL_WRITES") == "1"
     with open(os.environ["FAKE_PAPER_LOG"], "a", encoding="utf-8") as log:
         log.write(json.dumps({"command": command, "external_writes": external,
-                              "argv": argv}) + "\n")
+                              "argv": argv,
+                              # Names only (tests check which credentials a child got).
+                              "credentials": sorted(
+                                  name for name in ("ARA_PAPER_MANAGE_API_URL",
+                                                    "ARA_PAPER_MANAGE_API_KEY",
+                                                    "ZENODO_ACCESS_TOKEN")
+                                  if os.environ.get(name)),
+                              "api_url": os.environ.get("ARA_PAPER_MANAGE_API_URL")}) + "\n")
     if command == "program adopt":
         # The paper lives in the campaign workspace: copy it (registry + paper tree).
         source = Path(args.source)

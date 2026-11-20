@@ -225,6 +225,13 @@ class ProgramSettings:
     paper_writing_command: tuple[str, ...] = ("paper-writing",)
     # Delivery attempts per ready paper (one per tick) before it waits for a human.
     handoff_max_attempts: int = 3
+    # Credentials file of the release pipeline (2026-11-20): NAME=VALUE lines read by the
+    # tick for the delivery (ARA_PAPER_MANAGE_API_URL/_KEY) and Zenodo (ZENODO_ACCESS_TOKEN)
+    # child processes only -- never exported into the tick, so research seats (which inherit
+    # the tick's environment) do not see them. Must be a regular file of this user, mode
+    # 0600 or stricter (otherwise ignored, and the pipeline waits for credentials). The
+    # process environment still wins over the file. None: environment only.
+    credentials_file: str | None = None
     # Release pipeline (runs while auto_handoff is on): publish the Zenodo support
     # material (prepare/release) on the standing production authorization of
     # registry/settings.yaml#support_publication. False: stop before the first
@@ -1227,6 +1234,16 @@ def _domain_list(value: Any, key: str = "domains") -> tuple[str, ...]:
     return tuple(result)
 
 
+def _optional_path_text(value: Any, label: str) -> str | None:
+    """An absolute path given as text, or None when unset/empty."""
+
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if not isinstance(value, str) or not Path(value.strip()).expanduser().is_absolute():
+        raise ValueError(f"{label} must be an absolute path")
+    return str(Path(value.strip()).expanduser())
+
+
 def load_program_settings(payload: Any) -> ProgramSettings:
     program = payload if isinstance(payload, dict) else {}
     return ProgramSettings(
@@ -1266,6 +1283,8 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         auto_handoff=program.get("auto_handoff", False) is True,
         paper_writing_command=_command(program.get("paper_writing_command"), ("paper-writing",)),
         handoff_max_attempts=_positive_int(program.get("handoff_max_attempts"), 3),
+        credentials_file=_optional_path_text(program.get("credentials_file"),
+                                             "[program].credentials_file"),
         auto_release=program.get("auto_release", False) is True,
         support_release=_support_release(program.get("support_release")),
         support_none_reason=_nonempty_text(program.get("support_none_reason"),

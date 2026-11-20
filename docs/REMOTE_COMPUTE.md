@@ -3,7 +3,9 @@
 The ailab host is dedicated to experiments. The owner changed its allocation on
 2026-11-11: “ailab基本就是拿来做实验的了，基本不设限制”. There is no
 administrator-imposed aggregate CPU, RAM, swap, PID or experimental disk cap.
-The worker can use all 8 logical CPUs, about 61 GiB RAM, the existing 8 GiB swap,
+Since its 2026-11-20 CPU upgrade (i7-14700K) the worker can use all 28 logical CPUs
+(`config/remote-compute.json`: `cpu_threads` and `max_concurrent_jobs` 28; was 8),
+about 61 GiB RAM, the existing 8 GiB swap,
 and the combined available space of the six independent SSDs `/data/ssd1` through
 `/data/ssd6` (about 5.45 TiB when the pool was registered). The system filesystem
 is on a separate device and is excluded. Mathematical
@@ -39,8 +41,10 @@ metadata lives in the small control index under the worker home; experimental bu
 data stays on the SSDs. The remote receipt records disk id, root and filesystem UUID.
 
 For mathematical experiments add `--task-type math`. This is a classification
-label on ailab, not an 18 GiB machine limit. Admission uses the physical 8-CPU,
-62961-MiB capacity, permitting multiple jobs when their declared budgets fit.
+label on ailab, not an 18 GiB machine limit. Admission uses the physical 28-thread,
+62961-MiB capacity, permitting multiple jobs when their declared budgets fit. One topic
+still holds at most `[program] campaign_compute_threads` (8) queued + running threads,
+so a single job declares at most 8.
 `wait` timing out does not cancel a job; its execution timeout remains authoritative.
 
 ## Waiting from an autonomous task (2026-11-14)
@@ -210,8 +214,9 @@ journalctl --user -u openlabs-remote-bridge.service -n 40
 
 The service is enabled at WSL user-manager startup. The remote worker's user manager
 has lingering enabled; no remote research scheduler or model client runs there.
-The gateway starts per-job systemd services, while the WSL dispatcher schedules up
-to eight concurrent jobs against the physical CPU/RAM inventory. Remote results never
+The gateway starts per-job systemd services, while the WSL dispatcher schedules
+concurrent jobs against the physical CPU/RAM inventory (the container side advertises
+`max_concurrent_jobs` 28 since 2026-11-20; it was eight on the earlier 8-thread host). Remote results never
 write SQLite. `config/remote-compute.json` and the lab-runner prompt advertise this
 backend to newly launched research agents, including those with global memory masked.
 

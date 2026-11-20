@@ -216,7 +216,7 @@ def test_brief_lines_show_capacity_snapshot_and_limit(queues) -> None:
     _job(local, "c" * 32, cpus=2)
     lines = owner.compute_brief_lines(_settings(), "topic-a")
     text = "\n".join(lines)
-    assert "ailab 8 thr/61 GB (4 cores" in text and "1.6x slower" in text
+    assert "ailab 8 thr/61 GB (i7-14700K, 28 threads" in text and "1.6x slower" not in text
     assert "local 3 jobs/12 thr" in text
     assert "ailab 1/4 (+4 running), local 1/2 (+0); this topic 1/4." in text
     assert "<= 8 thr; submit refuses more" in text

@@ -80,6 +80,6 @@ def test_prompt_advertises_dedicated_ailab_without_local_math_cap(tmp_path):
  assert runner._remote_compute_notice(tmp_path,'math')==''
  (tmp_path/'config').mkdir();(tmp_path/'config/remote-compute.json').write_text('{"enabled":true}')
  notice=runner._remote_compute_notice(tmp_path,'math')
- assert '--task-type math' in notice and 'all 8 CPUs' in notice
+ assert '--task-type math' in notice and '28 CPU threads' in notice
  assert 'does not impose' in notice and 'database writes stay' in notice
  assert '--storage ssd1' in notice and 'OPENLABS_STORAGE_ROOTS' in notice

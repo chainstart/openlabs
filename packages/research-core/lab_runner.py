@@ -253,7 +253,7 @@ Remote CPU compute is available through backend `ailab`, using a shared file que
 Model calls, scientific decisions and research database writes stay in this local process.
 For a suitable CPU experiment, prepare a small source directory containing only its inputs,
 then use `{command} submit --source DIR --task-type {kind} --cpus N --memory-mib M
---timeout-seconds S -- python3 SCRIPT.py`. The dedicated ailab host offers all 8 CPUs and about 61 GiB RAM, without an imposed
+--timeout-seconds S -- python3 SCRIPT.py`. The dedicated ailab host (i7-14700K since 2026-11-20) offers 28 CPU threads and about 61 GiB RAM, without an imposed
 aggregate CPU/RAM/swap/PID/storage cap. Declare realistic per-job resources and timeout;
 the queue schedules against the physical machine capacity. `--task-type math` labels a
 mathematical experiment but does not impose the local WSL/cc-sg 18 GiB math limit on ailab.

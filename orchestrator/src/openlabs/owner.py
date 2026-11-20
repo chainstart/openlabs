@@ -2242,9 +2242,10 @@ def _owner_ceiling_text(settings: FactorySettings) -> str:
     return " / ".join(f"{value:.0%} ({provider})" for provider, value in values.items())
 
 
-# Measured on ailab (2026-11-14/17, astro standard solves): 4 physical cores, 8 threads;
-# two 4-process jobs side by side each run about 1.6x slower than alone.
-AILAB_HOST_NOTE = "4 cores; 2 jobs x 4 proc: each ~1.6x slower"
+# ailab since its 2026-11-20 CPU upgrade: i7-14700K, 20 cores / 28 threads, about 61 GiB RAM
+# (the earlier 4-core / 8-thread host ran two 4-process jobs about 1.6x slower each). One
+# topic still holds at most campaign_compute_threads (8) queued + running threads.
+AILAB_HOST_NOTE = "i7-14700K, 28 threads"
 
 
 # Brief lines for a line that declares GPU work (``environment.gpu``): the host has one GPU,

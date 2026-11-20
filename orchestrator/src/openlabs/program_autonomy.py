@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import re
+import stat as stat_module
 import subprocess
 from collections.abc import Mapping
 from datetime import datetime, timedelta
@@ -1477,13 +1478,15 @@ def run_paper_delivery(
 
     ``[program] auto_handoff = true`` is the standing authorization for this one
     external write, so ``OPENLABS_ENABLE_EXTERNAL_WRITES=1`` is set for this call
-    only. Credentials come from the environment (``ARA_PAPER_MANAGE_API_URL``,
-    ``ARA_PAPER_MANAGE_API_KEY``).
+    only. Credentials (``ARA_PAPER_MANAGE_API_URL``, ``ARA_PAPER_MANAGE_API_KEY``) come
+    from the environment or ``[program] credentials_file`` (:func:`pipeline_credentials`)
+    and are passed to this child process only.
     """
 
+    credentials, _ = pipeline_credentials(settings, DELIVERY_ENVIRONMENT)
     return _run_paper_command(
         paths, settings, ["program", "deliver", "--paper-id", paper_id],
-        environment={"OPENLABS_ENABLE_EXTERNAL_WRITES": "1"},
+        environment={**credentials, "OPENLABS_ENABLE_EXTERNAL_WRITES": "1"},
     )
 
 
@@ -1537,6 +1540,68 @@ def _run_paper_command(paths: WorkspacePaths, settings: FactorySettings,
 
 
 DELIVERY_ENVIRONMENT = ("ARA_PAPER_MANAGE_API_URL", "ARA_PAPER_MANAGE_API_KEY")
+ZENODO_TOKEN_ENVIRONMENT = "ZENODO_ACCESS_TOKEN"
+# The only names ``[program] credentials_file`` may supply (anything else in it is ignored).
+PIPELINE_CREDENTIAL_NAMES = (*DELIVERY_ENVIRONMENT, ZENODO_TOKEN_ENVIRONMENT)
+
+
+def _credentials_file_values(path: Path) -> tuple[dict[str, str], str | None]:
+    """Allowed NAME=VALUE pairs of a credentials file, or ``({}, why)`` when it is refused.
+
+    Refused: missing, not a regular file (symlinks included), owned by another user, or
+    readable/writable by group or others. Values never appear in the reason.
+    """
+
+    try:
+        info = path.lstat()
+    except OSError:
+        return {}, "credentials_file_missing"
+    if not stat_module.S_ISREG(info.st_mode):
+        return {}, "credentials_file_not_regular"
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        return {}, "credentials_file_foreign_owner"
+    if info.st_mode & 0o077:
+        return {}, "credentials_file_mode_not_0600"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}, "credentials_file_unreadable"
+    values: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        name, value = line.split("=", 1)
+        name, value = name.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if name in PIPELINE_CREDENTIAL_NAMES and value:
+            values[name] = value
+    return values, None
+
+
+def pipeline_credentials(settings: FactorySettings,
+                         names: tuple[str, ...]) -> tuple[dict[str, str], str | None]:
+    """``names`` -> value for the release pipeline's child processes.
+
+    The tick's environment first, then ``[program] credentials_file``. The values are
+    returned for one child process's environment and never written into ``os.environ``
+    (research seats inherit the tick's environment). The second item says why the file
+    was refused (``None`` when it was read or is not configured).
+    """
+
+    values = {name: os.environ[name].strip() for name in names
+              if os.environ.get(name, "").strip()}
+    refused = None
+    configured = settings.program.credentials_file
+    if configured and len(values) < len(names):
+        from_file, refused = _credentials_file_values(Path(configured))
+        for name in names:
+            if name not in values and name in from_file:
+                values[name] = from_file[name]
+    return values, refused
 
 
 def _deliver_ready(db, paths, settings, report) -> None:
@@ -1581,7 +1646,6 @@ RELEASE_DECIDER = "orchestrator:release_pipeline"
 # Bound on pipeline steps within one tick (each step is a short command, except
 # the delta review); the remainder continues on the next tick.
 RELEASE_STEPS_PER_TICK = 8
-ZENODO_TOKEN_ENVIRONMENT = "ZENODO_ACCESS_TOKEN"
 
 
 class ReleaseError(RuntimeError):
@@ -1610,8 +1674,9 @@ def run_zenodo_step(paths: WorkspacePaths, settings: FactorySettings, action: st
                  "--confirm-production"]
     if action == "release":
         arguments += ["--confirm-paper-id", paper_id]
+    credentials, _ = pipeline_credentials(settings, (ZENODO_TOKEN_ENVIRONMENT,))
     return _run_paper_command(paths, settings, arguments,
-                              environment={"OPENLABS_ENABLE_EXTERNAL_WRITES": "1"},
+                              environment={**credentials, "OPENLABS_ENABLE_EXTERNAL_WRITES": "1"},
                               json_flag=False)
 
 
@@ -2062,9 +2127,12 @@ class _ReleasePipeline:
             raise ReleaseWait(self.stage, "no_standing_authorization", {
                 "hint": "registry/settings.yaml#support_publication."
                         "standing_production_release_authorization is not true"})
-        if not os.environ.get(ZENODO_TOKEN_ENVIRONMENT, "").strip():
-            raise ReleaseWait(self.stage, "waiting_credentials",
-                              {"missing": [ZENODO_TOKEN_ENVIRONMENT]})
+        found, refused = pipeline_credentials(self.settings, (ZENODO_TOKEN_ENVIRONMENT,))
+        if ZENODO_TOKEN_ENVIRONMENT not in found:
+            detail: dict[str, Any] = {"missing": [ZENODO_TOKEN_ENVIRONMENT]}
+            if refused:
+                detail["credentials_file"] = refused
+            raise ReleaseWait(self.stage, "waiting_credentials", detail)
 
     def writer_pending(self) -> bool:
         task_id = str(self.state.get("writer_task_id") or "")
@@ -2215,15 +2283,18 @@ class _ReleasePipeline:
 
     def deliver(self, status: Mapping[str, Any]) -> None:
         self.stage = "deliver"
-        missing = [name for name in DELIVERY_ENVIRONMENT if not os.environ.get(name, "").strip()]
+        found, refused = pipeline_credentials(self.settings, DELIVERY_ENVIRONMENT)
+        missing = [name for name in DELIVERY_ENVIRONMENT if name not in found]
         if missing:
+            extra = {"credentials_file": refused} if refused else {}
             _info(self.report, "handoffs").append(
                 {"topic_id": self.topic_id, "paper_id": self.paper_id,
-                 "outcome": "waiting_credentials", "missing": missing})
+                 "outcome": "waiting_credentials", "missing": missing, **extra})
             self.db.record_event_once("topic", self.topic_id, "handoff_blocked",
-                                      {"reason": "credentials_missing", "missing": missing},
+                                      {"reason": "credentials_missing", "missing": missing,
+                                       **extra},
                                       event_key="credentials_missing")
-            raise ReleaseWait("deliver", "waiting_credentials", {"missing": missing})
+            raise ReleaseWait("deliver", "waiting_credentials", {"missing": missing, **extra})
         state = self.handoff
         attempts = int(state.get("attempts") or 0) + 1
         entry = {"topic_id": self.topic_id, "paper_id": self.paper_id}
