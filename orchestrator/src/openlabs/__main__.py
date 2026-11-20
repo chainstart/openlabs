@@ -217,6 +217,18 @@ def _parser() -> argparse.ArgumentParser:
     reopen_register.add_argument("--max-reopens", type=int, default=1)
     reopen_register.add_argument("--note", help="Why these conditions answer the freeze")
     reopen_register.add_argument("--by", default="operator", help="Who registered (provenance)")
+    reopen_grant = program_commands.add_parser(
+        "reopen-grant",
+        help="Grant a topic frozen in review for a procedural reason (review_stalled, "
+        "overdue) one more writer revision: frozen -> in_review, one text_revision seat for "
+        "its writer, no research slot while in review on the grant "
+        "([program] operator_reopen_max per topic)",
+    )
+    reopen_grant.add_argument("--topic-id", required=True)
+    reopen_grant.add_argument("--reason", required=True,
+                              help="Why the revision is granted (recorded in the ledger)")
+    reopen_grant.add_argument("--by", required=True, help="Who granted it (provenance)")
+    reopen_grant.add_argument("--scope", choices=("text_revision",), default="text_revision")
     program_commands.add_parser(
         "reopen-check",
         help="Evaluate every frozen topic's auto_reopen conditions now (read-only)",
@@ -546,6 +558,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 1
         elif args.program_command == "backfill":
             payload = backfill_grandfathered(db, paths, settings, write=args.write)
+        elif args.program_command == "reopen-grant":
+            from .program import TopicLedgerError
+            from .reopen import ReopenGrantError, grant_operator_reopen
+
+            try:
+                payload = grant_operator_reopen(
+                    db, paths, settings, topic_id=args.topic_id, reason=args.reason,
+                    by=args.by, scope=args.scope,
+                )
+            except (ReopenGrantError, TopicLedgerError, KeyError, OSError) as exc:
+                print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
+                return 1
         elif args.program_command == "mark-revisable":
             from .program_flow import mark_revisable
 

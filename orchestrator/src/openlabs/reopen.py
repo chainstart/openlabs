@@ -40,6 +40,17 @@ its reopen count is below the cap, it moves the topic ``frozen -> active``
 queues one owner seat in the same session saying which conditions changed. Nothing
 else is relaxed: budgets, slots, the stop rule and the pre-registered endpoint are
 those of the original topic.
+
+Operator grants (``program reopen-grant``, 2026-11-20) are the other way out of
+``frozen``: a topic frozen while its manuscript was in review, for a procedural reason
+(``review_stalled``, ``overdue``: the review loop or the decision allowance ran out, not
+the science), gets one more writer revision. It moves ``frozen -> in_review``
+(``operator_reopen_granted``), its campaign is reactivated and the manuscript's writer
+gets one seat briefed with the freeze record's revision list; the next unified review
+and, if it does not pass, the re-freeze are the ordinary flow. Grants are counted
+against ``[program].operator_reopen_max``, apart from automatic reopens, and a granted
+topic holds no research slot while it is in review on the grant
+(``program.grant_slot_exempt``).
 """
 
 from __future__ import annotations
@@ -56,12 +67,14 @@ from .config import FactorySettings, WorkspacePaths
 from .db import FactoryDB, utc_now
 from .program import (
     AUTO_REOPEN_REASON,
+    OPERATOR_REOPEN_REASON,
     TopicLedger,
     TopicLedgerError,
     find_topic,
     open_topic_ledger,
     parked_program_projects,
     paused_topic_campaigns,
+    record_topic_note,
     slot_status,
     topics_by_status,
     transition_topic,
@@ -70,6 +83,15 @@ from .research_lines import line_entry, read_lines_or_none
 
 CONDITION_KINDS = ("control_receipt", "line_capability")
 ROUTING_REOPENED = "owner_reopened"
+ROUTING_OPERATOR_REOPEN = "owner_operator_reopen"
+# Operator grants (``program reopen-grant``): the only scope, and the freeze classes that
+# are procedural (the review loop or the calendar ran out, not the science).
+GRANT_SCOPES = ("text_revision",)
+GRANTABLE_FREEZE_CLASSES = frozenset({"review_stalled", "overdue"})
+SCIENTIFIC_FREEZE_CLASSES = frozenset({
+    "primary_endpoint_failed", "feasibility_precheck_failed", "decisive_data_unavailable",
+    "contribution_insufficient",
+})
 DEFAULT_RECEIPT_KEY = "environment.standard_solver.control_receipt"
 # A seat needs at least this much of the campaign's Agent-time budget to be worth starting.
 MIN_REMAINING_AGENT_SECONDS = 600
@@ -79,6 +101,10 @@ _OPS = {"==": operator.eq, "!=": operator.ne, "<=": operator.le, ">=": operator.
 
 class ReopenConditionError(ValueError):
     """A ``reopen_when`` item cannot be evaluated mechanically."""
+
+
+class ReopenGrantError(ValueError):
+    """An operator reopen grant was refused (the message says why)."""
 
 
 # --------------------------------------------------------------------------- conditions
@@ -437,6 +463,8 @@ def resume_reopened_campaign(
 
     ledger = open_topic_ledger(paths, settings.program)
     topic = ledger.topic(topic_id) or {}
+    if _last_move_reason(topic) == OPERATOR_REOPEN_REASON:
+        return resume_granted_campaign(db, paths, settings, report, topic=topic)
     block = topic.get("auto_reopen") if isinstance(topic.get("auto_reopen"), Mapping) else {}
     reopens = list(block.get("reopens") or [])
     if count is None:
@@ -457,6 +485,241 @@ def resume_reopened_campaign(
     return seat
 
 
+def _last_move_reason(topic: Mapping[str, Any]) -> str | None:
+    history = topic.get("history") or []
+    last = next((entry for entry in reversed(history)
+                 if isinstance(entry, Mapping) and entry.get("to")), None)
+    return str(last.get("reason")) if last else None
+
+
+# --------------------------------------------------------------------------- operator grants
+
+
+def _latest_unified_review(db: FactoryDB, campaign_id: str) -> dict[str, Any] | None:
+    """Newest finished unified review (owner_review) of a campaign, with its outcome."""
+
+    from .owner import ROUTING_REVIEW
+
+    with db.connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM tasks WHERE campaign_id=? AND task_type='paper_review' "
+            "AND routing_reason=? AND status='succeeded' ORDER BY created_at DESC, rowid DESC "
+            "LIMIT 1", (campaign_id, ROUTING_REVIEW),
+        ).fetchone()
+    if row is None:
+        return None
+    task = dict(row)
+    outcome: dict[str, Any] = {}
+    try:
+        payload = json.loads(Path(str(task.get("result_path") or "")).read_text(encoding="utf-8"))
+        if isinstance(payload, Mapping) and isinstance(payload.get("review_outcome"), Mapping):
+            outcome = dict(payload["review_outcome"])
+    except (OSError, ValueError):
+        pass
+    return {"task_id": str(task["task_id"]), "result_path": task.get("result_path"),
+            "outcome": outcome}
+
+
+def _grant_note(topic: Mapping[str, Any], grant: Mapping[str, Any],
+                review: Mapping[str, Any] | None) -> str:
+    from .owner import RESPONSE_NAME, REVISION_RULE
+
+    items = [
+        f"({number}) [{item.get('type')}] {str(item.get('description') or '').strip()}"
+        for number, item in enumerate(topic.get("reopen_conditions") or [], start=1)
+        if isinstance(item, Mapping) and str(item.get("description") or "").strip()
+    ]
+    evidence = ", ".join(str(item.get("path")) for item in topic.get("freeze_evidence") or []
+                         if isinstance(item, Mapping))
+    outcome = (review or {}).get("outcome") or {}
+    last_review = (
+        f" Last unified review: {review.get('result_path')} (round "
+        f"{outcome.get('rounds_for_target')} of {outcome.get('max_rounds_per_target')}; decision "
+        f"record {outcome.get('decision_record') or 'see the result'})." if review else ""
+    )
+    return (
+        f"Operator grant ({grant['by']}, {grant['at']}): \"{grant['reason']}\". This topic was "
+        f"frozen in review ({topic.get('freeze_reason_class')}, {topic.get('frozen_at')}) and is "
+        "reopened once for a text revision of its manuscript (scope text_revision). The freeze "
+        "record lists what the revision must do: "
+        + ("; ".join(items) if items else "see the freeze record")
+        + f". Freeze record: {evidence or 'see the topic ledger'}.{last_review} Only the "
+        "manuscript items are in scope: conditions that need new data, new compute or a new "
+        "method are not part of this grant, so do not run new analyses (re-checking quoted "
+        "values against their cited sources is part of the revision). The pre-registration, "
+        f"endpoint verdict and evidence are unchanged. Answer each item in {RESPONSE_NAME} "
+        "(item -> change) and return ready_for_review: the manuscript goes to the next unified "
+        "review round; if that round does not pass, the topic is frozen again as usual."
+        + REVISION_RULE
+    )
+
+
+def _writer_runner(db: FactoryDB, settings: FactorySettings, campaign_id: str,
+                   parent: Mapping[str, Any] | None) -> str | None:
+    """The runner that wrote this topic's manuscript: the writer, else the last owner."""
+
+    from . import owner as owner_mode
+
+    writer = owner_mode.active_writer(db, settings, campaign_id)
+    if writer:
+        return writer
+    source = owner_mode.session_seat(db, str(parent["task_id"])) if parent else None
+    source = source or owner_mode.last_seat(db, campaign_id)
+    runner = str((source or {}).get("runner") or "")
+    return runner or None
+
+
+def resume_granted_campaign(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    report: Any,
+    *,
+    topic: Mapping[str, Any],
+) -> str | None:
+    """Reactivate a granted topic's campaign and queue the writer's text_revision seat.
+
+    Idempotent (fixed seat id per grant), so a half-done grant is finished by the tick.
+    """
+
+    from . import owner as owner_mode
+
+    grant_block = topic.get("reopen_grant") if isinstance(topic.get("reopen_grant"),
+                                                         Mapping) else {}
+    grants = list(grant_block.get("grants") or [])
+    if not grants:
+        return None
+    grant = grants[-1]
+    count = len(grants)
+    campaign_id = str(topic.get("campaign_id") or "")
+    db.reopen_frozen_campaign(campaign_id, reason=OPERATOR_REOPEN_REASON,
+                              topic_id=str(topic["topic_id"]))
+    campaign = db.campaign(campaign_id) or {}
+    owner_mode.reset_streak(db, campaign_id, reason="operator_reopen_granted")
+    parent = db.latest_task(campaign_id)
+    return owner_mode.enqueue_seat(
+        db, settings, report, campaign=campaign, parent=parent,
+        note=_grant_note(topic, grant, _latest_unified_review(db, campaign_id)),
+        routing_reason=ROUTING_OPERATOR_REOPEN,
+        task_id=owner_mode.seat_id(campaign_id, f"operator-reopen:{count}"),
+        runner_override=_writer_runner(db, settings, campaign_id, parent),
+    )
+
+
+def grant_operator_reopen(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    *,
+    topic_id: str,
+    reason: str,
+    by: str,
+    scope: str = "text_revision",
+    report: Any = None,
+) -> dict[str, Any]:
+    """``program reopen-grant``: one more writer revision for a topic frozen in review.
+
+    Accepted only for a topic frozen from ``in_review`` for a procedural reason
+    (:data:`GRANTABLE_FREEZE_CLASSES`), in owner mode, with Agent-time budget and a
+    unified review round left, below ``[program].operator_reopen_max`` grants (counted
+    apart from automatic reopens). The topic moves ``frozen -> in_review``
+    (``operator_reopen_granted``) with ``reopen_grant`` {scope, slot_exempt, grants}; it
+    holds no research slot while it is in review on the grant
+    (``program.grant_slot_exempt``). The campaign is reactivated and the manuscript's
+    writer gets one seat whose brief is the freeze record's revision list and this
+    grant's reason; the rest (unified review, re-freeze) is the ordinary flow.
+    """
+
+    from . import owner as owner_mode
+
+    reason = str(reason or "").strip()
+    by = str(by or "").strip()
+    if not reason or not by:
+        raise ReopenGrantError("--reason and --by are required")
+    if scope not in GRANT_SCOPES:
+        raise ReopenGrantError(f"scope must be one of {list(GRANT_SCOPES)}")
+    limit = int(settings.program.operator_reopen_max)
+    if limit <= 0:
+        raise ReopenGrantError("operator reopen grants are off ([program] operator_reopen_max = 0)")
+    ledger = open_topic_ledger(paths, settings.program)
+    document = ledger.read()
+    topic = find_topic(document, topic_id)
+    if topic is None:
+        raise ReopenGrantError(f"unknown topic {topic_id}")
+    if topic.get("status") != "frozen":
+        raise ReopenGrantError(f"topic {topic_id} is {topic.get('status')}, not frozen")
+    reason_class = str(topic.get("freeze_reason_class") or "")
+    if reason_class in SCIENTIFIC_FREEZE_CLASSES:
+        raise ReopenGrantError(
+            f"topic {topic_id} was frozen for a scientific reason ({reason_class}); a text "
+            "revision cannot answer it. Reopen it with a new card that declares `reopens`.")
+    if reason_class not in GRANTABLE_FREEZE_CLASSES:
+        raise ReopenGrantError(
+            f"topic {topic_id} was frozen as {reason_class or 'unknown'}, which is not a "
+            f"procedural review/deadline exhaustion ({sorted(GRANTABLE_FREEZE_CLASSES)}); "
+            "a text-revision grant does not answer it")
+    moves = [entry for entry in topic.get("history") or []
+             if isinstance(entry, Mapping) and entry.get("to")]
+    if not moves or moves[-1].get("to") != "frozen" or moves[-1].get("from") != "in_review":
+        raise ReopenGrantError(
+            f"topic {topic_id} was not frozen while its manuscript was in review; there is no "
+            "manuscript revision to grant")
+    if any(other.get("supersedes") == topic_id and other.get("status") != "rejected"
+           for other in document.get("topics") or []):
+        raise ReopenGrantError(f"topic {topic_id} is superseded by a newer topic")
+    if str(topic.get("program_project_id") or "") in parked_program_projects(paths):
+        raise ReopenGrantError(f"the program project of topic {topic_id} is paused")
+    previous = topic.get("reopen_grant") if isinstance(topic.get("reopen_grant"),
+                                                       Mapping) else {}
+    done = len(previous.get("grants") or [])
+    if done >= limit:
+        raise ReopenGrantError(
+            f"topic {topic_id} already had {done} operator grant(s); [program] "
+            f"operator_reopen_max = {limit}")
+    campaign_id = str(topic.get("campaign_id") or "")
+    campaign = db.campaign(campaign_id) if campaign_id else None
+    if campaign is None:
+        raise ReopenGrantError(f"campaign {campaign_id or '?'} of topic {topic_id} is missing")
+    if not owner_mode.applies(settings, campaign):
+        raise ReopenGrantError(f"topic {topic_id} does not run in owner mode")
+    if _campaign_budget_left(campaign) < MIN_REMAINING_AGENT_SECONDS:
+        raise ReopenGrantError(f"campaign {campaign_id} has no Agent-time budget left")
+    review = _latest_unified_review(db, campaign_id)
+    outcome = (review or {}).get("outcome") or {}
+    try:
+        rounds = int(outcome.get("rounds_for_target"))
+        maximum = int(outcome.get("max_rounds_per_target"))
+    except (TypeError, ValueError):
+        rounds = maximum = None
+    if rounds is not None and maximum is not None and rounds >= maximum:
+        raise ReopenGrantError(
+            f"the last unified review was round {rounds} of {maximum} for its target: no "
+            "review round is left, so a revision could not be reviewed")
+    decided_by = f"operator:{by}"
+    grant = {"at": utc_now(), "by": by, "reason": reason[:600], "scope": scope,
+             "freeze_reason_class": reason_class, "frozen_at": topic.get("frozen_at")}
+    block = {**copy.deepcopy(dict(previous)), "scope": scope, "slot_exempt": True,
+             "grants": [*list(previous.get("grants") or []), grant]}
+    decision = transition_topic(
+        ledger, topic_id, "in_review", db=db, reason=OPERATOR_REOPEN_REASON,
+        decided_by=decided_by, evidence=topic.get("freeze_evidence") or [],
+        updates={"reopen_grant": block},
+    )
+    current = ledger.topic(topic_id) or {}
+    seat = resume_granted_campaign(db, paths, settings, report, topic=current)
+    record_topic_note(
+        ledger, topic_id, db=db, event_type="operator_reopen_granted",
+        reason=OPERATOR_REOPEN_REASON, decided_by=decided_by,
+        detail={"by": by, "reason": reason[:600], "scope": scope, "count": done + 1,
+                "max": limit, "seat": seat, "slot_exempt": True},
+        key=f"operator_reopen:{topic_id}:{done + 1}",
+    )
+    return {"schema_version": "openlabs.program_reopen_grant.v1", "topic_id": topic_id,
+            "status": decision.status, "changed": decision.changed,
+            "campaign_id": campaign_id, "seat": seat, "grant": grant,
+            "grants_used": done + 1, "operator_reopen_max": limit}
+
+
 def repair_half_done_reopens(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -467,10 +730,10 @@ def repair_half_done_reopens(
 
     repaired: list[str] = []
     ledger = open_topic_ledger(paths, settings.program)
-    for topic in topics_by_status(ledger.read(), "active"):
-        history = topic.get("history") or []
-        last_move = next((entry for entry in reversed(history) if entry.get("to")), None)
-        if not last_move or last_move.get("reason") != AUTO_REOPEN_REASON:
+    for topic in topics_by_status(ledger.read(), "active", "in_review"):
+        expected = (AUTO_REOPEN_REASON if topic.get("status") == "active"
+                    else OPERATOR_REOPEN_REASON)
+        if _last_move_reason(topic) != expected:
             continue
         campaign = db.campaign(str(topic.get("campaign_id") or "")) or {}
         if str(campaign.get("status") or "") != "frozen":
@@ -505,13 +768,18 @@ def check_report(paths: WorkspacePaths, settings: FactorySettings) -> dict[str, 
 
 __all__ = [
     "CONDITION_KINDS",
+    "GRANTABLE_FREEZE_CLASSES",
+    "ROUTING_OPERATOR_REOPEN",
     "ROUTING_REOPENED",
     "ReopenConditionError",
+    "ReopenGrantError",
     "auto_reopen_block",
     "check_report",
     "evaluate",
+    "grant_operator_reopen",
     "normalize_conditions",
     "register_auto_reopen",
     "reopen_ready_topics",
     "repair_half_done_reopens",
+    "resume_granted_campaign",
 ]

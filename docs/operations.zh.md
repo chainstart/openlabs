@@ -645,6 +645,27 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   （默认 1，0 关闭）时，题目 `frozen -> active`（`auto_reopen_conditions_met`），campaign 解冻，给原负责人
   派一个 `owner_reopened` 坐席并写明哪些条件变了（会话按负责人模式的会话规则：默认新会话，从交接文件开始）。预注册、主终点、停止规则和预算都不变；再次冻结时若没有新的
   `reopen_when`，旧条件清空，不会因同一事实反复重开。
+- 业主授权的文字修改重开（2026-11-20）：稿件在评审中、因流程性耗尽被冻结的题目（`freeze_reason_class` 为
+  `review_stalled` 或 `overdue`，例如方向决策次数 `[program.direction_limits]` 用尽后被迫冻结），业主可再给一次
+  写稿者修改：
+  `python -m openlabs program reopen-grant --topic-id T --reason "<理由>" --by <谁> [--scope text_revision]`
+  （实例上经 `bin/openlabs-container-loop --instance-dir <实例> cli -- program reopen-grant ...` 调用）。
+  只接受从 `in_review` 冻结的题目；`primary_endpoint_failed`、`feasibility_precheck_failed`、
+  `decisive_data_unavailable`、`contribution_insufficient` 这类科学性冻结直接拒绝（这类题目要靠带 `reopens`
+  的新卡片重开），`budget_exhausted`、`infrastructure`、`no_eligible_venue` 也拒绝；另外要求负责人模式、campaign
+  还有 Agent 预算，且上一轮统一评审没有用完本刊轮次（`rounds_for_target < max_rounds_per_target`；轮次上限属于
+  settings.yaml 的用户决定，本命令不改）。每题可授权次数由 `[program].operator_reopen_max`（默认 1，0 关闭）
+  限制，与 `auto_reopen_max` 分开计数，不消耗自动重开次数。命令执行后：题目 `frozen -> in_review`（受保护理由
+  `operator_reopen_granted`，history 记 by、理由与时间，并另记一条 `operator_reopen_granted` 说明），台账写
+  `reopen_grant: {scope: text_revision, slot_exempt: true, grants: [...]}`；campaign 解冻；给该稿件原写稿者
+  （有 writer 时为 writer，否则为最近的负责人 runner，不换模型）派一个 `owner_operator_reopen` 坐席，说明由台账
+  `reopen_conditions` 的修改清单加本次授权理由组成，只做稿件修改、不做新分析。写稿者交 ready_for_review 后照常进入
+  下一轮统一评审；通过则进 ready 队列，不通过则照常排方向决策，次数已用尽时再次冻结。
+  名额：在授权下处于 `in_review` 的题目不占 `max_active_topics` 与 `line_max_active_topics`（它是已成稿题目的收尾，
+  不是新开研究）；调度报告里非零时单列为 `grant_exempt_topics` 和各线的 `grant_exempt`，不计入 `occupied`。豁免只在
+  授权那次转入 `in_review` 之后、没有被接受的非冻结方向决策（定点分析或换刊）之前有效；之后的
+  `ready_queue -> in_review` 全量复审或重新研究照常占位。其他题目的计数不变。命令在 ledger 已写、campaign 或坐席
+  未建时中断的，下一轮调度（`reopen_repaired`）补完。
 - 现有实例迁移：`python -m openlabs program init-instance --instance-dir <dir> --set-research-lines`
   先看 dry-run，再加 `--write`。它只新增缺少的产线项目，并在实例 TOML 的 `[program]` 里写入
   `research_lines`（其余键与注释不动，旧文件留 `.bak`），不改题目台账。回滚：恢复 `.bak`。

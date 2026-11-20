@@ -154,6 +154,7 @@ def test_known_routing_reasons_cover_the_dispatching_constants() -> None:
         owner.ROUTING_FIRST, owner.ROUTING_CONTINUE, owner.ROUTING_CONVERTED,
         owner.ROUTING_REVIEW, owner.ROUTING_REVIEWED, owner.ROUTING_RECOMPUTE,
         owner.ROUTING_RECOMPUTED, owner.ROUTING_RETRY, reopen.ROUTING_REOPENED,
+        reopen.ROUTING_OPERATOR_REOPEN,
         program_autonomy.DIRECTION_ROUTING_REASON, program_autonomy.TARGETED_ROUTING,
         program_autonomy.RETARGET_ROUTING, program_autonomy.RELEASE_FIX_ROUTING,
         program_autonomy.RELEASE_REVIEW_ROUTING, assets.RETROSPECTIVE_ROUTING_REASON,

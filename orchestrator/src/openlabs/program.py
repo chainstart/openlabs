@@ -29,9 +29,12 @@ recorded reopen conditions.
 Two guarded moves leave ``rejected`` (ledger schema v2): a hold whose only
 blocker was its research line's environment returns to ``proposed`` for the
 gate, or straight to ``admitted`` when the gate had already admitted it, once
-the line is ready (``release_held_topic``). One guarded move leaves ``frozen``:
+the line is ready (``release_held_topic``). Two guarded moves leave ``frozen``:
 ``frozen -> active`` when the topic's recorded line-level ``auto_reopen``
-conditions all hold (``reopen.py``); its pre-registration is unchanged.
+conditions all hold (``reopen.py``), and ``frozen -> in_review`` when an operator
+grants a topic frozen in review for a procedural reason one more text revision of
+its manuscript (``program reopen-grant``, ``reopen.grant_operator_reopen``); the
+pre-registration is unchanged either way.
 """
 
 from __future__ import annotations
@@ -81,19 +84,22 @@ TRANSITIONS: dict[str | None, frozenset[str]] = {
     "submitted": frozenset(),
     # Only the guarded hold releases below leave ``rejected``.
     "rejected": frozenset({"proposed", "admitted"}),
-    # Only an automatic reopen (``reopen.py``) leaves ``frozen``; every other reopening
-    # is a new card that declares ``reopens``.
-    "frozen": frozenset({"active"}),
+    # Only an automatic reopen or an operator's text-revision grant (``reopen.py``) leaves
+    # ``frozen``; every other reopening is a new card that declares ``reopens``.
+    "frozen": frozenset({"active", "in_review"}),
 }
 # Transitions allowed only with these reasons (see ``release_held_topic``).
 HOLD_RELEASE_FOR_REVIEW = "hold_released_for_review"
 HOLD_RELEASE_ADMITTED = "hold_released_admitted"
 # A frozen topic whose recorded line-level reopen conditions all hold (``reopen.py``).
 AUTO_REOPEN_REASON = "auto_reopen_conditions_met"
+# An operator granted a topic frozen in review one more text revision (``reopen.py``).
+OPERATOR_REOPEN_REASON = "operator_reopen_granted"
 GUARDED_TRANSITIONS: dict[tuple[str, str], frozenset[str]] = {
     ("rejected", "proposed"): frozenset({HOLD_RELEASE_FOR_REVIEW}),
     ("rejected", "admitted"): frozenset({HOLD_RELEASE_ADMITTED}),
     ("frozen", "active"): frozenset({AUTO_REOPEN_REASON}),
+    ("frozen", "in_review"): frozenset({OPERATOR_REOPEN_REASON}),
 }
 # Statuses that hold one of the ``max_active_topics`` research slots.
 # ``admitted`` is a reservation: the topic passed the admission gate but its
@@ -160,6 +166,9 @@ TOPIC_FIELDS = (
     # Machine-checkable line-level reopen conditions of a frozen topic and the
     # automatic reopens done so far (``reopen.py``; absent from older ledgers).
     "auto_reopen",
+    # Operator text-revision grants of a frozen topic (``reopen.grant_operator_reopen``):
+    # {"scope", "slot_exempt", "grants": [{"at", "by", "reason", "scope", "seat"}]}.
+    "reopen_grant",
     "history",
 )
 # Rejections that judged the topic on its merits. A card with the same
@@ -432,6 +441,10 @@ class SlotStatus:
     # topics that wait only for their own line's slot (not counted in ``admitted``).
     paused: int = 0
     line_waiting: int = 0
+    # Topics in review on an operator's slot-exempt text-revision grant (not counted
+    # above, :func:`grant_slot_exempt`), in total and per limited line.
+    grant_exempt: int = 0
+    line_grant_exempt: dict[str, int] = field(default_factory=dict)
 
     def line_limit(self, line: Any) -> int | None:
         key = str(line or "").strip()
@@ -509,16 +522,51 @@ class SlotStatus:
             "parked_topics": self.parked,
             "paused_topics": self.paused,
             "line_waiting_admitted": self.line_waiting,
+            # Listed only when a topic is in review on a slot-exempt operator grant.
+            **({"grant_exempt_topics": self.grant_exempt} if self.grant_exempt else {}),
             **({"lines": {
                 line: {"limit": limit, "occupied": self.line_occupied.get(line, 0),
                        "researching": self.line_researching.get(line, 0),
-                       "free_slots": self.line_free_slots(line)}
+                       "free_slots": self.line_free_slots(line),
+                       **({"grant_exempt": self.line_grant_exempt[line]}
+                          if self.line_grant_exempt.get(line) else {})}
                 for line, limit in sorted(self.line_limits.items())
             }} if self.line_limits else {}),
         }
 
 
 SLOT_STATUSES = ("admitted", "active", "in_review")
+
+
+def grant_slot_exempt(topic: Mapping[str, Any]) -> bool:
+    """Whether a topic is in review on an operator's slot-exempt text-revision grant.
+
+    True only while (a) the topic is ``in_review``, (b) its last lifecycle move was the
+    grant itself (``frozen -> in_review``, reason ``operator_reopen_granted``), so a later
+    ``ready_queue -> in_review`` full review counts as usual, (c) the grant says
+    ``slot_exempt``, and (d) no direction decision accepted after the grant sent the topic
+    back into research or to another venue (a targeted analysis is research again and
+    takes its slot). Every other topic is counted exactly as before.
+    """
+
+    if str(topic.get("status")) != "in_review":
+        return False
+    grant = topic.get("reopen_grant")
+    if not isinstance(grant, Mapping) or grant.get("slot_exempt") is not True:
+        return False
+    history = [entry for entry in topic.get("history") or [] if isinstance(entry, Mapping)]
+    moves = [index for index, entry in enumerate(history) if entry.get("to")]
+    if not moves:
+        return False
+    last = history[moves[-1]]
+    if last.get("to") != "in_review" or last.get("reason") != OPERATOR_REOPEN_REASON:
+        return False
+    for entry in history[moves[-1] + 1:]:
+        detail = entry.get("detail") if isinstance(entry.get("detail"), Mapping) else {}
+        if (entry.get("kind") == "direction_decided" and detail.get("accepted") is True
+                and entry.get("reason") != "freeze"):
+            return False
+    return True
 
 
 def slot_status(
@@ -539,6 +587,10 @@ def slot_status(
     slot-holding topics. An admitted topic waiting only for its own line's slot (the
     line already has as many topics in research as its limit) holds no global slot:
     it cannot start before its line frees one, so it must not block the other lines.
+
+    A topic in review on an operator's slot-exempt text-revision grant
+    (:func:`grant_slot_exempt`) holds neither a global nor a line slot: it is the
+    finishing revision of a written manuscript, not research (2026-11-20).
     """
 
     parked_ids = frozenset(parked_projects)
@@ -546,7 +598,9 @@ def slot_status(
     counts = {status: 0 for status in TOPIC_STATUSES}
     parked = 0
     paused = 0
+    exempt = 0
     limits = dict(getattr(settings, "line_max_active_topics", None) or {})
+    line_exempt: dict[str, int] = {}
     line_occupied = {line: 0 for line in limits}
     line_researching = {line: 0 for line in limits}
     line_admitted = {line: 0 for line in limits}
@@ -557,6 +611,12 @@ def slot_status(
             continue
         if status in SLOT_STATUSES and str(topic.get("campaign_id") or "") in paused_ids:
             paused += 1
+            continue
+        if grant_slot_exempt(topic):
+            exempt += 1
+            exempt_line = str(topic.get("research_line") or "").strip()
+            if exempt_line:
+                line_exempt[exempt_line] = line_exempt.get(exempt_line, 0) + 1
             continue
         counts[status] = counts.get(status, 0) + 1
         line = str(topic.get("research_line") or "").strip()
@@ -582,6 +642,8 @@ def slot_status(
         line_researching=line_researching,
         paused=paused,
         line_waiting=line_waiting,
+        grant_exempt=exempt,
+        line_grant_exempt=line_exempt,
     )
 
 

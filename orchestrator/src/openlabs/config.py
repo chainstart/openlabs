@@ -266,6 +266,9 @@ class ProgramSettings:
     # (``auto_reopen``: shared control receipt, line capability) came true; a
     # topic may ask for fewer. 0 turns automatic reopening off.
     auto_reopen_max: int = 1
+    # Operator text-revision grants per frozen topic (``program reopen-grant``,
+    # 2026-11-20), counted apart from ``auto_reopen_max``. 0 turns the command off.
+    operator_reopen_max: int = 1
     # Card intake (2026-11-16): run the mechanical precheck a research line declares
     # (``admission_precheck`` in research-lines.yaml, no model involved) before a card is
     # registered for admission, and raise a card's compute plan to the line's typical
@@ -500,7 +503,7 @@ KNOWN_ROUTING_REASONS: frozenset[str] = frozenset({
     # owner
     "owner_first_seat", "owner_continue", "owner_converted", "owner_review",
     "owner_review_returned", "owner_recompute_review", "owner_recompute_returned",
-    "owner_retry", "owner_reopened",
+    "owner_retry", "owner_reopened", "owner_operator_reopen",
     # program_autonomy
     "direction_decision", "direction_targeted_analysis", "direction_retarget",
     "release_format_fix", "release_full_review",
@@ -1275,6 +1278,7 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         owner_mode=_owner_mode(program.get("owner_mode")),
         owner=_owner_settings(program.get("owner")),
         auto_reopen_max=_nonnegative_int(program.get("auto_reopen_max"), 1),
+        operator_reopen_max=_nonnegative_int(program.get("operator_reopen_max"), 1),
         card_precheck=program.get("card_precheck", True) is not False,
         card_precheck_max_seconds=_positive_int(program.get("card_precheck_max_seconds"), 900),
         card_compute_floor=program.get("card_compute_floor", True) is not False,
