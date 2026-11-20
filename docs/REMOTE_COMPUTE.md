@@ -212,6 +212,21 @@ systemctl --user status openlabs-remote-bridge.service
 journalctl --user -u openlabs-remote-bridge.service -n 40
 ```
 
+Capacity accounting is rebuilt from the queue directory on every pass, not kept in
+memory: a job whose `status.json` says `running` (READY present) may be executing on
+ailab, so it always counts against `capacity` and is re-polled after a transport
+failure (backoff 15 s doubling to 300 s) until it is succeeded or failed, even when
+capacity is full; only new jobs wait for room. A restarted bridge therefore re-attaches
+to every running job. A job still unreachable after `started + wall + 300 s` is failed
+as before and gets `remote_cancel: pending`; the bridge keeps its capacity until the
+gateway's `cancel` operation (`systemctl --user stop` of the job unit) succeeds, retried
+once ailab answers again. Independently, each job unit has `RuntimeMaxSec = wall + 10`
+on ailab, and the runner stops its process group at `wall`.
+
+Deploy a bridge change from WSL with `tools/remote-compute/deploy-bridge.sh` (it finds
+the `bridge.py` the unit runs, updates it if it is a copy, and restarts the service).
+Gateway changes are installed on ailab as root into `/usr/local/lib/openlabs-remote/`.
+
 The service is enabled at WSL user-manager startup. The remote worker's user manager
 has lingering enabled; no remote research scheduler or model client runs there.
 The gateway starts per-job systemd services, while the WSL dispatcher schedules

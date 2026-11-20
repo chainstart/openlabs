@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Forced SSH command: fixed JSON+archive compute protocol, no shell interface."""
-import sys,os,json,subprocess,time,fcntl,shutil,datetime
+import sys,os,json,re,subprocess,time,fcntl,shutil,datetime
 from pathlib import Path
 from protocol import validate,receive,extract,pack,digest,atomic
 from storage import inventory,locate_job
@@ -12,6 +12,11 @@ def respond(data,archive=None):
   with open(archive,'rb') as f:shutil.copyfileobj(f,sys.stdout.buffer,1024*1024)
   sys.stdout.buffer.flush()
 
+ACTIVE_STATES=['active','activating','deactivating','reloading']
+
+def unit_state(unit):
+ return subprocess.run(['systemctl','--user','is-active',unit],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True).stdout.strip()
+
 def main():
  os.umask(0o077)
  line=sys.stdin.buffer.readline(131073)
@@ -20,7 +25,15 @@ def main():
  if op=='probe':
   limits=subprocess.check_output(['systemctl','--user','show','openlabs-compute.slice','-p','CPUQuotaPerSecUSec','-p','MemoryHigh','-p','MemoryMax','-p','MemorySwapMax','-p','TasksMax'],text=True)
   respond({'ok':True,'backend':'ailab','limits':limits,'storage':inventory(),'tools':{x:bool(shutil.which(x)) for x in ['python3','uv','gcc','g++','cmake','ninja','podman','bwrap','git']}});return
- if op!='run':raise ValueError('only probe and run are supported')
+ if op=='cancel':
+  # Stop a job's unit: used by the bridge for a job it gave up on after wall + grace.
+  job_id=str(header.get('job_id',''))
+  if not re.fullmatch('[0-9a-f]{32}',job_id):raise ValueError('invalid job identity')
+  unit='openlabs-job-'+job_id+'.service'
+  subprocess.run(['systemctl','--user','stop',unit],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  state=unit_state(unit);stopped=state not in ACTIVE_STATES
+  respond({'ok':stopped,'retryable':not stopped,'job_id':job_id,'unit_state':state});return
+ if op!='run':raise ValueError('only probe, run and cancel are supported')
  r=validate(header.get('request',{}));job,volume=locate_job(r['job_id'],r.get('storage','auto'));job.mkdir(mode=0o700,parents=True,exist_ok=True)
  with (job/'gateway.lock').open('a+') as lock:
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -44,8 +57,11 @@ def main():
      atomic(result/'receipt.json',{'schema_version':'openlabs.remote-receipt.v1','job_id':r['job_id'],'backend':'ailab','state':'failed','error':'systemd launch failed: '+launched.stderr[-2000:],'exit_code':125,'payload_sha256':r['payload_sha256']})
    deadline=json.loads(started.read_text())['started_at']+r['resources']['wall_seconds']+45
    while not (result/'receipt.json').exists():
-    active=subprocess.run(['systemctl','--user','is-active',unit],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True).stdout.strip()
-    if active not in ['active','activating','deactivating'] or time.time()>deadline:
+    active=unit_state(unit)
+    if active not in ACTIVE_STATES or time.time()>deadline:
+     # Past the deadline the unit (RuntimeMaxSec = wall + 10) should already be gone;
+     # stop it explicitly so a failed receipt never leaves a live job behind.
+     if active in ACTIVE_STATES:subprocess.run(['systemctl','--user','stop',unit],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
      atomic(result/'receipt.json',{'schema_version':'openlabs.remote-receipt.v1','job_id':r['job_id'],'backend':'ailab','state':'failed','error':'worker stopped without a completion receipt: '+active,'exit_code':125,'payload_sha256':r['payload_sha256']});break
     time.sleep(1)
   archive=job/'result.tar.gz'
