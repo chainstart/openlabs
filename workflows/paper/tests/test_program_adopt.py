@@ -234,6 +234,20 @@ def _root_layout_workspace(root):
     return evidence, pdf_bytes
 
 
+def test_adopt_carries_the_editorial_rewrite_record(tmp_path):
+    """The unified-review preflight needs the target's rewrite record in the data repository."""
+    workspace, data = tmp_path / "workspace", tmp_path / "data"
+    data.mkdir()
+    _workspace(workspace)
+    record = workspace / "reviews/editorial-rewrite" / PAPER / "20261119T092307Z" / "record.json"
+    record.parent.mkdir(parents=True)
+    record.write_text('{"outcome": "editorial_failed"}\n')
+    result = adopt(PAPER, root=data, source=workspace)
+    assert result["status"] == "adopted", result
+    copied = data / record.relative_to(workspace)
+    assert copied.read_bytes() == record.read_bytes()
+
+
 def test_adopt_relocates_a_workspace_root_layout_byte_for_byte(tmp_path):
     workspace, data = tmp_path / "workspace", tmp_path / "data"
     data.mkdir()

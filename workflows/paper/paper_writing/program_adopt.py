@@ -97,8 +97,10 @@ def _plan_copies(paper_id: str, metadata: Mapping[str, Any], source: Path,
 
     pairs: list[tuple[Path, Path]] = []
     skipped: list[str] = []
+    # The editor-facing rewrite record is a unified-review preflight requirement for the
+    # target; without it a later delta review stops in preflight.
     trees = [f"papers/{paper_id}", f"reviews/unified/{paper_id}",
-             f"reviews/formal-check/{paper_id}"]
+             f"reviews/formal-check/{paper_id}", f"reviews/editorial-rewrite/{paper_id}"]
     for tree in trees:
         for path in _files_under(source / tree):
             pairs.append((path, root / path.relative_to(source)))
