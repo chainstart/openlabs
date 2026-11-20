@@ -1941,6 +1941,21 @@ class _ReleasePipeline:
                 "run_dir": result.get("run_dir"),
                 "full_review_reasons": result.get("full_review_reasons") or []})
             return False
+        if status.get("release_artifacts_unbound"):
+            # `zenodo release` and delivery take only Git-frozen release files; the
+            # ignored PDF/.bbl are frozen through a content-addressed manifest instead,
+            # bound before the Zenodo release (its gate checks them) and committed by
+            # commit-before-zenodo-release, or by release-ready when no deposit is made.
+            self.stage = "bind_artifacts"
+            result = run_release_artifact_binding(self.paths, self.settings, self.paper_id)
+            if result.get("status") not in {"bound", "not_needed"}:
+                raise ReleaseError("release artifact binding failed: "
+                                   f"{str(result.get('error') or result)[:400]}")
+            self.save("release_artifacts_bound", "ignored_release_files_frozen",
+                      stage=self.stage, status="running",
+                      detail={"files": result.get("files"), "manifest": result.get("manifest")})
+            self.entry("artifacts_bound", files=len(result.get("files") or []))
+            return True
         if support.get("release_needed"):
             self.stage = "support_release"
             self.require_zenodo(support)
@@ -1958,19 +1973,6 @@ class _ReleasePipeline:
                               "receipt": result.get("receipt")})
             self.entry("support_published", version_doi=result.get("version_doi"))
             # The DOI/receipt registry update is committed by the next step.
-            return True
-        if status.get("release_artifacts_unbound"):
-            # Delivery takes only Git-frozen release files; the ignored PDF/.bbl are
-            # frozen through a committed content-addressed manifest instead.
-            self.stage = "bind_artifacts"
-            result = run_release_artifact_binding(self.paths, self.settings, self.paper_id)
-            if result.get("status") not in {"bound", "not_needed"}:
-                raise ReleaseError("release artifact binding failed: "
-                                   f"{str(result.get('error') or result)[:400]}")
-            self.save("release_artifacts_bound", "ignored_release_files_frozen",
-                      stage=self.stage, status="running",
-                      detail={"files": result.get("files"), "manifest": result.get("manifest")})
-            self.entry("artifacts_bound", files=len(result.get("files") or []))
             return True
         self.commit(status, "release-ready")
         self.deliver(status)

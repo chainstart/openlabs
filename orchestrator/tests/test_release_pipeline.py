@@ -639,6 +639,28 @@ def test_ignored_release_products_are_bound_and_committed_before_delivery(tmp_pa
     assert "release_artifacts_bound" in _events(db, topic["topic_id"])
 
 
+def test_ignored_release_products_are_bound_before_the_zenodo_release(tmp_path, monkeypatch):
+    """`zenodo release` refuses unbound ignored files, so binding comes first."""
+    pdf = f"papers/{PAPER_ID}/manuscript/main.pdf"
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch,
+                                             paper_extra={"unbound_artifacts": [pdf]})
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert report.errors == [], report.errors
+    assert _commands(log) == ["program release-status", "zenodo prepare",
+                              "program release-status", "review unified-run",
+                              "program release-status", "program bind-release-artifacts",
+                              "program release-status", "support-check", "zenodo release",
+                              "program release-status", "program deliver"]
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["handoff"]["status"] == "delivered" and final["release"]["status"] == "done"
+    assert final["release"].get("attempts") == {}
+    # The manifest is frozen by the commit that precedes the Zenodo release.
+    before = next(c["sha"] for c in final["release"]["commits"]
+                  if c["action"] == "commit-before-zenodo-release")
+    assert f"papers/{PAPER_ID}/production/release-artifacts.json" in _commit_files(paths.data,
+                                                                                  before)
+
+
 def test_unsupported_workspace_layout_waits_for_the_owner(tmp_path, monkeypatch):
     paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support_release="none")
     workspace = program_autonomy.asset_library.topic_workspace(db, paths, topic)

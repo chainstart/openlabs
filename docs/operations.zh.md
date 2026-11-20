@@ -767,9 +767,11 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   supplementary/supporting material，也没有“全部在文中/未用数据”时报问题（writer 修文字）。
 - 稿件源缺失（登记的稿件目录或 `main.tex` 不存在）时所有形式问题判为 `human`，等待负责人，不排文字 writer；
   `format_fix` writer 不跑实验室运行环境准备（与 direction_decision 一样只改文字）。
-- 冻结构建产物：交付只接受 Git 冻结的发布文件。被忽略的 PDF/.bbl 在交付前由
+- 冻结构建产物：`zenodo release` 与交付只接受 Git 冻结的发布文件。被忽略的 PDF/.bbl 在 Zenodo 发布之前由
   `paper-writing program bind-release-artifacts` 复制到 `openlabs-artifacts/paper-support/sha256/` 并写
-  `papers/<id>/production/release-artifacts.json`（登记 `submission_package.artifact_manifest`），随 `release-ready` 提交。
+  `papers/<id>/production/release-artifacts.json`（登记 `submission_package.artifact_manifest`），随
+  `commit-before-zenodo-release`（不做存档时随 `release-ready`）提交。已有清单但当前 PDF/.bbl 不在其中或
+  SHA-256 不符（交付旧版本后出了新版本）时视为未绑定，按全部当前候选文件重写清单并更新登记指针。
   只含 `artifact_manifest` 的 `submission_package` 不视为已配置期刊源码包，交付用规范源文件清单。
 - `support_release`（默认 `"zenodo"`，即上表的 Zenodo 步骤）：设为 `"none"` 时从不建 Zenodo 或其他公开记录。
   支撑记录仍是 `planned` 的论文由 `paper-writing program waive-support` 写入

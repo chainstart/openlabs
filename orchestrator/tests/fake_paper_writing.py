@@ -170,6 +170,11 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "zenodo release":
         assert external and args.confirm_paper_id == args.paper_id
+        if paper.get("unbound_artifacts"):
+            # The real gate: every release file (ignored PDF/.bbl too) in Git or bound.
+            print("Zenodo error: Support release files are not committed to Git: "
+                  + ", ".join(paper["unbound_artifacts"]))
+            return 2
         if _git_dirty(root, _paths(root, args.paper_id)):
             print("Zenodo error: Release files differ from Git HEAD")
             return 2
