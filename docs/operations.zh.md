@@ -757,8 +757,9 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   （登记 `relocation` 指向它），复制后再逐个核对；稿件字节不变，ready 决定绑定的稿件快照（相对稿件目录）
   照样复现，不需要重新评审。其他非规范布局一个文件也不复制，等待负责人（`layout_unsupported`）。
   恢复归档文件时依次用 ready 评审任务和该 campaign 其余任务的结果包；稿件快照所需的图、`.bbl`/`.aux`
-  与 PDF 只在组合后快照与决定完全一致时保留。新稿件一律 `paper-writing paper create`（`load_registry`
-  拒绝不在 `papers/<id>/` 下的登记路径）。
+  与 PDF 只在组合后快照与决定完全一致时保留。新稿件一律 `paper-writing paper create`（新建登记
+  必须在 `papers/<id>/` 下，否则 `write_paper_metadata` 拒绝；已有的根相对登记照常加载，在 `validate` 警告和
+  `release-status.layout_problems` 里报出，由 adopt 迁移）。
 - 撤销支撑材料豁免：`paper-writing program unwaive-support --paper-id <id> --by <name> --reason <理由>`，
   恢复 `settings.yaml#support_publication.default_mode`（或 `--mode`），原豁免与撤销记在
   `support.publication.waiver_history`。

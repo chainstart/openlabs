@@ -267,9 +267,12 @@ def load_registry(
         _validate_freeze_decision(paper, paper_id=paper_id)
         layout = paper_layout_problems(paper_id, paper)
         if layout:
-            raise ValueError(f"{paper_id}: registry paths must use the papers/{paper_id}/ layout "
-                             "(create the record with `paper-writing paper create`): "
-                             + "; ".join(layout))
+            # An existing record laid out relative to a private root (``workspace: .``) keeps
+            # loading so its review and writing commands still run where it lives; `program
+            # adopt` relocates it. New records are refused in ``write_paper_metadata``.
+            config.setdefault("layout_warnings", []).append(
+                f"{paper_id}: registry paths are outside the papers/{paper_id}/ layout "
+                "(`program adopt` relocates them): " + "; ".join(layout))
         workspace =str(paper.pop("workspace", f"papers/{paper_id}")).strip("/")
         paper.setdefault("manuscript_dir", f"{workspace}/manuscript")
         source = repo_root / paper["manuscript_dir"] / "main.tex"
@@ -806,9 +809,17 @@ def write_paper_metadata(
     root: str | Path | None = None,
 ) -> Path:
     path = paper_metadata_path(paper_id, root)
-    path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(payload)
     data["paper_id"] = paper_id
+    if not path.exists():
+        # New records must use the canonical layout; an existing root-relative record is
+        # left editable so it can be carried to `program adopt`.
+        layout = paper_layout_problems(paper_id, data)
+        if layout:
+            raise ValueError(f"{paper_id}: a new registry record must use the papers/{paper_id}/ "
+                             "layout (create it with `paper-writing paper create`): "
+                             + "; ".join(layout))
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=1000),
         encoding="utf-8",

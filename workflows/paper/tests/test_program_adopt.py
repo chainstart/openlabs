@@ -319,6 +319,46 @@ def test_registry_rejects_a_non_canonical_layout(tmp_path):
     assert len(problems) == 2
 
 
+def _registry_root(root, record):
+    (root / "registry/papers").mkdir(parents=True)
+    (root / "registry/settings.yaml").write_text("schema_version: ara.paper_writing.registry.v1\n")
+    (root / "registry/papers" / f"{PAPER}.yaml").write_text(yaml.safe_dump(record))
+
+
+def test_an_existing_root_layout_record_still_loads_with_a_warning(tmp_path):
+    """A paper under review in a private root keeps working; adopt relocates it later."""
+    from paper_writing.operations import validate_repository
+    from paper_writing.registry import load_registry
+
+    (tmp_path / "manuscript").mkdir()
+    (tmp_path / "manuscript/main.tex").write_text("\\begin{document}\\end{document}\n")
+    _registry_root(tmp_path, {"paper_id": PAPER, "created_at": "2026-11-19", "domain": "quant",
+                              "subdomain": "energy", "workspace": ".",
+                              "manuscript_dir": "manuscript", "version": "0.1.0"})
+    config = load_registry(tmp_path, include_local_repositories=False, paper_ids=[PAPER])
+    assert "." in config["papers"]
+    assert config["papers"]["."]["latest_source"] == "manuscript/main.tex"
+    assert any("program adopt" in item for item in config["layout_warnings"])
+    result = validate_repository(tmp_path)
+    assert any(PAPER in item and "layout" in item for item in result["warnings"])
+
+
+def test_a_new_record_must_use_the_canonical_layout_but_an_old_one_stays_editable(tmp_path):
+    from paper_writing.registry import load_paper_metadata, write_paper_metadata
+
+    (tmp_path / "registry/papers").mkdir(parents=True)
+    with pytest.raises(ValueError, match="new registry record must use"):
+        write_paper_metadata(PAPER, {"workspace": ".", "manuscript_dir": "manuscript"}, tmp_path)
+    assert not (tmp_path / "registry/papers" / f"{PAPER}.yaml").exists()
+    write_paper_metadata(PAPER, {"workspace": f"papers/{PAPER}",
+                                 "manuscript_dir": f"papers/{PAPER}/manuscript"}, tmp_path)
+    (tmp_path / "registry/papers" / f"{PAPER}.yaml").write_text(
+        yaml.safe_dump({"paper_id": PAPER, "workspace": ".", "manuscript_dir": "manuscript"}))
+    write_paper_metadata(PAPER, {"workspace": ".", "manuscript_dir": "manuscript",
+                                 "version": "0.2.0"}, tmp_path)
+    assert load_paper_metadata(PAPER, tmp_path)["version"] == "0.2.0"
+
+
 def test_bind_release_artifacts_freezes_the_ignored_pdf(tmp_path, monkeypatch):
     import subprocess
 

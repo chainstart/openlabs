@@ -1027,6 +1027,7 @@ def validate_repository(root: str | Path, *, settings: str | Path | None = None)
     except (OSError, ValueError) as exc:
         return {"valid": False, "papers": 0, "errors": [str(exc)], "warnings": []}
     warnings.extend(inventory.get("warnings", []))
+    warnings.extend(config.get("layout_warnings", []))
     for workspace, paper in config.get("papers", {}).items():
         paper_id = str(paper.get("paper_id") or "")
         if not (repo_root / workspace / "manuscript").is_dir():

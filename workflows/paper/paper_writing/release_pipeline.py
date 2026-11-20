@@ -30,7 +30,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from paper_writing.registry import freeze_block_reason, load_paper_metadata, load_registry_settings, paper_metadata_path
+from paper_writing.registry import (freeze_block_reason, load_paper_metadata, load_registry_settings, paper_layout_problems,
+                                    paper_metadata_path)
 from paper_writing.support_policy import effective_publication_mode, publication_policy
 
 STATUS_SCHEMA = "openlabs.release_status.v1"
@@ -278,6 +279,9 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "title": metadata.get("title"),
         # Non-null for a frozen paper: the pipeline must take no step for it.
         "frozen": freeze_block_reason(metadata, paper_id),
+        # Non-empty for a record still laid out relative to a private root; `program adopt`
+        # relocates it (reported, not blocking).
+        "layout_problems": paper_layout_problems(paper_id, metadata),
         "review": review,
         "support": support,
         "issues": issues,

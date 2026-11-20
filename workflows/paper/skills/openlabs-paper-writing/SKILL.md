@@ -25,7 +25,8 @@ prose. Use only the canonical artifacts, never a parallel state file:
 Create a new paper with `paper-writing paper create` (also inside a campaign workspace or a
 private review root). The record keeps `workspace: papers/<paper_id>` and every manuscript,
 PDF and evidence path under `papers/<paper_id>/`; never `workspace: .` or a root-level
-`manuscript/`. The registry loader rejects other layouts, and only this layout is delivered
+`manuscript/`. New records in other layouts are refused (existing ones only warn until
+`program adopt` relocates them), and only this layout is delivered
 from the data repository unchanged. The data and code availability statement names where
 the material is: the archived support record's DOI, a URL, or the journal's supplementary
 material (a delivery-exit check).
