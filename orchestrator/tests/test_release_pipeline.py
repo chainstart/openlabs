@@ -612,3 +612,51 @@ def test_release_retry_resets_an_exhausted_delivery(tmp_path, monkeypatch):
     assert _topic(paths, settings, topic["topic_id"])["handoff"]["attempts"] == 0
     _tick(paths, settings, monkeypatch)
     assert _topic(paths, settings, topic["topic_id"])["handoff"]["status"] == "delivered"
+
+
+# --------------------------------------------------------------------------- layout, artifacts
+
+
+def test_ignored_release_products_are_bound_and_committed_before_delivery(tmp_path, monkeypatch):
+    pdf = f"papers/{PAPER_ID}/manuscript/main.pdf"
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support="not_required",
+                                             paper_extra={"unbound_artifacts": [pdf]})
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert report.errors == [], report.errors
+    assert _commands(log) == ["program release-status", "program bind-release-artifacts",
+                              "program release-status", "program deliver"]
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["handoff"]["status"] == "delivered" and final["handoff"]["attempts"] == 1
+    ready = next(c["sha"] for c in final["release"]["commits"] if c["action"] == "release-ready")
+    assert f"papers/{PAPER_ID}/production/release-artifacts.json" in _commit_files(paths.data, ready)
+    assert "release_artifacts_bound" in _events(db, topic["topic_id"])
+
+
+def test_unsupported_workspace_layout_waits_for_the_owner(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support_release="none")
+    workspace = program_autonomy.asset_library.topic_workspace(db, paths, topic)
+    for relative in (f"registry/papers/{PAPER_ID}.json", f"papers/{PAPER_ID}"):
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        (paths.data / relative).rename(target)
+    (workspace / "LAYOUT-UNSUPPORTED").write_text("x")
+    _ready(paths, db, settings, monkeypatch, topic)
+    release = _topic(paths, settings, topic["topic_id"])["release"]
+    assert release["status"] == "waiting" and release["waiting_for"] == "layout_unsupported"
+    assert release["stage"] == "adopt" and release.get("attempts") == {}
+    assert _commands(log) == ["program adopt"]
+    assert not (paths.data / "registry" / "papers" / f"{PAPER_ID}.json").exists()
+
+
+def test_paper_command_error_keeps_the_json_error_behind_a_stderr_banner(tmp_path, monkeypatch):
+    from openlabs.config import FactorySettings, ProgramSettings
+
+    class Done:
+        returncode, stdout = 1, '{"status": "failed", "error": "Release files are not committed"}'
+        stderr = "OpenLabs resource guard: task-type=cpu\n"
+
+    monkeypatch.setattr(program_autonomy.subprocess, "run", lambda *a, **k: Done())
+    with pytest.raises(program_autonomy.DeliveryError, match="Release files are not committed"):
+        program_autonomy._run_paper_command(
+            type("P", (), {"data": tmp_path})(), FactorySettings(program=ProgramSettings()),
+            ["program", "deliver"])

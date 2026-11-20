@@ -786,7 +786,9 @@ def _verified_journal_source_archive(
     files: list[Path], supplement_source: Path | None,
 ) -> tuple[Path, int] | None:
     package = metadata.get("submission_package")
-    if package is None:
+    # A package that only freezes ignored build products (artifact_manifest) configures no
+    # journal source archive: the canonical source allowlist applies.
+    if package is None or (isinstance(package, Mapping) and set(package) == {"artifact_manifest"}):
         return None
     if (
         not isinstance(package, Mapping)

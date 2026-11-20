@@ -508,7 +508,10 @@ mechanically start each branch in a separate researcher campaign without alterin
 """
 
 
-DECISION_ONLY_TASK_TYPES = frozenset({"direction_decision"})
+# Task types that run no lab code: a direction decision reads evidence and decides; a
+# release format_fix edits manuscript text only (2026-11-20: a physics format_fix became
+# needs_human on "core environment is incomplete" before it started).
+DECISION_ONLY_TASK_TYPES = frozenset({"direction_decision", "format_fix"})
 
 
 def _lab_runtime_setup(
@@ -530,7 +533,7 @@ def _lab_runtime_setup(
         return {
             "schema_version": LAB_RUNTIME_SCHEMA,
             "setups": [],
-            "skipped": "decision-only task runs no lab code",
+            "skipped": "decision-only or text-only task runs no lab code",
         }
     project = task.get("project")
     protocol_id = project.get("protocol_id") if isinstance(project, Mapping) else None

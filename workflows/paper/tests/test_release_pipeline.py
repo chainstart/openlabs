@@ -145,3 +145,40 @@ def test_release_status_cli_prints_one_json_object(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(rp, 'release_status', lambda paper_id, root: {'paper_id': paper_id, 'issues': []})
     assert main(['program', 'release-status', '--paper-id', 'p', '--root', str(tmp_path), '--json']) == 0
     assert json.loads(capsys.readouterr().out) == {'paper_id': 'p', 'issues': []}
+
+
+def test_missing_manuscript_source_needs_the_owner_not_a_writer(tmp_path, monkeypatch):
+    metadata = _status_fixture(tmp_path, monkeypatch, publication={'mode': 'not_required'},
+                               style=['STYLE-MANUSCRIPT-MISSING', 'ABSTRACT-VENUE-FORMAT'])
+    metadata['manuscript_dir'] = 'manuscript'  # laid out relative to another root
+    status = rp.release_status('p', root=tmp_path)
+    assert {i['code']: i['remedy'] for i in status['issues']} == {
+        'MANUSCRIPT-SOURCE-MISSING': 'human', 'STYLE-MANUSCRIPT-MISSING': 'human',
+        'ABSTRACT-VENUE-FORMAT': 'human'}
+    assert status['release_artifacts_unbound'] == []
+
+
+def test_release_status_lists_ignored_release_products_to_bind(tmp_path, monkeypatch):
+    metadata = _status_fixture(tmp_path, monkeypatch, publication={'mode': 'not_required'})
+    (tmp_path / '.gitignore').write_text('**/*.pdf\n**/*.bbl\n')
+    (tmp_path / 'papers/p/manuscript/main.pdf').write_bytes(b'%PDF-1.4\n%%EOF\n')
+    (tmp_path / 'papers/p/manuscript/main.bbl').write_text('\\begin{thebibliography}{0}\\end{thebibliography}\n')
+    from paper_writing import handoff
+    files = [tmp_path / 'papers/p/manuscript/main.tex', tmp_path / 'papers/p/manuscript/main.bbl',
+             tmp_path / 'papers/p/manuscript/main.pdf']
+    monkeypatch.setattr(handoff, '_release_paths', lambda *a: (
+        tmp_path / 'papers/p/manuscript', files[-1], files))
+    assert rp.release_status('p', root=tmp_path)['release_artifacts_unbound'] == [
+        'papers/p/manuscript/main.bbl', 'papers/p/manuscript/main.pdf']
+    metadata['submission_package'] = {'artifact_manifest': {'path': 'x', 'sha256': '0' * 64}}
+    assert rp.release_status('p', root=tmp_path)['release_artifacts_unbound'] == []
+
+
+def test_an_artifact_only_submission_package_configures_no_journal_archive(tmp_path):
+    from paper_writing.handoff import HandoffError, _verified_journal_source_archive
+
+    only = {'submission_package': {'artifact_manifest': {'path': 'x', 'sha256': '0' * 64}}}
+    assert _verified_journal_source_archive(only, tmp_path, tmp_path, [], None) is None
+    with pytest.raises(HandoffError, match='not built'):
+        _verified_journal_source_archive({'submission_package': {'status': 'building'}},
+                                         tmp_path, tmp_path, [], None)

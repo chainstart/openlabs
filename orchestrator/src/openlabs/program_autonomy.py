@@ -1522,7 +1522,10 @@ def _run_paper_command(paths: WorkspacePaths, settings: FactorySettings,
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise DeliveryError(f"{' '.join(command[:3])} could not run: {exc}") from exc
     if completed.returncode not in accept:
-        detail = (completed.stderr or completed.stdout or "").strip()[-800:]
+        # The command's own error is on stdout (one JSON object); stderr may hold only
+        # the resource-guard banner, so stdout comes first.
+        detail = " | ".join(part.strip()[-600:] for part in (completed.stdout, completed.stderr)
+                            if part and part.strip())[-1000:]
         raise DeliveryError(f"exit {completed.returncode}: {detail}")
     try:
         payload = json.loads(completed.stdout)
@@ -1620,6 +1623,14 @@ def run_paper_adopt(paths: WorkspacePaths, settings: FactorySettings, paper_id: 
     for manifest in manifests:
         arguments += ["--artifact-manifest", manifest]
     return _run_paper_command(paths, settings, arguments)
+
+
+def run_release_artifact_binding(paths: WorkspacePaths, settings: FactorySettings,
+                                 paper_id: str) -> dict[str, Any]:
+    """``program bind-release-artifacts``: freeze the ignored release PDF/.bbl."""
+
+    return _run_paper_command(paths, settings,
+                              ["program", "bind-release-artifacts", "--paper-id", paper_id])
 
 
 def run_support_waiver(paths: WorkspacePaths, settings: FactorySettings,
@@ -1948,6 +1959,19 @@ class _ReleasePipeline:
             self.entry("support_published", version_doi=result.get("version_doi"))
             # The DOI/receipt registry update is committed by the next step.
             return True
+        if status.get("release_artifacts_unbound"):
+            # Delivery takes only Git-frozen release files; the ignored PDF/.bbl are
+            # frozen through a committed content-addressed manifest instead.
+            self.stage = "bind_artifacts"
+            result = run_release_artifact_binding(self.paths, self.settings, self.paper_id)
+            if result.get("status") not in {"bound", "not_needed"}:
+                raise ReleaseError("release artifact binding failed: "
+                                   f"{str(result.get('error') or result)[:400]}")
+            self.save("release_artifacts_bound", "ignored_release_files_frozen",
+                      stage=self.stage, status="running",
+                      detail={"files": result.get("files"), "manifest": result.get("manifest")})
+            self.entry("artifacts_bound", files=len(result.get("files") or []))
+            return True
         self.commit(status, "release-ready")
         self.deliver(status)
         return False
@@ -1978,6 +2002,10 @@ class _ReleasePipeline:
         bundle = self.db.result_bundle_path(review_task) if review_task else None
         result = run_paper_adopt(self.paths, self.settings, self.paper_id, workspace,
                                  [bundle] if bundle else [])
+        if result.get("status") == "blocked":
+            raise ReleaseWait("adopt", str(result.get("reason") or "adopt_blocked"), {
+                "detail": str(result.get("detail") or "")[:400], "source": str(workspace),
+                "hint": "the workspace paper cannot be adopted as laid out; the owner decides"})
         if result.get("status") != "adopted":
             raise ReleaseError(f"adopt failed: {str(result.get('error') or result)[:400]}")
         detail = {"source": str(workspace), "review_bundle": bundle,

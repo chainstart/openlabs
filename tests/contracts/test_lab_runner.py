@@ -63,6 +63,14 @@ def test_direction_decision_skips_lab_runtime_setup(tmp_path):
     assert result["setups"] == [] and "decision-only" in result["skipped"]
 
 
+def test_release_format_fix_skips_lab_runtime_setup(tmp_path):
+    runner = _load_runner()
+    manifest = {"runtime_setup": [{"setup_id": "core", "command": ["missing-toolchain"]}]}
+    task = {"lab_manifest": str(tmp_path / "lab.json"), "task_type": "format_fix"}
+    result = runner._lab_runtime_setup(task, manifest, workspace=tmp_path, agent_workspace=tmp_path)
+    assert result["setups"] == [] and "text-only" in result["skipped"]
+
+
 def test_remote_notice_tells_agents_to_yield_instead_of_waiting(tmp_path):
     runner = _load_runner()
     (tmp_path / "config").mkdir()

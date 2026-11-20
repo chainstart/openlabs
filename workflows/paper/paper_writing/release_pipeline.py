@@ -48,6 +48,11 @@ PREPARE_CODES = frozenset({
     # A selected claim-evidence map not (or not identically) in the current-version ZIP.
     "SUPPORT-CLAIM-MAP-UNPACKAGED", "SUPPORT-CLAIM-MAP-PACKAGE-MISMATCH",
 })
+# Problems no text edit can fix: the pipeline waits for the owner instead of a writer.
+HUMAN_CODES = frozenset({"DELIVERY-CHECK-FAILED", "STYLE-MANUSCRIPT-MISSING"})
+# Release build products Git ignores; delivery freezes them through
+# papers/<id>/production/release-artifacts.json (``program bind-release-artifacts``).
+RELEASE_ARTIFACT_SUFFIXES = frozenset({".pdf", ".bbl"})
 # What the writer is told it may touch for each class of problem.
 WRITER_SCOPE = (
     "Fix only the listed delivery-exit formal problems: unresolved TODO/draft markers, "
@@ -101,6 +106,35 @@ def commit_paths(paper_id: str, metadata: Mapping[str, Any], root: Path) -> list
             continue
         paths = [p for p in paths if not p.startswith(f"{relative}/")] + [relative]
     return paths
+
+
+def unbound_release_artifacts(paper_id: str, metadata: Mapping[str, Any], root: Path) -> list[str]:
+    """Release build products (PDF/.bbl) Git ignores and no artifact manifest freezes yet.
+
+    ``handoff release`` requires every release file to be in Git or bound through
+    ``submission_package.artifact_manifest``; an empty list means nothing to bind.
+    """
+    from paper_writing.handoff import _release_paths
+
+    if (metadata.get("submission_package") or {}).get("artifact_manifest"):
+        return []
+    try:
+        manuscript, _, files = _release_paths(paper_id, root, metadata)
+    except Exception:  # noqa: BLE001 - reported by the review/issue checks instead
+        return []
+    candidates = sorted({path.resolve().relative_to(root).as_posix() for path in files
+                         if path.resolve().is_relative_to(manuscript.resolve())
+                         and path.suffix.lower() in RELEASE_ARTIFACT_SUFFIXES})
+    if not candidates:
+        return []
+    tracked = set(_git(root, "ls-files", "--cached", "-z", "--", *candidates).split("\0"))
+    untracked = [item for item in candidates if item not in tracked]
+    if not untracked:
+        return []
+    completed = subprocess.run(["git", "check-ignore", "--", *untracked], cwd=root,
+                               capture_output=True, text=True, check=False)
+    ignored = set(completed.stdout.split())
+    return [item for item in untracked if item in ignored]
 
 
 def _package_stale(metadata: Mapping[str, Any], root: Path) -> str | None:
@@ -206,12 +240,23 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - reported, never guessed around
         raw_issues = [{"source": "release_status", "code": "DELIVERY-CHECK-FAILED", "location": "",
                        "message": str(exc), "text": f"Delivery formal check could not run: {exc}"}]
+    manuscript_dir = repo_root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
+    manuscript_missing = not manuscript_dir.is_dir() or not (manuscript_dir / "main.tex").is_file()
     issues = []
+    if manuscript_missing:
+        # A writer cannot repair a manuscript that is not where the registry points; every
+        # text finding is then a consequence of the missing source.
+        issues.append({"source": "release_status", "code": "MANUSCRIPT-SOURCE-MISSING",
+                       "location": str(metadata.get("manuscript_dir") or ""),
+                       "message": f"the registered manuscript source is missing: {manuscript_dir}",
+                       "text": "MANUSCRIPT-SOURCE-MISSING: the registered manuscript directory "
+                               f"or its main.tex is missing ({manuscript_dir})",
+                       "remedy": "human"})
     for item in raw_issues:
         code = str(item.get("code") or "")
         if code in PREPARE_CODES:
             remedy = "zenodo_prepare" if not support["published"] else "human"
-        elif code == "DELIVERY-CHECK-FAILED":
+        elif code in HUMAN_CODES or manuscript_missing:
             remedy = "human"
         else:
             remedy = "writer"
@@ -239,6 +284,8 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "notes": [{"kind": str(note.get("kind") or ""), "code": str(note.get("code") or ""),
                    "message": str(note.get("message") or note.get("note") or "")} for note in notes],
         "writer_scope": WRITER_SCOPE.replace("<paper_id>", paper_id),
+        "release_artifacts_unbound": ([] if manuscript_missing
+                                      else unbound_release_artifacts(paper_id, metadata, repo_root)),
         "commit_paths": paths,
         "git": git,
         "delivered": bool(delivery.get("package_id")) and str(delivery.get("version") or "") == version,

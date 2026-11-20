@@ -231,6 +231,21 @@ def _restore_pdf(paper_id: str, metadata: Mapping[str, Any], root: Path,
     return None
 
 
+def _layout_problems(paper_id: str, metadata: Mapping[str, Any]) -> list[str]:
+    """Registry paths that do not live in the canonical ``papers/<id>/`` layout."""
+
+    canonical = f"papers/{paper_id}"
+    problems = []
+    workspace = str(metadata.get("workspace") or "").strip().strip("/")
+    if workspace and workspace != canonical:
+        problems.append(f"workspace is {workspace!r}, not {canonical!r}")
+    for key in ("manuscript_dir", "latest_pdf", "latest_source", "latest_supplementary_pdf"):
+        value = str(metadata.get(key) or "").strip()
+        if value and not value.startswith(f"{canonical}/"):
+            problems.append(f"{key} is {value!r}, outside {canonical}/")
+    return problems
+
+
 def adopt(paper_id: str, *, root: str | Path, source: str | Path,
           artifact_manifests: Iterable[str | Path] = ()) -> dict[str, Any]:
     """Copy a workspace paper into the data repository (idempotent; never overwrites)."""
@@ -245,6 +260,14 @@ def adopt(paper_id: str, *, root: str | Path, source: str | Path,
     if target_registry.exists() and target_registry.read_bytes() != source_registry.read_bytes():
         raise AdoptError(f"the data repository already registers {paper_id} with other content")
     metadata = load_paper_metadata(paper_id, workspace)
+    layout = _layout_problems(paper_id, metadata)
+    if layout:
+        # The paper is laid out relative to the workspace root (e.g. ``workspace: .``,
+        # ``manuscript_dir: manuscript``): its registry paths would not resolve in the data
+        # repository, and rewriting them would change the reviewed registry. Copy nothing.
+        return {"schema_version": ADOPT_SCHEMA, "status": "blocked",
+                "reason": "layout_unsupported", "paper_id": paper_id,
+                "source": str(workspace), "detail": "; ".join(layout)[:800]}
     pairs, skipped = _plan_copies(paper_id, metadata, workspace, repo_root)
     pairs.insert(0, (source_registry, target_registry))
     copied = []
@@ -308,3 +331,38 @@ def waive_support(paper_id: str, *, root: str | Path, reason: str,
     support["publication"] = publication
     write_paper_metadata(paper_id, {**metadata, "support": support}, repo_root)
     return {**result, "status": "waived", "mode": "not_required", "reason": reason}
+
+
+RELEASE_BIND_SCHEMA = "openlabs.release_artifact_binding.v1"
+
+
+def bind_release_artifacts(paper_id: str, *, root: str | Path) -> dict[str, Any]:
+    """Freeze the ignored release PDF/.bbl through ``papers/<id>/production/release-artifacts.json``.
+
+    Copies the bytes to the content-addressed ``openlabs-artifacts/paper-support`` store
+    (``support.write_support_artifact_manifest``) and records
+    ``submission_package.artifact_manifest`` in the registry. The manifest and the
+    registry still have to be committed before ``handoff release`` accepts them.
+    """
+
+    from paper_writing.release_pipeline import unbound_release_artifacts
+    from paper_writing.support import write_support_artifact_manifest
+
+    repo_root = Path(root).resolve()
+    metadata = load_paper_metadata(paper_id, repo_root)
+    result = {"schema_version": RELEASE_BIND_SCHEMA, "paper_id": paper_id}
+    files = unbound_release_artifacts(paper_id, metadata, repo_root)
+    if not files:
+        return {**result, "status": "not_needed", "files": []}
+    relative = f"papers/{paper_id}/production/release-artifacts.json"
+    from paper_writing.support import SupportPackageError
+
+    try:
+        manifest = write_support_artifact_manifest(repo_root, files, relative)
+    except SupportPackageError as exc:
+        raise AdoptError(f"release artifacts could not be bound: {exc}") from exc
+    package = dict(metadata.get("submission_package") or {})
+    package["artifact_manifest"] = {"path": relative,
+                                    "sha256": _sha256(manifest.read_bytes())}
+    write_paper_metadata(paper_id, {**metadata, "submission_package": package}, repo_root)
+    return {**result, "status": "bound", "files": files, "manifest": relative}

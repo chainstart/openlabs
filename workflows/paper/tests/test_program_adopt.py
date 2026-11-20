@@ -195,3 +195,48 @@ def test_waive_support_refuses_an_existing_record(tmp_path):
     path.write_text(yaml.safe_dump(metadata))
     result = waive_support(PAPER, root=tmp_path, reason="r", decided_by="d")
     assert result["status"] == "blocked" and result["reason"] == "support_record_exists"
+
+
+def test_adopt_refuses_a_workspace_root_layout_and_copies_nothing(tmp_path):
+    workspace, data = tmp_path / "workspace", tmp_path / "data"
+    data.mkdir()
+    _workspace(workspace)
+    path = workspace / "registry/papers" / f"{PAPER}.yaml"
+    metadata = yaml.safe_load(path.read_text())
+    metadata.update({"workspace": ".", "manuscript_dir": "manuscript",
+                     "latest_pdf": "manuscript/main.pdf"})
+    path.write_text(yaml.safe_dump(metadata))
+    result = adopt(PAPER, root=data, source=workspace)
+    assert result["status"] == "blocked" and result["reason"] == "layout_unsupported"
+    assert "manuscript_dir" in result["detail"] and "workspace" in result["detail"]
+    assert list(data.iterdir()) == []
+
+
+def test_bind_release_artifacts_freezes_the_ignored_pdf(tmp_path, monkeypatch):
+    import subprocess
+
+    from paper_writing import handoff
+    from paper_writing.program_adopt import bind_release_artifacts
+
+    root = tmp_path / "openlabs-data"
+    _workspace(root)
+    manuscript = root / "papers" / PAPER / "manuscript"
+    (manuscript / "main.pdf").write_bytes(b"%PDF-1.4\nreviewed\n%%EOF\n")
+    (root / ".gitignore").write_text("**/*.pdf\n")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=T", "-c", "user.email=t@t",
+                    "commit", "-qm", "base"], check=True)
+    files = [manuscript / "main.tex", manuscript / "references.bib", manuscript / "main.pdf"]
+    monkeypatch.setattr(handoff, "_release_paths", lambda *a: (manuscript, files[-1], files))
+    result = bind_release_artifacts(PAPER, root=root)
+    assert result["status"] == "bound" and result["files"] == [f"papers/{PAPER}/manuscript/main.pdf"]
+    manifest = root / result["manifest"]
+    entry = json.loads(manifest.read_text())["files"][0]
+    stored = tmp_path / "openlabs-artifacts" / "paper-support" / "sha256" / entry["sha256"] / "main.pdf"
+    assert stored.read_bytes() == (manuscript / "main.pdf").read_bytes()
+    package = yaml.safe_load((root / "registry/papers" / f"{PAPER}.yaml").read_text())[
+        "submission_package"]
+    assert package == {"artifact_manifest": {"path": result["manifest"],
+                                             "sha256": _sha(manifest.read_bytes())}}
+    assert bind_release_artifacts(PAPER, root=root)["status"] == "not_needed"

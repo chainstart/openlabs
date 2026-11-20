@@ -58,6 +58,10 @@ def main(argv: list[str]) -> int:
     if command == "program adopt":
         # The paper lives in the campaign workspace: copy it (registry + paper tree).
         source = Path(args.source)
+        if (source / "LAYOUT-UNSUPPORTED").is_file():
+            print(json.dumps({"status": "blocked", "reason": "layout_unsupported",
+                              "detail": "manuscript_dir is 'manuscript', outside papers/<id>/"}))
+            return 0
         if not (source / "registry" / "papers" / f"{args.paper_id}.json").is_file():
             print(json.dumps({"status": "failed", "error": "no workspace registry record"}))
             return 1
@@ -100,10 +104,22 @@ def main(argv: list[str]) -> int:
                         "standing_production_release_authorization": paper["authorization"]},
             "issues": paper["issues"], "notes": paper.get("notes", []),
             "writer_scope": "Fix only the listed problems.",
+            "release_artifacts_unbound": paper.get("unbound_artifacts", []),
             "commit_paths": _paths(root, args.paper_id),
             "git": {"dirty": _git_dirty(root, _paths(root, args.paper_id))},
             "delivered": bool(paper.get("delivery")), "delivery": paper.get("delivery"),
         }))
+        return 0
+    if command == "program bind-release-artifacts":
+        assert not external
+        files = paper.pop("unbound_artifacts", [])
+        manifest = root / "papers" / args.paper_id / "production" / "release-artifacts.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({"files": files}))
+        paper["submission_package"] = {"artifact_manifest": {"path": str(manifest.relative_to(root))}}
+        save()
+        print(json.dumps({"status": "bound" if files else "not_needed", "files": files,
+                          "manifest": str(manifest.relative_to(root))}))
         return 0
     if command == "program waive-support":
         assert not external and args.reason and args.decided_by
@@ -165,6 +181,10 @@ def main(argv: list[str]) -> int:
     if command == "program deliver":
         assert external
         dirty = _git_dirty(root, _paths(root, args.paper_id))
+        if paper.get("unbound_artifacts"):
+            print(json.dumps({"status": "failed",
+                              "error": "Release files are not committed to Git"}))
+            return 1
         if dirty or paper["issues"] or support["status"] not in {"published", "not_required"}:
             print(json.dumps({"status": "failed", "error": f"not deliverable: {dirty}"}))
             return 1
