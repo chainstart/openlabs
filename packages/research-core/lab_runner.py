@@ -1357,9 +1357,22 @@ def _claude_startup_health(path: Path) -> tuple[int, bool, bool]:
 
 
 def _jsonl_runtime(path: Path) -> dict[str, Any]:
+    """Session id, model and token usage of one agent process from its JSONL stream.
+
+    Codex ``turn.completed`` usage is the thread's running total: the last event wins.
+    A Claude process emits one ``result`` event per stretch of work - a Stop hook that
+    blocks the first stop starts another - and each carries only that stretch's usage
+    (2026-11-20: a 95-minute recompute review recorded 154 output tokens, the last
+    stretch, of about 84 000), so Claude ``result`` usage is summed over the process;
+    ``result_segments`` says how many there were. ``total_cost_usd`` is already the
+    process total.
+    """
+
     runtime: dict[str, Any] = {}
     if not path.is_file():
         return runtime
+    sums: dict[str, int] = {}
+    segments = 0
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             event = json.loads(line)
@@ -1376,40 +1389,50 @@ def _jsonl_runtime(path: Path) -> dict[str, Any]:
                 runtime[key] = value
         usage = event.get("usage")
         if isinstance(usage, Mapping):
-            for key in (
-                "input_tokens",
-                "cached_input_tokens",
-                "output_tokens",
-                "reasoning_output_tokens",
-            ):
-                value = usage.get(key)
-                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-                    runtime[key] = value
-            # Claude stream-json ``result`` usage names its cache reads differently.
-            cache_read = usage.get("cache_read_input_tokens")
-            if (
-                "cached_input_tokens" not in usage
-                and isinstance(cache_read, int)
-                and not isinstance(cache_read, bool)
-                and cache_read >= 0
-            ):
-                runtime["cached_input_tokens"] = cache_read
-            # Claude cache writes (priced separately; a resumed session rewrites its
-            # whole context once the cache has expired).
-            cache_write = usage.get("cache_creation_input_tokens")
-            if isinstance(cache_write, int) and not isinstance(cache_write, bool) and (
-                cache_write >= 0
-            ):
-                runtime["cache_write_input_tokens"] = cache_write
-                detail = usage.get("cache_creation")
-                hour = detail.get("ephemeral_1h_input_tokens") if isinstance(
-                    detail, Mapping) else None
-                if isinstance(hour, int) and not isinstance(hour, bool) and hour >= 0:
-                    runtime["cache_write_1h_input_tokens"] = hour
+            found = _usage_counters(usage)
+            runtime.update(found)
+            if event.get("type") == "result":
+                segments += 1
+                for key, value in found.items():
+                    sums[key] = sums.get(key, 0) + value
         total_cost = event.get("total_cost_usd")
         if isinstance(total_cost, (int, float)) and not isinstance(total_cost, bool):
             runtime["cost_usd"] = total_cost
+    if segments:
+        runtime.update(sums)
+        runtime["result_segments"] = segments
     return runtime
+
+
+def _usage_counters(usage: Mapping[str, Any]) -> dict[str, int]:
+    """Token counters of one usage block (Codex and Claude spellings)."""
+
+    def count(value: Any) -> int | None:
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+        return None
+
+    found: dict[str, int] = {}
+    for key in ("input_tokens", "cached_input_tokens", "output_tokens",
+                "reasoning_output_tokens"):
+        value = count(usage.get(key))
+        if value is not None:
+            found[key] = value
+    # Claude stream-json ``result`` usage names its cache reads differently.
+    cache_read = count(usage.get("cache_read_input_tokens"))
+    if "cached_input_tokens" not in usage and cache_read is not None:
+        found["cached_input_tokens"] = cache_read
+    # Claude cache writes (priced separately; a resumed session rewrites its whole
+    # context once the cache has expired).
+    cache_write = count(usage.get("cache_creation_input_tokens"))
+    if cache_write is not None:
+        found["cache_write_input_tokens"] = cache_write
+        detail = usage.get("cache_creation")
+        hour = count(detail.get("ephemeral_1h_input_tokens")) if isinstance(
+            detail, Mapping) else None
+        if hour is not None:
+            found["cache_write_1h_input_tokens"] = hour
+    return found
 
 
 def _hook_runtime(path: Path, *, agent_workspace: Path) -> dict[str, Any]:

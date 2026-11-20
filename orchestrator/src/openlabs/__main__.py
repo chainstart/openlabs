@@ -206,6 +206,15 @@ def _parser() -> argparse.ArgumentParser:
     release_retry.add_argument("--paper-id", required=True)
     release_retry.add_argument("--reason", required=True, help="What was resolved")
     release_retry.add_argument("--by", required=True, help="Who resolved it (provenance)")
+    reconcile = program_commands.add_parser(
+        "reconcile",
+        help="List ledger/task drift (delivered papers still in review, parked legacy topics, "
+        "orphaned needs_human, historical needs_replan) with the proposed change and its "
+        "basis. Read-only unless --apply, which writes through the transition functions",
+    )
+    reconcile.add_argument("--apply", action="store_true",
+                           help="Carry the listed changes out (default: dry run)")
+    reconcile.add_argument("--json", action="store_true", help="JSON instead of the text list")
     revisable = program_commands.add_parser(
         "mark-revisable",
         help="Record that a judged rejection's defect is fixable, so the program schedules one "
@@ -519,6 +528,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
+    if args.command == "program" and args.program_command == "reconcile":
+        from . import program_reconcile
+        from .utilization import ReadOnlyFactoryDB
+
+        if not paths.database_file.is_file():
+            print(json.dumps({"status": "failed", "error": "no database at "
+                              f"{paths.database_file}"}, ensure_ascii=False), file=sys.stderr)
+            return 1
+        settings = load_settings(paths)
+        planned = program_reconcile.plan(ReadOnlyFactoryDB(paths.database_file), paths, settings)
+        if not args.apply:
+            if args.json:
+                print(json.dumps(planned, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(program_reconcile.render(planned), end="")
+            return 0
+        db = FactoryDB(paths.database_file)
+        result = program_reconcile.apply(db, paths, settings, planned)
+        print(json.dumps({**result, "counts": planned.get("counts")}, ensure_ascii=False,
+                         indent=2, sort_keys=True))
+        return 1 if result["errors"] else 0
     if args.command == "program" and args.program_command == "utilization":
         # Read-only: the database is opened with mode=ro and nothing is created.
         from .utilization import ReadOnlyFactoryDB, utilization_report

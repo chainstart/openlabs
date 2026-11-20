@@ -1897,6 +1897,35 @@ class FactoryDB:
                 self._event(connection, "task", task_id, event_type, dict(detail or {}))
         return bool(changed)
 
+    def close_needs_human(self, task_id: str, *, reason: str,
+                          detail: Mapping[str, Any] | None = None) -> bool:
+        """Close an orphaned ``needs_human`` record (``program reconcile --apply``).
+
+        Only a task still ``needs_human`` changes: it becomes ``cancelled`` with the
+        reason in front of its last error, which is kept; the task row, its attempts and
+        its result stay. One ``needs_human_closed`` event records the prior error.
+        """
+
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT last_error FROM tasks WHERE task_id=? AND status='needs_human'",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            previous = str(row["last_error"] or "")
+            connection.execute(
+                "UPDATE tasks SET status='cancelled', last_error=?, updated_at=? "
+                "WHERE task_id=? AND status='needs_human'",
+                (f"closed_by_reconcile: {reason}" + (f" | was: {previous}" if previous else ""),
+                 now, task_id),
+            )
+            self._event(connection, "task", task_id, "needs_human_closed",
+                        {"reason": reason, "previous_error": previous, **dict(detail or {})})
+        return True
+
     def reassign_queued_task(
         self,
         task_id: str,

@@ -786,7 +786,8 @@ def utilization_report(
     try:
         from . import usage as usage_accounting
 
-        payload["token_cost"] = usage_accounting.token_cost_summary(db, settings, now=moment)
+        payload["token_cost"] = usage_accounting.token_cost_summary(
+            db, settings, now=moment, data_root=paths.data)
         payload["topic_economics"] = usage_accounting.topic_economics(
             db, paths, settings, now=moment)
     except Exception as exc:  # noqa: BLE001 - the cost view is advisory.

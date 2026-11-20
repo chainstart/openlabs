@@ -24,6 +24,17 @@ The streak is the number of consecutive most-recent no-progress tasks. From
 (``no_progress_backoff_minutes``, last value repeats, counted from the last finish);
 at ``no_progress_escalate_after`` they stop as ``needs_human`` (``no_progress_circuit``),
 which also stops continuous replenishment of the campaign until a human acts.
+
+Same-state stalls (2026-11-20). The owner breaker's no-progress streak is reset by a
+direction decision or a review request, so a decision that changes nothing let the same
+loop run again (topic-943f53cf: three decisions in one day). :func:`state_signature` is
+the one definition of "the topic is where it was": owner seats record it
+(``owner.record_seat``: ``signature``, ``signature_streak``, reset only when the signature
+changes) and ``owner.after_result`` escalates on it (``[factory].stall_signature_repeats``,
+``stall_seats_after_decision``). :func:`stuck_report` puts all four guards - owner breaker,
+same-state stall, this module's campaign streak, the replan backoff - into one tick
+report list (``program.stuck_topics``) and lists every non-terminal ledger topic without
+an executable next step (``program.topics_without_next_step``).
 """
 
 from __future__ import annotations
@@ -48,6 +59,33 @@ FINISHED_STATUSES = ("succeeded", "needs_replan", "needs_human", "failed", "quar
 SOURCE_KINDS = ("source", "input")
 CIRCUIT_ERROR = "no_progress_circuit"
 HISTORY_LIMIT = 60
+# Fields of a state signature (see :func:`state_signature`).
+SIGNATURE_FIELDS = ("task_class", "phase", "status", "digest", "jobs", "review_stage",
+                    "review_round", "writing", "ledger")
+SIGNATURE_VERSION = 1
+
+
+def state_signature(fields: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    """``(sha256, normalized fields)`` of where a topic stands after one task.
+
+    Only control-plane facts: task class, declared phase, packet status, the digest of
+    the research files (bookkeeping excluded, ``owner.workspace_digest``), the job ids
+    the result names, review stage and round, the writer record's status, the ledger
+    status. Summaries, timestamps and task ids are never part of it, so a rewritten
+    summary or a refreshed log is the same state.
+    """
+
+    normalized: dict[str, Any] = {}
+    for key in SIGNATURE_FIELDS:
+        value = fields.get(key)
+        if isinstance(value, (list, tuple, set, frozenset)):
+            value = sorted({str(item) for item in value})
+        elif value is not None and not isinstance(value, (str, int, float, bool)):
+            value = str(value)
+        normalized[key] = value
+    digest = hashlib.sha256(json.dumps({"v": SIGNATURE_VERSION, **normalized},
+                                       sort_keys=True).encode()).hexdigest()
+    return digest, normalized
 
 
 def _now() -> datetime:
@@ -319,3 +357,129 @@ def idle_metrics(
         for key in ("attempts", "zero_output", "agent_hours", "zero_output_agent_hours")
     }
     return {"window_hours": hours, "since": since, "by_task_type": by_type, "total": total}
+
+
+# --------------------------------------------------------------------------- one report
+
+LIVE_STATUSES = ("queued", "leased", "running", "awaiting_remote")
+NON_TERMINAL_TOPIC_STATUSES = ("admitted", "active", "in_review", "ready_queue")
+# The engine's replan backoff starts at this many consecutive needs_replan results.
+REPLAN_STUCK_AFTER = 3
+
+
+def stuck_report(
+    db: FactoryDB,
+    paths: Any,
+    settings: FactorySettings,
+    *,
+    guard_actions: list[Mapping[str, Any]] | None = None,
+    now: datetime | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """``{"stuck_topics": [...], "topics_without_next_step": [...]}`` for the tick report.
+
+    ``stuck_topics`` gathers every guard in one list, each row with its ``source``:
+    ``same_state`` (owner seats with an unchanged :func:`state_signature`; ``stopped`` when
+    no further seat is queued), ``owner_no_progress`` (the owner breaker's streak),
+    ``campaign_no_progress`` (this module's backoff/circuit, from ``guard_actions``) and
+    ``replan_backoff`` (consecutive needs_replan). ``topics_without_next_step`` lists
+    the ledger topics in admitted/active/in_review/ready_queue with nothing that would move
+    them: no live task, no pending direction decision, no delivery step or human
+    confirmation ahead (a paused or missing campaign, a stalled owner, an exhausted
+    release, an admitted card never materialized within ``reconcile_stale_days``).
+    """
+
+    from . import owner as owner_mode
+    from .program import open_topic_ledger
+    from .program_autonomy import pending_decision
+
+    moment = now or _now()
+    stuck: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    document = open_topic_ledger(paths, settings.program).read()
+    marks = ",".join("?" for _ in LIVE_STATUSES)
+    with db.connect() as connection:
+        live = {str(row[0]): int(row[1]) for row in connection.execute(
+            f"SELECT campaign_id, COUNT(*) FROM tasks WHERE status IN ({marks}) "  # noqa: S608
+            "GROUP BY campaign_id", LIVE_STATUSES).fetchall()}
+        campaigns = {str(row[0]): str(row[1]) for row in connection.execute(
+            "SELECT campaign_id, status FROM campaigns").fetchall()}
+    repeats = settings.stall_signature_repeats
+    stale = timedelta(days=settings.program.reconcile_stale_days)
+    for topic in document.get("topics") or []:
+        status = str(topic.get("status") or "")
+        if status not in NON_TERMINAL_TOPIC_STATUSES:
+            continue
+        topic_id = str(topic.get("topic_id") or "")
+        campaign_id = str(topic.get("campaign_id") or "")
+        base = {"topic_id": topic_id, "campaign_id": campaign_id or None, "status": status}
+        state = owner_mode.owner_state(db, campaign_id) if campaign_id else {}
+        stall = owner_mode.stalled(state)
+        streak = int(state.get("signature_streak") or 0)
+        if stall is not None:
+            stuck.append({**base, "source": "same_state", "action": "stopped",
+                          "since": stall.get("stopped_at"), "signature_streak": streak,
+                          "state": dict(state.get("signature_fields") or {}),
+                          "decision_task": stall.get("decision_task")})
+        elif repeats and streak >= repeats:
+            stuck.append({**base, "source": "same_state", "action": "watching",
+                          "signature_streak": streak,
+                          "state": dict(state.get("signature_fields") or {})})
+        if int(state.get("no_progress_streak") or 0) >= 2:
+            stuck.append({**base, "source": "owner_no_progress",
+                          "no_progress_streak": int(state.get("no_progress_streak") or 0),
+                          "threshold": settings.program.owner.no_progress_seats})
+        reason = _missing_next_step(db, topic, campaigns, live, stall, pending_decision,
+                                    moment=moment, stale=stale)
+        if reason is not None:
+            missing.append({**base, "reason": reason,
+                            "campaign_status": campaigns.get(campaign_id)})
+    for action in guard_actions or []:
+        stuck.append({"campaign_id": action.get("campaign_id"), "source": "campaign_no_progress",
+                      "action": action.get("reason"),
+                      "consecutive_no_progress": action.get("consecutive_no_progress"),
+                      "last_task_type": action.get("last_task_type")})
+    for campaign_id, campaign_status in sorted(campaigns.items()):
+        if campaign_status != "active":
+            continue
+        replans = db.replan_streak(campaign_id)
+        if replans >= REPLAN_STUCK_AFTER:
+            stuck.append({"campaign_id": campaign_id, "source": "replan_backoff",
+                          "consecutive_needs_replan": replans})
+    return {"stuck_topics": stuck, "topics_without_next_step": missing}
+
+
+def _missing_next_step(
+    db: FactoryDB,
+    topic: Mapping[str, Any],
+    campaigns: Mapping[str, str],
+    live: Mapping[str, int],
+    stall: Mapping[str, Any] | None,
+    pending_decision: Any,
+    *,
+    moment: datetime,
+    stale: timedelta,
+) -> str | None:
+    """Why a non-terminal topic has no executable next step, or None when it has one."""
+
+    status = str(topic.get("status") or "")
+    campaign_id = str(topic.get("campaign_id") or "")
+    if status == "ready_queue":
+        release = topic.get("release") if isinstance(topic.get("release"), Mapping) else {}
+        handoff = topic.get("handoff") if isinstance(topic.get("handoff"), Mapping) else {}
+        if "exhausted" in {str(release.get("status") or ""), str(handoff.get("status") or "")}:
+            return "release_exhausted"
+        return None  # the delivery pipeline, then a human confirmation
+    if campaign_id and live.get(campaign_id):
+        return None
+    if campaign_id and pending_decision(db, campaign_id) is not None:
+        return None
+    if not campaign_id or campaign_id not in campaigns:
+        admitted = _parse(str(topic.get("admitted_at") or ""))
+        if status == "admitted" and admitted is not None and moment - admitted < stale:
+            return None  # waits for its materialization slot
+        return "no_campaign"
+    if campaigns[campaign_id] != "active":
+        return f"campaign_{campaigns[campaign_id]}"
+    if stall is not None:
+        return "owner_stalled"
+    return "no_live_task"

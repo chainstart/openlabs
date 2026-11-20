@@ -23,6 +23,15 @@ launch_jobs = true
 no_progress_backoff_after = 4
 no_progress_escalate_after = 8
 no_progress_backoff_minutes = [60, 240, 1440]
+# Same-state stalls (spin_guard.state_signature, 2026-11-20): an owner seat's state -
+# phase, packet status, research-file digest, job ids, review stage, writer, ledger
+# status - unchanged and without progress this many seats in a row (direction decisions
+# do not reset the count) schedules one direction decision with a diagnosis; still the
+# same stall_seats_after_decision seats after it, the topic gets no further seat and is
+# listed under program.stuck_topics until its workspace or ledger status changes.
+# 0 disables it. The tick report also lists program.topics_without_next_step.
+stall_signature_repeats = 6
+stall_seats_after_decision = 3
 # User rule 2026-11-18: large downloads through the proxy route (a file >= 200 MB or a
 # batch >= 1 GB) only in the off-peak window; `--route auto` is not limited. Claude
 # production sessions get a PreToolUse hook enforcing it; Codex sessions only with
@@ -146,6 +155,11 @@ handoff_max_attempts = 3
 # ARA_PAPER_MANAGE_API_URL, ARA_PAPER_MANAGE_API_KEY and ZENODO_ACCESS_TOKEN are read,
 # and only into the delivery / Zenodo child process; the environment still wins.
 # credentials_file = "/path/outside/git/pipeline-credentials.env"
+# `program reconcile` (dry run by default; --apply writes through the transition
+# functions) and the tick's next-step check: a topic or task record untouched this many
+# days is stale (parked legacy topic -> archived as frozen/legacy_archived, orphaned
+# needs_human -> closed, admitted card never materialized -> reported).
+reconcile_stale_days = 5
 # false: the pipeline stops before the first Zenodo write (zenodo prepare /
 # zenodo release) and marks the paper as waiting for a human. true: it runs them
 # on production, but only while settings.yaml#support_publication.

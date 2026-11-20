@@ -1279,10 +1279,14 @@ def reuse_cost_comparison(db: FactoryDB, paths: WorkspacePaths,
             users.setdefault(str(user), set()).add(str(asset["asset_id"]))
     with db.connect() as connection:
         rows = connection.execute(
-            "SELECT tasks.campaign_id, tasks.task_id, task_attempts.run_seconds, "
-            "task_attempts.runtime_json, task_attempts.status FROM task_attempts "
+            "SELECT tasks.campaign_id, tasks.task_id, task_attempts.attempt_id, "
+            "task_attempts.run_seconds, task_attempts.runtime_json, task_attempts.status "
+            "FROM task_attempts "
             "JOIN tasks USING(task_id) WHERE task_attempts.finished_at IS NOT NULL"
         ).fetchall()
+    from .usage import normalized_runtimes
+
+    normalized = normalized_runtimes(db)
     per_campaign: dict[str, dict[str, Any]] = {}
     for row in rows:
         stats = per_campaign.setdefault(str(row["campaign_id"]), {
@@ -1293,10 +1297,13 @@ def reuse_cost_comparison(db: FactoryDB, paths: WorkspacePaths,
         stats["tasks"].add(str(row["task_id"]))
         stats["attempts"] += 1
         stats["run_seconds"] += float(row["run_seconds"] or 0.0)
-        try:
-            runtime = json.loads(str(row["runtime_json"] or "{}"))
-        except json.JSONDecodeError:
-            runtime = {}
+        # Per-attempt increments, not session totals of resumed sessions (usage.py).
+        runtime = normalized.get(str(row["attempt_id"]))
+        if runtime is None:
+            try:
+                runtime = json.loads(str(row["runtime_json"] or "{}"))
+            except json.JSONDecodeError:
+                runtime = {}
         for name in TOKEN_KEYS:
             value = runtime.get(name) if isinstance(runtime, dict) else None
             if isinstance(value, int) and not isinstance(value, bool):

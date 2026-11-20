@@ -4267,8 +4267,20 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
         report.idle_metrics = metrics if metrics["by_task_type"] else {}
     except Exception as exc:  # noqa: BLE001 - reporting only
         report.errors.append(f"idle metrics failed: {exc}")
+    if settings.program.enabled:
+        # One list for every spin guard, and every open topic without a next step.
+        try:
+            stuck = spin_guard.stuck_report(db, paths, settings,
+                                            guard_actions=report.no_progress_guard)
+        except Exception as exc:  # noqa: BLE001 - reporting only
+            report.errors.append(f"stuck-topic report failed: {exc}")
+        else:
+            if stuck["stuck_topics"]:
+                report.program.setdefault("stuck_topics", []).extend(stuck["stuck_topics"])
+            if stuck["topics_without_next_step"]:
+                report.program["topics_without_next_step"] = stuck["topics_without_next_step"]
     try:
-        cost = usage_accounting.token_cost_summary(db, settings)
+        cost = usage_accounting.token_cost_summary(db, settings, data_root=paths.data)
         report.token_cost = cost if cost["by_task_type"] else {}
         economics = usage_accounting.topic_economics(db, paths, settings)
         report.topic_economics = economics if economics.get("topics") or economics.get(

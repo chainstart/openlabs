@@ -65,6 +65,7 @@ from pathlib import Path
 from typing import Any
 
 from . import budget as budget_control
+from . import spin_guard
 from .config import OWNER_TASK_TYPE, FactorySettings, WorkspacePaths, dispatch_runner
 from .contracts import (
     IDENTIFIER,
@@ -106,6 +107,8 @@ ROUTING_RETRY = "owner_retry"
 ROUTING_WRITING = "owner_writing_handover"
 WRITING_ACTIVE = "active"
 WRITING_FALLBACK = "fallback"
+# The owner writes the manuscript itself (recorded once, see ``settle_owner_writing``).
+WRITING_OWNER = "owner"
 # A writing seat over the writer's slot limit is re-checked this often.
 _WRITING_SLOT_RECHECK_MINUTES = 15
 RECOMPUTE_PACKET_SCHEMA = "openlabs.recompute_review_packet.v1"
@@ -146,6 +149,8 @@ _MAX_REMEMBERED_ARTIFACTS = 2000
 # Version of the workspace-digest definition (2: bookkeeping excluded).
 DIGEST_VERSION = 2
 _LINEAGE_LIMIT = 500
+# Last seats kept in the owner state for a stall diagnosis.
+_RECENT_SEATS = 6
 
 
 # --------------------------------------------------------------------------- switch
@@ -842,6 +847,57 @@ def writer_provider(db: FactoryDB, settings: FactorySettings, campaign_id: str) 
     return spec.provider if spec is not None else None
 
 
+# Plans of :func:`writing_plan` (who writes this topic's manuscript).
+PLAN_WRITER = "writer"
+PLAN_FALLBACK = "fallback"
+PLAN_HANDOVER = "handover"
+PLAN_OWNER = "owner"
+# Owner-writes reasons that need no word in the brief (the owner writes as before 11-19,
+# or a writer holds the topic and this is another seat, e.g. a direction step).
+_SILENT_OWNER_REASONS = frozenset({"writer_is_owner", "writer_unknown", "writer_seat_elsewhere"})
+
+
+def writing_plan(settings: FactorySettings, state: Mapping[str, Any],
+                 runner: str) -> tuple[str | None, str]:
+    """Who writes the manuscript of a topic whose seat runs on ``runner``: (plan, why).
+
+    The one place both the brief and the hand-over read (2026-11-20: they disagreed, so a
+    topic with review history was told to hand over while no writer seat was ever
+    created). ``None`` when no writer is configured (the owner writes, as before
+    2026-11-19). ``handover``: the owner solves and hands over once the research is done;
+    ``owner``: the owner writes itself - the topic was handed to the owner explicitly, a
+    manuscript is already in review or revision, the owner began writing before, the
+    writer is this seat's own runner or not a configured runner. It depends only on the
+    configured runner names, never on the model family.
+    """
+
+    writer = settings.program.owner.writing_runner
+    writing = state.get("writing") if isinstance(state.get("writing"), Mapping) else {}
+    status = str(writing.get("status") or "")
+    if status == WRITING_ACTIVE:
+        if settings.runners and str(writing.get("runner") or "") not in settings.runners:
+            # The writer runner was removed from the configuration: the seat's runner writes.
+            return PLAN_OWNER, "writer_removed"
+        if runner == str(writing.get("runner") or ""):
+            return PLAN_WRITER, "handed_over"
+        return PLAN_OWNER, "writer_seat_elsewhere"
+    if status == WRITING_FALLBACK:
+        return PLAN_FALLBACK, str(writing.get("fallback_reason") or "writer_unavailable")
+    if status == WRITING_OWNER:
+        return PLAN_OWNER, str(writing.get("reason") or "recorded")
+    if not writer:
+        return None, "no_writer"
+    if writer not in settings.runners:
+        return PLAN_OWNER, "writer_unknown"
+    if runner == writer:
+        return PLAN_OWNER, "writer_is_owner"
+    if _history(state) or state.get("review_round") or state.get("review_stage"):
+        return PLAN_OWNER, "review_history"
+    if str(state.get("phase") or "") == "writing":
+        return PLAN_OWNER, "already_writing"
+    return PLAN_HANDOVER, "research_not_done"
+
+
 def writing_switch_due(
     settings: FactorySettings,
     before: Mapping[str, Any],
@@ -854,17 +910,14 @@ def writing_switch_due(
 
     The switch point is the first promoted seat whose packet says the research is done:
     ``phase: writing`` (status ``continuing``), or a ``ready_for_review`` before any
-    review. Never when the writer is unset or unknown, the seat already ran on the
-    writer, the topic was handed over (or fell back) before, the topic had already
-    declared ``phase: writing`` before this seat (its manuscript was begun by the
-    owner, e.g. before the setting existed), or a review round exists (a manuscript by
-    another model is in review or revision): those topics keep their writer.
+    review - and only while :func:`writing_plan` says ``handover``. Every other plan
+    keeps the current writer (the owner writes, see :func:`owner_writes_note`).
     """
 
-    writer = settings.program.owner.writing_runner
-    if not writer or not successful or writer not in settings.runners:
+    if not successful:
         return None
-    if str(task.get("runner") or "") == writer or before.get("writing"):
+    plan, _why = writing_plan(settings, before, str(task.get("runner") or ""))
+    if plan != PLAN_HANDOVER:
         return None
     status = str(packet.get("status") or "").strip().lower()
     phase = str(packet.get("phase") or "").strip().lower()
@@ -872,11 +925,56 @@ def writing_switch_due(
         return None
     if phase != "writing" and status != "ready_for_review":
         return None
-    if str(before.get("phase") or "") == "writing":
-        return None
-    if _history(before) or before.get("review_round") or before.get("review_stage"):
-        return None
     return "phase_writing" if phase == "writing" else "ready_for_review"
+
+
+_OWNER_WRITES_WHY = {
+    "review_history": "a manuscript of this topic is already in review or revision",
+    "already_writing": "you began the manuscript before the writer setting",
+    "writer_is_owner": "the configured writer is your own runner",
+    "writer_unknown": "the configured writer is not a known runner",
+    "writer_seat_elsewhere": "the writer holds the topic",
+    "writer_removed": "the writer this topic was handed to is no longer configured",
+    "recorded": "recorded earlier",
+}
+
+
+def owner_writes_note(why: str) -> str:
+    return (f"You write this topic's manuscript and every revision yourself "
+            f"({_OWNER_WRITES_WHY.get(why, why)}); no writer seat will take it over. Do not "
+            "end a seat waiting for a hand-over.")
+
+
+def settle_owner_writing(
+    db: FactoryDB, paths: WorkspacePaths | None, settings: FactorySettings,
+    *, task: Mapping[str, Any], state: Mapping[str, Any],
+) -> str | None:
+    """Record once that the owner writes (plan ``owner`` without a record); the reason.
+
+    ``state`` is the owner state before the seat (the same view the hand-over decides on).
+    Silent reasons (the writer is this seat's own runner, unknown, or holds the topic) are
+    not recorded: a later configuration may still hand the topic over.
+
+    Makes the decision explicit and sticky: the owner state says ``writing.status =
+    owner`` and the topic's ledger history has a note, so neither the brief nor a later
+    seat can expect a hand-over that will not come.
+    """
+
+    runner = str(task.get("runner") or "")
+    plan, why = writing_plan(settings, state, runner)
+    if plan != PLAN_OWNER or why == "recorded" or why in _SILENT_OWNER_REASONS:
+        return None
+    campaign_id = str(task["campaign_id"])
+    record = {"status": WRITING_OWNER, "runner": runner, "reason": why,
+              "writer_configured": settings.program.owner.writing_runner,
+              "decided_by": str(task.get("task_id") or ""), "at": utc_now()}
+    if isinstance(state.get("writing"), Mapping) and state.get("writing"):
+        record["previous"] = dict(state["writing"])
+    update_state(db, campaign_id, "owner_writes_manuscript", record, writing=record)
+    _topic_note(paths, settings, db, campaign_id, event_type="writing_owner",
+                reason=f"the owner {runner} writes the manuscript ({why})",
+                decided_by=str(task.get("task_id") or ""), detail=record)
+    return why
 
 
 def _topic_note(paths: WorkspacePaths | None, settings: FactorySettings, db: FactoryDB,
@@ -1139,8 +1237,13 @@ def record_seat(
     promoted: bool,
     handover_max_bytes: int = 8_192,
     short_seat_seconds: int = 0,
+    ledger_status: str | None = None,
 ) -> dict[str, Any]:
-    """Update the no-progress streak of a topic after one finished seat.
+    """Update the no-progress streak and the state signature after one finished seat.
+
+    The state signature (:func:`spin_guard.state_signature`) and its streak
+    (``signature_streak``: consecutive seats with the same signature) are reset only by a
+    different signature, never by a direction decision or a review request.
 
     Progress (the streak resets) only through substantive output: the promoted
     workspace's research files changed (bookkeeping excluded, :func:`is_bookkeeping`),
@@ -1200,6 +1303,30 @@ def record_seat(
         reasons.append(f"status_{packet_status}")
     streak = 0 if reasons else int(state.get("no_progress_streak") or 0) + 1
     remembered = list(dict.fromkeys([*(state.get("artifact_hashes") or []), *new_hashes]))
+    writing = state.get("writing") if isinstance(state.get("writing"), Mapping) else {}
+    jobs = [str(item) for item in packet.get("job_ids") or []
+            if isinstance(item, (str, int))] if isinstance(packet.get("job_ids"), list) else []
+    signature, fields = spin_guard.state_signature({
+        "task_class": OWNER_TASK_TYPE,
+        "phase": phase if promoted and phase in OWNER_PHASES else state.get("phase"),
+        "status": packet_status if promoted and packet_status else final_status,
+        "digest": digest if digest is not None else state.get("digest"),
+        "jobs": jobs,
+        "review_stage": state.get("review_stage"),
+        "review_round": state.get("review_round"),
+        "writing": writing.get("status"),
+        "ledger": ledger_status,
+    })
+    # A seat with substantive output (new artifact outside the workspace, finished or new
+    # jobs, ...) is never "the same state", even when the fields above did not change.
+    same = signature == state.get("signature") and not reasons
+    signature_streak = int(state.get("signature_streak") or 0) + 1 if same else 1
+    recent = [*(state.get("recent_seats") or [])[-(_RECENT_SEATS - 1):], {
+        "task_id": str(task["task_id"]), "status": packet_status or final_status,
+        "phase": phase or None, "progress": reasons,
+        "note": _short(packet.get("next_step") or packet.get("resume_note")
+                       or payload.get("summary") or "", 300) or None,
+    }]
     updated = {
         **state,
         "digest": digest if digest is not None else state.get("digest"),
@@ -1212,13 +1339,20 @@ def record_seat(
         "last_runner": str(task.get("runner") or ""),
         "last_progress": reasons,
         "artifact_hashes": remembered[-_MAX_REMEMBERED_ARTIFACTS:],
-        "phase": phase if phase in OWNER_PHASES else state.get("phase"),
+        # Only a promoted seat moves the phase (an unaccepted "writing" would otherwise
+        # count as "already writing" and block the writer hand-over).
+        "phase": phase if promoted and phase in OWNER_PHASES else state.get("phase"),
         "handover": handover,
+        "signature": signature,
+        "signature_fields": fields,
+        "signature_streak": signature_streak,
+        "recent_seats": recent,
         "updated_at": utc_now(),
     }
     _store_state(db, campaign_id, updated, ("owner_seat_recorded", {
         "task_id": str(task["task_id"]), "final_status": final_status,
         "progress": reasons, "no_progress_streak": streak,
+        "signature": signature, "signature_streak": signature_streak,
         "run_seconds": run_seconds, "short_seat": short,
         "handover": handover or None,
     }))
@@ -1369,6 +1503,132 @@ def _breaker(
                 "threshold": settings.program.owner.no_progress_seats},
     )
     return scheduled is not None
+
+
+TRIGGER_STALLED = "owner_stalled"
+
+
+def _ledger_status(paths: WorkspacePaths | None, settings: FactorySettings,
+                   campaign_id: str) -> str | None:
+    if paths is None:
+        return None
+    try:
+        topic = _topic(paths, settings, campaign_id)
+    except Exception:  # noqa: BLE001 - the signature then lacks the ledger status.
+        return None
+    return str(topic.get("status") or "") or None if topic else None
+
+
+def stall_diagnosis(settings: FactorySettings, state: Mapping[str, Any],
+                    task: Mapping[str, Any]) -> dict[str, Any]:
+    """What a direction decision (or a human) needs to see about a same-state stall."""
+
+    plan, why = writing_plan(settings, state, str(task.get("runner") or ""))
+    return {
+        "signature": state.get("signature"),
+        "signature_streak": int(state.get("signature_streak") or 0),
+        "state": dict(state.get("signature_fields") or {}),
+        "no_progress_streak": int(state.get("no_progress_streak") or 0),
+        "recent_seats": list(state.get("recent_seats") or []),
+        "writing_plan": {"plan": plan, "why": why,
+                         "writer_configured": settings.program.owner.writing_runner},
+        "last_runner": str(task.get("runner") or ""),
+    }
+
+
+def _diagnosis_text(diagnosis: Mapping[str, Any]) -> str:
+    fields = diagnosis.get("state") or {}
+    notes = [str(item.get("note")) for item in diagnosis.get("recent_seats") or []
+             if isinstance(item, Mapping) and item.get("note")]
+    plan = diagnosis.get("writing_plan") or {}
+    return _short(
+        f"The topic stayed in the same state for {diagnosis.get('signature_streak')} owner "
+        f"seats in a row (phase {fields.get('phase')}, status {fields.get('status')}, ledger "
+        f"{fields.get('ledger')}, review stage {fields.get('review_stage')}, writer "
+        f"{fields.get('writing')}; research files unchanged, no new jobs), across earlier "
+        f"decisions. Writing plan: {plan.get('plan')} ({plan.get('why')}). The seats kept "
+        f"saying: {' | '.join(dict.fromkeys(notes)) or 'nothing'}. Decide a step that changes "
+        "the state (who acts next and on what), or freeze.", 1_800)
+
+
+def stalled(state: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The stall record when the topic gets no further seat, else None."""
+
+    stall = state.get("stall")
+    if isinstance(stall, Mapping) and stall.get("stopped") and (
+        stall.get("signature") == state.get("signature")
+    ):
+        return dict(stall)
+    return None
+
+
+def _stall(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    report: Any,
+    *,
+    task: Mapping[str, Any],
+    state: Mapping[str, Any],
+    result_path: Path,
+    result_sha256: str,
+) -> bool:
+    """Same-state stall: one direction decision with a diagnosis, then no more seats.
+
+    True when the next seat must not be queued (a decision was scheduled, or the topic
+    stopped); False leaves the ordinary path (breaker, backoff, next seat) in charge.
+    """
+
+    from .program_autonomy import pending_decision, schedule_direction_decision
+
+    repeats = settings.stall_signature_repeats
+    streak = int(state.get("signature_streak") or 0)
+    if repeats <= 0 or streak < repeats:
+        return False
+    campaign_id = str(task["campaign_id"])
+    signature = str(state.get("signature") or "")
+    stall = dict(state.get("stall") or {}) if isinstance(state.get("stall"), Mapping) else {}
+    diagnosis = stall_diagnosis(settings, state, task)
+    entry = {"campaign_id": campaign_id, "source": "same_state", "task_id": str(task["task_id"]),
+             "signature_streak": streak, "state": diagnosis["state"]}
+    if stall.get("signature") != signature or not stall.get("decision_task"):
+        if pending_decision(db, campaign_id) is not None:
+            return False
+        topic = _topic(paths, settings, campaign_id)
+        scheduled = None
+        if topic is not None:
+            scheduled = schedule_direction_decision(
+                db, paths, settings, report, topic=topic, trigger=TRIGGER_STALLED,
+                source_task_id=str(task["task_id"]),
+                evidence=[{"path": str(result_path), "sha256": result_sha256}],
+                reasons=[_diagnosis_text(diagnosis)], detail=diagnosis)
+        if scheduled is not None:
+            update_state(db, campaign_id, "owner_stall_decision",
+                         {"task_id": str(task["task_id"]), "decision": scheduled,
+                          "signature_streak": streak},
+                         stall={"signature": signature, "decision_task": scheduled,
+                                "decided_at_streak": streak, "at": utc_now()})
+            report.program.setdefault("stuck_topics", []).append(
+                {**entry, "action": "direction_decision", "decision": scheduled})
+            return True
+        stall = {"signature": signature, "decided_at_streak": streak}
+    if streak < int(stall.get("decided_at_streak") or 0) + settings.stall_seats_after_decision \
+            and stall.get("decision_task"):
+        return False
+    campaign = db.campaign(campaign_id) or {}
+    root = Path(str(campaign["state_path"])) if campaign.get("state_path") else None
+    record = {**stall, "signature": signature, "stopped": True, "stopped_at": utc_now(),
+              "diagnosis": diagnosis, "ledger": diagnosis["state"].get("ledger"),
+              # The canonical workspace as it stood: any change there lifts the stop.
+              "canonical_digest": workspace_digest(root)}
+    update_state(db, campaign_id, "owner_stalled",
+                 {"task_id": str(task["task_id"]), "signature_streak": streak}, stall=record)
+    _topic_note(paths, settings, db, campaign_id, event_type="owner_stalled",
+                reason=_diagnosis_text(diagnosis), decided_by=str(task["task_id"]),
+                detail={"signature": signature, "signature_streak": streak,
+                        "decision_task": stall.get("decision_task")})
+    report.program.setdefault("stuck_topics", []).append({**entry, "action": "stopped"})
+    return True
 
 
 def _recompute_context(state: Mapping[str, Any]) -> str:
@@ -1890,9 +2150,12 @@ def after_result(
         # unless the breaker sends the topic to a direction decision.
         state = record_seat(db, task=task, payload=payload, final_status=final_status,
                             workspace_root=workspace_root, promoted=False,
-                            handover_max_bytes=limit, short_seat_seconds=short_limit)
-        _breaker(db, paths, settings, report, task=task, state=state,
-                 result_path=result_path, result_sha256=result_sha256)
+                            handover_max_bytes=limit, short_seat_seconds=short_limit,
+                            ledger_status=_ledger_status(paths, settings, str(task["campaign_id"])))
+        if not _stall(db, paths, settings, report, task=task, state=state,
+                      result_path=result_path, result_sha256=result_sha256):
+            _breaker(db, paths, settings, report, task=task, state=state,
+                     result_path=result_path, result_sha256=result_sha256)
         return True
     if final_status in {"queued", "needs_human", "quarantined", "failed", "cancelled"}:
         # Retried as is, or stopped: the direction decision (needs_human) or the
@@ -1936,12 +2199,18 @@ def after_result(
     before = owner_state(db, str(task["campaign_id"]))
     state = record_seat(db, task=task, payload=payload, final_status=final_status,
                         workspace_root=workspace_root, promoted=successful,
-                        handover_max_bytes=limit, short_seat_seconds=short_limit)
+                        handover_max_bytes=limit, short_seat_seconds=short_limit,
+                        ledger_status=_ledger_status(paths, settings, str(task["campaign_id"])))
     trigger = writing_switch_due(settings, before, packet, task, successful=successful)
     if trigger is not None:
         start_writing(db, paths, settings, report, task=task, campaign=campaign,
                       trigger=trigger, result_path=result_path)
         return True
+    # No hand-over: when the owner writes, say so once and for good (never both unset).
+    owner_writes = settle_owner_writing(db, paths, settings, task=task,
+                                        state=before) if successful else None
+    if owner_writes is not None:
+        state = owner_state(db, str(task["campaign_id"]))
     status = str(packet.get("status") or "")
     if successful and status == "ready_for_review":
         verdict = str(packet.get("primary_endpoint_verdict") or "").strip().lower()
@@ -1971,6 +2240,9 @@ def after_result(
         _enqueue_review(db, paths, settings, report, task=task, packet=packet,
                         result_path=result_path)
         return True
+    if _stall(db, paths, settings, report, task=task, state=state,
+              result_path=result_path, result_sha256=result_sha256):
+        return True
     if _breaker(db, paths, settings, report, task=task,
                 state={**state, "summary": payload.get("summary")},
                 result_path=result_path, result_sha256=result_sha256):
@@ -1985,6 +2257,12 @@ def after_result(
     if successful:
         note = str(packet.get("resume_note") or packet.get("next_step") or "").strip() or (
             "Continue owning the topic from where the last seat stopped (your work log).")
+        plan, why = writing_plan(settings, state, str(task.get("runner") or ""))
+        if plan == PLAN_OWNER and why not in _SILENT_OWNER_REASONS and (
+            str(packet.get("phase") or "").strip().lower() == "writing"
+        ):
+            # The seat may still expect a hand-over (an older brief): it will not come.
+            note = owner_writes_note(why) + " " + note
         enqueue_seat(db, settings, report, campaign=campaign, parent=task, note=note,
                      routing_reason=ROUTING_CONTINUE, input_path=str(result_path),
                      not_before=wait)
@@ -2011,8 +2289,27 @@ def replenish(
     campaign: Mapping[str, Any],
     latest: Mapping[str, Any] | None,
 ) -> None:
-    """An owner-mode topic with nothing queued or running gets its next seat."""
+    """An owner-mode topic with nothing queued or running gets its next seat.
 
+    Not while the topic is stopped on a same-state stall (:func:`stalled`): it waits until
+    its research files or its ledger status change (a human or another process acted).
+    """
+
+    campaign_id = str(campaign["campaign_id"])
+    stall = stalled(owner_state(db, campaign_id))
+    if stall is not None:
+        root = Path(str(campaign.get("state_path") or "")) if campaign.get("state_path") else None
+        current = workspace_digest(root)
+        ledger = _ledger_status(paths, settings, campaign_id)
+        changed = current is not None and current != stall.get("canonical_digest")
+        if not changed and ledger == stall.get("ledger"):
+            report.production_blocked.append(
+                {"campaign_id": campaign_id, "reason": "owner_stalled",
+                 "since": str(stall.get("stopped_at") or "")})
+            return
+        update_state(db, campaign_id, "owner_stall_cleared",
+                     {"digest_changed": changed, "ledger": ledger, "was": stall.get("ledger")},
+                     stall=None, signature_streak=0)
     if latest is None:
         note = "Start owning this admitted topic."
         routing = ROUTING_FIRST
@@ -2399,6 +2696,7 @@ def render_brief(
     deadline: datetime,
     handover: str | None = None,
     writing: Mapping[str, Any] | None = None,
+    state: Mapping[str, Any] | None = None,
 ) -> str:
     """The owner's whole brief: goal, resources, tools, hard limits (about 4 KB)."""
 
@@ -2520,7 +2818,7 @@ def render_brief(
         "- Frozen for a line-level fact? Add `reopen_when` (CODE/orchestrator/src/openlabs/"
         "reopen.py): all true -> reopened once, same pre-registration.",
     ]
-    role = writing_brief_lines(settings, task=task, writing=writing)
+    role = writing_brief_lines(settings, task=task, writing=writing, state=state)
     if role:
         lines += ["", "## Writing", *role]
     if handover:
@@ -2529,22 +2827,32 @@ def render_brief(
 
 
 def writing_brief_lines(settings: FactorySettings, *, task: Mapping[str, Any],
-                        writing: Mapping[str, Any] | None) -> list[str]:
-    """Who writes the manuscript, and what the owner hands over (writing_runner set)."""
+                        writing: Mapping[str, Any] | None,
+                        state: Mapping[str, Any] | None = None) -> list[str]:
+    """Who writes the manuscript, and what the owner hands over (writing_runner set).
+
+    Reads :func:`writing_plan`, the same decision the hand-over uses, so the brief never
+    promises a writer seat the control plane will not create. ``state`` is the owner
+    state (review history, declared phase); without it only ``writing`` is known.
+    """
 
     owner = settings.program.owner
     writer = owner.writing_runner
     writing = writing or {}
     runner = str(task.get("runner") or "")
-    if writing.get("status") == WRITING_ACTIVE and runner == writing.get("runner"):
+    plan, why = writing_plan(settings, {**dict(state or {}), "writing": writing}, runner)
+    if plan == PLAN_WRITER:
         return [f"You are this topic's writer (research by {writing.get('solver_runner')}): write "
                 "the whole manuscript yourself and every revision after review, until delivery. "
                 "Do not split the writing among models. Plan the figures in the story line and "
                 "draw them with `paper-writing figures`."]
-    if writing.get("status") == WRITING_FALLBACK:
+    if plan == PLAN_FALLBACK:
         return [f"The writer {writing.get('runner')} could not start for "
                 f"{owner.writing_wait_hours:g} h; you write the manuscript and its revisions."]
-    if not writer or writing or runner == writer or writer not in settings.runners:
+    if plan == PLAN_OWNER:
+        # A writer runner equal to this seat's, or unknown: the owner writes as before.
+        return [] if why in _SILENT_OWNER_REASONS else [owner_writes_note(why)]
+    if plan != PLAN_HANDOVER:
         return []
     return [
         f"{writer} writes this topic's manuscript (user decision 2026-11-19). When the research "
@@ -2656,7 +2964,8 @@ def spec_block(
         request = render_brief(paths, settings, task={**spec_view, "runner": task.get("runner")},
                                campaign=campaign, topic=topic, adapter_family=family,
                                deadline=deadline, handover=handover,
-                               writing=writing_state(db, str(campaign["campaign_id"])))
+                               writing=writing_state(db, str(campaign["campaign_id"])),
+                               state=owner_state(db, str(campaign["campaign_id"])))
         brief_file = Path(where["brief"])
         if brief_file.parent.is_dir():
             brief_file.write_text(request, encoding="utf-8")

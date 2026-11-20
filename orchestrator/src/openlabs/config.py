@@ -232,6 +232,11 @@ class ProgramSettings:
     # 0600 or stricter (otherwise ignored, and the pipeline waits for credentials). The
     # process environment still wins over the file. None: environment only.
     credentials_file: str | None = None
+    # Ledger reconciliation (``program reconcile``, program_reconcile.py) and the tick's
+    # next-step check: a topic or task untouched this many days counts as stale (a parked
+    # legacy topic is archived, an orphaned needs_human record closed, an admitted card
+    # never materialized is reported without a next step).
+    reconcile_stale_days: float = 5.0
     # Release pipeline (runs while auto_handoff is on): publish the Zenodo support
     # material (prepare/release) on the standing production authorization of
     # registry/settings.yaml#support_publication. False: stop before the first
@@ -864,6 +869,14 @@ class FactorySettings:
     no_progress_backoff_after: int = 4
     no_progress_escalate_after: int = 8
     no_progress_backoff_minutes: tuple[int, ...] = (60, 240, 1440)
+    # Same-state stall detection (spin_guard.state_signature, 2026-11-20). A seat's state
+    # signature (phase, packet status, research-file digest, job ids, review stage,
+    # writer, ledger status) repeated this many seats in a row schedules one direction
+    # decision with a diagnosis; still unchanged stall_seats_after_decision seats after
+    # that decision, the topic gets no further seat (reported under stuck_topics) until
+    # its workspace or ledger status changes. 0 disables it.
+    stall_signature_repeats: int = 6
+    stall_seats_after_decision: int = 3
     archive_result_receipts: bool = True
     # User rule 2026-11-18: large proxy-route downloads only 02:00-14:00 Asia/Shanghai
     # ([factory] proxy_download_*; download_window.py).
@@ -1285,6 +1298,7 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         handoff_max_attempts=_positive_int(program.get("handoff_max_attempts"), 3),
         credentials_file=_optional_path_text(program.get("credentials_file"),
                                              "[program].credentials_file"),
+        reconcile_stale_days=_positive_float(program.get("reconcile_stale_days"), 5.0),
         auto_release=program.get("auto_release", False) is True,
         support_release=_support_release(program.get("support_release")),
         support_none_reason=_nonempty_text(program.get("support_none_reason"),
@@ -1818,6 +1832,8 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
             _minutes_sequence(factory.get("no_progress_backoff_minutes"))
             if factory.get("no_progress_backoff_minutes") is not None else (60, 240, 1440)
         ),
+        stall_signature_repeats=_nonnegative_int(factory.get("stall_signature_repeats"), 6),
+        stall_seats_after_decision=_positive_int(factory.get("stall_seats_after_decision"), 3),
         archive_result_receipts=bool(retention.get("archive_result_receipts", True)),
         proxy_download=load_window(factory),
         max_cpu_fraction_of_host=_fraction(resources.get("max_cpu_fraction_of_host"), 0.75),

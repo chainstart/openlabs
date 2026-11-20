@@ -17,6 +17,18 @@ under ``usage_session_base`` and the top-level keys become the difference
 History is never rewritten; the readers here apply the same correction on the fly
 to older rows (:func:`normalized_attempts`).
 
+Corrections of 2026-11-20 (W3, maintenance/20261120-pipeline-overhaul/W3-notes.md):
+
+* a Claude process that went on after a blocked Stop hook emitted several ``result``
+  events, each with only its own stretch's usage, and the lab runner kept the last one
+  (a 95-minute review recorded 154 output tokens). New attempts sum them
+  (``result_segments``); for older ones the token counts are lost, so their equivalent
+  cost is the CLI's own process cost (``cost_usd`` increment) whenever that is higher than
+  the token-priced figure (``cost_from_cli_attempts`` counts them);
+* the unified review's reviewer processes (``paper_writing.review_launcher``) are not
+  agent attempts; their use is read from the review run's role directories
+  (:func:`external_review_usage`) and added to the ``paper_review`` rows and totals here.
+
 Equivalent cost uses ``[reporting.prices]`` (USD per million tokens, the cost review's
 list prices by default). It is a list-price equivalent, not a bill: subscriptions are
 paid by quota. The runtime has one model per attempt, so all of an attempt's tokens are
@@ -213,6 +225,12 @@ def normalized_attempts(db: FactoryDB, *, campaign_ids: Iterable[str] | None = N
     return result
 
 
+def normalized_runtimes(db: FactoryDB) -> dict[str, dict[str, Any]]:
+    """``{attempt_id: incremental runtime}`` for every attempt (:func:`normalized_attempts`)."""
+
+    return {str(item["attempt_id"]): item["runtime"] for item in normalized_attempts(db)}
+
+
 def tokens_read(runtime: Mapping[str, Any]) -> int:
     """Input tokens the model read in this attempt (uncached + cached + cache writes)."""
 
@@ -269,19 +287,29 @@ def attempt_figures(item: Mapping[str, Any], settings: FactorySettings) -> dict[
     model = _model(runtime, settings, item.get("runner"))
     cost = equivalent_cost(runtime, _price(settings.reporting.prices, model))
     has_usage = any(_number(runtime.get(key)) for key in TOKEN_KEYS)
+    usd = cost if has_usage else (0.0 if cost is not None else None)
+    from_cli = False
+    cli = _number(runtime.get("cost_usd"))
+    if (str(runtime.get("adapter") or "") == "claude" and not runtime.get("result_segments")
+            and cli is not None and cli > (usd or 0.0)):
+        # Recorded before the result events were summed: the token counts may hold only
+        # the last stretch of the process; the CLI's process cost does not.
+        usd, from_cli = float(cli), True
     return {
         "model": model,
         "tokens_read": tokens_read(runtime),
         "output_tokens": int(_number(runtime.get("output_tokens")) or 0),
-        "equivalent_usd": cost if has_usage else (0.0 if cost is not None else None),
-        "has_usage": has_usage,
+        "equivalent_usd": usd,
+        "has_usage": has_usage or from_cli,
+        "cost_from_cli": from_cli,
         "agent_seconds": float(item.get("run_seconds") or 0.0),
     }
 
 
 def _empty() -> dict[str, Any]:
     return {"attempts": 0, "agent_hours": 0.0, "tokens_read": 0, "output_tokens": 0,
-            "equivalent_usd": 0.0, "unpriced_attempts": 0}
+            "equivalent_usd": 0.0, "unpriced_attempts": 0, "cost_from_cli_attempts": 0,
+            "external_review_roles": 0, "codex_tokens_unsplit": 0}
 
 
 def _add(entry: dict[str, Any], figures: Mapping[str, Any]) -> None:
@@ -289,11 +317,24 @@ def _add(entry: dict[str, Any], figures: Mapping[str, Any]) -> None:
     entry["agent_hours"] += figures["agent_seconds"] / 3600
     entry["tokens_read"] += figures["tokens_read"]
     entry["output_tokens"] += figures["output_tokens"]
+    entry["cost_from_cli_attempts"] += int(bool(figures.get("cost_from_cli")))
     if figures["equivalent_usd"] is None:
         if figures["has_usage"]:
             entry["unpriced_attempts"] += 1
     else:
         entry["equivalent_usd"] += figures["equivalent_usd"]
+
+
+def _add_external(entry: dict[str, Any], roles: Iterable[Mapping[str, Any]]) -> None:
+    """Reviewer processes of one unified review (not attempts: no attempt count)."""
+
+    for role in roles:
+        entry["external_review_roles"] += 1
+        entry["tokens_read"] += int(role.get("tokens_read") or 0)
+        entry["output_tokens"] += int(role.get("output_tokens") or 0)
+        entry["codex_tokens_unsplit"] += int(role.get("tokens_total_unsplit") or 0)
+        if role.get("equivalent_usd") is not None:
+            entry["equivalent_usd"] += float(role["equivalent_usd"])
 
 
 def _rounded(entry: Mapping[str, Any]) -> dict[str, Any]:
@@ -303,9 +344,124 @@ def _rounded(entry: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+# --------------------------------------------------------------------------- reviewers
+
+
+def _claude_stream_usage(text: str) -> dict[str, Any] | None:
+    """Summed ``result`` usage and the last ``total_cost_usd`` of a Claude stream-json run."""
+
+    found: dict[str, Any] = {}
+    segments = 0
+    for line in text.splitlines():
+        if '"result"' not in line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, Mapping) or event.get("type") != "result":
+            continue
+        segments += 1
+        usage = event.get("usage") if isinstance(event.get("usage"), Mapping) else {}
+        for source, key in (("input_tokens", "input_tokens"),
+                            ("cache_read_input_tokens", "cached_input_tokens"),
+                            ("cache_creation_input_tokens", "cache_write_input_tokens"),
+                            ("output_tokens", "output_tokens")):
+            value = _number(usage.get(source))
+            if value is not None:
+                found[key] = int(found.get(key, 0) + value)
+        cost = _number(event.get("total_cost_usd"))
+        if cost is not None:
+            found["cost_usd"] = float(cost)
+    return found if segments else None
+
+
+def _codex_tokens(stderr: str) -> int | None:
+    """The ``tokens used`` total ``codex exec`` prints at the end (no input/output split)."""
+
+    lines = [line.strip() for line in stderr.splitlines()]
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].lower() == "tokens used" and index + 1 < len(lines):
+            digits = lines[index + 1].replace(",", "")
+            if digits.isdigit():
+                return int(digits)
+    return None
+
+
+def external_review_usage(data_root: Path, decision_record: Any) -> list[dict[str, Any]]:
+    """Use of the reviewer processes of one unified-review run, one row per role.
+
+    ``decision_record`` is the review result's ``review_outcome.decision_record`` (relative
+    to the data repository); its directory holds one folder per role with the process's
+    ``stdout.txt``/``stderr.txt`` and ``receipt.json``. Claude roles: summed result usage and
+    the CLI cost; Codex roles: the printed total only (``tokens_total_unsplit``, unpriced).
+    """
+
+    relative = str(decision_record or "").strip()
+    if not relative:
+        return []
+    root = Path(data_root).resolve()
+    run_dir = (root / relative).resolve().parent
+    if not run_dir.is_relative_to((root / "reviews").resolve()) or not run_dir.is_dir():
+        return []
+    rows: list[dict[str, Any]] = []
+    for receipt_path in sorted(run_dir.glob("*/receipt.json")):
+        receipt = _read_json(receipt_path)
+        role_dir = receipt_path.parent
+        tool = str(receipt.get("tool") or "").lower()
+        row: dict[str, Any] = {"role": receipt.get("role") or role_dir.name,
+                               "model": receipt.get("model"),
+                               "provider": receipt.get("provider")}
+        try:
+            stdout = (role_dir / "stdout.txt").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            stdout = ""
+        claude = _claude_stream_usage(stdout) if "codex" not in tool else None
+        if claude is not None:
+            runtime = {"adapter": "claude", **claude}
+            row.update(tokens_read=tokens_read(runtime),
+                       output_tokens=int(claude.get("output_tokens") or 0),
+                       equivalent_usd=claude.get("cost_usd"))
+        else:
+            try:
+                stderr = (role_dir / "stderr.txt").read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                stderr = ""
+            total = _codex_tokens(stderr)
+            if total is None:
+                continue
+            row.update(tokens_total_unsplit=total, equivalent_usd=None)
+        rows.append(row)
+    return rows
+
+
+def _review_runs(db: FactoryDB, data_root: Path | None) -> dict[str, list[dict[str, Any]]]:
+    """``{paper_review task id: reviewer rows}`` for succeeded reviews with a run record."""
+
+    if data_root is None:
+        return {}
+    with db.connect() as connection:
+        rows = connection.execute(
+            "SELECT task_id, result_path FROM tasks WHERE task_type='paper_review' "
+            "AND status='succeeded' AND result_path IS NOT NULL"
+        ).fetchall()
+    result: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        outcome = _read_json(Path(str(row["result_path"]))).get("review_outcome")
+        if not isinstance(outcome, Mapping):
+            continue
+        try:
+            roles = external_review_usage(data_root, outcome.get("decision_record"))
+        except OSError:
+            continue
+        if roles:
+            result[str(row["task_id"])] = roles
+    return result
+
+
 def token_cost_summary(
     db: FactoryDB, settings: FactorySettings, *, now: datetime | None = None,
-    hours: int | None = None,
+    hours: int | None = None, data_root: Path | None = None,
 ) -> dict[str, Any]:
     """Tokens and equivalent cost per task type over the last ``hours`` (finished attempts)."""
 
@@ -314,16 +470,24 @@ def token_cost_summary(
     since = moment - timedelta(hours=window)
     by_type: dict[str, dict[str, Any]] = {}
     total = _empty()
+    reviews = _review_runs(db, data_root)
     for item in normalized_attempts(db):
         finished = _parse_time(item.get("finished_at"))
         if finished is None or finished < since or str(item.get("status")) == "quota_deferred":
             continue
         figures = attempt_figures(item, settings)
-        _add(by_type.setdefault(str(item.get("task_type") or ""), _empty()), figures)
+        entry = by_type.setdefault(str(item.get("task_type") or ""), _empty())
+        _add(entry, figures)
         _add(total, figures)
+        # A review's reviewer processes count once, with its first attempt in the window.
+        roles = reviews.pop(str(item.get("task_id") or ""), [])
+        _add_external(entry, roles)
+        _add_external(total, roles)
     return {
         "window_hours": window, "since": _iso(since),
-        "basis": "list-price equivalent, USD; per-attempt increments",
+        "basis": ("list-price equivalent, USD; per-attempt increments; Claude result stretches "
+                  "summed (older Claude attempts: CLI process cost where higher); unified-review "
+                  "reviewer processes included (Codex reviewers: unsplit token totals, unpriced)"),
         "by_task_type": {key: _rounded(value) for key, value in sorted(by_type.items())},
         "total": _rounded(total),
     }
@@ -482,6 +646,7 @@ def topic_economics(
     since = _parse_time(settings.reporting.economics_since)
     rows_by_campaign: dict[str, list[dict[str, Any]]] = {}
     loaded = _empty()
+    reviews = _review_runs(db, paths.data)
     for item in normalized_attempts(db):
         finished = _parse_time(item.get("finished_at"))
         # Finished attempts only: a seat counts once it has run.
@@ -489,8 +654,11 @@ def topic_economics(
             continue
         if str(item.get("status")) == "quota_deferred":
             continue
-        rows_by_campaign.setdefault(str(item.get("campaign_id") or ""), []).append(item)
+        roles = reviews.pop(str(item.get("task_id") or ""), [])
+        rows_by_campaign.setdefault(str(item.get("campaign_id") or ""), []).append(
+            {**item, "external_roles": roles})
         _add(loaded, attempt_figures(item, settings))
+        _add_external(loaded, roles)
     live = [topic for topic in topics if str(topic.get("status")) in {"active", "in_review"}]
     ready = [topic for topic in topics if str(topic.get("status")) in READY_STATUSES
              and (since is None or (_parse_time(_ready_at(topic)) or since) >= since)]
@@ -505,6 +673,7 @@ def topic_economics(
         seats = 0
         for item in rows_by_campaign.get(campaign_id, []):
             _add(entry, attempt_figures(item, settings))
+            _add_external(entry, item.get("external_roles") or [])
             seats += int(str(item.get("task_type")) == OWNER_TASK_TYPE)
         rows.append({
             "topic_id": topic.get("topic_id"), "campaign_id": campaign_id,
@@ -519,6 +688,7 @@ def topic_economics(
         campaign_id = str(topic["campaign_id"])
         for item in rows_by_campaign.get(campaign_id, []):
             _add(direct, attempt_figures(item, settings))
+            _add_external(direct, item.get("external_roles") or [])
         direct_core += core_hours.get(campaign_id, 0.0)
     count = len(ready)
     return {
@@ -547,7 +717,9 @@ __all__ = [
     "attempt_figures",
     "campaign_core_hours",
     "equivalent_cost",
+    "external_review_usage",
     "normalized_attempts",
+    "normalized_runtimes",
     "record_increment",
     "to_increment",
     "token_cost_summary",

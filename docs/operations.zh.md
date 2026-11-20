@@ -398,6 +398,14 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   `program utilization` 的 `providers.<p>.dispatch_allowed` 给出控制面按任务类别能否派发（`signal`
   只是配速预测，不是停工指令）；scout 用上面的空抽退避。已有的 replan 退避
   （30 分钟翻倍、6 小时封顶）保留，现在由本保险在第 8 次封住。
+- **同状态停派与统一报告**（2026-11-20，W3）。负责人坐席每次结束都会记录状态签名（`spin_guard.state_signature`）。签名字段为：phase、状态包 status、研究文件摘要、job id、review stage/round、写作者记录、台账状态。签名不变且无实质产出时计数加 1，方向决策和评审请求都不清零。
+  - 连续 `[factory].stall_signature_repeats` 次（默认 6）：安排一次带诊断的方向决策，trigger 为 `owner_stalled`。诊断包含签名字段、最近几次坐席的 next_step 和写作计划。
+  - 决策后仍不变 `stall_seats_after_decision` 次（默认 3）：不再派坐席，补种也跳过。owner_state 记 `stall.stopped`，台账写备注 `owner_stalled`。
+  - 解除：规范工作区的研究文件或台账状态一有变化就自动解除，事件 `owner_stall_cleared`。
+  - tick 报告的 `program.stuck_topics` 汇总四道防护，每行注明 `source`：`same_state`、`owner_no_progress`、`campaign_no_progress`、`replan_backoff`。
+  - `program.topics_without_next_step` 列出所有非终态台账课题中没有可执行下一步的，原因包括 campaign 暂停、campaign 缺失、负责人停派、交付流水线 exhausted、无活任务。
+  - 写作者切换（同日修复）：简报与切换共用 `owner.writing_plan`。有评审历史或已在写的课题明确由负责人自己写，记 `writing.status = owner`，并写台账备注 `writing_owner`。写作者与负责人是同一 runner 时照旧由负责人写。
+- **台账对账**（2026-11-20）：`python3 -m openlabs program reconcile` 默认只读，列出每个课题或任务记录的现状态、建议状态和依据。加 `--apply` 才通过 `transition_topic`、`freeze_topic`、`mark_topic_delivered`、`close_needs_human` 写入，规则见 `program_reconcile.py`。停滞判据为 `[program].reconcile_stale_days`（默认 5 天）。
 - **空转指标**：每个 tick 报告带 `idle_metrics`：最近 24 小时每个任务类型的 `attempts`、`zero_output`
   （任务按上面的口径无进展；scout 为无有效卡片）、`agent_hours` 与 `zero_output_agent_hours`，以及合计。
   例：`tail -1 state/ticks.jsonl | jq .report.idle_metrics`。

@@ -105,7 +105,9 @@ def test_topic_already_writing_or_in_review_keeps_its_writer(tmp_path, monkeypat
                  artifact=True)
     _tick(paths, settings, monkeypatch)
     assert _latest(db, topic["campaign_id"])["runner"] == "worker_gpt"
-    assert owner.writing_state(db, topic["campaign_id"]) == {}
+    # 2026-11-20: the owner keeps writing, and that is now recorded (never left implicit).
+    writing = owner.writing_state(db, topic["campaign_id"])
+    assert writing["status"] == owner.WRITING_OWNER and writing["reason"] == "already_writing"
     # A topic with a review round behind it: a manuscript by another model is in revision.
     before = {"phase": "solving", "review_round": 1}
     packet = {"status": "ready_for_review", "phase": "writing"}

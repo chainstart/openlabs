@@ -2536,9 +2536,9 @@ def execution_summary(
     with db.connect() as connection:
         rows = connection.execute(
             """
-            SELECT task_attempts.task_id, task_attempts.status, task_attempts.run_seconds,
-                   task_attempts.runtime_json, task_attempts.finished_at,
-                   tasks.runner AS task_runner
+            SELECT task_attempts.attempt_id, task_attempts.task_id, task_attempts.status,
+                   task_attempts.run_seconds, task_attempts.runtime_json,
+                   task_attempts.finished_at, tasks.runner AS task_runner
             FROM task_attempts JOIN tasks USING(task_id)
             WHERE task_attempts.finished_at IS NOT NULL
               AND (? IS NULL OR task_attempts.finished_at >= ?)
@@ -2552,11 +2552,17 @@ def execution_summary(
         "output_tokens",
         "reasoning_output_tokens",
     )
+    # Session-total counters of resumed sessions as per-attempt increments (usage.py).
+    from .usage import normalized_runtimes
+
+    normalized = normalized_runtimes(db)
     for row in rows:
-        try:
-            runtime = json.loads(str(row["runtime_json"] or "{}"))
-        except json.JSONDecodeError:
-            runtime = {}
+        runtime = normalized.get(str(row["attempt_id"]))
+        if runtime is None:
+            try:
+                runtime = json.loads(str(row["runtime_json"] or "{}"))
+            except json.JSONDecodeError:
+                runtime = {}
         if not isinstance(runtime, dict):
             runtime = {}
         record = runtime.get("execution")

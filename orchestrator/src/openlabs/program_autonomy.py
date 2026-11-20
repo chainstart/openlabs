@@ -386,6 +386,12 @@ def _trigger_reason_text(trigger: str, detail: Mapping[str, Any]) -> str:
             f"The topic owner finished {detail.get('no_progress_streak')} consecutive seats "
             "without new evidence (unchanged workspace, no new artifact, no finished job)."
         ),
+        "owner_stalled": (
+            f"The topic stayed in the same state for {detail.get('signature_streak')} "
+            "consecutive owner seats (same phase, packet status, research files, jobs, review "
+            "stage, writer and ledger status), across earlier decisions. The diagnosis is in "
+            "the trigger detail; choose a step that changes the state, or freeze."
+        ),
         TRIGGER_RESEARCH_BLOCKED: (
             "The research executor stopped with needs_human instead of continuing; decide "
             "whether one targeted step continues the topic or it is frozen."

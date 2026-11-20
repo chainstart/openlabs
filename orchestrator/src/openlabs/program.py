@@ -75,7 +75,8 @@ TOPIC_STATUSES = (
 TRANSITIONS: dict[str | None, frozenset[str]] = {
     None: frozenset({"proposed"}),
     "proposed": frozenset({"rejected", "admitted"}),
-    "admitted": frozenset({"active"}),
+    # admitted -> frozen only to archive a parked legacy topic (``program reconcile``).
+    "admitted": frozenset({"active", "frozen"}),
     "active": frozenset({"in_review", "frozen"}),
     "in_review": frozenset({"ready_queue", "frozen"}),
     # ready_queue -> in_review: the release pipeline found that a post-ready change
@@ -95,7 +96,13 @@ HOLD_RELEASE_ADMITTED = "hold_released_admitted"
 AUTO_REOPEN_REASON = "auto_reopen_conditions_met"
 # An operator granted a topic frozen in review one more text revision (``reopen.py``).
 OPERATOR_REOPEN_REASON = "operator_reopen_granted"
+# ``program reconcile`` (program_reconcile.py): a parked legacy topic is archived as frozen
+# with this reason class (history kept, no automatic reopen); a topic whose paper has a
+# delivery receipt but whose ledger entry never left review moves to the ready queue.
+LEGACY_ARCHIVE_REASON = "legacy_archived"
+DELIVERY_RECONCILE_REASON = "delivery_receipt_reconciled"
 GUARDED_TRANSITIONS: dict[tuple[str, str], frozenset[str]] = {
+    ("admitted", "frozen"): frozenset({LEGACY_ARCHIVE_REASON}),
     ("rejected", "proposed"): frozenset({HOLD_RELEASE_FOR_REVIEW}),
     ("rejected", "admitted"): frozenset({HOLD_RELEASE_ADMITTED}),
     ("frozen", "active"): frozenset({AUTO_REOPEN_REASON}),
@@ -1468,6 +1475,41 @@ def mark_topic_submitted(
     )
 
 
+def mark_topic_delivered(
+    ledger: TopicLedger,
+    topic_id: str,
+    *,
+    db: FactoryDB,
+    decided_by: str,
+    paper_id: str,
+    evidence: Any,
+    handoff: Mapping[str, Any],
+    release: Mapping[str, Any],
+) -> list[TopicDecision]:
+    """A paper delivered outside the release pipeline: ``[active ->] in_review -> ready_queue``.
+
+    Needs the delivery receipt as evidence (at least one hash-bound file). The ready
+    entry carries ``paper_id`` and a delivered ``handoff``/done ``release`` record, so the
+    release pipeline never delivers it again; the topic then waits, like every delivered
+    paper, for a human to confirm the submission (``ready_queue -> submitted``).
+    """
+
+    items = _evidence_list(evidence, required=True, label="delivery evidence")
+    topic = ledger.topic(topic_id)
+    if topic is None:
+        raise TopicLedgerError(f"unknown topic {topic_id}")
+    decisions: list[TopicDecision] = []
+    if topic.get("status") == "active":
+        decisions.append(transition_topic(
+            ledger, topic_id, "in_review", db=db, reason=DELIVERY_RECONCILE_REASON,
+            decided_by=decided_by, evidence=items, updates={"paper_id": paper_id}))
+    decisions.append(transition_topic(
+        ledger, topic_id, "ready_queue", db=db, reason=DELIVERY_RECONCILE_REASON,
+        decided_by=decided_by, evidence=items,
+        updates={"paper_id": paper_id, "handoff": dict(handoff), "release": dict(release)}))
+    return decisions
+
+
 def freeze_topic(
     ledger: TopicLedger,
     topic_id: str,
@@ -1481,6 +1523,8 @@ def freeze_topic(
 ) -> TopicDecision:
     """``active|in_review -> frozen``: record the freeze, then stop its campaign.
 
+    ``admitted -> frozen`` only with ``LEGACY_ARCHIVE_REASON`` (``program reconcile``).
+
     The ledger is written first (canonical); if the process dies before the
     campaign is frozen, :func:`reconcile_frozen_campaigns` finishes it on the next
     tick. ``reopen_when`` (already validated by ``reopen.normalize_conditions``)
@@ -1489,7 +1533,7 @@ def freeze_topic(
     automatic reopens already done is kept.
     """
 
-    if reason_class not in FREEZE_REASON_CLASSES:
+    if reason_class not in FREEZE_REASON_CLASSES and reason_class != LEGACY_ARCHIVE_REASON:
         raise TopicLedgerError(f"unsupported freeze reason class {reason_class!r}")
     evidence_items = _evidence_list(evidence, required=True, label="freeze_evidence")
     conditions = _reopen_conditions(reopen_conditions)
