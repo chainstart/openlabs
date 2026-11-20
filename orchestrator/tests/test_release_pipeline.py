@@ -523,3 +523,92 @@ def test_missing_paper_waits_instead_of_failing(tmp_path, monkeypatch):
     release = _topic(paths, settings, topic["topic_id"])["release"]
     assert release["waiting_for"] == "paper_not_found" and release.get("attempts") == {}
     assert _commands(log) == []
+
+
+# --------------------------------------------------------------------------- ignored ledger, retry
+
+
+def _ignore_ledger(paths, settings) -> str:
+    """The instance ledger as runtime state the data repository ignores and never tracked."""
+
+    ledger = settings.program.ledger_path
+    root = paths.data
+    if _git(root, "ls-files", "--", ledger).strip():
+        _git(root, "update-index", "--force-remove", "--", ledger)
+        _git(root, "-c", "user.name=Base", "-c", "user.email=base@example.invalid", "commit",
+             "-qm", "untrack the runtime ledger")
+    with (root / ".gitignore").open("a", encoding="utf-8") as handle:
+        handle.write(f"/{ledger}\n")
+    return ledger
+
+
+def test_an_ignored_untracked_ledger_is_left_out_of_the_commit(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support_release="none")
+    ledger = _ignore_ledger(paths, settings)
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert report.errors == [], report.errors
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["release"]["status"] == "done" and final["handoff"]["status"] == "delivered"
+    assert final["release"]["commits"]
+    for commit in final["release"]["commits"]:
+        files = _commit_files(paths.data, commit["sha"])
+        assert ledger not in files and f"registry/papers/{PAPER_ID}.json" in files
+    # Still ignored and untracked; never forced in.
+    assert _git(paths.data, "ls-files", "--", ledger).strip() == ""
+    assert _git(paths.data, "check-ignore", "--", ledger).strip() == ledger
+
+
+def test_only_an_ignored_ledger_left_means_no_commit(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch)
+    ledger = _ignore_ledger(paths, settings)
+    assert (paths.data / ledger).is_file()  # the ledger changed, the paper is clean at HEAD
+    assert program_autonomy.commit_paper_paths(
+        paths, settings, paper_id=PAPER_ID, version="1.0.0", action="test",
+        topic_id=topic["topic_id"],
+        commit_paths=[f"registry/papers/{PAPER_ID}.json", f"papers/{PAPER_ID}"]) is None
+
+
+def test_release_retry_lets_an_exhausted_stage_try_again(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, release_max_attempts=2,
+        paper_extra={"fail": {"zenodo prepare": 2}})
+    _ready(paths, db, settings, monkeypatch, topic)
+    _tick(paths, settings, monkeypatch)
+    state = _topic(paths, settings, topic["topic_id"])["release"]
+    assert state["status"] == "exhausted"
+    with pytest.raises(program_autonomy.DeliveryError, match="needs its reason"):
+        program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID, by="op",
+                                       reason=" ")
+    result = program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID,
+                                            by="operator", reason="Zenodo outage over")
+    assert result["release_reset"] is True and result["stage"] == "support_prepare"
+    reset = _topic(paths, settings, topic["topic_id"])
+    assert reset["release"]["status"] == "pending"
+    assert "support_prepare" not in reset["release"]["attempts"]
+    retry = reset["release"]["retries"][-1]
+    assert retry["by"] == "manual:operator" and retry["reason"] == "Zenodo outage over"
+    assert retry["previous_attempts"] == {"support_prepare": 2}
+    assert "simulated" in retry["previous_error"]
+    assert "release_retry" in _events(db, topic["topic_id"])
+    report = _tick(paths, settings, monkeypatch)
+    assert report.errors == [], report.errors
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["release"]["status"] == "done" and final["handoff"]["status"] == "delivered"
+    # Nothing stopped any more: a second retry is refused.
+    with pytest.raises(program_autonomy.DeliveryError, match="nothing stopped"):
+        program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID, by="op",
+                                       reason="again")
+
+
+def test_release_retry_resets_an_exhausted_delivery(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, handoff_max_attempts=1, support="not_required",
+        paper_extra={"fail": {"program deliver": 1}})
+    _ready(paths, db, settings, monkeypatch, topic)
+    assert _topic(paths, settings, topic["topic_id"])["handoff"]["status"] == "exhausted"
+    result = program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID,
+                                            by="operator", reason="site back up")
+    assert result["handoff_reset"] is True
+    assert _topic(paths, settings, topic["topic_id"])["handoff"]["attempts"] == 0
+    _tick(paths, settings, monkeypatch)
+    assert _topic(paths, settings, topic["topic_id"])["handoff"]["status"] == "delivered"

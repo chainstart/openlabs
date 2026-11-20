@@ -195,6 +195,14 @@ def _parser() -> argparse.ArgumentParser:
         "--conditions-met", action="store_true",
         help="Confirm that the admission conditions due before submission are met",
     )
+    release_retry = program_commands.add_parser(
+        "release-retry",
+        help="After resolving the cause, let a ready paper's exhausted release pipeline (or "
+        "delivery) try again: clears the stopped stage's attempts, records who and why",
+    )
+    release_retry.add_argument("--paper-id", required=True)
+    release_retry.add_argument("--reason", required=True, help="What was resolved")
+    release_retry.add_argument("--by", required=True, help="Who resolved it (provenance)")
     revisable = program_commands.add_parser(
         "mark-revisable",
         help="Record that a judged rejection's defect is fixable, so the program schedules one "
@@ -580,6 +588,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "written": mark_revisable(db, paths, settings, args.topic_id,
                                           decided_by=f"manual:{args.by}", reason=args.reason),
             }
+        elif args.program_command == "release-retry":
+            from .program_autonomy import retry_release
+
+            try:
+                payload = retry_release(db, paths, settings, paper_id=args.paper_id,
+                                        by=args.by, reason=args.reason)
+            except DeliveryError as exc:
+                print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
+                return 1
         elif args.program_command == "assign-handler":
             try:
                 payload = assign_submission_handler(

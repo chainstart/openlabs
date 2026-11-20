@@ -1702,9 +1702,11 @@ def commit_paper_paths(paths: WorkspacePaths, settings: FactorySettings, *, pape
     # deleted one, or untracked and not ignored). An empty directory, or one with
     # only ignored files, exists on disk but makes `git commit --only` fail with
     # "pathspec ... did not match any file(s) known to git".
-    present = [item for item in scope
-               if _git(root, "ls-files", "--cached", "--others", "--exclude-standard",
-                       "--", item).strip()]
+    def known(item: str) -> bool:
+        return bool(_git(root, "ls-files", "--cached", "--others", "--exclude-standard",
+                         "--", item).strip())
+
+    present = [item for item in scope if known(item)]
     if not present:
         return None
     if not _git(root, "status", "--porcelain=v1", "--untracked-files=all", "--",
@@ -1716,7 +1718,11 @@ def commit_paper_paths(paths: WorkspacePaths, settings: FactorySettings, *, pape
         ledger_relative = ledger_path.relative_to(root.resolve()).as_posix()
     except ValueError:
         ledger_relative = None
-    if ledger_relative and ledger_path.is_file() and ledger_relative not in present:
+    # The ledger rides along only when Git tracks it or would track it: an instance
+    # ledger the data repository ignores on purpose (runtime state) is never forced in,
+    # and naming an ignored, untracked path makes `git add` fail outright.
+    if (ledger_relative and ledger_path.is_file() and ledger_relative not in present
+            and known(ledger_relative)):
         present.append(ledger_relative)
     fields = {"action": action, "paper_id": paper_id, "version": version or "?",
               "topic_id": topic_id}
@@ -2245,6 +2251,74 @@ class _ReleasePipeline:
         if self.handoff.get("status") != "delivered":
             self.mark_delivered(delivery, int(self.handoff.get("attempts") or 0) + 1)
         self.commit_after_delivery(status)
+
+
+def retry_release(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    *,
+    paper_id: str,
+    by: str,
+    reason: str,
+) -> dict[str, Any]:
+    """After a human resolved the cause: let an exhausted release pipeline try again.
+
+    The topic's ``release`` goes back to ``pending`` with the stopped stage's
+    attempts cleared (writer rounds too when the writer stage stopped); an exhausted
+    delivery (``handoff``) goes back to ``queued`` with its attempts cleared. The
+    previous error, stage and attempts are kept in ``release.retries``. Nothing else
+    changes; the next tick re-reads the paper's actual state.
+    """
+
+    reason = str(reason or "").strip()
+    if not reason:
+        raise DeliveryError("a release retry needs its reason")
+    ledger = _ledger(paths, settings)
+    topic = next((item for item in topics_by_status(ledger.read(), "ready_queue")
+                  if paper_id in {str(item.get("paper_id") or ""),
+                                  str((item.get("handoff") or {}).get("paper_id") or "")}), None)
+    if topic is None:
+        raise DeliveryError(f"no ready-queued topic holds paper {paper_id}")
+    topic_id = str(topic["topic_id"])
+    release = dict(topic.get("release") or {})
+    handoff = dict(topic.get("handoff") or {})
+    release_stopped = release.get("status") in {"exhausted", "failed"}
+    handoff_stopped = handoff.get("status") in {"exhausted", "failed"}
+    if not release_stopped and not handoff_stopped:
+        raise DeliveryError(
+            f"paper {paper_id}: release is {release.get('status') or 'pending'!r} and delivery "
+            f"is {handoff.get('status') or 'queued'!r}; nothing stopped to retry")
+    decided_by = f"manual:{by}"
+    updates: dict[str, Any] = {}
+    stage = str(release.get("stage") or "check")
+    if release_stopped:
+        attempts = dict(release.get("attempts") or {})
+        retry = {"at": utc_now(), "by": decided_by, "reason": reason, "stage": stage,
+                 "previous_status": release.get("status"), "previous_attempts": dict(attempts),
+                 "previous_error": release.get("last_error")}
+        attempts.pop(stage, None)
+        new_release = {**release, "status": "pending", "attempts": attempts,
+                       "last_error": None, "waiting_for": None,
+                       "retries": [*list(release.get("retries") or []), retry][-10:],
+                       "seq": int(release.get("seq") or 0) + 1, "updated_at": utc_now()}
+        if stage == "form_fix_writer":
+            new_release["writer_rounds"] = 0
+        updates["release"] = new_release
+    if handoff_stopped:
+        updates["handoff"] = {**handoff, "status": "queued", "attempts": 0,
+                              "previous_error": handoff.get("last_error"), "last_error": None}
+    record_topic_note(
+        ledger, topic_id, db=db, event_type="release_retry", reason="human_resolved",
+        decided_by=decided_by,
+        detail={"paper_id": paper_id, "reason": reason, "stage": stage,
+                "release_reset": release_stopped, "handoff_reset": handoff_stopped},
+        updates=updates,
+        key=f"release_retry:{topic_id}:{int(release.get('seq') or 0)}:{handoff.get('attempts')}",
+    )
+    return {"schema_version": "openlabs.program_release_retry.v1", "topic_id": topic_id,
+            "paper_id": paper_id, "stage": stage, "release_reset": release_stopped,
+            "handoff_reset": handoff_stopped}
 
 
 def assign_submission_handler(

@@ -734,7 +734,12 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
 
 黑名单词只作备注，不阻断。改标题、数字、表格或结论段的改动超出差异规则，走完整评审。
 用尽 `release_max_attempts` 的论文列在 tick 报告的 `program.release_exhausted` 并写入
-`errors`，不再重试；人处理后把台账该题的 `release.status` 改回 `pending` 即从头再判断。
+`errors`，不再重试；人处理后运行
+`python -m openlabs program release-retry --paper-id <id> --by <name> --reason <处理了什么>`：
+`release.status` 回到 `pending`、清零停下那一阶段的 attempts（写作阶段还清零 writer_rounds），交付用尽的
+`handoff` 回到 `queued`；原错误、阶段和次数记在 `release.retries`，并写一条 `release_retry` 事件，下个 tick
+从实际状态重新判断。不要手改台账。提交只含 Git 会跟踪的路径：数据仓库有意忽略且未跟踪的实例台账
+（运行时状态，如 `registry/instances/cc-sg/topic-ledger.json`）不随提交，也不 `-f` 强加。
 
 - `auto_release`（默认 false）：为 false 时流水线停在第一次 Zenodo 写入之前，`release.status`
   为 `waiting`、`waiting_for: auto_release_off`；为 true 时还要求
