@@ -569,3 +569,27 @@ def test_bind_oversize_payloads_moves_an_over_limit_evidence_body_out_of_git(tmp
     again = bind_oversize_payloads(PAPER, root=root)
     assert again["files"][0]["sha256"] == _sha(changed)
     assert oversize_payloads(PAPER, paths, root) == []
+
+
+def test_config_default_follows_root_not_the_workspace_environment(tmp_path, monkeypatch):
+    """2026-11-20: the tick's OPENLABS_WORKSPACE made `zenodo prepare --root <data>` read
+    <workspace>/data/registry/settings.yaml, a directory that does not exist."""
+    from paper_writing import __main__ as cli
+
+    monkeypatch.setenv("OPENLABS_WORKSPACE", str(tmp_path / "elsewhere"))
+    seen = {}
+
+    def fake_plan(record, files, *, environment, repo_root):
+        seen["root"] = repo_root
+        return {"ready": True}
+
+    def fake_find(paper_id, *, repo_root, config_path):
+        seen["config"] = config_path
+        return {"support": {}}
+
+    monkeypatch.setattr("paper_writing.zenodo.find_paper_record", fake_find)
+    monkeypatch.setattr("paper_writing.zenodo.build_deposit_plan", fake_plan)
+    root = tmp_path / "openlabs-data"
+    code = cli.main(["zenodo", "plan", "--paper-id", PAPER, "--root", str(root)])
+    assert code == 0
+    assert seen["config"] == str(root / "registry" / "settings.yaml")

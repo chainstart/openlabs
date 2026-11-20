@@ -10,7 +10,6 @@ from pathlib import Path
 from paper_writing.bundles import validate_result_bundle
 from paper_writing.inventory import (
     build_inventory,
-    default_config_path,
     default_output_path,
     default_repo_root,
     load_config,
@@ -551,7 +550,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", default=str(default_repo_root()))
-    parser.add_argument("--config", default=str(default_config_path()))
+    # None: <--root>/registry/settings.yaml, resolved after parsing. A default fixed at
+    # parser build time followed OPENLABS_WORKSPACE instead of --root, so `zenodo prepare
+    # --root <data>` read <workspace>/data/registry/settings.yaml (2026-11-20, PMB-13B).
+    parser.add_argument("--config", default=None,
+                        help="Registry settings (default: <--root>/registry/settings.yaml)")
 
 
 def _zenodo_paper_arguments(parser: argparse.ArgumentParser, *, include_files: bool) -> None:
@@ -581,6 +584,8 @@ def _zenodo_release_arguments(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if hasattr(args, "config") and args.config is None:
+        args.config = str(Path(args.root) / "registry" / "settings.yaml")
     if args.command == "journal-history":
         from paper_writing import journal_history
         root = Path(args.root).resolve()
