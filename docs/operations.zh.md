@@ -753,6 +753,24 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   环境，不写进 tick 的 `os.environ`：研究坐席继承 tick 的环境，看不到这些值。文件缺失、权限过宽、属主不对时不读，
   流水线照旧 `waiting_credentials`，事件和 tick 报告里多一项 `credentials_file`（只说原因，不含值）。配置每个
   tick 重新读取，改这一项不用重启循环。
+
+交付链状态（2026-11-20 起）：每个 tick 的 `program.delivery_chain` 列出评审 ready 到交付完成之间的每篇论文，
+`program.delivery_stuck` 只列卡住的。每篇恰好处于一种状态：`in_progress`（下一步由流水线或它排的 writer /
+完整评审承担）、`auto_retry`（某步失败，自动重试，带 `attempt`/`max_attempts`）、`waiting`（等外部条件，
+`condition` 写明：凭据缺哪个变量、Git 身份、`auto_release`、常设授权等）、`needs_human`（`action` 写明人要做
+什么）。分类器不认识的状态记为 `needs_human`（`unrecognized: true`）并写入 tick `errors`，不留无主状态。
+用尽次数而停下的阶段或交付，若停下后代码仓库 HEAD 变了（修复已合入 main），下个 tick 自动重试一次
+（`release_retry` 记录，`decided_by: orchestrator:code_update`，每篇最多 2 次）；代码没变就一直等人。
+paper-writing 命令失败时记录命令自己的错误（stdout 的 JSON `error` 或其输出），资源守护的准入横幅
+（`OpenLabs container guard:` / `OpenLabs resource guard:`）不算错误内容；守护拒绝（`STOP:`）照记。
+
+期刊资格本地登记：`registry/verified-venues.yaml`（数据仓库）。每条写明 2025 中科院升级版大类分区、SCIE、
+APC/版面费/彩图费/投稿费、证据（URL 或本地文件）、核实日期和核实人；`verified` 仅当分区、SCIE、四项收费
+都有证据且（1 区，或有免费路线）。查询先走登记：`paper-writing venue lookup|alternatives|mark-pending`。
+负责人坐席因出版方页面拒绝（403/406 等）而返回 `blocked_human` 时，控制面改为 `continuing`，下一席的说明
+要求先 `venue mark-pending` 记为待核实，再继续或改选登记中已核实的替代刊（每个课题最多 2 次，之后照常
+`needs_human`）。
+
 - `auto_release`（默认 false）：为 false 时流水线停在第一次 Zenodo 写入之前，`release.status`
   为 `waiting`、`waiting_for: auto_release_off`；为 true 时还要求
   `settings.yaml#support_publication.standing_production_release_authorization: true` 和

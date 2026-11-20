@@ -33,7 +33,48 @@ def _git_dirty(root: Path, paths: list[str]) -> list[str]:
     return [line for line in output.splitlines() if line.strip()]
 
 
+def _no_remote_network() -> None:
+    """``FAKE_LOOPBACK_ONLY=1``: any connection to a non-loopback address fails at once."""
+
+    import socket
+
+    original = socket.socket.connect
+
+    def connect(self, address):
+        host = address[0] if isinstance(address, tuple) else address
+        if self.family in (socket.AF_INET, socket.AF_INET6) and host not in {
+                "127.0.0.1", "::1", "localhost"}:
+            raise OSError(f"fake paper-writing: refusing a non-loopback connection to {host}")
+        return original(self, address)
+
+    socket.socket.connect = connect
+
+
+def _service(base: str, method: str, path: str, *, token: str, body: bytes | None = None,
+             content_type: str = "application/json") -> dict:
+    """One request to a fake service (loopback only; never through a proxy)."""
+
+    import urllib.request
+    from urllib.parse import urlsplit
+
+    url = base.rstrip("/") + path
+    if urlsplit(url).hostname not in {"127.0.0.1", "localhost"}:
+        raise RuntimeError(f"fake paper-writing only talks to loopback services, not {url}")
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    request = urllib.request.Request(url, data=body, method=method, headers={
+        "Authorization": f"Bearer {token}", "Content-Type": content_type})
+    with opener.open(request, timeout=10) as response:
+        text = response.read().decode() or "{}"
+    return json.loads(text)
+
+
+def _loopback(url: str | None) -> bool:
+    return bool(url) and str(url).startswith(("http://127.0.0.1", "http://localhost"))
+
+
 def main(argv: list[str]) -> int:
+    if os.environ.get("FAKE_LOOPBACK_ONLY") == "1":
+        _no_remote_network()
     parser = argparse.ArgumentParser()
     parser.add_argument("words", nargs="+")
     parser.add_argument("--paper-id", required=True)
@@ -154,6 +195,22 @@ def main(argv: list[str]) -> int:
         assert external and args.confirm_production and args.environment == "production"
         support.update({"status": "draft", "doi": "10.5281/zenodo.17000001",
                         "package_sha": "a" * 64})
+        zenodo = os.environ.get("FAKE_ZENODO_URL")
+        if zenodo:
+            # Like the real client: a draft deposition, then the archive into its bucket.
+            token = os.environ.get("ZENODO_ACCESS_TOKEN", "")
+            if not token:
+                print("Zenodo error: ZENODO_ACCESS_TOKEN is not set")
+                return 2
+            draft = _service(zenodo, "POST", "/api/deposit/depositions", token=token,
+                             body=json.dumps({"metadata": {"title": args.paper_id}}).encode())
+            archive = (root / "papers" / args.paper_id / "main.tex").read_bytes()
+            bucket = draft["links"]["bucket"].split("/api/", 1)[1]
+            _service(zenodo, "PUT", f"/api/{bucket}/support.zip", token=token, body=archive,
+                     content_type="application/octet-stream")
+            support.update({"doi": draft["metadata"]["prereserve_doi"]["doi"],
+                            "deposition_id": draft["id"],
+                            "package_sha": hashlib.sha256(archive).hexdigest()})
         paper["issues"] = [i for i in paper["issues"] if i["remedy"] != "zenodo_prepare"]
         paper["issues"] += paper.pop("after_prepare_issues", [])
         save()
@@ -193,10 +250,17 @@ def main(argv: list[str]) -> int:
         if _git_dirty(root, _paths(root, args.paper_id)):
             print("Zenodo error: Release files differ from Git HEAD")
             return 2
+        concept = "10.5281/zenodo.17000000"
+        zenodo = os.environ.get("FAKE_ZENODO_URL")
+        if zenodo:
+            published = _service(zenodo, "POST", f"/api/deposit/depositions/"
+                                 f"{support['deposition_id']}/actions/publish",
+                                 token=os.environ.get("ZENODO_ACCESS_TOKEN", ""))
+            support["doi"], concept = published["doi"], published["conceptdoi"]
         support["status"] = "published"
         save()
         print(json.dumps({"status": "published", "version_doi": support["doi"],
-                          "concept_doi": "10.5281/zenodo.17000000", "receipt": "r.json"}))
+                          "concept_doi": concept, "receipt": "r.json"}))
         return 0
     if command == "program deliver":
         assert external
@@ -208,7 +272,23 @@ def main(argv: list[str]) -> int:
         if dirty or paper["issues"] or support["status"] not in {"published", "not_required"}:
             print(json.dumps({"status": "failed", "error": f"not deliverable: {dirty}"}))
             return 1
+        if paper.get("deliver_error_once"):
+            # A failure of the command itself, behind the resource guard's stderr banner
+            # (the wrapper prints it): the JSON error on stdout is what must be recorded.
+            error = paper.pop("deliver_error_once")
+            save()
+            print(json.dumps({"status": "failed", "error": error}))
+            return 1
         package = f"pkg-{paper['version']}" if paper.get("delivery") else "pkg-1"
+        manage = os.environ.get("ARA_PAPER_MANAGE_API_URL")
+        if _loopback(manage):
+            created = _service(manage, "POST", "/api/packages",
+                               token=os.environ.get("ARA_PAPER_MANAGE_API_KEY", ""),
+                               body=json.dumps({"paper_id": args.paper_id,
+                                                "version": paper["version"],
+                                                "support_doi": support.get("doi"),
+                                                "submission_handler": None}).encode())
+            package = created["package_id"]
         paper["delivery"] = {"awaiting_owner_review": True, "package_id": package,
                              "version": paper["version"], "submission_handler": None}
         save()

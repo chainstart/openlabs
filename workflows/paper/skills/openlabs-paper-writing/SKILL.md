@@ -86,6 +86,13 @@ charge per typeset page). Before any shortlist or retarget run `paper-writing jo
 from that venue, same-target history), the dated ranking source, the fee-free route and the
 official format, and convert the canonical `manuscript/` itself to that format. Missing ranking
 metadata is a lookup task; record `unverified` only after a genuine search fails or conflicts.
+Look a journal up in the local registry of verified journals first
+(`paper-writing venue lookup --journal <title>`; verified, eligible ones:
+`paper-writing venue alternatives [--zone N] [--category <CAS major category>]`); go online only
+for what it lacks. A publisher page that refuses you (HTTP 403/406, a challenge page) is not a
+reason to stop for a human: record it with `paper-writing venue mark-pending --journal <title>
+--url <url> --http-status <code> --reason <what> --by <model>` and continue with the journal
+pending verification or switch to a verified alternative.
 Handling a rejection: `docs/JOURNAL_HISTORY.md#handling-a-rejection`.
 
 ## Check, prepare support, hand off

@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -542,6 +543,88 @@ def normalize_packet(
 def packet_of(payload: Mapping[str, Any]) -> dict[str, Any]:
     packet = payload.get("owner_packet")
     return dict(packet) if isinstance(packet, Mapping) else {}
+
+
+# --------------------------------------------------------------------------- venue evidence
+#
+# 2026-11-19/20: owner seats of four topics stopped eight times for a human because a
+# publisher refused the evidence page (HTTP 403/406) for a journal's CAS 2025 zone or
+# its charges. That is not a human stop (user requirement 2026-11-20): the journal is
+# recorded pending verification in registry/verified-venues.yaml and the owner continues
+# with it pending, or picks a verified alternative from that registry. A seat's
+# blocked_human of that kind becomes ``continuing`` with these instructions, at most
+# VENUE_PENDING_LIMIT times per topic; after that the ordinary needs_human path applies.
+
+VENUE_PENDING_LIMIT = 2
+VENUE_PENDING_EVENT = "owner_venue_pending"
+_REFUSAL = re.compile(r"\b(?:http\s*)?(?:401|403|406|407|429|451)\b|forbidden|not acceptable|"
+                      r"access denied|captcha|challenge page", re.IGNORECASE)
+_VENUE_WORDS = re.compile(r"journal|venue|\bcas\b|partition|\bzone\b|fee|charge|\bapc\b|"
+                          r"colou?r|guide for authors|author guide|publisher|fenqubiao|"
+                          r"\bscie\b|indexing|中科院|分区|版面费", re.IGNORECASE)
+
+
+def venue_access_block(payload: Mapping[str, Any]) -> str | None:
+    """The stop reason when an owner seat stopped for a human over unreadable venue evidence."""
+
+    packet = packet_of(payload)
+    if str(payload.get("status") or "") != "needs_human" or str(
+            packet.get("status") or "") != "blocked_human":
+        return None
+    intervention = payload.get("human_intervention")
+    texts = [str(packet.get("reason") or ""), str(payload.get("summary") or ""),
+             str(payload.get("stop_reason") or ""),
+             str(intervention.get("reason") or "") if isinstance(intervention, Mapping) else ""]
+    text = " ".join(item for item in dict.fromkeys(texts) if item.strip())
+    if packet.get("venue_pending_verification") or (_REFUSAL.search(text)
+                                                     and _VENUE_WORDS.search(text)):
+        return text.strip() or "venue evidence could not be read"
+    return None
+
+
+def venue_pending_note(reason: str) -> str:
+    return (
+        "The last seat stopped for a human because venue evidence could not be read "
+        f"({reason[:600]}). A publisher refusing a page (HTTP 403/406, a challenge page) is "
+        "not a human stop (user requirement 2026-11-20). Check the local registry first: "
+        "`paper-writing venue lookup --journal <name>`. Record the refusal with `paper-writing "
+        "venue mark-pending --journal <name> --url <url> --http-status <code> --reason <what "
+        "could not be read> --by <your model>`, then either continue with the journal pending "
+        "verification (its open items are completed before submission, which a person "
+        "confirms anyway) or switch to a verified alternative from `paper-writing venue "
+        "alternatives [--zone N] [--category <CAS major category>]` and register it with that "
+        "entry's evidence. If your stop was about something other than journal-eligibility "
+        "evidence, return blocked_human again with that reason."
+    )
+
+
+def venue_pending_instead_of_human(db: FactoryDB, task: Mapping[str, Any],
+                                   payload: Mapping[str, Any], *, key: str) -> dict[str, Any]:
+    """An owner seat's venue-evidence stop becomes ``continuing`` (bounded per topic)."""
+
+    if not is_owner_task(task):
+        return dict(payload)
+    reason = venue_access_block(payload)
+    if reason is None:
+        return dict(payload)
+    campaign_id = str(task.get("campaign_id") or "")
+    used = db.count_events("campaign", campaign_id, VENUE_PENDING_EVENT)
+    if used >= VENUE_PENDING_LIMIT:
+        return dict(payload)
+    packet = packet_of(payload)
+    packet.update({"status": "continuing", "control_note": "venue_pending_verification",
+                   "venue_pending_verification": {"reason": reason[:1000],
+                                                  "conversion": used + 1,
+                                                  "limit": VENUE_PENDING_LIMIT},
+                   "resume_note": venue_pending_note(reason)})
+    bundle = {key_: value for key_, value in payload.items()
+              if key_ not in {"human_intervention", "stop_reason"}}
+    bundle.update({"status": "completed", "owner_packet": packet})
+    db.record_event_once("campaign", campaign_id, VENUE_PENDING_EVENT,
+                         {"task_id": str(task.get("task_id") or ""), "reason": reason[:1000],
+                          "conversion": used + 1, "limit": VENUE_PENDING_LIMIT},
+                         event_key=key)
+    return bundle
 
 
 # --------------------------------------------------------------------------- lineage
@@ -2415,7 +2498,7 @@ def render_brief(
         "5. The pre-registered primary endpoint is fixed; never rewrite it (verdict may stay "
         "pending).",
         "6. Paid publication only in a 2025 CAS zone-1 journal; otherwise a verified fee-free "
-        "route.",
+        "route (`paper-writing venue lookup` first).",
         "7. Submission, payment, authorship, external publication: stop and leave it to a human.",
         "8. Never approve your own manuscript: return ready_for_review; another model family "
         "reviews it and its comments come back to you.",

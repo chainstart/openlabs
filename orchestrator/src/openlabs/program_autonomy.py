@@ -1246,10 +1246,15 @@ def _enqueue_retarget(db, settings, *, topic, campaign, decision, decision_task_
         f"handoff_kind=retarget. Retarget the manuscript to {target} "
         f"(direction decision: {retarget['why_fits']}). Refresh and check the team rejection "
         "history (`paper-writing journal-history sync`/`check`) and the venue policy before "
-        "changing the target. Verify item by item and record, with sources, the new target's "
-        "indexing (SCIE), its 2025 CAS major-category zone and every mandatory author charge "
-        "(APC, page charges, colour charges, submission fees) before registering it; \"no APC\" "
-        "on an open-access page does not rule out a page charge. Convert the canonical "
+        "changing the target. Look the target up in the local registry of verified journals "
+        "first (`paper-writing venue lookup --journal <name>`; verified ones: `paper-writing "
+        "venue alternatives`). Otherwise verify item by item and record, with sources, the new "
+        "target's indexing (SCIE), its 2025 CAS major-category zone and every mandatory author "
+        "charge (APC, page charges, colour charges, submission fees) before registering it; "
+        "\"no APC\" on an open-access page does not rule out a page charge. A publisher page "
+        "that refuses the request (HTTP 403/406) is recorded with `paper-writing venue "
+        "mark-pending` and is no reason to stop for a human: continue with the target pending "
+        "verification or choose a verified alternative. Convert the canonical "
         "manuscript to the new venue or format, and keep every claim inside the frozen "
         "evidence." + fallback_note
     )
@@ -1502,6 +1507,44 @@ def run_handler_assignment(
     )
 
 
+# Lines the resource guard (bin/openlabs-resource-guard: container_guard.py, gpu_guard.py)
+# writes to stderr before it starts the command. They say the guard admitted the command,
+# not why it failed, and on 2026-11-20 a delivery failure was recorded as nothing but these
+# lines ("blocked by the resource guard") while the real error was elsewhere.
+_GUARD_BANNERS = ("OpenLabs container guard:", "OpenLabs resource guard:",
+                  "OpenLabs GPU guard: task-type=")
+
+
+def command_error_detail(stdout: str | None, stderr: str | None, *, limit: int = 1000) -> str:
+    """Why a paper-writing command failed: its JSON ``error``, else its own output.
+
+    The resource-guard admission banners are dropped; a guard refusal (``OpenLabs GPU
+    guard: STOP: ...``) is kept. Empty output says so instead of quoting the banner.
+    """
+
+    parts: list[str] = []
+    text = (stdout or "").strip()
+    if text:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, Mapping) and payload.get("error"):
+            parts.append(str(payload["error"]).strip()[-700:])
+        else:
+            parts.append(text[-700:])
+    own = "\n".join(line for line in (stderr or "").splitlines()
+                    if line.strip() and not line.strip().startswith(_GUARD_BANNERS)).strip()
+    if own:
+        parts.append(own[-700:])
+    if not parts:
+        guarded = any(line.strip().startswith(_GUARD_BANNERS)
+                      for line in (stderr or "").splitlines())
+        return ("no output from the command" + (" (only the resource guard's admission banner, "
+                                                  "i.e. the guard let it run)" if guarded else ""))
+    return " | ".join(parts)[-limit:]
+
+
 def _run_paper_command(paths: WorkspacePaths, settings: FactorySettings,
                        arguments: list[str],
                        environment: Mapping[str, str] | None = None, *,
@@ -1525,11 +1568,8 @@ def _run_paper_command(paths: WorkspacePaths, settings: FactorySettings,
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise DeliveryError(f"{' '.join(command[:3])} could not run: {exc}") from exc
     if completed.returncode not in accept:
-        # The command's own error is on stdout (one JSON object); stderr may hold only
-        # the resource-guard banner, so stdout comes first.
-        detail = " | ".join(part.strip()[-600:] for part in (completed.stdout, completed.stderr)
-                            if part and part.strip())[-1000:]
-        raise DeliveryError(f"exit {completed.returncode}: {detail}")
+        raise DeliveryError(f"exit {completed.returncode}: "
+                            f"{command_error_detail(completed.stdout, completed.stderr)}")
     try:
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
@@ -1604,10 +1644,87 @@ def pipeline_credentials(settings: FactorySettings,
     return values, refused
 
 
+def code_revision(paths: WorkspacePaths) -> str | None:
+    """The orchestrator code's Git commit (the loop loads the code afresh every tick)."""
+
+    try:
+        completed = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(paths.code),
+                                   capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    revision = completed.stdout.strip()
+    return revision if completed.returncode == 0 and revision else None
+
+
+# An exhausted release stage or delivery is tried again by itself when the code changed
+# since it stopped (the two 2026-11-20 stops were both cured by a code fix and then
+# needed a human `release-retry`): once per new revision, at most this many times per
+# topic. Anything else that stopped still waits for a human.
+RELEASE_CODE_RETRIES = 2
+
+
+def _code_update_retry(db, paths, settings, ledger, topic) -> dict[str, Any] | None:
+    """Reset an exhausted release/delivery after a code update; the updated topic or None."""
+
+    release = dict(topic.get("release") or {})
+    handoff = dict(topic.get("handoff") or {})
+    release_stopped = release.get("status") == "exhausted"
+    handoff_stopped = handoff.get("status") == "exhausted"
+    if not (release_stopped or handoff_stopped):
+        return None
+    used = int(release.get("code_retries") or 0)
+    if used >= RELEASE_CODE_RETRIES:
+        return None
+    current = code_revision(paths)
+    if not current:
+        return None
+    stopped_at = [str(block.get("exhausted_code_revision") or "")
+                  for block, stopped in ((release, release_stopped), (handoff, handoff_stopped))
+                  if stopped]
+    # Only a stop recorded with its revision, and only when every stopped part ran on an
+    # older code than the current one.
+    if not stopped_at or any(not item or item == current for item in stopped_at):
+        return None
+    topic_id = str(topic["topic_id"])
+    by = "orchestrator:code_update"
+    stage = str(release.get("stage") or "check")
+    updates: dict[str, Any] = {}
+    new_release = {**release, "code_retries": used + 1,
+                   "seq": int(release.get("seq") or 0) + 1, "updated_at": utc_now()}
+    if release_stopped:
+        attempts = dict(release.get("attempts") or {})
+        retry = {"at": utc_now(), "by": by, "reason": "code updated since the stop",
+                 "stage": stage, "previous_status": release.get("status"),
+                 "previous_attempts": dict(attempts), "previous_error": release.get("last_error"),
+                 "from_revision": release.get("exhausted_code_revision"), "to_revision": current}
+        attempts.pop(stage, None)
+        new_release.update({"status": "pending", "attempts": attempts, "last_error": None,
+                            "waiting_for": None, "waiting_detail": None,
+                            "retries": [*list(release.get("retries") or []), retry][-10:]})
+        if stage == "form_fix_writer":
+            new_release["writer_rounds"] = 0
+    updates["release"] = new_release
+    if handoff_stopped:
+        updates["handoff"] = {**handoff, "status": "queued", "attempts": 0,
+                              "previous_error": handoff.get("last_error"), "last_error": None}
+    record_topic_note(
+        ledger, topic_id, db=db, event_type="release_retry", reason="code_updated",
+        decided_by=by,
+        detail={"paper_id": str(handoff.get("paper_id") or topic.get("paper_id") or ""),
+                "stage": stage, "release_reset": release_stopped, "handoff_reset": handoff_stopped,
+                "to_revision": current, "code_retry": used + 1,
+                "code_retries_max": RELEASE_CODE_RETRIES},
+        updates=updates, key=f"release_code_retry:{topic_id}:{current}",
+    )
+    return ledger.topic(topic_id)
+
+
 def _deliver_ready(db, paths, settings, report) -> None:
     program = settings.program
     ledger = _ledger(paths, settings)
     for topic in topics_by_status(ledger.read(), "ready_queue"):
+        if program.auto_handoff:
+            topic = _code_update_retry(db, paths, settings, ledger, topic) or topic
         topic_id = str(topic["topic_id"])
         state = dict(topic.get("handoff") or {})
         status = str(state.get("status") or "queued")
@@ -1625,6 +1742,175 @@ def _deliver_ready(db, paths, settings, report) -> None:
                                  {"reason": "paper_id_unknown"}, event_key="paper_id_unknown")
             continue
         _ReleasePipeline(db, paths, settings, report, ledger, topic, paper_id).advance()
+
+
+# --------------------------------------------------------------------------- delivery chain state
+#
+# Every paper between review ``ready`` and a finished delivery is in exactly one of:
+#   in_progress  - the pipeline takes its next step this or the next tick (or a writer /
+#                  full review it started is running);
+#   auto_retry   - a step failed and is retried by itself (attempt n of a bounded number);
+#   waiting      - it waits for a named condition outside the pipeline (credentials, a
+#                  setting, an external service);
+#   needs_human  - it stopped and the entry says what a person has to do.
+# Nothing is left without one of these; a state the classifier does not know is reported
+# as needs_human ("unrecognized") and as a tick error, so a new failure mode cannot sit
+# unowned.
+
+# waiting_for -> (state, condition or action). Conditions that only a person can
+# satisfy are needs_human; the rest are waiting.
+_WAIT_STATES: dict[str, tuple[str, str]] = {
+    "waiting_credentials": ("waiting", "credentials {missing}, in the scheduler environment or "
+                                       "[program] credentials_file{file}"),
+    "git_identity_missing": ("waiting", "a Git identity: [program.git] user_name/user_email in "
+                                        "the instance settings, or user.name/user.email in the "
+                                        "data repository"),
+    "auto_release_off": ("waiting", "[program] auto_release = true (or run the Zenodo step "
+                                    "by hand)"),
+    "no_standing_authorization": ("waiting", "registry/settings.yaml#support_publication."
+                                             "standing_production_release_authorization: true"),
+    "support_release_none": ("waiting", "[program] support_release = \"zenodo\" (the paper has a "
+                                        "support record but deposits are switched off)"),
+    "paper_not_found": ("waiting", "the paper's registry record in the data repository or in "
+                                   "the topic's campaign workspace"),
+    "needs_owner": ("needs_human", "fix the listed delivery-exit problems by hand (they are not "
+                                   "text fixes a writer may make): {issues}"),
+    "layout_unsupported": ("needs_human", "move the workspace paper under papers/<paper_id>/ (or "
+                                          "decide to drop it); adopt refuses its layout"),
+    "support_record_exists": ("needs_human", "decide on the existing support record "
+                                             "(support_release = \"none\" cannot waive it)"),
+    "manuscript_cites_deposit": ("needs_human", "remove the Zenodo deposit from the "
+                                                "data-availability text or switch support_release "
+                                                "back to \"zenodo\""),
+    "adopt_blocked": ("needs_human", "read the adopt refusal in the topic history and lay the "
+                                     "workspace paper out so it can be adopted"),
+    "support_waiver_blocked": ("needs_human", "read the waiver refusal in the topic history and "
+                                              "decide on the support record"),
+}
+
+
+def _format_condition(template: str, detail: Mapping[str, Any]) -> str:
+    missing = (", ".join(str(item) for item in detail.get("missing") or [])
+               or "see the topic history")
+    issues = "; ".join(str(item) for item in detail.get("issues") or [])[:400] or "see the history"
+    refused = str(detail.get("credentials_file") or "")
+    text = template.format(missing=missing, issues=issues,
+                           file=f" (file refused: {refused})" if refused else "")
+    hint = str(detail.get("hint") or "").strip()
+    return f"{text} ({hint})" if hint and hint not in text else text
+
+
+def _retry_hint(paper_id: str) -> str:
+    return (f"then `python -m openlabs program release-retry --paper-id {paper_id} --by <name> "
+            "--reason <what was fixed>` (a code fix merged to main is retried automatically, "
+            f"at most {RELEASE_CODE_RETRIES} times)")
+
+
+def delivery_chain_state(db: FactoryDB, settings: FactorySettings,
+                         topic: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The delivery-chain state of one topic (None: not in the chain, or finished)."""
+
+    program = settings.program
+    status = str(topic.get("status") or "")
+    release = dict(topic.get("release") or {})
+    handoff = dict(topic.get("handoff") or {})
+    paper_id = str(handoff.get("paper_id") or topic.get("paper_id") or "") or None
+    base = {"topic_id": str(topic.get("topic_id") or ""), "paper_id": paper_id,
+            "stage": release.get("stage") or None}
+    release_status = str(release.get("status") or "")
+    handoff_status = str(handoff.get("status") or "queued")
+    if status == "in_review" and release_status == "returned_to_review":
+        # The pipeline handed the paper to a full review; that review task owns it.
+        tasks = [str((entry.get("detail") or {}).get("review_task_id") or "")
+                 for entry in topic.get("history") or []
+                 if entry.get("kind") == "release_returned_to_review"]
+        task_id = next((item for item in reversed(tasks) if item), "")
+        task_status = str((db.task(task_id) or {}).get("status") or "missing") if task_id else ""
+        if task_status in IN_FLIGHT or task_status == "succeeded":
+            return {**base, "state": "in_progress", "owner": task_id,
+                    "detail": f"full release review {task_status}"}
+        return {**base, "state": "needs_human",
+                "action": (f"the full review the pipeline queued ({task_id or 'none'}) ended "
+                           f"{task_status or 'without a task'}; review the paper, or run "
+                           f"`program release-retry --paper-id {paper_id}` if it is ready and "
+                           "current")}
+    if status != "ready_queue":
+        return None
+    if handoff_status == "delivered" and release_status != "commit_pending":
+        return None
+    if not program.auto_handoff:
+        return {**base, "state": "waiting", "condition": "[program] auto_handoff = true"}
+    if not paper_id:
+        return {**base, "state": "needs_human",
+                "action": "record the paper_id of this ready topic (handoff.paper_id)"}
+    attempts = dict(release.get("attempts") or {})
+    if handoff_status == "exhausted":
+        return {**base, "stage": "deliver", "state": "needs_human",
+                "action": ("resolve the delivery error "
+                           f"({str(handoff.get('last_error') or '')[:300]}); "
+                           f"{_retry_hint(paper_id)}")}
+    if release_status == "exhausted":
+        return {**base, "state": "needs_human",
+                "action": (f"resolve the {release.get('stage')} error "
+                           f"({str(release.get('last_error') or '')[:300]}); "
+                           f"{_retry_hint(paper_id)}")}
+    if handoff_status == "failed":
+        return {**base, "stage": "deliver", "state": "auto_retry",
+                "attempt": int(handoff.get("attempts") or 0),
+                "max_attempts": program.handoff_max_attempts,
+                "last_error": str(handoff.get("last_error") or "")[:300]}
+    if release_status == "failed":
+        stage = str(release.get("stage") or "")
+        return {**base, "state": "auto_retry", "attempt": int(attempts.get(stage) or 0),
+                "max_attempts": program.release_max_attempts,
+                "last_error": str(release.get("last_error") or "")[:300]}
+    if release_status == "commit_pending":
+        return {**base, "state": "auto_retry", "detail": "delivered; the record commit is retried",
+                "last_error": str(release.get("last_error") or "")[:300]}
+    if release_status == "waiting" and release.get("writer_task_id"):
+        task_id = str(release["writer_task_id"])
+        task_status = str((db.task(task_id) or {}).get("status") or "missing")
+        return {**base, "state": "in_progress", "owner": task_id,
+                "detail": f"formal-fix writer {task_status}"}
+    if release_status == "waiting":
+        reason = str(release.get("waiting_for") or "")
+        detail = dict(release.get("waiting_detail") or {})
+        known = _WAIT_STATES.get(reason)
+        if known is None:
+            return {**base, "state": "needs_human", "unrecognized": True,
+                    "action": (f"the pipeline waits for {reason or 'an unnamed condition'!r}, "
+                               "which has no known owner; read the topic history")}
+        state, template = known
+        key = "condition" if state == "waiting" else "action"
+        return {**base, "state": state, "waiting_for": reason,
+                key: _format_condition(template, detail)}
+    if release_status in {"", "pending", "running"} or (release_status == "done"
+                                                        and handoff_status != "delivered"):
+        return {**base, "state": "in_progress"}
+    return {**base, "state": "needs_human", "unrecognized": True,
+            "action": (f"unrecognized release state {release_status!r} / delivery "
+                       f"{handoff_status!r}; read the topic history")}
+
+
+def report_delivery_chain(db, paths, settings, report) -> None:
+    """``program.delivery_chain`` (every paper in the chain) and ``delivery_stuck``."""
+
+    document = _ledger(paths, settings).read()
+    chain: list[dict[str, Any]] = []
+    for topic in document.get("topics") or []:
+        if str(topic.get("status") or "") not in {"ready_queue", "in_review"}:
+            continue
+        item = delivery_chain_state(db, settings, topic)
+        if item is None:
+            continue
+        chain.append(item)
+        if item.get("unrecognized"):
+            report.errors.append(
+                f"Delivery chain: {item['paper_id']} (topic {item['topic_id']}) has no owner: "
+                f"{item['action']}")
+    report.program["delivery_chain"] = chain
+    report.program["delivery_stuck"] = [item for item in chain
+                                        if item["state"] in {"waiting", "needs_human"}]
 
 
 # --------------------------------------------------------------------------- release pipeline
@@ -1879,11 +2165,12 @@ class _ReleasePipeline:
         attempts[self.stage] = int(attempts.get(self.stage) or 0) + 1
         final = attempts[self.stage] >= self.settings.program.release_max_attempts
         error = str(exc)[:800]
+        marks = {"exhausted_code_revision": code_revision(self.paths)} if final else {}
         self.save("release_exhausted" if final else "release_failed", f"{self.stage}_failed",
                   detail={"stage": self.stage, "attempt": attempts[self.stage], "error": error,
                           "final": final},
                   attempts=attempts, last_error=error, stage=self.stage,
-                  status="exhausted" if final else "failed")
+                  status="exhausted" if final else "failed", **marks)
         self.entry("exhausted" if final else "failed", attempt=attempts[self.stage],
                    error=error[:300])
         if final:
@@ -1901,8 +2188,14 @@ class _ReleasePipeline:
 
     def wait(self, wait: ReleaseWait) -> None:
         self.stage = wait.stage
+        # What exactly is awaited (missing variables, the hint) stays in the state, so the
+        # tick report can name the condition without reading the history.
+        waiting_detail = {key: wait.detail[key] for key in ("missing", "hint", "issues",
+                                                         "credentials_file")
+                          if wait.detail.get(key)}
         self.save(None, wait.reason, detail={"stage": wait.stage, **wait.detail},
-                  status="waiting", stage=wait.stage, waiting_for=wait.reason)
+                  status="waiting", stage=wait.stage, waiting_for=wait.reason,
+                  waiting_detail=waiting_detail or None)
         self.entry(f"waiting_{wait.reason}", **wait.detail)
 
     def commit(self, status: Mapping[str, Any], action: str) -> str | None:
@@ -2163,7 +2456,8 @@ class _ReleasePipeline:
                         self.stage: self.settings.program.release_max_attempts}
             self.save("release_exhausted", "writer_rounds_exhausted", stage=self.stage,
                       status="exhausted", attempts=attempts, last_error=error[:800],
-                      detail={"issues": texts[:20]})
+                      detail={"issues": texts[:20]},
+                      exhausted_code_revision=code_revision(self.paths))
             self.entry("exhausted", error=error[:300])
             self.exhausted_report(error)
             return
@@ -2307,6 +2601,8 @@ class _ReleasePipeline:
             new_state = {**state, "status": "exhausted" if final else "failed",
                          "attempts": attempts, "last_error": str(exc)[:800],
                          "last_attempt_at": utc_now(), "paper_id": self.paper_id}
+            if final:
+                new_state["exhausted_code_revision"] = code_revision(self.paths)
             record_topic_note(
                 self.ledger, self.topic_id, db=self.db, event_type="handoff_failed",
                 reason="delivery_failed", decided_by="orchestrator:auto_handoff",
@@ -2645,12 +2941,13 @@ def run_program_autonomy(
     if not settings.program.enabled:
         return
     for name, step in (("limits", _check_limits), ("decisions", _check_decision_tasks),
-                       ("delivery", _deliver_ready)):
+                       ("delivery", _deliver_ready),
+                       ("delivery_chain", report_delivery_chain)):
         try:
             step(db, paths, settings, report)
         except (OSError, TopicLedgerError, KeyError, TypeError, ValueError,
                 json.JSONDecodeError) as exc:
             report.errors.append(f"program autonomy ({name}): {exc}")
     for key in ("direction_decisions", "topics_frozen", "ready_queued", "handoffs", "releases",
-                "release_exhausted"):
+                "release_exhausted", "delivery_chain", "delivery_stuck"):
         report.program.setdefault(key, [])

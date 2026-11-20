@@ -47,6 +47,35 @@ def build_parser() -> argparse.ArgumentParser:
     history_summary = history_commands.add_parser("summary", help="Show the generated per-journal table.")
     history_summary.add_argument("--root", default=str(default_repo_root()))
 
+    venue = subparsers.add_parser(
+        "venue",
+        help="Local registry of verified journals (registry/verified-venues.yaml): read it "
+             "before checking a journal online.",
+    )
+    venue_commands = venue.add_subparsers(dest="venue_command", required=True)
+    venue_lookup = venue_commands.add_parser(
+        "lookup", help="Is the journal verified and eligible (exit 0), pending or not eligible "
+                       "(1), or not registered (3)?")
+    venue_lookup.add_argument("--journal")
+    venue_lookup.add_argument("--issn")
+    venue_alternatives = venue_commands.add_parser(
+        "alternatives", help="Verified, eligible journals of the registry.")
+    venue_alternatives.add_argument("--zone", type=int, action="append", default=[],
+                                    help="2025 CAS zone (repeatable).")
+    venue_alternatives.add_argument("--category", help="Part of the CAS major category name.")
+    venue_alternatives.add_argument("--exclude", help="A journal to leave out (the current one).")
+    venue_pending = venue_commands.add_parser(
+        "mark-pending",
+        help="Record a journal whose evidence could not be read (HTTP 403/406 ...) as "
+             "pending_verification; never downgrades a verified entry.")
+    venue_pending.add_argument("--journal", required=True)
+    venue_pending.add_argument("--issn")
+    venue_pending.add_argument("--url", help="The page that refused the request.")
+    venue_pending.add_argument("--http-status", type=int)
+    venue_pending.add_argument("--reason", required=True)
+    venue_pending.add_argument("--by", required=True, help="Model or person recording it.")
+    for command in (venue_lookup, venue_alternatives, venue_pending):
+        command.add_argument("--root", default=str(default_repo_root()))
     cadence = subparsers.add_parser("cadence", help="Check team submission spacing before an actual submission.")
     cadence_commands = cadence.add_subparsers(dest="cadence_command", required=True)
     cadence_check = cadence_commands.add_parser("check", help="Exit 0 when allowed, 1 when blocked, 2 when the ledger is unusable.")
@@ -520,6 +549,28 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError, KeyError) as exc:
             print(json.dumps({"valid": False, "error": str(exc)}, ensure_ascii=False))
             return 2
+    if args.command == "venue":
+        from paper_writing import venue_registry
+
+        try:
+            if args.venue_command == "lookup":
+                result = venue_registry.lookup(args.root, journal=args.journal, issn=args.issn)
+                code = 0 if result["eligible"] else (1 if result["found"] else 3)
+            elif args.venue_command == "alternatives":
+                result = venue_registry.alternatives(args.root, zones=args.zone,
+                                                     category=args.category,
+                                                     exclude=args.exclude)
+                code = 0
+            else:
+                result = venue_registry.mark_pending(
+                    args.root, journal=args.journal, issn=args.issn, url=args.url,
+                    http_status=args.http_status, reason=args.reason, by=args.by)
+                code = 0
+        except (OSError, ValueError) as exc:
+            print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return code
     if args.command == "cadence":
         from paper_writing.submission_cadence import check_cadence
         try:

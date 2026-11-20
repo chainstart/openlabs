@@ -2798,6 +2798,10 @@ def ingest_results(
                         {"attempt_id": attempt_id, "corrections": corrected},
                         event_key=f"staged-hash:{attempt_id}",
                     )
+                # A stop over unreadable venue evidence (publisher 403/406) is no human
+                # stop: the seat continues with the venue pending or a verified alternative.
+                normalized = owner_mode.venue_pending_instead_of_human(
+                    db, task, normalized, key=f"venue-pending:{attempt_id}")
                 if normalized != payload:
                     atomic_write_json(result_path, normalized)
                     actual_sha = sha256_file(result_path)
