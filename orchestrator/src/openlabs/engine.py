@@ -809,6 +809,7 @@ class TickReport:
     # {"short": bool, "paused_task_types": [...], "runners": {...}}; short=True
     # means no lead runner may take decision work (负责人额度不足).
     lead_quota: dict[str, Any] = field(default_factory=dict)
+    provider_suspensions: list[dict[str, Any]] = field(default_factory=list)
     routed: list[dict[str, Any]] = field(default_factory=list)
     routing_deferred: list[dict[str, Any]] = field(default_factory=list)
     # Task classes no provider may take (额度配速暂停), why, and the estimated
@@ -852,6 +853,8 @@ class TickReport:
                 payload[name] = value
         # Routing keys appear only with a [runners] table, so the default report
         # shape is unchanged.
+        if self.provider_suspensions:
+            payload["provider_suspensions"] = self.provider_suspensions
         if self.provider_quota or self.lead_quota or self.routed or self.routing_deferred or (
             self.escalated or self.quota_probes
         ):
@@ -2051,6 +2054,28 @@ def _infrastructure_failure(
             # The agent produced scientific output; this is not a pure runner miss.
             return None, evidence
     return failure_class, evidence
+
+
+def _record_provider_suspensions(db: FactoryDB, settings: FactorySettings,
+                                 report: TickReport) -> None:
+    """Report the configured provider suspensions; one event when each starts and ends."""
+
+    from . import suspensions as suspension_rules
+
+    configured = tuple(getattr(settings, "provider_suspensions", ()) or ())
+    if not configured:
+        return
+    moment = suspension_rules.now()
+    report.provider_suspensions = suspension_rules.report(configured, moment)
+    for item in configured:
+        key = f"{item.provider}:{item.until.isoformat()}"
+        detail = item.summary(moment)
+        if item.active:
+            db.record_event_once("scheduler", "provider_suspension", "provider_suspension_active",
+                                 detail, event_key=f"active:{key}")
+        else:
+            db.record_event_once("scheduler", "provider_suspension",
+                                 "provider_suspension_expired", detail, event_key=f"expired:{key}")
 
 
 def _triage_infrastructure_block(
@@ -4190,6 +4215,7 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
         report.quota_overrides_expired = budget_control.expire_quota_overrides(
             db, now=budget_now
         )
+        _record_provider_suspensions(db, settings, report)
         router = budget_control.QuotaRouter.build(db, settings, now=budget_now)
         report.provider_quota = router.provider_summary()
         report.lead_quota = router.lead_summary()

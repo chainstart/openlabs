@@ -933,6 +933,9 @@ class FactorySettings:
     budget: BudgetSettings = field(default_factory=BudgetSettings)
     runners: dict[str, RunnerSpec] = field(default_factory=dict)
     routing: RoutingSettings = field(default_factory=RoutingSettings)
+    # [routing.provider_suspensions] as configured, each marked active or expired at load
+    # time (suspensions.py); the active ones are already applied to runners and routing.
+    provider_suspensions: tuple[Any, ...] = ()
     assets: AssetSettings = field(default_factory=lambda: AssetSettings())
     reporting: ReportingSettings = field(default_factory=lambda: ReportingSettings())
 
@@ -1871,6 +1874,10 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
     factory = payload.get("factory") if isinstance(payload.get("factory"), dict) else {}
     resources = payload.get("resources") if isinstance(payload.get("resources"), dict) else {}
     retention = payload.get("retention") if isinstance(payload.get("retention"), dict) else {}
+    from . import suspensions as suspension_rules
+
+    # Time-limited provider suspensions apply before anything is parsed (suspensions.py).
+    payload, provider_suspensions = suspension_rules.apply(payload)
     runners = load_runner_specs(payload.get("runners"))
     routing = load_routing_settings(payload.get("routing"))
     runners = apply_model_defaults(runners, routing, payload.get("runners"))
@@ -1930,4 +1937,5 @@ def load_settings(paths: WorkspacePaths) -> FactorySettings:
         runners=runners,
         routing=routing,
         reporting=load_reporting_settings(payload.get("reporting")),
+        provider_suspensions=provider_suspensions,
     )

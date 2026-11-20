@@ -1125,6 +1125,7 @@ bin/openlabs-container-loop cli -- program utilization            # --history N�
   （每家只放 1 个任务）。可外推的过期读数（`stale_estimate_hours`）照旧外推。
 - **Fable**：原有更严的保护保留，与新规则取较严者：Fable 依赖的窗口上 `lead_decision_reserve` 只留给决策，
   Fable 自身的评审和普通任务到 `lead_review_ceiling` 为止；Fable 的决策也受 90% 配速线约束。
+- **提供方限时停用**（2026-11-20）：`[routing.provider_suspensions.<provider>]` 写 `until`（带时区的 ISO 时间）和决定来源 `by`、`date`、`quote`（`reason` 可选）。`until` 之前，该提供方的 runner 在读配置时整体移除：负责人、写作、立项、评审、方向决策、轻活档都不派给它；`writing_runner` 属于它时回落为负责人自己写；`protected_models` 里它的模型不再保护；`probe_commands` 跳过它；`provider_ceilings` 里它的条目搁置（不报“未知提供方”）；路由按单族（`same_family_different_model`）运行。配置每轮重读，到 `until` 后下一轮起一切按配置原文恢复，无需人工。tick 报告 `provider_suspensions` 列出每条停用、是否生效和剩余小时数；开始和到期各记一次 `provider_suspension_active` / `provider_suspension_expired` 事件。正在运行的任务不受影响。代码见 `suspensions.py`。论文流水线一侧对应的是 `settings.yaml` 的 `review.temporary_panels`（`paper_writing/temporary_panels.py`）：评审在 `since`～`until` 之间启动就用限时面板和它的编辑改写配置，之后启动用标准面板；同一轮评审始终绑定启动时的面板。
 - **按提供方覆盖**（2026-11-16 起）：`[routing.provider_ceilings.<provider>]` 可为单个提供方单独设
   `ordinary_ceiling` 和/或 `hard_ceiling`，未列出的提供方、未写的键沿用 `[routing]` 的全局值。覆盖后的值
   用于该提供方的一切：类别上限、配速线（按该提供方的上限缩放）、恢复时间与 `projected_at_reset` 对照、

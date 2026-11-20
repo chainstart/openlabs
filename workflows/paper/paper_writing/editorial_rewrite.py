@@ -44,6 +44,7 @@ from typing import Any, Mapping
 
 from paper_writing.registry import load_paper_metadata, load_registry_settings, require_not_frozen, settings_path
 from paper_writing.review_launcher import LaunchError, run_role
+from paper_writing import temporary_panels
 
 PARTS = ("abstract", "introduction", "closing")
 VOICE_DIMENSIONS = ("naturalness", "restraint", "clarity", "venue_fit")
@@ -178,15 +179,10 @@ def _single_family_authorization(settings: Mapping[str, Any]) -> dict[str, Any] 
     return dict(receipt)
 
 
-def rewrite_config(root: Path) -> dict[str, Any]:
-    settings = load_registry_settings(root) if settings_path(root).is_file() else {}
-    raw = dict((settings.get("quality_gate") or {}).get("editorial_rewrite") or {})
-    rewriters = raw.get("rewriters") or DEFAULT_ROLES
-    judges = raw.get("judges") or DEFAULT_ROLES
+def _check_judges(rewriters: Any, judges: Any, single_family: Any) -> None:
     for group in (rewriters, judges):
         if not isinstance(group, Mapping) or not group:
             raise ValueError("editorial_rewrite rewriters/judges must be non-empty mappings")
-    single_family = _single_family_authorization(settings)
     if len({str(role.get("provider")) for role in judges.values()}) < 2:
         if single_family is None:
             raise ValueError("editorial_rewrite judges must come from at least two model families "
@@ -200,6 +196,27 @@ def rewrite_config(root: Path) -> dict[str, Any]:
         if len(models) < 2:
             raise ValueError("editorial_rewrite judges of one model family must use at least two "
                              "different models (review.cross_model.basis: model)")
+
+
+def rewrite_config(root: Path) -> dict[str, Any]:
+    settings = load_registry_settings(root) if settings_path(root).is_file() else {}
+    raw = dict((settings.get("quality_gate") or {}).get("editorial_rewrite") or {})
+    rewriters = raw.get("rewriters") or DEFAULT_ROLES
+    judges = raw.get("judges") or DEFAULT_ROLES
+    _check_judges(rewriters, judges, _single_family_authorization(settings))
+    # A time-limited review panel (review.temporary_panels) may bring its own rewriters and
+    # judges; every entry is validated, the one in force replaces the standard pair. Its
+    # authorization stands for the one-family decision (basis: model).
+    for entry in temporary_panels.entries(settings):
+        override = entry["editorial_rewrite"]
+        if override:
+            _check_judges(override.get("rewriters") or rewriters, override.get("judges") or judges,
+                          entry["authorization"]
+                          if str(entry["cross_model"].get("basis") or "model") == "model" else None)
+    current = temporary_panels.active(settings)
+    if current is not None and current["editorial_rewrite"]:
+        rewriters = current["editorial_rewrite"].get("rewriters") or rewriters
+        judges = current["editorial_rewrite"].get("judges") or judges
     return {"enabled": bool(raw.get("enabled", True)), "required": bool(raw.get("required", False)),
             "required_from": _date(raw.get("required_from")),
             "rewriters": {str(k): dict(v) for k, v in rewriters.items()},

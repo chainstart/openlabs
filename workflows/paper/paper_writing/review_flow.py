@@ -28,6 +28,7 @@ from paper_writing.registry import (load_paper_metadata, load_registry, load_reg
                                      require_not_frozen, write_paper_metadata)
 from paper_writing.review_launcher import LaunchError, role_runtime, run_role
 from paper_writing import formal_checks
+from paper_writing import temporary_panels
 
 PROCESS = "unified_v1"
 RECOMMENDATIONS = ("accept", "minor_revision", "major_revision", "reject")
@@ -142,6 +143,22 @@ def _json_dump(path: Path, value: Any) -> str:
 
 # --------------------------------------------------------------------------- configuration
 
+def _check_formal_verifier(roles: Any, label: str) -> None:
+    if not isinstance(roles, Mapping) or FORMAL_ROLE not in roles:
+        return
+    verifier = roles[FORMAL_ROLE]
+    if (not isinstance(verifier, Mapping)
+            or any(not isinstance(verifier.get(k), str) or not verifier[k].strip()
+                   for k in ("provider", "tool", "model"))):
+        raise ValueError(f"{label}.{FORMAL_ROLE} needs provider, tool and model, like the other roles")
+    if verifier["provider"] != "openai-codex":
+        raise ValueError(f"{label}.{FORMAL_ROLE} must use an independent Codex process (provider openai-codex)")
+    try:
+        role_runtime(verifier)
+    except LaunchError as exc:
+        raise ValueError(f"{label}.{FORMAL_ROLE}: {exc}") from exc
+
+
 def check_referee_models(roles: Mapping[str, Any], panel: list[str]) -> None:
     """The two active referees must use different models (one rule for load and run)."""
     if len(panel) != 2:
@@ -183,29 +200,50 @@ def review_config(root: str | Path) -> dict[str, Any]:
             raise ValueError("review.cross_model.basis 'model' (same family, different model) "
                              "requires basis_authorization with actor and date")
     roles = review.get("roles") or {}
-    if FORMAL_ROLE in roles:
-        verifier = roles[FORMAL_ROLE]
-        if (not isinstance(verifier, Mapping)
-                or any(not isinstance(verifier.get(k), str) or not verifier[k].strip()
-                       for k in ("provider", "tool", "model"))):
-            raise ValueError(f"review.roles.{FORMAL_ROLE} needs provider, tool and model, like the other roles")
-        if verifier["provider"] != "openai-codex":
-            raise ValueError(f"review.roles.{FORMAL_ROLE} must use an independent Codex process (provider openai-codex)")
-        try:
-            role_runtime(verifier)
-        except LaunchError as exc:
-            raise ValueError(f"review.roles.{FORMAL_ROLE}: {exc}") from exc
+    _check_formal_verifier(roles, "review.roles")
     # The run-time rule, checked when the settings are loaded too (2026-11-20: a panel with
     # both referees on one model loaded fine and then stopped every unified review).
     check_referee_models(roles if isinstance(roles, Mapping) else {}, panel)
+    # Time-limited panels (temporary_panels.py): every entry is validated like the standard
+    # panel; the one in force replaces it for reviews starting now, and each is also a
+    # bound panel for policy_for_record (reviews started under it keep it after `until`).
+    temporaries = temporary_panels.entries(settings)
+    bound = []
+    for index, entry in enumerate(temporaries):
+        label = f"review.temporary_panels[{index}]"
+        entry_panel = entry.get("referee_roles") or panel
+        if (not isinstance(entry_panel, list) or len(entry_panel) not in {1, 2}
+                or any(name not in {"referee_a", "referee_b"} for name in entry_panel)):
+            raise ValueError(f"{label}.referee_roles must select one or two known referees")
+        entry_basis = str(entry["cross_model"].get("basis") or "model")
+        if entry_basis not in CROSS_MODEL_BASES:
+            raise ValueError(f"{label}.cross_model.basis must be one of {', '.join(CROSS_MODEL_BASES)}")
+        if {"editor", *entry_panel} - set(entry["roles"]):
+            raise ValueError(f"{label}.roles must define editor and every active referee")
+        _check_formal_verifier(entry["roles"], f"{label}.roles")
+        check_referee_models(entry["roles"], list(entry_panel))
+        bound.append({"valid_for_reviews_started_before": entry["until"].isoformat(),
+                      "valid_for_reviews_started_from": (entry["since"].isoformat()
+                                                         if entry["since"] else None),
+                      "roles": dict(entry["roles"]), "referee_roles": list(entry_panel),
+                      "cross_model_basis": entry_basis, "temporary": True})
+    current = temporary_panels.active(settings)
+    temporary = None
+    if current is not None:
+        roles = dict(current["roles"])
+        panel = list(current.get("referee_roles") or panel)
+        basis = str(current["cross_model"].get("basis") or "model")
+        temporary = {"until": current["until"].isoformat(),
+                     "authorization": dict(current["authorization"])}
     return {"process": gate.get("review_process"), "roles": roles,
+            "temporary_panel": temporary,
             "referee_roles": panel, "rejection_clearance_required": True,
             "max_rounds_per_target": int(review.get("max_rounds_per_target", 10)),
             "timeout_seconds": int(review.get("timeout_seconds", 3600)),
             "writer_model": str(review.get("writer_model") or ""),
             "cross_model_required": bool(cross.get("required", False)),
             "cross_model_basis": basis,
-            "previous_panels": [dict(p) for p in previous]}
+            "previous_panels": [dict(p) for p in previous] + bound}
 
 
 def formal_role_name(roles: Mapping[str, Any]) -> str:
@@ -348,13 +386,18 @@ def policy_for_record(record: Mapping[str, Any], config: Mapping[str, Any]) -> d
     candidates = []
     for index, panel in enumerate(config.get("previous_panels", [])):
         until = _parse_time(panel["valid_for_reviews_started_before"])
-        if started and started < until and active == list(panel["referee_roles"]):
+        since = _parse_time(panel.get("valid_for_reviews_started_from"))
+        if (started and started < until and (since is None or started >= since)
+                and active == list(panel["referee_roles"])):
             candidates.append((until, index, panel))
     if candidates:
         # The panel in force when the review started: the earliest cut-off after its
         # start, whatever order the entries are listed in.
         panel = min(candidates, key=lambda item: (item[0], item[1]))[2]
-        return dict(config, roles=dict(panel["roles"]), referee_roles=list(panel["referee_roles"]))
+        bound = dict(config, roles=dict(panel["roles"]), referee_roles=list(panel["referee_roles"]))
+        if panel.get("cross_model_basis"):  # a temporary panel keeps its independence basis
+            bound["cross_model_basis"] = panel["cross_model_basis"]
+        return bound
     return dict(config)
 
 
