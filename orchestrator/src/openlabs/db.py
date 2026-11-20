@@ -1287,6 +1287,66 @@ class FactoryDB:
             )
         return True
 
+    def requeue_task_manually(
+        self,
+        task_id: str,
+        *,
+        by: str,
+        reason: str,
+        allow_needs_human: bool = False,
+    ) -> dict[str, Any]:
+        """Requeue a quarantined (or, when allowed, needs_human) task as a new attempt.
+
+        For a cause a person has fixed outside the task (a configuration error, for
+        example) that the infrastructure triage does not classify. One more attempt is
+        granted; the event ``manual_requeue`` records who, why and the prior state.
+        Raises ``ValueError`` when the task is missing, in another state, or its campaign
+        is not active.
+        """
+
+        allowed = {"quarantined", "needs_human"} if allow_needs_human else {"quarantined"}
+        if not str(reason or "").strip() or not str(by or "").strip():
+            raise ValueError("a reason and an actor are required")
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, attempt, max_attempts, campaign_id, last_error FROM tasks "
+                "WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"no task {task_id}")
+            status = str(row["status"])
+            if status not in allowed:
+                hint = (" (needs_human needs --allow-needs-human)"
+                        if status == "needs_human" else "")
+                raise ValueError(f"task {task_id} is {status}; only "
+                                 f"{'/'.join(sorted(allowed))} tasks are requeued{hint}")
+            campaign = connection.execute(
+                "SELECT status FROM campaigns WHERE campaign_id=?", (row["campaign_id"],)
+            ).fetchone()
+            if campaign is not None and str(campaign["status"]) != "active":
+                raise ValueError(f"campaign {row['campaign_id']} is {campaign['status']}, "
+                                 "not active")
+            connection.execute(
+                """
+                UPDATE tasks SET status='queued',
+                    max_attempts=MAX(max_attempts, attempt+1), not_before=NULL,
+                    last_error=?, lease_owner=NULL, lease_expires_at=NULL, worker_pid=NULL,
+                    current_attempt_id=NULL, output_path=NULL, updated_at=?
+                WHERE task_id=?
+                """,
+                (f"manual_requeue:{str(reason).strip()[:300]}", now, task_id),
+            )
+            detail = {"by": str(by).strip(), "reason": str(reason).strip(),
+                      "prior_status": status, "prior_attempt": int(row["attempt"] or 0),
+                      "prior_max_attempts": int(row["max_attempts"] or 0),
+                      "prior_error": (str(row["last_error"])[:300] if row["last_error"]
+                                      else None)}
+            self._event(connection, "task", task_id, "manual_requeue", detail)
+        return {"task_id": task_id, "status": "queued", **detail}
+
     def escalate_task_tier(
         self,
         task_id: str,

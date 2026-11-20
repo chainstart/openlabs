@@ -406,6 +406,8 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   - `program.topics_without_next_step` 列出所有非终态台账课题中没有可执行下一步的，原因包括 campaign 暂停、campaign 缺失、负责人停派、交付流水线 exhausted、无活任务。
   - 写作者切换（同日修复）：简报与切换共用 `owner.writing_plan`。有评审历史或已在写的课题明确由负责人自己写，记 `writing.status = owner`，并写台账备注 `writing_owner`。写作者与负责人是同一 runner 时照旧由负责人写。
 - **台账对账**（2026-11-20）：`python3 -m openlabs program reconcile` 默认只读，列出每个课题或任务记录的现状态、建议状态和依据。加 `--apply` 才通过 `transition_topic`、`freeze_topic`、`mark_topic_delivered`、`close_needs_human` 写入，规则见 `program_reconcile.py`。停滞判据为 `[program].reconcile_stale_days`（默认 5 天）。
+- **人工重排被隔离的任务**（2026-11-20）：`python3 -m openlabs program requeue TASK_ID --reason "<修好了什么>" [--by NAME]`。只接受 `quarantined` 的任务（`needs_human` 要另加 `--allow-needs-human`），所属 campaign 须为 active；任务回到 `queued`，多给一次 attempt，写一条 `manual_requeue` 事件（谁、为什么、原状态与次数）。用于基础设施分流不会自动重试的失败，例如评审因配置错误三次失败被隔离。tick 报告 `program.topics_without_next_step` 里，若课题最新任务是这类被隔离/needs_human 的任务，会附 `blocked_task` 和 `suggested_command`。
+- **评审面板的加载校验**（2026-11-20）：两位审稿人模型必须不同，这条规则在加载 `settings.yaml` 时就检查（`review_flow.check_referee_models`，与 `unified-run` 运行时同一个函数），改错面板会立刻报错，不会等到每次评审启动才失败。
 - **空转指标**：每个 tick 报告带 `idle_metrics`：最近 24 小时每个任务类型的 `attempts`、`zero_output`
   （任务按上面的口径无进展；scout 为无有效卡片）、`agent_hours` 与 `zero_output_agent_hours`，以及合计。
   例：`tail -1 state/ticks.jsonl | jq .report.idle_metrics`。

@@ -142,6 +142,17 @@ def _json_dump(path: Path, value: Any) -> str:
 
 # --------------------------------------------------------------------------- configuration
 
+def check_referee_models(roles: Mapping[str, Any], panel: list[str]) -> None:
+    """The two active referees must use different models (one rule for load and run)."""
+    if len(panel) != 2:
+        return
+    first, second = (roles.get(name) for name in panel)
+    if not isinstance(first, Mapping) or not isinstance(second, Mapping):
+        return  # a missing referee role is reported by unified-run's own check
+    if str(first.get("model") or "").strip().lower() == str(second.get("model") or "").strip().lower():
+        raise ValueError("The two referees must use different models")
+
+
 def review_config(root: str | Path) -> dict[str, Any]:
     settings = load_registry_settings(root)
     gate = settings.get("quality_gate") or {}
@@ -184,6 +195,9 @@ def review_config(root: str | Path) -> dict[str, Any]:
             role_runtime(verifier)
         except LaunchError as exc:
             raise ValueError(f"review.roles.{FORMAL_ROLE}: {exc}") from exc
+    # The run-time rule, checked when the settings are loaded too (2026-11-20: a panel with
+    # both referees on one model loaded fine and then stopped every unified review).
+    check_referee_models(roles if isinstance(roles, Mapping) else {}, panel)
     return {"process": gate.get("review_process"), "roles": roles,
             "referee_roles": panel, "rejection_clearance_required": True,
             "max_rounds_per_target": int(review.get("max_rounds_per_target", 10)),
@@ -2285,8 +2299,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
         raise ValueError("settings review.roles must define editor and every active referee")
     if roles["editor"].get("provider") != "openai-codex":
         raise ValueError("The editorial screen must use an independent Codex process")
-    if len(panel) == 2 and roles[panel[0]].get("model") == roles[panel[1]].get("model"):
-        raise ValueError("The two referees must use different models")
+    check_referee_models(roles, panel)
     # Cross-model decision 2026-11-07 is checked after the paper metadata is loaded.
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run = runs_dir(root, paper_id) / run_id

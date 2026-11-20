@@ -206,6 +206,17 @@ def _parser() -> argparse.ArgumentParser:
     release_retry.add_argument("--paper-id", required=True)
     release_retry.add_argument("--reason", required=True, help="What was resolved")
     release_retry.add_argument("--by", required=True, help="Who resolved it (provenance)")
+    requeue = program_commands.add_parser(
+        "requeue",
+        help="After fixing the cause, queue a quarantined task (or, with --allow-needs-human, "
+        "a needs_human one) again as a new attempt, e.g. a review that failed on a "
+        "configuration error; records who and why (event manual_requeue)",
+    )
+    requeue.add_argument("task_id")
+    requeue.add_argument("--reason", required=True, help="What was fixed")
+    requeue.add_argument("--by", default="user", help="Who decided (provenance; default user)")
+    requeue.add_argument("--allow-needs-human", action="store_true",
+                         help="Also accept a task in needs_human")
     reconcile = program_commands.add_parser(
         "reconcile",
         help="List ledger/task drift (delivered papers still in review, parked legacy topics, "
@@ -663,6 +674,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "written": mark_revisable(db, paths, settings, args.topic_id,
                                           decided_by=f"manual:{args.by}", reason=args.reason),
             }
+        elif args.program_command == "requeue":
+            try:
+                payload = {"schema_version": "openlabs.program_requeue.v1",
+                           **db.requeue_task_manually(
+                               args.task_id, by=args.by, reason=args.reason,
+                               allow_needs_human=args.allow_needs_human)}
+            except ValueError as exc:
+                print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
+                return 1
         elif args.program_command == "release-retry":
             from .program_autonomy import retry_release
 

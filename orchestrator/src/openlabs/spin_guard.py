@@ -431,8 +431,10 @@ def stuck_report(
         reason = _missing_next_step(db, topic, campaigns, live, stall, pending_decision,
                                     moment=moment, stale=stale)
         if reason is not None:
-            missing.append({**base, "reason": reason,
-                            "campaign_status": campaigns.get(campaign_id)})
+            row = {**base, "reason": reason, "campaign_status": campaigns.get(campaign_id)}
+            if reason in {"no_live_task", "owner_stalled"}:
+                row.update(_blocked_task_hint(db, campaign_id))
+            missing.append(row)
     for action in guard_actions or []:
         stuck.append({"campaign_id": action.get("campaign_id"), "source": "campaign_no_progress",
                       "action": action.get("reason"),
@@ -446,6 +448,37 @@ def stuck_report(
             stuck.append({"campaign_id": campaign_id, "source": "replan_backoff",
                           "consecutive_needs_replan": replans})
     return {"stuck_topics": stuck, "topics_without_next_step": missing}
+
+
+def _blocked_task_hint(db: FactoryDB, campaign_id: str) -> dict[str, Any]:
+    """The campaign's latest task when it stopped quarantined/needs_human for a reason the
+    infrastructure triage does not retry, with the command that queues it again."""
+
+    from .engine import _infrastructure_failure
+
+    try:
+        with db.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM tasks WHERE campaign_id=? ORDER BY updated_at DESC, rowid DESC "
+                "LIMIT 1", (campaign_id,)).fetchone()
+    except Exception:  # noqa: BLE001 - the hint is advisory
+        return {}
+    if row is None or str(row["status"]) not in {"quarantined", "needs_human"}:
+        return {}
+    latest = dict(row)
+    try:
+        failure_class, _ = _infrastructure_failure(db, latest)
+    except Exception:  # noqa: BLE001 - the hint is advisory
+        failure_class = None
+    if failure_class is not None:
+        return {}
+    flag = " --allow-needs-human" if latest["status"] == "needs_human" else ""
+    return {
+        "blocked_task": {"task_id": latest["task_id"], "task_type": latest["task_type"],
+                         "status": latest["status"]},
+        "suggested_command": (f"python -m openlabs program requeue {latest['task_id']}"
+                              f"{flag} --reason \"<what was fixed>\""),
+    }
 
 
 def _missing_next_step(

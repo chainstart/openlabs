@@ -1867,3 +1867,20 @@ def test_stream_without_a_result_event_is_rejected():
 
     with pytest.raises(LaunchError, match="no final result"):
         parse_claude_stream(json.dumps({"type": "system"}) + "\n" + json.dumps({"type": "assistant"}))
+
+
+def test_identical_referee_models_are_refused_when_the_settings_load(monkeypatch):
+    astra = {'provider': 'openai-codex', 'tool': 'Codex', 'model': 'gpt-6.2-astra'}
+    sol = dict(astra, model='gpt-6.2-sol')
+    settings = {'review': {'referee_roles': ['referee_a', 'referee_b'],
+                           'roles': {'editor': dict(astra), 'referee_a': dict(astra),
+                                     'referee_b': dict(astra)}}}
+    monkeypatch.setattr(flow, 'load_registry_settings', lambda root: settings)
+    with pytest.raises(ValueError, match='two referees must use different models'):
+        flow.review_config('x')
+    settings['review']['roles']['referee_a'] = sol
+    assert flow.review_config('x')['roles']['referee_a']['model'] == 'gpt-6.2-sol'
+    # Same rule at run time and at load: one function.
+    with pytest.raises(ValueError, match='different models'):
+        flow.check_referee_models({'referee_a': astra, 'referee_b': dict(astra, model='GPT-6.2-ASTRA')},
+                                  ['referee_a', 'referee_b'])
