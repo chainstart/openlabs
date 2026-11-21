@@ -554,6 +554,7 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
     "paper_revision": "worker",
     "paper_readiness": "worker",
     "paper_writing": "worker",
+    "paper_figure_repair": "worker",
     # light: cheapest model.
     "literature_scan": "light",
     "literature_search": "light",
@@ -575,7 +576,7 @@ KNOWN_ROUTING_REASONS: frozenset[str] = frozenset({
     # owner
     "owner_first_seat", "owner_continue", "owner_converted", "owner_review",
     "owner_review_returned", "owner_recompute_review", "owner_recompute_returned",
-    "owner_retry", "owner_reopened", "owner_operator_reopen",
+    "owner_retry", "owner_reopened", "owner_operator_reopen", "paper_figure_repair",
     # program_autonomy
     "direction_decision", "direction_targeted_analysis", "direction_retarget",
     "release_format_fix", "release_full_review",
@@ -702,6 +703,7 @@ DEFAULT_CLAIM_RANKS: dict[str, int] = {
     "paper_revision": 3,
     "paper_readiness": 3,
     "paper_writing": 3,
+    "paper_figure_repair": 3,
     "topic_admission": 1,
     "topic_card_repair": 1,
     "topic_revision": 0,

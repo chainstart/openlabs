@@ -47,7 +47,9 @@ Read `../openlabs-paper-readability/SKILL.md` before drafting and again before e
 Its rules are binding, not a reference: a one-page story line before the first sentence, a main
 text that carries only the problem-method-experiment-result line (robustness, resolution,
 sensitivity and secondary checks in the appendix), a plain abstract, one layer of qualification
-per conclusion, no revision history, and revisions that do not grow the main text.
+per conclusion, no revision history, and revisions that do not grow the main text. Before drafting, read
+`../openlabs-paper-figures/SKILL.md`, use the handover's two to four reader-facing points,
+and link `manuscript/figure-plan.json` from the story line.
 
 1. Build or update the claim–evidence map before strengthening any claim or adding numbers.
 2. Fix one main conclusion and its contribution boundary against the closest published work,

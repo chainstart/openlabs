@@ -157,7 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     figures = subparsers.add_parser(
         "figures",
         help="Figure sources in manuscript/figure-src/ -> vector PDFs in manuscript/figures/ "
-             "(build, check, sheet, new; writer's own tools, not a gate).",
+             "(build, check, sheet, new).",
     )
     figure_commands = figures.add_subparsers(dest="figures_command", required=True)
 
@@ -177,7 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
                                help="Do not refresh production/figure-artifacts.json.")
     figures_check = figure_commands.add_parser(
         "check", help="Source and rebuild, vector, printed font size, text overlap/clipping, internal "
-                      "words, caption and citation, colour-only cues, asset licences.")
+                      "words, caption and citation, figure-plan coverage, plot conventions and asset licences.")
     _figure_target(figures_check)
     figures_check.add_argument("--no-rebuild", action="store_true", help="Skip the rebuild comparison.")
     figures_check.add_argument("--text-width", help="Printed text width (e.g. 160mm) instead of probing.")

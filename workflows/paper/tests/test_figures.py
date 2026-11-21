@@ -329,3 +329,41 @@ def test_review_figure_files_and_images(tmp_path):
     assert len(sheet["images"]) == 1 and sheet["notes"]
     broken = fig.review_images(ms, [{"path": "figures/none.pdf", "sha256": "x"}], tmp_path / "run3")
     assert broken["images"] == [] and "unavailable" in broken["notes"][0]
+
+
+def test_method_plan_needs_included_source_built_schematic(tmp_path):
+    ms = _manuscript(tmp_path, r"""
+\documentclass{article}\begin{document}
+See Figure~\ref{fig:design}.
+\begin{figure}\includegraphics{figures/design.pdf}
+\caption{Design.}\label{fig:design}\end{figure}
+\end{document}
+""")
+    (ms / "figure-plan.json").write_text(json.dumps({
+        "paper_type": "method", "figures": [{
+            "figure": "design", "kind": "schematic", "point": "See the split",
+            "figure_type": "study design", "source": "figure-src/design.svg", "data_source": "Methods",
+        }],
+    }))
+    ws = fig.workspace(manuscript=ms)
+    result = fig.check(ws, rebuild=False, text_width="160mm")
+    assert {f["code"] for f in result["repair_required"]} == {"FIG-PLAN-MISSING", "FIG-SCHEMATIC-MISSING"}
+    (ms / "figure-src/design.svg").write_text(SVG)
+    _pdf(ms / "figures/design.pdf", 200, 80, [((30, 40), "Paired split", 9)])
+    assert fig.check(ws, rebuild=False, text_width="160mm")["repair_required"] == []
+
+
+def test_result_plot_checks_panels_reference_legend_and_units(tmp_path):
+    pdf = tmp_path / "result.pdf"
+    with fitz.open() as doc:
+        page = doc.new_page(width=300, height=260)
+        for y in (20, 138):
+            page.draw_rect(fitz.Rect(40, y, 275, y + 78))
+            page.insert_text((130, y + 100), "Time", fontsize=9)
+        page.draw_line((40, 51), (275, 51), dashes="[4 2] 0", color=(0.35, 0.35, 0.35))
+        page.draw_line((40, 85), (274, 24), color=(0, 0.3, 0.7))
+        page.draw_rect(fitz.Rect(152, 39, 224, 65), color=None, fill=(1, 1, 1), fill_opacity=.8)
+        page.insert_text((160, 61), "Treatment", fontsize=8)
+        doc.save(str(pdf))
+    diagnostic = dict(fig.inspect_pdf(pdf, result_plot=True)["plot_findings"])
+    assert set(diagnostic) == {"FIG-PANEL-LABELS", "FIG-AXIS-UNITS", "FIG-REFERENCE-LABEL", "FIG-LEGEND-OVERLAP"}

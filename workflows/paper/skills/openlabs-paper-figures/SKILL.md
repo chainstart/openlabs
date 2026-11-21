@@ -1,6 +1,6 @@
 ---
 name: openlabs-paper-figures
-description: Plan, draw, check and caption the schematic figures of an OpenLabs manuscript (concept, framework, architecture, flow, mechanism, geometry, algorithm, study design, timeline) as vector figures from committed source code, with the paper-writing figures tools and the shared templates and styles. The writer's own reference; it adds no gate.
+description: Plan, draw, check and caption the schematic figures of an OpenLabs manuscript (concept, framework, architecture, flow, mechanism, geometry, algorithm, study design, timeline) as vector figures from committed source code, with the paper-writing figures tools and the shared templates and styles. Used by the writer and the pre-review figure repair seat.
 ---
 
 # Figures that carry the paper's key points
@@ -16,14 +16,35 @@ In OpenLabs this skill overrides the sentence in the vendored `scientific-writin
 tools below. Everything else in that component's figure section (provenance, units, sample sizes,
 accessibility) still applies.
 
-This is a reference for the writer, not a gate: there is no required number of figures. A paper
-with one clear schematic and two result figures is better than one with six figures nobody needs.
+A method, mechanism or study-design paper needs at least one useful vector schematic.
+Use only figures that serve the story line.
 
 ## 1. Figure plan: part of the story line
 
-Plan the figures when you write `writing/storyline.md`, not after the text. Add a short
-`Figures` section there: for each figure, the one point it makes for the reader, the story-line
-step it serves, and its kind (schematic or result). Then draw only what the plan needs.
+Before drafting, link `manuscript/figure-plan.json` from the Figures section of
+`writing/storyline.md` and connect each figure to a step in the argument. The plan uses
+`paper_type` (`method`, `mechanism`, `study_design` or `other`) and a `figures` array:
+
+```json
+{
+  "paper_type": "study_design",
+  "figures": [{
+    "figure": "fig-design",
+    "kind": "schematic",
+    "figure_type": "cohort and split diagram",
+    "point": "See which records enter each split and where the endpoint is measured",
+    "data_source": "registered cohort counts in evidence/cohort.csv",
+    "source": "figure-src/fig-design.tex"
+  }]
+}
+```
+
+Use the output filename stem for `figure` and `schematic`, `result` or `object` for
+`kind`. Name the registered results or source data. A conceptual diagram with no
+empirical values may name the manuscript method section. Use an object composition where
+readers need to recognise the instrument, material, specimen or device. Run `figures build`,
+inspect the PNGs and run `figures check` before returning `ready_for_review`.
+The dispatcher checks `blocking` and `repair_required` before unified review.
 
 - **Reader's entry schematic** (usually one): at the end of the Introduction or at the start of
   Methods, the picture that makes the rest of the paper easy to follow -- the mechanism (how
@@ -40,8 +61,8 @@ spatial arrangement, timing, flow with quantities, correspondences between panel
 would just hold sentences from the text, cut the figure (the PFAS overview figure of 2026-11-13,
 about 250 words in boxes, was removed at the user's request for exactly this reason).
 
-The research-to-writing handover lists suggested schematic points; treat them as candidates for
-the plan, not as orders.
+The research owner records two to four reader-facing points and proposed figure types in
+`OWNER_HANDOVER.md`. The writer uses those suggestions to choose the final figures.
 
 ## 2. Choosing the figure
 

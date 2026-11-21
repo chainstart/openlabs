@@ -173,5 +173,27 @@ def test_figure_sources_are_not_unused_review_sources(tmp_path):
 def test_review_prompts_carry_the_figure_dimension():
     editor_md = (flow.PROMPTS / "editor.md").read_text()
     referee_md = (flow.PROMPTS / "referee.md").read_text()
-    assert "Judge the figures" in editor_md and "presentation_problems" in editor_md
-    assert "6. Figures." in referee_md and "`evidence` or `claim_narrowing`" in referee_md
+    assert "Judge the figures" in editor_md and "`figure_changes`" in editor_md
+    assert "6. Figures." in referee_md and "required `figure`" in referee_md and "`evidence`" in referee_md
+
+
+def test_required_figure_revision_is_tracked_as_presentation():
+    edit = {"type": "figure", "location": "Methods", "change": "Show the paired sampling design."}
+    screen = {**editor(), "figure_changes": [edit]}
+    report = referee("accept")
+    merged = flow.merge(screen, {"a": report, "b": report})
+    assert merged["outcome"] == "revision_required" and merged["next_action"] == "text_revision"
+    assert not merged["scientific_blockers"]
+    required = merged["required_changes"][0]
+    assert not required["advisory"] and not flow.change_blocks(required)
+    item = flow.tracked_item(edit)
+    assert flow.previous_tracked_items({"merged": merged}) == [item]
+
+    open_item = {"item": item, "resolved": False, "evidence": "Still missing."}
+    rereview = flow.merge(editor(), {"a": {**report, "previous_items": [open_item]}, "b": report})
+    assert rereview["next_action"] == "text_revision"
+    assert flow.previous_tracked_items({"merged": rereview}) == [item]
+
+    discrepancy = {**edit, "type": "evidence", "change": "Reconcile the plotted estimate with Table 2."}
+    assert flow.merge({**editor(), "figure_changes": [discrepancy]},
+                      {"a": report, "b": report})["next_action"] == "evidence_remediation"

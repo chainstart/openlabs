@@ -78,6 +78,7 @@ from . import assets as asset_library
 from . import program_autonomy
 from . import local_compute
 from . import owner as owner_mode
+from . import paper_figures
 from . import remote_wait
 from . import spin_guard
 from . import usage as usage_accounting
@@ -3861,6 +3862,8 @@ def _write_task_spec(
             configured_paper_skill = _paper_skill(str(task.get("domain") or ""))
             if configured_paper_skill:
                 paper_skill_ids.add(configured_paper_skill)
+        if task_type == paper_figures.TASK_TYPE:
+            paper_skill_ids.add(paper_figures.SKILL)
         if project_bound and requested_skill_id not in paper_skill_ids:
             raise ValueError(
                 f"Project task Skill {requested_skill_id!r} is not activated by protocol "
@@ -3929,6 +3932,8 @@ def _launch_task(
     lab = lab_for_domain(labs, str(task["domain"]))
     requested_skill = str(task.get("skill_path") or "").strip() or None
     skill_path = lab.skill_path(requested_skill)
+    if task.get("task_type") == paper_figures.TASK_TYPE and requested_skill == paper_figures.SKILL:
+        skill_path = paths.code / "workflows" / "paper" / "skills" / requested_skill / "SKILL.md"
     if requested_skill and skill_path is None:
         raise ValueError(f"Unknown skill {requested_skill!r} for lab {lab.lab_id}")
     campaign = db.campaign(str(task["campaign_id"]))

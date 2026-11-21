@@ -36,7 +36,7 @@ PROCESS = "unified_v1"
 RECOMMENDATIONS = ("accept", "minor_revision", "major_revision", "reject")
 EDITOR_DECISIONS = ("send_to_review", "revise_before_submission", "desk_reject")
 DESK_CATEGORIES = ("scope", "significance", "readership", "novelty_unclear", "presentation", "incremental", "none")
-CHANGE_TYPES = ("text", "claim_narrowing", "evidence")
+CHANGE_TYPES = ("text", "figure", "claim_narrowing", "evidence")
 # Desk-reject categories that no amount of manuscript polishing answers: the
 # automated orchestrator must choose a direction instead of remediating text.
 DIRECTION_CATEGORIES = ("significance", "incremental")
@@ -60,7 +60,7 @@ EDITOR_SCHEMA: dict[str, Any] = {
     "required": ["contribution_in_two_sentences", "presentation_fails_restatement", "closest_prior_work",
                  "advance_over_prior_work", "significance_for_journal", "readership_for_journal",
                  "presentation_problems", "prior_rejections_addressed", "strongest_desk_reject_reason",
-                 "desk_reject_category", "decision", "decision_rationale"],
+                 "desk_reject_category", "decision", "decision_rationale", "figure_changes"],
     "properties": {
         "contribution_in_two_sentences": _TEXT,
         "presentation_fails_restatement": {"type": "boolean"},
@@ -72,6 +72,11 @@ EDITOR_SCHEMA: dict[str, Any] = {
         "significance_for_journal": _TEXT,
         "readership_for_journal": _TEXT,
         "presentation_problems": _TEXT_LIST,
+        "figure_changes": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["location", "change", "type"],
+            "properties": {"location": _TEXT, "change": _TEXT,
+                           "type": {"type": "string", "enum": ["figure", "evidence"]}}}},
         "prior_rejections_addressed": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "required": ["decision_id", "journal", "concern", "answered", "judgment", "evidence"],
@@ -1795,14 +1800,15 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
           history_blockers: list[str] | None = None, *,
           previous_ids: set[str] | None = None, formal_blockers: list[str] | None = None,
           formal_summary: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Deterministic merge in which only scientific substance can block readiness.
+    """Merge scientific merits and concrete presentation requirements.
 
     A paper is ready when no referee reports a scientific blocker, an ``evidence``
     change, a main-claim narrowing or an unresolved previous scientific/evidence
     item, scientific coverage is complete, and the recommendation is accept or
     minor revision. When referees disagree, the more favourable recommendation is
     used unless someone substantiated the stricter one with such an item; then the
-    stricter recommendation stands. ``text`` changes are kept, marked advisory.
+    stricter recommendation stands. ``text`` changes are advisory. Required figure
+    changes route to presentation revision and do not change the scientific judgment.
     When every referee of a two-referee panel recommends reject (with or without
     listed blockers), ``next_action`` is ``direction_decision`` with a
     ``direction_context``, as after a significance desk reject; a split decision
@@ -1815,9 +1821,11 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
         if previous_ids is not None:
             raise ValueError("Previous item IDs supplied twice")
         previous_ids, history_blockers = history_blockers, None
+    editor_figures = [dict(c, referee="editor", advisory=False, placement="main_text")
+                      for c in editor.get("figure_changes", [])]
     if history_blockers:
         return {"outcome": "rejection_history_blocked", "recommendation": None,
-                "scientific_blockers": history_blockers, "required_changes": [],
+                "scientific_blockers": history_blockers, "required_changes": editor_figures,
                 "next_action": "evidence_remediation"}
     if formal_blockers:
         categories = (formal_summary or {}).get('by_category', {})
@@ -1825,7 +1833,7 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
         # complete raw blocker list separately and present distinct root causes.
         scientific = list(categories.get('scientific', formal_blockers))
         scientific.extend(b for r in referees.values() for b in r['scientific_blockers'])
-        changes = [dict(c, referee=name, advisory=not change_blocks(c))
+        changes = editor_figures + [dict(c, referee=name, advisory=not change_blocks(c) and c["type"] != "figure")
                    for name, r in referees.items() for c in r['required_changes']]
         unresolved = [dict(p, referee=name, advisory=item_is_advisory(p.get('item')))
                       for name, r in referees.items() for p in r['previous_items'] if not p['resolved']]
@@ -1854,8 +1862,10 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
                       "advisory": True}
                      for item in editor.get("presentation_problems", [])]
                     if editor["decision"] == "revise_before_submission" else [])
+        if action == "text_revision" and any(c["type"] == "evidence" for c in editor_figures):
+            action = "evidence_remediation"
         result = {"outcome": editor["decision"], "recommendation": None, "scientific_blockers": [],
-                  "required_changes": required, "next_action": action}
+                  "required_changes": required + editor_figures, "next_action": action}
         if action == "direction_decision":
             result["direction_context"] = direction_context(editor)
         return result
@@ -1873,7 +1883,7 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
             # scientific_blockers; text requests remain typed required_changes.
             # Preserve diagnostic observations in the actual referee report,
             # without automatically upgrading every observation into a defect.
-    changes = [dict(c, referee=name, advisory=not change_blocks(c))
+    changes = editor_figures + [dict(c, referee=name, advisory=not change_blocks(c) and c["type"] != "figure")
                for name, r in referees.items() for c in r["required_changes"]]
     unresolved_previous = [dict(p, referee=name, advisory=item_is_advisory(p.get("item")))
                            for name, r in referees.items()
@@ -1881,11 +1891,14 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
                            and (previous_ids is None or str(p.get("id", "")).strip("[] ") in previous_ids)]
     blocking_changes = [c for c in changes if not c["advisory"]]
     blocking_previous = [p for p in unresolved_previous if not p["advisory"]]
-    substantive = bool(blockers or blocking_changes or blocking_previous)
+    figure_changes_required = any(c["type"] == "figure" for c in blocking_changes) or any(
+        str(p.get("item") or "").startswith("[figure]") for p in blocking_previous)
+    substantive = bool(blockers or any(change_blocks(c) for c in blocking_changes)
+                       or any(not str(p.get("item") or "").startswith("[figure]") for p in blocking_previous))
     worst = max(recommendations.values(), key=RECOMMENDATIONS.index)
     best = min(recommendations.values(), key=RECOMMENDATIONS.index)
     rec = worst if substantive else best
-    ready = rec in {"accept", "minor_revision"} and not substantive
+    ready = rec in {"accept", "minor_revision"} and not substantive and not figure_changes_required
     unanimous_reject = unanimous_rejection(referees)
     if unanimous_reject:
         # Both referees decline, with or without itemized blockers: another
@@ -1894,6 +1907,8 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
         rec, ready, action = "reject", False, "direction_decision"
     elif ready:
         action = None
+    elif figure_changes_required and not substantive:
+        action = "text_revision"
     elif blockers or any(c["type"] == "evidence" for c in blocking_changes) or rec == "reject":
         action = "evidence_remediation"
     else:
@@ -1952,7 +1967,7 @@ def exhausted_review(root, paper_id, target, rounds, maximum):
 
 def previous_tracked_items(last: Mapping[str, Any],
                            history_policy: Mapping[str, Any] | None = None) -> list[str]:
-    """Items the next round must check one by one: scientific and evidence items only.
+    """Items the next round must check one by one: science, evidence and required figures.
 
     Text requests (including an editor's presentation list) are advisory. They stay
     in the previous decision letter, which the next referees read, but they are no
@@ -1960,9 +1975,13 @@ def previous_tracked_items(last: Mapping[str, Any],
     """
     merged = last.get("merged") or {}
     items = list(merged.get("scientific_blockers", []))
-    items += [tracked_item(c) for c in merged.get("required_changes", []) if change_blocks(c)]
+    items += [tracked_item(c) for c in merged.get("required_changes", []) if change_blocks(c) or c["type"] == "figure"]
     # The opted-in four-paper continuation must not silently forget scientific
     # requests that the last referee explicitly left unresolved.
+    for item in merged.get("unresolved_previous_items", []):
+        text = item.get("item") if isinstance(item, Mapping) else None
+        if isinstance(text, str) and text.lstrip().startswith("[figure]") and text not in items:
+            items.append(text)
     if history_policy is not None:
         for item in merged.get('unresolved_previous_items', []):
             if not isinstance(item, Mapping) or not isinstance(item.get('item'), str) or not item['item'].strip():
@@ -1981,7 +2000,7 @@ def _previous_round(root: Path, paper_id: str, target: str, expanded: str, respo
     items = previous_tracked_items(last, history_policy)
     if not response:
         if items:
-            raise ValueError("A re-review with open scientific or evidence items requires the authors' "
+            raise ValueError("A re-review with open scientific, evidence or figure items requires the authors' "
                              "response letter (--response)")
         response = ("[No response letter: the previous round left no scientific or evidence item "
                     "to answer. Its advisory text requests are in the decision letter above.]")
@@ -2259,11 +2278,21 @@ def figure_changes(base: Mapping[str, Any], pre: Mapping[str, Any]) -> list[str]
 
 def figure_review_packet(pre: Mapping[str, Any], run: Path, changed: list[str]) -> tuple[str, list[Path], dict]:
     """Render the figures for the reviewers; returns (packet text, image paths, record)."""
+    from paper_writing.figure_quality import read_plan
     from paper_writing.figures import review_images
+
+    manuscript_path = pre.get("manuscript_path")
+    plan, _ = read_plan(Path(manuscript_path)) if manuscript_path else ({}, None)
+    plan_text = ""
+    if plan:
+        coverage = [{field: item[field][:500] for field in ("figure", "kind", "figure_type", "point")}
+                    for item in plan["figures"]]
+        plan_text = (f"\nFigure plan ({plan['paper_type']}, author's intended coverage): "
+                     + json.dumps(coverage, ensure_ascii=False) + "\n")
 
     files = list(pre.get("figure_files") or [])
     if not files:
-        return ("\n## Figures\nThe manuscript contains no figures.\n", [],
+        return ("\n## Figures\nThe manuscript contains no figures.\n" + plan_text, [],
                 {"images": [], "notes": [], "changed_since_previous_round": []})
     result = review_images(Path(pre["manuscript_path"]), files, run / "figures")
     images = [Path(item["png"]) for item in result["images"]]
@@ -2284,7 +2313,7 @@ def figure_review_packet(pre: Mapping[str, Any], run: Path, changed: list[str]) 
     record = {"images": [{"figure": item["figure"], "sha256": item["sha256"], "png_sha256": item["png_sha256"],
                           "png": Path(item["png"]).relative_to(run).as_posix()} for item in result["images"]],
               "notes": result["notes"], "changed_since_previous_round": changed}
-    return "\n".join(lines) + "\n", images, record
+    return "\n".join(lines) + "\n" + plan_text, images, record
 
 
 OWNER_DIRECTED_DELTA_KIND = "owner_directed_revision_without_rereview"
@@ -2581,6 +2610,16 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                                       schema=LETTER_SCHEMA, workdir=run / "decision-letter",
                                       timeout=config["timeout_seconds"])
     receipts["decision_letter"] = letter_receipt
+    figure_edits = [c for c in merged.get("required_changes", [])
+                    if c["type"] == "figure" or (c["type"] == "evidence" and c["referee"] == "editor")]
+    figure_requirements = [f"- {c['location']} ({c['referee']}): {c['change']}" for c in figure_edits]
+    figure_requirements += [
+        f"- {item['item']} ({item['referee']}) — open: {item['evidence']}"
+        for item in merged.get("unresolved_previous_items", [])
+        if str(item.get("item") or "").startswith("[figure]")
+    ]
+    if figure_requirements:
+        letter["letter"] += "\n\n## Required figure revisions\n\n" + "\n".join(figure_requirements)
     record |= {"stage_reached": "decision", "round_for_target": len(rounds) + int(consumes_round),
                "consumes_scientific_round": consumes_round,
                "round_count_basis": "substantive judgment; pure technical/source-routing/preparation failures excluded",

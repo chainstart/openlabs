@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from paper_writing.figure_quality import PLOT_FINDINGS, plot_findings, read_plan
+
 TEMPLATES = Path(__file__).resolve().parents[1] / "figure-templates"
 STYLE_DIR = TEMPLATES / "style"
 FIGURE_SRC = "figure-src"
@@ -656,7 +658,7 @@ def _segment_hits_rect(a, b, rect) -> bool:
     return t1 - t0 > 1e-6
 
 
-def inspect_pdf(pdf: Path, *, scale: float = 1.0) -> dict[str, Any]:
+def inspect_pdf(pdf: Path, *, scale: float = 1.0, result_plot: bool = False) -> dict[str, Any]:
     """Text sizes, overlaps, clipping, strokes through text, raster share and colour pairs."""
     fitz = _fitz()
     with fitz.open(str(pdf)) as doc:
@@ -696,6 +698,7 @@ def inspect_pdf(pdf: Path, *, scale: float = 1.0) -> dict[str, Any]:
         raster_fraction = len(covered) / grid ** 2
         colour_pairs = _color_findings(page)
         all_text = page.get_text("text")
+        plot = plot_findings(fitz, drawings, lines, _segments, _segment_hits_rect) if result_plot else []
     def core(rect, fx: float = 0.12, fy: float = 0.22):
         w, h = rect.width, rect.height
         return fitz.Rect(rect.x0 + w * fx, rect.y0 + h * fy, rect.x1 - w * fx, rect.y1 - h * fy)
@@ -741,7 +744,7 @@ def inspect_pdf(pdf: Path, *, scale: float = 1.0) -> dict[str, Any]:
             "smallest_script_text": [t for _, t in scripts[:3]],
             "overlaps": overlaps[:10], "clipped": clipped[:10],
             "strokes_through_text": crossings[:10], "raster_fraction": round(raster_fraction, 3),
-            "drawings": len(drawings), "grey_merge_pairs": colour_pairs}
+            "drawings": len(drawings), "grey_merge_pairs": colour_pairs, "plot_findings": plot}
 
 
 # --------------------------------------------------------------------------- manuscript references
@@ -856,6 +859,7 @@ def manuscript_uses(ws: Workspace, widths: Mapping[str, float]) -> dict[str, lis
                   "labels": labels, "referenced": bool(referenced)}
         for prefix in graphic_dirs:
             key = os.path.normpath(prefix + target)
+            record["suffix"] = Path(target).suffix.lower()
             uses.setdefault(re.sub(r"\.(pdf|png|jpe?g|eps)$", "", key, flags=re.I), []).append(record)
     return uses
 
@@ -960,6 +964,36 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
     blocking: list[dict[str, str]] = []
     advisory: list[dict[str, str]] = []
     figures: list[dict[str, Any]] = []
+    plan, plan_error = read_plan(ws.manuscript)
+    planned = {item["figure"]: item for item in plan.get("figures", [])}
+    def uses_of(path: Path) -> list[dict[str, Any]]:
+        key = (path.parent / path.stem).relative_to(ws.manuscript).as_posix()
+        return [item for item in uses.get(key, [])
+                if item["suffix"] == path.suffix.lower()
+                or (not item["suffix"] and (path.suffix == ".pdf" or not path.with_suffix(".pdf").exists()))]
+
+    included = {pdf.stem for pdf in pdfs if uses_of(pdf)}
+    included_rasters = {raster.stem for raster in rasters if uses_of(raster)}
+    required: list[dict[str, str]] = []
+    if plan_error:
+        required.append(_finding("plan", "FIG-PLAN", plan_error))
+    if plan.get("paper_type") in {"method", "mechanism", "study_design"} and not any(
+        item["kind"] == "schematic" and name in included and name in by_stem
+        for name, item in planned.items()
+    ):
+        required.append(_finding("plan", "FIG-SCHEMATIC-MISSING",
+                                 "Include a source-built vector schematic of the method, mechanism or study design."))
+    for name, item in planned.items():
+        if name not in included and not (item["kind"] == "object" and name in included_rasters):
+            required.append(_finding(name, "FIG-PLAN-MISSING",
+                                     f"Include the planned {item['figure_type']} showing {item['point']}."))
+        elif not (ws.manuscript / item["source"]).is_file():
+            required.append(_finding(name, "FIG-PLAN-SOURCE",
+                                     f"Update the plan to point to the existing source for {name}."))
+    if plan:
+        for name in sorted((included | included_rasters) - set(planned)):
+            required.append(_finding(name, "FIG-PLAN-UNLISTED",
+                                     f"Describe {name} in the figure plan and link its source and evidence."))
 
     for stem, src in by_stem.items():
         if not (ws.out_dir / f"{stem}.pdf").is_file():
@@ -968,7 +1002,6 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
     for pdf in pdfs:
         stem = pdf.stem
         src = by_stem.get(stem)
-        rel = os.path.normpath((ws.out_dir / stem).relative_to(ws.manuscript).as_posix())
         record: dict[str, Any] = {"figure": stem, "pdf": str(pdf), "source": str(src.path) if src else None,
                                   "kind": src.kind if src else "unspecified"}
         external = None
@@ -997,9 +1030,11 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
                             advisory.append(_finding(stem, "FIG-STALE",
                                                      f"figures/{pdf.name} differs from a fresh build of "
                                                      f"{src.path.name}; run figures build"))
-        use = uses.get(rel) or []
+        use = uses_of(pdf)
+        record["kind"] = planned.get(stem, {}).get("kind", record["kind"])
         try:
-            info = inspect_pdf(pdf)
+            info = inspect_pdf(pdf, result_plot=bool(use) and record["kind"] != "schematic"
+                               and record["kind"] != "object")
         except Exception as exc:  # noqa: BLE001 - an unreadable PDF is a finding, not a crash
             blocking.append(_finding(stem, "FIG-UNREADABLE", f"figures/{pdf.name}: {exc}"))
             figures.append(record)
@@ -1040,6 +1075,8 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
         elif info["raster_fraction"] > 0.5 and record["kind"] == "schematic":
             advisory.append(_finding(stem, "FIG-RASTER-SCHEMATIC",
                                      f"{info['raster_fraction']:.0%} of the schematic is raster; draw it as vectors"))
+        for code, message in info["plot_findings"]:
+            advisory.append(_finding(stem, code, message))
         for text in info["overlaps"]:
             blocking.append(_finding(stem, "FIG-TEXT-OVERLAP", f"overlapping text {text}"))
         for text in info["clipped"]:
@@ -1055,18 +1092,21 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
                                      "or patterns"))
         figures.append(record)
     for raster in rasters:
-        rel = os.path.normpath((ws.out_dir / raster.stem).relative_to(ws.manuscript).as_posix())
-        if uses.get(rel):
+        if uses_of(raster):
+            if planned.get(raster.stem, {}).get("kind") == "result":
+                required.append(_finding(raster.stem, "FIG-RASTER-RESULT",
+                                         "Export the result plot as vector PDF and include that file."))
             advisory.append(_finding(raster.stem, "FIG-RASTER-FILE",
                                      f"figures/{raster.name} is a bitmap: fine for photographs and image data; "
                                      "schematics and plots belong in vector PDF"))
     lic_block, lic_advice, licenses = license_findings(ws, sources, manuscript_text)
     blocking += lic_block
     advisory += lic_advice
+    required += [item for item in advisory if item["code"] in PLOT_FINDINGS]
     return {"manuscript": str(ws.manuscript), "paper_id": ws.paper_id,
             "layout": {k: (round(v / 72 * 25.4, 1) if isinstance(v, float) else v) for k, v in widths.items()},
             "layout_units": "mm", "min_font_pt": min_font_pt, "figures": figures, "assets": licenses,
-            "blocking": blocking, "advisory": advisory, "valid": not blocking}
+            "blocking": blocking, "advisory": advisory, "repair_required": required, "valid": not blocking}
 
 
 def render_check(result: Mapping[str, Any]) -> str:
@@ -1080,6 +1120,9 @@ def render_check(result: Mapping[str, Any]) -> str:
                      + ("" if fig.get("source") else ", NO SOURCE"))
     lines.append(f"Blocking ({len(result['blocking'])}):" if result["blocking"] else "Blocking: none.")
     lines += [f"  BLOCK {f['code']} [{f['figure']}]: {f['message']}" for f in result["blocking"]]
+    repair = result.get("repair_required", [])
+    lines.append(f"Figure repair ({len(repair)}):" if repair else "Figure repair: none.")
+    lines += [f"  REPAIR {f['code']} [{f['figure']}]: {f['message']}" for f in repair]
     lines.append(f"Advisory ({len(result['advisory'])}):" if result["advisory"] else "Advisory: none.")
     lines += [f"  ADVICE {f['code']} [{f['figure']}]: {f['message']}" for f in result["advisory"]]
     lines.append("Look at every preview PNG yourself as well; the checks do not judge whether a figure "

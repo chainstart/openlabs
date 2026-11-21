@@ -20,3 +20,7 @@ since the last round without a main-text request (`placement: main_text`), say s
 cuts. For each required item, keep its placement: additions marked `appendix_or_response` go to
 the appendix or the response letter, not into the main text. Include cut requests among what must
 be done when they concern the main line.
+
+List every required `figure` item from the fixed decision, including the location and the
+specific visual revision. Preserve any reported disagreement between a figure and the results
+as an evidence item. Ask the author to address each required figure change in the response.

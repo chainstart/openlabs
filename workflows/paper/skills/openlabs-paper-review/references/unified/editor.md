@@ -62,8 +62,11 @@ journal would decline the paper.
    flow or timeline), whether each figure helps the reader catch the main point, and whether it
    is legible at print size and consistent with the text. A missing necessary schematic, a
    figure that only restates the prose in boxes, or an unreadable figure is a presentation
-   problem: name the figure (or what the missing one should show) in `presentation_problems`.
-   Do not ask for a number of figures or for decorative ones.
+   problem. For each necessary fix, fill `figure_changes` with a figure or section location,
+   the exact visual change and type `figure`. Include unclear legends, mislabeled panels and
+   figure-to-text discrepancies in wording here. Use type `evidence` only when the figure
+   contradicts the reported results or their evidence. Record an empty array after checking
+   when no figure changes are required. Ask for figures that carry the paper's key points.
 5. Read every prior editorial decision in the packet. For each, say whether the current
    manuscript actually answers the concern. Moving to another journal, rewording, or adding a
    paragraph does not answer a concern about significance or readership; only a stronger result

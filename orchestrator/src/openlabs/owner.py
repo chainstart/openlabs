@@ -65,7 +65,7 @@ from pathlib import Path
 from typing import Any
 
 from . import budget as budget_control
-from . import spin_guard
+from . import paper_figures, spin_guard
 from .config import OWNER_TASK_TYPE, FactorySettings, WorkspacePaths, dispatch_runner
 from .contracts import (
     IDENTIFIER,
@@ -1112,7 +1112,7 @@ def _writer_note(solver: str, trigger: str) -> str:
         "You are the writer of this topic from now on (user decision 2026-11-19): the research "
         f"is done (owner {solver}, {trigger.replace('_', ' ')}). Start from OWNER_HANDOVER.md, "
         "research_state.json and OWNER_LOG.md. Write the whole manuscript yourself, from the "
-        "story line to the last section; do not split the writing among models or sub-agents "
+        "story line and figure plan to the last section; do not split the writing among models or sub-agents "
         "(sub-agents may check numbers, citations or builds). Any earlier draft in the "
         "workspace is material, not a text to polish. Do not redo the research: run only what "
         "you need to report it correctly. You also own every revision after the recompute "
@@ -1795,6 +1795,88 @@ def _review_objective(packet: Mapping[str, Any], topic: Mapping[str, Any] | None
     )
 
 
+def _figure_gate(db, paths, settings, report, *, task, packet, result_path, state, campaign, topic) -> bool:
+    """Hold a review while the figure seat or the owner repairs its presentation."""
+    paper_id = str(packet.get("paper_id") or "")
+    if not IDENTIFIER.fullmatch(paper_id):
+        return False
+    revision = bool((topic or {}).get("delivered_revision"))
+    root = paper_figures.paper_root(paths, campaign, paper_id, include_shared=not revision)
+    if root is None and not revision:
+        return False
+    campaign_id = str(task["campaign_id"])
+    audit = paper_figures.check(paths, settings, paper_id, root) if root is not None else {}
+    issues = ([*audit.get("blocking", []), *audit.get("repair_required", [])] if root is not None else
+              [{"figure": "manuscript", "code": "FIG-DRAFT-MISSING",
+                "message": "Locate the supplementary revision in the campaign workspace."}])
+    if not issues:
+        if state.get("figure_repair"):
+            update_state(db, campaign_id, "owner_figure_check_passed", {"paper_id": paper_id},
+                         figure_repair=None)
+        return False
+    record = state.get("figure_repair") or {}
+    if record.get("paper_id") != paper_id:
+        record = {}
+    rounds = int(record.get("rounds") or 0)
+    if root is not None and not record.get("owner_recovery") and rounds < paper_figures.MAX_ROUNDS:
+        repair_id = paper_figures.queue(
+            db, paths, settings, report, task=task, packet=packet, result_path=result_path,
+            paper_id=paper_id, root=root, audit=audit, round_number=rounds + 1,
+        )
+        if repair_id:
+            update_state(db, campaign_id, "owner_figure_repair_scheduled",
+                         {"task_id": repair_id, "paper_id": paper_id},
+                         figure_repair={"task_id": repair_id, "rounds": rounds + 1, "paper_id": paper_id})
+            report.program.setdefault("figure_repairs", []).append({
+                "task_id": repair_id, "paper_id": paper_id, "round": rounds + 1,
+                "findings": [item["code"] for item in issues],
+            })
+            return True
+
+    findings = _items_text([f"{i['figure']} [{i['code']}]: {i['message']}" for i in issues])
+    if record.get("owner_recovery"):
+        from .program_autonomy import pending_decision, schedule_direction_decision
+
+        if pending_decision(db, campaign_id) or (topic and schedule_direction_decision(
+            db, paths, settings, report, topic=topic, trigger="owner_figure_repair_exhausted",
+            source_task_id=str(task["task_id"]), reasons=[findings], detail={"paper_id": paper_id},
+            evidence=[{"path": str(result_path), "sha256": sha256_file(result_path)}]
+            if result_path.is_file() else [],
+        )):
+            return True
+    next_seat = enqueue_seat(
+        db, settings, report, campaign=campaign, parent=task, input_path=str(result_path),
+        routing_reason=ROUTING_RETRY,
+        note=f"The automatic figure repair could not clear the pre-review check for {paper_id}. "
+             f"Resolve these figure issues yourself, or decide the topic's direction: {findings} "
+             "Inspect the rendered PNGs, run figures check, and return ready_for_review when clear.",
+        task_id=_seat_id(campaign_id, f"figure-recovery:{task['task_id']}"),
+    )
+    if next_seat:
+        update_state(db, campaign_id, "owner_figure_repair_returned",
+                     {"task_id": next_seat, "paper_id": paper_id, "findings": issues},
+                     figure_repair={"rounds": rounds, "paper_id": paper_id, "owner_recovery": True})
+    return True
+
+
+def _after_figure_repair(db, paths, settings, report, *, task, successful) -> None:
+    campaign_id = str(task["campaign_id"])
+    state = owner_state(db, campaign_id)
+    if (state.get("figure_repair") or {}).get("task_id") != task["task_id"]:
+        return
+    packet = _read_json(Path(task["input_path"]))
+    if successful:
+        try:
+            paper_figures.apply(db, paths, task, packet, _read_json)
+        except paper_figures.IMPORT_ERRORS as exc:
+            report.program.setdefault("figure_repairs", []).append(
+                {"task_id": task["task_id"], "error": str(exc)})
+    original = db.task(packet["original_ready_task"])
+    if original:
+        _enqueue_review(db, paths, settings, report, task=original, packet=packet["ready_packet"],
+                        result_path=Path(packet["original_ready_result"]))
+
+
 def _enqueue_review(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -1814,6 +1896,12 @@ def _enqueue_review(
     campaign = db.campaign(str(task["campaign_id"])) or {}
     topic = _topic(paths, settings, str(task["campaign_id"]))
     state = owner_state(db, str(task["campaign_id"]))
+    paper_id = packet.get("paper_id") or state.get("paper_id") or paper_figures.draft_paper_id(paths, campaign)
+    if paper_id:
+        packet = {**packet, "paper_id": paper_id}
+    if _figure_gate(db, paths, settings, report, task=task, packet=packet,
+                    result_path=result_path, state=state, campaign=campaign, topic=topic):
+        return None
     db.enqueue_task(
         task_id=review_id,
         campaign_id=str(task["campaign_id"]),
@@ -1857,10 +1945,9 @@ CONTEXT_RULE = (
     "`max_output_tokens` <= 2000); bulk reading -> a sub-agent that returns a summary."
 )
 WRITING_RULES = (
-    "Writing rules (binding): read CODE/workflows/paper/skills/openlabs-paper-readability/"
-    "SKILL.md before each draft and revision; story line first, checks to appendix; "
-    "`paper-writing narrative-check`, `reader-check` before ready_for_review; figures: "
-    "openlabs-paper-figures."
+    "Writing rules (binding): read openlabs-paper-readability/SKILL.md and openlabs-paper-figures "
+    "under CODE/workflows/paper/skills/. Link manuscript/figure-plan.json from the pre-draft "
+    "story line. Run narrative-check, reader-check and figures check before review."
 )
 REVISION_RULE = (
     " Placement (readability skill, section 5): put added qualifications, checks and explanations "
@@ -2278,6 +2365,10 @@ def after_result(
                         workspace_root=workspace_root, promoted=successful,
                         handover_max_bytes=limit, short_seat_seconds=short_limit)
         return True
+    if task_type == paper_figures.TASK_TYPE:
+        if final_status not in {"queued", "yielded"} and campaign.get("status") == "active" and has_room:
+            _after_figure_repair(db, paths, settings, report, task=task, successful=successful)
+        return True
     if final_status == "failed" and is_owner_task(task):
         # Out of attempts: a seat without progress; replenishment starts the next one
         # unless the breaker sends the topic to a direction decision.
@@ -2429,7 +2520,14 @@ def replenish(
     """
 
     campaign_id = str(campaign["campaign_id"])
-    stall = stalled(owner_state(db, campaign_id))
+    state = owner_state(db, campaign_id)
+    if latest and latest.get("task_type") == paper_figures.TASK_TYPE and (
+        state.get("figure_repair") or {}
+    ).get("task_id") == latest["task_id"]:
+        _after_figure_repair(db, paths, settings, report, task=latest,
+                             successful=latest["status"] == "succeeded")
+        return
+    stall = stalled(state)
     if stall is not None:
         root = Path(str(campaign.get("state_path") or "")) if campaign.get("state_path") else None
         current = workspace_digest(root)
@@ -3004,7 +3102,7 @@ def writing_brief_lines(settings: FactorySettings, *, task: Mapping[str, Any],
         f"{writer} writes this topic's manuscript (user decision 2026-11-19). When the research "
         f"is complete, do not draft the paper: write {HANDOVER_NAME} for the writer - every "
         "result to report with its value and the file or script that produces it, the figures "
-        "and tables available, schematics to draw, the endpoint verdict, negative results, "
+        "and tables available, 2–4 key points with suggested figure types, the endpoint verdict, negative results, "
         "known limitations, open items, paper_id and venue (files for detail) - then end the "
         "seat with status "
         "continuing and phase writing. The writer takes over from there."
