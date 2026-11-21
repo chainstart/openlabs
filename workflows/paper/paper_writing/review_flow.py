@@ -2011,7 +2011,7 @@ def stalled_signal(rounds: list[Mapping[str, Any]], referees: Mapping[str, Mappi
 # its scientific content where the referees saw it. The rule is deliberately
 # simple and conservative; any doubt sends the paper to a full review.
 DELTA_RULE = ("Reuse the last ready full review only when, after removing comments, layout "
-              "commands and DOI/version identifiers inside an inline reference list, the title, abstract, introduction, theorem-like statements, every table, every "
+              "commands, inactive figure fallbacks bound to reviewed image hashes, and delivery identifiers, the title, abstract, introduction, theorem-like statements, every table, every "
               "results/evaluation/discussion/conclusion section and the multiset of numbers in the "
               "document bodies are identical, at most {fraction:.0%} of lines changed, and every figure "
               "file the build reads has the SHA-256 recorded by that review (a changed figure is shown "
@@ -2038,6 +2038,49 @@ _DELTA_REFERENCE_IDENTIFIER = re.compile(
     r"|\b[Vv]ersion\s*v?\d+(?:\.\d+)*\b|\bv\d+(?:\.\d+)+\b")
 
 
+_DELTA_DELIVERY_SECTION = re.compile(
+    r"(\\section\*?\{(Data and code availability|Declaration of generative AI and AI-assisted "
+    r"technologies in the manuscript preparation process)\})(.*?)(?=\\(?:section|bibliography|end\{document\})|\Z)", re.S)
+_DELTA_SUPPORT_ID = re.compile(r"\b(?:version\s+\d+(?:\.\d+)+|10\.5281/zenodo\.\d+)\b", re.I)
+_DELTA_MODEL_ID = re.compile(r"\bGPT-\d+(?:\.\d+)+(?:-[A-Za-z]+)*\b", re.I)
+
+
+def _delivery_identifiers(match: re.Match) -> str:
+    pattern = _DELTA_SUPPORT_ID if match[2] == "Data and code availability" else _DELTA_MODEL_ID
+    return match[1] + pattern.sub("identifier", match[3])
+
+
+# Recognize only a literal image existence test whose true arm includes that very file.
+_FIGURE_TEST = re.compile(
+    r"\\IfFileExists\{([\w./-]+\.(?:pdf|png|jpg))\}\s*"
+    r"\{(\\includegraphics(?:\[[^\]\n{}]*\])?\{\1\})\}\s*\{")
+
+
+def _reviewed_figure_branches(text: str, files: set[str]) -> str:
+    def select(match: re.Match, fallback: str) -> str | None:
+        if match[1] in files:
+            return match[2]
+        # Only collapse an alternative when its entire body is another verified image test.
+        nested = fallback.strip()
+        child = _FIGURE_TEST.match(nested)
+        if child and child[1] in files:
+            body = _balanced(nested, child.end() - 1)
+            if body and child.end() + len(body) + 1 == len(nested):
+                return child[2]
+        return None
+
+    offset = 0
+    while match := _FIGURE_TEST.search(text, offset):
+        fallback = _balanced(text, match.end() - 1)
+        selected = select(match, fallback) if fallback else None
+        if selected:
+            text = text[:match.start()] + selected + text[match.end() + len(fallback) + 1:]
+            offset = match.start() + len(selected)
+        else:
+            offset = match.end()
+    return text
+
+
 def _norm(text: str) -> str:
     return " ".join(text.split())
 
@@ -2058,6 +2101,7 @@ def substantive_parts(expanded: str) -> dict[str, Any]:
         if _DELTA_HEADINGS.search(match.group(1)):
             end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
             sections.append([_norm(match.group(1)), _norm(body[match.start():end])])
+    body = _DELTA_DELIVERY_SECTION.sub(_delivery_identifiers, body)
     numbers = _DELTA_NUMBER.findall(_DELTA_LAYOUT.sub(" ", _DELTA_DIMENSION.sub(" ", body)))
     return {"title": _norm(head["title"]), "abstract": _norm(head["abstract"]),
             "introduction": _norm(head["introduction"]),
@@ -2137,8 +2181,16 @@ def delta_review_basis(root: Path, paper_id: str, target: str, pre: Mapping[str,
         context = [str(exc)]
     if context:
         reasons.append("rejection history changed: " + context[0])
-    delta = substantive_delta(old_path.read_text(), pre["expanded"])
     changed_figures = figure_changes(base, pre)
+    reviewed_text = old_path.read_text()
+    old = reviewed_text
+    new = pre["expanded"]
+    if not changed_figures:
+        files = {item["path"] for item in base.get("figure_files") or [] if item.get("sha256")}
+        old = _reviewed_figure_branches(old, files)
+        new = _reviewed_figure_branches(new, files)
+    delta = substantive_delta(old, new)
+    delta["summary"]["identical"] = reviewed_text == pre["expanded"]
     if changed_figures:
         reasons.append("figure files changed: " + ", ".join(changed_figures[:8]))
     delta["summary"]["figures_changed"] = changed_figures
