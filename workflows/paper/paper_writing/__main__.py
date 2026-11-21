@@ -521,6 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Copy a campaign-workspace paper into the data repository (never overwrites).",
     )
     program_adopt.add_argument("--paper-id", required=True)
+    program_adopt.add_argument("--previous-package", help="Promote a reviewed successor of this delivery")
     program_adopt.add_argument("--source", required=True, help="Campaign workspace root.")
     program_adopt.add_argument(
         "--artifact-manifest", action="append", default=[],
@@ -963,8 +964,14 @@ def _run_program(args: argparse.Namespace) -> int:
         elif args.program_command == "adopt":
             from paper_writing.program_adopt import adopt
 
-            result = adopt(args.paper_id, root=args.root, source=args.source,
-                           artifact_manifests=args.artifact_manifest)
+            if args.previous_package:
+                from paper_writing.program_adopt import adopt_revision
+                result = adopt_revision(args.paper_id, root=args.root, source=args.source,
+                                        previous_package=args.previous_package,
+                                        artifact_manifests=args.artifact_manifest)
+            else:
+                result = adopt(args.paper_id, root=args.root, source=args.source,
+                               artifact_manifests=args.artifact_manifest)
         elif args.program_command == "bind-release-artifacts":
             from paper_writing.program_adopt import bind_release_artifacts
 

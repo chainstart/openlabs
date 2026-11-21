@@ -580,6 +580,9 @@ def schedule_direction_decision(
     if cap and (registry / "verified-venues.yaml").is_file():
         target = detail.get("target_journal") or (direction_context or {}).get("target_journal")
         args = ["venue", "alternatives"]
+        zone = (topic.get("delivered_revision") or {}).get("target_zone")
+        if zone:
+            args.extend(["--zone", str(zone)])
         if target:
             args.extend(["--exclude", str(target)])
         candidates = _run_paper_command(paths, settings, args, json_flag=False)["venues"]
@@ -637,6 +640,7 @@ def schedule_direction_decision(
         # different model).
         "producer_model": research_model(db, settings, campaign_id),
         "options": options,
+        **({"delivered_revision": topic["delivered_revision"]} if topic.get("delivered_revision") else {}),
         **({"verified_alternatives": candidates, "short_format_value": "short_format"} if cap else {}),
         "created_at": utc_now(),
     })
@@ -1061,7 +1065,7 @@ def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payl
                              # The owner confirms these before a submission handler is set.
                              "submission_conditions": submission_conditions(topic)},
                  "release": {"status": "pending", "stage": "check", "attempts": {},
-                             "writer_rounds": 0, "seq": 0}},
+                             "writer_rounds": 0, "seq": int((topic.get("release") or {}).get("seq", -1)) + 1}},
         key=f"handoff_queued:{task_id}",
     )
     _info(report, "ready_queued").append(
@@ -1183,9 +1187,11 @@ def apply_direction_decision(
         problems.append("answers_reason does not quote one of reasons_to_answer verbatim")
     if not problems and "verified_alternatives" in packet:
         allowed = {entry["journal"] for entry in packet["verified_alternatives"]}
+        if not (packet.get("delivered_revision") or {}).get("target_zone"):
+            allowed.add("short_format")
         if decision["choice"] not in packet["options"] or (
             decision["choice"] == "retarget_or_short_format" and
-            decision["retarget"]["venue_or_format"] not in allowed | {"short_format"}
+            decision["retarget"]["venue_or_format"] not in allowed
         ):
             problems.append("choose a verified alternative, short_format or freeze")
     if problems:
@@ -2239,10 +2245,12 @@ def run_zenodo_step(paths: WorkspacePaths, settings: FactorySettings, action: st
 
 
 def run_paper_adopt(paths: WorkspacePaths, settings: FactorySettings, paper_id: str,
-                    source: Path, manifests: list[str]) -> dict[str, Any]:
+                    source: Path, manifests: list[str], previous_package: str | None = None) -> dict[str, Any]:
     """``program adopt``: copy a campaign-workspace paper into the data repository."""
 
     arguments = ["program", "adopt", "--paper-id", paper_id, "--source", str(source)]
+    if previous_package:
+        arguments += ["--previous-package", previous_package]
     for manifest in manifests:
         arguments += ["--artifact-manifest", manifest]
     return _run_paper_command(paths, settings, arguments)
@@ -2687,7 +2695,11 @@ class _ReleasePipeline:
         """
 
         registry = self.paths.data / "registry" / "papers"
-        if any((registry / f"{self.paper_id}{suffix}").is_file()
+        request = self.topic.get("delivered_revision") or {}
+        current_package = request.get("package_id")
+        if current_package and self.state.get("adopted_revision_package") == current_package:
+            return False
+        if not current_package and any((registry / f"{self.paper_id}{suffix}").is_file()
                for suffix in (".yaml", ".yml", ".json")):
             return False
         self.stage = "adopt"
@@ -2708,7 +2720,11 @@ class _ReleasePipeline:
         for path in (self.db.campaign_result_bundle_paths(campaign_id) if campaign_id else []):
             if path not in manifests:
                 manifests.append(path)
-        result = run_paper_adopt(self.paths, self.settings, self.paper_id, workspace, manifests)
+        args = (self.paths, self.settings, self.paper_id, workspace, manifests)
+        if current_package:
+            result = run_paper_adopt(*args, previous_package=current_package)
+        else:
+            result = run_paper_adopt(*args)
         if result.get("status") == "blocked":
             raise ReleaseWait("adopt", str(result.get("reason") or "adopt_blocked"), {
                 "detail": str(result.get("detail") or "")[:400], "source": str(workspace),
@@ -2720,7 +2736,7 @@ class _ReleasePipeline:
                       "copied", "evidence_restored", "evidence_missing", "pdf_restored",
                       "support_sources_copied_to", "support_sources_missing")}}
         self.save("release_paper_adopted", "workspace_paper_adopted", stage=self.stage,
-                  status="running", detail=detail)
+                  status="running", detail=detail, adopted_revision_package=current_package)
         self.entry("adopted", copied=result.get("copied"), pdf_restored=result.get("pdf_restored"),
                    evidence_missing=len(result.get("evidence_missing") or []))
         return True

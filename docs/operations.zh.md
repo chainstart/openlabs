@@ -1250,3 +1250,5 @@ OpenLabs 不自动投稿或创建期刊事件。论文适配器默认拒绝外�
 预算的启动、队首大任务不会阻塞可运行小任务、
 过期 lease 能恢复或隔离、reviewer 均为 fresh session。单元测试证明状态机边界，soak run
 证明目标机器上的 systemd、PATH、Codex profile、凭据和休眠策略确实可连续工作。
+
+已交付稿需要新增研究时，运行 `program revise-delivered --topic-id T --package-id PKG --reason "补充分析任务" --by NAME`。命令绑定当前交付包，调度器等到方向有研究槽和剩余预算后恢复原 campaign，派一次负责人坐席。负责人从已交付版本开启 paper start-revision，保留预注册和已有证据，再走统一评审、版本发布和网站交付。只在收到新包后由人确认投稿。

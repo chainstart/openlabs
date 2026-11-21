@@ -808,3 +808,91 @@ def unwaive_support(paper_id: str, *, root: str | Path, reason: str, by: str,
     support["publication"] = publication
     write_paper_metadata(paper_id, {**metadata, "support": support}, repo_root)
     return {**result, "status": "restored", "mode": target}
+
+
+def adopt_revision(paper_id, *, root, source, previous_package, artifact_manifests=()):
+    """Stage and verify a successor, then promote its registry last for restartability."""
+    from tempfile import TemporaryDirectory
+    from paper_writing.handoff import manuscript_snapshot_sha256
+    from paper_writing.review_flow import validate_unified_release
+
+    data = Path(root).resolve()
+    baseline = load_paper_metadata(paper_id, data)
+    candidate = load_paper_metadata(paper_id, source)
+    delivery = baseline.get("delivery") or {}
+    if (delivery.get("package_id") != previous_package or delivery.get("submission_handler")
+            or candidate.get("delivery") != delivery or not delivery.get("version")):
+        raise AdoptError("revision does not descend from the expected delivery")
+    release = candidate.get("writing_release") or {}
+    version = candidate.get("version")
+    if (version == delivery["version"] or not version or release.get("status") != "ready"
+            or release.get("manuscript_version") != version):
+        raise AdoptError("expected a ready unified review of a successor version")
+    old_support = (baseline.get("support") or {}).get("publication") or {}
+    new_support = (candidate.get("support") or {}).get("publication") or {}
+    if old_support.get("zenodo") != new_support.get("zenodo"):
+        raise AdoptError("revision changed the published Zenodo identity")
+    registry = paper_metadata_path(paper_id, data)
+    if baseline.get("version") != delivery["version"]:
+        if (baseline.get("version") == version
+                and baseline.get("writing_release", {}).get("decision_record_sha256")
+                == release.get("decision_record_sha256")):
+            return {"status": "adopted", "copied": 0}
+        raise AdoptError("canonical paper already has another successor")
+    with TemporaryDirectory(prefix="openlabs-revision-") as directory:
+        stage = Path(directory)
+        result = adopt(paper_id, root=stage, source=source, artifact_manifests=artifact_manifests)
+        if result["status"] != "adopted":
+            return result
+        for name in ("settings.yaml", "verified-venues.yaml", "journal-rejections.json"):
+            if (data / "registry" / name).is_file():
+                shutil.copy2(data / "registry" / name, stage / "registry" / name)
+        manuscript = stage / str(candidate["manuscript_dir"])
+        pdf = stage / str(candidate.get("latest_pdf") or (Path(candidate["manuscript_dir"]) / "main.pdf"))
+        if not manuscript.resolve().is_relative_to(stage) or not pdf.resolve().is_relative_to(manuscript):
+            raise AdoptError("revision manuscript paths escape the staged paper")
+        problems = validate_unified_release(paper_id, candidate, stage,
+                                           manuscript_snapshot_sha256(manuscript, pdf))
+        if problems:
+            raise AdoptError("successor review is not current: " + "; ".join(problems))
+        # The final manuscript must have exactly the reviewed inputs. Stale source
+        # files left by an older version would change the snapshot after promotion.
+        live_manuscript = data / manuscript.relative_to(stage)
+        from paper_writing.handoff import _source_files
+        if live_manuscript.is_dir():
+            extras = [p for p in _source_files(live_manuscript, data / pdf.relative_to(stage))
+                      if not (manuscript / p.relative_to(live_manuscript)).is_file()]
+            if extras:
+                raise AdoptError("reviewed successor omits previous manuscript inputs: "
+                                 + ", ".join(p.name for p in extras[:8]))
+        copies = []
+        for tree in (stage / "papers", stage / "reviews"):
+            for path in _files_under(tree):
+                relative = path.relative_to(stage)
+                target = data / relative
+                if target.resolve() != target:
+                    raise AdoptError(f"revision target is a symlink: {relative}")
+                if target.is_file() and target.read_bytes() == path.read_bytes():
+                    continue
+                if relative.is_relative_to(Path("papers") / paper_id / "releases"):
+                    raise AdoptError("revision cannot change delivery receipts")
+                if target.exists() and relative.parts[:2] == ("reviews", "unified"):
+                    raise AdoptError("revision cannot overwrite an earlier unified review")
+                copies.append((path, target))
+        # Keep the committed baseline available. Stop on a concurrent local edit.
+        for path, target in copies:
+            if target.exists():
+                clean = subprocess.run(["git", "diff", "--quiet", "HEAD", "--",
+                                        str(target.relative_to(data))], cwd=data)
+                if clean.returncode:
+                    raise AdoptError(f"uncommitted canonical change at {target.relative_to(data)}")
+        for path, target in copies:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            pending = target.with_name("." + target.name + ".revision-pending")
+            shutil.copy2(path, pending)
+            pending.replace(target)
+        staged_registry = paper_metadata_path(paper_id, stage)
+        pending = registry.with_suffix(".revision-pending")
+        shutil.copy2(staged_registry, pending)
+        pending.replace(registry)
+        return {**result, "copied": len(copies) + 1}

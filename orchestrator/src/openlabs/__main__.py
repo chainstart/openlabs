@@ -248,6 +248,10 @@ def _parser() -> argparse.ArgumentParser:
     reopen_register.add_argument("--max-reopens", type=int, default=1)
     reopen_register.add_argument("--note", help="Why these conditions answer the freeze")
     reopen_register.add_argument("--by", default="operator", help="Who registered (provenance)")
+    revision = program_commands.add_parser("revise-delivered", help="Request owner-led supplementary research on a delivered version")
+    revision.add_argument("--target-zone", type=int, choices=(1, 2, 3, 4))
+    for name in ("topic-id", "package-id", "reason", "by"):
+        revision.add_argument("--" + name, required=True)
     reopen_grant = program_commands.add_parser(
         "reopen-grant",
         help="Grant a topic frozen in review for a procedural reason (review_stalled, "
@@ -652,6 +656,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                            "blocks": line_facts.blocks(db), "waits": line_facts.waits(db)}
         elif args.program_command == "backfill":
             payload = backfill_grandfathered(db, paths, settings, write=args.write)
+        elif args.program_command == "revise-delivered":
+            from .reopen import request_delivered_revision, ReopenGrantError
+
+            try:
+                payload = request_delivered_revision(db, paths, settings, args.topic_id,
+                                                     args.package_id, args.reason, args.by, args.target_zone)
+            except ReopenGrantError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
         elif args.program_command == "reopen-grant":
             from .program import TopicLedgerError
             from .reopen import ReopenGrantError, grant_operator_reopen

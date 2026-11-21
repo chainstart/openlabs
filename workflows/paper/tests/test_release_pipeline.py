@@ -198,3 +198,10 @@ def test_an_artifact_only_submission_package_configures_no_journal_archive(tmp_p
     with pytest.raises(HandoffError, match='not built'):
         _verified_journal_source_archive({'submission_package': {'status': 'building'}},
                                          tmp_path, tmp_path, [], None)
+
+
+def test_previous_published_support_requires_new_version(tmp_path, monkeypatch):
+    _status_fixture(tmp_path, monkeypatch, publication={
+        'status': 'published', 'zenodo': {'version': '1.1.0', 'deposition_id': 123}})
+    support = rp.release_status('p', root=tmp_path)['support']
+    assert support['prepare_needed'] and not support['published']

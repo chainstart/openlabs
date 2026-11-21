@@ -160,6 +160,12 @@ def plan(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings, *,
         if status in {"active", "in_review"}:
             paper_id, source = _paper_id(db, topic, campaign)
             receipts = delivery_receipts(paths, paper_id) if paper_id else []
+            revision = topic.get("delivered_revision") or {}
+            if revision:
+                # All deliveries up through the requested revision's baseline are historical.
+                baseline = next((i for i, r in enumerate(receipts)
+                                 if r["package_id"] == revision["package_id"]), None)
+                receipts = receipts[baseline + 1:] if baseline is not None else []
             if receipts:
                 latest = receipts[-1]
                 basis = (f"delivery receipt {Path(latest['path']).name} (version "

@@ -783,3 +783,84 @@ __all__ = [
     "repair_half_done_reopens",
     "resume_granted_campaign",
 ]
+
+
+def request_delivered_revision(db, paths, settings, topic_id, package_id, reason, by, target_zone=None):
+    """Bind the request to one delivered package. The tick owns slot allocation."""
+    from . import owner
+    from .program_reconcile import delivery_receipts
+
+    ledger = open_topic_ledger(paths, settings.program)
+    topic = ledger.topic(topic_id) or {}
+    handoff = topic.get("handoff") or {}
+    prior = topic.get("delivered_revision") or {}
+    if not all(str(x).strip() for x in (package_id, reason, by)):
+        raise ReopenGrantError("package, reason and operator are required")
+    if prior.get("package_id") == package_id:
+        if prior["reason"] != reason or prior["by"] != by or prior.get("target_zone") != target_zone:
+            raise ReopenGrantError("this package already has a different revision request")
+        return prior
+    campaign = db.campaign(str(topic.get("campaign_id") or "")) or {}
+    receipts = delivery_receipts(paths, str(topic.get("paper_id") or ""))
+    if (topic.get("status") != "ready_queue" or handoff.get("status") != "delivered"
+            or handoff.get("submission_handler") or handoff.get("package_id") != package_id
+            or not receipts or receipts[-1]["package_id"] != package_id
+            or campaign.get("status") != "production_paused" or not owner.applies(settings, campaign)):
+        raise ReopenGrantError("expected a delivered owner topic with matching latest receipt and no handler")
+    request = {"package_id": package_id, "version": receipts[-1]["version"], "reason": reason,
+               "by": by, "target_zone": target_zone, "requested_at": utc_now()}
+    record_topic_note(ledger, topic_id, db=db, event_type="delivered_revision_requested",
+                      reason="operator_request", decided_by=f"operator:{by}", detail=request,
+                      updates={"delivered_revision": request}, key=f"revise:{package_id}")
+    saved = ledger.topic(topic_id)["delivered_revision"]
+    if any(saved.get(key) != request[key] for key in ("by", "reason", "target_zone")):
+        raise ReopenGrantError("this package already has a different revision request")
+    return saved
+
+
+def advance_delivered_revisions(db, paths, settings, report):
+    """Allocate a normal research slot, recover a paused campaign and enqueue one owner."""
+    from . import owner
+
+    ledger = open_topic_ledger(paths, settings.program)
+    outcomes = []
+    for topic in topics_by_status(ledger.read(), "ready_queue", "active"):
+        request = topic.get("delivered_revision") or {}
+        if not request:
+            continue
+        campaign_id = topic["campaign_id"]
+        task_id = owner.seat_id(campaign_id, "revision:" + request["package_id"])
+        if db.task(task_id):
+            continue
+        campaign = db.campaign(campaign_id) or {}
+        if topic["status"] == "ready_queue":
+            handoff = topic.get("handoff") or {}
+            if (handoff.get("status") != "delivered" or handoff.get("submission_handler")
+                    or handoff.get("package_id") != request["package_id"]):
+                continue
+            slots = slot_status(ledger.read(), settings.program, parked_program_projects(paths),
+                                paused_topic_campaigns(db))
+            if (not slots.can_materialize or not slots.line_can_materialize(topic.get("research_line"))
+                    or _campaign_budget_left(campaign) < MIN_REMAINING_AGENT_SECONDS):
+                outcomes.append({"topic_id": topic["topic_id"], "status": "waiting_for_capacity"})
+                continue
+            transition_topic(ledger, topic["topic_id"], "active", db=db,
+                             reason="delivered_revision_requested", decided_by="operator:" + request["by"],
+                             updates={"handoff": {**handoff, "status": "under_revision"}})
+        elif _last_move_reason(topic) != "delivered_revision_requested":
+            continue
+        db.resume_paused_campaign(campaign_id, reason="delivered_revision_requested")
+        owner.reset_review_cycle(db, campaign_id, reason="supplementary research")
+
+        note = (f"Revise existing paper {topic['paper_id']}, delivered version {request['version']}. "
+                f"In the writable campaign workspace, bring in the delivered registry record, paper and "
+                f"review history for this paper from {paths.data} before starting the revision. "
+                "Retain the delivery block and published Zenodo identity for the release pipeline. "
+                "Begin paper start-revision once against that baseline before edits. "
+                "Preserve preregistration, primary evidence and review history. Label new analyses exploratory. "
+                "Return ready_for_review through the normal unified review and release workflow. "
+                + request["reason"])
+        owner.enqueue_seat(db, settings, report, campaign=campaign, parent=db.latest_task(campaign_id),
+                           note=note, routing_reason=ROUTING_REOPENED, task_id=task_id)
+        outcomes.append({"topic_id": topic["topic_id"], "task_id": task_id})
+    return outcomes

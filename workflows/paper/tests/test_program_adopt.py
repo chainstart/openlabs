@@ -667,3 +667,30 @@ def test_adopt_registers_analysis_sources_when_owner_omits_list(tmp_path):
     registered = yaml.safe_load((data / path.relative_to(workspace)).read_text())
     assert registered["support"]["publication"]["source_files"] == ["analysis/primary.py"]
     assert (data / "papers" / PAPER / "support-materials/analysis/primary.py").is_file()
+
+
+def test_adopt_revision_requires_matching_delivery_and_new_bound_decision(tmp_path, monkeypatch):
+    from paper_writing import review_flow
+    from paper_writing.program_adopt import adopt_revision
+
+    workspace, data = tmp_path / "workspace", tmp_path / "data"
+    evidence, pdf = _workspace(workspace)
+    bundle = _bundle(tmp_path / "bundle", evidence, pdf)
+    record = workspace / "registry/papers" / f"{PAPER}.yaml"
+    candidate = yaml.safe_load(record.read_text())
+    candidate["delivery"] = {"version": "0.1.4", "package_id": "pkg_old"}
+    candidate["writing_release"]["manuscript_version"] = "0.1.5"
+    record.write_text(yaml.safe_dump(candidate))
+    target = data / record.relative_to(workspace)
+    target.parent.mkdir(parents=True)
+    target.write_text(yaml.safe_dump({**candidate, "version": "0.1.4"}))
+    with pytest.raises(AdoptError, match="expected delivery"):
+        adopt_revision(PAPER, root=data, source=workspace, previous_package="wrong")
+    args = dict(root=data, source=workspace, previous_package="pkg_old", artifact_manifests=[bundle])
+    with pytest.raises(AdoptError, match="review is not current"):
+        adopt_revision(PAPER, **args)
+    assert yaml.safe_load(target.read_text())["version"] == "0.1.4"
+    monkeypatch.setattr(review_flow, "validate_unified_release", lambda *args: [])
+    assert adopt_revision(PAPER, **args)["status"] == "adopted"
+    assert yaml.safe_load(target.read_text())["version"] == "0.1.5"
+    assert adopt_revision(PAPER, **args)["copied"] == 0

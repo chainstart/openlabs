@@ -3485,6 +3485,9 @@ def run_program_pipeline(
         # back before new admissions are materialized (reopen.py).
         from .reopen import reopen_ready_topics, repair_half_done_reopens
 
+        from .reopen import advance_delivered_revisions
+
+        info["delivered_revisions"] = advance_delivered_revisions(db, paths, settings, report)
         info["reopen_repaired"] = repair_half_done_reopens(db, paths, settings, report)
         info["auto_reopen"] = reopen_ready_topics(db, paths, settings, report)
         spawned = materialize_waiting_topics(db, paths, settings)

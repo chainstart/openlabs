@@ -81,7 +81,7 @@ TRANSITIONS: dict[str | None, frozenset[str]] = {
     "in_review": frozenset({"ready_queue", "frozen"}),
     # ready_queue -> in_review: the release pipeline found that a post-ready change
     # (formal fix, support citation) is beyond the delta review and needs a full one.
-    "ready_queue": frozenset({"submitted", "in_review"}),
+    "ready_queue": frozenset({"submitted", "in_review", "active"}),
     "submitted": frozenset(),
     # Only the guarded hold releases below leave ``rejected``.
     "rejected": frozenset({"proposed", "admitted"}),
@@ -102,6 +102,7 @@ OPERATOR_REOPEN_REASON = "operator_reopen_granted"
 LEGACY_ARCHIVE_REASON = "legacy_archived"
 DELIVERY_RECONCILE_REASON = "delivery_receipt_reconciled"
 GUARDED_TRANSITIONS: dict[tuple[str, str], frozenset[str]] = {
+    ("ready_queue", "active"): frozenset({"delivered_revision_requested"}),
     ("admitted", "frozen"): frozenset({LEGACY_ARCHIVE_REASON}),
     ("rejected", "proposed"): frozenset({HOLD_RELEASE_FOR_REVIEW}),
     ("rejected", "admitted"): frozenset({HOLD_RELEASE_ADMITTED}),
@@ -173,6 +174,7 @@ TOPIC_FIELDS = (
     "revision_of",
     # Machine-checkable line-level reopen conditions of a frozen topic and the
     # automatic reopens done so far (``reopen.py``; absent from older ledgers).
+    "delivered_revision",
     "auto_reopen",
     # Operator text-revision grants of a frozen topic (``reopen.grant_operator_reopen``):
     # {"scope", "slot_exempt", "grants": [{"at", "by", "reason", "scope", "seat"}]}.
@@ -868,7 +870,7 @@ def transition_topic(
 
 # Fields an automatic decision may set on a topic without changing its status.
 NOTE_FIELDS = frozenset(
-    {"awaiting_owner_review", "handoff", "paper_id", "release", "delivery_repair", "card_repair", "revision",
+    {"delivered_revision", "awaiting_owner_review", "handoff", "paper_id", "release", "delivery_repair", "card_repair", "revision",
      # A retried line admission precheck (program_flow.retry_held_prechecks).
      "card_check"}
 )

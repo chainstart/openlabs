@@ -276,6 +276,8 @@ def _support_status(metadata: Mapping[str, Any], settings: Mapping[str, Any],
     package = str(publication.get("package_sha256") or "")
     required = mode != "not_required"
     environment = str(zenodo.get("environment") or "")
+    previous_version = (status == "published" and zenodo.get("version")
+                        and str(zenodo["version"]) != str(metadata.get("version")))
     stale = _package_stale(metadata, root) if required and status == "draft" else None
     return {
         "mode": mode,
@@ -288,12 +290,12 @@ def _support_status(metadata: Mapping[str, Any], settings: Mapping[str, Any],
         # A draft is needed (or must be moved from the sandbox to production).
         # A draft is needed, must move from the sandbox to production, or its
         # package no longer matches the registered sources/version.
-        "prepare_needed": required and (status == "planned"
+        "prepare_needed": required and (status == "planned" or bool(previous_version)
                                         or (status == "draft" and (environment != "production"
                                                                    or stale is not None))),
         "package_stale": stale,
         "release_needed": required and status == "draft",
-        "published": required and status == "published",
+        "published": required and status == "published" and not previous_version,
         "zenodo_environment": str(raw.get("zenodo_environment") or "production"),
         "release_after_ready": raw.get("release_after_ready"),
         "standing_production_release_authorization":
