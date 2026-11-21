@@ -31,5 +31,9 @@ def test_delivered_revision_is_package_bound_and_resumes_once(tmp_path, monkeypa
     assert "extra analysis" in db.task(row["task_id"])["objective"]
     assert ledger.topic(topic_id)["status"] == "active"
     assert db.campaign(campaign_id)["status"] == "active"
+    from openlabs.program_reconcile import plan
+    db.pause_production_campaign(campaign_id, reason="test between seats")
+    assert not any(item["action"] == "mark_delivered" and item["id"] == topic_id
+                   for item in plan(db, paths, settings)["rows"])
     assert reopen.request_delivered_revision(*args, package, "extra analysis", "operator") == request
     assert reopen.advance_delivered_revisions(db, paths, settings, None) == []

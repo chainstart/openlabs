@@ -577,10 +577,10 @@ def schedule_direction_decision(
     cap = trigger in {TRIGGER_REVIEW_ROUNDS, "owner_review_rounds_exhausted"}
     options = ["retarget_or_short_format", "freeze"]
     candidates = []
+    zone = (topic.get("delivered_revision") or {}).get("target_zone")
     if cap and (registry / "verified-venues.yaml").is_file():
         target = detail.get("target_journal") or (direction_context or {}).get("target_journal")
         args = ["venue", "alternatives"]
-        zone = (topic.get("delivered_revision") or {}).get("target_zone")
         if zone:
             args.extend(["--zone", str(zone)])
         if target:
@@ -641,7 +641,7 @@ def schedule_direction_decision(
         "producer_model": research_model(db, settings, campaign_id),
         "options": options,
         **({"delivered_revision": topic["delivered_revision"]} if topic.get("delivered_revision") else {}),
-        **({"verified_alternatives": candidates, "short_format_value": "short_format"} if cap else {}),
+        **({"verified_alternatives": candidates, "short_format_value": None if zone else "short_format"} if cap else {}),
         "created_at": utc_now(),
     })
     packet_path = (
@@ -668,7 +668,8 @@ def schedule_direction_decision(
             "`freeze` {reason_class, reopen_conditions[]}. Choices whose decisions_remaining is 0 "
             "are refused and the topic is frozen. Do not run the analysis or edit the manuscript."
             + (" For this exhausted cycle choose freeze, or set venue_or_format to an exact "
-               "verified_alternatives journal name or short_format. Preserve the target cap."
+               + ("verified_alternatives journal name. Read the operator revision and assess subject fit."
+                  if zone else "verified_alternatives journal name or short_format. Preserve the target cap.")
                if cap else "")
         ),
         input_path=str(packet_path),
@@ -1065,7 +1066,9 @@ def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payl
                              # The owner confirms these before a submission handler is set.
                              "submission_conditions": submission_conditions(topic)},
                  "release": {"status": "pending", "stage": "check", "attempts": {},
-                             "writer_rounds": 0, "seq": int((topic.get("release") or {}).get("seq", -1)) + 1}},
+                             "writer_rounds": 0, "seq": int((topic.get("release") or {}).get("seq", -1)) + 1,
+                             **{k: v for k, v in (topic.get("release") or {}).items()
+                                if k == "adopted_revision_package"}}},
         key=f"handoff_queued:{task_id}",
     )
     _info(report, "ready_queued").append(
