@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
@@ -223,8 +224,7 @@ def run_role(
     ``materials`` (the registered files a Codex role may inspect, see
     :mod:`paper_writing.review_sandbox`) select the isolation: the native ``-s read-only``
     sandbox when bubblewrap works, otherwise a write-protected copy outside the workspace
-    that is hashed before and after the run (a change raises ``LaunchError``). Without
-    materials, or for Claude (tools disabled), the role runs as before.
+    that is hashed before and after the run (a change raises ``LaunchError``). Inline-only Codex roles use the same selection and retain their exact prompt bytes.
     """
     runtime = role_runtime(role)
     model = str(role["model"])
@@ -267,11 +267,18 @@ def run_role(
             stdin_text = claude_image_message(prompt, attached)
     else:
         codex = _executable("codex")
-        sandbox_mode, sandbox_probe = (review_sandbox.select_mode(codex) if materials is not None
-                                       else (review_sandbox.NATIVE, None))
+        sandbox_mode, sandbox_probe = review_sandbox.select_mode(codex)
         if sandbox_mode == review_sandbox.READONLY_COPY:
+            inputs = materials or review_sandbox.ReviewMaterials(workdir, {}, {})
+            image_files = {f"review-images/{i}/{path.name}": path for i, path in enumerate(attached)}
+            if image_files:
+                if set(image_files) & (set(inputs.files) | set(inputs.relative.values())):
+                    raise LaunchError(f"{role_name}: attachment collides with registered materials")
+                inputs = replace(inputs, files={**inputs.files, **image_files},
+                                 relative={**inputs.relative, **{name: name for name in image_files}},
+                                 extras=inputs.extras.union(image_files))
             try:
-                copy = review_sandbox.ReadonlyCopy(materials, role_name)
+                copy = review_sandbox.ReadonlyCopy(inputs, role_name)
             except (review_sandbox.ReadonlyCopyViolation, OSError) as exc:
                 raise LaunchError(f"{role_name}: read-only copy unavailable: {exc}") from exc
             try:
@@ -280,13 +287,16 @@ def run_role(
                 copy.write_record(workdir)
                 copy.release()
                 raise LaunchError(f"{role_name}: {exc}") from exc
-            prompt = copy.prompt(prompt)
+            # Inline verifier packets are reconstructed byte-for-byte during adoption.
+            if materials is not None:
+                prompt = copy.prompt(prompt)
             (workdir / "prompt.txt").write_text(prompt)
             stdin_text = prompt
             env = copy.env(env)
             sandbox = copy.inputs
         command = [codex, "exec"]
-        for path in attached:
+        image_paths = [copy.inputs / name for name in image_files] if copy else attached
+        for path in image_paths:
             command += ["--image", str(path)]
         command += ["-m", model, "-s",
                     "danger-full-access" if copy is not None else "read-only",
@@ -362,7 +372,7 @@ def run_role(
         "schema_sha256": _sha256(schema_text.encode()),
         "output_sha256": _sha256(out_path.read_bytes()),
     }
-    if runtime == "codex" and materials is not None:
+    if runtime == "codex":
         # "readonly-copy": bubblewrap was unavailable; the role ran with danger-full-access
         # inside a write-protected copy, hashed before and after (see review_sandbox).
         receipt["isolation"] = ("readonly_copy_danger_full_access" if copy is not None

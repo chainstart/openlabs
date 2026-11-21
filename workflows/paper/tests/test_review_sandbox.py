@@ -125,14 +125,32 @@ def test_mode_can_be_forced(tmp_path, monkeypatch, fake_codex):
     assert not (fake_codex / "probes").exists()
 
 
-def test_roles_without_materials_are_unchanged_and_not_probed(tmp_path, monkeypatch, fake_codex):
-    monkeypatch.setenv("FAKE_PROBE_RC", "1")
+@pytest.mark.parametrize("available", [True, False])
+def test_inline_role_selects_sandbox_and_preserves_packet(tmp_path, monkeypatch, fake_codex, available):
+    monkeypatch.setenv("FAKE_PROBE_RC", "0" if available else "1")
+    image = tmp_path / "figure.png"
+    image.write_bytes(b"figure")
     _, receipt = run_role(role_name="editor", role=CODEX, system_prompt="s", user_prompt="u",
-                          schema={"type": "object"}, workdir=tmp_path / "run")
+                          schema={"type": "object"}, workdir=tmp_path / "run", images=[image])
     args = (fake_codex / "args").read_text().split()
-    assert args[args.index("-s") + 1] == "read-only"
-    assert receipt["sandbox_mode"] == "read-only" and "isolation" not in receipt
-    assert not (fake_codex / "probes").exists()
+    assert (fake_codex / "probes").exists()
+    assert (tmp_path / "run/prompt.txt").read_text() == "s\n\nu"
+    assert args[args.index("-s") + 1] == ("read-only" if available else "danger-full-access")
+    supplied_image = Path(args[args.index("--image") + 1])
+    if available:
+        assert supplied_image == image
+    else:
+        assert supplied_image != image
+        assert receipt["readonly_copy"]["valid"]
+        assert receipt["readonly_copy"]["file_count"] == 1
+
+
+def test_empty_inline_copy_must_stay_read_only(tmp_path, monkeypatch, fake_codex):
+    monkeypatch.setenv("FAKE_PROBE_RC", "1")
+    monkeypatch.setenv("FAKE_ACTION", "chmod u+w .")
+    with pytest.raises(LaunchError, match="invalid"):
+        run_role(role_name="decision_letter", role=CODEX, system_prompt="s", user_prompt="u",
+                 schema={"type": "object"}, workdir=tmp_path / "run")
 
 
 # --------------------------------------------------------------------------- read-only copy

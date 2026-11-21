@@ -181,6 +181,7 @@ class ReadonlyCopy:
     # ----------------------------------------------------------------- set up
     def create(self) -> dict[str, Any]:
         materials = self.materials
+        self.inputs.mkdir()
         for name, source in sorted(materials.files.items()):
             if source.is_symlink() or not source.is_file():
                 raise ReadonlyCopyViolation(f"registered material is not a regular file: {source}")
@@ -267,13 +268,18 @@ class ReadonlyCopy:
     def verify(self) -> dict[str, Any]:
         """Re-hash the copy and the originals; raise :class:`ReadonlyCopyViolation` on change."""
         problems: list[str] = []
-        after = tree_manifest(self.inputs) if self.inputs.is_dir() else {}
+        intact_directory = not self.inputs.is_symlink() and self.inputs.is_dir()
+        if not intact_directory:
+            problems.append("copy input directory replaced or missing")
+        elif self.inputs.stat().st_mode & 0o222:
+            problems.append("copy input directory became writable")
+        after = tree_manifest(self.inputs) if intact_directory else {}
         for key in sorted(set(self.before) | set(after)):
             if self.before.get(key) != after.get(key):
                 state = ("added" if key not in self.before else
                          "removed" if key not in after else "modified")
                 problems.append(f"copy {state}: {key}")
-        for entry in self.inputs.rglob("*") if self.inputs.is_dir() else []:
+        for entry in self.inputs.rglob("*") if intact_directory else []:
             if not entry.is_symlink() and entry.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
                 problems.append(f"copy write permission restored: {entry.relative_to(self.inputs)}")
         for name, source in sorted(self.materials.files.items()):
