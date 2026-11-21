@@ -2189,6 +2189,8 @@ def report_delivery_chain(db, paths, settings, report) -> None:
             report.errors.append(
                 f"Delivery chain: {item['paper_id']} (topic {item['topic_id']}) has no owner: "
                 f"{item['action']}")
+    from .paper_figures import latest_metrics
+    report.program["figure_metrics"] = latest_metrics(db)
     report.program["delivery_chain"] = chain
     report.program["delivery_stuck"] = [item for item in chain
                                         if item["state"] in {"waiting", "needs_human"}]
@@ -3028,6 +3030,12 @@ class _ReleasePipeline:
                       detail={"error": str(exc)[:400]}, last_error=str(exc)[:800])
             self.entry("commit_pending", error=str(exc)[:300])
             return
+        from .paper_figures import harvest, record_review_metrics
+        binding = status.get("figure_review_binding") or {}
+        record_review_metrics(self.db, self.paths, {}, binding.get("decision"), binding.get("sha256"))
+        candidates = harvest(self.paths, self.settings, self.paper_id, binding)
+        if candidates:
+            _info(self.report, "figure_harvest").extend(candidates)
         self.save("release_done", "delivered", stage="done", status="done",
                   detail={"package_id": self.handoff.get("package_id")})
         self.entry("done", package_id=self.handoff.get("package_id"))

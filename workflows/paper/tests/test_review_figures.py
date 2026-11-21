@@ -197,3 +197,23 @@ def test_required_figure_revision_is_tracked_as_presentation():
     discrepancy = {**edit, "type": "evidence", "change": "Reconcile the plotted estimate with Table 2."}
     assert flow.merge({**editor(), "figure_changes": [discrepancy]},
                       {"a": report, "b": report})["next_action"] == "evidence_remediation"
+
+
+def test_review_inventory_counts_only_included_and_binds_source(tmp_path, monkeypatch):
+    from paper_writing import figures
+    ws = figures.workspace(manuscript=tmp_path)
+    ws.src_dir.mkdir()
+    source = ws.src_dir / "mechanism.svg"
+    source.write_text("<svg/>")
+    rows = [{"pdf": str(ws.out_dir / (name + ".pdf")), "kind": kind, "source": str(source)}
+            for name, kind in [("mechanism", "schematic"), ("validation", "result"), ("unused", "schematic")]]
+    audit = dict(figures=rows, blocking=[], repair_required=[])
+    monkeypatch.setattr(figures, "check", lambda *a, **k: audit)
+    pre = dict(manuscript_path=str(tmp_path), figure_files=[
+        dict(path="figures/mechanism.pdf", sha256="a"), dict(path="figures/validation.pdf", sha256="b")])
+    metrics, sources = figures.review_inventory(pre)
+    assert metrics == dict(check_passed=True, schematic_count=1, result_count=1,
+                           required_changes=0, figure_seats=None)
+    assert len(sources) == 1 and sources[0]["source"] == source.name
+    audit["repair_required"].append("missing")
+    assert figures.review_inventory(pre)[0]["check_passed"] is False

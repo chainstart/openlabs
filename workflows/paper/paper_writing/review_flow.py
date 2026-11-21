@@ -2515,6 +2515,8 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
         record["support_claim_evidence_maps"] = claim_map_provenance(pre["support_claim_evidence_maps"])
     record["build_inputs"] = list(pre.get("build_inputs", []))
     record["figure_files"] = list(pre.get("figure_files", []))
+    from paper_writing.figures import review_inventory
+    record["figure_metrics"], record["figure_sources"] = review_inventory(pre)
     if pre["blockers"]:
         record |= {"stage_reached": "preflight", "merged": {"outcome": "preflight_failed",
                    "preflight_blockers": pre["blockers"], "next_action": "text_revision"}}
@@ -2618,6 +2620,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
         for item in merged.get("unresolved_previous_items", [])
         if str(item.get("item") or "").startswith("[figure]")
     ]
+    record["figure_metrics"]["required_changes"] = len(figure_requirements)
     if figure_requirements:
         letter["letter"] += "\n\n## Required figure revisions\n\n" + "\n".join(figure_requirements)
     record |= {"stage_reached": "decision", "round_for_target": len(rounds) + int(consumes_round),

@@ -719,6 +719,14 @@ def utilization_report(
                 paused_topic_campaigns(db)).to_dict()
         except Exception:  # noqa: BLE001 - the ledger view is advisory.
             program = {}
+    from .paper_figures import latest_metrics
+    figures = list(latest_metrics(db).values())
+    program["figure_metrics"] = {
+        "papers": len(figures), "checks_passed": sum(m.get("check_passed") is True for m in figures),
+        "checks_unknown": sum(m.get("check_passed") is None for m in figures),
+        **{key: sum(m.get(key) or 0 for m in figures)
+           for key in ("schematic_count", "result_count", "figure_seats", "required_changes")},
+    }
     admission = _admission_pass_rate(db)
     quota_rows: dict[str, Any] = {}
     for provider, item in pace.items():

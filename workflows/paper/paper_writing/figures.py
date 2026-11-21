@@ -1192,3 +1192,50 @@ def recolor_file(source: Path, target: Path, mapping: Mapping[str, str] | None =
     target.write_text(helpers.recolor_svg(source.read_text(encoding="utf-8"), mapping), encoding="utf-8")
     return target
 
+
+
+def review_inventory(pre):
+    """Count the graphics actually read by TeX and bind candidate sources to this review."""
+    metrics = dict(schematic_count=0, result_count=0, check_passed=None,
+                   figure_seats=None, required_changes=0)
+    candidates = []
+    if not pre.get("manuscript_path"):
+        return metrics, candidates
+    manuscript = Path(pre["manuscript_path"])
+    if not manuscript.is_dir():
+        return metrics, candidates
+    seats = manuscript.parent / "build" / "figure-seats.json"
+    if seats.is_file():
+        try:
+            count = json.loads(seats.read_text()).get("count")
+            if type(count) is int and count >= 0:
+                metrics["figure_seats"] = count
+        except (OSError, ValueError, AttributeError):
+            pass
+    try:
+        ws = workspace(manuscript=manuscript)
+        audit = check(ws, rebuild=False)
+    except (OSError, ValueError, FigureToolError):
+        return metrics, candidates
+    metrics["check_passed"] = not (audit["blocking"] or audit["repair_required"])
+    included = {item["path"]: item["sha256"] for item in pre.get("figure_files", [])}
+    plan, _ = read_plan(manuscript)
+    planned = {item["figure"]: item["kind"] for item in plan.get("figures", [])}
+    counted = set()
+    for item in audit["figures"]:
+        pdf = Path(item["pdf"])
+        digest = included.get(pdf.relative_to(manuscript).as_posix())
+        if not digest or item["kind"] not in {"schematic", "result"}:
+            continue
+        counted.add(pdf.relative_to(manuscript).as_posix())
+        metrics[item["kind"] + "_count"] += 1
+        if item["kind"] == "schematic" and item.get("source"):
+            src = Path(item["source"])
+            if src.parent == ws.src_dir and src.resolve() == src and src.is_file():
+                candidates.append(dict(source=src.name, source_sha256=hashlib.sha256(src.read_bytes()).hexdigest(),
+                                       pdf=pdf.name, pdf_sha256=digest))
+    for name in included.keys() - counted:
+        kind = planned.get(Path(name).stem)
+        if kind in {"schematic", "result"}:
+            metrics[kind + "_count"] += 1
+    return metrics, candidates

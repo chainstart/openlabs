@@ -28,7 +28,7 @@ a_s = rng.normal(a_true, 0.03, 4000)
 b_s = rng.normal(b_true, 0.12, 4000)
 paths = capacity(t[None, :], a_s[:, None], b_s[:, None])
 lo, mid, hi = np.percentile(paths, [5, 50, 95], axis=0)
-eol = np.array([t[np.argmax(p < THRESH)] if (p < THRESH).any() else np.nan for p in paths])
+eol = 1000 * ((1 - THRESH) / a_s) ** (1 / b_s)
 eol = eol[np.isfinite(eol)]
 eol_true = t[np.argmax(capacity(t, a_true, b_true) < THRESH)]
 eol_med = float(np.median(eol))
@@ -36,7 +36,7 @@ eol_med = float(np.median(eol))
 ink, gray = olf.PALETTE["ink"], olf.PALETTE["gray"]
 blue, wine, orange = olf.PALETTE["blue"], olf.PALETTE["wine"], olf.PALETTE["orange"]
 
-fig = olf.figure("onehalf", 2.55)
+fig = olf.figure("onehalf", 3.6)
 ax = fig.add_subplot(111)
 after = t >= T_P
 ax.fill_between(t[after], lo[after], hi[after], color=blue, alpha=0.18, lw=0, label="90% predictive band")
@@ -69,5 +69,6 @@ ax.set_xlim(0, 1000)
 ax.set_ylim(0.66, 1.03)
 ax.set_xlabel("Cycle")
 ax.set_ylabel("Capacity (fraction of rated)")
-ax.legend(loc="upper right")
+ax.legend(loc="lower left", bbox_to_anchor=(0,1.02), ncol=2, fontsize=7, frameon=False)
+fig.suptitle("Illustrative degradation model", fontsize=10)
 olf.save(fig)

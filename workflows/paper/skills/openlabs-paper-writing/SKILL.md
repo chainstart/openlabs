@@ -149,3 +149,5 @@ scientific keywords in place of `--paper-id`. Keep the host domain and subject
 subdomain in their existing CLI options. Reuse the registered ID for all
 subsequent commands. Panel and independence rules come from the main data
 repository's `registry/settings.yaml`.
+
+示意图要承载数值与对比，不画纯方框流程。注明单位、样本或时间分辨率、对比基准和证据出处。教学参数须在图中标明，不能作为稿件结果。

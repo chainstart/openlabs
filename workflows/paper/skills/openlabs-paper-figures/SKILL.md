@@ -71,7 +71,8 @@ The research owner records two to four reader-facing points and proposed figure 
 | data sources, exclusions, n per step, endpoint | study-design flow | `study-design` | TikZ |
 | modules, layers, what flows between them | architecture with interface labels | `method-architecture` | TikZ |
 | iteration, stopping rule, update | flow + numbered pseudo-code | `algorithm-loop` | TikZ |
-| physical geometry that produces the observable | geometry panels + computed curve | `binary-eclipse-geometry` | Python |
+| detached binary with separate photospheres | geometry panels + computed curve | `binary-eclipse-geometry` | Python |
+| contact binary with a common envelope | Roche equipotential, inclination and projected flux | `contact-roche` | Python |
 | timing rule, settlement or sampling interval | one worked interval, both rules | `settlement-timing` | TikZ |
 | degradation, thresholds, prognostic quantities | curve, band, threshold, RUL arrow | `degradation-rul` | Python |
 | train/validation/holdout, rolling backtest | windows on one calendar axis | `rolling-evaluation` | SVG |

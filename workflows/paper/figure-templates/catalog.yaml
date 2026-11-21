@@ -20,12 +20,13 @@ templates:
   - name: binary-eclipse-geometry
     file: binary-eclipse-geometry.py
     figure_kind: schematic
-    use_when: Physical geometry that produces the observable, computed from the model (here orbit, sky projection and the resulting eclipse light curve).
+    use_when: Detached binary only. Physical geometry that produces the observable, computed from the model (here orbit, sky projection and the resulting eclipse light curve).
   - name: settlement-timing
     file: settlement-timing.tex
     figure_kind: schematic
     use_when: A timing or settlement rule (market intervals, sampling windows) where one worked interval shows what each rule pays or measures.
   - name: degradation-rul
+    field: reliability
     file: degradation-rul.py
     figure_kind: schematic
     use_when: Degradation, thresholds and prognostic quantities (failure threshold, prediction time, end-of-life distribution, RUL definition).
@@ -41,3 +42,38 @@ templates:
     file: li-ion-cell.svg
     figure_kind: schematic
     use_when: A physical object or device drawn in code with gradients (cell, device cross-section, sample) when no licensed asset or rendering from data exists.
+  - name: contact-roche
+    field: astronomy
+    file: contact-roche.py
+    figure_kind: schematic
+    use_when: Contact envelope, inclination, eclipse projections and integrated light curve.
+  - name: sector-profiles
+    field: astronomy
+    file: sector-profiles.py
+    figure_kind: result
+    use_when: Profile likelihood and matched extraction shifts by observing sector; supply the three verified input JSONs.
+  - name: shared-export
+    field: energy
+    file: shared-export.py
+    figure_kind: schematic
+    use_when: Size shared export and compare storage with PV-only dispatch.
+  - name: settlement-clock
+    field: energy
+    file: settlement-clock.py
+    figure_kind: schematic
+    use_when: Price the same dispatch on two settlement clocks.
+  - name: policy-periods
+    field: energy
+    file: policy-periods.py
+    figure_kind: schematic
+    use_when: Explain a matched policy-period contrast with contemporaneous comparison sites.
+  - name: specimen-split
+    field: reliability
+    file: specimen-split.py
+    figure_kind: schematic
+    use_when: Assign physical specimens before segmenting time series.
+  - name: rank-agreement
+    field: reliability
+    file: rank-agreement.py
+    figure_kind: result
+    use_when: Show per-rig rank agreement and paired bootstrap uncertainty from inputs/ranks.csv.

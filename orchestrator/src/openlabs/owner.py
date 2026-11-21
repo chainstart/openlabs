@@ -1810,6 +1810,10 @@ def _figure_gate(db, paths, settings, report, *, task, packet, result_path, stat
               [{"figure": "manuscript", "code": "FIG-DRAFT-MISSING",
                 "message": "Locate the supplementary revision in the campaign workspace."}])
     if not issues:
+        manuscript = Path(audit.get("manuscript") or root / "papers" / paper_id / "manuscript")
+        if manuscript.resolve() == manuscript and manuscript.is_relative_to(root) and manuscript.is_dir():
+            atomic_write_json(manuscript.parent / "build" / "figure-seats.json",
+                              {"count": db.count_events("paper", paper_id, "figure_seat")})
         if state.get("figure_repair"):
             update_state(db, campaign_id, "owner_figure_check_passed", {"paper_id": paper_id},
                          figure_repair=None)

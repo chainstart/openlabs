@@ -3172,6 +3172,10 @@ def ingest_results(
             if successful and task_type == "paper_review":
                 outcome = payload.get("review_outcome")
                 try:
+                    if isinstance(outcome, Mapping):
+                        paper_figures.record_review_metrics(
+                            db, paths, campaign_binding or {}, outcome.get("decision_record"),
+                            outcome.get("decision_record_sha256"))
                     budget_control.ingest_review_quota(
                         db, settings, paths.data,
                         outcome.get("decision_record") if isinstance(outcome, Mapping) else None,

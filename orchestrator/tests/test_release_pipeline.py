@@ -462,6 +462,10 @@ def test_writer_rounds_are_bounded(tmp_path, monkeypatch):
 def test_resume_after_a_crash_between_delivery_and_its_commit(tmp_path, monkeypatch):
     paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support="not_required")
     original = program_autonomy.commit_paper_paths
+    from openlabs import paper_figures
+
+    harvested = []
+    monkeypatch.setattr(paper_figures, "harvest", lambda *args: harvested.append(args[2]) or [])
     calls = {"n": 0}
 
     def flaky(*args, **kwargs):
@@ -475,10 +479,12 @@ def test_resume_after_a_crash_between_delivery_and_its_commit(tmp_path, monkeypa
     pending = _topic(paths, settings, topic["topic_id"])
     assert pending["handoff"]["status"] == "delivered"
     assert pending["release"]["status"] == "commit_pending"
+    assert harvested == []
     assert _git(paths.data, "status", "--porcelain", "--", f"registry/papers/{PAPER_ID}.json")
     _tick(paths, settings, monkeypatch)
     done = _topic(paths, settings, topic["topic_id"])
     assert done["release"]["status"] == "done"
+    assert harvested == [PAPER_ID]
     assert _commands(log).count("program deliver") == 1  # never delivered twice
     assert _git(paths.data, "status", "--porcelain", "--", f"registry/papers/{PAPER_ID}.json") == ""
 

@@ -407,6 +407,9 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "writer_scope": WRITER_SCOPE.replace("<paper_id>", paper_id),
         "release_artifacts_unbound": ([] if manuscript_missing
                                       else unbound_release_artifacts(paper_id, metadata, repo_root)),
+        "figure_review_binding": {"field": metadata.get("field"),
+                                 "decision": release.get("decision_record"),
+                                 "sha256": release.get("decision_record_sha256")},
         "commit_paths": paths,
         # Files the release commit would refuse (over the Git payload limit); the
         # pipeline binds them to the artifact store before its next commit.

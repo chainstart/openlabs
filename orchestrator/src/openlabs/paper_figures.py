@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import tempfile
@@ -12,7 +13,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 from zipfile import BadZipFile, ZipFile
 
-from .contracts import atomic_write_json, sha256_file
+from .contracts import IDENTIFIER, atomic_write_json, sha256_file
 from .resources import default_task_resources
 
 
@@ -119,7 +120,8 @@ def queue(db, paths, settings, report, *, task, packet, result_path, paper_id, r
         max_wall_seconds=min(3600, settings.max_task_wall_seconds),
         objective=(
             "Read the figure-repair packet. Copy its manuscript to your workspace. Fix the named "
-            "figure issues on that copy, following the figure skill and templates. Preserve the "
+            f"figure issues on that copy. Consult field candidates in {paths.program_control}/figure-templates/_harvest/ "
+            "and the figure skill and official templates. Preserve the "
             "registered endpoint, results and claims. Use real registered data for result plots. "
             "Build vector figures and inspect every rendered PNG, then run figures check on the "
             "copy. Update only the plan, figure code, vector PDFs and figure-related TeX "
@@ -132,6 +134,7 @@ def queue(db, paths, settings, report, *, task, packet, result_path, paper_id, r
         ),
         **default_task_resources(settings).to_dict(),
     )
+    db.record_event_once("paper", paper_id, "figure_seat", {"task_id": task_id}, event_key=task_id)
     report.enqueued.append(task_id)
     return task_id
 
@@ -210,3 +213,85 @@ def apply(db, paths, task, packet, read_json):
 
 
 IMPORT_ERRORS = (BadZipFile, OSError, ValueError, RuntimeError, KeyError)
+
+
+def harvest(paths, settings, paper_id, binding):
+    """Archive only the exact source and output bound by the delivered ready decision."""
+    field = binding.get("field")
+    if field not in {"astronomy", "energy", "reliability"} or not IDENTIFIER.fullmatch(paper_id):
+        return []
+    decision = paths.data / str(binding.get("decision") or "")
+    if (decision.resolve() != decision or not decision.is_relative_to(paths.data)
+            or not decision.is_file() or sha256_file(decision) != binding.get("sha256")):
+        return []
+    record = json.loads(decision.read_text())
+    if (record.get("paper_id") != paper_id or record.get("merged", {}).get("outcome") != "ready"
+            or record.get("figure_metrics", {}).get("check_passed") is not True
+            or not record.get("figure_sources")):
+        return []
+    audit = check(paths, settings, paper_id, paths.data)
+    if not audit.get("valid") or audit["blocking"] or audit["repair_required"]:
+        return []
+    root = Path(audit["manuscript"])
+    if root.resolve() != root or not root.is_relative_to(paths.data):
+        return []
+    warnings = {item["figure"] for item in audit.get("advisory", [])}
+    saved = []
+    for item in record["figure_sources"]:
+        source = root / "figure-src" / item["source"]
+        pdf = root / "figures" / item["pdf"]
+        if (source.stem in warnings or source.parent != root / "figure-src" or pdf.parent != root / "figures"
+                or source.resolve() != source or pdf.resolve() != pdf
+                or source.suffix not in {".tex", ".py", ".svg", ".html"}
+                or not source.is_file() or not pdf.is_file() or sha256_file(pdf) != item["pdf_sha256"]):
+            continue
+        content = source.read_bytes()
+        if hashlib.sha256(content).hexdigest() != item["source_sha256"]:
+            continue
+        dest = (paths.program_control / "figure-templates" / "_harvest" / field / paper_id
+                / binding["sha256"] / source.stem)
+        dest.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=dest, delete=False) as handle:
+            handle.write(content)
+        os.replace(handle.name, dest / source.name)
+        atomic_write_json(dest / "provenance.json", {
+            **item, "paper_id": paper_id, "field": field, "decision": binding["decision"],
+            "decision_sha256": binding["sha256"], "review_excerpt": str(record.get("letter", ""))[:900],
+        })
+        saved.append(str(dest / source.name))
+    return saved
+
+
+def record_review_metrics(db, paths, campaign, relative, digest):
+    if not relative or not digest:
+        return
+    for root in [*_draft_roots(paths, campaign), paths.data.resolve()]:
+        path = root / relative
+        if (path.resolve() != path or not path.is_relative_to(root)
+                or not path.is_file() or sha256_file(path) != digest):
+            continue
+        try:
+            record = json.loads(path.read_text())
+        except (ValueError, OSError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        metrics = record.get("figure_metrics")
+        paper_id = record.get("paper_id")
+        if isinstance(metrics, dict) and isinstance(paper_id, str) and IDENTIFIER.fullmatch(paper_id):
+            db.record_event_once("figure_review", paper_id, "metrics", metrics, event_key=digest)
+            return
+
+
+def latest_metrics(db):
+    papers = {}
+    for event in db.events(entity_type="figure_review"):
+        papers[event["entity_id"]] = {k: v for k, v in event["payload"].items() if k != "event_key"}
+    with db.connect() as connection:
+        counts = connection.execute(
+            "SELECT entity_id, COUNT(*) FROM events WHERE entity_type='paper' "
+            "AND event_type='figure_seat' GROUP BY entity_id").fetchall()
+    for paper_id, count in counts:
+        papers.setdefault(paper_id, {"schematic_count": None, "result_count": None,
+                                     "check_passed": None, "required_changes": None})["figure_seats"] = count
+    return papers

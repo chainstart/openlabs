@@ -216,6 +216,7 @@ def test_briefs_tell_the_owner_to_hand_over_and_the_writer_to_write(tmp_path, mo
     lines = owner.writing_brief_lines(settings, task=seat, writing={})
     assert lines and owner.HANDOVER_NAME in lines[0] and "phase writing" in lines[0]
     assert "file or script that produces it" in lines[0]
+    assert "2–4 key points with suggested figure types" in lines[0]
     writing = {"status": owner.WRITING_ACTIVE, "runner": WRITER, "solver_runner": "worker_gpt"}
     lines = owner.writing_brief_lines(settings, task={"runner": WRITER}, writing=writing)
     assert lines and "writer" in lines[0] and "Do not split" in lines[0]
