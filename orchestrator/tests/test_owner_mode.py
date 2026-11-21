@@ -324,6 +324,29 @@ def test_ready_for_review_goes_to_another_family_and_comments_return_to_the_owne
     assert db.campaign(topic["campaign_id"])["status"] == "production_paused"
 
 
+def test_review_cooldown_defers_owner_seat(tmp_path, monkeypatch):
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch, owner_settings=OwnerSettings(recompute_review=False))
+    seat = _first_seat(paths, db, settings, monkeypatch, topic)
+    _seat_packet(db, paths, seat["task_id"], {
+        "status": "ready_for_review", "paper_id": "20261114-ai-owner",
+        "primary_endpoint_verdict": "met"}, session="s1", artifact=True)
+    _tick(paths, settings, monkeypatch)
+    review = _lease(paths, settings, monkeypatch, db, _latest(db, topic["campaign_id"])["task_id"])
+    retry_at = datetime.now(UTC) + timedelta(hours=2)
+    _finish(db, paths, review["task_id"], supported=False, extra={
+        "paper_candidate": False,
+        "round_guard": {"cooldown_only": True, "retry_at": retry_at.isoformat(),
+                        "blockers": ["Cooldown in effect"]},
+    })
+    _tick(paths, settings, monkeypatch)
+    back = _latest(db, topic["campaign_id"])
+    assert back["task_type"] == OWNER_TASK_TYPE
+    assert back["not_before"] == budget_control._iso(retry_at)
+    assert "held before the editor or referees ran" in back["objective"]
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "in_review"
+
+
 def test_ready_for_review_needs_an_endpoint_verdict(tmp_path, monkeypatch):
     paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
     seat = _first_seat(paths, db, settings, monkeypatch, topic)

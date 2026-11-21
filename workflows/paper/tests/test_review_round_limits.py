@@ -57,7 +57,11 @@ def test_official_run_enforces_effective_paper_target_cap(tmp_path, monkeypatch,
     monkeypatch.setattr(flow, "review_config", lambda root: config())
     monkeypatch.setattr(flow, "preflight", lambda *args: {"metadata": meta, "target": TARGET,
         "expanded": "Current complete manuscript", "bibliography": "", "fingerprints": {}, "blockers": []})
-    monkeypatch.setattr(flow, "completed_rounds", lambda *args: [{"stage_reached": "decision"}] * used)
+    monkeypatch.setattr(flow.review_round_guard, "check", lambda *args: {"blockers": []})
+    previous = tmp_path / "previous.json"
+    previous.write_text("{}")
+    monkeypatch.setattr(flow, "completed_rounds",
+                        lambda *args: [{"stage_reached": "decision", "_path": previous}] * used)
     monkeypatch.setattr(flow, "_previous_round", lambda *args: None)
     calls = []
     def role(**kwargs):

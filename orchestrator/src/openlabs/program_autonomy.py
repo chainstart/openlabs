@@ -2639,6 +2639,10 @@ class _ReleasePipeline:
                                   "decision_sha256": result.get("decision_sha256")})
                 self.entry("delta_review_ready", run_dir=result.get("run_dir"))
                 return True
+            if result.get("outcome") == "review_round_blocked" and result.get("next_action") == "wait":
+                # An in-flight unified review owns this paper; retry on a later tick.
+                self.entry("delta_review_waiting", reason="unified_review_active")
+                return False
             if result.get("outcome") in {"full_review_required", TRIGGER_REVIEW_ROUNDS}:
                 # The change is outside the delta rule: only a full review can judge it.
                 self.return_to_review(status, {
@@ -2926,7 +2930,11 @@ class _ReleasePipeline:
                         "canonical release sources. Load the instance LaTeX environment before building. "
                         "If this root is unavailable, report the access error. Do not review a different "
                         "campaign snapshot. Do not edit the "
-                        "manuscript. Return paper_candidate=true only for outcome ready, and copy "
+                        "manuscript. For a same-venue re-review prepare the decision-bound JSON --response "
+                        "from the registered revision and evidence. For review_round_blocked, copy round_guard verbatim into the result, return paper_candidate=false and stop this attempt. "
+                        "Ask the writer or researcher for any missing revision evidence. For cooldown alone, "
+                        "return no next action. Do not copy the prior writing_release as a fresh result. "
+                        "For other outcomes return paper_candidate=true only for outcome ready, and copy "
                         "unified-run's review_outcome when present, otherwise the registered writing_release, into `review_outcome` (next_action, "
                         "status, review_stalled, rounds_for_target, max_rounds_per_target, "
                         "direction_context, decision_record, decision_record_sha256, paper_id)."

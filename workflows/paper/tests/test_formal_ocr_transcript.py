@@ -13,7 +13,7 @@ TEXT = ("[OCR transcription of original PDF pages 1-2; RapidOCR; not the publish
         "Theorem 2: for every real x, x squared is nonnegative.\n")
 
 
-def setup(root, *, text=TEXT, original=SCAN, **overrides):
+def ocr_fixture(root, *, text=TEXT, original=SCAN, **overrides):
     metadata = fixture_workspace(root)
     path = root / "papers/p/evidence/ocr.txt"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,7 +39,7 @@ def collect(root, metadata, body=SCAN):
 
 
 def test_bound_transcript_is_primary_text(tmp_path):
-    metadata = setup(tmp_path)
+    metadata = ocr_fixture(tmp_path)
     sources, errors = collect(tmp_path, metadata)
     primary = [s for s in sources if s["kind"] == "primary_text"]
     assert errors == [] and len(primary) == 1
@@ -51,10 +51,10 @@ def test_bound_transcript_is_primary_text(tmp_path):
 @pytest.mark.parametrize("fault", ["other_original", "changed_transcript", "no_header"])
 def test_unbound_transcript_is_refused(tmp_path, fault):
     if fault == "no_header":
-        metadata = setup(tmp_path, text="Theorem 2: for every real x, x squared is nonnegative.\n")
+        metadata = ocr_fixture(tmp_path, text="Theorem 2: for every real x, x squared is nonnegative.\n")
         body = SCAN
     else:
-        metadata = setup(tmp_path)
+        metadata = ocr_fixture(tmp_path)
         body = SCAN + b"different" if fault == "other_original" else SCAN
         if fault == "changed_transcript":
             (tmp_path / "papers/p/evidence/ocr.txt").write_text(TEXT + "edited\n")
@@ -66,7 +66,7 @@ def test_unbound_transcript_is_refused(tmp_path, fault):
 @pytest.mark.parametrize("overrides", [{"pages": None}, {"kind": "publisher_catalog"},
                                        {"extraction_method": "text"}])
 def test_invalid_transcript_declarations(tmp_path, overrides):
-    metadata = setup(tmp_path)
+    metadata = ocr_fixture(tmp_path)
     source = metadata["formal_check"]["sources"][0]
     for key, value in overrides.items():
         if value is None:
@@ -75,7 +75,7 @@ def test_invalid_transcript_declarations(tmp_path, overrides):
             source[key] = value
     with pytest.raises(ValueError):
         formal.source_plan(metadata)
-    metadata = setup(tmp_path / "second")
+    metadata = ocr_fixture(tmp_path / "second")
     metadata["formal_check"]["sources"][0]["transcript"]["path"] = "elsewhere/ocr.txt"
     with pytest.raises(ValueError):
         formal.source_plan(metadata)

@@ -1776,7 +1776,7 @@ def _review_objective(packet: Mapping[str, Any], topic: Mapping[str, Any] | None
         _recompute_context(state or {})
         + (f"The owner names paper ID {paper}. " if paper else
            "Resolve the paper ID from the owner's registered artifacts. ")
-        + "Run `paper-writing review unified-run --paper-id <id>` (add --response for a "
+        + "Run `paper-writing review unified-run --paper-id <id>` (pass the writer's JSON --response for a "
         "re-review). It runs the preflight, the target-journal editor screen, two blind "
         "referees and the conservative decision; do not reproduce its stages or edit the "
         "manuscript. Also compare the pre-registered primary endpoint (research_state.json "
@@ -1788,6 +1788,9 @@ def _review_objective(packet: Mapping[str, Any], topic: Mapping[str, Any] | None
         "data is presented as observation. Return "
         "paper_candidate=true only for outcome ready; otherwise return exactly one structured "
         "text_revision or evidence_remediation action, or none for retarget_required/blocked. "
+        "For review_round_blocked, copy round_guard verbatim into the result, set paper_candidate=false, "
+        "and stop this review attempt. Ask the writer or researcher for any missing revision evidence. "
+        "For cooldown alone, return no next action. Do not copy the prior writing_release as a fresh result. "
         "If unified-run returns review_outcome, copy it verbatim. Otherwise copy the registered writing_release into the result field "
         "`review_outcome` (next_action, status, review_stalled, rounds_for_target, "
         "max_rounds_per_target, direction_context, decision_record, decision_record_sha256, "
@@ -1962,6 +1965,13 @@ REVISION_RULE = (
 
 
 def _review_note(payload: Mapping[str, Any], result_path: Path) -> str:
+    guard = payload.get("round_guard")
+    if isinstance(guard, Mapping):
+        return (
+            f"The unified review was held before the editor or referees ran. See {result_path} "
+            "for the guard findings. Address any missing revisions, evidence or response items "
+            "before returning ready_for_review. If nothing is missing, reuse the prepared response."
+        )
     outcome = payload.get("review_outcome") if isinstance(payload.get("review_outcome"),
                                                          Mapping) else {}
     action = payload.get("next_actions") or []
@@ -1977,7 +1987,7 @@ def _review_note(payload: Mapping[str, Any], result_path: Path) -> str:
         f"record: {outcome.get('decision_record') or 'see the result'}."
         + (f" Requested: {str(requested)[:1500]}" if requested else "")
         + " Address it in the manuscript or the evidence as you judge right, keep contrary "
-        "results, and return ready_for_review when it is ready for the re-review."
+        "results, and return ready_for_review with the path to the decision-bound JSON response, prepared per openlabs-paper-review."
         + REVISION_RULE
     )
 
@@ -2409,8 +2419,12 @@ def after_result(
                     f"without a decision ({str(task.get('last_error') or '')[:300]}). Return "
                     "ready_for_review again when you want it re-run.")
             routing = ROUTING_RETRY
+        guard = payload.get("round_guard") if successful else None
+        retry_at = (budget_control.parse_time(guard.get("retry_at"))
+                    if isinstance(guard, Mapping) and guard.get("cooldown_only") is True else None)
         enqueue_seat(db, settings, report, campaign=campaign, parent=task, note=note,
-                     routing_reason=routing, input_path=str(result_path))
+                     routing_reason=routing, input_path=str(result_path),
+                     not_before=budget_control._iso(retry_at) if retry_at else None)
         return True
     if not is_owner_task(task):
         # Conversion of an in-flight topic: its next step is an owner seat.

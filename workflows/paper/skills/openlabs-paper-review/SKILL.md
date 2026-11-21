@@ -24,10 +24,10 @@ text. A mismatch is a scientific blocker, not a text change.
 
 ```bash
 bin/openlabs-resource-guard --task-type cpu -- env PYTHONPATH=workflows/paper python -m paper_writing \
-  review unified-run --paper-id PID --root DATA_ROOT --response RESPONSE.md
+  review unified-run --paper-id PID --root DATA_ROOT --response RESPONSE.json
 ```
 
-Omit `--response` only for a first review. Do not manually construct decisions or
+For a new full review at the same venue, pass the decision-bound JSON response described below. Do not manually construct decisions or
 edit manuscript/registry/evidence during review. Preserve actual outputs and model
 receipts, including failures. Revised prose remains neutral scientific writing;
 keep internal review negotiation and claims about editor approval outside the paper.
@@ -87,6 +87,35 @@ title, abstract, introduction, statements, tables, conclusion-bearing sections a
 unchanged and few lines changed, the earlier judgment is reused, the formal verification
 reruns, and no round is consumed. Anything more gets a full review.
 
+For a second or later full review at the same venue, bind `--response RESPONSE.json`
+to the latest counted decision. The command returns `review_round_blocked` with
+`round_guard.required_items`, `previous_decision_sha256`, `requires_new_artifact`,
+`blockers` and `retry_at` when admission fails. No editor or referee starts and no
+round is charged. Use the exact item strings from this output.
+
+```json
+{
+  "decision_sha256": "<sha256 of the previous decision.json>",
+  "items": [
+    {
+      "item": "<exact required item>",
+      "status": "addressed",
+      "explanation": "Describe what changed and how it answers the request.",
+      "evidence": ["papers/ID/manuscript/appendix.tex:42", "sha256:<artifact sha256>"]
+    }
+  ]
+}
+```
+
+Include every required item once. For an unaddressed item, use `unaddressed` and
+explain why. New calculations, data and analyses require an addressed item with the
+hash of a new registered support artifact or `job:<id>` from a new registered JSON
+result containing that top-level `job_id`. For a full re-review with zero mandatory
+items, send a response with an empty `items` array. The guard also checks the
+expanded manuscript, figures and registered evidence against the previous review
+and enforces the default three-hour cooldown. See operations.zh.md for policy
+settings and owner grants.
+
 The round limit per target is `review.max_rounds_per_target`; a paper may carry a
 `review_round_limit_override` only with a matching SHA-256-bound user receipt. At the limit the
 paper is `blocked` and the orchestrator takes a direction decision (retarget, more research, or
@@ -126,9 +155,13 @@ output without editing the manuscript:
 - `next_action: retarget_required`, `direction_decision`, `review_stalled: true` or
   `status: blocked` (rounds used up) -> no action; the `review_outcome` below lets the
   orchestrator schedule a direction decision. Do not choose a new venue or stop the topic here.
+- `review_round_blocked` -> `paper_candidate: false`. Report the guard output,
+  including the retry time, in the top-level result field `round_guard`. Send missing revisions or evidence to the writer or
+  researcher. If only the cooldown remains or a unified review is already active,
+  end the attempt without another review call or a new revision action.
 - `preflight_failed` -> one `text_revision` action listing the preflight blockers.
 
-In every case also copy the paper's `registry/papers/<paper_id>.yaml#writing_release` unchanged
+For outcomes other than `review_round_blocked`, also copy the paper's `registry/papers/<paper_id>.yaml#writing_release` unchanged
 into the result field `review_outcome`: `next_action`, `status`, `review_stalled` (false when
 absent), `rounds_for_target`, `max_rounds_per_target`, `direction_context` (null when absent),
 `decision_record`, `decision_record_sha256`, plus `paper_id`. The orchestrator checks it and

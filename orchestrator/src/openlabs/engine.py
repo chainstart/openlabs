@@ -3419,11 +3419,14 @@ def ingest_results(
                         "task_type": "paper_review",
                         "objective": (
                             "Resolve the paper ID from the writer's registered artifacts and run "
-                            "`paper-writing review unified-run --paper-id <id>` (add --response for a re-review). "
+                            "`paper-writing review unified-run --paper-id <id>` (pass the writer's JSON --response for a re-review). "
                             "It runs the preflight, the target-journal editor screen, two blind referees and the "
                             "conservative decision; do not reproduce its stages or edit the manuscript. Return "
                             "paper_candidate=true only for outcome ready; otherwise return exactly one structured "
                             "text_revision or evidence_remediation action, or none for retarget_required/blocked. "
+                            "For review_round_blocked, copy round_guard verbatim into the result, set paper_candidate=false, "
+                            "and stop this review attempt. Ask the writer or researcher for any missing revision evidence. "
+                            "For cooldown alone, return no next action. Do not copy the prior writing_release as a fresh result. "
                             "If unified-run returns review_outcome, copy it verbatim. Otherwise copy the registered writing_release into the result field "
                             "`review_outcome` (next_action, status, review_stalled, rounds_for_target, "
                             "max_rounds_per_target, direction_context, decision_record, "

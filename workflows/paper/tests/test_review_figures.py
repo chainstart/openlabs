@@ -11,7 +11,7 @@ import pytest
 from paper_writing import review_flow as flow
 from paper_writing.review_launcher import claude_image_message, run_role
 
-from test_review_flow import MANUSCRIPT, _delta_fixture, editor, referee
+from test_review_flow import MANUSCRIPT, _delta_fixture, _round_response, editor, referee
 
 fitz = pytest.importorskip("pymupdf")
 
@@ -99,7 +99,9 @@ def _with_figures(tmp_path, monkeypatch, base_files, current_text="Design"):
     current = review_figure_files(manuscript, ["figures/fig-a.pdf"])
     base = tmp_path / "reviews/unified/p/20200101T000000Z/decision.json"
     record = json.loads(base.read_text())
-    if base_files is not None:
+    if base_files is None:
+        record.pop("figure_files", None)
+    else:
         record["figure_files"] = base_files(current)
     base.write_text(json.dumps(record))
     pre = {'metadata': {'version': '1.0', 'target_journal': 'J'}, 'target': 'J', 'blockers': [],
@@ -131,7 +133,7 @@ def test_unchanged_figures_keep_the_delta_review(tmp_path, monkeypatch):
 def test_changed_figure_requires_a_full_review_that_shows_it(tmp_path, monkeypatch):
     calls, seen, _ = _with_figures(
         tmp_path, monkeypatch, lambda current: [dict(current[0], sha256="0" * 64)])
-    record = flow.run_review('p', root=tmp_path, apply=False)
+    record = flow.run_review('p', root=tmp_path, response_letter=_round_response(tmp_path), apply=False)
     assert "referee_a" in calls and record.get("review_mode") != "delta"
     assert "figure files changed: figures/fig-a.pdf" in record["delta_review_refused"]["reasons"]
     for name in ("editor", "referee_a", "referee_b"):

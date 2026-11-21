@@ -1260,6 +1260,7 @@ def _delta_fixture(tmp_path, monkeypatch, expanded):
     base.mkdir(parents=True)
     (base / "manuscript-expanded.tex").write_text(MANUSCRIPT)
     record = {"stage_reached": "decision", "target_journal": "J", "run_id": "20200101T000000Z",
+              "finished_at": "2020-01-01T01:00:00Z", "figure_files": [], "round_evidence_files": {},
               "review_policy_sha256": flow.review_policy_sha256(config), "review_track": {"track": "routine"},
               "editor_screen": editor() | {"prior_rejections_addressed": []},
               "referee_reports": {"referee_a": referee("accept"), "referee_b": referee("minor_revision")},
@@ -1299,21 +1300,33 @@ def test_text_only_change_after_ready_reuses_the_review(tmp_path, monkeypatch):
     assert record["letter"] == "Accepted with minor wording suggestions."
 
 
+def _round_response(root, items=()):
+    prior = next((root / "reviews/unified/p").glob("*/decision.json"))
+    response = root / "response.json"
+    response.write_text(json.dumps({"decision_sha256": flow._sha256(prior.read_bytes()),
+                                    "items": list(items)}))
+    return response
+
+
 def test_numeric_change_after_ready_requires_full_review(tmp_path, monkeypatch):
     calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace("120 counties", "118 counties"))
-    record = flow.run_review('p', root=tmp_path, apply=False)
+    load = flow.review_config
+    monkeypatch.setattr(flow, "review_config", lambda root: dict(load(root), round_guard=
+                        flow.review_round_guard.settings({"round_min_changed_words": 1})))
+    record = flow.run_review('p', root=tmp_path, response_letter=_round_response(tmp_path), apply=False)
     assert 'editor' in calls and 'referee_a' in calls and 'referee_b' in calls
     assert record.get("review_mode") != "delta"
     assert any("numbers changed" in r for r in record["delta_review_refused"]["reasons"])
     assert record["merged"]["outcome"] == "ready" and record["merged"]["stalled"] is False
 
 
-def test_policy_change_after_ready_requires_full_review(tmp_path, monkeypatch):
+def test_policy_change_after_ready_requires_full_review_but_does_not_supply_a_substantive_change(tmp_path, monkeypatch):
     calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace("width=0.8", "width=0.6"))
     monkeypatch.setattr(flow.formal_checks, "POLICY_VERSION", flow.formal_checks.POLICY_VERSION + 1)
-    record = flow.run_review('p', root=tmp_path, apply=False)
-    assert 'referee_a' in calls
+    record = flow.run_review('p', root=tmp_path, response_letter=_round_response(tmp_path), apply=False)
+    assert calls == [] and record["merged"]["outcome"] == "review_round_blocked"
     assert "review policy changed since the ready review" in record["delta_review_refused"]["reasons"]
+    assert len(flow.scientific_rounds(tmp_path, "p", "J")) == 1
 
 
 def _apply_fixture(tmp_path, monkeypatch):

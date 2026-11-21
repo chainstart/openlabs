@@ -299,7 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the unified editor-and-referee review (the only path to ready).",
     )
     unified.add_argument("--paper-id", required=True)
-    unified.add_argument("--response", help="Authors' response letter for a re-review round.")
+    unified.add_argument("--response", help="Decision-bound JSON response for a new full review at the same venue.")
     unified.add_argument("--no-apply", action="store_true", help="Record the decision without updating the registry.")
     unified.add_argument("--delta-only", action="store_true",
                          help="Only the post-ready delta review; report full_review_required instead of "
@@ -882,6 +882,8 @@ def main(argv: list[str] | None = None) -> int:
         summary["next_action"] = result["merged"].get("next_action")
         if result.get("review_outcome"):
             summary["review_outcome"] = result["review_outcome"]
+        if result["merged"].get("round_guard"):
+            summary["round_guard"] = result["merged"]["round_guard"]
         summary["editor_decision"] = (result.get("editor_screen") or {}).get("decision")
         summary["recommendation"] = result["merged"].get("recommendation")
         summary["review_mode"] = result.get("review_mode", "full")

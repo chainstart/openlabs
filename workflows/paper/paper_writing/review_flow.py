@@ -13,6 +13,7 @@ from __future__ import annotations
 import concurrent.futures
 import copy
 import difflib
+import fcntl
 import hashlib
 import json
 import os
@@ -28,6 +29,7 @@ from paper_writing.registry import (load_paper_metadata, load_registry, load_rev
                                     paper_metadata_path, require_not_frozen, review_settings_path,
                                     write_paper_metadata)
 from paper_writing.review_launcher import LaunchError, role_runtime, run_role
+from paper_writing import review_round_guard
 from paper_writing import review_sandbox
 from paper_writing import formal_checks
 from paper_writing import temporary_panels
@@ -112,11 +114,12 @@ REFEREE_SCHEMA: dict[str, Any] = {
         "scientific_blockers": _TEXT_LIST,
         "required_changes": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
-            "required": ["change", "type", "location", "main_claim", "placement"],
+            "required": ["change", "type", "location", "main_claim", "placement", "requires_new_artifact"],
             "properties": {"change": _TEXT, "type": {"type": "string", "enum": list(CHANGE_TYPES)}, "location": _TEXT,
                            # True when the item concerns a headline conclusion (title, abstract,
                            # stated main result). Only then can claim_narrowing block readiness.
                            "main_claim": {"type": "boolean"},
+                           "requires_new_artifact": {"type": "boolean"},
                            # Where the change belongs (user decision 2026-11-19): added checks,
                            # qualifications and explanations default to the appendix or the
                            # response letter; main_text only when the main line needs it.
@@ -249,6 +252,7 @@ def review_config(root: str | Path) -> dict[str, Any]:
             "referee_roles": panel, "rejection_clearance_required": True,
             "max_rounds_per_target": int(review.get("max_rounds_per_target", 10)),
             "timeout_seconds": int(review.get("timeout_seconds", 3600)),
+            "round_guard": review_round_guard.settings(review),
             "writer_model": str(review.get("writer_model") or ""),
             "cross_model_required": bool(cross.get("required", False)),
             "cross_model_basis": basis,
@@ -1934,7 +1938,7 @@ def runs_dir(root: Path, paper_id: str) -> Path:
 def completed_rounds(root: Path, paper_id: str, target: str) -> list[dict[str, Any]]:
     rows = []
     base = runs_dir(root, paper_id)
-    for path in sorted(base.glob("*/decision.json")) if base.is_dir() else []:
+    for path in sorted(base.glob("*/decision.json"), key=lambda p: p.parent.name) if base.is_dir() else []:
         record = json.loads(path.read_text())
         if record.get("target_journal") == target:
             rows.append(record | {"_path": path})
@@ -2441,6 +2445,28 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
 
 def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path | None = None,
                apply: bool = True, delta_only: bool = False) -> dict[str, Any]:
+    """Run a unified review; delta_only cannot launch the editor or referees."""
+    root = Path(root).resolve()
+    if paper_metadata_path(paper_id, root).is_file():
+        require_not_frozen(load_paper_metadata(paper_id, root), paper_id)
+    lock_root = Path(tempfile.gettempdir()) / f"openlabs-review-locks-{os.getuid()}"
+    lock_root.mkdir(mode=0o700, exist_ok=True)
+    lock_key = _sha256(os.fsencode(runs_dir(root, paper_id).resolve()))
+    # Serialize the history check, model calls and decision write across CLI processes.
+    with (lock_root / lock_key).open("a+b") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"paper_id": paper_id, "stage_reached": "round_guard",
+                    "consumes_scientific_round": False,
+                    "merged": {"outcome": "review_round_blocked", "next_action": "wait",
+                               "round_guard": {"blockers": ["Another unified review is active for this paper"]}}}
+        return _run_review(paper_id, root=root, response_letter=response_letter,
+                           apply=apply, delta_only=delta_only)
+
+
+def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None,
+                apply: bool, delta_only: bool) -> dict[str, Any]:
     """Run the unified review; ``delta_only`` never starts the editor or the referees.
 
     With ``delta_only`` (the release pipeline after post-ready text, DOI or support
@@ -2448,11 +2474,6 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     ``full_review_required`` (stage ``delta_check``, no round consumed, registry
     untouched) instead of starting a full review.
     """
-    root = Path(root).resolve()
-    # A frozen paper is not reviewed: no run directory, no model, no round consumed.
-    # (A missing registry record is reported by the preflight.)
-    if paper_metadata_path(paper_id, root).is_file():
-        require_not_frozen(load_paper_metadata(paper_id, root), paper_id)
     config = review_config(root)
     if config["process"] != PROCESS:
         raise ValueError(f"quality_gate.review_process must be {PROCESS}")
@@ -2466,6 +2487,11 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     # Cross-model decision 2026-11-07 is checked after the paper metadata is loaded.
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run = runs_dir(root, paper_id) / run_id
+    sequence = 0
+    while run.exists():
+        sequence += 1
+        run = run.with_name(f"{run_id}-{sequence:04d}")
+    run_id = run.name
     run.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix="unified-build-") as tmp:
         try:
@@ -2554,12 +2580,47 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                               "full_review_reasons": reasons}, "finished_at": _now()}
         _json_dump(run / "decision.json", record)
         return record | {"run_dir": str(run.relative_to(root))}
-    response = Path(response_letter).read_text() if response_letter else None
+    try:
+        response = Path(response_letter).read_text() if response_letter else None
+    except (OSError, UnicodeError):
+        if not rounds:
+            raise
+        response = None
+    record["round_evidence_files"] = review_round_guard.evidence_snapshot(root, pre)
+    record["round_evidence_jobs"] = review_round_guard.artifact_jobs(root, record["round_evidence_files"])
+    if rounds:
+        last = rounds[-1]
+        explicit = dict.fromkeys((last.get("round_guard") or {}).get("requires_new_artifact", []), True)
+        for change in (last.get("merged") or {}).get("required_changes", []):
+            if "requires_new_artifact" in change:
+                item = tracked_item(change)
+                explicit[item] = explicit.get(item, False) or change["requires_new_artifact"]
+        items = previous_tracked_items(last, history_policy)
+        items.extend(row["item"] for row in (last.get("merged") or {}).get("unresolved_previous_items", [])
+                     if isinstance(row, Mapping) and isinstance(row.get("item"), str)
+                     and not item_is_advisory(row["item"]))
+        guard = review_round_guard.check(
+            root, paper_id, target, last, pre, record["round_evidence_files"], record["round_evidence_jobs"], response,
+            list(dict.fromkeys(items)), explicit,
+            _sha256(last["_path"].read_bytes()),
+            _parse_time(last.get("finished_at")),
+            datetime.now(UTC), config.get("round_guard") or review_round_guard.settings({}),
+        )
+        record["round_guard"] = guard
+        if guard["blockers"]:
+            record |= {"stage_reached": "round_guard", "consumes_scientific_round": False,
+                       "round_for_target": len(rounds), "finished_at": _now(),
+                       "merged": {"outcome": "review_round_blocked", "next_action": "revision_or_wait",
+                                  "round_guard": guard}}
+            _json_dump(run / "decision.json", record)
+            return record | {"run_dir": str(run.relative_to(root))}
     if response:
         pre = dict(pre, author_response=response)
     previous = _previous_round(root, paper_id, target, pre["expanded"], response, history_policy)
     if response:
-        (run / "response-letter.md").write_text(response)
+        response_path = run / ("response.json" if rounds else "response-letter.md")
+        response_path.write_text(response)
+        record["author_response_sha256"] = _sha256(response_path.read_bytes())
 
     decisions = prior_decisions(paper_id, metadata, root)
     _json_dump(run / "prior-decisions.json", decisions)

@@ -407,6 +407,22 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   - 写作者切换（同日修复）：简报与切换共用 `owner.writing_plan`。有评审历史或已在写的课题明确由负责人自己写，记 `writing.status = owner`，并写台账备注 `writing_owner`。写作者与负责人是同一 runner 时照旧由负责人写。
 - **台账对账**（2026-11-20）：`python3 -m openlabs program reconcile` 默认只读，列出每个课题或任务记录的现状态、建议状态和依据。加 `--apply` 才通过 `transition_topic`、`freeze_topic`、`mark_topic_delivered`、`close_needs_human` 写入，规则见 `program_reconcile.py`。停滞判据为 `[program].reconcile_stale_days`（默认 5 天）。
 - **人工重排被隔离的任务**（2026-11-20）：`python3 -m openlabs program requeue TASK_ID --reason "<修好了什么>" [--by NAME]`。只接受 `quarantined` 的任务（`needs_human` 要另加 `--allow-needs-human`），所属 campaign 须为 active；任务回到 `queued`，多给一次 attempt，写一条 `manual_requeue` 事件（谁、为什么、原状态与次数）。用于基础设施分流不会自动重试的失败，例如评审因配置错误三次失败被隔离。tick 报告 `program.topics_without_next_step` 里，若课题最新任务是这类被隔离/needs_human 的任务，会附 `blocked_task` 和 `suggested_command`。
+- **同刊复审关口**。同一目标刊第 2 轮起，完整评审启动前须提交 `--response RESPONSE.json`。
+  文件用 `decision_sha256` 绑定上一轮计数决定，`items` 逐条填写 `item` 原文、
+  `status`（`addressed` 或 `unaddressed`）、`explanation` 和 `evidence`。已处理项填写仓库相对
+  路径及行号（如 `papers/ID/manuscript/appendix.tex:42`）、`sha256:<哈希>` 或 `job:<作业号>`。
+  未处理项说明原因。要求新计算、新数据或新分析的项须引用与上一轮相比新增的已登记支撑数据字节，
+  可填其 SHA-256，或填写登记 JSON 结果顶层的 `job_id`。零必改项时使用空数组。
+- 关口比较展开的正文与附录、评审图件哈希及登记的支撑数据文件哈希。默认有效词差异至少
+  80 个，或有新图件、支撑数据字节。同内容重命名和仅改打包版本不算新证据。旧决定缺少逐文件
+  哈希时，可用上一轮的支撑材料总摘要核实新增文件。复审默认在上一轮决定完成 3 小时后启动。
+  在数据仓库 `registry/settings.yaml#review` 用 `round_min_changed_words`、`round_cooldown_hours`
+  调整阈值。人工可在同一位置的 `round_cooldown_overrides` 加入带 `paper_id`、`target_journal`、
+  `decision_sha256`、`actor` 和 `reason` 的单轮授权，实际使用会写入决定记录。
+- 被拦时返回 `review_round_blocked`，`round_guard` 列出缺项和最早重试时间。负责人和交付承载任务
+  应记录该结果，需要时交回写作或分析。仅剩冷却期时，负责人的下一坐席延至 `retry_at`，
+  结束当前尝试，避免循环调用。
+  合格的免轮次差异复核沿用原流程。轮次上限、独立评审和投稿人工确认继续生效。
 - **评审面板的加载校验**（2026-11-20）：两位审稿人模型必须不同，这条规则在加载 `settings.yaml` 时就检查（`review_flow.check_referee_models`，与 `unified-run` 运行时同一个函数），改错面板会立刻报错，不会等到每次评审启动才失败。
 - **审稿人的只读运行环境**（2026-11-20）：Codex 审稿人原用 `-s read-only`，它依赖 bubblewrap；容器的 seccomp
   禁止用户命名空间时，审稿人的每条命令都在启动前失败（"bwrap: No permissions to create new namespace"），

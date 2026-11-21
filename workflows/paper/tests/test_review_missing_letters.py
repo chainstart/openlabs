@@ -252,10 +252,19 @@ def test_both_fresh_roles_receive_complete_available_letters_policy_and_previous
     old = tmp_path / 'reviews/unified/p/20260101T000000Z'; old.mkdir(parents=True)
     missing = 'Original rejection letter unavailable: J 1'
     science = 'Proof of current Lemma 2 missing'
-    (old / 'manuscript-expanded.tex').write_text('Old source')
+    (old / 'manuscript-expanded.tex').write_text(' '.join(f'old{i}' for i in range(85)))
     (old / 'decision.json').write_text(json.dumps({'stage_reached': 'decision', 'target_journal': 'K',
-        'letter': 'Earlier requests', 'merged': {'scientific_blockers': [missing, science], 'required_changes': []}}))
-    response = tmp_path / 'response.md'; response.write_text('User instruction changes missing-original requirement; proof supplied.')
+        'finished_at': '2026-01-01T01:00:00Z', 'letter': 'Earlier requests', 'merged': {'scientific_blockers': [missing, science], 'required_changes': []}}))
+    proof = tmp_path / 'proof.tex'
+    proof.write_text('Independent current proof assessment.')
+    response = tmp_path / 'response.json'
+    response.write_text(json.dumps({
+        'decision_sha256': hashlib.sha256((old / 'decision.json').read_bytes()).hexdigest(),
+        'items': [
+            {'item': missing, 'status': 'unaddressed', 'explanation': 'Scoped user authorization applies.'},
+            {'item': science, 'status': 'addressed', 'explanation': 'Proof supplied.', 'evidence': ['proof.tex:1']},
+        ],
+    }))
     calls = []
     def role(**kw):
         name = kw['role_name']; calls.append(name)
@@ -292,7 +301,7 @@ def test_both_fresh_roles_receive_complete_available_letters_policy_and_previous
 
 def test_scoped_next_round_keeps_exact_unresolved_prerequisites_for_fresh_assessment(tmp_path, monkeypatch):
     old = tmp_path / 'old'; old.mkdir()
-    (old / 'manuscript-expanded.tex').write_text('Old source')
+    (old / 'manuscript-expanded.tex').write_text(' '.join(f'old{i}' for i in range(85)))
     missing = 'Previous rejection not overcome or compatible: ' + 'a' * 20
     proof = '[evidence] Missing uniform proof (Theorem 2)'
     record = {'_path': old / 'decision.json', 'stage_reached': 'decision', 'letter': 'Actual previous letter',
