@@ -242,6 +242,63 @@ def test_missing_standing_authorization_also_waits(tmp_path, monkeypatch):
         "no_standing_authorization")
 
 
+@pytest.mark.parametrize("retarget", [True, False])
+def test_full_review_at_cap_dispatches_direction_and_bounds_invalid_choices(tmp_path, monkeypatch, retarget):
+    from test_program_autonomy import _decide, _direction_task, _retarget_decision
+
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, support="not_required", issues=[WRITER_ISSUE])
+    _ready(paths, db, settings, monkeypatch, topic)
+    writer = _topic(paths, settings, topic["topic_id"])["release"]["writer_task_id"]
+    _finish_writer(paths, settings, monkeypatch, db, writer)
+    from paper_writing.review_flow import runs_dir, scientific_rounds
+    for number in range(1, 5):
+        path = runs_dir(paths.data, PAPER_ID) / str(number) / "decision.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"target_journal": "Old journal", "stage_reached": "decision",
+                                    "round_for_target": number, "merged": {"outcome": "ready"}}))
+    cap = {"paper_id": PAPER_ID, "target_journal": "Old journal", "direction_context": {},
+           "rounds_for_target": 4, "max_rounds_per_target": 4,
+           "decision_record": str(path.relative_to(paths.data)),
+           "decision_record_sha256": program_autonomy.sha256_file(path)}
+    monkeypatch.setattr(program_autonomy, "run_delta_review", lambda *args: {
+        "outcome": "review_rounds_exhausted", "review_outcome": cap,
+        "full_review_reasons": ["primary result changed"]})
+    registry = paths.data / "registry" / "verified-venues.yaml"
+    registry.write_text(json.dumps({"schema_version": "openlabs.verified_venues.v1", "venues": [
+        {"journal": name, "status": "verified", "cas_2025": {"zone": zone, "source": "fixture"},
+         "indexes": {"list": ["SCIE"]}} for name, zone in [
+             ("Old journal", 1), ("New journal", 1), ("Unknown fees", 2)]]}))
+    from paper_writing.venue_registry import alternatives
+    original = program_autonomy._run_paper_command
+    def command(paths, settings, args, **kwargs):
+        if args[:2] == ["venue", "alternatives"]:
+            return alternatives(paths.data, exclude=args[3])
+        return original(paths, settings, args, **kwargs)
+    monkeypatch.setattr(program_autonomy, "_run_paper_command", command)
+    report = _tick(paths, settings, monkeypatch)
+    assert not report.errors
+    decision = _direction_task(db)
+    packet = json.loads(Path(decision["input_path"]).read_text())
+    assert packet["trigger"]["detail"]["decision_record"] == str(path.relative_to(paths.data))
+    assert packet["options"] == ["retarget_or_short_format", "freeze"]
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "in_review"
+    assert [item["journal"] for item in packet["verified_alternatives"]] == ["New journal"]
+    if retarget:
+        chosen = _decide(paths, settings, monkeypatch, db,
+                         _retarget_decision("primary result changed", "New journal"))
+        successor = db.task(chosen.program["direction_decisions"][-1]["executed_task_id"])
+        assert "New journal" in successor["objective"]
+        assert scientific_rounds(paths.data, PAPER_ID, "New journal") == []
+        assert len(scientific_rounds(paths.data, PAPER_ID, "Old journal")) == 4
+        assert db.campaign(topic["campaign_id"])["status"] == "active"
+        return
+    for _ in range(program_autonomy.MAX_DECISION_ATTEMPTS):
+        _decide(paths, settings, monkeypatch, db,
+                _retarget_decision("primary result changed", "Unverified venue"))
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "frozen"
+
+
 def test_delta_review_needing_a_full_review_returns_the_topic_to_review(tmp_path, monkeypatch):
     paths, db, settings, topic, log = _setup(
         tmp_path, monkeypatch, support="not_required", issues=[WRITER_ISSUE],
@@ -713,7 +770,9 @@ def _returned_to_review(tmp_path, monkeypatch):
         _tick(paths, settings, monkeypatch)
     returned = _topic(paths, settings, topic["topic_id"])
     assert returned["status"] == "in_review"
-    review = db.latest_task(topic["campaign_id"])
+    event = next(entry for entry in reversed(returned["history"])
+                 if entry.get("kind") == "release_returned_to_review")
+    review = db.task(event["detail"]["review_task_id"])
     assert review["task_id"].startswith("release-review:") and review["status"] == "queued"
     return paths, db, settings, topic, log, review
 
@@ -726,6 +785,24 @@ def _bind_review_to_current_manuscript(paths) -> None:
     paper["review"]["snapshot"] = hashlib.sha256(
         (paths.data / "papers" / PAPER_ID / "main.tex").read_bytes()).hexdigest()
     _write_paper(paths, paper)
+
+
+def test_release_retry_recovers_historical_full_review_at_cap(tmp_path, monkeypatch):
+    paths, db, settings, topic, log, review = _returned_to_review(tmp_path, monkeypatch)
+    path = paths.data / "prior.json"
+    path.write_text('{"merged":{"outcome":"ready"}}')
+    cap = {"paper_id": PAPER_ID, "target_journal": "Old journal", "direction_context": {},
+           "decision_record": path.name, "decision_record_sha256": program_autonomy.sha256_file(path)}
+    monkeypatch.setattr(program_autonomy, "run_release_status", lambda *args: {
+        "review": {"ready": True, "current": False, "exhausted_review": cap}})
+    monkeypatch.setattr(program_autonomy, "run_delta_review", lambda *args: {
+        "outcome": "review_rounds_exhausted", "review_outcome": cap})
+    first = program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID, by="op",
+                                           reason="historical stalled review")
+    second = program_autonomy.retry_release(db, paths, settings, paper_id=PAPER_ID, by="op",
+                                            reason="retry")
+    assert first["direction_task_id"] == second["direction_task_id"]
+    assert db.task(review["task_id"])["status"] == "cancelled"
 
 
 def test_release_retry_returns_a_ready_current_paper_from_review(tmp_path, monkeypatch):

@@ -1788,7 +1788,7 @@ def _review_objective(packet: Mapping[str, Any], topic: Mapping[str, Any] | None
         "data is presented as observation. Return "
         "paper_candidate=true only for outcome ready; otherwise return exactly one structured "
         "text_revision or evidence_remediation action, or none for retarget_required/blocked. "
-        "Always copy the paper's registered writing_release into the result field "
+        "If unified-run returns review_outcome, copy it verbatim. Otherwise copy the registered writing_release into the result field "
         "`review_outcome` (next_action, status, review_stalled, rounds_for_target, "
         "max_rounds_per_target, direction_context, decision_record, decision_record_sha256, "
         "paper_id); the orchestrator decides what follows."
@@ -2213,16 +2213,21 @@ def _after_recompute(
     topic = _topic(paths, settings, campaign_id)
     scheduled = None
     if topic is not None:
+        owner_packet = packet_of(_read_json(Path(str(seat.get("result_path") or ""))))
         scheduled = schedule_direction_decision(
             db, paths, settings, report, topic=topic, trigger=trigger,
             source_task_id=str(task["task_id"]),
             evidence=[{"path": str(result_path), "sha256": result_sha256}],
             reasons=[block["summary"]] if block["summary"] else None,
             detail={"verdict": verdict, "round": round_number, "max_rounds": max_rounds,
-                    "required": block["required"][:10]},
+                    "target_journal": owner_packet.get("target_journal"),
+                    "required": block["required"]},
         )
     if scheduled is None:
-        # No decision could be scheduled (one is pending, or the topic left research):
+        from .program_autonomy import pending_decision
+        if pending_decision(db, campaign_id):
+            return True
+        # No decision could be scheduled for this topic:
         # the owner hears the verdict instead of the topic stalling.
         _seat_after_review(db, settings, report, campaign=campaign, review=task,
                            result_path=result_path, note=(

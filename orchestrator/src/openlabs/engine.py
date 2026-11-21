@@ -3419,7 +3419,7 @@ def ingest_results(
                             "conservative decision; do not reproduce its stages or edit the manuscript. Return "
                             "paper_candidate=true only for outcome ready; otherwise return exactly one structured "
                             "text_revision or evidence_remediation action, or none for retarget_required/blocked. "
-                            "Always copy the paper's registered writing_release into the result field "
+                            "If unified-run returns review_outcome, copy it verbatim. Otherwise copy the registered writing_release into the result field "
                             "`review_outcome` (next_action, status, review_stalled, rounds_for_target, "
                             "max_rounds_per_target, direction_context, decision_record, "
                             "decision_record_sha256, paper_id); the orchestrator decides what follows."

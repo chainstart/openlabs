@@ -1920,6 +1920,23 @@ def scientific_rounds(root: Path, paper_id: str, target: str) -> list[dict[str, 
             if r.get('stage_reached') == 'decision' and r.get('consumes_scientific_round', True)]
 
 
+def exhausted_review(root, paper_id, target, rounds, maximum):
+    """Bind the governance handoff to the last scientific decision for this journal."""
+    if len(rounds) < maximum:
+        return None
+    last = rounds[-1]
+    path = last["_path"]
+    merged = last["merged"]
+    return {"paper_id": paper_id, "status": "blocked", "next_action": "direction_decision",
+            "target_journal": target, "rounds_for_target": len(rounds),
+            "max_rounds_per_target": maximum, "decision_record": str(path.relative_to(root)),
+            "decision_record_sha256": _sha256(path.read_bytes()),
+            "direction_context": {**(merged.get("direction_context") or {}),
+                                  "target_journal": target, "latest_outcome": merged["outcome"],
+                                  "unresolved_items": previous_tracked_items(last),
+                                  "unresolved_previous_items": merged.get("unresolved_previous_items", [])}}
+
+
 def previous_tracked_items(last: Mapping[str, Any],
                            history_policy: Mapping[str, Any] | None = None) -> list[str]:
     """Items the next round must check one by one: scientific and evidence items only.
@@ -2467,6 +2484,14 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     if delta is not None:
         record["delta_review_refused"] = {"basis_run_id": delta["base"].get("run_id"),
                                           "reasons": delta["reasons"], "summary": delta["summary"]}
+    exhausted = exhausted_review(root, paper_id, target, rounds, config["max_rounds_per_target"])
+    if exhausted:
+        record |= {"stage_reached": "round_limit", "consumes_scientific_round": False,
+                   "review_outcome": exhausted, "finished_at": _now(),
+                   "merged": {"outcome": "review_rounds_exhausted", "next_action": "direction_decision",
+                              "full_review_reasons": delta["reasons"] if delta else []}}
+        _json_dump(run / "decision.json", record)
+        return record | {"run_dir": str(run.relative_to(root))}
     if delta_only:
         reasons = delta["reasons"] if delta is not None else ["no earlier ready full review to carry over"]
         record |= {"stage_reached": "delta_check", "review_mode": "delta_check",
@@ -2475,10 +2500,6 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                               "full_review_reasons": reasons}, "finished_at": _now()}
         _json_dump(run / "decision.json", record)
         return record | {"run_dir": str(run.relative_to(root))}
-    if len(rounds) >= config["max_rounds_per_target"]:
-        raise ValueError(f"{paper_id} has used all {config['max_rounds_per_target']} review rounds for {target}; "
-                         "no further round starts: under the research program the orchestrator takes a "
-                         "direction decision (targeted analysis, retarget or freeze) on review_rounds_exhausted")
     response = Path(response_letter).read_text() if response_letter else None
     if response:
         pre = dict(pre, author_response=response)
@@ -2621,6 +2642,11 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
         release["unresolved_review_blockers"] = merged["scientific_blockers"]
     if merged.get("direction_context"):
         release["direction_context"] = merged["direction_context"]
+    if status == "blocked" and record.get("round_for_target", 0) >= max_rounds:
+        release["direction_context"] = {
+            **(release.get("direction_context") or {}), "target_journal": record["target_journal"],
+            "latest_outcome": merged["outcome"], "unresolved_items": previous_tracked_items(record),
+            "unresolved_previous_items": merged.get("unresolved_previous_items", [])}
     if merged.get("stalled"):
         release["review_stalled"] = True
     advisory = [c for c in merged.get("required_changes", []) if c.get("advisory")]

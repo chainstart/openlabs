@@ -574,6 +574,17 @@ def schedule_direction_decision(
             _resource("settings.yaml#research_portfolio", registry / "settings.yaml"),
         ) if item is not None
     ]
+    cap = trigger in {TRIGGER_REVIEW_ROUNDS, "owner_review_rounds_exhausted"}
+    options = ["retarget_or_short_format", "freeze"]
+    candidates = []
+    if cap and (registry / "verified-venues.yaml").is_file():
+        target = detail.get("target_journal") or (direction_context or {}).get("target_journal")
+        args = ["venue", "alternatives"]
+        if target:
+            args.extend(["--exclude", str(target)])
+        candidates = _run_paper_command(paths, settings, args, json_flag=False)["venues"]
+    if not cap:
+        options.insert(0, "targeted_core_analysis")
     routine = _routine_names(topic)
     exclude = research_provider(db, settings, campaign_id)
     work_log = Path(str(campaign.get("state_path") or "")) / "OWNER_LOG.md"
@@ -625,7 +636,8 @@ def schedule_direction_decision(
         # Read by the router when only one model family is configured (same family,
         # different model).
         "producer_model": research_model(db, settings, campaign_id),
-        "options": ["targeted_core_analysis", "retarget_or_short_format", "freeze"],
+        "options": options,
+        **({"verified_alternatives": candidates, "short_format_value": "short_format"} if cap else {}),
         "created_at": utc_now(),
     })
     packet_path = (
@@ -651,6 +663,9 @@ def schedule_direction_decision(
             "budget_seconds, success_criterion}, `retarget` {venue_or_format, why_fits} or "
             "`freeze` {reason_class, reopen_conditions[]}. Choices whose decisions_remaining is 0 "
             "are refused and the topic is frozen. Do not run the analysis or edit the manuscript."
+            + (" For this exhausted cycle choose freeze, or set venue_or_format to an exact "
+               "verified_alternatives journal name or short_format. Preserve the target cap."
+               if cap else "")
         ),
         input_path=str(packet_path),
         skill_path=DIRECTION_SKILL,
@@ -920,10 +935,30 @@ REVIEW_TRIGGER_ORDER = (
 def review_trigger(outcome: Mapping[str, Any]) -> str | None:
     """Direction trigger named by a structured review outcome (None: ordinary flow)."""
 
+    used, limit = outcome.get("rounds_for_target"), outcome.get("max_rounds_per_target")
+    if outcome.get("status") == "blocked" and limit and used is not None and used >= limit:
+        return TRIGGER_REVIEW_ROUNDS
     for trigger, matches in REVIEW_TRIGGER_ORDER:
         if matches(outcome):
             return trigger
     return None
+
+
+def _schedule_cap(db, paths, settings, report, topic, cap, evidence, reasons=None):
+    campaign = str(topic["campaign_id"])
+    pending = pending_decision(db, campaign)
+    if pending:
+        return pending
+    path = paths.data / cap["decision_record"]
+    if not path.is_file() or sha256_file(path) != cap["decision_record_sha256"]:
+        raise DeliveryError("the exhausted target's last decision cannot be verified")
+    task = schedule_direction_decision(
+        db, paths, settings, report, topic=topic, trigger=TRIGGER_REVIEW_ROUNDS,
+        source_task_id=cap["decision_record_sha256"], evidence=[*evidence, _evidence(path)],
+        direction_context=cap["direction_context"], reasons=reasons, detail=dict(cap))
+    if not task:
+        raise DeliveryError("could not schedule the exhausted target's direction decision")
+    return task
 
 
 def _on_review_result(db, paths, settings, report, *, topic, task, payload, evidence):
@@ -955,6 +990,11 @@ def _on_review_result(db, paths, settings, report, *, topic, task, payload, evid
     trigger = review_trigger(outcome)
     if trigger is None:
         return None
+    if trigger == TRIGGER_REVIEW_ROUNDS and record_path.is_file():
+        last = json.loads(record_path.read_text())
+        outcome = {**outcome, "target_journal": last.get("target_journal"),
+                   "direction_context": {**(outcome.get("direction_context") or {}),
+                                         "latest_decision": last.get("merged")}}
     schedule_direction_decision(
         db, paths, settings, report, topic=topic, trigger=trigger,
         source_task_id=str(task["task_id"]), evidence=evidence,
@@ -962,7 +1002,7 @@ def _on_review_result(db, paths, settings, report, *, topic, task, payload, evid
         if isinstance(outcome.get("direction_context"), Mapping) else None,
         detail={key: outcome.get(key) for key in (
             "next_action", "status", "review_stalled", "rounds_for_target",
-            "max_rounds_per_target", "decision_record", "decision_record_sha256", "paper_id",
+            "max_rounds_per_target", "decision_record", "decision_record_sha256", "paper_id", "target_journal",
         )},
     )
     return "handled"
@@ -1141,6 +1181,13 @@ def apply_direction_decision(
         decision.get("answers_reason"), list(packet.get("reasons_to_answer") or [])
     ):
         problems.append("answers_reason does not quote one of reasons_to_answer verbatim")
+    if not problems and "verified_alternatives" in packet:
+        allowed = {entry["journal"] for entry in packet["verified_alternatives"]}
+        if decision["choice"] not in packet["options"] or (
+            decision["choice"] == "retarget_or_short_format" and
+            decision["retarget"]["venue_or_format"] not in allowed | {"short_format"}
+        ):
+            problems.append("choose a verified alternative, short_format or freeze")
     if problems:
         db.record_event_once("topic", topic_id, "direction_decision_invalid",
                              {"task_id": task_id, "errors": problems}, event_key=task_id)
@@ -1190,6 +1237,8 @@ def apply_direction_decision(
                 reopen_when=freeze.get("reopen_when"))
         return finish("frozen", {"choice": choice, "reason_class": freeze["reason_class"]})
     source_task_id = str(record["source_task_id"])
+    if trigger == TRIGGER_REVIEW_ROUNDS and not db.task(source_task_id):
+        source_task_id = str((topic.get("handoff") or {}).get("review_task_id") or source_task_id)
     if trigger == TRIGGER_BUDGET or float(campaign.get("agent_seconds_used") or 0) + 1 > float(
         campaign.get("max_agent_seconds") or 0
     ):
@@ -1886,6 +1935,13 @@ def delivery_chain_state(db: FactoryDB, settings: FactorySettings,
     release_status = str(release.get("status") or "")
     handoff_status = str(handoff.get("status") or "queued")
     if status == "in_review" and release_status == "returned_to_review":
+        pending = pending_decision(db, str(topic.get("campaign_id") or ""))
+        if pending:
+            return {**base, "state": "in_progress", "owner": pending,
+                    "detail": "awaiting direction decision"}
+        if release.get("direction_task_id"):
+            # The direction controller owns retries, the chosen successor, and freeze.
+            return None
         # The pipeline handed the paper to a full review; that review task owns it.
         tasks = [str((entry.get("detail") or {}).get("review_task_id") or "")
                  for entry in topic.get("history") or []
@@ -2031,6 +2087,17 @@ def _repair_delivery(db, paths, settings, report) -> None:
         task = db.task(task_id) if task_id else None
         if task and task["status"] in IN_FLIGHT:
             continue
+        if topic.get("status") == "in_review" and item.get("paper_id"):
+            try:
+                status = run_release_status(paths, settings, item["paper_id"])
+                if (status.get("review") or {}).get("exhausted_review"):
+                    result = _retry_returned_review(
+                        db, paths, settings, ledger, topic, paper_id=item["paper_id"],
+                        by=RELEASE_DECIDER, reason="recover exhausted release review", status=status)
+                    _info(report, "releases").append(result)
+                    continue
+            except DeliveryError as exc:
+                _info(report, "delivery_repairs").append({"topic_id": topic_id, "error": str(exc)})
         if task and task["status"] == "succeeded" and not repair.get("checked"):
             try:
                 _apply_writer_files(db, paths, task_id)
@@ -2557,12 +2624,12 @@ class _ReleasePipeline:
                                   "decision_sha256": result.get("decision_sha256")})
                 self.entry("delta_review_ready", run_dir=result.get("run_dir"))
                 return True
-            if result.get("outcome") == "full_review_required":
+            if result.get("outcome") in {"full_review_required", TRIGGER_REVIEW_ROUNDS}:
                 # The change is outside the delta rule: only a full review can judge it.
                 self.return_to_review(status, {
                     "reason": "the post-ready change needs a full review",
                     "outcome": result.get("outcome"), "review_mode": result.get("review_mode"),
-                    "run_dir": result.get("run_dir"),
+                    "run_dir": result.get("run_dir"), "exhausted_review": result.get("review_outcome"),
                     "full_review_reasons": result.get("full_review_reasons") or []})
                 return False
             # preflight_failed, formal_check_blocked, ...: a preflight, environment or
@@ -2805,6 +2872,7 @@ class _ReleasePipeline:
                                                                   default=str))
         state = {**self.state, "status": "returned_to_review", "stage": self.stage,
                  "seq": int(self.state.get("seq") or 0) + 1, "updated_at": utc_now()}
+        cap = detail.get("exhausted_review") or (status.get("review") or {}).get("exhausted_review")
         return_topic_to_review(
             self.ledger, self.topic_id, db=self.db, decided_by=f"{RELEASE_DECIDER}:{marker[:16]}",
             evidence=evidence,
@@ -2813,8 +2881,13 @@ class _ReleasePipeline:
         )
         self.state = state
         task_id = None
+        if cap:
+            topic = find_topic(self.ledger.read(), self.topic_id)
+            task_id = _schedule_cap(self.db, self.paths, self.settings, self.report, topic, cap,
+                                    evidence, detail.get("full_review_reasons"))
+            state["direction_task_id"] = task_id
         campaign = self.db.campaign(campaign_id) if campaign_id else None
-        if campaign is not None:
+        if campaign is not None and not cap:
             self.db.resume_paused_campaign(campaign_id, reason="release_full_review_required")
             task_id = f"release-review:{marker[:32]}"
             if self.db.task(task_id) is None:
@@ -2831,7 +2904,7 @@ class _ReleasePipeline:
                         "If this root is unavailable, report the access error. Do not review a different "
                         "campaign snapshot. Do not edit the "
                         "manuscript. Return paper_candidate=true only for outcome ready, and copy "
-                        "the paper's registered writing_release into `review_outcome` (next_action, "
+                        "unified-run's review_outcome when present, otherwise the registered writing_release, into `review_outcome` (next_action, "
                         "status, review_stalled, rounds_for_target, max_rounds_per_target, "
                         "direction_context, decision_record, decision_record_sha256, paper_id)."
                     ),
@@ -2847,13 +2920,15 @@ class _ReleasePipeline:
                     **default_task_resources(self.settings).to_dict(),
                 )
                 self.report.enqueued.append(task_id)
+        task_detail = {"direction_task_id" if cap else "review_task_id": task_id}
         record_topic_note(
             self.ledger, self.topic_id, db=self.db, event_type="release_returned_to_review",
             reason="full_review_required", decided_by=RELEASE_DECIDER,
-            detail={"paper_id": self.paper_id, "review_task_id": task_id, **dict(detail)},
+            detail={"paper_id": self.paper_id, **task_detail, **dict(detail)},
+            updates={"release": state} if cap else None,
             evidence=evidence, key=f"release_returned_to_review:{marker}",
         )
-        self.entry("returned_to_review", review_task_id=task_id,
+        self.entry("returned_to_review", **task_detail,
                    reasons=list(detail.get("full_review_reasons") or [])[:5])
 
     def deliver(self, status: Mapping[str, Any]) -> None:
@@ -3093,7 +3168,7 @@ def _retry_new_version(db, paths, settings, ledger, topic, *, paper_id: str, by:
 
 
 def _retry_returned_review(db, paths, settings, ledger, topic, *, paper_id: str, by: str,
-                           reason: str) -> dict[str, Any]:
+                           reason: str, status=None) -> dict[str, Any]:
     """The pipeline sent the topic back to review, yet the paper is ready and current.
 
     The topic goes ``in_review -> ready_queue``; its campaign is paused again, which
@@ -3109,16 +3184,11 @@ def _retry_returned_review(db, paths, settings, ledger, topic, *, paper_id: str,
         raise DeliveryError(
             f"topic {topic_id} holds paper {paper_id} in review, but its release is "
             f"{release.get('status') or 'pending'!r}, not 'returned_to_review'; nothing to retry")
-    status = run_release_status(paths, settings, paper_id)
+    if status is None:
+        status = run_release_status(paths, settings, paper_id)
     review = dict(status.get("review") or {})
     if status.get("frozen"):
         raise DeliveryError(f"paper {paper_id} is frozen: {status['frozen']}")
-    if not (review.get("ready") and review.get("current")):
-        problems = "; ".join(str(item) for item in review.get("problems") or [])[:400]
-        raise DeliveryError(
-            f"paper {paper_id}: the registered review is not ready and current "
-            f"(ready={bool(review.get('ready'))}, current={bool(review.get('current'))}"
-            f"{': ' + problems if problems else ''}); the full review has to decide")
     review_tasks = list(dict.fromkeys(
         str((entry.get("detail") or {}).get("review_task_id") or "")
         for entry in topic.get("history") or []
@@ -3130,6 +3200,45 @@ def _retry_returned_review(db, paths, settings, ledger, topic, *, paper_id: str,
         raise DeliveryError(
             f"paper {paper_id}: the full review {', '.join(running)} is already running; let it "
             "finish (a ready result queues delivery) or stop it through the control plane first")
+    pending = pending_decision(db, str(topic["campaign_id"]))
+    if pending:
+        return {"schema_version": "openlabs.program_release_retry.v1", "kind": "direction_pending",
+                "paper_id": paper_id, "topic_id": topic_id, "direction_task_id": pending}
+    cap = review.get("exhausted_review")
+    if cap and review.get("ready") and not review.get("current"):
+        delta = run_delta_review(paths, settings, paper_id)
+        if delta.get("outcome") == "ready":
+            review = run_release_status(paths, settings, paper_id)["review"]
+            cap = None
+        elif delta.get("outcome") != TRIGGER_REVIEW_ROUNDS:
+            raise DeliveryError(f"delta review ended with {delta.get('outcome')!r}")
+    if cap:
+        for previous_id, previous in _decisions(db).items():
+            if (previous.get("campaign_id") == topic["campaign_id"] and
+                    previous.get("trigger") == TRIGGER_REVIEW_ROUNDS and
+                    previous.get("source_task_id") == cap["decision_record_sha256"] and
+                    previous.get("outcome") == "executed"):
+                return {"schema_version": "openlabs.program_release_retry.v1",
+                        "kind": "direction_executed", "topic_id": topic_id,
+                        "paper_id": paper_id, "direction_task_id": previous_id}
+        from .engine import TickReport
+        evidence = [_write_evidence(paths, topic_id, "release-retry-direction", {
+            "paper_id": paper_id, "by": by, "reason": reason, "review": cap})]
+        task_id = _schedule_cap(db, paths, settings, TickReport(), topic, cap, evidence)
+        db.pause_production_campaign(str(topic["campaign_id"]), reason="review_rounds_exhausted")
+        record_topic_note(
+            ledger, topic_id, db=db, event_type="release_retry", reason=TRIGGER_REVIEW_ROUNDS,
+            decided_by=by, updates={"release": {**release, "direction_task_id": task_id}},
+            detail={"paper_id": paper_id, "direction_task_id": task_id}, evidence=evidence,
+            key=f"release_retry_direction:{task_id}")
+        return {"schema_version": "openlabs.program_release_retry.v1", "kind": "direction_pending",
+                "paper_id": paper_id, "topic_id": topic_id, "direction_task_id": task_id}
+    if not (review.get("ready") and review.get("current")):
+        problems = "; ".join(str(item) for item in review.get("problems") or [])[:400]
+        raise DeliveryError(
+            f"paper {paper_id}: the registered review is not ready and current "
+            f"(ready={bool(review.get('ready'))}, current={bool(review.get('current'))}"
+            f"{': ' + problems if problems else ''}); the full review has to decide")
     decided_by = f"manual:{by}"
     evidence = [_write_evidence(paths, topic_id, "release-retry-ready", {
         "paper_id": paper_id, "reason": reason, "by": decided_by, "version": status.get("version"),

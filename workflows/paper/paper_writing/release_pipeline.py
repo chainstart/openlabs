@@ -318,7 +318,16 @@ def _review_status(paper_id: str, metadata: Mapping[str, Any], root: Path,
             problems = [f"{type(exc).__name__}: {exc}"]
         if support.get("required") and support.get("package_sha256") and not support.get("bound_to_review"):
             problems.append("The ready decision is not bound to the current support package")
-    return {"ready": ready, "current": ready and not problems, "problems": problems,
+    cap = None
+    target = metadata.get("target_journal")
+    if target and (not ready or problems):
+        from paper_writing import review_flow
+        rounds = review_flow.scientific_rounds(root, paper_id, target)
+        if rounds:
+            override = review_flow.review_round_limit_override(metadata, root, paper_id, target)
+            maximum = (override or review_flow.review_config(root))["max_rounds_per_target"]
+            cap = review_flow.exhausted_review(root, paper_id, target, rounds, maximum)
+    return {"exhausted_review": cap, "ready": ready, "current": ready and not problems, "problems": problems,
             "review_mode": release.get("review_mode", "full") if ready else None,
             "decision_record": release.get("decision_record"),
             "version": str(metadata.get("version") or "")}

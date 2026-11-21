@@ -66,8 +66,17 @@ def test_official_run_enforces_effective_paper_target_cap(tmp_path, monkeypatch,
                 [kwargs["role_name"]], {})
     monkeypatch.setattr(flow, "run_role", role)
     if not allowed:
-        with pytest.raises(ValueError, match=f"used all {20 if override else 15} review rounds"):
-            flow.run_review(BIO, root=tmp_path, apply=False)
+        previous = flow.runs_dir(tmp_path, BIO) / "previous" / "decision.json"
+        previous.parent.mkdir(parents=True)
+        last = {"target_journal": TARGET, "stage_reached": "decision", "merged": {"outcome": "ready"}}
+        previous.write_text(json.dumps(last))
+        monkeypatch.setattr(flow, "completed_rounds", lambda *args: [dict(last, _path=previous)] * used)
+        result = flow.run_review(BIO, root=tmp_path, apply=False, delta_only=override)
+        assert result["review_outcome"]["rounds_for_target"] == used
+        assert result["consumes_scientific_round"] is False
+        monkeypatch.undo()
+        assert len(flow.scientific_rounds(tmp_path, BIO, TARGET)) == 1
+        assert flow.scientific_rounds(tmp_path, BIO, "New journal") == []
         assert calls == []
     else:
         result = flow.run_review(BIO, root=tmp_path, apply=False)

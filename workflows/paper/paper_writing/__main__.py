@@ -878,6 +878,8 @@ def main(argv: list[str] | None = None) -> int:
                                                     "round_for_target", "decision_sha256")}
         summary["outcome"] = result["merged"]["outcome"]
         summary["next_action"] = result["merged"].get("next_action")
+        if result.get("review_outcome"):
+            summary["review_outcome"] = result["review_outcome"]
         summary["editor_decision"] = (result.get("editor_screen") or {}).get("decision")
         summary["recommendation"] = result["merged"].get("recommendation")
         summary["review_mode"] = result.get("review_mode", "full")
