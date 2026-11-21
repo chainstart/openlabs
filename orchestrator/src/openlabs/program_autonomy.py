@@ -849,6 +849,9 @@ def _on_research_result(db, paths, settings, report, *, topic, task, payload, ev
             reason_class = (
                 "primary_endpoint_failed" if verdict == "failed" else "decisive_data_unavailable"
             )
+            if verdict == "met":
+                # A completed endpoint does not establish that decisive data were missing.
+                reason_class = "unspecified"
             note = {"reason_class_inferred": True, "declared_reason_class": declared or None,
                     "primary_endpoint_verdict": verdict or None}
         declared_evidence = _freeze_evidence(gate_result)

@@ -843,6 +843,12 @@ def record_scout_outcomes(
         accepted = by_source.get(str(task["task_id"]), 0)
         state["last_created_at"], state["last_task_id"] = marker
         state["recent_task_ids"] = [*recent, marker[1]][-20:]
+        if str(task.get("status")) != "succeeded":
+            # The control plane did not accept the result (needs_replan: an artifact outside
+            # the staging area, a hash mismatch, a failed commit; needs_human): its cards never
+            # reached intake, so it says nothing about the line's supply. Neither empty nor
+            # productive; the minimum scout interval still spaces the next attempt.
+            continue
         if project.research_line and (cards is not None or accepted):
             _record_template_draws(paths, settings, project.research_line, state,
                                    accepted_topics.get(str(task["task_id"]), []))
@@ -851,12 +857,6 @@ def record_scout_outcomes(
                 changes.append({"key": key, "event": "topic_scout_productive",
                                 "task_id": marker[1], "previous_empty_draws": state["count"]})
             state.update(count=0, fingerprint=None, reason=None, last_summary=None)
-            continue
-        if str(task.get("status")) != "succeeded":
-            # The control plane did not accept the result (needs_replan: an artifact outside
-            # the staging area, a hash mismatch, a failed commit; needs_human): its cards never
-            # reached intake, so it says nothing about the line's supply. Neither empty nor
-            # productive; the minimum scout interval still spaces the next attempt.
             continue
         if key not in fingerprints:
             fingerprints[key] = scout_supply_fingerprint(paths, settings, project, document)

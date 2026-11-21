@@ -464,8 +464,12 @@ def test_budget_exhaustion_routes_to_one_direction_decision(tmp_path, monkeypatc
 # --------------------------------------------------------------------------- explicit freeze
 
 
-@pytest.mark.parametrize("declared", ["decisive_data_unavailable", None])
-def test_explicit_freeze_writes_the_ledger_and_releases_the_slot(tmp_path, monkeypatch, declared):
+@pytest.mark.parametrize(("declared", "verdict", "expected"), [
+    ("decisive_data_unavailable", "inconclusive", "decisive_data_unavailable"),
+    (None, "inconclusive", "decisive_data_unavailable"),
+    (None, "met", "unspecified"),
+])
+def test_explicit_freeze_writes_the_ledger_and_releases_the_slot(tmp_path, monkeypatch, declared, verdict, expected):
     paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
     research = db.latest_task(topic["campaign_id"])
     _lease(paths, settings, monkeypatch, db, research["task_id"])
@@ -476,7 +480,7 @@ def test_explicit_freeze_writes_the_ledger_and_releases_the_slot(tmp_path, monke
     if declared:
         gate_result["freeze_reason_class"] = declared
     _finish(db, paths, research["task_id"], extra={
-        "primary_endpoint_verdict": "inconclusive",
+        "primary_endpoint_verdict": verdict,
         "preregistration_sha256": topic["preregistration_sha256"], "gate_result": gate_result,
     })
     before = slot_status(open_topic_ledger(paths, settings.program).read(), settings.program)
@@ -485,7 +489,7 @@ def test_explicit_freeze_writes_the_ledger_and_releases_the_slot(tmp_path, monke
 
     frozen = _topic(paths, settings, topic["topic_id"])
     assert frozen["status"] == "frozen"
-    assert frozen["freeze_reason_class"] == "decisive_data_unavailable"
+    assert frozen["freeze_reason_class"] == expected
     assert {item["path"] for item in frozen["freeze_evidence"]} >= {str(receipt)}
     assert db.campaign(topic["campaign_id"])["status"] == "frozen"
     after = slot_status(open_topic_ledger(paths, settings.program).read(), settings.program)

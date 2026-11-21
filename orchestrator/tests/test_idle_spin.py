@@ -389,9 +389,14 @@ def test_a_scout_whose_result_was_not_accepted_is_no_empty_draw(tmp_path, monkey
         "artifacts": [{"artifact_id": "queue", "kind": "data", "uri": bogus.resolve().as_uri(),
                        "sha256": "0" * 64}]},
         receipt_files={"data-access.json": flow.RECEIPT})
+    # A failed workspace commit can leave a readable, hash-bound one-card bundle.
+    monkeypatch.setattr(program_flow, "_scout_result_cards", lambda task: (1, "one card"))
+    draws = []
+    monkeypatch.setattr(program_flow, "_record_template_draws", lambda *args: draws.append(args))
     report = flow._tick(paths, settings, monkeypatch)
     assert db.task(task_id)["status"] != "succeeded"
     assert not [item for item in report.program.get("scout_outcomes") or []
                 if item.get("event") == "topic_scout_empty"], report.program
     assert report.program["scout_blocked"] != "scout_empty_backoff"
     assert not report.program.get("scout_supply_blocked")
+    assert not draws
