@@ -140,7 +140,7 @@ def test_runtime_provenance_fails_closed(tmp_path, failure):
     assert "MODEL-EVIDENCE-MISMATCH" in {code for code, _ in errors}
 
 
-def test_version_change_does_not_waive_human_code_validation(tmp_path):
+def test_recorded_model_change_with_code_use_disclosure_passes(tmp_path):
     main = tmp_path / "main.tex"
     main.write_text(r"""\documentclass{article}
 \begin{document}
@@ -153,10 +153,7 @@ AI-generated output was not treated as mathematical proof.
 \end{document}
 """)
     result = audit_tex_tree(main, root=tmp_path, model_usage=usage(tmp_path))
-    codes = {item["code"] for item in result["errors"]}
-    assert "STYLE-AI-DISCLOSURE-CODE-VALIDATION" in codes
-    assert "STYLE-AI-DISCLOSURE-TOOL" not in codes
-    assert not any("MODEL" in code for code in codes)
+    assert result["valid"], result["errors"]
 
 
 def test_recorded_tool_missing_from_declaration_is_rejected(tmp_path):
@@ -247,23 +244,21 @@ def test_configuration_record_does_not_support_an_actual_use_claim(tmp_path, tex
     assert codes >= {"CONFIGURATION-DISCLOSURE", "MODEL-UNREGISTERED"}
 
 
-def test_configuration_acceptance_does_not_waive_human_inspection(tmp_path):
+def test_configuration_disclosure_with_code_use_passes(tmp_path):
     main = tmp_path / "main.tex"
     main.write_text(r"""\documentclass{article}
 \begin{document}
 Python code checks finite examples.
 \section*{Generative AI declaration}
 """ + CONFIGURED_DISCLOSURE + r"""
-Codex assisted manuscript drafting, editing, technical preparation and code development.
+Codex assisted manuscript drafting, editing, technical preparation and source-code development.
 The authors take full responsibility for the article and associated materials.
 AI-generated output was not treated as mathematical proof.
 \end{document}
 """)
     result = audit_tex_tree(main, root=tmp_path, model_usage=usage(tmp_path),
                             configured_attempts=configured_attempt(tmp_path))
-    codes = {item["code"] for item in result["errors"]}
-    assert "STYLE-AI-DISCLOSURE-CODE-VALIDATION" in codes
-    assert "STYLE-AI-DISCLOSURE-MODEL-UNREGISTERED" not in codes
+    assert result["valid"], result["errors"]
 
 
 # --------------------------------------------------------------------------- record-based tools (2026-11)

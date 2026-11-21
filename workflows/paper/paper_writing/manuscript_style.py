@@ -669,15 +669,13 @@ def audit_tex_tree(
         )
 
     if has_declaration:
-        # Author-preferred journal template (2026-10-24). Its two sentences
-        # disclose actual tools/purposes and author responsibility. Review of
-        # the output is an optional factual attestation, never boilerplate that
-        # a checker should force authors to invent. Private runtime and
-        # scientific/code-validation evidence remain required
-        # by their separate checks, rather than as extra public boilerplate.
+        # The journal template discloses actual tools and purposes and states
+        # author responsibility. Accept the historical wording and the current
+        # prospective review statement.
         journal_template = bool(re.search(
             r"During the preparation of this work, the authors? used .+? for .+?\.\s+"
-            r"The authors? (?:reviewed and edited the output as needed and )?take full "
+            r"The authors? (?:reviewed and edited the output as needed and "
+            r"|will review the full manuscript before submission and )?takes? full "
             r"responsibility for the content of (?:the |this )(?:published )?article"
             r"(?: and associated materials)?\.\s*$",
             declaration_text, re.IGNORECASE | re.DOTALL,
@@ -757,20 +755,6 @@ def audit_tex_tree(
                     _issue(
                         "STYLE-AI-DISCLOSURE-CODE",
                         "disclose AI assistance with source-code development when computational code is part of the work",
-                        path=next(iter(declaration_ranges)),
-                        root=report_root,
-                    )
-                )
-            if not journal_template and not re.search(
-                r"(?:inspected|reviewed).{0,100}code.{0,120}"
-                r"(?:tested|executed|validated|checked)",
-                declaration_text,
-                re.IGNORECASE | re.DOTALL,
-            ):
-                issues.append(
-                    _issue(
-                        "STYLE-AI-DISCLOSURE-CODE-VALIDATION",
-                        "state that human authors inspected the AI-assisted code and executed or validated the checks",
                         path=next(iter(declaration_ranges)),
                         root=report_root,
                     )

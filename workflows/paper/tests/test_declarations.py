@@ -186,7 +186,11 @@ def test_ai_section_stops_before_appendices():
         assert section(source, "ai_use")[1].strip() == "The authors used X."
 
 
-def test_default_declarations_verify_models_and_preserve_byline(tmp_path, monkeypatch):
+@pytest.mark.parametrize("review_clause", [
+    "reviewed and edited the output as needed and take",
+    "will review the full manuscript before submission and take",
+])
+def test_default_declarations_verify_models_and_preserve_byline(tmp_path, monkeypatch, review_clause):
     import json
     from paper_writing import declarations
 
@@ -198,7 +202,7 @@ def test_default_declarations_verify_models_and_preserve_byline(tmp_path, monkey
     registry.mkdir(parents=True)
     template = {"heading_latex": r"\section*{AI use}", "automatically_reusable": True,
                 "text_template": "The author(s) used [NAME OF TOOL/SERVICE] for [REASON]. "
-                                 "The author(s) reviewed and edited the output as needed and take full responsibility."}
+                                 f"The author(s) {review_clause} full responsibility."}
     (registry / "templates.yaml").write_text(json.dumps({"default_ai_template_id": "journal",
                                                         "ai_templates": {"journal": template}}))
     receipt = tmp_path / "runtime.json"
@@ -212,6 +216,10 @@ def test_default_declarations_verify_models_and_preserve_byline(tmp_path, monkey
     assert declarations.apply_default_declarations("test", tmp_path)["changed"]
     assert "A: Software." in path.read_text() and "gpt-6.2-sol through Codex" in path.read_text()
     assert "reviewed and edited" not in path.read_text()
+    if review_clause.startswith("will"):
+        assert f"The author {review_clause} full responsibility." in path.read_text()
+    else:
+        assert "The author takes full responsibility." in path.read_text()
     assert not declarations.apply_default_declarations("test", tmp_path)["changed"]
     receipt.write_text("{}")
     assert not declarations.apply_default_declarations("test", tmp_path)["changed"]

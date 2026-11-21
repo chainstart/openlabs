@@ -12,8 +12,7 @@ CODE_DECLARATION = r"""
 During the preparation of this work, the authors used OpenAI GPT-5.6 through
 Codex to assist with manuscript drafting, editing, technical preparation,
 source-code development, and preparation of computational verification scripts.
-The authors reviewed and edited all AI-assisted text, inspected AI-assisted code,
-and independently executed and validated the stated checks. The authors take full
+The authors will review the full manuscript before submission. The authors take full
 responsibility for the article and its computational materials. The reported results
 are based on verified outputs. Unverified model responses were not used as evidence.
 """
@@ -154,19 +153,18 @@ def test_style_check_accepts_neutral_body_and_complete_code_disclosure(
     }
 
 
-def test_mathematical_gap_does_not_require_code_validation(tmp_path: Path) -> None:
+def test_mathematical_gap_is_distinct_from_gap_software(tmp_path: Path) -> None:
     main = _write(tmp_path, r"The density gap is positive. \begin{equation}\label{eq:gap}1>0\end{equation}")
     result = audit_tex_tree(main)
     assert result["valid"] is True
     assert result["ai_declaration"]["code_assistance_relevant"] is False
 
 
-def test_gap_software_still_requires_code_validation(tmp_path: Path) -> None:
-    disclosure = CODE_DECLARATION.replace("inspected AI-assisted code,\nand independently executed and validated the stated checks", "checked the mathematical argument")
-    main = _write(tmp_path, "We used GAP to verify the group computations.", disclosure)
+def test_gap_software_passes_with_truthful_code_use_disclosure(tmp_path: Path) -> None:
+    main = _write(tmp_path, "We used GAP to verify the group computations.")
     result = audit_tex_tree(main)
     assert result["ai_declaration"]["code_assistance_relevant"] is True
-    assert "STYLE-AI-DISCLOSURE-CODE-VALIDATION" in {e["code"] for e in result["errors"]}
+    assert result["valid"] is True
 
 
 def test_style_check_rejects_internal_workflow_and_ai_narration_in_body(

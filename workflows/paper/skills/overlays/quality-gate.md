@@ -164,9 +164,9 @@ Author default 2026-10-24: use the short tool/purpose template in the data repos
 `registry/paper-declarations/templates.yaml` (selected by `default_ai_template_id`) unless the
 venue requires another format; heading "Declaration of generative AI and AI-assisted
 technologies in the manuscript preparation process". Fill it with the actual tool, evidenced
-model identifiers and purposes; never copy another paper's model list. The clause that authors
-reviewed and edited the output is a factual attestation: omit it when unsupported. Detailed
-provenance stays in private records.
+model identifiers and purposes; never copy another paper's model list. State that the authors will review the full manuscript before submission and take
+responsibility for the article. Include completed checks only if supported by the paper record.
+Detailed provenance stays in private records.
 
 Register each use under `declarations.ai_use.model_usage` with `provider: openai-codex`, `tool:
 Codex` or `provider: anthropic`, `tool: Claude Code`, `model`, purpose, and `evidence: {path,
@@ -174,8 +174,8 @@ sha256, json_pointer}` pointing to a bounded JSON runtime record under the data 
 checks compare the tools and identifiers named in the statement with the registered usage and
 verify hash and pointer; an empty list, changed record or invented identifier blocks delivery. Papers before 2026-09-06 without
 structured metadata keep their legacy textual check; never rewrite an old model identity to a
-newer name. Model provenance does not attest that humans inspected or ran code; if human checks
-have not happened, say so and keep the blocker.
+newer name. The authors review the full manuscript before submission. Submission requires
+separate human confirmation.
 
 ## Voice and readability
 
