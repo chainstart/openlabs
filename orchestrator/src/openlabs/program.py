@@ -1533,7 +1533,11 @@ def freeze_topic(
     automatic reopens already done is kept.
     """
 
-    if reason_class not in FREEZE_REASON_CLASSES and reason_class != LEGACY_ARCHIVE_REASON:
+    # The ledger can record a missing owner classification without making it a
+    # valid reason for a direction decision.
+    if reason_class not in FREEZE_REASON_CLASSES and reason_class not in (
+        LEGACY_ARCHIVE_REASON, "unspecified"
+    ):
         raise TopicLedgerError(f"unsupported freeze reason class {reason_class!r}")
     evidence_items = _evidence_list(evidence, required=True, label="freeze_evidence")
     conditions = _reopen_conditions(reopen_conditions)

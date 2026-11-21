@@ -1350,7 +1350,6 @@ FREEZE_REASON_CLASSES = frozenset(
     {
         "primary_endpoint_failed",
         "decisive_data_unavailable",
-        "unspecified",
         "overdue",
         "contribution_insufficient",
         "no_eligible_venue",
