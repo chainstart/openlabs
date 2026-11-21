@@ -21,3 +21,13 @@ Define q = M₂/M₁ and measure i from the orbital normal. Identify the compone
 - `sector-profiles` — Profile likelihood and matched extraction shifts by observing sector; supply the three verified input JSONs.
 
 For `sector-profiles` put `budget_profile_inputs.json` (sector → [q, ΔNLL, capped] points), `restart_overlap_diagnostic.json` (allowed_range.overlap) and `matched_product_fits.json` (per-sector extraction shifts under both assignments) in the paper workspace’s `inputs/` directory. Adapt the registered threshold and show the crossing region at readable scale.
+
+## Evidence plan before drawing
+
+Read paper_writing/figure-standards.json. Choose manuscript_type from its profiles (for an unrepresented design use other with a substantive count_reason). Keep the existing paper_type. For every figure list evidence_stages (profile stage IDs), panels (integer), and source and data_source. Supply count_reason for justified departures, single_panel_reason for a standalone result, and supplement_coverage mapping checks to appendix figure/table identifiers or explaining complete main-text coverage. The first main figure carries first_stage. Plan evidence before drawing. Use actual study outputs for every result and anchor every schematic in a real measured example or comparison. Explain n, units, intervals and every visual encoding in captions. Compare axes, ordering and color limits at final column width.
+
+- single_target (6–11): observation, fit_residual, identifiability, robustness. Figure 1: observed phase curve, phase origin and decisive eclipse. Supplement: all sectors, extraction choices and competing fits.
+
+- multi_target (8–12): sample_selection, fit_residual, identifiability, population, robustness. Figure 1: selection and representative observed target. Supplement: remaining targets, selection effects and extraction choices.
+
+- astronomy_method (4–14): sampling, observable, recovery, cross_target. Figure 1: sampling protocol and measured feature. Supplement: per-target recovery and missed detections.

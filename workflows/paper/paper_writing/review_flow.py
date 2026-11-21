@@ -2283,6 +2283,12 @@ def figure_review_packet(pre: Mapping[str, Any], run: Path, changed: list[str]) 
 
     manuscript_path = pre.get("manuscript_path")
     plan, _ = read_plan(Path(manuscript_path)) if manuscript_path else ({}, None)
+    from paper_writing.figure_standard import findings
+    standard = []
+    if manuscript_path:
+        manuscript = Path(manuscript_path)
+        tex = pre.get("expanded")
+        standard = findings(plan, tex if isinstance(tex, str) else expand_tex(manuscript / "main.tex", manuscript))
     plan_text = ""
     if plan:
         coverage = [{field: item[field][:500] for field in ("figure", "kind", "figure_type", "point")}
@@ -2290,10 +2296,12 @@ def figure_review_packet(pre: Mapping[str, Any], run: Path, changed: list[str]) 
         plan_text = (f"\nFigure plan ({plan['paper_type']}, author's intended coverage): "
                      + json.dumps(coverage, ensure_ascii=False) + "\n")
 
+    if standard:
+        plan_text += "\nRequired figure revisions: " + json.dumps(standard, ensure_ascii=False) + "\n"
     files = list(pre.get("figure_files") or [])
     if not files:
         return ("\n## Figures\nThe manuscript contains no figures.\n" + plan_text, [],
-                {"images": [], "notes": [], "changed_since_previous_round": []})
+                {"images": [], "notes": [], "changed_since_previous_round": [], "standard": standard})
     result = review_images(Path(pre["manuscript_path"]), files, run / "figures")
     images = [Path(item["png"]) for item in result["images"]]
     lines = ["", "## Figures"]
@@ -2310,7 +2318,7 @@ def figure_review_packet(pre: Mapping[str, Any], run: Path, changed: list[str]) 
     else:
         lines.append("The figure files could not be rendered for this review (" + "; ".join(result["notes"])
                      + "); judge the figures from their captions and references only, and say so.")
-    record = {"images": [{"figure": item["figure"], "sha256": item["sha256"], "png_sha256": item["png_sha256"],
+    record = {"standard": standard, "images": [{"figure": item["figure"], "sha256": item["sha256"], "png_sha256": item["png_sha256"],
                           "png": Path(item["png"]).relative_to(run).as_posix()} for item in result["images"]],
               "notes": result["notes"], "changed_since_previous_round": changed}
     return "\n".join(lines) + "\n" + plan_text, images, record
@@ -2566,6 +2574,12 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                                       system_prompt=(PROMPTS / "editor.md").read_text(),
                                       user_prompt=editor_packet(pre, decisions), schema=editor_schema_for_policy(history_policy),
                                       workdir=run / "editor", timeout=config["timeout_seconds"], **with_images)
+    # Preserve the independent editor receipt. Add deterministic presentation items at merge.
+    decision_editor = dict(editor, figure_changes=[
+        *editor.get("figure_changes", []),
+        *(dict(type="figure", location=i["figure"], change=i["message"])
+          for i in record["figure_review"].get("standard", [])),
+    ])
     referees: dict[str, Any] = {}
     receipts = {"editor": editor_receipt}
     history_blockers = rejection_clearance_blockers(editor, decisions, history_policy)
@@ -2592,10 +2606,10 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                     raise ValueError('Referee omitted or introduced a previous mandatory item')
         # Scientific merit/correctness is evaluated before the narrower check;
         # an output-format defect must not prevent an overall referee report.
-        scientific_decision = apply_review_track(merge(editor, referees, history_blockers), referees, track)
+        scientific_decision = apply_review_track(merge(decision_editor, referees, history_blockers), referees, track)
         if scientific_decision['outcome'] == 'ready':
             pre, formal_blockers, formal_summary = _formal_stage(pre, root, run, roles, config, metadata, record)
-    merged = apply_review_track(merge(editor, referees, history_blockers, formal_blockers=formal_blockers,
+    merged = apply_review_track(merge(decision_editor, referees, history_blockers, formal_blockers=formal_blockers,
                                       formal_summary=formal_summary), referees, track)
     merged |= stalled_signal(rounds, referees, merged)
     consumes_round = not (formal_blockers and formal_summary is not None

@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from paper_writing.figure_standard import findings as standard_findings
 from paper_writing.figure_quality import PLOT_FINDINGS, plot_findings, read_plan
 
 TEMPLATES = Path(__file__).resolve().parents[1] / "figure-templates"
@@ -974,7 +975,7 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
 
     included = {pdf.stem for pdf in pdfs if uses_of(pdf)}
     included_rasters = {raster.stem for raster in rasters if uses_of(raster)}
-    required: list[dict[str, str]] = []
+    required = standard_findings(plan, manuscript_text)
     if plan_error:
         required.append(_finding("plan", "FIG-PLAN", plan_error))
     if plan.get("paper_type") in {"method", "mechanism", "study_design"} and not any(

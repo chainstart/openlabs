@@ -336,11 +336,11 @@ def test_method_plan_needs_included_source_built_schematic(tmp_path):
 \documentclass{article}\begin{document}
 See Figure~\ref{fig:design}.
 \begin{figure}\includegraphics{figures/design.pdf}
-\caption{Design.}\label{fig:design}\end{figure}
+\caption{Two specimen groups follow the same measurement protocol. Arrows connect each physical specimen to its assigned split and show the timing of segmentation before model evaluation.}\label{fig:design}\end{figure}
 \end{document}
 """)
     (ms / "figure-plan.json").write_text(json.dumps({
-        "paper_type": "method", "figures": [{
+        "paper_type": "method", "manuscript_type": "other", "count_reason": "Split design only", "figures": [{
             "figure": "design", "kind": "schematic", "point": "See the split",
             "figure_type": "study design", "source": "figure-src/design.svg", "data_source": "Methods",
         }],

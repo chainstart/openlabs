@@ -1,0 +1,170 @@
+{
+  "profiles": {
+    "computational_method": {
+      "field": "computation",
+      "main_figures": [
+        4,
+        5
+      ],
+      "basis": "IQR n=12",
+      "stages": [
+        "task",
+        "baseline",
+        "held_out",
+        "failure"
+      ],
+      "first_stage": "task",
+      "figure_one": "inputs, core operation, outputs and validation boundary",
+      "supplement": "task-level results, sensitivity and failures"
+    },
+    "single_target": {
+      "field": "astronomy",
+      "main_figures": [
+        6,
+        11
+      ],
+      "basis": "IQR n=18",
+      "stages": [
+        "observation",
+        "fit_residual",
+        "identifiability",
+        "robustness"
+      ],
+      "first_stage": "observation",
+      "figure_one": "observed phase curve, phase origin and decisive eclipse",
+      "supplement": "all sectors, extraction choices and competing fits"
+    },
+    "multi_target": {
+      "field": "astronomy",
+      "main_figures": [
+        8,
+        12
+      ],
+      "basis": "IQR n=13",
+      "stages": [
+        "sample_selection",
+        "fit_residual",
+        "identifiability",
+        "population",
+        "robustness"
+      ],
+      "first_stage": "sample_selection",
+      "figure_one": "selection and representative observed target",
+      "supplement": "remaining targets, selection effects and extraction choices"
+    },
+    "astronomy_method": {
+      "field": "astronomy",
+      "main_figures": [
+        4,
+        14
+      ],
+      "basis": "IQR n=4",
+      "stages": [
+        "sampling",
+        "observable",
+        "recovery",
+        "cross_target"
+      ],
+      "first_stage": "sampling",
+      "figure_one": "sampling protocol and measured feature",
+      "supplement": "per-target recovery and missed detections"
+    },
+    "market_dispatch": {
+      "field": "energy",
+      "main_figures": [
+        4,
+        6
+      ],
+      "basis": "compact scheduling examples; expanded scenarios 9–15",
+      "stages": [
+        "boundary",
+        "operation",
+        "aggregate",
+        "mechanism"
+      ],
+      "first_stage": "boundary",
+      "figure_one": "asset, meter, allowed charging sources and export constraint",
+      "supplement": "all site-years, efficiency, prices and rolling replay",
+      "parent_sample_iqr": [
+        5,
+        8
+      ]
+    },
+    "policy_distribution": {
+      "field": "energy",
+      "main_figures": [
+        5,
+        8
+      ],
+      "basis": "system examples; compact survey 3",
+      "stages": [
+        "denominator",
+        "counterfactual",
+        "effect",
+        "distribution",
+        "mechanism"
+      ],
+      "first_stage": "denominator",
+      "figure_one": "exposure, population denominator or policy contrast",
+      "supplement": "regions, alternative scenarios and extremes",
+      "parent_sample_iqr": [
+        5,
+        8
+      ]
+    },
+    "rank_audit": {
+      "field": "reliability",
+      "main_figures": [
+        3,
+        6
+      ],
+      "basis": "observed range n=7",
+      "stages": [
+        "protocol",
+        "split",
+        "individual",
+        "aggregate",
+        "reversal"
+      ],
+      "first_stage": "protocol",
+      "figure_one": "units, held-out split, challenge, reference and score",
+      "supplement": "full model-by-challenge matrix, perturbations, resampling units and failures",
+      "parent_sample_iqr": [
+        3,
+        6
+      ]
+    },
+    "rul_degradation": {
+      "field": "reliability",
+      "main_figures": [
+        9,
+        27
+      ],
+      "basis": "observed range n=6",
+      "stages": [
+        "observation",
+        "indicator",
+        "endpoint",
+        "error",
+        "failure"
+      ],
+      "first_stage": "observation",
+      "figure_one": "fault location, observation process or model inputs and outputs",
+      "supplement": "all specimen trajectories, sensitivity and cross-condition tests",
+      "parent_sample_iqr": [
+        10,
+        24
+      ]
+    }
+  },
+  "panel_rule": "Align comparable axes, preserve model or site order and color scale. Group results that answer one comparison.",
+  "caption_rule": "Decode points, lines, colors and bands used, sample and resampling units, interval definition and direction.",
+  "caption_reference_words": {
+    "Nature": 158,
+    "specialist_astronomy": [
+      37,
+      58
+    ]
+  },
+  "caption_review_floor_words": 25
+}

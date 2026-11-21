@@ -22,3 +22,11 @@ Assign specimens before windowing and show unit counts in train, tuning and hold
 - `rank-agreement` — Show per-rig rank agreement and paired bootstrap uncertainty from inputs/ranks.csv.
 
 For `rank-agreement` supply `inputs/ranks.csv` with scenario, rig, rho, lower and upper columns. Replace the registered cutoffs, group labels and interval definitions with those of the current protocol.
+
+## Evidence plan before drawing
+
+Read paper_writing/figure-standards.json. Choose manuscript_type from its profiles (for an unrepresented design use other with a substantive count_reason). Keep the existing paper_type. For every figure list evidence_stages (profile stage IDs), panels (integer), and source and data_source. Supply count_reason for justified departures, single_panel_reason for a standalone result, and supplement_coverage mapping checks to appendix figure/table identifiers or explaining complete main-text coverage. The first main figure carries first_stage. Plan evidence before drawing. Use actual study outputs for every result and anchor every schematic in a real measured example or comparison. Explain n, units, intervals and every visual encoding in captions. Compare axes, ordering and color limits at final column width.
+
+- rank_audit (3–6): protocol, split, individual, aggregate, reversal. Figure 1: units, held-out split, challenge, reference and score. Supplement: full model-by-challenge matrix, perturbations, resampling units and failures.
+
+- rul_degradation (9–27): observation, indicator, endpoint, error, failure. Figure 1: fault location, observation process or model inputs and outputs. Supplement: all specimen trajectories, sensitivity and cross-condition tests.

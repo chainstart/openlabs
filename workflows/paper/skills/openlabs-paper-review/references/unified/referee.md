@@ -155,3 +155,8 @@ into an unresolved mandatory item merely because the author did not implement it
 
 Scores are integers from 1 to 10 relative to the journal named in the packet; when between two
 integers choose the lower. Return only the JSON object required by the schema.
+
+
+① 只看首图，能否说出研究对象、关键差异和待检验的问题？② 每个核心结论能否定位到特定面板、可识别的分母或比较基线？③ 点、线、带、颜色、方向和误差约定是否在图注中解释，缩到刊物栏宽后仍可辨认？④ 模型与观测、相关与因果、敏感性与独立验证能否在图内区分？⑤ 附录能否追到正文图的样本和失败情形？数量偏离参考区间、图文面积偏离一半均可接受，但独立审稿人无法从图回到观测或比较条件时，应退回补证据。
+
+能源检查充电来源、共享上限、配对单位、分母与成本承担者；区分实测和政策情景。排名审计检查试件泄漏、性能下降与换位。寿命预测检查预测起点、终点、删失及失效窗口。

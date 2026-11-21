@@ -21,7 +21,9 @@ def read_plan(manuscript):
         if not isinstance(plan, dict) or plan.get("paper_type") not in PAPER_TYPES:
             raise ValueError("paper_type must be method, mechanism, study_design or other")
         figures = plan.get("figures")
-        if not isinstance(figures, list) or not figures:
+        if not isinstance(figures, list) or (not figures and not (
+                plan.get("manuscript_type") == "other" and isinstance(plan.get("count_reason"), str)
+                and plan["count_reason"].strip())):
             raise ValueError("list the intended figures")
         names = set()
         for item in figures:

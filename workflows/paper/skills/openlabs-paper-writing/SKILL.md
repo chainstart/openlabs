@@ -49,7 +49,7 @@ text that carries only the problem-method-experiment-result line (robustness, re
 sensitivity and secondary checks in the appendix), a plain abstract, one layer of qualification
 per conclusion, no revision history, and revisions that do not grow the main text. Before drafting, read
 `../openlabs-paper-figures/SKILL.md`, use the handover's two to four reader-facing points,
-and link `manuscript/figure-plan.json` from the story line.
+and link `manuscript/figure-plan.json` from the story line. Choose a manuscript_type in paper_writing/figure-standards.json and map each figure to its evidence_stages before drafting. Follow the figure skill for panel counts, caption encodings, supplements and reasoned exceptions.
 
 1. Build or update the claim–evidence map before strengthening any claim or adding numbers.
 2. Fix one main conclusion and its contribution boundary against the closest published work,

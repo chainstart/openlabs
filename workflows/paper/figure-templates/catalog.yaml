@@ -77,3 +77,33 @@ templates:
     file: rank-agreement.py
     figure_kind: result
     use_when: Show per-rig rank agreement and paired bootstrap uncertainty from inputs/ranks.csv.
+  - name: sector-replication
+    field: astronomy
+    file: sector-replication.py
+    figure_kind: result
+    use_when: "Synthetic eclipse-depth recovery under a fixed eclipse shape. Replace illustrative inputs before manuscript use."
+  - name: eclipse-contact
+    field: astronomy
+    file: eclipse-contact.py
+    figure_kind: result
+    use_when: "Circular edge-on transit of a dark disk over a uniformly bright disk. Replace illustrative inputs before manuscript use."
+  - name: dispatch-replay
+    field: energy
+    file: dispatch-replay.py
+    figure_kind: result
+    use_when: "Illustrative fixed dispatch, lossless, one hour per step, no grid charging. Replace illustrative inputs before manuscript use."
+  - name: revenue-spikes
+    field: energy
+    file: revenue-spikes.py
+    figure_kind: result
+    use_when: "Synthetic paired daily net cash; explicit full-year denominator. Replace illustrative inputs before manuscript use."
+  - name: challenge-ranks
+    field: reliability
+    file: challenge-ranks.py
+    figure_kind: result
+    use_when: "Synthetic ranks; source ordering A–H; pair counts use strict inversions. Replace illustrative inputs before manuscript use."
+  - name: specimen-failure
+    field: reliability
+    file: specimen-failure.py
+    figure_kind: result
+    use_when: "Synthetic vibration RMS, fixed baseline and forecasts for two complete units. Replace illustrative inputs before manuscript use."

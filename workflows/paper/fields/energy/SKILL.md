@@ -20,3 +20,11 @@ Balance AC flows at the shared meter. Separate power (MW) from stored energy (MW
 - `shared-export` — Size shared export and compare storage with PV-only dispatch.
 - `settlement-clock` — Price the same dispatch on two settlement clocks.
 - `policy-periods` — Explain a matched policy-period contrast with contemporaneous comparison sites.
+
+## Evidence plan before drawing
+
+Read paper_writing/figure-standards.json. Choose manuscript_type from its profiles (for an unrepresented design use other with a substantive count_reason). Keep the existing paper_type. For every figure list evidence_stages (profile stage IDs), panels (integer), and source and data_source. Supply count_reason for justified departures, single_panel_reason for a standalone result, and supplement_coverage mapping checks to appendix figure/table identifiers or explaining complete main-text coverage. The first main figure carries first_stage. Plan evidence before drawing. Use actual study outputs for every result and anchor every schematic in a real measured example or comparison. Explain n, units, intervals and every visual encoding in captions. Compare axes, ordering and color limits at final column width.
+
+- market_dispatch (4–6): boundary, operation, aggregate, mechanism. Figure 1: asset, meter, allowed charging sources and export constraint. Supplement: all site-years, efficiency, prices and rolling replay.
+
+- policy_distribution (5–8): denominator, counterfactual, effect, distribution, mechanism. Figure 1: exposure, population denominator or policy contrast. Supplement: regions, alternative scenarios and extremes.

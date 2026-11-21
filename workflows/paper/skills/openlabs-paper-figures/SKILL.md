@@ -28,9 +28,13 @@ Before drafting, link `manuscript/figure-plan.json` from the Figures section of
 ```json
 {
   "paper_type": "study_design",
+  "manuscript_type": "rank_audit",
+  "supplement_coverage": {"alternative splits": "Figure S1"},
   "figures": [{
     "figure": "fig-design",
     "kind": "schematic",
+    "evidence_stages": ["protocol", "split"],
+    "panels": 2,
     "figure_type": "cohort and split diagram",
     "point": "See which records enter each split and where the endpoint is measured",
     "data_source": "registered cohort counts in evidence/cohort.csv",
@@ -166,3 +170,32 @@ point ("Half-hour settlement pays the block mean, so a five-minute spike is dilu
 then define panels, symbols, colours and line styles, give n, units and what the bands mean.
 No "Schematic diagram of ..." filler, no method narration, no internal names. Credit licensed
 assets here or in the acknowledgments as their licence requires.
+
+## Evidence plan before drawing
+
+Read paper_writing/figure-standards.json. Choose manuscript_type from its profiles (for an unrepresented design use other with a substantive count_reason). Keep the existing paper_type. For every figure list evidence_stages (profile stage IDs), panels (integer), and source and data_source. Supply count_reason for justified departures, single_panel_reason for a standalone result, and supplement_coverage mapping checks to appendix figure/table identifiers or explaining complete main-text coverage. The first main figure carries first_stage. Plan evidence before drawing. Use actual study outputs for every result and anchor every schematic in a real measured example or comparison. Explain n, units, intervals and every visual encoding in captions. Compare axes, ordering and color limits at final column width.
+
+
+|模式|适用问题|画面要素与阅读顺序|评审时怎么辨别|
+|---|---|---|---|
+|计算链与单元展开|模型把物理先验和数据拟合放在不同环节|首个面板标输入、状态、预测量；次面板展开唯一需要解释的计算单元，标出训练和预测时可见的数据|遮住正文，读者能否指出哪些量来自观测、哪些由模型产生？|
+|总体性能与失效位置|天气、时空预测、跨场站或跨扇区外推|同图排列按预测时长或样本分组的误差、空间差值或逐组差值；保持基线、误差方向和色标一致|读者能否从总体改善追到一个具体失效区域或时段？|
+|轨道几何与光变证据|用全食形态约束质量比、倾角或第三光|共用相位零点；标主次食、接触点或平底区，在相邻面板给观测点、模型和残差；仅在几何来自拟合时写明模型条件|能否从几何解释找到对应数据段，再看到该段的误差？示意的几何不能被当作独立观测。|
+|单目标拟合到跨观测复现|多扇区 TESS、跨管线重提取、异质噪声|选取预先说明的代表扇区，主曲线下对齐残差；下一图按同一参数轴画全部扇区的区间，编码提取流程和公共区间|区间、固定参数、单位、置信或似然约定能否逐项找回？不同扇区的离散是否被合并均值掩盖？|
+|观测轨道与竞争解|轨道周期变化、光时效应、质量转移|按时间绘极小时刻的 O−C，注明历表与单位；下排并列候选模型的残差或剔除一组数据后的变化|纵轴量级是否足以分辨模型；只有数据允许时，才把周期项解释为物理伴星。|
+|接入结构与配对收益|同一场站比较两种储能拓扑或结算规则|两张结构图用相同符号和边界标可充电路径、电表和出口限制；对应结果用同一场站年的配对差、零线和汇总区间|两种设计是否只改声称改变的条件？图上能否找出收益来源及收益变号的场站？|
+|排名迁移与分歧定位|验证人工扰动是否预测真实工况|首图标同一模型集、人工/实测两路、分组与留出；结果并排显示完整排名与相关系数及区间，特别标异常对照|能否辨别“整体顺序近似”“第一名能否迁移”和“区间是否跨判据”这三个命题？|
+|主张与敏感性预算|结论依赖食深提取、阈值、调度策略或筛选规则|正文展示能够改变结论的扰动，附录展开逐项扰动、全样本图谱和额外残差；标题或图注给出和正文的对应图号|把敏感性图删除后，读者是否会误认结论确定性？若会，应移入正文。|
+
+
+
+
+
+|适用问题|图中要素与组合方式|本地产线的落点|
+|---|---|---|
+|同一资产的两种结算或接线规则|左右保留相同资产、时段和约束，只高亮改变的价格、流向或上限；下方用一个真实结算时段核算两种结果|结算稿可展示相同调度怎样得到两种现金流；光储稿可把越限和回收的时段连到收益分解|
+|年度收入由少数尖峰驱动|同横轴叠排价格、可用功率、SOC 与现金流；旁列全年配对效应及区间，交代选日规则|结算稿已有滚动区间和收入集中度表，可验证“典型日是否代表全年”|
+|总收益掩盖分配差异|依次呈现总体分母、受益或受损组、区域差异；不同地域比较固定色标，空间位置不重要时用排序点图|光储稿按站点、年份同时识别；小站点数优先保留站名，避免着色地图制造连续覆盖的印象|
+|模型能否跨噪声或跨域保持排序|左为训练与留出单位，右为同一模型序列在基准与挑战集上的排名连线或矩阵；下方绘秩相关和配对区间|轴承稿把 5×8 排名与已有相关图连起来，标出发生反转的模型对及其误差范围|
+|寿命预测对测试单元失效|上排传感器原始量与健康指标，下排预测寿命与参考终点；并排普通试件与按预先规则选出的失败试件|区分跨试件泛化、临近失效时间窗和不同预测起点；保留试件号与时间单位|
+|多个场景共用一个模型|主图一对面板固定比较对象，再依次展开参数或地点；每次只改变一个维度，减少读者来回找色标的成本|用丹麦／法国复版、不同季节同轴、不同噪声形态同模型顺序等结构检验异质性|

@@ -1763,8 +1763,14 @@ def _route_preflight(tmp_path, monkeypatch, formal_check):
     return metadata
 
 
-def test_stale_selectors_and_local_evidence_are_advisories_and_the_review_continues(tmp_path, monkeypatch):
+@pytest.mark.parametrize("has_plan", [True, False])
+def test_stale_selectors_and_local_evidence_are_advisories_and_the_review_continues(tmp_path, monkeypatch, has_plan):
     _route_preflight(tmp_path, monkeypatch, copy.deepcopy(STALE_ROUTES))
+    if has_plan:
+        (tmp_path / "papers/p/manuscript/figure-plan.json").write_text(json.dumps({
+            "paper_type": "other", "manuscript_type": "other", "figures": [],
+            "count_reason": "This source-routing fixture is a text-only note.",
+        }))
     pre = flow.preflight('p', tmp_path, tmp_path / 'build')
     assert pre['blockers'] == []
     stale = [a for a in pre['preparation_advisories'] if a['code'] == 'SOURCE-SELECTOR-STALE']
@@ -1785,7 +1791,10 @@ def test_stale_selectors_and_local_evidence_are_advisories_and_the_review_contin
         (editor(), {}) if kw['role_name'] == 'editor' else
         ({'letter': 'fixed'}, {}) if kw['role_name'] == 'decision_letter' else (referee('accept'), {})))
     record = flow.run_review('p', root=tmp_path, apply=False)
-    assert record['merged']['outcome'] == 'ready'
+    assert record["merged"]["outcome"] == ("ready" if has_plan else "revision_required")
+    assert record["merged"]["scientific_blockers"] == []
+    if not has_plan:
+        assert any(c["type"] == "figure" for c in record["merged"]["required_changes"])
     assert {'SOURCE-SELECTOR-STALE', 'LOCAL-EVIDENCE-UNBOUND'} <= {a['code'] for a in record['preparation_advisories']}
 
 
