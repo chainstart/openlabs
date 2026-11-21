@@ -189,23 +189,12 @@ def support_sources_snapshot_sha256(
     if not isinstance(configured, list) or not configured:
         return None
     root = Path(repo_root).resolve()
-    paths = resolve_support_sources(record, repo_root=root)
+    logical = support_sources_logical_paths(record, repo_root=root)
     bindings = _load_artifact_bindings(root, support_artifact_manifests(record))
-    for path in paths:
+    for path in logical.values():
         binding = bindings.get(path.relative_to(root).as_posix())
         if binding is not None:
             _verify_artifact_binding(root, path, binding)
-    raw_aliases = publication.get("adopted_sources")
-    aliases = ({str(key): str(value) for key, value in raw_aliases.items()}
-               if isinstance(raw_aliases, Mapping) else None)
-    logical: dict[str, Path] = {}
-    for path in paths:
-        name = _review_logical_support_path(path, root, aliases)
-        if name in logical:
-            raise SupportPackageError(
-                f"Support sources collide after version normalization: {name}"
-            )
-        logical[name] = path
     return support_sources_digest(logical)
 
 
@@ -217,9 +206,12 @@ def support_sources_logical_paths(
     """``{logical name: resolved file}`` of the registered support sources (no binding check)."""
 
     root = Path(repo_root).resolve()
+    aliases = _publication(record).get("adopted_sources")
+    if not isinstance(aliases, Mapping):
+        aliases = None
     logical: dict[str, Path] = {}
     for path in resolve_support_sources(record, repo_root=root):
-        name = _review_logical_support_path(path, root)
+        name = _review_logical_support_path(path, root, aliases)
         if name in logical:
             raise SupportPackageError(
                 f"Support sources collide after version normalization: {name}"

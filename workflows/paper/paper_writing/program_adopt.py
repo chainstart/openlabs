@@ -355,7 +355,12 @@ def adopt(paper_id: str, *, root: str | Path, source: str | Path,
         metadata = plan["metadata"]
         registry_bytes = _registry_yaml(paper_id, metadata).encode("utf-8")
     publication = (metadata.get("support") or {}).get("publication") or {}
-    if (publication.get("mode") == "zenodo_only" and publication.get("status", "planned") == "planned"
+    from paper_writing.registry import load_registry_settings
+    from paper_writing.support_policy import effective_publication_mode, publication_policy
+
+    settings = load_registry_settings(repo_root) if (repo_root / "registry/settings.yaml").is_file() else {}
+    if (effective_publication_mode(publication, publication_policy(settings)) == "zenodo_only"
+            and publication.get("status", "planned") == "planned"
             and not publication.get("source_files")):
         from paper_writing.support import resolve_support_sources
         from paper_writing.support_upload_policy import validate_upload_sources
@@ -380,7 +385,7 @@ def adopt(paper_id: str, *, root: str | Path, source: str | Path,
             selected = resolve_support_sources(metadata, candidates, repo_root=workspace)
             validate_upload_sources(selected, repo_root=workspace)
             publication = {**publication, "source_files": [str(path.relative_to(workspace)) for path in selected]}
-            metadata = {**metadata, "support": {**metadata["support"], "publication": publication}}
+            metadata = {**metadata, "support": {**(metadata.get("support") or {}), "publication": publication}}
             registry_bytes = _registry_yaml(paper_id, metadata).encode("utf-8")
         elif (reason := str(metadata.get("support_none_reason") or publication.get("not_required_reason") or "").strip()):
             # A recorded paper-specific decision is required. An absent manifest
@@ -389,7 +394,7 @@ def adopt(paper_id: str, *, root: str | Path, source: str | Path,
                     _availability_text(metadata, workspace, paper_id)):
                 publication = {**publication, "mode": "not_required", "not_required_reason": reason,
                                "not_required_recorded_by": "program:adopt"}
-                metadata = {**metadata, "support": {**metadata["support"], "publication": publication}}
+                metadata = {**metadata, "support": {**(metadata.get("support") or {}), "publication": publication}}
                 registry_bytes = _registry_yaml(paper_id, metadata).encode("utf-8")
     if target_registry.exists() and target_registry.read_bytes() != registry_bytes:
         raise AdoptError(f"the data repository already registers {paper_id} with other content")

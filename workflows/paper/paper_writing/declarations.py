@@ -114,7 +114,22 @@ def default_ai_wording(root: Path, usage: Any, *, plural: bool) -> tuple[str, st
     return template["heading_latex"], text
 
 
-def apply_default_declarations(paper_id: str, root: Path) -> dict[str, Any]:
+def missing_default_contributions(metadata: Mapping[str, Any], root: Path) -> bool:
+    from paper_writing.review_flow import expand_tex
+
+    declaration = (metadata.get("declarations") or {}).get("author_contributions") or {}
+    if not declaration.get("include_in_manuscript", True):
+        return False
+    path = (root / str(metadata.get("latest_source") or "")).resolve()
+    if not path.is_file() or not path.is_relative_to(root / "papers" / str(metadata.get("paper_id") or "")):
+        return False
+    if not (root / "registry/paper-declarations/templates.yaml").is_file():
+        return False
+    return not any("contribution" in match.group(1).lower()
+                   for match in HEADING.finditer(expand_tex(path, path.parent)))
+
+
+def apply_default_declarations(paper_id: str, root: Path, *, contributions_only: bool = False) -> dict[str, Any]:
     """Repair inline declarations using the registered byline and verified model uses."""
     from paper_writing.registry import load_registry_settings
 
@@ -125,34 +140,32 @@ def apply_default_declarations(paper_id: str, root: Path) -> dict[str, Any]:
     if not path.is_relative_to(paper) or not path.is_file():
         return {"changed": False}
     usage = model_usage_for_record(metadata)
-    authors = metadata.get("authors") or load_registry_settings(root)["defaults"]["authors"]
+    authors = metadata.get("authors") or load_registry_settings(root).get("defaults", {}).get("authors", [])
     try:
         people = contribution_authors({"authors": authors})
     except ValueError:
         return {"changed": False}
-    default_heading, text = default_ai_wording(root, usage, plural=len(people) > 1)
-    if not text or model_disclosure_issues(text, usage, root=root):
-        return {"changed": False}
     source = path.read_text()
-    if (metadata.get("declarations") or {}).get("ai_use", {}).get("text_sha256"):
-        return {"changed": False}
     heading, old = section(source, "ai_use")
     if heading:
-        if not old or old not in source or "\\" in old:
-            return {"changed": False}
         start = source.index(heading)
-        end = source.index(old, start + len(heading)) + len(old)
     else:
         anchor = re.search(r"\\(?:bibliographystyle|bibliography|end\{document\})", source)
         if not anchor:
             return {"changed": False}
-        start = end = anchor.start()
-    replacement = default_heading + "\n" + text
-    contribution_heading, _ = section(source, "author_contributions")
-    if not contribution_heading and (metadata.get("declarations") or {}).get(
-            "author_contributions", {}).get("include_in_manuscript", True):
+        start = anchor.start()
+    replacement = ""
+    end = start
+    if not contributions_only and not (metadata.get("declarations") or {}).get("ai_use", {}).get("text_sha256"):
+        default_heading, text = default_ai_wording(root, usage, plural=len(people) > 1)
+        if text and not model_disclosure_issues(text, usage, root=root):
+            if not heading or (old and old in source and "\\" not in old):
+                if heading:
+                    end = source.index(old, start + len(heading)) + len(old)
+                replacement = default_heading + "\n" + text + ("\n\n" if not heading else "")
+    if missing_default_contributions({**metadata, "paper_id": paper_id}, root):
         replacement = r"\section*{Author contributions}" + "\n" + contributions_latex(people) + "\n\n" + replacement
-    updated = source[:start] + replacement + ("\n\n" if not heading else "") + source[end:]
+    updated = source[:start] + replacement + source[end:]
     if updated != source:
         path.write_text(updated)
     return {"changed": updated != source}

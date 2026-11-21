@@ -296,7 +296,8 @@ def test_delta_review_blocked_by_a_check_is_retried_not_sent_back_to_review(
     report = _tick(paths, settings, monkeypatch)
     state = _topic(paths, settings, topic["topic_id"])
     assert state["status"] == "ready_queue" and state["release"]["status"] == "exhausted"
-    assert any("a human must resolve" in error for error in report.errors)
+    assert report.errors == []
+    assert report.program["delivery_chain"][0]["repair"]["attempt"] == 1
     assert state["handoff"]["status"] != "returned_to_review"
     assert _commands(log).count("review unified-run") == 2
     assert "program deliver" not in _commands(log)
@@ -379,8 +380,8 @@ def test_failed_stage_is_retried_then_exhausted_and_reported(tmp_path, monkeypat
     state = _topic(paths, settings, topic["topic_id"])["release"]
     assert state["status"] == "exhausted" and state["attempts"]["support_prepare"] == 2
     assert report.program["release_exhausted"][0]["stage"] == "support_prepare"
-    assert any("Release pipeline" in error and "a human must resolve" in error
-               for error in report.errors)
+    assert not report.errors
+    assert report.program["delivery_chain"][0]["state"] == "in_progress"
     calls = len(_calls(log))
     report = _tick(paths, settings, monkeypatch)
     assert len(_calls(log)) == calls  # no further attempt

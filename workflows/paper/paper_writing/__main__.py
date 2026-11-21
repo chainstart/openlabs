@@ -557,6 +557,7 @@ def build_parser() -> argparse.ArgumentParser:
     program_bind_payloads.add_argument("--paper-id", required=True)
     program_declarations = program_commands.add_parser("apply-default-declarations")
     program_declarations.add_argument("--paper-id", required=True)
+    program_declarations.add_argument("--contributions-only", action="store_true")
     program_relocate = program_commands.add_parser(
         "relocate-support-sources",
         help="Point support.publication.source_files at the papers/<id>/support-materials/ "
@@ -968,7 +969,7 @@ def _run_program(args: argparse.Namespace) -> int:
         elif args.program_command == "apply-default-declarations":
             from paper_writing.declarations import apply_default_declarations
 
-            result = apply_default_declarations(args.paper_id, Path(args.root))
+            result = apply_default_declarations(args.paper_id, Path(args.root), contributions_only=args.contributions_only)
         elif args.program_command == "relocate-support-sources":
             from paper_writing.program_adopt import relocate_support_sources
 

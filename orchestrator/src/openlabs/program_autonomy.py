@@ -2051,6 +2051,8 @@ def _repair_delivery(db, paths, settings, report) -> None:
                     _info(report, "delivery_repairs").append({"task_id": task_id, "error": str(exc)})
             continue
         if used >= 2:
+            _info(report, "delivery_repairs").append({"topic_id": topic_id, "outcome": "needs_human",
+                                                     "attempts": used, "action": item["action"]})
             continue
         domain = str(topic.get("domain") or "")
         task_id = f"delivery-repair:{topic_id}:{used + 1}"
@@ -2105,7 +2107,7 @@ def report_delivery_chain(db, paths, settings, report) -> None:
             if item["state"] == "needs_human" and task.get("status") in IN_FLIGHT:
                 item.update(state="in_progress", owner=repair["task_id"])
         chain.append(item)
-        if item.get("unrecognized"):
+        if item.get("unrecognized") and item["state"] == "needs_human":
             report.errors.append(
                 f"Delivery chain: {item['paper_id']} (topic {item['topic_id']}) has no owner: "
                 f"{item['action']}")
@@ -2397,6 +2399,8 @@ class _ReleasePipeline:
         _info(self.report, "release_exhausted").append(
             {"topic_id": self.topic_id, "paper_id": self.paper_id, "stage": self.stage,
              "error": error[:300]})
+        if self.settings.program.auto_release and int((self.topic.get("delivery_repair") or {}).get("attempt") or 0) < 2:
+            return
         self.report.errors.append(
             f"Release pipeline for {self.paper_id} (topic {self.topic_id}) stopped at "
             f"{self.stage} after {self.settings.program.release_max_attempts} attempts; "
@@ -2526,10 +2530,13 @@ class _ReleasePipeline:
             self.entry("support_prepared", version_doi=result.get("reserved_version_doi"))
             return True
         writer = [item for item in issues if item.get("remedy") == "writer"]
-        if writer and any(str(item.get("code") or "").startswith(("STYLE-AI-DISCLOSURE-", "STYLE-AI-DECLARATION-"))
-                          for item in writer):
-            result = _run_paper_command(self.paths, self.settings,
-                                        ["program", "apply-default-declarations", "--paper-id", self.paper_id])
+        ai_issues = any(str(item.get("code") or "").startswith(
+            ("STYLE-AI-DISCLOSURE-", "STYLE-AI-DECLARATION-")) for item in writer)
+        if ai_issues or status.get("missing_default_contributions"):
+            command = ["program", "apply-default-declarations", "--paper-id", self.paper_id]
+            if not ai_issues:
+                command.append("--contributions-only")
+            result = _run_paper_command(self.paths, self.settings, command)
             if result.get("changed"):
                 self.entry("default_declarations_applied")
                 return True
@@ -2695,10 +2702,17 @@ class _ReleasePipeline:
             self.entry("waiting_writer", task_id=task_id)
             return True
         self.stage = "form_fix_writer"
-        self.save("release_writer_finished", status, stage=self.stage, writer_task_id=None,
-                  detail={"task_id": task_id, "status": status})
+        error = None
         if status == "succeeded":
-            _apply_writer_files(self.db, self.paths, task_id)
+            try:
+                _apply_writer_files(self.db, self.paths, task_id)
+            except (ReleaseError, ValueError, OSError) as exc:
+                error = str(exc)
+        self.save("release_writer_finished", status, stage=self.stage, writer_task_id=None,
+                  detail={"task_id": task_id, "status": status, "import_error": error})
+        if error:
+            self.failure(ReleaseError(error))
+            return True
         if status != "succeeded":
             self.failure(ReleaseError(f"formal-fix writer {task_id} ended {status}"))
             return True  # this tick stops; the next one re-checks and may retry
@@ -2786,7 +2800,7 @@ class _ReleasePipeline:
         self.stage = "full_review"
         campaign_id = str(self.topic.get("campaign_id") or "")
         evidence = [_write_evidence(self.paths, self.topic_id, "release-full-review",
-                                    {"paper_id": self.paper_id, **dict(detail)})]
+                                    {"paper_id": self.paper_id, "canonical_root": str(self.paths.data), **dict(detail)})]
         marker = _digest(self.topic_id, self.paper_id, json.dumps(dict(detail), sort_keys=True,
                                                                   default=str))
         state = {**self.state, "status": "returned_to_review", "stage": self.stage,
@@ -2812,7 +2826,10 @@ class _ReleasePipeline:
                         "A change after the ready review (formal fixes or the support-material "
                         "citation) is beyond the delta review; the packet at the input path names "
                         "why. Run `paper-writing review unified-run --paper-id "
-                        f"{self.paper_id}` as an ordinary full review and do not edit the "
+                        f"{self.paper_id} --root {self.paths.data}` as an ordinary full review on the "
+                        "canonical release sources. Load the instance LaTeX environment before building. "
+                        "If this root is unavailable, report the access error. Do not review a different "
+                        "campaign snapshot. Do not edit the "
                         "manuscript. Return paper_candidate=true only for outcome ready, and copy "
                         "the paper's registered writing_release into `review_outcome` (next_action, "
                         "status, review_stalled, rounds_for_target, max_rounds_per_target, "

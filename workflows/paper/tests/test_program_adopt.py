@@ -634,6 +634,8 @@ def test_relocated_support_sources_keep_the_reviewed_support_digest(tmp_path):
         f"papers/{PAPER}/support-materials/precheck/farms.csv"]
     assert publication["adopted_sources"][
         f"papers/{PAPER}/support-materials/decisive/solve.py"] == "decisive/solve.py"
+    from paper_writing.support import support_sources_logical_paths, support_sources_digest
+    assert support_sources_digest(support_sources_logical_paths(after, repo_root=root)) == reviewed
     assert support_sources_snapshot_sha256(after, repo_root=root) == reviewed
     assert relocate_support_sources(PAPER, root=root)["status"] == "not_needed"
     # Changed bytes are not hidden by the alias: the digest moves.

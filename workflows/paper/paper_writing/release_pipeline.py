@@ -326,6 +326,7 @@ def _review_status(paper_id: str, metadata: Mapping[str, Any], root: Path,
 
 def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
     """Everything the release pipeline decides its next step from (read-only)."""
+    from paper_writing.declarations import missing_default_contributions
     from paper_writing.review_flow import delivery_issues
 
     repo_root = Path(root).resolve()
@@ -391,6 +392,7 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "issues": issues,
         "notes": [{"kind": str(note.get("kind") or ""), "code": str(note.get("code") or ""),
                    "message": str(note.get("message") or note.get("note") or "")} for note in notes],
+        "missing_default_contributions": missing_default_contributions(metadata, repo_root),
         "writer_scope": WRITER_SCOPE.replace("<paper_id>", paper_id),
         "release_artifacts_unbound": ([] if manuscript_missing
                                       else unbound_release_artifacts(paper_id, metadata, repo_root)),
