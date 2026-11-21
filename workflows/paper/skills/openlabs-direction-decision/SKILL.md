@@ -25,6 +25,13 @@ stands. It must be one of `reasons_to_answer`; quote it verbatim in `answers_rea
 
 ## Choose
 
+Use the choices listed in the packet's `options`. When it includes
+`verified_alternatives`, the target has exhausted its review cycle. For a journal
+switch, copy the exact journal name from that list into `retarget.venue_or_format`.
+For a short communication use `short_format` and explain the intended article
+type and scope in `why_fits`. A format change preserves the journal's round count.
+Choose `freeze` if neither path addresses the outstanding review findings.
+
 - `targeted_core_analysis` - only when one specific, named analysis could change an editor's
   verdict on that reason: a missing external or temporal validation, the strongest baseline the
   referees named, an ablation that decides the mechanism. Name it, say what it is expected to
