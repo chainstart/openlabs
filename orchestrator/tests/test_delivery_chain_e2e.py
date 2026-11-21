@@ -332,6 +332,8 @@ def test_preflight_failure_is_retried_then_resumed_by_a_code_fix_never_a_full_re
     that stopped needed a human `release-retry` even after the code was fixed."""
 
     zenodo, manage = services
+    # Exercise the code-revision fallback independently of the repair worker.
+    monkeypatch.setattr(program_autonomy, "_repair_delivery", lambda *_: None)
     paths, db, settings, topic, log = _chain(tmp_path, monkeypatch, services,
                                              support="not_required",
                                              delta_outcome="preflight_failed")
@@ -384,6 +386,8 @@ def test_preflight_failure_is_retried_then_resumed_by_a_code_fix_never_a_full_re
 
 
 def test_code_retries_are_bounded(tmp_path, monkeypatch, services):
+    # Exercise the code-revision fallback independently of the repair worker.
+    monkeypatch.setattr(program_autonomy, "_repair_delivery", lambda *_: None)
     paths, db, settings, topic, log = _chain(tmp_path, monkeypatch, services,
                                              support="not_required",
                                              delta_outcome="preflight_failed")
@@ -426,8 +430,10 @@ def test_missing_manuscript_source_needs_a_human_and_starts_no_writer(
     assert release["status"] == "waiting" and release["waiting_for"] == "needs_owner"
     assert not release.get("writer_task_id") and not release.get("writer_rounds")
     assert not any(task_id.startswith("release-fix:") for task_id in report.enqueued)
-    stuck = _stuck(report)[topic["topic_id"]]
-    assert stuck["state"] == "needs_human" and "STYLE-MANUSCRIPT-MISSING" in stuck["action"]
+    item = next(i for i in report.program["delivery_chain"] if i["topic_id"] == topic["topic_id"])
+    assert item["state"] == "in_progress" and "STYLE-MANUSCRIPT-MISSING" in item["action"]
+    assert item["repair"]["attempt"] == 1
+    assert db.task(item["owner"])["exclude_provider"] == "anthropic"
 
 
 # --------------------------------------------------------------------------- classification

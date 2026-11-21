@@ -555,6 +555,8 @@ def build_parser() -> argparse.ArgumentParser:
              "papers/<id>/production/payload-artifacts.json and ignore the local copies.",
     )
     program_bind_payloads.add_argument("--paper-id", required=True)
+    program_declarations = program_commands.add_parser("apply-default-declarations")
+    program_declarations.add_argument("--paper-id", required=True)
     program_relocate = program_commands.add_parser(
         "relocate-support-sources",
         help="Point support.publication.source_files at the papers/<id>/support-materials/ "
@@ -563,7 +565,7 @@ def build_parser() -> argparse.ArgumentParser:
     program_relocate.add_argument("--paper-id", required=True)
     for command in (program_escalation, program_fallback, program_confirm, program_deliver,
                     program_assign, program_status, program_adopt, program_waive, program_bind,
-                    program_unwaive, program_bind_payloads, program_relocate):
+                    program_unwaive, program_bind_payloads, program_relocate, program_declarations):
         command.add_argument("--root", default=str(default_repo_root()))
         command.add_argument("--json", action="store_true", help="Print one JSON object.")
     return parser
@@ -963,6 +965,10 @@ def _run_program(args: argparse.Namespace) -> int:
             from paper_writing.program_adopt import bind_release_artifacts
 
             result = bind_release_artifacts(args.paper_id, root=args.root)
+        elif args.program_command == "apply-default-declarations":
+            from paper_writing.declarations import apply_default_declarations
+
+            result = apply_default_declarations(args.paper_id, Path(args.root))
         elif args.program_command == "relocate-support-sources":
             from paper_writing.program_adopt import relocate_support_sources
 

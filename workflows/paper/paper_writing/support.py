@@ -85,6 +85,7 @@ def resolve_support_sources(
     explicit_sources: Iterable[str | Path] = (),
     *,
     repo_root: str | Path,
+    discover: bool = False,
 ) -> list[Path]:
     """Resolve configured files/directories into a safe, sorted file list."""
 
@@ -98,6 +99,15 @@ def resolve_support_sources(
     # into a new Zenodo version, which makes the outer version label
     # misleading.  With no explicit set, retain the registry declaration.
     values = explicit if explicit else configured
+    if discover and not values and publication.get("source_files") in (None, []):
+        # Adopted source packages share their parent with generated Zenodo
+        # archives. Select only the dedicated source tree, never past deposits.
+        paper_id = record.get("paper_id")
+        if isinstance(paper_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", paper_id):
+            directory = root / "papers" / paper_id / "support-materials"
+            if directory.is_dir() and directory.resolve() == directory:
+                values = [path for path in sorted(directory.iterdir())
+                          if path.name != "zenodo" and not path.name.startswith(".")]
     if not values:
         raise SupportPackageError(
             "No support source files are declared; set support.publication.source_files "

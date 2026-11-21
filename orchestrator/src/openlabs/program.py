@@ -164,6 +164,7 @@ TOPIC_FIELDS = (
     "handoff",
     # Release pipeline state between ready and delivery (stage, attempts, last error).
     "release",
+    "delivery_repair",
     # Admission policy v2 (absent from older ledgers): one automatic repair of a
     # format-invalid card, and one revision of a held or fixably rejected topic.
     "card_repair",
@@ -867,7 +868,7 @@ def transition_topic(
 
 # Fields an automatic decision may set on a topic without changing its status.
 NOTE_FIELDS = frozenset(
-    {"awaiting_owner_review", "handoff", "paper_id", "release", "card_repair", "revision",
+    {"awaiting_owner_review", "handoff", "paper_id", "release", "delivery_repair", "card_repair", "revision",
      # A retried line admission precheck (program_flow.retry_held_prechecks).
      "card_check"}
 )

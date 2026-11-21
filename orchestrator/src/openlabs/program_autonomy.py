@@ -1786,6 +1786,9 @@ def _deliver_ready(db, paths, settings, report) -> None:
     program = settings.program
     ledger = _ledger(paths, settings)
     for topic in topics_by_status(ledger.read(), "ready_queue"):
+        repair_id = (topic.get("delivery_repair") or {}).get("task_id")
+        if repair_id and (db.task(repair_id) or {}).get("status") in IN_FLIGHT:
+            continue
         if program.auto_handoff:
             topic = _code_update_retry(db, paths, settings, ledger, topic) or topic
         topic_id = str(topic["topic_id"])
@@ -1955,6 +1958,135 @@ def delivery_chain_state(db: FactoryDB, settings: FactorySettings,
                        f"{handoff_status!r}; read the topic history")}
 
 
+def _writer_sources(root: Path, paper_id: str) -> dict[str, str]:
+    """Bind proposed text replacements to this paper's current manuscript bytes."""
+    directory = root / "papers" / paper_id / "manuscript"
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", paper_id) or directory.resolve() != directory:
+        return {}
+    return {p.relative_to(root).as_posix(): sha256_file(p) for p in sorted(directory.rglob("*"))
+            if p.suffix in {".tex", ".bib"} and p.resolve() == p and p.is_file()}
+
+
+def _apply_writer_files(db, paths, task_id: str) -> int:
+    """Import named text artifacts from an ingested bundle, checking their base and hash."""
+    import tempfile
+    from urllib.parse import unquote, urlparse
+
+    task = db.task(task_id) or {}
+    packet_path = task.get("input_path")
+    bundle_path = db.result_bundle_path(task_id)
+    if not packet_path or not bundle_path:
+        return 0
+    packet = _read_object(Path(packet_path))
+    sources = packet.get("source_sha256") or {}
+    if not sources:
+        return 0
+    bundle = Path(bundle_path)
+    paper = paths.data / "papers" / packet["paper_id"] / "manuscript"
+    changes = []
+    for artifact in _read_object(bundle).get("artifacts") or []:
+        name = str(artifact.get("artifact_id") or "")
+        if not name.startswith("edit-"):
+            continue
+        targets = [relative for relative in sources
+                   if name == "edit-" + hashlib.sha256(relative.encode()).hexdigest()[:16]]
+        if len(targets) != 1:
+            raise ReleaseError("Unrecognized delivery text artifact")
+        relative = targets[0]
+        target = paths.data / relative
+        uri = urlparse(str(artifact.get("uri") or ""))
+        origin = Path(unquote(uri.path)).resolve()
+        if (target.resolve() != target or not target.is_relative_to(paper)
+                or uri.scheme != "file" or uri.netloc or not origin.is_relative_to(bundle.parent / "artifacts")
+                or not origin.is_file() or origin.stat().st_size > 4 * 1024 * 1024
+                or sha256_file(origin) != artifact.get("sha256")):
+            raise ReleaseError("Unsafe or changed delivery text artifact")
+        current = sha256_file(target)
+        if current == artifact["sha256"]:
+            continue
+        if current != sources[relative]:
+            raise ReleaseError("Delivery writer base changed: " + relative)
+        changes.append((target, origin.read_bytes()))
+    for target, content in changes:
+        with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as output:
+            output.write(content)
+        os.chmod(output.name, target.stat().st_mode)
+        os.replace(output.name, target)
+    return len(changes)
+
+
+def _repair_delivery(db, paths, settings, report) -> None:
+    """Give a stopped topic two scoped GPT repair attempts under its original gates."""
+    if not settings.program.auto_handoff or not settings.program.auto_release:
+        return
+    ledger = _ledger(paths, settings)
+    for topic in ledger.read().get("topics") or []:
+        item = delivery_chain_state(db, settings, topic)
+        repair = topic.get("delivery_repair") or {}
+        if not item or item["state"] != "needs_human":
+            continue
+        topic_id = topic["topic_id"]
+        used = int(repair.get("attempt") or 0)
+        task_id = repair.get("task_id")
+        task = db.task(task_id) if task_id else None
+        if task and task["status"] in IN_FLIGHT:
+            continue
+        if task and task["status"] == "succeeded" and not repair.get("checked"):
+            try:
+                _apply_writer_files(db, paths, task_id)
+            except (ReleaseError, OSError, ValueError) as exc:
+                _info(report, "delivery_repairs").append({"task_id": task_id, "error": str(exc)})
+            record_topic_note(ledger, topic_id, db=db, event_type="delivery_repair_checked",
+                              reason="recheck_original_gates", decided_by=RELEASE_DECIDER,
+                              updates={"delivery_repair": {**repair, "checked": True}},
+                              detail={"task_id": task_id}, key=f"delivery_repair_checked:{task_id}")
+            stopped = {"failed", "exhausted"}
+            if item.get("paper_id") and (topic.get("status") == "in_review"
+                    or (topic.get("release") or {}).get("status") in stopped
+                    or (topic.get("handoff") or {}).get("status") in stopped):
+                try:
+                    retry_release(db, paths, settings, paper_id=item["paper_id"],
+                                  by="delivery-repair", reason=f"Recheck after {task_id}")
+                except DeliveryError as exc:
+                    _info(report, "delivery_repairs").append({"task_id": task_id, "error": str(exc)})
+            continue
+        if used >= 2:
+            continue
+        domain = str(topic.get("domain") or "")
+        task_id = f"delivery-repair:{topic_id}:{used + 1}"
+        if db.task(task_id) is None:
+            paper_id = str(item.get("paper_id") or "")
+            packet_path = _control_root(paths) / "release-packets" / _token(topic_id) / f"repair-{used + 1}.json"
+            atomic_write_json(packet_path, {"paper_id": paper_id, "canonical_root": str(paths.data),
+                                            "source_sha256": _writer_sources(paths.data, paper_id),
+                                            "error": item["action"]})
+            db.enqueue_task(task_id=task_id, input_path=str(packet_path), campaign_id=_release_campaign(db, settings, domain),
+                            domain=domain, task_type=RELEASE_FIX_TASK_TYPE,
+                            objective=(f"Repair delivery for topic {topic_id}, paper {item.get('paper_id')}, "
+                                       f"stage {item.get('stage')}. Action: {item['action']}. "
+                                       "Inspect the release history and repair only paper files or public "
+                                       "support registration. Use registered declaration defaults and actual "
+                                       "runtime evidence. If a human decision is required, return the "
+                                       "specific blocker. Read canonical_root from the input packet. Return each changed "
+                                       "TeX or Bib file as an artifact with ID edit- followed by the first 16 "
+                                       "hex digits of SHA-256 of its registry-relative UTF-8 path. "
+                                       "Preserve scientific results and review bindings. "
+                                       "Never edit the topic ledger, database, configuration, credentials "
+                                       "or attestations. Do not publish, submit, assign a handler, or "
+                                       "invoke release commands. The controller rechecks all gates."),
+                            runner=dispatch_runner(settings, RELEASE_FIX_TASK_TYPE, RELEASE_FIX_ROUTING, "cheap"),
+                            exclude_provider="anthropic", routing_reason=RELEASE_FIX_ROUTING,
+                            agent_role="writer", session_mode="fresh", max_attempts=1,
+                            max_wall_seconds=min(7200, settings.max_task_wall_seconds),
+                            **default_task_resources(settings).to_dict())
+            report.enqueued.append(task_id)
+        repair = {"task_id": task_id, "attempt": used + 1, "stage": item.get("stage")}
+        record_topic_note(ledger, topic_id, db=db, event_type="delivery_repair_scheduled",
+                          reason="delivery_needs_human", decided_by=RELEASE_DECIDER,
+                          updates={"delivery_repair": repair}, detail={**repair, "action": item["action"]},
+                          key=task_id)
+
+
 def report_delivery_chain(db, paths, settings, report) -> None:
     """``program.delivery_chain`` (every paper in the chain) and ``delivery_stuck``."""
 
@@ -1966,6 +2098,12 @@ def report_delivery_chain(db, paths, settings, report) -> None:
         item = delivery_chain_state(db, settings, topic)
         if item is None:
             continue
+        repair = topic.get("delivery_repair") or {}
+        if repair:
+            task = db.task(repair["task_id"]) or {}
+            item["repair"] = {**repair, "status": task.get("status"), "max_attempts": 2}
+            if item["state"] == "needs_human" and task.get("status") in IN_FLIGHT:
+                item.update(state="in_progress", owner=repair["task_id"])
         chain.append(item)
         if item.get("unrecognized"):
             report.errors.append(
@@ -2388,6 +2526,13 @@ class _ReleasePipeline:
             self.entry("support_prepared", version_doi=result.get("reserved_version_doi"))
             return True
         writer = [item for item in issues if item.get("remedy") == "writer"]
+        if writer and any(str(item.get("code") or "").startswith(("STYLE-AI-DISCLOSURE-", "STYLE-AI-DECLARATION-"))
+                          for item in writer):
+            result = _run_paper_command(self.paths, self.settings,
+                                        ["program", "apply-default-declarations", "--paper-id", self.paper_id])
+            if result.get("changed"):
+                self.entry("default_declarations_applied")
+                return True
         if writer:
             self.schedule_writer(status, writer)
             return False
@@ -2552,6 +2697,8 @@ class _ReleasePipeline:
         self.stage = "form_fix_writer"
         self.save("release_writer_finished", status, stage=self.stage, writer_task_id=None,
                   detail={"task_id": task_id, "status": status})
+        if status == "succeeded":
+            _apply_writer_files(self.db, self.paths, task_id)
         if status != "succeeded":
             self.failure(ReleaseError(f"formal-fix writer {task_id} ended {status}"))
             return True  # this tick stops; the next one re-checks and may retry
@@ -2579,6 +2726,8 @@ class _ReleasePipeline:
             "topic_id": self.topic_id, "paper_id": self.paper_id,
             "version": status.get("version"), "round": rounds + 1,
             "scope": status.get("writer_scope"),
+            "canonical_root": str(self.paths.data),
+            "source_sha256": _writer_sources(self.paths.data, self.paper_id),
             "issues": [{key: item.get(key) for key in ("code", "location", "message", "text",
                                                        "files") if item.get(key) is not None}
                        for item in issues],
@@ -2603,7 +2752,10 @@ class _ReleasePipeline:
                 objective=(
                     f"Paper {self.paper_id} passed the unified review. Fix only the "
                     f"{len(issues)} delivery-exit formal problem(s) listed in the packet at the "
-                    "input path, in the data repository's paper files. Do not change any number, "
+                    "input path. Read canonical_root and source_sha256 from this packet. Work on copies of "
+                    "the exact canonical sources. Return each changed TeX or Bib file as an artifact "
+                    "with artifact_id edit- followed by the first 16 lowercase hex digits of SHA-256 "
+                    "of its registry-relative path encoded as UTF-8. Do not change any number, "
                     "table, figure content, result, claim or conclusion, nor the title. Do not run "
                     "the review, Zenodo or delivery commands and do not commit; the orchestrator "
                     "re-checks, re-reviews the change (delta review) and commits. Return a result "
@@ -3054,7 +3206,7 @@ def run_program_autonomy(
         return
     for name, step in (("limits", _check_limits), ("decisions", _check_decision_tasks),
                        ("delivery", _deliver_ready),
-                       ("delivery_chain", report_delivery_chain)):
+                       ("delivery_repairs", _repair_delivery), ("delivery_chain", report_delivery_chain)):
         try:
             step(db, paths, settings, report)
         except (OSError, TopicLedgerError, KeyError, TypeError, ValueError,

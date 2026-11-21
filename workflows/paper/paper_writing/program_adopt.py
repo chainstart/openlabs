@@ -354,6 +354,43 @@ def adopt(paper_id: str, *, root: str | Path, source: str | Path,
         relocation = plan
         metadata = plan["metadata"]
         registry_bytes = _registry_yaml(paper_id, metadata).encode("utf-8")
+    publication = (metadata.get("support") or {}).get("publication") or {}
+    if (publication.get("mode") == "zenodo_only" and publication.get("status", "planned") == "planned"
+            and not publication.get("source_files")):
+        from paper_writing.support import resolve_support_sources
+        from paper_writing.support_upload_policy import validate_upload_sources
+
+        paper = workspace / "papers" / paper_id
+        dedicated = paper / SUPPORT_COPY_DIR
+        if dedicated.is_dir() and not dedicated.is_symlink():
+            candidates = [path for path in sorted(dedicated.iterdir())
+                          if path.name != "zenodo" and not path.name.startswith(".")]
+        else:
+            # Owner workspaces keep the analysis outside the manuscript, including
+            # private receipts and raw inputs. Only select analysis source and
+            # named small result tables from these conventional locations.
+            candidates = []
+            for directory in (workspace / "analysis", workspace / "grid", workspace / "grid/analysis",
+                              workspace / "decisive", paper / "analysis"):
+                if directory.is_dir() and directory.resolve() == directory:
+                    candidates.extend(sorted(directory.glob("*.py")))
+                    candidates.extend(path for name in ("primary.json", "ranks.csv", "PROTOCOL.md")
+                                      if (path := directory / name).is_file())
+        if candidates:
+            selected = resolve_support_sources(metadata, candidates, repo_root=workspace)
+            validate_upload_sources(selected, repo_root=workspace)
+            publication = {**publication, "source_files": [str(path.relative_to(workspace)) for path in selected]}
+            metadata = {**metadata, "support": {**metadata["support"], "publication": publication}}
+            registry_bytes = _registry_yaml(paper_id, metadata).encode("utf-8")
+        elif (reason := str(metadata.get("support_none_reason") or publication.get("not_required_reason") or "").strip()):
+            # A recorded paper-specific decision is required. An absent manifest
+            # by itself cannot establish that the owner has no public materials.
+            if not publication.get("zenodo") and not publication.get("version_doi") and not _DEPOSIT_PATTERN.search(
+                    _availability_text(metadata, workspace, paper_id)):
+                publication = {**publication, "mode": "not_required", "not_required_reason": reason,
+                               "not_required_recorded_by": "program:adopt"}
+                metadata = {**metadata, "support": {**metadata["support"], "publication": publication}}
+                registry_bytes = _registry_yaml(paper_id, metadata).encode("utf-8")
     if target_registry.exists() and target_registry.read_bytes() != registry_bytes:
         raise AdoptError(f"the data repository already registers {paper_id} with other content")
     pairs, skipped = _plan_copies(paper_id, metadata, workspace, repo_root,

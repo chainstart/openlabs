@@ -384,7 +384,7 @@ def test_failed_stage_is_retried_then_exhausted_and_reported(tmp_path, monkeypat
     calls = len(_calls(log))
     report = _tick(paths, settings, monkeypatch)
     assert len(_calls(log)) == calls  # no further attempt
-    assert report.program["release_exhausted"]  # still shown on every tick
+    assert report.program["delivery_chain"][0]["repair"]["attempt"] == 1
     assert "release_exhausted" in _events(db, topic["topic_id"])
 
 
@@ -603,6 +603,7 @@ def test_only_an_ignored_ledger_left_means_no_commit(tmp_path, monkeypatch):
 
 
 def test_release_retry_lets_an_exhausted_stage_try_again(tmp_path, monkeypatch):
+    monkeypatch.setattr(program_autonomy, "_repair_delivery", lambda *_: None)
     paths, db, settings, topic, log = _setup(
         tmp_path, monkeypatch, release_max_attempts=2,
         paper_extra={"fail": {"zenodo prepare": 2}})
@@ -635,6 +636,7 @@ def test_release_retry_lets_an_exhausted_stage_try_again(tmp_path, monkeypatch):
 
 
 def test_release_retry_resets_an_exhausted_delivery(tmp_path, monkeypatch):
+    monkeypatch.setattr(program_autonomy, "_repair_delivery", lambda *_: None)
     paths, db, settings, topic, log = _setup(
         tmp_path, monkeypatch, handoff_max_attempts=1, support="not_required",
         paper_extra={"fail": {"program deliver": 1}})
@@ -975,3 +977,51 @@ def test_credentials_file_setting_must_be_absolute() -> None:
     assert load_program_settings({"credentials_file": "/x/y.env"}).credentials_file == "/x/y.env"
     with pytest.raises(ValueError, match="credentials_file must be an absolute path"):
         load_program_settings({"credentials_file": "relative.env"})
+
+
+def test_import_writer_artifact_rechecks_base_and_is_idempotent(tmp_path):
+    import hashlib
+    from types import SimpleNamespace
+    data = tmp_path / "data"
+    manuscript = data / "papers" / PAPER_ID / "manuscript/main.tex"
+    manuscript.parent.mkdir(parents=True)
+    manuscript.write_text("base")
+    packet = tmp_path / "packet.json"
+    sources = program_autonomy._writer_sources(data, PAPER_ID)
+    packet.write_text(json.dumps({"paper_id": PAPER_ID, "source_sha256": sources}))
+    bundle = tmp_path / "bundle/result.json"
+    artifact = bundle.parent / "artifacts/0.tex"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("fixed")
+    relative = manuscript.relative_to(data).as_posix()
+    artifact_id = "edit-" + hashlib.sha256(relative.encode()).hexdigest()[:16]
+    bundle.write_text(json.dumps({"artifacts": [{"artifact_id": artifact_id,
+                         "uri": artifact.as_uri(), "sha256": hashlib.sha256(b"fixed").hexdigest()}]}))
+    db = SimpleNamespace(task=lambda _: {"input_path": str(packet)}, result_bundle_path=lambda _: str(bundle))
+    paths = SimpleNamespace(data=data)
+    assert program_autonomy._apply_writer_files(db, paths, "task") == 1
+    assert program_autonomy._apply_writer_files(db, paths, "task") == 0
+    manuscript.write_text("concurrent edit")
+    with pytest.raises(program_autonomy.ReleaseError, match="base changed"):
+        program_autonomy._apply_writer_files(db, paths, "task")
+    assert manuscript.read_text() == "concurrent edit"
+
+
+def test_exhausted_release_gets_two_repair_seats_before_owner(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, release_max_attempts=1, paper_extra={"fail": {"zenodo prepare": 9}})
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    for attempt in (1, 2):
+        item = report.program["delivery_chain"][0]
+        assert item["repair"]["attempt"] == attempt and item["state"] == "in_progress"
+        task_id = item["owner"]
+        assert db.task(task_id)["exclude_provider"] == "anthropic"
+        _lease(paths, settings, monkeypatch, db, task_id)
+        _finish(db, paths, task_id)
+        for _ in range(4):
+            report = _tick(paths, settings, monkeypatch)
+            item = report.program["delivery_chain"][0]
+            if item.get("owner") != task_id and item["state"] in {"in_progress", "needs_human"}:
+                if item.get("owner") or item["state"] == "needs_human":
+                    break
+    assert item["state"] == "needs_human" and item["repair"]["attempt"] == 2

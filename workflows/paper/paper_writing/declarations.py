@@ -91,6 +91,73 @@ def contribution_authors(metadata: Mapping[str, Any]) -> list[Mapping[str, Any]]
     return people
 
 
+def default_ai_wording(root: Path, usage: Any, *, plural: bool) -> tuple[str, str]:
+    """Return the registered template filled with the paper's actual tools and purposes."""
+    import yaml
+
+    path = root / "registry/paper-declarations/templates.yaml"
+    if not path.is_file() or not isinstance(usage, list) or not usage:
+        return "", ""
+    if not all(isinstance(item, Mapping) and item.get("model") and item.get("purpose") for item in usage):
+        return "", ""
+    templates = yaml.safe_load(path.read_text())
+    template = templates["ai_templates"][templates["default_ai_template_id"]]
+    if not template.get("automatically_reusable"):
+        return "", ""
+    tools = ", ".join(dict.fromkeys(f"{item['model']} through {item.get('tool')}" for item in usage))
+    purposes = ", ".join(dict.fromkeys(str(item["purpose"]) for item in usage))
+    if re.search(r"[\\{}%$&#_^~]", purposes + tools):
+        return "", ""
+    text = template["text_template"].replace("[NAME OF TOOL/SERVICE]", tools).replace("[REASON]", purposes)
+    text = text.replace("author(s)", "authors" if plural else "author")
+    text = text.replace("reviewed and edited the output as needed and take", "take" if plural else "takes")
+    return template["heading_latex"], text
+
+
+def apply_default_declarations(paper_id: str, root: Path) -> dict[str, Any]:
+    """Repair inline declarations using the registered byline and verified model uses."""
+    from paper_writing.registry import load_registry_settings
+
+    root = Path(root).resolve()
+    metadata = load_paper_metadata(paper_id, root)
+    path = (root / str(metadata.get("latest_source") or "")).resolve()
+    paper = root / "papers" / paper_id
+    if not path.is_relative_to(paper) or not path.is_file():
+        return {"changed": False}
+    usage = model_usage_for_record(metadata)
+    authors = metadata.get("authors") or load_registry_settings(root)["defaults"]["authors"]
+    try:
+        people = contribution_authors({"authors": authors})
+    except ValueError:
+        return {"changed": False}
+    default_heading, text = default_ai_wording(root, usage, plural=len(people) > 1)
+    if not text or model_disclosure_issues(text, usage, root=root):
+        return {"changed": False}
+    source = path.read_text()
+    if (metadata.get("declarations") or {}).get("ai_use", {}).get("text_sha256"):
+        return {"changed": False}
+    heading, old = section(source, "ai_use")
+    if heading:
+        if not old or old not in source or "\\" in old:
+            return {"changed": False}
+        start = source.index(heading)
+        end = source.index(old, start + len(heading)) + len(old)
+    else:
+        anchor = re.search(r"\\(?:bibliographystyle|bibliography|end\{document\})", source)
+        if not anchor:
+            return {"changed": False}
+        start = end = anchor.start()
+    replacement = default_heading + "\n" + text
+    contribution_heading, _ = section(source, "author_contributions")
+    if not contribution_heading and (metadata.get("declarations") or {}).get(
+            "author_contributions", {}).get("include_in_manuscript", True):
+        replacement = r"\section*{Author contributions}" + "\n" + contributions_latex(people) + "\n\n" + replacement
+    updated = source[:start] + replacement + ("\n\n" if not heading else "") + source[end:]
+    if updated != source:
+        path.write_text(updated)
+    return {"changed": updated != source}
+
+
 def check_record(metadata: Mapping[str, Any], source: str, *, root: Path | None = None) -> dict[str, Any]:
     """Check completeness and text binding, not scientific truth or journal acceptance."""
     errors = []

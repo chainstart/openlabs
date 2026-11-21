@@ -617,7 +617,7 @@ def prepare_zenodo_release(
 
     root = Path(repo_root or default_repo_root()).resolve()
     record = find_paper_record(paper_id, repo_root=root, config_path=config_path)
-    source_paths = resolve_support_sources(record, sources, repo_root=root)
+    source_paths = resolve_support_sources(record, sources, repo_root=root, discover=True)
     from paper_writing.support_upload_policy import validate_upload_sources
     validate_upload_sources(source_paths, repo_root=root,
                             settings=load_config(config_path or root / "registry" / "settings.yaml"))

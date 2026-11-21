@@ -639,3 +639,29 @@ def test_relocated_support_sources_keep_the_reviewed_support_digest(tmp_path):
     # Changed bytes are not hidden by the alias: the digest moves.
     (root / f"papers/{PAPER}/support-materials/decisive/solve.py").write_bytes(b"print(2)\n")
     assert support_sources_snapshot_sha256(after, repo_root=root) != reviewed
+
+
+def test_support_prepare_discovers_adopted_sources_without_previous_deposits(tmp_path):
+    from paper_writing.support import resolve_support_sources
+
+    directory = tmp_path / "papers" / PAPER / "support-materials"
+    archive = directory / "zenodo" / "old.zip"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"old")
+    source = directory / "analysis.py"
+    source.write_text("x = 1")
+    record = {"paper_id": PAPER, "support": {"publication": {"status": "planned"}}}
+    assert resolve_support_sources(record, repo_root=tmp_path, discover=True) == [source]
+
+
+def test_adopt_registers_analysis_sources_when_owner_omits_list(tmp_path):
+    workspace, data = tmp_path / "workspace", tmp_path / "data"
+    _workspace(workspace)
+    path = workspace / "registry/papers" / f"{PAPER}.yaml"
+    metadata = yaml.safe_load(path.read_text())
+    del metadata["support"]["publication"]["source_files"]
+    path.write_text(yaml.safe_dump(metadata))
+    assert adopt(PAPER, source=workspace, root=data)["status"] == "adopted"
+    registered = yaml.safe_load((data / path.relative_to(workspace)).read_text())
+    assert registered["support"]["publication"]["source_files"] == ["analysis/primary.py"]
+    assert (data / "papers" / PAPER / "support-materials/analysis/primary.py").is_file()

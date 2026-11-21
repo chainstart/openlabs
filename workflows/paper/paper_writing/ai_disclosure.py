@@ -26,7 +26,18 @@ def model_usage_for_record(metadata: Mapping[str, Any]) -> Any:
     declarations = metadata.get("declarations")
     ai = declarations.get("ai_use") if isinstance(declarations, Mapping) else None
     if isinstance(ai, Mapping) and "model_usage" in ai:
-        return ai["model_usage"] if ai["model_usage"] is not None else []
+        usage = ai["model_usage"]
+        if not isinstance(usage, list):
+            return usage if usage is not None else []
+        entries = []
+        for entry in usage:
+            if isinstance(entry, Mapping) and "actual_runtime_model" in entry and "model" not in entry:
+                entry = {**entry, "model": entry["actual_runtime_model"]}
+                purposes = entry.get("purposes")
+                if "purpose" not in entry and isinstance(purposes, list) and all(isinstance(p, str) for p in purposes):
+                    entry["purpose"] = ", ".join(purposes)
+            entries.append(entry)
+        return entries
     candidates = [str(metadata.get("created_at") or "")[:10]]
     match = re.match(r"^(\d{4})(\d{2})(\d{2})", str(metadata.get("paper_id") or ""))
     if match:

@@ -682,6 +682,12 @@ def audit_tex_tree(
             r"(?: and associated materials)?\.\s*$",
             declaration_text, re.IGNORECASE | re.DOTALL,
         )) and not re.search(r"\[(?:NAME OF TOOL/SERVICE|REASON)\]", declaration_text, re.IGNORECASE)
+        from paper_writing.declarations import default_ai_wording, normalized
+        for plural in (True, False):
+            _, wording = default_ai_wording(report_root, model_usage, plural=plural)
+            if wording and normalized(wording) in normalized(declaration_text):
+                journal_template = True
+                break
         # The tools and models named in the declaration are checked against the
         # paper's registered model-usage records (see tool_disclosure_issues and
         # model_disclosure_issues), never against a hard-coded vendor name.
@@ -696,7 +702,7 @@ def audit_tex_tree(
             ),
             (
                 "STYLE-AI-DISCLOSURE-ACCOUNTABILITY",
-                re.compile(r"(?:take|accept) full responsibility", re.IGNORECASE),
+                re.compile(r"(?:takes?|accepts?) full responsibility", re.IGNORECASE),
                 "state full human-author responsibility for the article and associated materials",
             ),
             (
