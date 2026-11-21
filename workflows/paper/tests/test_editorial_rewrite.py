@@ -436,7 +436,7 @@ def test_previous_panel_keeps_old_decisions_valid(monkeypatch):
     settings = {"review": {"referee_roles": ["referee_a", "referee_b"], "roles": roles(),
                            "previous_panels": [{"valid_for_reviews_started_before": "2026-11-07T11:30:00+00:00",
                                                 "referee_roles": ["referee_b"], "roles": roles()}]}}
-    monkeypatch.setattr(flow, "load_registry_settings", lambda root: settings)
+    monkeypatch.setattr(flow, "load_review_settings", lambda root: settings)
     config = flow.review_config("x")
     old = {"started_at": "2026-11-01T00:00:00+00:00", "active_referee_roles": ["referee_b"]}
     new = {"started_at": "2026-11-08T00:00:00+00:00", "active_referee_roles": ["referee_b"]}
@@ -530,7 +530,7 @@ def test_same_family_basis_needs_a_recorded_authorization(tmp_path, monkeypatch)
     review = {"referee_roles": ["referee_a", "referee_b"],
               "cross_model": {"required": True, "basis": "model"},
               "roles": {}}
-    monkeypatch.setattr(flow, "load_registry_settings", lambda root: {"review": review})
+    monkeypatch.setattr(flow, "load_review_settings", lambda root: {"review": review})
     with pytest.raises(ValueError, match="basis_authorization"):
         flow.review_config(tmp_path)
     review["cross_model"]["basis_authorization"] = {"actor": "user", "date": "2026-11-15"}

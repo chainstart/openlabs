@@ -902,3 +902,30 @@ def test_rejection_stage_enforced_by_target_validator(count, tier, passes):
     else:
         with pytest.raises(ValueError, match="target_journal_tier"):
             _validate_journal_target_policy(paper, paper_id="test", policy=policy)
+
+
+@pytest.mark.parametrize(("field", "short", "host", "keyword"), [
+    ("astronomy", "photometry", "physics", "eclipse"),
+    ("energy", "power", "quant", "settlement"),
+    ("reliability", "phm", "ai", "bearing"),
+])
+def test_field_bound_create_keeps_host_and_uses_field_id(tmp_path, monkeypatch, field, short, host, keyword):
+    from paper_writing.review_flow import _field_packet
+
+    _settings(tmp_path)
+    date = "2026-11-21"
+    old_id = f"20261121-{host}-legacy-{keyword}"
+    options = dict(root=tmp_path, title="A paper", created_at=date, domain=host,
+                   subdomain="legacy", venue_type="journal")
+    old = create_paper(**options, paper_id=old_id)
+    monkeypatch.setenv("OPENLABS_PAPER_FIELD", field)
+    monkeypatch.setenv("OPENLABS_PAPER_LINE_SHORT_NAME", short)
+    new = create_paper(**options, paper_id=None, slug=keyword)
+    new_id = f"20261121-{field}-{short}-{keyword}"
+    assert new.stem == new_id and old.stem == old_id
+    records = load_registry(tmp_path, include_local_repositories=False)["papers"]
+    assert records[f"papers/{new_id}"]["domain"] == host
+    assert f"name: openlabs-{field}-paper" in _field_packet(records[f"papers/{new_id}"])
+    assert _field_packet(records[f"papers/{old_id}"]) == ""
+    assert canonical_public_manuscript_filename(old_id, root=tmp_path) == f"{old_id}-v0.1.0.pdf"
+    assert canonical_public_manuscript_filename(new_id, root=tmp_path) == f"{new_id}-v0.1.0.pdf"

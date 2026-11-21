@@ -7,7 +7,7 @@ description: Shared OpenLabs manuscript workflow for every domain, from verified
 
 The repository owns state and evidence; this skill is the shared procedure. Principles are in
 the code repository's `AGENTS.md`; user decisions (venue eligibility, review panel, round
-limit, author defaults, cadence) are in `<paper_root>/registry/settings.yaml`. Mechanical
+limit, author defaults, cadence) are in the main data repository's `registry/settings.yaml`. Mechanical
 details of the checks and registry fields are in `../overlays/quality-gate.md`
 (`workflows/paper/skills/overlays/quality-gate.md`).
 
@@ -138,3 +138,12 @@ Handling a rejection: `docs/JOURNAL_HISTORY.md#handling-a-rejection`.
 Report changed files, evidence gaps, checks and builds actually run, and remaining scientific
 risks. If the paper is not ready, state the next bounded step instead of calling it
 submission-ready.
+
+## Field-bound topics
+
+When the task activates a field skill, read it before drafting. The campaign
+provides the field and line short name. In `paper create`, supply `--slug` with
+scientific keywords in place of `--paper-id`. Keep the host domain and subject
+subdomain in their existing CLI options. Reuse the registered ID for all
+subsequent commands. Panel and independence rules come from the main data
+repository's `registry/settings.yaml`.

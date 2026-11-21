@@ -3,7 +3,9 @@
 Apply the repository-wide policy in [`docs/PAPER_ID_POLICY.md`](../../../../docs/PAPER_ID_POLICY.md)
 whenever a paper workspace or reader-facing file is created.
 
-- New papers use `YYYYMMDD-domain-subdomain-keywords`; date, domain and subdomain match registry.
+- Field-bound campaigns create papers with `--slug` in place of `--paper-id`.
+  The registry binds `YYYYMMDD-field-line_short_name-keywords` to the creation date and campaign profile.
+- Other campaigns use `YYYYMMDD-domain-subdomain-keywords`; the segments match registry metadata.
 - Keywords describe stable scientific content. Keep OpenLabs question/task/round/workstream labels
   in provenance metadata, not in `paper_id`, `display_id`, manuscript prose or public filenames.
 - Keep established `paper_id` values immutable. Use a compliant `display_id` for legacy records.

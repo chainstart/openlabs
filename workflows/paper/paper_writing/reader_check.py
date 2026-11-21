@@ -164,7 +164,7 @@ def save(paper_id: str, root: Path, metadata: Mapping[str, Any], digest: str, an
 
 def run(paper_id: str, *, root: str | Path, role: Mapping[str, Any] | None = None, prompt_only: bool = False,
         record: str | Path | None = None, timeout: int = 1800) -> dict[str, Any]:
-    from paper_writing.registry import load_registry
+    from paper_writing.registry import load_review_settings
     from paper_writing.review_launcher import run_role
 
     repo_root = Path(root).resolve()
@@ -182,7 +182,7 @@ def run(paper_id: str, *, root: str | Path, role: Mapping[str, Any] | None = Non
         answer = json.loads(Path(record).read_text(encoding="utf-8"))
         return save(paper_id, repo_root, metadata, digest, answer, reader={"model": "recorded sub-agent"},
                     receipt_dir=None)
-    settings = load_registry(repo_root, include_local_repositories=False, paper_ids=[paper_id])
+    settings = load_review_settings(repo_root)
     chosen = reader_role(settings, role)
     workdir = base / stamp
     workdir.parent.mkdir(parents=True, exist_ok=True)

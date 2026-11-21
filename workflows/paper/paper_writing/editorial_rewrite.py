@@ -42,9 +42,10 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
-from paper_writing.registry import load_paper_metadata, load_registry_settings, require_not_frozen, settings_path
 from paper_writing.review_launcher import LaunchError, run_role
 from paper_writing import temporary_panels
+from paper_writing.registry import (load_paper_metadata, load_review_settings,
+                                    require_not_frozen, review_settings_path)
 
 PARTS = ("abstract", "introduction", "closing")
 VOICE_DIMENSIONS = ("naturalness", "restraint", "clarity", "venue_fit")
@@ -199,7 +200,7 @@ def _check_judges(rewriters: Any, judges: Any, single_family: Any) -> None:
 
 
 def rewrite_config(root: Path) -> dict[str, Any]:
-    settings = load_registry_settings(root) if settings_path(root).is_file() else {}
+    settings = load_review_settings(root, required=False)
     raw = dict((settings.get("quality_gate") or {}).get("editorial_rewrite") or {})
     rewriters = raw.get("rewriters") or DEFAULT_ROLES
     judges = raw.get("judges") or DEFAULT_ROLES
@@ -627,6 +628,7 @@ def run_rewrite(paper_id: str, *, root: str | Path, rewriters: list[str] | None 
     run.mkdir(parents=True)
     sources = manuscript_sources(manuscript)
     record: dict[str, Any] = {
+        "review_settings_source": str(review_settings_path(root)),
         "schema_version": "openlabs.editorial_rewrite.v1", "paper_id": paper_id, "run_id": run_id,
         "target": venue, "manuscript_version": str(metadata.get("version") or ""), "started_at": _now(),
         "source_sha256": sources, "parts": {n: {"file": p.file, "heading": p.heading, "words": _words(p.body)}

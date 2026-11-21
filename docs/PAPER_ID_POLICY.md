@@ -5,14 +5,19 @@
 
 ## 1. 新论文的不可变 `paper_id`
 
-统一格式为：
+有学科绑定的新课题使用：
 
 ```text
-YYYYMMDD-domain-subdomain-keywords
+YYYYMMDD-field-line_short_name-keywords
 ```
 
+例如 `20261121-astronomy-photometry-eclipse-timing`。在课题坐席运行
+`paper-writing paper create --slug eclipse-timing`，并提供标题、日期和领域等必填选项。
+学科与线短名在课题首次物化时绑定，保存在论文登记的 `field` 和 `line_short_name`。
+无学科绑定的课题使用 `YYYYMMDD-domain-subdomain-keywords`。
+
 - `YYYYMMDD` 是论文工作区的 `created_at` 日期，不是研究项目启动日、投稿日或版本日期。
-- `domain` 和 `subdomain` 必须与论文 registry 字段完全一致。
+- `domain` 和 `subdomain` 仍记录实际宿主领域与主题子域。无学科绑定时，编号对应两字段；有学科绑定时，编号对应 `field` 与 `line_short_name`。
 - `keywords` 使用一至五个小写英文或数字词组，描述稳定的科学对象、方法或研究目标。
 - 整个 ID 只使用小写字母、数字和连字符，长度不超过 80 个字符。
 - 创建后 `paper_id` 是跨目录、manifest、receipt 和 API 使用的不可变技术主键。标题、结论、
@@ -38,7 +43,7 @@ OpenLabs 自编题号应放在 `project_name`、研究 provenance 或 artifact �
 
 ## 2. `display_id` 与旧论文
 
-`display_id` 是面向界面、公开归档和读者文件的可读标识，也必须使用上述 domain-scoped
+`display_id` 是面向界面、公开归档和读者文件的可读标识，也必须使用上述对应的
 格式。对新论文，`display_id` 与 `paper_id` 相同。
 
 旧格式 `paper_id` 不迁移、不重命名，以免破坏历史路径和回执；为其登记合规的

@@ -217,12 +217,12 @@ def build_parser() -> argparse.ArgumentParser:
     create = paper_commands.add_parser("create", help="Create a registered empty manuscript workspace.")
     create.add_argument(
         "--paper-id",
-        required=True,
         help=(
             "Descriptive immutable ID: YYYYMMDD-domain-subdomain-keywords, "
             "for example 20260802-math-graph-opg1757-active-newton"
         ),
     )
+    create.add_argument("--slug", help="Scientific keywords for the field-bound paper ID")
     create.add_argument("--title", required=True)
     create.add_argument(
         "--project-name",
@@ -820,6 +820,7 @@ def main(argv: list[str] | None = None) -> int:
         path = create_paper(
             root=args.root,
             paper_id=args.paper_id,
+            slug=args.slug,
             title=args.title,
             project_name=args.project_name,
             created_at=args.created_at,

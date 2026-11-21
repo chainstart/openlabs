@@ -2151,6 +2151,10 @@ def _agent_environment(task: Mapping[str, Any], adapter: str | None) -> dict[str
         value = str(task.get(key) or "").strip()
         if value:
             extra[name] = value
+    profile = task.get("paper_profile")
+    if isinstance(profile, Mapping):
+        extra["OPENLABS_PAPER_FIELD"] = str(profile["field"])
+        extra["OPENLABS_PAPER_LINE_SHORT_NAME"] = str(profile["line_short_name"])
     owner = task.get("owner")
     if isinstance(owner, Mapping):
         try:

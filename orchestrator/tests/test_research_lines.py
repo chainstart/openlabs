@@ -6,12 +6,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import test_parallel_program as parallel
 import test_research_program_flow as flow
 from openlabs import engine
 from openlabs.config import load_program_settings
 from openlabs.contracts import validate_topic_card
 from openlabs.program import open_topic_ledger
+from openlabs.projects import workstream_policy
 from openlabs.program_flow import LAST_SCOUT_KEY, schedule_scouts
 from openlabs.research_lines import environment_status, load_research_lines
 
@@ -279,8 +281,14 @@ def test_a_line_that_stops_being_ready_during_review_is_still_held(tmp_path, mon
     assert db.campaign(f"{entry['topic_id']}") is None
 
 
-def test_ready_line_admits_and_the_precheck_is_the_first_task(tmp_path, monkeypatch):
+@pytest.mark.parametrize("with_field", [False, True])
+def test_ready_line_admits_and_the_precheck_is_the_first_task(tmp_path, monkeypatch, with_field):
     paths, db, settings = _line_setup(tmp_path, "ready")
+    profile = {"field": "reliability", "line_short_name": "phm"} if with_field else None
+    if profile:
+        lines = paths.data / "registry" / "research-lines.yaml"
+        lines.write_text(lines.read_text().replace("    host_domain: ai\n",
+                         "    host_domain: ai\n    field: reliability\n    line_short_name: phm\n"))
     _, admission, _ = flow._to_admission(paths, db, settings, monkeypatch, [_line_card(0)])
     entry = flow._packet(admission)["topic_cards"][0]
     flow._complete(db, paths, admission["task_id"],
@@ -297,6 +305,29 @@ def test_ready_line_admits_and_the_precheck_is_the_first_task(tmp_path, monkeypa
     first = db.latest_task(topic["campaign_id"])
     assert "feasibility_precheck" in first["objective"]
     assert "feasibility_precheck_failed" in first["objective"]
+    assert workstream_policy(campaign).get("paper_profile") == profile
+
+    # A registry change after materialization does not activate field skills on an old topic.
+    lines = paths.data / "registry" / "research-lines.yaml"
+    original = _lines_file(paths, "ready").read_text()
+    lines.write_text(original.replace("    host_domain: ai\n",
+                     "    host_domain: ai\n    field: astronomy\n    line_short_name: survey\n", 1))
+    task = {**first, "task_type": "paper_write", "skill_path": "openlabs-ai-paper",
+            "current_attempt_id": "field-skill-test", "attempt": 1}
+    attempt = engine.prepare_attempt_workspace(paths, task, campaign)
+    output = engine.attempt_output_path(attempt, task)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    skill = paths.code / "workflows/paper/skills/openlabs-ai-paper/SKILL.md"
+    spec = engine._write_task_spec(
+        paths, task, attempt_workspace=attempt, lab_id="ai",
+        manifest_path=paths.code / "labs/ai/lab.json", skill_path=skill,
+        output_path=output, wall_seconds=60, campaign=campaign,
+    )
+    job = json.loads(spec.read_text())
+    assert job.get("paper_profile") == profile
+    skills = job["runtime_policy"]["skills"]
+    assert ("$openlabs-reliability-paper" in skills) == with_field
+    assert ("$openlabs-ai-paper" in skills) != with_field
 
 
 def test_research_line_example_card_is_valid() -> None:

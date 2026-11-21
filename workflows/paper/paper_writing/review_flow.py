@@ -24,8 +24,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
-from paper_writing.registry import (load_paper_metadata, load_registry, load_registry_settings, paper_metadata_path,
-                                     require_not_frozen, write_paper_metadata)
+from paper_writing.registry import (load_paper_metadata, load_registry, load_review_settings,
+                                    paper_metadata_path, require_not_frozen, review_settings_path,
+                                    write_paper_metadata)
 from paper_writing.review_launcher import LaunchError, role_runtime, run_role
 from paper_writing import review_sandbox
 from paper_writing import formal_checks
@@ -172,7 +173,8 @@ def check_referee_models(roles: Mapping[str, Any], panel: list[str]) -> None:
 
 
 def review_config(root: str | Path) -> dict[str, Any]:
-    settings = load_registry_settings(root)
+    started_at = temporary_panels.now()
+    settings = load_review_settings(root)
     gate = settings.get("quality_gate") or {}
     review = settings.get("review") or {}
     panel = review.get("referee_roles", ["referee_a", "referee_b"])
@@ -228,7 +230,7 @@ def review_config(root: str | Path) -> dict[str, Any]:
                                                          if entry["since"] else None),
                       "roles": dict(entry["roles"]), "referee_roles": list(entry_panel),
                       "cross_model_basis": entry_basis, "temporary": True})
-    current = temporary_panels.active(settings)
+    current = temporary_panels.active(settings, started_at)
     temporary = None
     if current is not None:
         roles = dict(current["roles"])
@@ -237,6 +239,7 @@ def review_config(root: str | Path) -> dict[str, Any]:
         temporary = {"until": current["until"].isoformat(),
                      "authorization": dict(current["authorization"])}
     return {"process": gate.get("review_process"), "roles": roles,
+            "panel_selected_at": started_at.isoformat(),
             "temporary_panel": temporary,
             "referee_roles": panel, "rejection_clearance_required": True,
             "max_rounds_per_target": int(review.get("max_rounds_per_target", 10)),
@@ -840,7 +843,8 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
     from paper_writing.support import SupportPackageError
     from paper_writing.support_citations import audit_manuscript_support, support_review_findings
 
-    load_registry(root, include_local_repositories=False, paper_ids=[paper_id])  # target-policy validation
+    load_registry(root, settings=review_settings_path(root), include_local_repositories=False,
+                  paper_ids=[paper_id])  # target-policy validation
     metadata = load_paper_metadata(paper_id, root)
     guard_target(root, metadata)  # New reviews cannot reuse an excluded historical target.
     blockers: list[str] = []
@@ -1317,8 +1321,7 @@ TRACK_TEXT = {
 def review_track(metadata: Mapping[str, Any], root: Path | None = None) -> dict[str, Any]:
     """Routine or escalation review, derived from the registered target and venue policy."""
     from paper_writing import venue_policy
-    from paper_writing.registry import settings_path
-    settings = load_registry_settings(root) if root and settings_path(root).is_file() else {}
+    settings = load_review_settings(root, required=False) if root else {}
     policy = settings.get("journal_target_policy") or {}
     config = venue_policy.eligibility_config(policy)
     escalation = bool(config) and venue_policy.is_escalation_venue(metadata, policy, root=root)
@@ -1372,10 +1375,20 @@ def _target_block(metadata: Mapping[str, Any], track: str = "routine") -> str:
             f"{json.dumps(fit, ensure_ascii=False, indent=2)}")
 
 
+def _field_packet(metadata: Mapping[str, Any]) -> str:
+    field = str(metadata.get("field") or "")
+    if not field:
+        return ""
+    if not re.fullmatch(r"[a-z]+", field):
+        raise ValueError(f"Invalid paper field: {field!r}")
+    skill = Path(__file__).resolve().parents[1] / "fields" / field / "SKILL.md"
+    return f"## Discipline guidance\n{skill.read_text(encoding='utf-8')}\n\n"
+
+
 def editor_packet(pre: Mapping[str, Any], decisions: list[dict[str, Any]]) -> str:
     parts = front_matter(pre["expanded"])
     letters = json.dumps(decisions, ensure_ascii=False, indent=2) if decisions else "No prior rejections recorded."
-    return (_active_revision_packet(pre) + f"## Target journal\n{_target_block(pre['metadata'], pre.get('review_track', 'routine'))}\n\n"
+    return (_field_packet(pre["metadata"]) + _active_revision_packet(pre) + f"## Target journal\n{_target_block(pre['metadata'], pre.get('review_track', 'routine'))}\n\n"
             f"## Prior editorial decisions on this paper\n"
             "Any prior_review_documents are authenticated pre-final expert reports, not the final "
             "refusal letter. Read their complete texts as historical context; they cannot replace "
@@ -1655,7 +1668,7 @@ def referee_packet(pre: Mapping[str, Any], root: Path, previous: Mapping[str, An
     else:
         mapping = root / str(metadata.get('evidence_dir') or f"papers/{metadata.get('paper_id')}/evidence") / 'claim_evidence_map.md'
         evidence = mapping.read_text(errors='replace') if mapping.is_file() else '[No canonical claim-evidence map available]'
-    text = (f"## Target journal\n{_target_block(pre['metadata'], pre.get('review_track', 'routine'))}\n\n"
+    text = (_field_packet(metadata) + f"## Target journal\n{_target_block(pre['metadata'], pre.get('review_track', 'routine'))}\n\n"
             f"## Manuscript (LaTeX, all inputs expanded)\n{pre['expanded']}\n\n"
             f"## Bibliography\n{pre['bibliography']}\n\n"
             f"## Claim-evidence map\n{evidence}\n\n"
@@ -2441,7 +2454,9 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                               "venue_type": str(metadata.get("venue_type") or "journal"),
                               "review_track": track,
                               "manuscript_version": str(metadata.get("version") or ""),
-                              "fingerprints": pre["fingerprints"], "started_at": _now()}
+                              "fingerprints": pre["fingerprints"],
+                              "started_at": config.get("panel_selected_at") or _now(),
+                              "review_settings_source": str(review_settings_path(root))}
     record |= {"review_policy_sha256": review_policy_sha256(config, history_policy, round_limit), "active_referee_roles": panel,
                "formal_verifier_role": formal_role_name(roles),
                "single_referee_panel": len(panel) == 1, "writer_model": writer,

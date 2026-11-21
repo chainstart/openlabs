@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import json
 import re
 from collections.abc import Iterable, Mapping
@@ -179,7 +181,7 @@ def _review_carry_forward_candidate(
 def create_paper(
     *,
     root: str | Path,
-    paper_id: str,
+    paper_id: str | None,
     title: str,
     created_at: str,
     domain: str,
@@ -187,13 +189,24 @@ def create_paper(
     venue_type: str,
     project_name: str | None = None,
     target_journal: str | None = None,
+    slug: str | None = None,
 ) -> Path:
     repo_root = Path(root).resolve()
+    field = os.environ.get("OPENLABS_PAPER_FIELD")
+    line_short_name = os.environ.get("OPENLABS_PAPER_LINE_SHORT_NAME")
+    if bool(field) != bool(line_short_name):
+        raise ValueError("Paper profile requires both field and line short name")
+    if slug is not None:
+        if not field or paper_id:
+            raise ValueError("--slug requires a field-bound campaign and replaces --paper-id")
+        paper_id = f"{created_at.replace('-', '')}-{field}-{line_short_name}-{slug}"
+    if not paper_id:
+        raise ValueError("Supply --paper-id or a field-bound --slug")
     validate_new_paper_id(
         paper_id,
         created_at=created_at,
-        domain=domain,
-        subdomain=subdomain,
+        domain=field or domain,
+        subdomain=line_short_name or subdomain,
     )
     path = paper_metadata_path(paper_id, repo_root)
     if path.exists() or (repo_root / "papers" / paper_id).exists():
@@ -245,6 +258,7 @@ def create_paper(
         "created_at": created_at,
         "domain": domain,
         "subdomain": subdomain,
+        **({"field": field, "line_short_name": line_short_name} if field else {}),
         "record_status": "paper_workspace",
         "title": title,
         "title_history": [],

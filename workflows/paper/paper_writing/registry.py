@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from collections.abc import Iterable
 from copy import deepcopy
 from pathlib import Path
@@ -128,6 +129,54 @@ def _load_yaml(path: Path, *, required: bool = True) -> dict[str, Any]:
     return payload
 
 
+def review_settings_path(root: str | Path) -> Path:
+    """Resolve the main policy repository for a paper workspace."""
+    configured = os.environ.get("OPENLABS_REVIEW_DATA") or os.environ.get("OPENLABS_DATA")
+    if configured:
+        return settings_path(configured)
+    local = Path(root).resolve()
+    workspace = os.environ.get("OPENLABS_WORKSPACE")
+    if workspace:
+        data = Path(workspace).expanduser().resolve() / "openlabs-data"
+        if settings_path(data).is_file():
+            return settings_path(data)
+    for parent in local.parents:
+        if parent.name == "openlabs-data" or (
+            local.relative_to(parent).parts[0] == "workspaces" and settings_path(parent).is_file()
+        ):
+            return settings_path(parent)
+    return settings_path(local)
+
+
+def load_review_settings(root: str | Path, *, required: bool = True) -> dict[str, Any]:
+    """Load policy from the main registry and report conflicting workspace copies."""
+    source = review_settings_path(root)
+    if not required and not source.is_file() and source == settings_path(root):
+        return {}
+    settings = load_registry_settings(root, settings=source)
+    local = settings_path(root)
+    if local != source and local.is_file():
+        try:
+            copy = _load_yaml(local)
+        except (OSError, ValueError, yaml.YAMLError):
+            warnings.warn(f"Unreadable workspace review settings at {local}; using {source}",
+                          stacklevel=2)
+        else:
+            for section in ("review", "quality_gate"):
+                candidate = copy.get(section)
+                official = settings.get(section) or {}
+                if isinstance(candidate, dict):
+                    conflicts = [key for key, value in candidate.items()
+                                 if value != official.get(key)]
+                else:
+                    conflicts = [section] if section in copy and candidate != official else []
+                if conflicts:
+                    warnings.warn(
+                        f"Conflicting workspace review settings at {local} ({section}: "
+                        f"{', '.join(conflicts)}); using {source}", stacklevel=2)
+    return settings
+
+
 def load_registry_settings(
     root: str | Path | None = None,
     *,
@@ -199,10 +248,15 @@ def load_registry(
         canonical_parts = domain_scoped_parts(paper_id)
         domain = str(paper.get("domain") or "").strip()
         subdomain = str(paper.get("subdomain") or "").strip()
-        if canonical_parts and (
-            canonical_parts["domain"] != domain
-            or canonical_parts["subdomain"] != subdomain
-        ):
+        field = str(paper.get("field") or "").strip()
+        line_short_name = str(paper.get("line_short_name") or "").strip()
+        if bool(field) != bool(line_short_name):
+            raise ValueError(f"Paper profile requires both field and line_short_name for {paper_id}")
+        id_domain, id_subdomain = (field, line_short_name) if field else (domain, subdomain)
+        if (field and not canonical_parts) or (canonical_parts and (
+            canonical_parts["domain"] != id_domain
+            or canonical_parts["subdomain"] != id_subdomain
+        )):
             raise ValueError(
                 f"paper_id domain/subdomain segments must match registry metadata for {paper_id}"
             )
@@ -229,8 +283,8 @@ def load_registry(
             if display_parts["date"] != expected_date:
                 raise ValueError(f"display_id date must match created_at for {paper_id}")
             if (
-                display_parts["domain"] != domain
-                or display_parts["subdomain"] != subdomain
+                display_parts["domain"] != id_domain
+                or display_parts["subdomain"] != id_subdomain
             ):
                 raise ValueError(
                     f"display_id domain/subdomain must match registry metadata for {paper_id}"

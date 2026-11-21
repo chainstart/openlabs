@@ -621,6 +621,14 @@ def materialize_candidate(
             source=str(project.path),
             max_agent_seconds=max_agent_seconds or settings.max_campaign_agent_seconds,
         )
+    policy = dict(extra_policy or {})
+    if existing is not None and existing.get("project_config_path"):
+        # Materialization can replay after the ledger update fails. Keep what the
+        # campaign first bound, including the absence of a profile for old topics.
+        pinned_profile = workstream_policy(existing).get("paper_profile")
+        policy.pop("paper_profile", None)
+        if pinned_profile:
+            policy["paper_profile"] = pinned_profile
     db.configure_project_campaign(
         campaign_id,
         project_config_path=str(project.path),
@@ -637,7 +645,7 @@ def materialize_candidate(
             "objective": str(raw_branch.get("objective") or ""),
             "source_review_task_id": review_task_id,
             "candidate_id": candidate_id,
-            **dict(extra_policy or {}),
+            **policy,
         },
         priority=int(source_campaign.get("priority") or 0) + 1,
         max_agent_seconds=max_agent_seconds,

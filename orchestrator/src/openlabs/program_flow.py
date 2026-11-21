@@ -3291,6 +3291,12 @@ def materialize_waiting_topics(
             )
             + conditions_instruction(record_conditions(record))
         ).strip()
+        line = str(topic.get("research_line") or "")
+        entry = (line_entry(research_lines_document(paths, settings), line) or {}) if line else {}
+        paper_profile = (
+            {"field": entry["field"], "line_short_name": entry["line_short_name"]}
+            if entry.get("field") else None
+        )
         campaign_id, first_task = materialize_candidate(
             db,
             paths,
@@ -3305,7 +3311,8 @@ def materialize_waiting_topics(
                 record, topic, record_path=record_path, agent_seconds_budget=budget
             ),
             extra_policy={"topic_id": topic_id, "program_research": True,
-                          "max_agent_seconds": budget},
+                          "max_agent_seconds": budget,
+                          **({"paper_profile": paper_profile} if paper_profile else {})},
             max_agent_seconds=budget,
         )
         activate_topic(

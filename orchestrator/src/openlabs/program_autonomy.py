@@ -1673,7 +1673,8 @@ def _run_paper_command(paths: WorkspacePaths, settings: FactorySettings,
         command.append("--json")
     try:
         completed = subprocess.run(
-            command, cwd=str(paths.data), env={**os.environ, **dict(environment or {})},
+            command, cwd=str(paths.data),
+            env={**os.environ, **dict(environment or {}), "OPENLABS_REVIEW_DATA": str(paths.data)},
             capture_output=True,
             text=True, timeout=timeout, check=False,
         )

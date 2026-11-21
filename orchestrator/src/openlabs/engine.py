@@ -3867,6 +3867,22 @@ def _write_task_spec(
                 f"{campaign.get('protocol_id')!r}"
             )
         skill_dirs.append(skill_path.parent)
+    if campaign:
+        profile = workstream_policy(campaign).get("paper_profile")
+        if profile:
+            payload["paper_profile"] = profile
+            field = profile["field"]
+            if not re.fullmatch(r"[a-z]+", field):
+                raise ValueError(f"Invalid paper field: {field!r}")
+            field_skill = paths.code / "workflows" / "paper" / "fields" / field
+            if not (field_skill / "SKILL.md").is_file():
+                raise ValueError(f"Missing paper field skill: {field_skill}")
+            legacy_skill = _paper_skill(str(task["domain"]))
+            skill_dirs = [path for path in skill_dirs if path.name != legacy_skill]
+            available_skill_dirs = [path for path in available_skill_dirs if path.name != legacy_skill]
+            skill_dirs.append(field_skill)
+            if skill_path and skill_path.parent.name == legacy_skill:
+                payload["skill_path"] = str(field_skill / "SKILL.md")
     if owner_mode.is_owner_task(task) and campaign is not None and db is not None and (
         settings is not None
     ):
@@ -3953,6 +3969,7 @@ def _launch_task(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ)
     environment["OPENLABS_WORKSPACE"] = str(paths.workspace)
+    environment["OPENLABS_REVIEW_DATA"] = str(paths.data)
     environment["OPENLABS_JOB_SPEC"] = str(job_path)
     reserved = task_resources(task)
     thread_count = str(reserved.cpu_threads)

@@ -49,9 +49,8 @@ SETTINGS = {
 @pytest.fixture
 def settings(monkeypatch):
     data = copy.deepcopy(SETTINGS)
-    monkeypatch.setattr(flow, "load_registry_settings", lambda root: data)
-    monkeypatch.setattr(er, "load_registry_settings", lambda root: data)
-    monkeypatch.setattr(er, "settings_path", lambda root: Path(__file__))
+    monkeypatch.setattr(flow, "load_review_settings", lambda root: data)
+    monkeypatch.setattr(er, "load_review_settings", lambda root, **kwargs: data)
     return data
 
 
@@ -127,3 +126,29 @@ def test_until_needs_a_zone(settings, monkeypatch):
     settings["review"]["temporary_panels"][0]["until"] = "2026-11-23T11:00:00"
     with pytest.raises(ValueError, match="zone"):
         flow.review_config("x")
+
+
+def test_workspace_copy_cannot_override_main_panel_or_invalidate_started_review(tmp_path, monkeypatch):
+    import yaml
+
+    main = tmp_path / "data"
+    topic = main / "workspaces" / "quant" / "topic"
+    data = {"schema_version": "ara.paper_writing.registry.v1", **copy.deepcopy(SETTINGS)}
+    for root in (main, topic):
+        (root / "registry").mkdir(parents=True)
+        (root / "registry/settings.yaml").write_text(yaml.safe_dump(data))
+    _at(monkeypatch, BEFORE)
+    digest = flow.review_policy_sha256(flow.review_config(topic))
+    (topic / "registry/settings.yaml").write_text(yaml.safe_dump({"review": {"temporary_panels": []}}))
+    with pytest.warns(UserWarning, match="Conflicting workspace review settings.*temporary_panels"):
+        active = flow.review_config(topic)
+    assert active["cross_model_basis"] == "model"
+    assert active["panel_selected_at"] == BEFORE.isoformat()
+    assert flow.review_policy_sha256(active) == digest
+    _at(monkeypatch, AFTER)
+    with pytest.warns(UserWarning, match="Conflicting workspace review settings"):
+        standard = flow.review_config(topic)
+    assert standard["cross_model_basis"] == "model_family"
+    historical = flow.policy_for_record({"started_at": active["panel_selected_at"],
+                                         "active_referee_roles": active["referee_roles"]}, standard)
+    assert flow.review_policy_sha256(historical) == digest

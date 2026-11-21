@@ -659,7 +659,7 @@ def test_original_rejection_letter_is_loaded_and_hash_bound(tmp_path, monkeypatc
 
 def test_single_referee_requires_authorization_and_retains_blockers(monkeypatch):
     settings = {'review': {'referee_roles': ['referee_b']}}
-    monkeypatch.setattr(flow, 'load_registry_settings', lambda root: settings)
+    monkeypatch.setattr(flow, 'load_review_settings', lambda root: settings)
     with pytest.raises(ValueError, match='authorization'):
         flow.review_config('x')
     settings['review']['single_referee_authorization'] = {'actor': 'user', 'quote': 'one referee temporarily'}
@@ -1573,7 +1573,7 @@ def test_formal_stage_runs_on_formal_verifier_or_falls_back_to_editor(tmp_path, 
 
 def test_formal_verifier_config_is_validated(monkeypatch):
     settings = {'review': {'roles': {'editor': EDITOR_MODEL, 'formal_verifier': dict(VERIFIER_MODEL)}}}
-    monkeypatch.setattr(flow, 'load_registry_settings', lambda root: settings)
+    monkeypatch.setattr(flow, 'load_review_settings', lambda root: settings)
     assert flow.review_config('x')['roles']['formal_verifier'] == VERIFIER_MODEL
     settings['review']['roles']['formal_verifier'] = dict(REFEREE_MODEL)
     with pytest.raises(ValueError, match='Codex'):
@@ -1894,7 +1894,7 @@ def test_identical_referee_models_are_refused_when_the_settings_load(monkeypatch
     settings = {'review': {'referee_roles': ['referee_a', 'referee_b'],
                            'roles': {'editor': dict(astra), 'referee_a': dict(astra),
                                      'referee_b': dict(astra)}}}
-    monkeypatch.setattr(flow, 'load_registry_settings', lambda root: settings)
+    monkeypatch.setattr(flow, 'load_review_settings', lambda root: settings)
     with pytest.raises(ValueError, match='two referees must use different models'):
         flow.review_config('x')
     settings['review']['roles']['referee_a'] = sol

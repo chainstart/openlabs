@@ -2910,6 +2910,10 @@ def render_brief(
         "--route auto --wait`.",
         "- Manuscripts: `paper-writing` CLI (CODE/workflows/paper/skills/openlabs-paper-writing/"
         "SKILL.md). Other skills and CODE/AGENTS.md are optional references and checklists.",
+        *([f"- Paper field: read `$openlabs-{profile['field']}-paper` before writing. "
+           "For a new manuscript use `paper-writing paper create --slug <scientific-keywords>` "
+           "with the other required options. Reuse its registered ID afterward."]
+          if (profile := task.get("paper_profile")) else []),
         f"- {WRITING_RULES}",
         f"- {CONTEXT_RULE}",
         "",
