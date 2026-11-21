@@ -1935,7 +1935,8 @@ def delivery_chain_state(db: FactoryDB, settings: FactorySettings,
     release_status = str(release.get("status") or "")
     handoff_status = str(handoff.get("status") or "queued")
     if status == "in_review" and release_status == "returned_to_review":
-        pending = pending_decision(db, str(topic.get("campaign_id") or ""))
+        campaign_id = topic.get("campaign_id")
+        pending = pending_decision(db, str(campaign_id)) if campaign_id else None
         if pending:
             return {**base, "state": "in_progress", "owner": pending,
                     "detail": "awaiting direction decision"}
