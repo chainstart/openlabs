@@ -859,12 +859,13 @@ def adopt_revision(paper_id, *, root, source, previous_package, artifact_manifes
         # files left by an older version would change the snapshot after promotion.
         live_manuscript = data / manuscript.relative_to(stage)
         from paper_writing.handoff import _source_files
+        extras = []
         if live_manuscript.is_dir():
             extras = [p for p in _source_files(live_manuscript, data / pdf.relative_to(stage))
                       if not (manuscript / p.relative_to(live_manuscript)).is_file()]
-            if extras:
-                raise AdoptError("reviewed successor omits previous manuscript inputs: "
-                                 + ", ".join(p.name for p in extras[:8]))
+            for path in extras:
+                if path.resolve() != path:
+                    raise AdoptError("unexpected symbolic link in the delivered manuscript")
         copies = []
         for tree in (stage / "papers", stage / "reviews"):
             for path in _files_under(tree):
@@ -880,12 +881,21 @@ def adopt_revision(paper_id, *, root, source, previous_package, artifact_manifes
                     raise AdoptError("revision cannot overwrite an earlier unified review")
                 copies.append((path, target))
         # Keep the committed baseline available. Stop on a concurrent local edit.
-        for path, target in copies:
-            if target.exists():
-                clean = subprocess.run(["git", "diff", "--quiet", "HEAD", "--",
-                                        str(target.relative_to(data))], cwd=data)
-                if clean.returncode:
-                    raise AdoptError(f"uncommitted canonical change at {target.relative_to(data)}")
+        changed = [target for _, target in copies if target.exists()] + extras
+        if changed:
+            owned = [str(target.relative_to(data)) for target in changed]
+            unknown = subprocess.run(["git", "ls-files", "--others", "--exclude-standard",
+                                      "--", *owned], cwd=data, capture_output=True, check=True)
+            clean = subprocess.run(["git", "diff", "--quiet", "HEAD", "--", *owned], cwd=data)
+            if unknown.stdout or clean.returncode:
+                raise AdoptError("uncommitted canonical change among the files to replace")
+        if extras:
+            from uuid import uuid4
+            backup = data / "_trash" / "paper-revisions" / uuid4().hex
+            for path in extras:
+                saved = backup / path.relative_to(data)
+                saved.parent.mkdir(parents=True, exist_ok=True)
+                path.rename(saved)
         for path, target in copies:
             target.parent.mkdir(parents=True, exist_ok=True)
             pending = target.with_name("." + target.name + ".revision-pending")
