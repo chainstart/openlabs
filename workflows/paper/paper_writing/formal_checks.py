@@ -823,13 +823,20 @@ def collect_sources(inv: Mapping[str, Any], metadata: Mapping[str, Any], root: P
     # post-review publication step. It is never evidence about external theory.
     publication = (metadata.get("support") or {}).get("publication") or {}
     support_key = publication.get("bibliography_key")
+    audit = None
+    if not support_key and publication.get("status") == "draft" and publication.get("draft_receipt"):
+        from paper_writing.support_citations import audit_manuscript_support
+        audit = audit_manuscript_support(str(metadata["paper_id"]), root=root)
+        if audit.get("valid"):
+            support_key = audit.get("bibliography_key")
     for ref in inv["references"]:
         key, raw = ref["key"], ref["text"]
         doi = re.search(r"10\.\d{4,9}/[^\s{}<>\"]+", raw, re.I)
         arxiv = re.search(r"(?:arxiv(?:\.org/(?:abs|pdf)/|\s*:\s*))((?:\d{4}\.\d{4,5}|[a-z-]+/\d{7})(?:v\d+)?)", raw, re.I)
         if key == support_key and publication.get("status") != "published":
             from paper_writing.support_citations import audit_manuscript_support, support_review_findings
-            audit = audit_manuscript_support(str(metadata["paper_id"]), root=root)
+            if audit is None:
+                audit = audit_manuscript_support(str(metadata["paper_id"]), root=root)
             receipt_name = publication.get("draft_receipt")
             # Identifier-presentation findings are preparation advisories at review
             # time; the authenticated draft evidence itself must still be intact.

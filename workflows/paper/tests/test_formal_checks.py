@@ -776,7 +776,8 @@ def test_metadata_suffices_without_original_document(tmp_path, monkeypatch):
     assert json.loads((run / "formal-check/evidence/retrieval-failures.json").read_text()) == []
 
 
-def test_actual_v2_support_receipt_preserves_bibliographic_data_without_private_links(tmp_path, monkeypatch):
+@pytest.mark.parametrize("registered_key", ["s", None])
+def test_actual_v2_support_receipt_preserves_bibliographic_data_without_private_links(tmp_path, monkeypatch, registered_key):
     from paper_writing import support_citations
     metadata = fixture_workspace(tmp_path); metadata.pop("formal_check")
     receipt = tmp_path / "papers/p/production/draft.json"; receipt.parent.mkdir()
@@ -785,8 +786,8 @@ def test_actual_v2_support_receipt_preserves_bibliographic_data_without_private_
         "submitted_metadata": {"title": "Exact current scientific support", "version": "1.0", "creators": [{"name": "Smith"}]},
         "verified_remote_metadata": {"title": "Exact current scientific support", "version": "1.0"},
         "upload_url": "https://storage.example/private?sig=dummy", "links": {"edit": "DUMMY_PRIVATE_EDIT"}}))
-    metadata["support"] = {"publication": {"status": "draft", "bibliography_key": "s", "draft_receipt": receipt.relative_to(tmp_path).as_posix()}}
-    monkeypatch.setattr(support_citations, "audit_manuscript_support", lambda *args, **kwargs: {"valid": True})
+    metadata["support"] = {"publication": {"status": "draft", "bibliography_key": registered_key, "draft_receipt": receipt.relative_to(tmp_path).as_posix()}}
+    monkeypatch.setattr(support_citations, "audit_manuscript_support", lambda *args, **kwargs: {"valid": True, "bibliography_key": "s"})
     docs, bib = formal.current_inputs(metadata, tmp_path)
     with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(503))) as client:
         sources, errors = formal.collect_sources(formal.inventory(docs, bib), metadata, tmp_path, tmp_path / "evidence", client)
