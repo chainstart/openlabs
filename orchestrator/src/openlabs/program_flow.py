@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -142,7 +143,7 @@ HUMAN_PROVIDER = "human"
 # awaiting_remote: parked on remote compute jobs (openlabs.remote_wait); still in flight.
 IN_FLIGHT_STATUSES = ("queued", "leased", "running", "awaiting_remote")
 POOL_STATUSES = ("proposed",)
-DOMAIN_LOAD_STATUSES = ("proposed", "admitted", "active", "in_review")
+SCOUT_LOAD_STATUSES = ("proposed", "admitted", "active", "in_review")
 # Research campaigns may continue in these ledger states (enforce_admission).
 ADMITTED_WORK_STATUSES = ("admitted", "active", "in_review", "ready_queue", "submitted")
 
@@ -201,14 +202,29 @@ def admission_workstream_id(project: ProjectConfig) -> str | None:
     return None
 
 
-def scout_key(project: ProjectConfig) -> str:
-    """Rotation key of a program project: its research line, else its domain."""
+def _scope_key(line: Any, domain: Any) -> str:
+    # '/' is excluded from project identifiers, so legacy keys cannot collide with line IDs.
+    return str(line) if line else f"domain/{domain or ''}"
 
-    return project.research_line or project.domain
+
+def scout_key(project: ProjectConfig) -> str:
+    return _scope_key(project.research_line, project.domain)
 
 
 def _topic_key(topic: Mapping[str, Any]) -> str:
-    return str(topic.get("research_line") or topic.get("domain") or "")
+    return _scope_key(topic.get("research_line"), topic.get("domain"))
+
+
+def _scout_stamp(stamps: Mapping[str, str], key: str) -> str:
+    return stamps.get(key, stamps.get(key.removeprefix("domain/"), ""))
+
+
+def _rotation_projects(settings: FactorySettings, projects: list[ProjectConfig]) -> list[ProjectConfig]:
+    lines = settings.program.research_lines
+    domains = settings.program.domains
+    if lines:
+        return [project for project in projects if project.research_line in lines]
+    return [project for project in projects if not domains or project.domain in domains]
 
 
 def research_lines_document(
@@ -370,6 +386,30 @@ def _program_tasks(db: FactoryDB, *, statuses: tuple[str, ...], where: str = "",
     return [dict(row) for row in rows]
 
 
+def scout_task_key(db: FactoryDB, task: Mapping[str, Any]) -> str:
+    try:
+        packet = _read_object(Path(str(task.get("input_path") or "")))
+        if packet.get("schema_version") == SCOUT_PACKET_SCHEMA:
+            return _topic_key(packet)
+    except (OSError, ValueError):
+        pass
+    project = campaign_project(db.campaign(str(task.get("campaign_id") or "")) or {})
+    return scout_key(project) if project else _topic_key(task)
+
+
+def admission_task_keys(db: FactoryDB, task: Mapping[str, Any]) -> set[str]:
+    try:
+        packet = _verified_review_packet(Path(str(task.get("input_path") or "")))
+        keys = {_topic_key(entry["card"]) for entry in packet.get("topic_cards", [])
+                if isinstance(entry, Mapping) and isinstance(entry.get("card"), Mapping)}
+        if keys:
+            return keys
+    except (OSError, TypeError, ValueError):
+        pass
+    project = campaign_project(db.campaign(str(task.get("campaign_id") or "")) or {})
+    return {scout_key(project) if project else _topic_key(task)}
+
+
 # --------------------------------------------------------------------------- scouts
 
 
@@ -458,12 +498,7 @@ def _choose_scout_project(
     lines = list(settings.program.research_lines)
     configured = list(settings.program.domains)
     usable: list[tuple[ProjectConfig, str]] = []
-    for project in projects:
-        if lines:
-            if project.research_line not in lines:
-                continue
-        elif configured and project.domain not in configured:
-            continue
+    for project in _rotation_projects(settings, projects):
         if scout_key(project) in exclude:
             continue
         scout_id = scout_workstream_id(project)
@@ -474,7 +509,7 @@ def _choose_scout_project(
     if not usable:
         return None
     load: dict[str, int] = {}
-    for topic in topics_by_status(document, *DOMAIN_LOAD_STATUSES):
+    for topic in topics_by_status(document, *SCOUT_LOAD_STATUSES):
         topic_key = _topic_key(topic)
         load[topic_key] = load.get(topic_key, 0) + 1
     last = db.meta_items(LAST_SCOUT_KEY + ":")
@@ -486,7 +521,7 @@ def _choose_scout_project(
             order = lines.index(project.research_line) if project.research_line in lines else 0
         else:
             order = configured.index(project.domain) if project.domain in configured else 0
-        return (load.get(rotation, 0), last.get(rotation, ""), order, project.project_id)
+        return (load.get(rotation, 0), _scout_stamp(last, rotation), order, project.project_id)
 
     return min(usable, key=key)
 
@@ -759,7 +794,7 @@ def scout_supply_fingerprint(
     queues = queued_templates(lines_document, line) if line else {}
     key = scout_key(project)
     parts = {
-        "key": key,
+        "key": line or project.domain,
         "line": line_entry(lines_document, line) if line else None,
         "queues": {template: _file_digest(path) for template, path in sorted(queues.items())},
         "held": held_queue_releases(paths, settings, line, queues) if line and queues else {},
@@ -776,6 +811,8 @@ def scout_supply_fingerprint(
 
 def _supply_state(db: FactoryDB, key: str) -> dict[str, Any]:
     raw = db.meta_get(SCOUT_SUPPLY_PREFIX + key)
+    if raw is None and key.startswith("domain/"):
+        raw = db.meta_get(SCOUT_SUPPLY_PREFIX + key.removeprefix("domain/"))
     try:
         value = json.loads(raw) if raw else {}
     except json.JSONDecodeError:
@@ -1038,7 +1075,7 @@ def _schedule_one_scout(
             # A line with its own slot limit asks for no more cards than it can admit.
             max_cards = max(1, min(max_cards, room))
             line_fields["line_free_slots"] = status.line_free_slots(line)
-    # The campaign's task count keeps two scouts of one domain scheduled within
+    # The campaign's task count keeps two scouts of one campaign scheduled within
     # the same second apart.
     sequence = db.task_count(campaign_id)
     digest = hashlib.sha256(
@@ -1154,13 +1191,8 @@ def schedule_scouts(
 ) -> tuple[list[ScoutDecision], str | None]:
     """Schedule as many topic scouts as the program allows this tick.
 
-    Returns the scheduled scouts and the reason no (further) scout was
-    scheduled. With ``max_concurrent_scouts = 1`` this is the original single
-    scout with a program-wide minimum interval. Above 1, at most one scout per
-    domain runs, the interval applies per domain, and scouts are added only
-    while ``candidate pool + in-flight scouts x expected cards`` stays below
-    ``candidate_pool_low_water``; each new scout asks for its share of what is
-    still missing.
+    The worker ceiling is global. Each line gets at most one in-flight scout
+    and uses its own interval, supply backoff and candidate coverage.
     """
 
     program = settings.program
@@ -1181,95 +1213,85 @@ def schedule_scouts(
     if compute_backlogged(settings):
         return [], COMPUTE_BACKLOG_REASON
     all_projects = program_projects(paths)
-    # No scout for a line whose environment is not ready, and its waiting cards do
-    # not fill the pool for the lines that can run (they wait for the environment).
+    rotating = _rotation_projects(settings, all_projects)
     blocked_lines = lines_not_ready(
-        paths, settings,
-        [project.research_line for project in all_projects]
-        + [topic.get("research_line") for topic in _proposed_pool(document)],
-        db=db,
+        paths, settings, [project.research_line for project in rotating], db=db,
     )
-    ready_projects = [project for project in all_projects
-                      if not project.research_line or project.research_line not in blocked_lines]
-    # A line at its own slot limit (or whose waiting cards already fill its free slots)
-    # gets no scout, and its waiting cards do not hold the pool against the other lines.
+    ready_projects = [project for project in rotating
+                      if project.research_line not in blocked_lines]
+    if rotating and not ready_projects:
+        return [], "research_line_environment_not_ready"
     full_lines = lines_without_scout_room(status, document)
-    projects = [project for project in ready_projects
-                if not project.research_line or project.research_line not in full_lines]
-    pool = len([topic for topic in _proposed_pool(document)
-                if str(topic.get("research_line") or "") not in blocked_lines
-                and str(topic.get("research_line") or "") not in full_lines])
-    if pool >= program.candidate_pool_low_water:
+    projects = [project for project in ready_projects if project.research_line not in full_lines]
+    if ready_projects and not projects:
+        return [], LINE_SLOTS_FULL_REASON
+    if not projects:
+        return [], "no_program_project"
+
+    pool_by_key = Counter(_topic_key(topic) for topic in _proposed_pool(document))
+    legacy_keys = {scout_key(project) for project in projects if not project.research_line}
+    legacy_pool = sum(pool_by_key[key] for key in legacy_keys)
+    low_water = program.candidate_pool_low_water
+    needs = {
+        scout_key(project): low_water - (pool_by_key[scout_key(project)]
+                                        if project.research_line else legacy_pool)
+        for project in projects
+    }
+    projects = [project for project in projects if needs[scout_key(project)] > 0]
+    if not projects:
         return [], "candidate_pool_at_low_water"
     if lead_short:
         return [], "lead_quota_short"
-    if all_projects and not ready_projects:
-        return [], "research_line_environment_not_ready"
-    configured_lines = set(program.research_lines)
-    rotating = [project for project in ready_projects
-                if not configured_lines or project.research_line in configured_lines]
-    if rotating and all(project.research_line in full_lines for project in rotating):
-        return [], LINE_SLOTS_FULL_REASON
+
     in_flight = _program_tasks(db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?",
                                parameters=(SCOUT_TASK_TYPE,))
+    flight_keys = [scout_task_key(db, task) for task in in_flight]
+    busy = set(flight_keys)
+    legacy_in_flight = sum(key in legacy_keys for key in flight_keys)
     moment = now or _now_moment()
-    interval = timedelta(hours=program.scout_min_interval_hours)
+    stamps = db.meta_items(LAST_SCOUT_KEY + ":")
+    recent = set()
+    for project in projects:
+        key = scout_key(project)
+        last_stamp = _scout_stamp(stamps, key)
+        if not stamps and not project.research_line and program.max_concurrent_scouts == 1:
+            last_stamp = db.meta_get(LAST_SCOUT_KEY)
+        last = budget_control.parse_time(last_stamp)
+        interval = program.line_scout_min_interval_hours.get(
+            project.research_line or "", program.scout_min_interval_hours
+        )
+        if last is not None and moment - last < timedelta(hours=interval):
+            recent.add(key)
     supply_blocks = scout_supply_blocks(db, paths, settings, projects, document, moment=moment)
     blocked_keys = frozenset(supply_blocks)
-    if program.max_concurrent_scouts <= 1:
-        if in_flight:
-            return [], "scout_in_flight"
-        last = budget_control.parse_time(db.meta_get(LAST_SCOUT_KEY))
-        if last is not None and moment - last < interval:
-            return [], "scout_min_interval"
-        chosen = _choose_scout_project(db, settings, projects, document, exclude=blocked_keys)
-        if chosen is None:
-            if blocked_keys and _choose_scout_project(db, settings, projects, document):
-                return [], _supply_block_reason(supply_blocks)
-            return [], "no_program_project"
-        project, campaign_id = chosen
-        decision = _schedule_one_scout(
-            db, paths, settings, document=document, ledger=ledger, status=status,
-            project=project, campaign_id=campaign_id,
-            max_cards=max(1, program.candidate_pool_low_water - pool), moment=moment,
-        )
-        return [decision], None
-    expected = expected_cards_per_scout(db, settings, document)
-    keys_by_campaign = {
-        scout_workstream_id(project): scout_key(project) for project in projects
-    }
-    busy = {
-        keys_by_campaign.get(str(task.get("campaign_id") or ""))
-        or str(task.get("domain") or "")
-        for task in in_flight
-    }
-    recent = {
-        domain
-        for domain, stamp in db.meta_items(LAST_SCOUT_KEY + ":").items()
-        if (at := budget_control.parse_time(stamp)) is not None and moment - at < interval
-    }
-    missing = program.candidate_pool_low_water - pool - len(in_flight) * expected
-    if missing <= 0:
+    expected = expected_cards_per_scout(db, settings, document) if legacy_keys else 1.0
+    legacy_missing = low_water - legacy_pool - legacy_in_flight * expected
+    if legacy_missing <= 0 and all(not project.research_line for project in projects):
         return [], "candidate_pool_covered_by_scouts"
     room = program.max_concurrent_scouts - len(in_flight)
     if room <= 0:
-        return [], "max_concurrent_scouts"
-    wanted = min(room, math.ceil(missing / expected))
-    max_cards = max(1, math.ceil(missing / wanted))
+        return [], "scout_in_flight" if program.max_concurrent_scouts == 1 else "max_concurrent_scouts"
+    legacy_wanted = max(0, min(room, math.ceil(legacy_missing / expected)))
+    legacy_max_cards = max(1, math.ceil(legacy_missing / max(1, legacy_wanted)))
+    legacy_scheduled = 0
     scheduled: list[ScoutDecision] = []
     reason: str | None = None
-    while len(scheduled) < wanted:
+    while len(scheduled) < room:
+        if legacy_scheduled >= legacy_wanted:
+            projects = [project for project in projects if project.research_line]
         chosen = _choose_scout_project(
             db, settings, projects, document, exclude=frozenset(busy | recent) | blocked_keys
         )
         if chosen is None:
             if not projects:
-                reason = "no_program_project"
+                reason = "candidate_pool_covered_by_scouts"
             elif blocked_keys and _choose_scout_project(
                 db, settings, projects, document, exclude=frozenset(busy | recent)
             ) is not None:
                 reason = _supply_block_reason(supply_blocks)
-            elif busy and not (recent - busy):
+            elif _choose_scout_project(db, settings, projects, document) is None:
+                reason = "no_program_project"
+            elif _choose_scout_project(db, settings, projects, document, exclude=frozenset(busy)) is None:
                 reason = "scout_in_flight"
             else:
                 reason = "scout_min_interval"
@@ -1277,15 +1299,16 @@ def schedule_scouts(
         project, campaign_id = chosen
         decision = _schedule_one_scout(
             db, paths, settings, document=document, ledger=ledger, status=status,
-            project=project, campaign_id=campaign_id, max_cards=max_cards, moment=moment,
+            project=project, campaign_id=campaign_id,
+            max_cards=needs[scout_key(project)] if project.research_line else legacy_max_cards,
+            moment=moment,
         )
         scheduled.append(decision)
         busy.add(scout_key(project))
-    if reason is None and len(scheduled) == wanted:
-        reason = (
-            "max_concurrent_scouts" if wanted == room
-            else "candidate_pool_covered_by_scouts"
-        )
+        if not project.research_line:
+            legacy_scheduled += 1
+    if len(scheduled) == room and program.max_concurrent_scouts > 1:
+        reason = "max_concurrent_scouts"
     return scheduled, reason
 
 
@@ -2493,9 +2516,10 @@ def schedule_topic_admission(
     campaign_id = str(campaign["campaign_id"])
     project = load_project(str(campaign["project_config_path"]))
     ledger = open_topic_ledger(paths, settings.program)
+    snapshot_document = ledger.read()
     proposed = [
         topic
-        for topic in topics_by_status(ledger.read(), "proposed")
+        for topic in topics_by_status(snapshot_document, "proposed")
         if topic.get("program_project_id") == project.project_id
     ]
     # A card of a line whose environment is not ready stays proposed, unreviewed:
@@ -2543,22 +2567,38 @@ def schedule_topic_admission(
     cap = settings.program.max_concurrent_admissions
     if cap > 0 and len(in_flight) >= cap:
         return ReviewSchedule(reason="max_concurrent_admissions")
-    snapshot_document = ledger.read()
-    # A line with its own slot limit reviews no more cards than it has free slots
-    # (cards already in a review count against them); a full line's cards wait.
-    line_free = slot_status(snapshot_document, settings.program,
-                            parked_program_projects(paths),
-                            paused_topic_campaigns(db)).line_free_slots(
-        project.research_line)
-    if line_free is not None and line_free - reviewing <= 0:
+    batch_counts = Counter(key for task in in_flight.values()
+                           for key in admission_task_keys(db, task))
+    slots = slot_status(snapshot_document, settings.program, parked_program_projects(paths),
+                        paused_topic_campaigns(db))
+    reservations = Counter(
+        _topic_key(topic) for topic in _proposed_pool(snapshot_document)
+        if (attempts := topic.get("admission_attempts"))
+        and _attempt_task_id(attempts[-1]) in in_flight
+    )
+    below_batch_limit = [
+        topic for topic in pending
+        if batch_counts[_topic_key(topic)] < settings.program.max_admissions_per_line
+    ]
+    if not below_batch_limit:
+        return ReviewSchedule(reason="max_admissions_per_line")
+    pending = [
+        topic for topic in below_batch_limit
+        if (free := slots.line_free_slots(topic.get("research_line"))) is None
+        or free > reservations[_topic_key(topic)]
+    ]
+    if not pending:
         return ReviewSchedule(reason=LINE_SLOTS_FULL_REASON)
     pending.sort(key=lambda item: (_proposal_time(item), str(item["topic_id"])))
+    key = _topic_key(pending[0])
+    line_free = slots.line_free_slots(pending[0].get("research_line"))
+    pending = [topic for topic in pending if _topic_key(topic) == key]
     authors = {str(topic["topic_id"]): card_author(topic, snapshot_document)
                for topic in pending}
     provider = authors[str(pending[0]["topic_id"])][0]
     batch_size = max(1, int(workstream_policy(campaign).get("review_batch_size") or 8))
     if line_free is not None:
-        batch_size = min(batch_size, line_free - reviewing)
+        batch_size = min(batch_size, line_free - reservations[key])
     batch = [
         topic for topic in pending if authors[str(topic["topic_id"])][0] == provider
     ][:batch_size]
@@ -2815,12 +2855,10 @@ def parallel_admission_room(
 ) -> bool:
     """Whether a program admission campaign may queue another batch beside its in-flight ones.
 
-    Only with ``[program].max_admissions_per_domain`` above 1, and only while
-    the campaign has fewer admission reviews queued or running than that.
+    The scheduling gate checks the count across all campaigns of the batch's line.
     """
 
-    limit = settings.program.max_admissions_per_domain
-    if not settings.program.enabled or limit <= 1:
+    if not settings.program.enabled:
         return False
     if workstream_policy(campaign).get("continuation") != "review_on_new_results":
         return False
@@ -2829,21 +2867,18 @@ def parallel_admission_room(
         return False
     campaign_id = str(campaign.get("campaign_id") or "")
     flights = _program_tasks(
-        db, statuses=IN_FLIGHT_STATUSES, where="AND campaign_id=? AND routing_reason=?",
-        parameters=(campaign_id, ADMISSION_ROUTING_REASON),
+        db, statuses=IN_FLIGHT_STATUSES, where="AND campaign_id=?",
+        parameters=(campaign_id,),
     )
-    others = _program_tasks(
-        db, statuses=IN_FLIGHT_STATUSES,
-        where="AND campaign_id=? AND COALESCE(routing_reason, '')<>?",
-        parameters=(campaign_id, ADMISSION_ROUTING_REASON),
+    return bool(flights) and all(
+        task.get("routing_reason") == ADMISSION_ROUTING_REASON for task in flights
     )
-    return not others and len(flights) < limit
 
 
 def parallel_routing_reasons(settings: FactorySettings) -> tuple[str, ...]:
     """Routing reasons whose tasks may run beside a sibling of the same campaign."""
 
-    if settings.program.enabled and settings.program.max_admissions_per_domain > 1:
+    if settings.program.enabled:
         return (ADMISSION_ROUTING_REASON,)
     return ()
 
@@ -3433,6 +3468,57 @@ def compute_backlogged(settings: FactorySettings) -> bool:
 # --------------------------------------------------------------------------- tick
 
 
+def report_scheduling_counts(
+    db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings, report: Any,
+) -> None:
+    """Snapshot topic supply and queued/running work after all scheduling passes."""
+
+    lines: dict[str, dict[str, int]] = {}
+    legacy: dict[str, dict[str, int]] = {}
+
+    def bucket(key: str) -> dict[str, int]:
+        if key.startswith("domain/"):
+            return legacy.setdefault(key.removeprefix("domain/") or "unknown", {})
+        return lines.setdefault(key, {})
+
+    document = open_topic_ledger(paths, settings.program).read()
+    for line in settings.program.research_lines:
+        bucket(line)
+    for topic in document.get("topics") or []:
+        counts = bucket(_topic_key(topic))
+        status = str(topic["status"])
+        counts[status] = counts.get(status, 0) + 1
+    for task in _program_tasks(
+        db, statuses=IN_FLIGHT_STATUSES,
+        where="AND (task_type=? OR routing_reason=?)",
+        parameters=(SCOUT_TASK_TYPE, ADMISSION_ROUTING_REASON),
+    ):
+        if task["task_type"] == SCOUT_TASK_TYPE:
+            keys, name = {scout_task_key(db, task)}, "scouts_in_flight"
+        else:
+            keys, name = admission_task_keys(db, task), "admission_batches_in_flight"
+        for key in keys:
+            counts = bucket(key)
+            counts[name] = counts.get(name, 0) + 1
+    for line, slots in report.program.get("lines", {}).items():
+        bucket(line).update(slots)
+    for item in report.program.get("scouts_scheduled", []):
+        counts = bucket(_topic_key(item))
+        counts["scouts_scheduled"] = counts.get("scouts_scheduled", 0) + 1
+    for item in report.program.get("admissions_scheduled", []):
+        task = db.task(item["task_id"])
+        if task:
+            keys = admission_task_keys(db, task)
+            item["research_lines"] = sorted(key for key in keys if not key.startswith("domain/"))
+            item["legacy_domains"] = sorted(key.removeprefix("domain/") for key in keys
+                                            if key.startswith("domain/"))
+            for key in keys:
+                counts = bucket(key)
+                counts["admission_batches_scheduled"] = counts.get("admission_batches_scheduled", 0) + 1
+    report.program["by_line"] = lines
+    report.program["legacy_by_domain"] = legacy
+
+
 def run_program_pipeline(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -3510,7 +3596,8 @@ def run_program_pipeline(
         )
         info["scout_supply_blocked"] = list(supply.values())
         info["line_supply"] = [
-            {"research_line": item.get("research_line") or item.get("domain"),
+            {**({"research_line": item["research_line"]} if item.get("research_line")
+                else {"legacy_domain": item.get("domain")}),
              "signal": ("supply_exhausted" if item["reason"] in EXHAUSTED_REASONS
                         else "scout_backoff"),
              "reason": item["reason"], "empty_draws": item.get("empty_draws"),

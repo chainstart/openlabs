@@ -162,18 +162,15 @@ class ProgramSettings:
     max_ready_unsubmitted: int = 6
     # Relative to the data repository root (``WorkspacePaths.data``).
     ledger_path: str = DEFAULT_TOPIC_LEDGER_PATH
-    # A topic scout is scheduled only while fewer proposed (undecided) topics
-    # than this wait for the admission gate.
+    # Proposed cards needed per line. Unbound legacy projects share their own pool.
     candidate_pool_low_water: int = 3
-    # Minimum time between two scheduled topic scouts: program-wide while
-    # ``max_concurrent_scouts`` is 1, per domain when scouts may run in parallel.
+    # Default interval per research line (domain fallback for projects without a line).
     scout_min_interval_hours: float = 12.0
-    # Topic scouts in flight at once (at most one per domain). 1 keeps the
-    # original single-scout front end.
+    line_scout_min_interval_hours: dict[str, float] = field(default_factory=dict)
+    # Program-wide worker ceiling. At most one scout per research line.
     max_concurrent_scouts: int = 1
-    # Cards one scout is expected to register; an in-flight scout counts this
-    # much toward ``candidate_pool_low_water`` (replaced by this instance's own
-    # average once a few scouts have finished).
+    # Expected cards per legacy scout for the shared pool, until enough finish
+    # to use this instance's measured average.
     scout_expected_cards: float = 2.0
     # Empty-draw backoff (2026-11-16): after the n-th consecutive scout of a line
     # that registered no usable card while the line's candidate supply (queue files,
@@ -184,10 +181,9 @@ class ProgramSettings:
     # until its supply changes (0 = never mark exhausted).
     scout_empty_backoff_hours: tuple[float, ...] = (1.0, 6.0, 24.0)
     scout_exhausted_after: int = 4
-    # Admission reviews of one domain in flight at once (different batches of
-    # its proposed topics); 1 keeps one review per domain.
-    max_admissions_per_domain: int = 1
-    # Admission reviews in flight across all domains; 0 means no global cap.
+    # Admission batches in flight per line. TOML accepts the former domain key as an alias.
+    max_admissions_per_line: int = 1
+    # Admission reviews in flight across all lines; 0 means no global cap.
     max_concurrent_admissions: int = 0
     # When true, a new research workstream of a non-program project is only
     # activated if the topic ledger links it to an admitted topic.
@@ -201,7 +197,8 @@ class ProgramSettings:
     # Research lines taking part in scout rotation, in preference order. When set,
     # only program projects whose ``research_line`` is listed are scouted (rotation,
     # per-line interval and load are kept per line); projects without a line keep
-    # their admissions and campaigns but get no new scouts. Empty: rotate by domain.
+    # their admissions and campaigns but get no new scouts. Empty: use the legacy
+    # host-domain filter, with rotation still keyed by line when one is present.
     research_lines: tuple[str, ...] = ()
     # Direction file (relative to the data repository root): line definitions read
     # by scouts and the admission gate, and each line's environment status.
@@ -1322,6 +1319,20 @@ def _optional_path_text(value: Any, label: str) -> str | None:
     return str(Path(value.strip()).expanduser())
 
 
+def _line_scout_intervals(value: Any) -> dict[str, float]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("[program].line_scout_min_interval_hours must be a table")
+    intervals = {}
+    for line, raw in value.items():
+        hours = _nonnegative_float(raw, -1.0)
+        if not line.strip() or isinstance(raw, bool) or not 0 <= hours < float("inf"):
+            raise ValueError(f"invalid scout interval for research line {line!r}")
+        intervals[line.strip()] = hours
+    return intervals
+
+
 def load_program_settings(payload: Any) -> ProgramSettings:
     program = payload if isinstance(payload, dict) else {}
     return ProgramSettings(
@@ -1333,13 +1344,18 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         scout_min_interval_hours=_nonnegative_float(
             program.get("scout_min_interval_hours"), 12.0
         ),
+        line_scout_min_interval_hours=_line_scout_intervals(
+            program.get("line_scout_min_interval_hours")
+        ),
         max_concurrent_scouts=_positive_int(program.get("max_concurrent_scouts"), 1),
         scout_expected_cards=_positive_float(program.get("scout_expected_cards"), 2.0),
         scout_empty_backoff_hours=_hours_sequence(
             program.get("scout_empty_backoff_hours"), (1.0, 6.0, 24.0)
         ),
         scout_exhausted_after=_nonnegative_int(program.get("scout_exhausted_after"), 4),
-        max_admissions_per_domain=_positive_int(program.get("max_admissions_per_domain"), 1),
+        max_admissions_per_line=_positive_int(
+            program.get("max_admissions_per_line", program.get("max_admissions_per_domain")), 1
+        ),
         max_concurrent_admissions=_nonnegative_int(
             program.get("max_concurrent_admissions"), 0
         ),

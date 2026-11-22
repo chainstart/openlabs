@@ -113,7 +113,7 @@ PRESETS: dict[str, dict[str, bool]] = {
 #   pace below max_parallel_agents.
 THROUGHPUT_PROGRAM: dict[str, Any] = {
     "max_concurrent_scouts": len(PROGRAM_DOMAINS),
-    "max_admissions_per_domain": 2,
+    "max_admissions_per_line": 2,
 }
 THROUGHPUT_ROUTING: dict[str, Any] = {
     "utilization_target": 0.9,

@@ -4,6 +4,7 @@ the feasibility precheck as the first research task."""
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -195,6 +196,86 @@ def test_without_research_lines_rotation_stays_by_domain(tmp_path) -> None:
     assert {item.domain for item in scheduled} == {"ai", "physics", "quant"}
 
 
+def test_single_scout_ceiling_does_not_share_line_intervals(tmp_path):
+    lines = ("astro-photometry", "engineering-vvuq")
+    paths, db, settings = _line_program(
+        tmp_path, lines, max_concurrent_scouts=1, scout_min_interval_hours=2,
+        line_scout_min_interval_hours={lines[0]: 3, lines[1]: 0},
+        line_max_active_topics=dict.fromkeys(lines, 1),
+    )
+    db.update_meta({f"{LAST_SCOUT_KEY}:{lines[0]}": NOW.isoformat()})
+    first, _ = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
+    assert [item.research_line for item in first] == [lines[1]]
+    parallel._finish(db, [first[0].task_id])
+    second, _ = schedule_scouts(db, paths, settings, lead_short=False,
+                                now=NOW + timedelta(hours=2))
+    assert [item.research_line for item in second] == [lines[1]]
+
+
+def test_backlog_of_one_line_does_not_count_against_a_sibling(tmp_path):
+    from openlabs.program import propose_topic
+
+    lines = ("astro-photometry", "engineering-vvuq")
+    paths, db, settings = _line_program(
+        tmp_path, lines, max_concurrent_scouts=2, candidate_pool_low_water=2,
+        line_max_active_topics=dict.fromkeys(lines, 4),
+    )
+    ledger = open_topic_ledger(paths, settings.program)
+    for n, line in enumerate((lines[0], lines[0], None, None)):
+        propose_topic(ledger, {"topic_id": f"p{n}", "domain": "physics", "question": f"q{n}",
+                               "data_sources": [f"s{n}"], "primary_endpoint": "e"},
+                      db=db, decided_by="test", metadata={"research_line": line})
+    scheduled, _ = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
+    assert [item.research_line for item in scheduled] == [lines[1]]
+    report = engine.TickReport()
+    from openlabs.program_flow import report_scheduling_counts
+
+    report_scheduling_counts(db, paths, settings, report)
+    assert report.program["by_line"][lines[0]]["proposed"] == 2
+    assert report.program["by_line"][lines[1]]["scouts_in_flight"] == 1
+    assert report.program["legacy_by_domain"]["physics"]["proposed"] == 2
+
+
+def test_admission_batch_limit_counts_line_across_campaigns_and_remote_waits(tmp_path):
+    from openlabs.program_flow import (
+        ADMISSION_ROUTING_REASON, REVIEW_PACKET_SCHEMA, _signed, admission_workstream_id,
+        intake_card, program_projects, schedule_topic_admission,
+    )
+
+    lines = ("astro-photometry", "engineering-vvuq")
+    paths, db, settings = _line_program(
+        tmp_path, lines, max_admissions_per_line=1, line_max_active_topics=dict.fromkeys(lines, 2),
+    )
+    projects = {project.research_line: project for project in program_projects(paths)}
+    receipt = paths.data / "receipts" / "data-access.json"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_bytes(flow.RECEIPT)
+    for n, line in enumerate(lines):
+        card = _line_card(n, research_line=line)
+        outcome = intake_card(db, paths, settings, projects[line], card, decided_by="manual:test",
+                              provider="human", source_task_id=None, receipt_digests=None)
+        assert outcome["status"] == "proposed", outcome
+
+    # An earlier batch on a retired/replaced campaign still occupies the line.
+    packet = paths.data / "older-admission.json"
+    packet.write_text(json.dumps(_signed({
+        "schema_version": REVIEW_PACKET_SCHEMA,
+        "topic_cards": [{"card": {"research_line": lines[0], "domain": "physics"}}],
+    })))
+    db.register_campaign("earlier-gate", domain="physics", title="Earlier gate")
+    db.enqueue_task(task_id="older-batch", campaign_id="earlier-gate", domain="physics",
+                    task_type="portfolio_review", objective="Review the earlier batch.",
+                    input_path=str(packet), routing_reason=ADMISSION_ROUTING_REASON)
+    with db.connect() as connection:
+        connection.execute("UPDATE tasks SET status='awaiting_remote' WHERE task_id='older-batch'")
+    results = [schedule_topic_admission(
+        db, paths, settings, db.campaign(admission_workstream_id(projects[line])), epoch=1,
+    ) for line in lines]
+    assert results[0].reason == "max_admissions_per_line"
+    assert results[1].task_id is not None
+    assert flow._packet(db.task(results[1].task_id))["topic_cards"][0]["card"]["research_line"] == lines[1]
+
+
 # --------------------------------------------------------------------------- intake and gate
 
 
@@ -299,6 +380,7 @@ def test_ready_line_admits_and_the_precheck_is_the_first_task(tmp_path, monkeypa
     assert topic["status"] == "active"
     campaign = db.campaign(topic["campaign_id"])
     state = json.loads(Path(campaign["workstream_state_path"]).read_text(encoding="utf-8"))
+    assert Path(campaign["state_path"]) == paths.data / "workspaces" / "lines" / LINE / topic["campaign_id"]
     assert state["research_line"] == LINE
     assert state["feasibility_precheck"]["on_failure"] == "freeze"
     assert state["fee_check"] and state["license_check"]["blacklist_checked"] is True
@@ -315,6 +397,15 @@ def test_ready_line_admits_and_the_precheck_is_the_first_task(tmp_path, monkeypa
     task = {**first, "task_type": "paper_write", "skill_path": "openlabs-ai-paper",
             "current_attempt_id": "field-skill-test", "attempt": 1}
     attempt = engine.prepare_attempt_workspace(paths, task, campaign)
+    from openlabs.attempts import find_attempt_workspace
+
+    recovered = find_attempt_workspace(paths, campaign_id=topic["campaign_id"],
+                                       attempt_id=task["current_attempt_id"])
+    assert recovered == attempt
+    assert attempt.map_path(campaign["workstream_state_path"]) == str(
+        attempt.campaign_root / "research_state.json"
+    )
+    assert Path(attempt.map_path(campaign["project_config_path"])).is_file()
     output = engine.attempt_output_path(attempt, task)
     output.parent.mkdir(parents=True, exist_ok=True)
     skill = paths.code / "workflows/paper/skills/openlabs-ai-paper/SKILL.md"
@@ -328,6 +419,31 @@ def test_ready_line_admits_and_the_precheck_is_the_first_task(tmp_path, monkeypa
     skills = job["runtime_policy"]["skills"]
     assert ("$openlabs-reliability-paper" in skills) == with_field
     assert ("$openlabs-ai-paper" in skills) != with_field
+
+
+def test_materialization_keeps_a_persisted_legacy_workspace(tmp_path, monkeypatch):
+    from openlabs.portfolio import _candidate_campaign_id
+
+    paths, db, settings = _line_setup(tmp_path, "ready")
+    _, admission, _ = flow._to_admission(paths, db, settings, monkeypatch, [_line_card()])
+    packet = flow._packet(admission)
+    entry = packet["topic_cards"][0]
+    campaign_id = _candidate_campaign_id(packet["project_id"], entry["topic_id"])
+    legacy = paths.data / "workspaces" / "ai" / campaign_id
+    legacy.mkdir(parents=True)
+    evidence = legacy / "evidence.txt"
+    evidence.write_text("persisted reference")
+    db.register_campaign(campaign_id, domain="ai", title="Existing topic", state_path=str(legacy))
+    flow._complete(db, paths, admission["task_id"],
+                   extra={"candidate_branches": [flow._branch(entry)]})
+    report = flow._tick(paths, settings, monkeypatch)
+    assert report.errors == []
+    topic = open_topic_ledger(paths, settings.program).topic(entry["topic_id"])
+    assert topic["campaign_id"] == campaign_id and topic["status"] == "active"
+    campaign = db.campaign(campaign_id)
+    assert Path(campaign["workstream_state_path"]) == legacy / "research_state.json"
+    assert evidence.read_text() == "persisted reference"
+    assert not (paths.data / "workspaces" / "lines" / LINE / campaign_id).exists()
 
 
 def test_research_line_example_card_is_valid() -> None:

@@ -31,7 +31,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from .config import WorkspacePaths
-from .contracts import atomic_write_json, executable_artifact, sha256_file
+from .contracts import IDENTIFIER, atomic_write_json, executable_artifact, sha256_file
 from .gates import volatile_state_marker
 from .reproduction import materialize_reproduction
 
@@ -144,6 +144,8 @@ class AttemptWorkspace:
         if not candidate.is_absolute():
             return raw
         resolved = candidate.resolve()
+        if _inside(resolved, self.canonical_campaign_root):
+            return str(self.campaign_root / resolved.relative_to(self.canonical_campaign_root))
         if resolved == self.canonical_domain_root or resolved.is_relative_to(
             self.canonical_domain_root
         ):
@@ -546,6 +548,20 @@ def plan_campaign_merge(
     )
 
 
+def _campaign_workspace_path(
+    paths: WorkspacePaths, campaign_root: Path, domain_root: Path, domain: str, campaign_id: str,
+) -> Path:
+    if _inside(campaign_root, domain_root):
+        return Path(domain) / campaign_root.relative_to(domain_root)
+    lines_root = paths.data.resolve() / "workspaces" / "lines"
+    if campaign_root.is_relative_to(lines_root):
+        relative = campaign_root.relative_to(lines_root)
+        if (len(relative.parts) == 2 and IDENTIFIER.fullmatch(relative.parts[0])
+                and relative.name == campaign_id):
+            return Path("lines") / relative
+    raise AttemptWorkspaceError("Campaign path escapes its workspace")
+
+
 def prepare_attempt_workspace(
     paths: WorkspacePaths,
     task: Mapping[str, Any],
@@ -565,8 +581,7 @@ def prepare_attempt_workspace(
         if configured_state_root
         else (canonical_domain / campaign_id).resolve()
     )
-    if not _inside(canonical_campaign, canonical_domain):
-        raise AttemptWorkspaceError("Campaign path escapes its domain workspace")
+    workspace_path = _campaign_workspace_path(paths, canonical_campaign, canonical_domain, domain, campaign_id)
     canonical_campaign.mkdir(parents=True, exist_ok=True)
 
     root = (
@@ -575,7 +590,7 @@ def prepare_attempt_workspace(
         / _token(attempt_id, prefix="attempt")
     ).resolve()
     staged_domain = root / "workspaces" / domain
-    staged_campaign = staged_domain / canonical_campaign.relative_to(canonical_domain)
+    staged_campaign = root / "workspaces" / workspace_path
     metadata_path = root / "attempt-workspace.json"
     workspace = AttemptWorkspace(
         root=root,
@@ -603,7 +618,7 @@ def prepare_attempt_workspace(
     temporary = Path(tempfile.mkdtemp(prefix=f".{root.name}.", dir=root.parent))
     try:
         temporary_domain = temporary / "workspaces" / domain
-        temporary_campaign = temporary_domain / canonical_campaign.relative_to(canonical_domain)
+        temporary_campaign = temporary / "workspaces" / workspace_path
         (temporary / "artifact-stage").mkdir(parents=True)
         # Prior result bundles are immutable inputs referenced explicitly by the
         # task and must not be recursively recopied into every new attempt.
@@ -697,7 +712,8 @@ def find_attempt_workspace(
     domain = str(metadata.get("domain") or "")
     canonical_domain = (paths.data / "workspaces" / domain).resolve()
     staged_domain = root / "workspaces" / domain
-    if not _inside(canonical_campaign, canonical_domain) or not _inside(staged_campaign, root):
+    workspace_path = _campaign_workspace_path(paths, canonical_campaign, canonical_domain, domain, campaign_id)
+    if staged_campaign != root / "workspaces" / workspace_path:
         raise AttemptWorkspaceError(f"Attempt workspace paths escape their roots: {metadata_path}")
     return AttemptWorkspace(
         root=root,
