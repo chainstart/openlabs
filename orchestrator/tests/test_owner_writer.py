@@ -224,3 +224,8 @@ def test_briefs_tell_the_owner_to_hand_over_and_the_writer_to_write(tmp_path, mo
                                topic=topic, adapter_family=None,
                                deadline=datetime(2026, 11, 19), writing={})
     assert "## Writing" in brief
+    reviewed = owner.render_brief(paths, settings, task=seat, campaign=db.campaign(topic["campaign_id"]),
+                                  topic=topic, adapter_family=None, deadline=datetime(2026, 11, 19),
+                                  state={"review_round": 1}, writing={})
+    assert owner.owner_writes_note("review_history") in reviewed
+    assert "CODE/docs/owner-policy.md" in reviewed

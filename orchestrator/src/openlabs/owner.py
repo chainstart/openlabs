@@ -1461,6 +1461,11 @@ def record_seat(
         "last_task_id": str(task["task_id"]),
         "last_runner": str(task.get("runner") or ""),
         "last_progress": reasons,
+        "evidence_index": ([{"path": item.get("uri") or item.get("path"), "sha256": item["sha256"]}
+                            for item in payload.get("artifacts") or [] if isinstance(item, Mapping)
+                            and (item.get("uri") or item.get("path"))
+                            and SHA256.fullmatch(str(item.get("sha256") or ""))][:12]
+                           or state.get("evidence_index", [])) if promoted else state.get("evidence_index", []),
         "artifact_hashes": remembered[-_MAX_REMEMBERED_ARTIFACTS:],
         # Only a promoted seat moves the phase (an unaccepted "writing" would otherwise
         # count as "already writing" and block the writer hand-over).
@@ -1956,10 +1961,8 @@ def _enqueue_review(
 # and is re-read by each later request; whole JSON states, receipts, SKILL/SOP files and logs
 # were most of the owner sessions' context.
 CONTEXT_RULE = (
-    "Context: every output stays in this session and is re-read at each later step. Locate "
-    "with `rg -n`/`jq`, read slices (`sed -n A,Bp`, `tail -50`); never dump whole JSON "
-    "states, receipts, logs or SKILL/SOP files; keep outputs small (Codex "
-    "`max_output_tokens` <= 2000); bulk reading -> a sub-agent that returns a summary."
+    "Context: every output stays in the session. Read as much evidence as the decision needs. "
+    "For bulk reading, consider targeted searches or a helper summary."
 )
 WRITING_RULES = (
     "Writing: openlabs-paper-readability/SKILL.md. Give 2–4 takeaways; run story-review before drafting. "
@@ -2958,20 +2961,20 @@ def render_brief(
     writing: Mapping[str, Any] | None = None,
     state: Mapping[str, Any] | None = None,
 ) -> str:
-    """The owner's whole brief: goal, resources, tools, hard limits (about 4 KB)."""
+    """The owner's whole brief: goal, resources, tools, hard limits and current evidence."""
 
     owner = settings.program.owner
     window = settings.proxy_download
-    state = _read_json(Path(str(campaign.get("workstream_state_path") or "")))
-    prereg = state.get("preregistration") if isinstance(state.get("preregistration"),
+    research = _read_json(Path(str(campaign.get("workstream_state_path") or "")))
+    prereg = research.get("preregistration") if isinstance(research.get("preregistration"),
                                                         Mapping) else {}
-    line = str(state.get("research_line") or campaign_line(campaign) or "")
+    line = str(research.get("research_line") or campaign_line(campaign) or "")
     where = brief_paths(task)
     code = paths.code
     sha = str((topic or {}).get("preregistration_sha256") or prereg.get("sha256") or "n/a")
-    routine = ", ".join(_venue_names(state.get("routine_fallback"))[:4]) or "see research_state.json"
-    escalation = ", ".join(_venue_names(state.get("escalation_target"))[:2])
-    conditions = state.get("admission_conditions") or []
+    routine = ", ".join(_venue_names(research.get("routine_fallback"))[:4]) or "see research_state.json"
+    escalation = ", ".join(_venue_names(research.get("escalation_target"))[:2])
+    conditions = research.get("admission_conditions") or []
     used = int(float(campaign.get("agent_seconds_used") or 0))
     maximum = int(campaign.get("max_agent_seconds") or 0)
     tools = _line_tools(paths, settings, line)
@@ -2992,8 +2995,8 @@ def render_brief(
             f"`-m {owner.codex_light_model}`; long runs in the background)."
         )
     precheck = (" The card's feasibility_precheck (research_state.json) decides first whether "
-                "the topic goes on." if state.get("feasibility_precheck") else "")
-    topic_name = (topic or {}).get("topic_id") or state.get("topic_id") or campaign["campaign_id"]
+                "the topic goes on." if research.get("feasibility_precheck") else "")
+    topic_name = (topic or {}).get("topic_id") or research.get("topic_id") or campaign["campaign_id"]
     # Static rules first, this topic and this seat last (2026-11-20, prompt caching): a
     # fresh seat's prefix stays cacheable across topics and seats up to the topic block.
     lines = [
@@ -3034,7 +3037,7 @@ def render_brief(
         "`/workspace/.download-bridge/download-submit --url URL --output /workspace/... "
         "--route auto --wait`.",
         "- Manuscripts: `paper-writing` CLI (CODE/workflows/paper/skills/openlabs-paper-writing/"
-        "SKILL.md). Other skills and CODE/AGENTS.md are optional references and checklists.",
+        "SKILL.md). Use the writing policies below when preparing a manuscript.",
         *([f"- Paper field: read `$openlabs-{profile['field']}-paper` before writing. "
            "For a new manuscript use `paper-writing paper create --slug <scientific-keywords>` "
            "with the other required options. Reuse its registered ID afterward."]
@@ -3047,22 +3050,12 @@ def render_brief(
         f"slow is not failed); large proxy downloads (>= {window.large_file_mib} MB file or "
         f"{window.large_batch_mib} MB batch) only {window.start}-{window.end} {window.timezone}, "
         "never split. Never change network, proxy or firewall settings.",
-        "2. Never print, copy or send credentials.",
-        "3. Heavy work on ailab/the queue or in the resource guard; GPU only through its lock.",
-        "4. Never fabricate data, results, citations or reviews; never pass simulated or "
-        "synthetic data off as observations or results; report negative results as they are.",
-        "5. The pre-registered primary endpoint is fixed; never rewrite it (verdict may stay "
-        "pending).",
-        "6. Paid publication only in a 2025 CAS zone-1 journal; otherwise a verified fee-free "
-        "route (`paper-writing venue lookup` first).",
-        "7. Submission, payment, authorship, external publication: stop and leave it to a human.",
-        "8. Never approve your own manuscript: return ready_for_review; another model family "
-        "reviews it and its comments come back to you.",
+        "- Read CODE/docs/owner-policy.md for the standing research and publication rules.",
         "",
         "## Ending a seat",
         f"Keep {WORK_LOG_NAME} (writable workspace) current. A seat normally starts a fresh "
-        f"session: end each with {HANDOVER_NAME} there (<= {owner.handover_max_bytes // 1024} KB:"
-        f" state, open items, key paths, pending jobs, last review); answer review items in "
+        f"session: keep {HANDOVER_NAME} there when the recorded index needs context (<= {owner.handover_max_bytes // 1024} KB:"
+        f" evidence paths, pending jobs and next action); answer review items in "
         f"{RESPONSE_NAME}. Then write JSON to the result path: "
         "`{\"status\": \"continuing|awaiting_remote|ready_for_review|frozen|blocked_human\", "
         "\"summary\", \"job_ids\", \"paper_id\", \"primary_endpoint_verdict\": "
@@ -3077,11 +3070,11 @@ def render_brief(
         "",
         f"## This topic: {topic_name}",
         *([precheck.strip()] if precheck else []),
-        f"- Question: {_short(state.get('question') or campaign.get('title') or '', 220)}",
+        f"- Question: {_short(research.get('question') or campaign.get('title') or '', 220)}",
         f"- Pre-registered primary endpoint (sha256 {sha}): "
         f"{_short(prereg.get('primary_endpoint') or prereg, 240)} (full: research_state.json "
         "`preregistration`).",
-        f"- Target: {state.get('target_tier') or 'routine'}; venues: {routine}"
+        f"- Target: {research.get('target_tier') or 'routine'}; venues: {routine}"
         + (f"; escalation: {escalation}" if escalation else "") + f". Admission conditions: "
         f"{len(conditions) if isinstance(conditions, list) else 0} (`admission_conditions`).",
         f"- Budget: {used}/{maximum} Agent seconds used; this seat ends by "
@@ -3155,6 +3148,11 @@ def handover_text(
     path = root / HANDOVER_NAME
     state = owner_state(db, str(campaign["campaign_id"]))
     lines = ["### Handover"]
+    for entry in state.get("evidence_index") or []:
+        lines.append(f"- {entry['path']} (sha256 {entry['sha256']})")
+    recent = state.get("recent_seats") or []
+    if recent and recent[-1].get("note"):
+        lines.append(f"Next action / last seat note: {recent[-1]['note']}")
     if path.is_file():
         data = path.read_bytes()
         text = data[:limit].decode("utf-8", errors="ignore").strip()
@@ -3164,7 +3162,7 @@ def handover_text(
             lines.append(f"[cut at {limit} bytes of {len(data)}: keep {HANDOVER_NAME} shorter]")
     else:
         lines.append(f"The last seat left no {HANDOVER_NAME}; start from {WORK_LOG_NAME} and "
-                     "research_state.json, and write the handover at the end of this seat.")
+                     "research_state.json and the recorded evidence index.")
     lines.append(f"Work log: {root / WORK_LOG_NAME}; research state: "
                  f"{campaign.get('workstream_state_path') or 'research_state.json'}.")
     history = _history(state)

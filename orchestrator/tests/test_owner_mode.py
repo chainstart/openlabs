@@ -534,13 +534,6 @@ def test_brief_is_short_has_the_four_parts_and_forces_no_skill(tmp_path, monkeyp
                              wall_seconds=14_400, db=db)
     request = block["request"]
     body = request.split("\n---\n")[0]
-    # About 4.3 KB in production (shorter roots); the test roots are long tmp paths. The
-    # recompute-review goal and the handover rule (2026-11-16) added about 0.3 KB; the
-    # quota-authorization line (2026-11-17) about 50 B; the compute capacity, queue
-    # snapshot and per-topic thread limit lines (2026-11-18) about 0.3 KB; the off-peak
-    # proxy-download window (2026-11-18) about 90 B; the binding writing-rules line
-    # (2026-11-19) about 0.25 KB. 2026-11-20 (cache-cost review): the context-economy line
-    # about 0.3 KB, and the static-first order (the "## This topic" block) about 50 B.
     assert len(body.encode("utf-8")) <= 5_850, len(body.encode("utf-8"))
     # Static rules first, this topic and this seat last (prompt caching): the topic id,
     # budget, deadline and queue snapshot all come after "## Ending a seat".
