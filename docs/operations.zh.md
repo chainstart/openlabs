@@ -3,6 +3,26 @@
 论文评审只走统一评审 `review unified-run`；编辑、审稿人、模型与轮次上限以数据仓库
 `registry/settings.yaml#review` 为准。已停用的增量复审文档见 `archive/`。
 
+## 正式核验复核
+
+最近一轮实质裁决为 `formal_check_blocked`，编辑同意送审、全部审稿人接受且科学、叙事与图示均已通过时，
+作者可在修订后申请仅正式核验复核。检查以原轮存档为基准，目标刊轮次用尽时仍可运行。
+
+```bash
+paper-writing review unified-run --root DATA_ROOT --paper-id PID \
+  --formal-only --response RESPONSE.json
+```
+
+回复 JSON 包含原轮 `decision.json` 的 `decision_sha256` 和说明核验修复内容的 `explanation`。
+研究计划登记了预注册哈希时，另填 `registered_primary_endpoint`，值为预注册记录中的
+`primary_endpoint` 原始 JSON 对象。若澄清预注册判据措辞，在 `preregistration_clarifications`
+数组逐项填 `before`、`after`（稿中唯一对应的原文和新文）和 `explanation`，说明为何原判定保持一致。
+
+差异分类器检查正文数值、结论及图件哈希等，独立核验方另核对完整差异和逐项澄清。只有描述性修正、
+书目修复和对既有分析的定义补全可走该路径。主终点定义、判据含义或结果变更须完整评审。
+`full_review_required` 在新记录中列明拒绝原因。复核通过后沿用原科学裁决，绑定新正式核验记录，
+并照常通过盲读和交付检查后进入交付链。全程不计入目标刊科学轮次，投稿由人确认。
+
 ## 手工演练
 
 所有命令都以外层工作空间为边界：

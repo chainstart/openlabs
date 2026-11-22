@@ -303,9 +303,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the unified editor-and-referee review (the only path to ready).",
     )
     unified.add_argument("--paper-id", required=True)
-    unified.add_argument("--response", help="Decision-bound JSON response for a new full review at the same venue.")
+    unified.add_argument("--response", help="Decision-bound JSON response for a full review or formal-only recheck.")
     unified.add_argument("--no-apply", action="store_true", help="Record the decision without updating the registry.")
-    unified.add_argument("--delta-only", action="store_true",
+    review_mode = unified.add_mutually_exclusive_group()
+    review_mode.add_argument("--formal-only", action="store_true",
+                             help="Recheck formal verification after a formal-check-only block.")
+    review_mode.add_argument("--delta-only", action="store_true",
                          help="Only the post-ready delta review; report full_review_required instead of "
                               "starting the editor and referees.")
     unified.add_argument("--root", default=str(default_repo_root()))
@@ -880,7 +883,7 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             result = run_review(args.paper_id, root=args.root, response_letter=args.response,
-                                apply=not args.no_apply, delta_only=args.delta_only)
+                                apply=not args.no_apply, delta_only=args.delta_only, formal_only=args.formal_only)
         except PaperFrozenError as exc:
             print(json.dumps({"valid": False, "frozen": True, "error": str(exc)}, ensure_ascii=False))
             return 2

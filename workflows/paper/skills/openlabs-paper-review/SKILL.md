@@ -85,6 +85,21 @@ title, abstract, introduction, statements, tables, conclusion-bearing sections a
 unchanged and few lines changed, the earlier judgment is reused, the formal verification
 reruns, and no round is consumed. Anything more gets a full review.
 
+When the latest unified decision is `formal_check_blocked` and the editor and every
+referee passed science, narrative and figures with no outstanding mandatory items, use
+`review unified-run --paper-id PID --root DATA_ROOT --formal-only --response RESPONSE.json`
+after the author repairs the formal findings. This entry point is available at the venue cap.
+Use the blocked decision's SHA-256 as `decision_sha256` and describe the repairs in
+`explanation`. For a research-program paper with a registered preregistration digest,
+supply the original preregistration `primary_endpoint` object as `registered_primary_endpoint`.
+For every preregistered-criterion wording clarification, include an entry in
+`preregistration_clarifications` with unique verbatim `before` and `after` source excerpts
+and an `explanation` of why the original verdict follows. The independent verifier must
+confirm every entry and the fresh formal check must pass. Changing the registered definition,
+criterion, verdict, scientific values, conclusion, or figure data requires full review.
+A successful recheck carries forward the bound independent judgments and runs the normal
+delivery reader. It consumes no scientific round.
+
 For a second or later full review at the same venue, supply `--response RESPONSE.json` when the latest counted decision has required items. The controller binds that decision automatically. The command returns `review_round_blocked` with
 `round_guard.required_items`, `previous_decision_sha256`, `requires_new_artifact`,
 `blockers` and `retry_at` when admission fails. No editor or referee starts and no

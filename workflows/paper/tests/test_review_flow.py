@@ -1962,3 +1962,154 @@ def test_reader_repair_cap_and_independence(tmp_path, monkeypatch):
                                    tmp_path, tmp_path, editor())
     assert readers == ["astra"] and merged["next_action"] == "direction_decision"
     assert not merged["scientific_blockers"] and merged["required_changes"]
+
+
+def _formal_only_fixture(tmp_path, monkeypatch, expanded, *, clarifications=(), confirmation=(),
+                         veto=(), figure_changed=False, counts=True, prereg=False):
+    _delta_fixture(tmp_path, monkeypatch, expanded)
+    config = flow.review_config(tmp_path)
+    config["max_rounds_per_target"] = 1
+    pre = flow.preflight("p", tmp_path, tmp_path)
+    fingerprints = {"registry_review_content_sha256": "registry",
+                    "support_sources_sha256": "support",
+                    "manuscript_snapshot_sha256": "snapshot"}
+    pre["fingerprints"] = fingerprints
+    pre["metadata"]["paper_id"] = "p"
+    basis = next((tmp_path / "reviews/unified/p").glob("*/decision.json"))
+    data = json.loads(basis.read_text())
+    data.update(paper_id="p", round_for_target=int(counts), consumes_scientific_round=counts,
+                fingerprints=fingerprints, figure_files=[{"path": "fig1.png", "sha256": "reviewed"}])
+    pre["figure_files"] = [{"path": "fig1.png", "sha256": "changed" if figure_changed else "reviewed"}]
+    data["referee_reports"]["referee_b"]["recommendation"] = "accept"
+    data["merged"] = flow.merge(data["editor_screen"], data["referee_reports"],
+                                formal_blockers=["Unspecified term"])
+    for role, report in {"editor": data["editor_screen"], **data["referee_reports"]}.items():
+        directory = basis.parent / role
+        directory.mkdir()
+        payload = json.dumps(report).encode()
+        (directory / "output.json").write_bytes(payload)
+        prompt = f"## Manuscript (LaTeX, all inputs expanded)\n{MANUSCRIPT}\n\n## Bibliography\n\n\n## Claim-evidence map\n"
+        (directory / "prompt.txt").write_text(prompt)
+        data["receipts"][role] = {"output_sha256": flow._sha256(payload),
+                                  "prompt_sha256": flow._sha256(prompt.encode())}
+    digest = flow._json_dump(basis, data)
+    response = tmp_path / "response.json"
+    letter = {"decision_sha256": digest, "explanation": "Define the term already used in the analysis.",
+              "preregistration_clarifications": list(clarifications)}
+    if prereg:
+        endpoint = {"decision_rule": "Apply the cutoff to the prespecified contrast."}
+        endpoint_digest = hashlib.sha256(
+            b'{"decision_rule":"Apply the cutoff to the prespecified contrast."}').hexdigest()
+        pre["metadata"]["provenance"] = {"research_program": {
+            "preregistration_sha256": endpoint_digest}}
+        letter["registered_primary_endpoint"] = endpoint
+    flow._json_dump(response, letter)
+    calls = []
+
+    def role(**kw):
+        assert kw["role_name"] == "formal_recheck"
+        calls.append(kw["role_name"])
+        result = {"blockers": list(veto), "clarifications": list(confirmation)}
+        kw["workdir"].mkdir()
+        prompt = kw["system_prompt"] + "\n\n" + kw["user_prompt"]
+        (kw["workdir"] / "prompt.txt").write_text(prompt)
+        out_hash = flow._json_dump(kw["workdir"] / "output.json", result)
+        return result, {"prompt_sha256": flow._sha256(prompt.encode()), "output_sha256": out_hash}
+
+    monkeypatch.setattr(flow, "run_role", role)
+    return basis, response, pre, calls
+
+
+@pytest.mark.parametrize("counts", [True, False])
+def test_formal_only_ready_uses_blocked_decision_and_keeps_round_count(tmp_path, monkeypatch, counts):
+    revised = MANUSCRIPT.replace("The estimator follows a standard design.",
+                                 "The estimator follows a standard design with fixed weights.")
+    basis, response, pre, calls = _formal_only_fixture(tmp_path, monkeypatch, revised, counts=counts)
+    meta, written = _apply_fixture(tmp_path, monkeypatch)
+    from paper_writing import operations
+    monkeypatch.setattr(operations, "_review_workspace_fingerprints", lambda *args: pre["fingerprints"])
+    formal = {"valid": True, "blockers": [], "sha256": "fresh formal report"}
+    monkeypatch.setattr(flow.formal_checks, "run_checks", lambda *args: formal)
+
+    record = flow.run_review("p", root=tmp_path, response_letter=response, formal_only=True)
+    assert calls == ["formal_recheck"]
+    assert record["merged"]["outcome"] == "ready"
+    assert record["formal_check"] == formal
+    assert record["round_for_target"] == int(counts)
+    assert not record["consumes_scientific_round"]
+    assert len(flow.scientific_rounds(tmp_path, "p", "J")) == int(counts)
+    assert record["delta_review"]["basis_decision_sha256"] == flow._sha256(basis.read_bytes())
+    assert record["referee_reports"] == json.loads(basis.read_text())["referee_reports"]
+    release = written[-1]["writing_release"]
+    assert release["review_mode"] == "formal_only" and release["status"] == "ready"
+    assert flow.validate_unified_release("p", meta, tmp_path, "snapshot") == []
+    assert flow.run_review("p", root=tmp_path, apply=False, delta_only=True)["merged"]["outcome"] == "ready"
+
+    basis.write_text(basis.read_text() + "\n")
+    assert any("Formal-only provenance" in issue
+               for issue in flow.validate_unified_release("p", meta, tmp_path, "snapshot"))
+
+
+@pytest.mark.parametrize("edit,figure,reason", [
+    (("120 counties", "118 counties"), False, "numbers"),
+    (("Prices fell.", "Prices rose."), False, "conclusion-bearing"),
+    (None, True, "figure"),
+])
+def test_formal_only_refuses_changed_science_before_verifier(tmp_path, monkeypatch, edit, figure, reason):
+    revised = MANUSCRIPT.replace(*edit) if edit else MANUSCRIPT
+    _, response, _, calls = _formal_only_fixture(tmp_path, monkeypatch, revised, figure_changed=figure)
+    record = flow.run_review("p", root=tmp_path, response_letter=response, formal_only=True)
+    assert record["merged"]["outcome"] == "full_review_required"
+    assert any(reason in text for text in record["merged"]["full_review_reasons"])
+    assert calls == []
+    assert not record["consumes_scientific_round"]
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_formal_only_verifier_confirms_each_preregistered_wording_change(tmp_path, monkeypatch, approved):
+    before = "The effect is"
+    after = "The prespecified effect contrast is"
+    _, response, _, calls = _formal_only_fixture(
+        tmp_path, monkeypatch, MANUSCRIPT.replace(before, after),
+        clarifications=[{"before": before, "after": after, "explanation": "Same contrast."}],
+        confirmation=[{"unchanged": approved, "reason": "Independent comparison of the contrast."}],
+        prereg=True)
+    record = flow.run_review("p", root=tmp_path, response_letter=response, apply=False, formal_only=True)
+    assert calls == ["formal_recheck"]
+    assert record["merged"]["outcome"] == ("ready" if approved else "full_review_required")
+
+
+def test_formal_only_refuses_when_a_narrative_repair_is_open(tmp_path, monkeypatch):
+    basis, response, _, calls = _formal_only_fixture(tmp_path, monkeypatch, MANUSCRIPT)
+    data = json.loads(basis.read_text())
+    data["referee_reports"]["referee_a"]["dimension_repairs"] = {"narrative": ["Explain the comparator"]}
+    flow._json_dump(basis, data)
+    record = flow.run_review("p", root=tmp_path, response_letter=response, apply=False, formal_only=True)
+    assert "all review dimensions" in record["merged"]["full_review_reasons"][0]
+    assert calls == []
+
+
+def test_formal_only_methods_change_requires_independent_approval(tmp_path, monkeypatch):
+    revised = MANUSCRIPT.replace("The estimator follows a standard design.",
+                                 "The estimator uses a different eligible population.")
+    _, response, _, calls = _formal_only_fixture(
+        tmp_path, monkeypatch, revised, veto=["Primary endpoint population changed."])
+    record = flow.run_review("p", root=tmp_path, response_letter=response, formal_only=True)
+    assert calls == ["formal_recheck"]
+    assert record["merged"]["outcome"] == "full_review_required"
+    assert record["merged"]["full_review_reasons"] == ["Primary endpoint population changed."]
+
+
+def test_formal_only_retry_uses_original_science_after_failed_formal_check(tmp_path, monkeypatch):
+    basis, response, _, calls = _formal_only_fixture(tmp_path, monkeypatch, MANUSCRIPT)
+    monkeypatch.setattr(flow.formal_checks, "run_checks", lambda *args: {
+        "valid": False, "blockers": ["Unresolved formal issue"]})
+    blocked = flow.run_review("p", root=tmp_path, response_letter=response, formal_only=True, apply=False)
+    assert blocked["merged"]["outcome"] == "formal_check_blocked"
+    assert not blocked["consumes_scientific_round"]
+    mock_formal_stage(monkeypatch)
+    ready = flow.run_review("p", root=tmp_path, response_letter=response, formal_only=True, apply=False)
+    assert ready["merged"]["outcome"] == "ready"
+    assert ready["delta_review"]["basis_decision_sha256"] == flow._sha256(basis.read_bytes())
+    assert calls == ["formal_recheck", "formal_recheck"]
+    assert len(flow.scientific_rounds(tmp_path, "p", "J")) == 1
