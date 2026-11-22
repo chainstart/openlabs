@@ -24,7 +24,11 @@
     "sample": "astrophysics-and-space-science.tex",
     "article_type": "research article",
     "layout": "springer",
-    "hard_limits": {},
+    "hard_limits": {
+      "abstract_max_words": 250,
+      "source_text": "Please provide an abstract of 150 to 250 words.",
+      "additional_source_text": "Please provide a short abstract of 100 to 250 words."
+    },
     "guide": "https://link.springer.com/journal/10509/submission-guidelines"
   },
   "New Astronomy": {
