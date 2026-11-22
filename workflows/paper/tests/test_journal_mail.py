@@ -101,3 +101,23 @@ def test_copyable_fields_and_private_revision_file_gate(tmp_path):
         _journal_response_files(tmp_path, "test", "R1")
     (folder / "uploads.md").write_text("TEST")
     assert len(_journal_response_files(tmp_path, "test", "R1")) == 4
+
+
+def test_missing_handler_does_not_block_model_or_status(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from paper_writing import journal_dispatch as dispatch
+    class Site:
+        def _request(self, method, path, **kwargs):
+            if method == "GET":
+                return {"assignments": [], "submission_attempts": [{"id": "a", "manuscript_number": "TEST-1",
+                        "status": "submitted", "package_id": "package"}]}
+            return {"review_round": {"id": "round"}, "revision_request": {"request_id": "req"}}
+    commands = []
+    monkeypatch.setattr(dispatch, "ledger", lambda *args: commands.append(args))
+    event = {"paper_id": "test", "message_key": "b"*64, "decision": "revision_requested", "due": None,
+             "manuscript_id": "TEST-1", "reviewer_comments": "Explain proof."}
+    record(tmp_path, event)
+    dispatch.drain(SimpleNamespace(state=tmp_path, account="test@example.test"), Site())
+    assert len(commands) == 2
+    with sqlite3.connect(tmp_path / "events.sqlite") as db:
+        assert db.execute("SELECT notified,complete FROM progress").fetchone() == (0,0)

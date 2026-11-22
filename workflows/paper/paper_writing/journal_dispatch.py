@@ -86,9 +86,29 @@ def uploaded_reviews(api, paper, round_id, directory):
     return "\n\n".join(texts)
 
 
+def notify_once(args, api, db, paper, event):
+    key = event["message_key"]
+    notified = db.execute("SELECT notified FROM progress WHERE message_key=?", (key,)).fetchone()[0]
+    if notified == -1:
+        return False
+    if not notified:
+        def before_send():
+            db.execute("UPDATE progress SET notified=-1 WHERE message_key=?", (key,))
+            db.commit()
+        try:
+            notify(api, paper, event, args.account, before_send)
+        except (OSError, HandoffError, ValueError) as exc:
+            print("Handler notification pending", key[:12], type(exc).__name__, flush=True)
+            return False
+        db.execute("UPDATE progress SET notified=1 WHERE message_key=?", (key,))
+        db.commit()
+    return True
+
+
 def dispatch_one(args, api, db, event):
     key = event["message_key"]
     paper = api._request("GET", "/v1/papers/" + event["paper_id"])
+    notified = notify_once(args, api, db, paper, event)
     number = event["manuscript_id"]
     attempts = [a for a in paper["submission_attempts"] if number and
                 str(a.get("manuscript_number") or "").casefold() == number.casefold()]
@@ -96,6 +116,7 @@ def dispatch_one(args, api, db, event):
         attempts = [a for a in paper["submission_attempts"] if not a.get("manuscript_number")
                     and a["status"] == "preparing" and a.get("journal_name") == event["journal"]]
     if len(attempts) != 1:
+        ledger(args, event)
         raise ValueError("Attempt requires reconciliation")
     attempt = attempts[0]
     did = event["decision"]
@@ -119,16 +140,6 @@ def dispatch_one(args, api, db, event):
         kind = {"proofs": "note"}.get(did, did)
         api._request("POST", uri + "/events", idempotency_key="mail:" + key,
                      json={"event_type": kind, "to_status": attempt["status"] if did == "proofs" else did, **({"occurred_at": event["received_at"]} if event.get("received_at") else {}), "payload": {"manuscript_number": number, "decision": did}})
-    notified = db.execute("SELECT notified FROM progress WHERE message_key=?", (key,)).fetchone()[0]
-    if notified == -1:
-        raise ValueError("Unconfirmed SMTP receipt requires reconciliation")
-    if not notified:
-        def before_send():
-            db.execute("UPDATE progress SET notified=-1 WHERE message_key=?", (key,))
-            db.commit()
-        notify(api, paper, event, args.account, before_send)
-        db.execute("UPDATE progress SET notified=1 WHERE message_key=?", (key,))
-        db.commit()
     ledger(args, event)
     if did == "revision_requested":
         request = result.get("revision_request") or next((r for r in paper["revision_requests"] if r["review_round_id"] == rid), {})
@@ -140,7 +151,8 @@ def dispatch_one(args, api, db, event):
         brief.write_text(comments)
         ledger(args, event, ["--round", str(rnd), "--package-id", attempt["package_id"],
                              "--revision-brief", str(brief), "--request-id", request_id])
-    db.execute("UPDATE progress SET complete=1 WHERE message_key=?", (key,))
+    if notified:
+        db.execute("UPDATE progress SET complete=1 WHERE message_key=?", (key,))
     db.commit()
 
 

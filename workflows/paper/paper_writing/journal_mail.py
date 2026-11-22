@@ -230,6 +230,7 @@ def main():
         parser.error("Private state directory requires mode 0700")
     lock = (args.state / "service.lock").open("a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    (args.state / "service.pid").write_text(str(os.getpid()) + "\n")
     config = tomllib.loads((args.state.parent.parent / "openlabs.toml").read_text())
     credentials, error = _credentials_file_values(Path(config["program"]["credentials_file"]))
     if error:

@@ -1275,7 +1275,7 @@ OpenLabs 不自动投稿或创建期刊事件。论文适配器默认拒绝外�
 
 ### 期刊邮件、投稿包与返修
 
-cc-sg 的邮件服务独立于调度 tick。运行 `bin/openlabs-journal-mail --account "$SDJU_ACCOUNT" --root /workspace/openlabs/openlabs-data --state /workspace/openlabs/openlabs-instances/cc-sg/state/journal-mail`。使用论文工作流的 Python 依赖；`--interval-minutes` 默认为 20。服务从指定归档加载 SDJU 密码，通过 TLS 直连企业邮，使用 EXAMINE 和 BODY.PEEK。首次启动从当时的 UIDNEXT 接续；重启读取私有目录的游标。UIDVALIDITY 变化时需要核对游标。对已获准的历史信可用 `python3 -m paper_writing.journal_mail --root DIR --state PRIVATE_DIR --eml FILE`；演练使用独立目录，测试信不能导入生产。
+cc-sg 的邮件服务独立于调度 tick。运行 `bin/openlabs-journal-mail --account "$SDJU_ACCOUNT" --root /workspace/openlabs/openlabs-data --state /workspace/openlabs/openlabs-instances/cc-sg/state/journal-mail`。使用论文工作流的 Python 依赖；`--interval-minutes` 默认为 20。服务从指定归档加载 SDJU 密码，通过 TLS 直连企业邮，使用 EXAMINE 和 BODY.PEEK。实例可在私有 state/journal-mail/account 中保存已核实的登录名，调度循环启动后检查服务锁并在服务退出时重启。首次启动从当时的 UIDNEXT 接续；重启读取私有目录的游标。UIDVALIDITY 变化时需要核对游标。对已获准的历史信可用 `python3 -m paper_writing.journal_mail --root DIR --state PRIVATE_DIR --eml FILE`；演练使用独立目录，测试信不能导入生产。
 
 交付版本的 release_metadata.submission_checklist 包含本刊字段、文件角色与待核实项。负责人核对作者、费用证据及日期、声明和官网生成的 PDF，提交后在对应投稿尝试登记稿号及回执。交付网站的包回执只证明交付；稿件未取得期刊回执时显示“待核实”。
 

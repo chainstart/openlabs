@@ -8,4 +8,12 @@ archive=$(cat "$vault/LATEST.txt")
 source "$vault/$archive/loaders.sh"
 load_sdju_mail_credentials
 export PYTHONPATH="$code/workflows/paper:$code/orchestrator/src:${PYTHONPATH:-}"
-exec python3 -m paper_writing.journal_mail "$@"
+python=python3
+if [[ -x $code/workflows/paper/.venv/bin/python ]]; then
+  python=$code/workflows/paper/.venv/bin/python
+elif ! python3 -c 'import httpx, yaml' >/dev/null 2>&1; then
+  for packages in "$code"/workflows/paper/.venv/lib/python*/site-packages; do
+    [[ -d $packages ]] && export PYTHONPATH="$PYTHONPATH:$packages"
+  done
+fi
+exec "$python" -m paper_writing.journal_mail "$@"

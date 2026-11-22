@@ -179,6 +179,13 @@ run_loop() {
     rotate_if_large "$state/loop.log" "$log_max"
     rotate_if_large "$state/tick.err" "$log_max"
     rotate_if_large "$state/ticks.jsonl" "$log_max"
+    # The mailbox service has its own interval and lock. An instance opts in by
+    # storing the verified login name in its private journal-mail directory.
+    if [[ -s $state/journal-mail/account ]] && flock -n "$state/journal-mail/service.lock" true; then
+      "$CODE/bin/openlabs-journal-mail" --root "$OPENLABS_WORKSPACE/openlabs-data" \
+        --state "$state/journal-mail" --account "$(cat "$state/journal-mail/account")" \
+        </dev/null >>"$state/journal-mail/service.log" 2>&1 9>&- &
+    fi
     started=$(date -u +%FT%TZ)
     report=$state/last-tick.json
     set +e
