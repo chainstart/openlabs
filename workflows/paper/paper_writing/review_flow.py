@@ -2341,6 +2341,10 @@ def figure_review_packet(pre: Mapping[str, Any], run: Path, changed: list[str]) 
     result = review_images(Path(pre["manuscript_path"]), files, run / "figures")
     images = [Path(item["png"]) for item in result["images"]]
     lines = ["", "## Figures"]
+    if images:
+        lines.append("Read the figures and captions alone first. Give a one-sentence result, name its panel, "
+                     "comparator and uncertainty, then compare that reading with Results. Record any material "
+                     "mismatch in the visual dimension with a specific repair.")
     if images and len(images) == len(files):
         lines.append(f"The {len(images)} images attached to this message are the manuscript's figures as "
                      "typeset, in this order (judge them together with the text, captions and results):")

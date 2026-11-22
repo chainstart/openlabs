@@ -43,7 +43,7 @@ assigned reviewer role. Repository rules override vendored instructions; in part
 
 ## Write
 
-Give the research and its communication equal importance. Within the paper, give prose and figures equal editorial attention. Use the narrative and visual standards of leading applied research journals across submission tiers.
+Select the article type and class from the [journal proof catalog](../../templates/journal-proofs/README.md). Compile the matching short sample, carry its measured column widths into the figure plan, and use the publisher’s current submission options for the actual manuscript. The Nature layout is a preview.
 
 Use the owner's two to four takeaways and the claim–evidence map to draft one page in
 `writing/storyline.md`: intended reader, question, decisive comparison, quantitative answer,

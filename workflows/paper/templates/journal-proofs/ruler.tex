@@ -1,0 +1,16 @@
+\section{A physical scale for page proofs}
+A millimetre ruler makes scaling visible after the paper is printed. Figure~\ref{fig:one} shows a single segment and Fig.~\ref{fig:two} compares two lengths. We follow the SI definition of length \cite{si}.
+\begin{equation} L_{\mathrm{mm}}=10 L_{\mathrm{cm}}.\end{equation}
+\begin{figure}[ht]\centering\typeout{SINGLE=\the\linewidth}
+\rule{10mm}{0.6bp}\caption{One centimetre at print size. The horizontal rule spans ten millimetres.}\label{fig:one}\end{figure}
+\begin{figure*}[t]\centering\typeout{DOUBLE=\the\linewidth}
+(a) \rule{10mm}{0.6bp}\qquad (b) \rule{20mm}{0.6bp}
+\caption{Two centimetres double the reference length. Panels a and b show one and two centimetres on the same physical scale.}\label{fig:two}\end{figure*}
+\section{Reading the proof}
+Measure the two rules after printing. Supplementary Note~\ref{sec:print} gives the printer setting.
+\section{Supplementary Note}\label{sec:print}
+Print at actual size. Scaling to fit changes both lengths.
+\begin{thebibliography}{1}
+\bibitem[BIPM(2019)]{si} BIPM. The International System of Units (SI), ninth edition, 2019. doi:10.59161/AUEZ1291.
+\end{thebibliography}
+\end{document}

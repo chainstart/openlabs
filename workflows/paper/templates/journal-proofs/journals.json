@@ -1,0 +1,76 @@
+{
+  "Applied Energy": {
+    "sample": "applied-energy.tex",
+    "article_type": "research article",
+    "layout": "elsevier",
+    "hard_limits": {},
+    "guide": "https://www.sciencedirect.com/journal/applied-energy/publish/guide-for-authors"
+  },
+  "Energy Policy": {
+    "sample": "energy-policy.tex",
+    "article_type": "research article",
+    "layout": "elsevier",
+    "hard_limits": {},
+    "guide": "https://www.sciencedirect.com/journal/energy-policy/publish/guide-for-authors"
+  },
+  "Energy Economics": {
+    "sample": "energy-economics.tex",
+    "article_type": "research article",
+    "layout": "elsevier",
+    "hard_limits": {},
+    "guide": "https://www.sciencedirect.com/journal/energy-economics/publish/guide-for-authors"
+  },
+  "Astrophysics and Space Science": {
+    "sample": "astrophysics-and-space-science.tex",
+    "article_type": "research article",
+    "layout": "springer",
+    "hard_limits": {},
+    "guide": "https://link.springer.com/journal/10509/submission-guidelines"
+  },
+  "New Astronomy": {
+    "sample": "new-astronomy.tex",
+    "article_type": "research article",
+    "layout": "elsevier",
+    "hard_limits": {},
+    "guide": "https://www.sciencedirect.com/journal/new-astronomy/publish/guide-for-authors"
+  },
+  "Mechanical Systems and Signal Processing": {
+    "sample": "mechanical-systems-and-signal-processing.tex",
+    "article_type": "research article",
+    "layout": "elsevier",
+    "hard_limits": {},
+    "guide": "https://www.sciencedirect.com/journal/mechanical-systems-and-signal-processing/publish/guide-for-authors"
+  },
+  "Reliability Engineering & System Safety": {
+    "sample": "reliability-engineering-and-system-safety.tex",
+    "article_type": "research article",
+    "layout": "elsevier",
+    "hard_limits": {},
+    "guide": "https://www.sciencedirect.com/journal/reliability-engineering-and-system-safety/publish/guide-for-authors"
+  },
+  "Engineering Applications of Artificial Intelligence": {
+    "sample": "engineering-applications-of-artificial-intelligence.tex",
+    "article_type": "research article",
+    "layout": "elsevier",
+    "hard_limits": {},
+    "guide": "https://www.sciencedirect.com/journal/engineering-applications-of-artificial-intelligence/publish/guide-for-authors"
+  },
+  "IEEE Transactions on Industrial Informatics": {
+    "sample": "ieee-transactions-on-industrial-informatics.tex",
+    "article_type": "Regular Research Paper",
+    "layout": "ieee",
+    "hard_limits": {
+      "new_submission_pages": 10,
+      "final_pages": 12,
+      "source_text": "Only new submissions since 01 January 2025 are allowed 10 pages maximum (strictly enforced). Final versions of such papers are allowed 12 pages maximum(strictly enforced)."
+    },
+    "guide": "https://www.ieee-ies.org/pubs/transactions-on-industrial-informatics"
+  },
+  "Nature preview": {
+    "sample": "nature-preview.tex",
+    "article_type": "research article",
+    "layout": "nature",
+    "hard_limits": {},
+    "guide": "https://www.nature.com/nature/for-authors/initial-submission"
+  }
+}
