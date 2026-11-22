@@ -1885,6 +1885,7 @@ def _deliver_ready(db, paths, settings, report) -> None:
 # waiting_for -> (state, condition or action). Conditions that only a person can
 # satisfy are needs_human; the rest are waiting.
 _WAIT_STATES: dict[str, tuple[str, str]] = {
+    "control_plane": ("waiting", "restore delivery inputs or environment; the next tick checks again: {issues}"),
     "waiting_credentials": ("waiting", "credentials {missing}, in the scheduler environment or "
                                        "[program] credentials_file{file}"),
     "git_identity_missing": ("waiting", "a Git identity: [program.git] user_name/user_email in "
@@ -1978,13 +1979,15 @@ def delivery_chain_state(db: FactoryDB, settings: FactorySettings,
                 "action": "record the paper_id of this ready topic (handoff.paper_id)"}
     attempts = dict(release.get("attempts") or {})
     if handoff_status == "exhausted":
-        return {**base, "stage": "deliver", "state": "needs_human",
-                "action": ("resolve the delivery error "
+        return {**base, "stage": "deliver", "state": "waiting",
+                "condition": ("resolve the delivery error "
                            f"({str(handoff.get('last_error') or '')[:300]}); "
                            f"{_retry_hint(paper_id)}")}
     if release_status == "exhausted":
-        return {**base, "state": "needs_human",
-                "action": (f"resolve the {release.get('stage')} error "
+        if release.get("stage") == "form_fix_writer" and release.get("unresolved_manuscript_issues"):
+            return {**base, "state": "needs_human", "action": str(release["last_error"])}
+        return {**base, "state": "waiting",
+                "condition": (f"resolve the {release.get('stage')} error "
                            f"({str(release.get('last_error') or '')[:300]}); "
                            f"{_retry_hint(paper_id)}")}
     if handoff_status == "failed":
@@ -2127,6 +2130,8 @@ def _repair_delivery(db, paths, settings, report) -> None:
                                   by="delivery-repair", reason=f"Recheck after {task_id}")
                 except DeliveryError as exc:
                     _info(report, "delivery_repairs").append({"task_id": task_id, "error": str(exc)})
+            continue
+        if item.get("stage") != "form_fix_writer":
             continue
         if used >= 2:
             _info(report, "delivery_repairs").append({"topic_id": topic_id, "outcome": "needs_human",
@@ -2470,7 +2475,7 @@ class _ReleasePipeline:
         self.save("release_exhausted" if final else "release_failed", f"{self.stage}_failed",
                   detail={"stage": self.stage, "attempt": attempts[self.stage], "error": error,
                           "final": final},
-                  attempts=attempts, last_error=error, stage=self.stage,
+                  attempts=attempts, last_error=error, stage=self.stage, unresolved_manuscript_issues=False,
                   status="exhausted" if final else "failed", **marks)
         self.entry("exhausted" if final else "failed", attempt=attempts[self.stage],
                    error=error[:300])
@@ -2594,6 +2599,10 @@ class _ReleasePipeline:
                               "manifest_sha256": result.get("manifest_sha256")})
             self.entry("payloads_bound", files=len(result.get("files") or []))
             return True
+        infrastructure = [item for item in issues if item.get("remedy") == "control_plane"]
+        if infrastructure:
+            raise ReleaseWait(self.stage, "control_plane",
+                              {"issues": [str(item.get("text") or "")[:300] for item in infrastructure]})
         human = [item for item in issues if item.get("remedy") == "human"]
         if human:
             raise ReleaseWait("form_fix", "needs_owner",
@@ -2823,7 +2832,7 @@ class _ReleasePipeline:
                         self.stage: self.settings.program.release_max_attempts}
             self.save("release_exhausted", "writer_rounds_exhausted", stage=self.stage,
                       status="exhausted", attempts=attempts, last_error=error[:800],
-                      detail={"issues": texts[:20]},
+                      detail={"issues": texts[:20]}, unresolved_manuscript_issues=True,
                       exhausted_code_revision=code_revision(self.paths))
             self.entry("exhausted", error=error[:300])
             self.exhausted_report(error)

@@ -50,7 +50,7 @@ PREPARE_CODES = frozenset({
     "SUPPORT-CLAIM-MAP-UNPACKAGED", "SUPPORT-CLAIM-MAP-PACKAGE-MISMATCH",
 })
 # Problems no text edit can fix: the pipeline waits for the owner instead of a writer.
-HUMAN_CODES = frozenset({"DELIVERY-CHECK-FAILED", "STYLE-MANUSCRIPT-MISSING"})
+CONTROL_PLANE_CODES = frozenset({"DELIVERY-CHECK-FAILED", "STYLE-MANUSCRIPT-MISSING"})
 # Release build products Git ignores; delivery freezes them through
 # papers/<id>/production/release-artifacts.json (``program bind-release-artifacts``).
 RELEASE_ARTIFACT_SUFFIXES = frozenset({".pdf", ".bbl"})
@@ -368,13 +368,13 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
                        "message": f"the registered manuscript source is missing: {manuscript_dir}",
                        "text": "MANUSCRIPT-SOURCE-MISSING: the registered manuscript directory "
                                f"or its main.tex is missing ({manuscript_dir})",
-                       "remedy": "human"})
+                       "remedy": "control_plane"})
     for item in raw_issues:
         code = str(item.get("code") or "")
         if code in PREPARE_CODES:
             remedy = "zenodo_prepare" if not support["published"] else "human"
-        elif code in HUMAN_CODES or manuscript_missing:
-            remedy = "human"
+        elif code in CONTROL_PLANE_CODES or manuscript_missing:
+            remedy = "control_plane"
         else:
             remedy = "writer"
         issues.append({**item, "remedy": remedy})

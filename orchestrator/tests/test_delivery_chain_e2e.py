@@ -361,8 +361,8 @@ def test_preflight_failure_is_retried_then_resumed_by_a_code_fix_never_a_full_re
     assert exhausted["release"]["status"] == "exhausted"
     assert exhausted["release"]["exhausted_code_revision"] == "a" * 40
     stuck = _stuck(report)[topic_id]
-    assert stuck["state"] == "needs_human" and "release-retry" in stuck["action"]
-    assert "preflight_failed" in stuck["action"]
+    assert stuck["state"] == "waiting" and "release-retry" in stuck["condition"]
+    assert "preflight_failed" in stuck["condition"]
     assert not any(task_id.startswith("release-review:") for task_id in report.enqueued)
 
     # Same code: it stays stopped.
@@ -407,7 +407,7 @@ def test_code_retries_are_bounded(tmp_path, monkeypatch, services):
     release = _topic(paths, settings, topic_id)["release"]
     assert release["status"] == "exhausted"
     assert release["code_retries"] == program_autonomy.RELEASE_CODE_RETRIES
-    assert _stuck(report)[topic_id]["state"] == "needs_human"
+    assert _stuck(report)[topic_id]["state"] == "waiting"
 
 
 def test_missing_manuscript_source_needs_a_human_and_starts_no_writer(
@@ -417,7 +417,7 @@ def test_missing_manuscript_source_needs_a_human_and_starts_no_writer(
     the release check could not find; each ended needs_human within seconds."""
 
     missing = {"code": "STYLE-MANUSCRIPT-MISSING", "location": "manuscript/main.tex",
-               "remedy": "human", "message": "canonical manuscript source is missing",
+               "remedy": "control_plane", "message": "canonical manuscript source is missing",
                "text": "STYLE-MANUSCRIPT-MISSING: manuscript/main.tex: canonical manuscript "
                        "source is missing"}
     paths, db, settings, topic, log = _chain(tmp_path, monkeypatch, services, issues=[missing],
@@ -427,13 +427,12 @@ def test_missing_manuscript_source_needs_a_human_and_starts_no_writer(
     _tick(paths, settings, monkeypatch)
     report = _tick(paths, settings, monkeypatch)
     release = _topic(paths, settings, topic["topic_id"])["release"]
-    assert release["status"] == "waiting" and release["waiting_for"] == "needs_owner"
+    assert release["status"] == "waiting" and release["waiting_for"] == "control_plane"
     assert not release.get("writer_task_id") and not release.get("writer_rounds")
     assert not any(task_id.startswith("release-fix:") for task_id in report.enqueued)
     item = next(i for i in report.program["delivery_chain"] if i["topic_id"] == topic["topic_id"])
-    assert item["state"] == "in_progress" and "STYLE-MANUSCRIPT-MISSING" in item["action"]
-    assert item["repair"]["attempt"] == 1
-    assert db.task(item["owner"])["exclude_provider"] == "anthropic"
+    assert item["state"] == "waiting" and "STYLE-MANUSCRIPT-MISSING" in item["condition"]
+    assert "repair" not in item
 
 
 # --------------------------------------------------------------------------- classification
@@ -466,8 +465,10 @@ def test_every_release_state_has_an_owner(tmp_path):
                      "waiting_detail": {"missing": ["ARA_PAPER_MANAGE_API_KEY"]}})
     assert waiting["state"] == "waiting" and "ARA_PAPER_MANAGE_API_KEY" in waiting["condition"]
     assert state({"status": "waiting", "waiting_for": "needs_owner"})["state"] == "needs_human"
-    assert state({"status": "exhausted", "stage": "commit"})["state"] == "needs_human"
-    assert state(handoff={"status": "exhausted"})["state"] == "needs_human"
+    assert state({"status": "exhausted", "stage": "commit"})["state"] == "waiting"
+    assert state({"status": "exhausted", "stage": "form_fix_writer",
+                  "last_error": "writer exited without a result"})["state"] == "waiting"
+    assert state(handoff={"status": "exhausted"})["state"] == "waiting"
     unknown = state({"status": "waiting", "waiting_for": "something_new"})
     assert unknown["state"] == "needs_human" and unknown["unrecognized"] is True
     assert state({"status": "mystery"})["unrecognized"] is True

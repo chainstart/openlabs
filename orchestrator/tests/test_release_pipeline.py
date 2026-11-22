@@ -354,7 +354,7 @@ def test_delta_review_blocked_by_a_check_is_retried_not_sent_back_to_review(
     state = _topic(paths, settings, topic["topic_id"])
     assert state["status"] == "ready_queue" and state["release"]["status"] == "exhausted"
     assert report.errors == []
-    assert report.program["delivery_chain"][0]["repair"]["attempt"] == 1
+    assert report.program["delivery_chain"][0]["state"] == "waiting"
     assert state["handoff"]["status"] != "returned_to_review"
     assert _commands(log).count("review unified-run") == 2
     assert "program deliver" not in _commands(log)
@@ -438,11 +438,11 @@ def test_failed_stage_is_retried_then_exhausted_and_reported(tmp_path, monkeypat
     assert state["status"] == "exhausted" and state["attempts"]["support_prepare"] == 2
     assert report.program["release_exhausted"][0]["stage"] == "support_prepare"
     assert not report.errors
-    assert report.program["delivery_chain"][0]["state"] == "in_progress"
+    assert report.program["delivery_chain"][0]["state"] == "waiting"
     calls = len(_calls(log))
     report = _tick(paths, settings, monkeypatch)
     assert len(_calls(log)) == calls  # no further attempt
-    assert report.program["delivery_chain"][0]["repair"]["attempt"] == 1
+    assert not report.program["delivery_chain"][0].get("repair")
     assert "release_exhausted" in _events(db, topic["topic_id"])
 
 
@@ -1097,21 +1097,11 @@ def test_import_writer_artifact_rechecks_base_and_is_idempotent(tmp_path):
     assert manuscript.read_text() == "concurrent edit"
 
 
-def test_exhausted_release_gets_two_repair_seats_before_owner(tmp_path, monkeypatch):
+def test_exhausted_support_stage_waits_for_control_plane_retry(tmp_path, monkeypatch):
     paths, db, settings, topic, log = _setup(
         tmp_path, monkeypatch, release_max_attempts=1, paper_extra={"fail": {"zenodo prepare": 9}})
     report = _ready(paths, db, settings, monkeypatch, topic)
-    for attempt in (1, 2):
-        item = report.program["delivery_chain"][0]
-        assert item["repair"]["attempt"] == attempt and item["state"] == "in_progress"
-        task_id = item["owner"]
-        assert db.task(task_id)["exclude_provider"] == "anthropic"
-        _lease(paths, settings, monkeypatch, db, task_id)
-        _finish(db, paths, task_id)
-        for _ in range(4):
-            report = _tick(paths, settings, monkeypatch)
-            item = report.program["delivery_chain"][0]
-            if item.get("owner") != task_id and item["state"] in {"in_progress", "needs_human"}:
-                if item.get("owner") or item["state"] == "needs_human":
-                    break
-    assert item["state"] == "needs_human" and item["repair"]["attempt"] == 2
+    item = report.program["delivery_chain"][0]
+    assert item["state"] == "waiting" and item["stage"] == "support_prepare"
+    assert "release-retry" in item["condition"]
+    assert not item.get("repair")

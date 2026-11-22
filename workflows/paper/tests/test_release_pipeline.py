@@ -153,8 +153,8 @@ def test_missing_manuscript_source_needs_the_owner_not_a_writer(tmp_path, monkey
     metadata['manuscript_dir'] = 'manuscript'  # laid out relative to another root
     status = rp.release_status('p', root=tmp_path)
     assert {i['code']: i['remedy'] for i in status['issues']} == {
-        'MANUSCRIPT-SOURCE-MISSING': 'human', 'STYLE-MANUSCRIPT-MISSING': 'human',
-        'ABSTRACT-VENUE-FORMAT': 'human'}
+        'MANUSCRIPT-SOURCE-MISSING': 'control_plane', 'STYLE-MANUSCRIPT-MISSING': 'control_plane',
+        'ABSTRACT-VENUE-FORMAT': 'control_plane'}
     assert status['release_artifacts_unbound'] == []
 
 
