@@ -487,14 +487,14 @@ def shared_reference(
     line = str(topic.get("research_line") or "")
     gate = payload.get("gate_result") if isinstance(payload.get("gate_result"), Mapping) else {}
     declared = gate.get("line_reference")
-    if isinstance(declared, Mapping) and (declared.get("id") or declared.get("job_id")):
+    if isinstance(declared, Mapping) and JOB_ID.fullmatch(str(declared.get("job_id") or "")):
         job = str(declared.get("job_id") or "")
         return {"id": str(declared.get("id") or job), "source": "declared",
                 "job_ids": [job] if JOB_ID.fullmatch(job) else []}
     for item in classification.get("items") or []:
         reference = item.get("reference")
         if isinstance(reference, Mapping) and reference.get("shared") is not False and (
-                reference.get("id") or reference.get("job_id")):
+                JOB_ID.fullmatch(str(reference.get("job_id") or ""))):
             job = str(reference.get("job_id") or "")
             return {"id": str(reference.get("id") or job), "source": "declared_criterion",
                     "job_ids": [job] if JOB_ID.fullmatch(job) else []}
@@ -610,6 +610,9 @@ def _signature(criterion: Mapping[str, Any]) -> tuple[float, float]:
 
 
 def _same_reference(record: Mapping[str, Any], reference: Mapping[str, Any]) -> bool:
+    old_digest, new_digest = record.get("receipt_sha256"), reference.get("receipt_sha256")
+    if old_digest and new_digest and old_digest != new_digest:
+        return False
     if str(record.get("reference_id") or "") == str(reference.get("id") or ""):
         return True
     return bool(set(record.get("job_ids") or []) & set(reference.get("job_ids") or []))

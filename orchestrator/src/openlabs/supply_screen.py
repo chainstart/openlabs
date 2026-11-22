@@ -377,13 +377,38 @@ def requirement_coverage(requirement: Mapping[str, Any], *, data_root: Path,
     columns = [str(item).strip().upper() for item in requirement.get("columns") or []
                if str(item).strip()]
     header = str(requirement.get("header") or "csv").strip().lower()
-    if header not in HEADER_KINDS:
-        return {"name": requirement.get("name") or pattern, "glob": pattern, "ok": False,
-                "files": 0, "covered": 0, "columns": columns,
-                "error": f"header must be one of {sorted(HEADER_KINDS)}"}
     nonblank = requirement.get("nonblank") is True
     files = sorted(Path(item) for item in globbing.glob(pattern)
                    if _in_months(Path(item), requirement.get("months")))
+    if header not in HEADER_KINDS:
+        try:
+            minimum = max(1, int(requirement.get("min_files") or 1))
+        except (ValueError, TypeError):
+            minimum = 1
+        # Admission can assess a documented equivalent export. Bind each pair
+        # to actual bytes and test the export against the original column rules.
+        proofs = requirement.get("equivalent_exports") or {}
+        verified = []
+        for path in files:
+            proof = proofs.get(path.name) if isinstance(proofs, Mapping) else None
+            if not isinstance(proof, Mapping) or not str(proof.get("explanation") or "").strip():
+                continue
+            export = (data_root / str(proof.get("csv") or "")).resolve()
+            if not export.is_relative_to(data_root.resolve()) or not export.is_file() or not path.is_file():
+                continue
+            with path.open("rb") as original, export.open("rb") as converted:
+                if (hashlib.file_digest(original, "sha256").hexdigest() != proof.get("source_sha256")
+                        or hashlib.file_digest(converted, "sha256").hexdigest() != proof.get("csv_sha256")):
+                    continue
+            profile = cache.profile(export, "csv")
+            if profile and set(columns) <= set(profile["valued" if nonblank else "columns"]):
+                verified.append(path.name)
+        if not files or len(verified) != len(files) or len(files) < minimum:
+            return {"name": requirement.get("name") or pattern, "glob": pattern, "ok": False,
+                    "files": len(files), "covered": len(verified), "columns": columns,
+                    "error": "unsupported header: provide hash-bound equivalent_exports for admission review"}
+        return {"name": requirement.get("name") or pattern, "glob": pattern, "ok": True,
+                "files": len(files), "covered": len(verified), "columns": columns, "equivalent_exports": proofs}
     missing: list[str] = []
     unreadable: list[str] = []
     for path in files:
@@ -565,6 +590,10 @@ def _repeat(document: Mapping[str, Any], card: Mapping[str, Any],
                     f"reopens: {prior['topic_id']} with its reopen basis"), prior
         if prior["status"] != "rejected" or prior["reason"] not in MECHANICAL_REJECTIONS:
             continue
+        if prior["reason"] in {CAPABILITY_REJECTION, DATA_REJECTION}:
+            # Re-evaluate cheap live predicates: queue identity says nothing about
+            # newly installed capabilities or new bytes at a registered data path.
+            continue
         if prior.get("entry_digest") and current:
             same = prior["entry_digest"] == current
         else:
@@ -683,7 +712,40 @@ def _stage(spec: Mapping[str, Any], *, card: Mapping[str, Any], card_path: Path,
     printed = printed if isinstance(printed, dict) else {}
     source = Path(str(printed.get("source") or out))
     job_argv = printed.get("argv") if isinstance(printed.get("argv"), list) else ["bash", "run.sh"]
-    return {"source": source, "argv": [str(item) for item in job_argv]}
+    return {"source": source, "argv": [str(item) for item in job_argv],
+            "pilot_version": printed.get("version"), "data_digest": printed.get("lc_sha256")}
+
+
+def pilot_input_digest(staged, budget, card, entry):
+    """Identify identical staged programs and inputs under a declared dataset version."""
+    photometry = (staged.get("pilot_version") == "ap-pilot-1"
+                  and card.get("paper_template") == "contact-binary-solution"
+                  and re.fullmatch(r"[0-9a-f]{64}", str(staged.get("data_digest") or "")))
+    version = (staged["data_digest"] if photometry else
+               card.get("data_version") or (entry or {}).get("data_version"))
+    source = staged["source"]
+    if not version or not source.is_dir():
+        return None
+    identity = [card.get("research_line"), card.get("paper_template"), target_key(card),
+                version, staged["argv"], budget]
+    digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode())
+    for path in sorted(source.rglob("*")):
+        if path.is_symlink():
+            return None
+        if path.is_file():
+            if photometry and path == source / "params.json":
+                params = json.loads(path.read_text())
+                if params.get("lc_sha256") != version:
+                    return None
+                # In ap-pilot-1 these two fields record staging provenance only.
+                params.pop("staged_at", None)
+                params.pop("card", None)
+                content = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()
+            else:
+                with path.open("rb") as handle:
+                    content = hashlib.file_digest(handle, "sha256").hexdigest()
+            digest.update(json.dumps([path.relative_to(source).as_posix(), content]).encode())
+    return digest.hexdigest()
 
 
 def _read_verdict(view: Mapping[str, Any], verdict_file: str) -> dict[str, Any] | None:
@@ -722,7 +784,11 @@ def advance_pilots(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettin
     if not supply.pilot:
         return []
     ledger = open_topic_ledger(paths, settings.program)
-    waiting = [topic for topic in ledger.read().get("topics") or []
+    topics = ledger.read().get("topics") or []
+    passed = {p["input_digest"]: p for t in topics if isinstance(t, Mapping)
+              if (p := (t.get("card_check") or {}).get("pilot") or {}).get("status") == "pass"
+              and p.get("input_digest")}
+    waiting = [topic for topic in topics
                if isinstance(topic, Mapping) and topic.get("status") == "proposed"
                and pilot_held(topic)]
     if not waiting:
@@ -806,6 +872,16 @@ def advance_pilots(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettin
             attempt = int(pilot.get("attempts") or 0) + 1
             out = (paths.program_control / "pilots" / topic_id / f"attempt-{attempt}")
             staged = _stage(spec, card=card, card_path=card_path, out=out, data_root=paths.data)
+            _, entry = _queue_entry(template_entry.get("candidate_queue"), target_key(card))
+            digest = pilot_input_digest(staged, budget, card, entry)
+            pilot["input_digest"] = digest
+            previous = passed.get(digest)
+            if previous:
+                pilot.update(status="pass", verdict="pass", job_id=previous["job_id"],
+                             metrics=previous.get("metrics"), reused=True)
+                record(topic, pilot, "card_pilot_reused")
+                outcomes.append({"topic_id": topic_id, "status": "pass", "reused": True})
+                continue
             submission = submit(staged["source"], staged["argv"], cpu_threads=budget["cpus"],
                                 memory_mib=budget["memory_mib"],
                                 wall_seconds=budget["wall_seconds"])

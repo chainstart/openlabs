@@ -132,6 +132,9 @@ def test_the_lines_control_receipt_is_found_by_job_or_tag(tmp_path) -> None:
     found = line_facts.shared_reference(paths, settings, topic=topic, payload=by_tag,
                                         classification={"items": []}, artifacts=[])
     assert found and found["source"] == "line_reference" and found["receipt_sha256"]
+    omission = {"gate_result": {"line_reference": {"id": "missing_card_capability"}}}
+    assert line_facts.shared_reference(paths, settings, topic=topic, payload=omission,
+                                       classification={"items": []}, artifacts=[]) is None
     own = {"summary": "The target's own q profile is open.", "gate_result": {}}
     assert line_facts.shared_reference(paths, settings, topic=topic, payload=own,
                                        classification={"items": []}, artifacts=[]) is None
@@ -767,7 +770,7 @@ def test_presence_only_requirement_with_a_file_count(tmp_path):
     assert not row["ok"] and "5 required" in row["error"]
     bad = supply_screen.requirement_coverage({**item, "header": "parquet"}, data_root=tmp_path,
                                              cache=cache)
-    assert not bad["ok"] and "header must be" in bad["error"]
+    assert not bad["ok"] and "equivalent_exports" in bad["error"]
     # A csv reading of a binary file stops at the bounded line length.
     lines = supply_screen._header_lines(folder / "B0.mat")
     assert len(lines) == 1 and len(lines[0]) <= supply_screen.HEADER_LINE_CHARS
@@ -804,3 +807,49 @@ def test_queue_entry_data_requirements_join_the_card_screen(tmp_path):
             "data_requirements": [{"name": "UIGF", "columns": ["DUID"]}]}
     failed, rows = supply_screen.data_problems(_Paths, None, card, {}, template)
     assert failed == [] and rows[0]["columns"] == ["DUID"]
+
+
+def test_pilot_cache_requires_version_and_exact_staged_bytes(tmp_path):
+    staged = {"source": tmp_path, "argv": ["bash", "run.sh"]}
+    script = tmp_path / "run.sh"
+    script.write_text("echo first")
+    digest = supply_screen.pilot_input_digest
+    assert digest(staged, {}, {}, {}) is None
+    first = digest(staged, {}, {"data_version": "v1"}, {})
+    assert first == digest(staged, {}, {"data_version": "v1"}, {})
+    assert first != digest(staged, {}, {"data_version": "v2"}, {})
+    script.write_text("echo second")
+    assert first != digest(staged, {}, {"data_version": "v1"}, {})
+
+
+def test_equivalent_export_is_bound_to_both_files(tmp_path):
+    source = tmp_path / "data.bin"
+    source.write_bytes(b"sample")
+    csv = tmp_path / "export.csv"
+    csv.write_text("RATE\n0.5\n")
+    proof = {"csv": csv.name, "csv_sha256": hashlib.sha256(csv.read_bytes()).hexdigest(),
+             "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "explanation": "RATE in Hz"}
+    req = {"glob": "*.bin", "columns": ["RATE"], "header": "binary", "equivalent_exports": {source.name: proof}}
+    cache = supply_screen.HeaderCache(tmp_path / "headers.json")
+    assert supply_screen.requirement_coverage(req, data_root=tmp_path, cache=cache)["ok"]
+    source.write_bytes(b"new")
+    assert not supply_screen.requirement_coverage(req, data_root=tmp_path, cache=cache)["ok"]
+
+
+def test_changed_reference_receipt_is_not_the_same_shared_failure():
+    record = {"reference_id": "control", "receipt_sha256": "old"}
+    assert not line_facts._same_reference(record, {"id": "control", "receipt_sha256": "new"})
+
+
+def test_photometry_pilot_reuses_identical_scientific_inputs_across_staging_times(tmp_path):
+    light_curve = hashlib.sha256(b"light curve").hexdigest()
+    staged = {"source": tmp_path, "argv": ["bash", "run.sh"], "pilot_version": "ap-pilot-1",
+              "data_digest": light_curve}
+    params = {"lc_sha256": light_curve, "period": 0.3, "staged_at": "yesterday", "card": "old.json"}
+    card = {"paper_template": "contact-binary-solution"}
+    def fingerprint(**changes):
+        (tmp_path / "params.json").write_text(json.dumps({**params, **changes}))
+        return supply_screen.pilot_input_digest(staged, {}, card, {})
+    first = fingerprint()
+    assert first and first == fingerprint(staged_at="today", card="new.json")
+    assert first != fingerprint(period=0.4)

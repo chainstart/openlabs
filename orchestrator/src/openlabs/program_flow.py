@@ -798,8 +798,12 @@ def scout_supply_fingerprint(
         "line": line_entry(lines_document, line) if line else None,
         "queues": {template: _file_digest(path) for template, path in sorted(queues.items())},
         "held": held_queue_releases(paths, settings, line, queues) if line and queues else {},
+        "shared_reference_versions": {ref["id"]: line_facts.receipt_fingerprint(ref)
+                                      for ref in line_facts.line_references(paths, settings, line)}
+                                     if line else {},
         "ledger": sorted(
-            [str(topic.get("topic_id") or ""), str(topic.get("status") or "")]
+            [str(topic.get("topic_id") or ""), str(topic.get("status") or ""),
+             last_rejection_reason(topic), str((topic.get("card_check") or {}).get("entry_digest") or "")]
             for topic in document.get("topics") or []
             if isinstance(topic, Mapping) and _topic_key(topic) == key
         ),
@@ -900,16 +904,14 @@ def record_scout_outcomes(
             queued[key] = bool(project.research_line and queued_templates(
                 research_lines_document(paths, settings), project.research_line))
         fingerprint = fingerprints[key]
-        same = state.get("fingerprint") == fingerprint and int(state.get("count") or 0) > 0
+        reason = "cards_rejected" if cards else "candidate_queue_exhausted" if queued[key] else "no_cards"
+        same = state.get("fingerprint") == fingerprint and state.get("reason") == reason
         state.update(
             count=(int(state.get("count") or 0) + 1) if same else 1,
             fingerprint=fingerprint,
             last_at=str(task.get("updated_at") or utc_now()),
             last_summary=summary,
-            reason=(
-                "cards_rejected" if cards
-                else "candidate_queue_exhausted" if queued[key] else "no_cards"
-            ),
+            reason=reason,
         )
         changes.append({"key": key, "event": "topic_scout_empty", "task_id": marker[1],
                          "empty_draws": state["count"], "reason": state["reason"]})
