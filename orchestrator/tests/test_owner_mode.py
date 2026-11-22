@@ -260,7 +260,7 @@ def test_no_progress_seats_trip_the_direction_decision(tmp_path, monkeypatch):
     _tick(paths, settings, monkeypatch)
     assert not _direction_tasks(db)
     second = _lease(paths, settings, monkeypatch, db, _latest(db, topic["campaign_id"])["task_id"])
-    _seat_packet(db, paths, second["task_id"], {"status": "continuing"}, session="s1")
+    _seat_packet(db, paths, second["task_id"], {"status": "continuing", "direction_reason": "change_topic"}, session="s1")
     _tick(paths, settings, monkeypatch)
     decisions = _direction_tasks(db)
     assert len(decisions) == 1
@@ -715,12 +715,8 @@ def test_quota_stop_seats_back_off_then_trip_the_direction_decision(tmp_path, mo
     assert not _direction_tasks(db)
     _release(db, third["task_id"])
     _quota_stop_seat(paths, db, settings, monkeypatch, third["task_id"], 3, duration=600.0)
-    decisions = _direction_tasks(db)
-    assert len(decisions) == 1
-    packet = json.loads(Path(decisions[0]["input_path"]).read_text(encoding="utf-8"))
-    assert packet["trigger"]["reason"] == owner.TRIGGER_NO_PROGRESS
-    # No further seat while the decision is pending.
-    assert _latest(db, campaign_id)["task_id"] == third["task_id"]
+    assert not _direction_tasks(db)
+    assert _latest(db, campaign_id)["not_before"]
 
 
 def test_backoff_steps_grow_and_the_last_repeats() -> None:

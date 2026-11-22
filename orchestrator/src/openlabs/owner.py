@@ -1616,7 +1616,10 @@ def _breaker(
 
     from .program_autonomy import schedule_direction_decision
 
-    if int(state.get("no_progress_streak") or 0) < settings.program.owner.no_progress_seats:
+    request = packet_of(_read_json(result_path)).get("direction_reason")
+    if request not in ("major_freeze", "change_topic", "budget_dispute"):
+        if int(state.get("no_progress_streak") or 0) >= settings.program.owner.no_progress_seats:
+            report.program.setdefault("owner_diagnostics", []).append(stall_diagnosis(settings, state, task))
         return False
     topic = _topic(paths, settings, str(task["campaign_id"]))
     if topic is None:
@@ -1626,7 +1629,7 @@ def _breaker(
         source_task_id=str(task["task_id"]),
         evidence=[{"path": str(result_path), "sha256": result_sha256}],
         reasons=[str(state.get("summary") or "")] if state.get("summary") else None,
-        detail={"no_progress_streak": int(state.get("no_progress_streak") or 0),
+        detail={"direction_reason": request, "no_progress_streak": int(state.get("no_progress_streak") or 0),
                 "seats": int(state.get("seats") or 0),
                 "threshold": settings.program.owner.no_progress_seats},
     )
@@ -1707,7 +1710,7 @@ def _stall(
     stopped); False leaves the ordinary path (breaker, backoff, next seat) in charge.
     """
 
-    from .program_autonomy import pending_decision, schedule_direction_decision
+    from .program_autonomy import pending_decision
 
     repeats = settings.stall_signature_repeats
     streak = int(state.get("signature_streak") or 0)
@@ -1719,29 +1722,15 @@ def _stall(
     diagnosis = stall_diagnosis(settings, state, task)
     entry = {"campaign_id": campaign_id, "source": "same_state", "task_id": str(task["task_id"]),
              "signature_streak": streak, "state": diagnosis["state"]}
-    if stall.get("signature") != signature or not stall.get("decision_task"):
-        if pending_decision(db, campaign_id) is not None:
-            return False
-        topic = _topic(paths, settings, campaign_id)
-        scheduled = None
-        if topic is not None:
-            scheduled = schedule_direction_decision(
-                db, paths, settings, report, topic=topic, trigger=TRIGGER_STALLED,
-                source_task_id=str(task["task_id"]),
-                evidence=[{"path": str(result_path), "sha256": result_sha256}],
-                reasons=[_diagnosis_text(diagnosis)], detail=diagnosis)
-        if scheduled is not None:
-            update_state(db, campaign_id, "owner_stall_decision",
-                         {"task_id": str(task["task_id"]), "decision": scheduled,
-                          "signature_streak": streak},
-                         stall={"signature": signature, "decision_task": scheduled,
-                                "decided_at_streak": streak, "at": utc_now()})
-            report.program.setdefault("stuck_topics", []).append(
-                {**entry, "action": "direction_decision", "decision": scheduled})
-            return True
+    if pending_decision(db, campaign_id) is not None:
+        return False
+    if packet_of(_read_json(result_path)).get("direction_reason") in ("major_freeze", "change_topic", "budget_dispute"):
+        return False
+    if stall.get("signature") != signature:
         stall = {"signature": signature, "decided_at_streak": streak}
-    if streak < int(stall.get("decided_at_streak") or 0) + settings.stall_seats_after_decision \
-            and stall.get("decision_task"):
+        update_state(db, campaign_id, "owner_stall_diagnosed", diagnosis, stall=stall)
+    if streak < int(stall.get("decided_at_streak") or repeats) + settings.stall_seats_after_decision:
+        report.program.setdefault("stuck_topics", []).append({**entry, "action": "diagnosis", "diagnosis": diagnosis})
         return False
     campaign = db.campaign(campaign_id) or {}
     root = Path(str(campaign["state_path"])) if campaign.get("state_path") else None
@@ -1772,8 +1761,8 @@ def _recompute_context(state: Mapping[str, Any]) -> str:
         f"An independent recompute review already recomputed the core results from the data "
         f"({len(history)} round(s), last verdict {last.get('verdict')}; records: {records}; "
         f"recompute scripts: {scripts or 'see the records'}). "
-        "Do not repeat that recomputation: give its records to the referees as context (in the "
-        "response letter of a re-review), and check only that its required items are resolved. "
+        "Give the records and scripts to the referees. Do not repeat that recomputation for the "
+        "same version. Verify changed evidence and check whether required items are resolved. "
     )
 
 
@@ -2088,6 +2077,29 @@ def _response_of(campaign: Mapping[str, Any], packet: Mapping[str, Any]) -> dict
     return result or None
 
 
+def needs_specialist_review(state, packet, prereg):
+    verdict = packet.get("primary_endpoint_verdict")
+    previous = state.get("review_endpoint_verdict")
+    flip = previous in EVALUATED_VERDICTS and previous != verdict
+    sensitive = isinstance(prereg, Mapping) and prereg.get("high_sensitivity") is True
+    risk = packet.get("recompute_risk")
+    if not (flip or sensitive or risk in ("high_sensitivity", "disputed_data", "verdict_flip")
+            or state.get("review_stage") == STAGE_MAJOR):
+        return False
+    history = _history(state)
+    last = history[-1] if history else {}
+    covered = (state.get("digest") and state["digest"] == last.get("workspace_digest")
+                and packet.get("paper_id") and packet["paper_id"] == last.get("paper_id")
+                and last.get("verdict") in ("accept", "minor") and previous == verdict
+                and not last.get("unverified") and state.get("review_stage") != STAGE_MAJOR)
+    if not covered:
+        return True
+    try:
+        return sha256_file(Path(str(last.get("result_path") or ""))) != last.get("result_sha256")
+    except OSError:
+        return True
+
+
 def _recompute_objective(round_number: int, max_rounds: int) -> str:
     return (
         f"Recompute review, round {round_number} of {max_rounds}, of a topic owner's manuscript "
@@ -2140,6 +2152,7 @@ def _enqueue_recompute_review(
         "round": round_number,
         "max_rounds": max_rounds,
         "paper_id": packet.get("paper_id") or state.get("paper_id"),
+        "workspace_digest": state.get("digest"),
         "owner_seat": str(task["task_id"]),
         "owner_result": str(result_path),
         "canonical_workspace": str(root) if campaign.get("state_path") else None,
@@ -2271,7 +2284,9 @@ def _after_recompute(
         return True
     round_number = int(state.get("review_round") or 0) + 1
     max_rounds = settings.program.owner.review_max_rounds
+    reviewed = _read_json(Path(str(task.get("input_path") or "")))
     entry = {"round": round_number, "cycle": int(state.get("review_cycle") or 0),
+             "workspace_digest": reviewed.get("workspace_digest"), "paper_id": reviewed.get("paper_id"),
              "task_id": str(task["task_id"]), "runner": str(task.get("runner") or ""),
              "result_path": str(result_path), "result_sha256": result_sha256,
              **{key: block[key] for key in ("verdict", "required", "optional", "unverified",
@@ -2483,11 +2498,10 @@ def after_result(
         if history and response and not history[-1].get("owner_response"):
             history[-1]["owner_response"] = response
             state = update_state(db, campaign_id, review_history=history)
-        stage = str(state.get("review_stage") or "")
-        if settings.program.owner.recompute_review and stage not in {
-            STAGE_MINOR, STAGE_PASSED, STAGE_UNIFIED,
-        }:
-            # Recompute review first; the unified review once it says minor or accept.
+        prereg = _read_json(Path(str(campaign.get("workstream_state_path") or ""))).get("preregistration")
+        specialist = needs_specialist_review(state, packet, prereg)
+        update_state(db, campaign_id, review_endpoint_verdict=verdict)
+        if settings.program.owner.recompute_review and specialist:
             _enqueue_recompute_review(db, paths, settings, report, task=task, packet=packet,
                                       result_path=result_path)
             return True
@@ -3005,14 +3019,9 @@ def render_brief(
         "You own this admitted topic end to end; how to get there is your decision.",
         "",
         "## Goal",
-        ("One manuscript, on the line's paper template, that an independent recompute review "
-         "(another model, fresh session, recomputing your core numbers from your data) judges "
-         "minor or accept - or an early, honest verdict that it cannot be done, and why. Major "
-         f"verdicts return to you (at most {owner.review_max_rounds} rounds), then the unified "
-         "review and a human decide. Run the recompute checklist on your results first."
-         if owner.recompute_review else
-         "One manuscript, on the research line's paper template, that a venue on the line's "
-         "list would publish - or an early, honest verdict that it cannot be done, and why."),
+        "One publishable manuscript or an early, honest finding that the question cannot be answered. "
+        "Flag high_sensitivity, disputed_data or verdict_flip in recompute_risk for independent recompute review. "
+        "For a direction decision record direction_reason (major_freeze, change_topic or budget_dispute).",
         "",
         "## Resources",
         f"CODE={code}, DATA={paths.data}.",

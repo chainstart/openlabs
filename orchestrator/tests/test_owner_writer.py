@@ -76,7 +76,7 @@ def test_reviews_of_the_writers_manuscript_avoid_the_writers_family(tmp_path, mo
     _tick(paths, settings, monkeypatch)
     review = _latest(db, topic["campaign_id"])
     assert review["task_type"] == "paper_review"
-    assert review["routing_reason"] == owner.ROUTING_RECOMPUTE
+    assert review["routing_reason"] == owner.ROUTING_REVIEW
     assert review["exclude_provider"] == CLAUDE and review["parent_task_id"] == writer_seat["task_id"]
     review = _lease(paths, settings, monkeypatch, db, review["task_id"])
     assert RUNNERS[review["runner"]].provider != CLAUDE

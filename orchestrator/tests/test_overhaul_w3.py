@@ -218,23 +218,14 @@ def test_same_state_seats_get_one_decision_then_stop(tmp_path, monkeypatch) -> N
     campaign_id = topic["campaign_id"]
     for n in range(1, 4):
         _same_seat(paths, db, settings, monkeypatch, _latest(db, campaign_id)["task_id"], n)
-    decisions = _direction_tasks(db)
-    assert len(decisions) == 1
-    packet = json.loads(Path(decisions[0]["input_path"]).read_text(encoding="utf-8"))
-    assert packet["trigger"]["reason"] == owner.TRIGGER_STALLED
-    detail = packet["trigger"]["detail"]
-    assert detail["signature_streak"] == 3 and detail["state"]["phase"] == "writing"
-    assert "Hand the manuscript to the writer." in packet["reasons_to_answer"][1]
-    # The decision keeps the topic alive; its step does not change the state.
-    report = _decide(paths, settings, monkeypatch, db,
-                     _analysis_decision(packet["reasons_to_answer"][0]))
-    executed = report.program["direction_decisions"][-1]["executed_task_id"]
-    _same_seat(paths, db, settings, monkeypatch, executed, 4)
+    assert not _direction_tasks(db)
+    report = _tick(paths, settings, monkeypatch)
+    _same_seat(paths, db, settings, monkeypatch, _latest(db, campaign_id)["task_id"], 4)
     assert owner.stalled(owner.owner_state(db, campaign_id)) is None
     _same_seat(paths, db, settings, monkeypatch, _latest(db, campaign_id)["task_id"], 5)
     state = owner.owner_state(db, campaign_id)
     stall = owner.stalled(state)
-    assert stall is not None and stall["decision_task"] == decisions[0]["task_id"]
+    assert stall is not None and not stall.get("decision_task")
     last = _latest(db, campaign_id)
     assert last["status"] == "succeeded"  # no further seat was queued
     # Replenishment respects the stop and the tick reports the topic as stuck.

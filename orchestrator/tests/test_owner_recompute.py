@@ -29,10 +29,10 @@ from test_research_program_flow import RUNNERS, _tick
 PAPER = "20261116-ai-owner-recompute"
 
 
-def _ready(db, paths, seat, *, session="s1"):
+def _ready(db, paths, seat, *, session="s1", risk="disputed_data"):
     return _seat_packet(db, paths, seat["task_id"], {
         "status": "ready_for_review", "paper_id": PAPER, "primary_endpoint_verdict": "met",
-        "phase": "writing"}, session=session, artifact=True)
+        "phase": "writing", "recompute_risk": risk}, session=session, artifact=True)
 
 
 def _verdict(verdict: str, **extra) -> dict:
@@ -118,7 +118,7 @@ def test_major_then_minor_then_unified_then_ready(tmp_path, monkeypatch):
 
     # After the minor changes the manuscript goes to the unified review, not a 3rd round.
     minor = _lease(paths, settings, monkeypatch, db, minor["task_id"])
-    _ready(db, paths, minor, session="s3")
+    _ready(db, paths, minor, session="s3", risk=None)
     _tick(paths, settings, monkeypatch)
     unified = _review_of(db, campaign_id)
     assert unified["routing_reason"] == owner.ROUTING_REVIEW
@@ -666,3 +666,28 @@ def test_reporting_prices_parse_and_default_to_the_cost_review() -> None:
     assert load_program_settings({"owner": {"session_max_seats": 0, "review_max_rounds": 5,
                                             "recompute_review": False}}).owner == OwnerSettings(
         session_max_seats=0, review_max_rounds=5, recompute_review=False)
+
+
+def test_routine_endpoint_routes_to_unified_review(tmp_path, monkeypatch):
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    seat = _first_seat(paths, db, settings, monkeypatch, topic)
+    _seat_packet(db, paths, seat["task_id"], {"status": "ready_for_review", "paper_id": PAPER,
+                 "primary_endpoint_verdict": "met"}, artifact=True)
+    _tick(paths, settings, monkeypatch)
+    assert _review_of(db, topic["campaign_id"])["routing_reason"] == owner.ROUTING_REVIEW
+
+
+def test_sensitive_endpoint_reuses_only_a_matching_independent_review(tmp_path):
+    report = tmp_path / "decision.json"
+    report.write_text('{"verdict": "accept"}')
+    state = {"digest": "current", "review_endpoint_verdict": "met", "review_history": [
+        {"paper_id": PAPER, "workspace_digest": "current", "verdict": "accept",
+         "result_path": str(report), "result_sha256": owner.sha256_file(report)}]}
+    packet = {"paper_id": PAPER, "primary_endpoint_verdict": "met"}
+    prereg = {"high_sensitivity": True}
+    assert not owner.needs_specialist_review(state, packet, prereg)
+    assert owner.needs_specialist_review(dict(state, digest="changed"), packet, prereg)
+    assert owner.needs_specialist_review(state, dict(packet, paper_id="other"), prereg)
+    assert owner.needs_specialist_review(state, dict(packet, primary_endpoint_verdict="failed"), {})
+    report.write_text("{}")
+    assert owner.needs_specialist_review(state, packet, prereg)
