@@ -137,21 +137,8 @@ synthetic and derived_model_output only alongside real data), an HTTP(S) `source
 
 ## Editor-facing rewrite pass and cross-model review
 
-User decision 2026-11-07 (blind experiment: rewriting the opening and closing helped in every
-model; each model judge preferred its own model's text 4/5):
+Authors may use `paper-writing rewrite run <paper_id>` to compare alternative openings and closings. Preserve the evidence and disclosures when applying a candidate. Unified review can start without a rewrite receipt.
 
-- Once per target checked on or after `quality_gate.editorial_rewrite.required_from`, before
-  its first unified review, run `paper-writing rewrite run <paper_id> [--apply]`. Only a
-  missing pass stops the review; its verdict is advice recorded with the review. Each
-  configured rewriter rewrites only the abstract, Introduction and closing section in a fresh
-  process; judges of both families rank the original and candidates blind. A candidate is used
-  only if it passes the deterministic checks (no new citation keys, labels kept, references
-  resolve, length within the hard limit), no judge finds a major fidelity issue, every judge
-  ranks it above the original, and every judge scores naturalness, restraint, clarity and venue
-  fit at least 7/10, affirms `editorial_ready` and reports no located `editorial_blockers`.
-  When no version meets these floors the pass ends `editorial_failed`, which the review also
-  receives as advice. Necessary qualifications and truthful disclosures stay. Later source
-  changes do not trigger a rerun; keyword densities are diagnostics.
 - The panel is configured in `settings.yaml#review`; `review.cross_model.required` blocks a panel
   in which every referee is of the drafting model's family (another version of the same family
   does not count). The drafting model is the paper record's `writer_model`; without it the

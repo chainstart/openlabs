@@ -223,7 +223,7 @@ def test_run_select_apply_and_preflight_gate(tmp_path):
     (root / "registry/settings.yaml").write_text(yaml.safe_dump({"schema_version": "ara.paper_writing.registry.v1", "quality_gate": {"editorial_rewrite": {
         "required": True, "required_from": "2026-11-08", "rewriters": er.DEFAULT_ROLES, "judges": er.DEFAULT_ROLES}}}))
     metadata = yaml.safe_load((root / "registry/papers/p.yaml").read_text())
-    assert er.preflight_blockers(metadata, root, "p")  # no pass yet
+    assert er.preflight_blockers(metadata, root, "p") == []  # optional even before the first pass
     record = er.run_rewrite("p", root=root, runner=fake_runner({"judge_gpt": "GPT", "judge_opus": "OPUS"}))
     assert record["outcome"] == "candidate_selected"
     assert set(record["blind_keys"]["gpt"].values()) == {"original", "gpt", "opus"}
@@ -256,7 +256,7 @@ def test_failed_rewriters_do_not_satisfy_required_pass(tmp_path):
     assert record["outcome"] == "rewrite_failed"
     assert set(record["rewriter_failures"]) == {"gpt", "opus"}
     metadata = yaml.safe_load((root / "registry/papers/p.yaml").read_text())
-    assert er.preflight_blockers(metadata, root, "p")
+    assert er.preflight_blockers(metadata, root, "p") == []
     assert (root / "papers/p/manuscript/main.tex").read_text() == MAIN
 
 
@@ -404,7 +404,7 @@ def test_judge_failure_is_recorded_and_blocks(tmp_path):
 
     record = er.run_rewrite("p", root=root, runner=runner)
     assert record["outcome"] == "judge_failed"
-    assert er.preflight_blockers(metadata, root, "p")
+    assert er.preflight_blockers(metadata, root, "p") == []
 
 
 def test_duplicate_judge_ranking_is_rejected():

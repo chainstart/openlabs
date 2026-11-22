@@ -796,21 +796,7 @@ def advisory(metadata: Mapping[str, Any], root: Path, paper_id: str) -> dict[str
 
 
 def preflight_blockers(metadata: Mapping[str, Any], root: Path, paper_id: str) -> list[str]:
-    """Unified-review preflight: run the rewrite pass once per target before the first review.
-
-    Its verdict is advice recorded with the review (see ``advisory``); editorial
-    floors, unapplied candidates and later source changes no longer block. Only a
-    missing completed pass and an invalid rewrite configuration do. The verified
-    venue abstract limits are a preparation advisory at review time
-    (``abstract_findings``) and a hard requirement at delivery.
-    """
-    applies, problems = _gate_applies(metadata, root)
-    if not applies:
-        return problems
-    target = target_of(metadata)
-    if latest_record(root, paper_id, target, completed_only=True) is None:
-        return [f"Run the editor-facing rewrite pass for {target} once before the unified review "
-                f"(`paper-writing rewrite run {paper_id}`); its result is advisory"]
+    """Compatibility hook. Editorial rewriting is an optional author tool."""
     return []
 
 
