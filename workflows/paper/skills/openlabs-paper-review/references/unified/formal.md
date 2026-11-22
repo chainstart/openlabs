@@ -93,3 +93,15 @@ qualification, condition, check or derivation step stated in an appendix or supp
 as stated: do not mark a gap or error because the main text does not repeat it. When you report
 a gap whose repair is an added step or qualification, say in the finding that it belongs in the
 appendix or supplement unless the main result cannot be read correctly without it.
+
+## Verification after the first attempt
+
+When the packet includes `followup_scope`, inspect only the supplied items.
+The complete manuscript is context for resolving those items and checking their
+dependencies. Keep findings tied to the selected passages and bibliographic
+entries. In changed prose, flag concrete numeric or citation discrepancies that
+the evidence establishes. When the packet includes `materiality`, all negative verdicts require
+a `finding_kind` and a concrete `reader_misconclusion`. Report presentation
+and wording issues as advisory. A numeral, citation or formula error can still
+block with a concrete validity consequence. Preserve exact batch coverage and
+located evidence under the same rules.

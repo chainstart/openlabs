@@ -88,11 +88,12 @@ def test_round_guard(tmp_path, monkeypatch, case, blocked_by):
 
     def respond(**kwargs):
         report, receipt = role(**kwargs)
-        if kwargs["role_name"].startswith("referee"):
+        if kwargs["role_name"] == "editor" or kwargs["role_name"].startswith("referee"):
             report["previous_items"] = [
-                {"item": row["item"], "resolved": True, "evidence": row["explanation"]}
+                {"item": row["item"], "resolved": True, "evidence": row["explanation"], "reader_misconclusion": ""}
                 for row in items
             ]
+            report["new_findings"] = []
         return report, receipt
 
     monkeypatch.setattr(flow, "run_role", respond)

@@ -6,6 +6,7 @@ This is not a claim that an entire manuscript has been machine proved.
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import html
 import json
@@ -268,6 +269,10 @@ def verification_source_metadata(metadata: Mapping[str, Any], inv: Mapping[str, 
     plan = source_plan(metadata)
     sources = [s for s in plan.get('sources', []) if s['kind'] == 'publisher_catalog' or any(
         not re.search(r'10\.\d{4,9}/|arxiv', refs.get(key, ''), re.I) for key in s['reference_keys'])]
+    if inv.get("followup"):
+        keys = set(inv["task_reference_keys"]) | {c["key"] for p in inv["passages"] for c in p["citations"]}
+        sources = [dict(source, reference_keys=[key for key in source["reference_keys"] if key in keys])
+                   for source in sources if set(source["reference_keys"]) & keys]
     sources = [{k: v for k, v in s.items() if k != 'passage_patterns'} for s in sources]
     return dict(metadata, formal_check={'sources': sources, 'local_evidence': []})
 
@@ -965,7 +970,8 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
                     *, findings: list[dict[str, Any]] | None = None,
                     artifacts: Mapping[str, Any] | None = None,
                     unverifiable_keys: Any = (),
-                    unverifiable_out: list[dict[str, Any]] | None = None) -> list[str]:
+                    unverifiable_out: list[dict[str, Any]] | None = None,
+                    followup: bool = False) -> list[str]:
     """Check exact coverage and whitespace-equivalent evidence without changing raw text.
 
     ``unverifiable_keys`` are references whose authoritative record could not be
@@ -985,8 +991,8 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
         unverifiable_out.append({"item": label, "reference_key": key, "status": row["status"],
                                  "classification": "unverifiable_source_access"})
         return True
-    _validate_against_schema(report, REPORT_SCHEMA)
-    _exact(report["references"], "key", {r["key"] for r in inv["references"]}, "References")
+    _validate_against_schema(report, report_schema(followup))
+    _exact(report["references"], "key", {r["key"] for r in _task_references(inv)}, "References")
     _exact(report["passages"], "passage_id", {p["id"] for p in inv["passages"]}, "Passages")
     source_by_id = {s["id"]: s for s in sources}
     if len(source_by_id) != len(sources):
@@ -995,7 +1001,8 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
     context = {'root': '', 'label': ''}
     def add(message: str, category: str = 'technical', *, aggregate: bool = False,
             reason: str = '', status: str | None = None) -> None:
-        blockers.append(message)
+        if category != "advisory":
+            blockers.append(message)
         if findings is not None:
             findings.append({'category': category, 'root': context['root'], 'location': context['label'],
                              'message': message, 'aggregate': aggregate, 'reason': reason, 'status': status})
@@ -1025,9 +1032,20 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
         context['label'] = label
         if row["status"] != "verified":
             category = 'preparation' if row.get('kind') == 'artifact_preparation' else 'scientific'
-            add(f"{label}: {row['status']}", category,
+            if followup:
+                consequence = row["reader_misconclusion"].strip()
+                if row["finding_kind"] == "advisory" or not consequence:
+                    category = "advisory"
+                fields = (*fields, "reader_misconclusion")
+                # A gap or unchecked result must still identify a concrete
+                # validity defect. An error can be in numbers, citations or formulas.
+            reason = "\n".join(str(row.get(f, '')) for f in fields)
+            message = f"{label}: {row['status']}"
+            if followup:
+                message += f" — {reason.strip()}"
+            add(message, category,
                 aggregate='passage_id' in row, status=row['status'],
-                reason='\n'.join(str(row.get(f, '')) for f in fields))
+                reason=reason)
             return False
         if any(not row[field].strip() for field in fields):
             add(f"{label}: a verified item lacks its check rationale")
@@ -1042,6 +1060,7 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
                                     "primary_source_check", "publication_status_check")):
             evidence(row["evidence"], {row["key"]}, kinds={"primary_text", "publisher_catalog", "bibliographic_metadata", "current_support_draft"})
     inv_passages = {p["id"]: p for p in inv["passages"]}
+    proof_context = {**inv_passages, **inv.get("proof_context", {})}
     for row in report["passages"]:
         context['root'] = row['passage_id']
         unit = inv_passages[row["passage_id"]]
@@ -1097,18 +1116,18 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
                     if keys or item["evidence"]:
                         add("Internal derivation must be reconstructed from located manuscript proof, not external evidence")
                     locator = item["original_locator"].strip()
-                    if locator not in inv_passages and not (len(_whitespace(locator)) >= 12 and any(
-                            _whitespace(locator) in _whitespace(p["text"]) for p in inv["passages"])):
+                    if locator not in proof_context and not (len(_whitespace(locator)) >= 12 and any(
+                            _whitespace(locator) in _whitespace(p["text"]) for p in proof_context.values())):
                         add("Internal derivation locator is not an actual manuscript passage ID or literal proof excerpt")
     return blockers
 
 
 def issue_summary(findings: list[dict[str, Any]]) -> dict[str, Any]:
     """Preserve raw coverage; collapse only a parent's nested failure aggregation."""
-    nested_roots = {f['root'] for f in findings if not f['aggregate'] and f.get('status') is not None}
+    nested = {(f['root'], f['category']) for f in findings if not f['aggregate'] and f.get('status') is not None}
     roots = []
     for finding in findings:
-        if finding['aggregate'] and finding['root'] in nested_roots:
+        if finding['aggregate'] and (finding['root'], finding['category']) in nested:
             continue
         # Do not merge different checks because they share only gap/error.
         key = (finding['category'], finding['root'], finding['location'], finding['message'], finding['reason'])
@@ -1117,7 +1136,8 @@ def issue_summary(findings: list[dict[str, Any]]) -> dict[str, Any]:
     roots = [{k: v for k, v in r.items() if k != '_key'} for r in roots]
     return {'raw_findings': findings, 'root_causes': roots,
             'by_category': {k: [r['message'] for r in roots if r['category'] == k]
-                            for k in ['scientific', 'technical', 'source_routing', 'preparation']}}
+                            for k in ['scientific', 'technical', 'source_routing', 'preparation',
+                                      *(['advisory'] if any(r['category'] == 'advisory' for r in roots) else [])]}}
 
 
 def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[str, str]],
@@ -1140,7 +1160,17 @@ def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[s
                     for pattern in s.get("passage_patterns", []) for p in batch))]
     scoped_urls = {s["url"] for s in selected if s.get("extraction_pages")}
     selected = [s for s in selected if s["url"] not in scoped_urls or s.get("extraction_pages")]
-    return json.dumps({"scope": group, "items": batch, "complete_manuscript": documents,
+    instructions = {}
+    if inv.get("followup"):
+        instructions["followup_scope"] = (
+            "Check only the listed prior blockers and changed passages or bibliography entries. "
+            "Use the manuscript as context. Keep all findings within the listed items.")
+    if inv.get("materiality") or inv.get("followup"):
+        instructions["materiality"] = (
+            "For each negative verdict provide finding_kind and the concrete reader_misconclusion. "
+            "Use advisory for wording, style, caption details and issues without a validity consequence. "
+            "For verified items use advisory and an empty reader_misconclusion.")
+    return json.dumps({**instructions, "scope": group, "items": batch, "complete_manuscript": documents,
         "evidence_root": evidence_root if evidence_root is not None else (str(root.resolve()) if root else None),
         "deterministic_preparation_inventory": artifacts or {},
         "complete_bibliography": inv["references"], "retrieved_sources": selected,
@@ -1209,15 +1239,37 @@ def packet_batches(group: str, documents: list[dict[str, str]], inv: Mapping[str
                                                     "citation_keys": selected})]
                 for number, selected in enumerate(groups, 1)]
 
-    units = inv[group]
+    units = _task_references(inv) if group == "references" else inv[group]
     return [batch for start in range(0, len(units), BATCH_SIZE)
             for batch in split(units[start:start + BATCH_SIZE])]
+
+
+def report_schema(followup: bool) -> dict[str, Any]:
+    if not followup:
+        return REPORT_SCHEMA
+    schema = json.loads(json.dumps(REPORT_SCHEMA))
+
+    def add_fields(node):
+        for child in node.get("properties", {}).values():
+            add_fields(child)
+        if "items" in node:
+            add_fields(node["items"])
+        if "status" in node.get("properties", {}):
+            node["properties"].update(
+                finding_kind={"type": "string", "enum": [
+                    "advisory", "numeric_or_statistical_error", "citation_error_or_unsupported",
+                    "formula_error", "unsupported_claim", "preregistration_violation", "figure_result_mismatch"]},
+                reader_misconclusion=TEXT)
+            node["required"].extend(["finding_kind", "reader_misconclusion"])
+
+    add_fields(schema)
+    return schema
 
 
 def batch_schema(group: str, batch: list[dict[str, Any]], inv: Mapping[str, Any],
                  sources: list[dict[str, Any]]) -> dict[str, Any]:
     """Constrain output identities and locations, never scientific judgments."""
-    schema = json.loads(json.dumps(REPORT_SCHEMA))
+    schema = json.loads(json.dumps(report_schema(bool(inv.get("followup") or inv.get("materiality")))))
     for scope, identifier in (("references", "key"), ("passages", "passage_id")):
         rows = schema['properties'][scope]
         rows['minItems'] = rows['maxItems'] = len(batch) if scope == group else 0
@@ -1230,7 +1282,7 @@ def batch_schema(group: str, batch: list[dict[str, Any]], inv: Mapping[str, Any]
         'citation_id': [citation['id'] for unit in batch for citation in unit.get('citations', [])],
     }
     def constrain(node: dict[str, Any], field: str = '') -> None:
-        if node.get('type') == 'string' and field != 'quote':
+        if node.get('type') == 'string' and field not in {'quote', 'reader_misconclusion'}:
             node['minLength'] = 1
         properties = node.get('properties', {})
         for identifier, ids in choices.items():
@@ -1255,7 +1307,7 @@ def batch_schema(group: str, batch: list[dict[str, Any]], inv: Mapping[str, Any]
         external['properties']['reference_keys']['items']['enum'] = keys
     internal['properties']['reference_keys']['maxItems'] = 0
     internal['properties']['evidence']['maxItems'] = 0
-    ids = [unit['id'] for unit in inv['passages']]
+    ids = list(dict.fromkeys([unit['id'] for unit in inv['passages']] + list(inv.get('proof_context', {}))))
     if ids:
         internal['properties']['original_locator']['enum'] = ids
     prerequisites['items'] = {'anyOf': [external, internal]}
@@ -1305,6 +1357,13 @@ def merge_evidence_parts(rows: list[dict[str, Any]], splits: Mapping[str, Any]) 
     concatenated. A missing part leaves its citation uses absent, which the exact
     coverage check then refuses.
     """
+    def rank(row):
+        status = row.get("status")
+        advisory = ("finding_kind" in row and
+                    (row["finding_kind"] == "advisory" or not row["reader_misconclusion"].strip()))
+        # A cosmetic error in one part must not mask a material gap in another.
+        return (status == "verified", advisory, _STATUS_ORDER.get(status, 0))
+
     merged: list[dict[str, Any]] = []
     index: dict[str, int] = {}
     for row in rows:
@@ -1322,8 +1381,10 @@ def merge_evidence_parts(rows: list[dict[str, Any]], splits: Mapping[str, Any]) 
             continue
         target = merged[index[pid]]
         target["_parts"] += 1
-        if _STATUS_ORDER.get(row.get("status"), 0) < _STATUS_ORDER.get(target.get("status"), 0):
-            target["status"] = row.get("status")
+        if rank(row) < rank(target):
+            for field in ("status", "finding_kind", "reader_misconclusion"):
+                if field in row:
+                    target[field] = row[field]
         target["coverage_rationale"] += f"\n[evidence part {target['_parts']}] {row.get('coverage_rationale', '')}"
         target["citations"].extend(row.get("citations", []))
         target["prerequisites"].extend(row.get("prerequisites", []))
@@ -1332,7 +1393,7 @@ def merge_evidence_parts(rows: list[dict[str, Any]], splits: Mapping[str, Any]) 
             i = formulas.get(formula.get("formula_id"))
             if i is None:
                 target["formulas"].append(formula)
-            elif _STATUS_ORDER.get(formula.get("status"), 0) < _STATUS_ORDER.get(target["formulas"][i].get("status"), 0):
+            elif rank(formula) < rank(target["formulas"][i]):
                 target["formulas"][i] = formula
     for row in merged:
         parts = row.pop("_parts", None)
@@ -1342,9 +1403,10 @@ def merge_evidence_parts(rows: list[dict[str, Any]], splits: Mapping[str, Any]) 
     return merged
 
 
-def batch_coverage(output: Mapping[str, Any], group: str, batch: list[dict[str, Any]]) -> None:
+def batch_coverage(output: Mapping[str, Any], group: str, batch: list[dict[str, Any]],
+                   *, followup: bool = False) -> None:
     """Refuse malformed nested IDs before accepting a provider's batch."""
-    _validate_against_schema(output, REPORT_SCHEMA)
+    _validate_against_schema(output, report_schema(followup))
     _exact(output[group], "key" if group == "references" else "passage_id",
            {u["key" if group == "references" else "id"] for u in batch}, group)
     if output["passages" if group == "references" else "references"]:
@@ -1357,28 +1419,114 @@ def batch_coverage(output: Mapping[str, Any], group: str, batch: list[dict[str, 
             _exact(row["citations"], "citation_id", {c["id"] for c in unit["citations"]}, "Citation uses")
 
 
+def _delta_inventory(documents, bibliography, prior_documents, prior_inventory, blocked_roots):
+    """Map unchanged paragraphs across line moves and select prior negatives and edits."""
+    inv = inventory(documents, bibliography)
+    core = {p["id"]: p for p in verification_inventory(documents, bibliography)["passages"]}
+    selected = set()
+    for doc in documents:
+        current = [p for p in inv["passages"] if p["document"] == doc["id"]]
+        previous = [p for p in prior_documents["passages"] if p["document"] == doc["id"]]
+        matcher = difflib.SequenceMatcher(None, [p["text"] for p in previous],
+                                         [p["text"] for p in current], autojunk=False)
+        for tag, old_start, old_stop, start, stop in matcher.get_opcodes():
+            if tag == "equal":
+                selected.update(p["id"] for old, p in zip(previous[old_start:old_stop], current[start:stop])
+                                if old["id"] in blocked_roots)
+            elif start == stop and current:
+                # Review the surviving neighbors when a deletion changes context.
+                selected.update(p["id"] for p in current[max(0, start - 1):start + 1])
+            else:
+                selected.update(p["id"] for p in current[start:stop])
+    old_refs = {r["key"]: r for r in prior_inventory["references"]}
+    changed_refs = {r["key"] for r in inv["references"]
+                    if r != old_refs.get(r["key"]) or r["key"] in blocked_roots}
+    # A bibliographic change also warrants checking its use.
+    passages = [p for p in inv["passages"] if p["id"] in selected
+                or any(c["key"] in changed_refs for c in p["citations"])]
+    passages = [core.get(p["id"], dict(p, formulas=[])) for p in passages]
+    return dict(inv, followup=True, passages=passages,
+                task_reference_keys=sorted(changed_refs),
+                proof_context={pid: {"text": p["text"]} for pid, p in core.items()},
+                scope={"name": "prior_blockers_and_changed_passages"})
+
+
+def _followup_inventory(binding, metadata, root, role, documents, bibliography):
+    if not binding:
+        return None
+    path = _safe_file(root, binding["path"])
+    raw = path.read_bytes()
+    if sha(raw) != binding["sha256"]:
+        raise ValueError("Previous formal-check report changed")
+    prior = json.loads(raw)
+    if (prior["paper_id"] != metadata["paper_id"] or prior["role"] != dict(role)
+            or not policy_accepted(prior["policy"])
+            or prior["source_plan_sha256"] != digest(source_plan(metadata))):
+        return None
+    findings = prior["issue_summary"]["raw_findings"]
+    old_inv = prior["inventory"]
+    incomplete = any(f["category"] in {"technical", "source_routing", "preparation"} for f in findings)
+    if incomplete and not old_inv.get("followup"):
+        return None
+    old_docs = prior.get("documents")
+    if old_docs is None:
+        if not prior["receipts"]:
+            return None
+        # Legacy receipts already bind the complete manuscript in their packet.
+        first = prior["receipts"][0]
+        prompt = _safe_file(root, first["workdir"] + "/prompt.txt").read_bytes()
+        system = _safe_file(root, first["workdir"] + "/system.txt").read_bytes()
+        if sha(prompt) != first["receipt"]["prompt_sha256"] or not prompt.startswith(system + b"\n\n"):
+            raise ValueError("Previous formal-check manuscript evidence changed")
+        old_docs = json.loads(prompt[len(system) + 2:])["complete_manuscript"]
+    if digest(old_docs) != old_inv["documents_sha256"]:
+        raise ValueError("Previous formal-check manuscript does not match its inventory")
+    old_bib = "\n\n".join(r["text"] for r in old_inv["references"])
+    roots = {f["root"] for f in findings if f["category"] == "scientific"}
+    if incomplete:
+        roots.update(p["id"] for p in old_inv["passages"])
+        roots.update(r["key"] for r in _task_references(old_inv))
+    return _delta_inventory(documents, bibliography, inventory(old_docs, old_bib), old_inv, roots)
+
+
+def _task_references(inv):
+    keys = inv.get("task_reference_keys")
+    return inv["references"] if keys is None else [r for r in inv["references"] if r["key"] in keys]
+
+
 def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str, Any],
                timeout: int, runner) -> dict[str, Any]:
     if role.get("provider") != "openai-codex":
         raise ValueError("Formal verification requires an independent Codex role")
     metadata = pre["metadata"]
     documents, bibliography = current_inputs(metadata, root)
-    inv = verification_inventory(documents, bibliography)
+    prior = pre.get("previous_formal_check")
+    inv = _followup_inventory(prior, metadata, root, role, documents, bibliography)
+    if inv is None:
+        inv = verification_inventory(documents, bibliography)
+        prior = None
+        if pre.get("materiality"):
+            inv["materiality"] = True
     directory = run / "formal-check"
     directory.mkdir()
     findings = []
+    source_inv = inv
+    if inv.get("followup"):
+        keys = set(inv["task_reference_keys"]) | {c["key"] for p in inv["passages"] for c in p["citations"]}
+        source_inv = dict(inv, references=[ref for ref in inv["references"] if ref["key"] in keys])
     source_metadata = verification_source_metadata(metadata, inv)
     routes = local_route_preflight(source_metadata, inventory(documents, bibliography), root)
     # PDF/ZIP identity is enforced by preflight/release, not a mathematical premise.
     artifacts = {}
     with httpx.Client(timeout=httpx.Timeout(30, connect=15), follow_redirects=True) as client:
         unreachable: dict[str, list[str]] = {}
-        sources, errors = ([], routes) if routes else collect_sources(inv, source_metadata, root, directory / "evidence",
+        sources, errors = ([], routes) if routes else collect_sources(source_inv, source_metadata, root, directory / "evidence",
                                                                      client, unreachable)
     for message in errors:
         findings.append({'category': 'source_routing', 'root': '', 'location': '', 'message': message,
                          'aggregate': False, 'reason': message, 'status': None})
     report = {"references": [], "passages": []}
+    materiality = bool(inv.get("followup") or inv.get("materiality"))
     receipts = []
     splits: dict[str, list[dict[str, Any]]] = {}
     if not errors:
@@ -1404,7 +1552,7 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
                     findings.append({'category':'technical','root':'','location':'','message':message,'aggregate':False,'reason':message,'status':None})
                     continue
                 try:
-                    batch_coverage(output, group, batch)
+                    batch_coverage(output, group, batch, followup=materiality)
                 except (LaunchError, ValueError, OSError) as exc:
                     message = f"{group} batch {batch_number}: coverage protocol failure: {exc}"
                     errors.append(message)
@@ -1421,7 +1569,8 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
     unverifiable_items: list[dict[str, Any]] = []
     try:
         errors.extend(report_blockers(report, inv, sources, findings=findings, artifacts=artifacts,
-                                      unverifiable_keys=unreachable, unverifiable_out=unverifiable_items))
+                                      unverifiable_keys=unreachable, unverifiable_out=unverifiable_items,
+                                      followup=materiality))
     except (ValueError, LaunchError) as exc:
         message = f"Coverage/evidence verification failed: {exc}"
         errors.append(message)
@@ -1455,6 +1604,9 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
         "unverifiable_source_access": {"references": dict(sorted(unreachable.items())),
                                        "items": unverifiable_items},
         "machine_proof_of_whole_manuscript": False, "verified_at": datetime.now(UTC).isoformat()}
+    result["documents"] = documents
+    if prior:
+        result["previous_formal_check"] = {key: prior[key] for key in ("path", "sha256")}
     path = directory / "report.json"
     path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     binding = {"path": path.relative_to(root).as_posix(), "sha256": sha(path.read_bytes()),
@@ -1484,7 +1636,14 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
         if result["source_plan_sha256"] != digest(source_plan(metadata)):
             raise ValueError("Registered primary-source plan changed")
         documents, bibliography = current_inputs(metadata, root)
-        if result["inventory"] != verification_inventory(documents, bibliography):
+        prior = result.get("previous_formal_check")
+        if prior and _safe_file(root, prior["path"]).parent.parent >= path.parent.parent:
+            raise ValueError("Previous formal check must precede this run")
+        expected_inv = (_followup_inventory(prior, metadata, root, result["role"], documents, bibliography)
+                        if prior else verification_inventory(documents, bibliography))
+        if not prior and result["inventory"].get("materiality") is True:
+            expected_inv["materiality"] = True
+        if result["inventory"] != expected_inv:
             raise ValueError("Formal-check coverage does not match current manuscript and bibliography")
         if result.get('artifact_inventory') != {}:
             raise ValueError('Preparation artifacts are outside the mathematical scope')
@@ -1505,8 +1664,9 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             # bytes whose SHA was just checked; read_text translates newlines.
             if _safe_file(root, source["text_path"]).read_bytes().decode("utf-8") != source["text"]:
                 raise ValueError("Reported source text differs from the actual evidence file")
-        if not result["receipts"]:
+        if not result["receipts"] and not prior:
             raise ValueError("Formal verification lacks independent actual-model receipts")
+        materiality = bool(prior or result["inventory"].get("materiality"))
         reconstructed = {"references": [], "passages": []}
         expected_batches = [(group, batch) for group in ("references", "passages")
                             for batch in packet_batches(group, documents, result["inventory"],
@@ -1547,7 +1707,7 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
                 raise ValueError("Formal role did not inspect the exact bound manuscript, batch and source evidence")
             output = json.loads(_safe_file(root, workdir + "/output.json").read_text())
             _validate_against_schema(output, schema)
-            batch_coverage(output, group, batch)
+            batch_coverage(output, group, batch, followup=materiality)
             reconstructed[group].extend(output[group])
         expected_splits = evidence_splits([batch for group, batch in expected_batches if group == "passages"],
                                           result["sources"])
@@ -1567,7 +1727,7 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             raise ValueError("A reference is recorded both as retrieved and as unverifiable")
         blockers = report_blockers(result["report"], result["inventory"], result["sources"],
                                    findings=findings, artifacts=result['artifact_inventory'],
-                                   unverifiable_keys=keys)
+                                   unverifiable_keys=keys, followup=materiality)
         if result.get('issue_summary') != issue_summary(findings):
             raise ValueError('Formal issue summary differs from actual raw findings')
         return blockers

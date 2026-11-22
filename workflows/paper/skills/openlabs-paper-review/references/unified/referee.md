@@ -161,3 +161,15 @@ Set `requires_new_artifact` on every required change. Use true when answering th
 request requires new calculation, data, analysis or a new simulation or experiment.
 Use false for explanation, claim narrowing or figure edits that reuse existing results.
 Put required new work in a typed evidence item even when the corresponding gap is also a scientific blocker.
+
+## Same-journal follow-up
+
+The follow-up packet narrows the job to the latest mandatory items. Return each
+item exactly once in `previous_items`. Cite the evidence for its resolution or
+remaining defect and state the specific erroneous reader conclusion for an
+unresolved blocker. Record new issues in `new_findings`. Only a numerical or
+statistical error, bad or unsupported citation, unsupported claim,
+preregistration violation, formula error or figure-result mismatch can block.
+Include the exact location, the incorrect conclusion a reader would draw if the
+issue remained, and why the prior round missed it. Cosmetic wording, caption,
+definition, length and style requests go in optional suggestions.

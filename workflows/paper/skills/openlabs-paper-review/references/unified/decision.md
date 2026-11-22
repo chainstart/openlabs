@@ -20,3 +20,11 @@ be done when they concern the main line.
 List every required `figure` item from the fixed decision, including the location and the
 specific visual revision. Preserve any reported disagreement between a figure and the results
 as an evidence item. Ask the author to address each required figure change in the response.
+
+## Same-journal follow-up
+
+Use the fixed decision's `required_changes` and `unresolved_previous_items` for
+mandatory work and its `advisory_items` as suggestions for final preparation.
+These are the editorial synthesis after materiality screening. Raw referee
+recommendations and dimension notes cannot add requirements. Do not ask for
+revision or re-verification for suggestions.

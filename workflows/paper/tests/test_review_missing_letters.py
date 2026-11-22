@@ -273,20 +273,25 @@ def test_both_fresh_roles_receive_complete_available_letters_policy_and_previous
             assert identity in packet and 'available_originals_only' in packet
             assert 'Authentic original: contribution too narrow.' in packet
             assert 'not_assessable' in packet and 'unknown' in packet
+        previous = [
+            {'item': missing, 'resolved': True, 'evidence': 'Requirement superseded by scoped policy.',
+             'reader_misconclusion': ''},
+            {'item': science, 'resolved': old_science_resolved, 'evidence': 'Independent current proof assessment.',
+             'reader_misconclusion': 'The bound would appear to hold outside the proven parameter range.'},
+        ]
         if name == 'editor':
             rows = flow.prior_decisions('p', meta, tmp_path)
             reports = [addressed(identity)] + [{'decision_id': r['decision_id'], 'journal': 'K',
                 'concern': 'Narrow contribution', 'answered': False, 'judgment': 'compatible',
                 'evidence': 'Current stronger result and matched target comparison Section 1.'}
                 for r in rows if r['decision_id'] != identity]
-            result = {'decision': 'send_to_review', 'prior_rejections_addressed': reports}
+            result = {'decision': 'send_to_review', 'prior_rejections_addressed': reports,
+                      'previous_items': previous, 'new_findings': []}
             assert 'not_assessable' in kw['schema']['properties']['prior_rejections_addressed']['items']['properties']['judgment']['enum']
             return result, {}
         if name == 'decision_letter':
             return {'letter': 'Internal simulated decision, not external acceptance'}, {}
         assert missing in kw['user_prompt'] and science in kw['user_prompt']
-        previous = [{'item': missing, 'resolved': True, 'evidence': 'No longer required by explicit scoped policy; letter remains unknown.'},
-                    {'item': science, 'resolved': old_science_resolved, 'evidence': 'Independent current proof assessment.'}]
         _validate_against_schema(previous, kw['schema']['properties']['previous_items'])
         return {'recommendation': 'minor_revision', 'scientific_blockers': [], 'required_changes': [],
                 'previous_items': previous, 'scores': {'overall': 6}, 'formal_check_assessment': {'coverage_complete': True, 'omissions_or_errors': []}}, {}

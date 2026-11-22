@@ -114,7 +114,7 @@ def _with_figures(tmp_path, monkeypatch, base_files, current_text="Design"):
         calls.append(kw['role_name'])
         seen[kw['role_name']] = kw
         if kw['role_name'] == 'editor':
-            return editor() | {'prior_rejections_addressed': []}, {}
+            return editor() | {'prior_rejections_addressed': [], 'previous_items': [], 'new_findings': []}, {}
         if kw['role_name'] == 'decision_letter':
             return {'letter': 'fresh letter'}, {}
         return referee('accept'), {}

@@ -491,6 +491,7 @@ def _release_snapshot(metadata: Mapping[str, Any]) -> dict[str, Any]:
             "editorial_closeout",
             "nonblocking_venue_findings",
             "unresolved_review_blockers",
+            "advisory_changes",
             "reviewed_at",
             "manuscript_snapshot_sha256",
             "manuscript_version",

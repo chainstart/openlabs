@@ -112,3 +112,17 @@ Read the title, abstract and opening against the decisive panel. State whose dec
 
 When indexed evidence includes a precedent or counterexample, you may open the cited passage
 and check whether the source actually makes the claimed comparison under the stated conditions.
+
+## Same-journal follow-up
+
+When the packet declares a same-journal follow-up, check each listed previous
+item against the response and diff and return it exactly once in
+`previous_items`. Give the exact unresolved defect and what incorrect scientific
+conclusion a reader would draw in `reader_misconclusion`. For a new blocker use
+`new_findings` and include the location, concrete incorrect reader conclusion and
+why the earlier reviewers missed it. Only numerical or statistical errors,
+incorrect or unsupported citations, unsupported claims, preregistration
+violations, formula errors and figures that contradict results qualify. Treat
+wording, definitions that preserve the analysis, caption details, length and
+style as advisory. Earlier journal correspondence still follows the
+history-clearance policy.

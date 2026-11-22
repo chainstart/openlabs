@@ -1277,7 +1277,7 @@ def _delta_fixture(tmp_path, monkeypatch, expanded):
     def role(**kw):
         calls.append(kw['role_name'])
         if kw['role_name'] == 'editor':
-            return editor() | {'prior_rejections_addressed': []}, {}
+            return editor() | {'prior_rejections_addressed': [], 'previous_items': [], 'new_findings': []}, {}
         if kw['role_name'] == 'decision_letter':
             return {'letter': 'fresh letter'}, {}
         return referee('accept'), {}

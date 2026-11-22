@@ -32,6 +32,18 @@ edit manuscript/registry/evidence during review. Preserve actual outputs and mod
 receipts, including failures. Revised prose remains neutral scientific writing;
 keep internal review negotiation and claims about editor approval outside the paper.
 
+## Same-journal follow-up
+
+From the second round at the same journal, both editor and referees check the
+latest mandatory items. Each remaining blocker must identify the incorrect
+scientific conclusion a reader would draw. A newly raised blocker also needs a
+location and an explanation of why the previous round missed it. Only defects
+that affect a conclusion or its validity can block. Wording, equivalent
+definitions, caption details, length and style go to the final-preparation
+advice in the decision and handoff. After the first formal verification, verify
+the prior blocking items and the paragraphs or bibliography affected by edits.
+Keep preregistration, independent review and delivery evidence requirements.
+
 ## Sequence
 
 1. Deterministic preflight. It stops the review only when a review would be meaningless: the
