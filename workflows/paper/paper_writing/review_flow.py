@@ -779,7 +779,7 @@ def _build(manuscript: Path, workdir: Path, *, document: str = "main.tex") -> tu
 
 
 def build_registered_supplement(metadata: Mapping[str, Any], root: Path,
-                                manuscript: Path, workdir: Path) -> set[str]:
+                                manuscript: Path, workdir: Path, *, update_manuscript: bool = True) -> set[str]:
     """Freshen the scientific SI and collect its actual standalone dependencies."""
     relative = metadata.get("latest_supplementary_pdf")
     if not relative:
@@ -790,10 +790,11 @@ def build_registered_supplement(metadata: Mapping[str, Any], root: Path,
             or not source.is_file()):
         raise ValueError("Registered supplementary PDF requires its manuscript-root TeX source")
     fresh_pdf, used = _build(manuscript, workdir / "supplement", document=source.name)
-    shutil.copyfile(fresh_pdf, pdf)
-    bbl = fresh_pdf.with_suffix(".bbl")
-    if bbl.is_file():
-        shutil.copyfile(bbl, source.with_suffix(".bbl"))
+    if update_manuscript:
+        shutil.copyfile(fresh_pdf, pdf)
+        bbl = fresh_pdf.with_suffix(".bbl")
+        if bbl.is_file():
+            shutil.copyfile(bbl, source.with_suffix(".bbl"))
     return used | {source.name}
 
 
@@ -847,17 +848,18 @@ def _preparation_advisory(source: str, code: str, message: str, *, kind: str = "
     return item
 
 
-def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
+def preflight(paper_id: str, root: Path, workdir: Path, *, update_manuscript: bool = True) -> dict[str, Any]:
     """Check the review inputs and attach the author's diagnostic findings."""
     from paper_writing.journal_history import tolerate_stale_ledger
 
     # Internal review: a stale team rejection ledger is a warning here. Journal
     # selection, retargeting and delivery keep requiring a fresh ledger.
     with tolerate_stale_ledger() as ledger_warnings:
-        return _preflight(paper_id, root, workdir, ledger_warnings)
+        return _preflight(paper_id, root, workdir, ledger_warnings, update_manuscript=update_manuscript)
 
 
-def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[str]) -> dict[str, Any]:
+def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[str], *,
+               update_manuscript: bool = True) -> dict[str, Any]:
     from paper_writing.journal_history import guard_target
     from paper_writing.manuscript_style import audit_manuscript_style, manuscript_style_review_findings
     from paper_writing.operations import _review_workspace_fingerprints
@@ -885,12 +887,13 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
     manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
     pdf, used = _build(manuscript, workdir)  # a manuscript that does not build stops here
     canonical = root / str(metadata.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf")
-    shutil.copyfile(pdf, canonical)
+    if update_manuscript:
+        shutil.copyfile(pdf, canonical)
     fresh_bbl = pdf.with_suffix(".bbl")
-    if fresh_bbl.is_file():
+    if update_manuscript and fresh_bbl.is_file():
         # A stale committed .bbl would reach referees and the journal source package.
         shutil.copyfile(fresh_bbl, manuscript / "main.bbl")
-    used |= build_registered_supplement(metadata, root, manuscript, workdir)
+    used |= build_registered_supplement(metadata, root, manuscript, workdir, update_manuscript=update_manuscript)
     used |= standalone_document_files(manuscript)
     if (manuscript / "figures").is_dir():
         from paper_writing import figures
@@ -2330,7 +2333,8 @@ def stalled_signal(rounds: list[Mapping[str, Any]], referees: Mapping[str, Mappi
 DELTA_RULE = ("Reuse the last ready full review only when, after removing comments, layout "
               "commands, inactive figure fallbacks bound to reviewed image hashes, and delivery identifiers, the title, abstract, introduction, theorem-like statements, every table, every "
               "results/evaluation/discussion/conclusion section and the multiset of numbers in the "
-              "document bodies are identical, at most {fraction:.0%} of lines changed, and every figure "
+              "document bodies (excluding DOI, version, file path and script line references) are identical, "
+              "at most {fraction:.0%} of lines changed, and every figure "
               "file the build reads has the SHA-256 recorded by that review (a changed figure is shown "
               "to the referees in a full review). The verifier checks changed units and outstanding blockers against bound prior receipts.")
 DELTA_MAX_CHANGED_FRACTION = 0.15
@@ -2353,6 +2357,19 @@ _DELTA_BIBLIOGRAPHY = re.compile(r"\\begin\{thebibliography\}.*?\\end\{thebiblio
 _DELTA_REFERENCE_IDENTIFIER = re.compile(
     r"(?:\bdoi:\s*|https?://(?:dx\.)?doi\.org/)?\b10\.\d{4,9}/[^\s{}]+"
     r"|\b[Vv]ersion\s*v?\d+(?:\.\d+)*\b|\bv\d+(?:\.\d+)+\b")
+
+_DELTA_FILE_REFERENCE = re.compile(
+    r"(?<![\w.])(?:[\w.+-]+/)*(?:[\w.+-]+\.(?:py|r|sh|jl|ipynb|tex|csv|tsv|json|ya?ml))"
+    r"(?::(?:L)?\d+(?:(?:--?|–)(?:L)?\d+)?)?(?![\w.])", re.I)
+_DELTA_LINE_REFERENCE = re.compile(
+    r"\b(lines?\s+)\d+(?:\s*(?:--?|–|to)\s*\d+)?"
+    r"(?=\s+(?:in|of)\s+(?:the\s+)?(?:script\b|source\b|code\b|file\b|\\texttt\{))", re.I)
+
+
+def _citation_numbers(text: str) -> str:
+    text = _DELTA_REFERENCE_IDENTIFIER.sub(lambda m: _DELTA_NUMBER.sub("#", m[0]), text)
+    text = _DELTA_FILE_REFERENCE.sub(lambda m: _DELTA_NUMBER.sub("#", m[0]), text)
+    return _DELTA_LINE_REFERENCE.sub(r"\1#", text)
 
 
 _DELTA_DELIVERY_SECTION = re.compile(
@@ -2412,6 +2429,7 @@ def substantive_parts(expanded: str) -> dict[str, Any]:
     body = re.sub(r"\\documentclass.*?\\begin\{document\}", "", text, flags=re.S)
     if numeric:  # generated result macros count as the numbers they print
         body = re.sub(r"\\([A-Za-z]+)\b", lambda m: numeric.get(m.group(1), m.group(0)), body)
+    body = _citation_numbers(body)
     headings = list(re.finditer(r"\\section\*?\{([^}]*)\}", body))
     sections = []
     for index, match in enumerate(headings):
@@ -2424,10 +2442,17 @@ def substantive_parts(expanded: str) -> dict[str, Any]:
             "introduction": _norm(head["introduction"]),
             "statements": [_norm(m.group(0)) for m in _DELTA_STATEMENTS.finditer(body)],
             "tables": [_norm(m.group(0)) for m in _DELTA_TABLES.finditer(body)],
-            "sections": sections, "numbers": sorted(numbers)}
+            "sections": sections, "numbers": numbers}
 
 
-def substantive_delta(old: str, new: str) -> dict[str, Any]:
+
+def _sentence_deletion(old: str, new: str) -> bool:
+    old_sentences, new_sentences = (re.split(r"(?<=[.!?])\s+", text) for text in (old, new))
+    return all(tag in {"equal", "delete"} for tag, *_ in
+               difflib.SequenceMatcher(None, old_sentences, new_sentences, autojunk=False).get_opcodes())
+
+
+def substantive_delta(old: str, new: str, *, reviewed_deletions: bool = False) -> dict[str, Any]:
     """Compare a ready full review's expanded manuscript with the current one."""
     import collections
 
@@ -2440,7 +2465,12 @@ def substantive_delta(old: str, new: str) -> dict[str, Any]:
     if a["sections"] != b["sections"]:
         old_sections, new_sections = dict(map(tuple, a["sections"])), dict(map(tuple, b["sections"]))
         names = sorted(n for n in set(old_sections) | set(new_sections) if old_sections.get(n) != new_sections.get(n))
-        reasons.append("conclusion-bearing sections changed: " + ", ".join(names or ["section order"]))
+        if reviewed_deletions and [row[0] for row in a["sections"]] == [row[0] for row in b["sections"]]:
+            names = [name for name in names if not (
+                re.search(r"\bdiscussion\b", name, re.I)
+                and _sentence_deletion(old_sections[name], new_sections[name]))]
+        if names or [row[0] for row in a["sections"]] != [row[0] for row in b["sections"]]:
+            reasons.append("conclusion-bearing sections changed: " + ", ".join(names or ["section order"]))
     old_numbers, new_numbers = collections.Counter(a["numbers"]), collections.Counter(b["numbers"])
     if old_numbers != new_numbers:
         removed, added = sorted((old_numbers - new_numbers).elements()), sorted((new_numbers - old_numbers).elements())
@@ -2501,7 +2531,7 @@ def delta_review_basis(root: Path, paper_id: str, target: str, pre: Mapping[str,
     for row in reversed(completed_rounds(root, paper_id, target)):
         if base is not None and row["_path"].parent.name <= base["_path"].parent.name:
             break
-        if row.get("review_mode") == "formal_only" and row["merged"]["outcome"] == "ready":
+        if row.get("review_mode") in {"formal_only", "resynthesize"} and row["merged"]["outcome"] == "ready":
             base = row
             break
     if (base is None or (base.get("merged") or {}).get("outcome") != "ready"
@@ -2512,6 +2542,10 @@ def delta_review_basis(root: Path, paper_id: str, target: str, pre: Mapping[str,
         return None
     reasons = _delta_context_reasons(base, pre, config, track, root, history_policy, round_limit)
     reasons.extend(_formal_recheck_binding(base, base["_path"], root, pre["metadata"]))
+    if base.get("review_mode") == "resynthesize":
+        from paper_writing import resynthesis
+
+        reasons.extend(resynthesis.validate(base, base["_path"], root, pre["metadata"], as_basis=True))
     changed_figures = figure_changes(base, pre)
     reviewed_text = old_path.read_text()
     old = reviewed_text
@@ -2745,6 +2779,13 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
         pre, formal_blockers, formal_summary = _formal_stage(pre, root, run, roles, config, pre["metadata"], record)
     merged = apply_review_track(_recorded_merge(base, history_blockers, formal_blockers=formal_blockers,
                                       formal_summary=formal_summary), referees, track)
+    if base.get("review_mode") == "resynthesize":
+        previous_advice = base["merged"].get("advisory_items", [])
+        advice = merged.setdefault("advisory_items", [])
+        advice.extend(item for item in previous_advice if item not in advice)
+        required = merged.setdefault("required_changes", [])
+        required.extend(item for item in base["merged"].get("required_changes", [])
+                        if item.get("advisory") and item not in required)
     merged |= {"stalled": False, "stalled_basis": "delta review; no new referee judgment"}
     base_path = base["_path"]
     record |= {"stage_reached": "decision", "review_mode": "delta",
@@ -2754,7 +2795,8 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
                                 "basis_decision": base_path.relative_to(root).as_posix(),
                                 "basis_decision_sha256": _sha256(base_path.read_bytes()),
                                 "rule": delta["rule"], "summary": delta["summary"],
-                                **({"basis_mode": "formal_only"} if base.get("review_mode") == "formal_only" else {}),
+                                **({"basis_mode": base["review_mode"]}
+                                   if base.get("review_mode") in {"formal_only", "resynthesize"} else {}),
                                 **({"owner_directed": delta["owner_directed"]} if delta.get("owner_directed") else {})},
                "editor_screen": editor, "referee_reports": referees, "merged": merged,
                "letter": base.get("letter", ""), "receipts": copy.deepcopy(base.get("receipts", {})),
@@ -2831,11 +2873,12 @@ def _formal_recheck_baseline(base: Mapping[str, Any]) -> tuple[bytes, str]:
     return expanded, bibliographies.pop()
 
 
-def _recheck_source_delta(old: str, new: str, clarifications: list) -> dict[str, Any]:
+def _recheck_source_delta(old: str, new: str, clarifications: list, *,
+                          reviewed_deletions: bool = False) -> dict[str, Any]:
     # Bibliographic metadata can change identifiers and dates. The verifier sees
     # both complete reference lists and checks any change in the use of evidence.
     old, new = (_DELTA_BIBLIOGRAPHY.sub("", text) for text in (old, new))
-    delta = substantive_delta(old, new)
+    delta = substantive_delta(old, new, reviewed_deletions=reviewed_deletions)
     masked = new
     for entry in clarifications:
         keys = ("before", "after", "explanation")
@@ -2920,7 +2963,8 @@ def _run_formal_recheck(paper_id, target, root, run, record, pre, config, track,
         if not isinstance(clarifications, list):
             raise ValueError("preregistration_clarifications must be an array")
         _check_recheck_preregistration(pre["metadata"], response)
-        delta = _recheck_source_delta(expanded.decode(), pre["expanded"], clarifications)
+        delta = _recheck_source_delta(expanded.decode(), pre["expanded"], clarifications,
+                                      reviewed_deletions=True)
     except (ValueError, OSError, KeyError) as exc:
         return refuse([str(exc)])
     if delta["reasons"]:
@@ -3017,6 +3061,11 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
     """Run unified review, with explicit modes for reusing an independent judgment."""
     if delta_only and formal_only:
         raise ValueError("Choose one review mode")
+    return _locked_review(paper_id, root, _run_review, response_letter=response_letter,
+                          apply=apply, delta_only=delta_only, formal_only=formal_only)
+
+
+def _locked_review(paper_id, root, operation, **kwargs):
     root = Path(root).resolve()
     if paper_metadata_path(paper_id, root).is_file():
         require_not_frozen(load_paper_metadata(paper_id, root), paper_id)
@@ -3032,8 +3081,7 @@ def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path |
                     "consumes_scientific_round": False,
                     "merged": {"outcome": "review_round_blocked", "next_action": "wait",
                                "round_guard": {"blockers": ["Another unified review is active for this paper"]}}}
-        return _run_review(paper_id, root=root, response_letter=response_letter,
-                           apply=apply, delta_only=delta_only, formal_only=formal_only)
+        return operation(paper_id, root=root, **kwargs)
 
 
 def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None,
@@ -3307,13 +3355,18 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     if not review_policy_matches(record, config, root, history_policy, round_limit):
         raise ValueError("Review policy changed; rerun the review")
     if record['merged']['outcome'] == 'ready':
-        provenance_errors = _formal_recheck_binding(record, decision_path, root, metadata)
+        from paper_writing import resynthesis
+
+        provenance_errors = (_formal_recheck_binding(record, decision_path, root, metadata)
+                             + resynthesis.validate_delta_basis(record, root, metadata))
         if provenance_errors:
             raise ValueError("; ".join(provenance_errors))
         panel = config['referee_roles']
         if set(record.get('referee_reports', {})) != set(panel):
             raise ValueError("Ready decision is missing an active referee")
-        formal_errors = formal_checks.validate_binding(record.get("formal_check"), metadata, root, formal_role(config["roles"]))
+        formal_errors = (resynthesis.validate(record, decision_path, root, metadata)
+                         if record.get("review_mode") == "resynthesize" else
+                         formal_checks.validate_binding(record.get("formal_check"), metadata, root, formal_role(config["roles"])))
         if formal_errors:
             raise ValueError("; ".join(formal_errors))
         if any("formal_check_assessment" not in r for r in record["referee_reports"].values()):
@@ -3347,7 +3400,10 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
         "decision_record": decision_path.relative_to(root).as_posix(), "decision_record_sha256": digest,
         **{k: v for k, v in fingerprints.items() if v is not None},
     }
-    if record.get("formal_check", {}).get("valid") is True:
+    if record.get("review_mode") == "resynthesize":
+        release["review_mode"] = "resynthesize"
+        release["resynthesis"] = record["resynthesis"]
+    if record.get("formal_check", {}).get("valid") is True or record.get("review_mode") == "resynthesize":
         release["formal_check"] = record["formal_check"]
         access = record["formal_check"].get("unverifiable_source_access")
         if access:
@@ -3413,7 +3469,8 @@ def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
         return items
 
     problems = []
-    if (record or {}).get("editor_screen", {}).get("review_standard") == "materiality_v1":
+    if ((record or {}).get("merged", {}).get("review_standard") == "materiality_v1"
+            or (record or {}).get("editor_screen", {}).get("review_standard") == "materiality_v1"):
         fit = metadata.get("target_journal_fit") or {}
         if fit.get("status") != "approved":
             problems.append(dict(source="venue", code="TARGET-UNVERIFIED", location="registry",
@@ -3551,7 +3608,15 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
         return [f'Paper/target-scoped review round limit is invalid: {exc}']
     if not review_policy_matches(record, config, root, history_policy, round_limit):
         problems.append("Review policy changed after this decision; a fresh review is required")
-    problems.extend(formal_checks.validate_binding(record.get("formal_check"), metadata, root, formal_role(config["roles"])))
+    from paper_writing import resynthesis
+
+    problems.extend(resynthesis.validate_delta_basis(record, root, metadata))
+    if record.get("review_mode") == "resynthesize":
+        problems.extend(resynthesis.validate(record, path, root, metadata))
+        if release.get("resynthesis") != record.get("resynthesis"):
+            problems.append("The release is not bound to the resynthesis receipt")
+    else:
+        problems.extend(formal_checks.validate_binding(record.get("formal_check"), metadata, root, formal_role(config["roles"])))
     problems.extend(_formal_recheck_binding(record, path, root, metadata))
     if release.get("formal_check") != record.get("formal_check"):
         problems.append("The release is not bound to the actual mandatory formal check")

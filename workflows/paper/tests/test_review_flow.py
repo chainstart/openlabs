@@ -2143,3 +2143,84 @@ def test_new_standard_followup_requires_materiality_and_explanation(kind, wrong,
     result = flow.merge(screen, {"a": report})
     assert result["outcome"] == expected
     assert result["required_changes"][0]["advisory"] == (expected == "ready")
+
+
+def test_delta_ignores_citation_numbers_and_preserves_the_results():
+    source = MANUSCRIPT + r"""\section{Discussion}
+    See \texttt{analysis/v1.1/check2.py:42} and lines 32--33 in the script.
+    The report is version 1.1, doi:10.1234/fr.45. The effect was 0.24.
+    """
+    updated = source.replace("v1.1", "v1.2").replace("check2.py:42", "check3.py:43")
+    updated = updated.replace("lines 32--33", "lines 40--41").replace("version 1.1", "version 1.2")
+    updated = updated.replace("10.1234/fr.45", "10.4567/fr.46")
+    assert flow.substantive_delta(source, updated)["reasons"] == []
+    assert any("numbers changed" in reason for reason in
+               flow.substantive_delta(source, updated.replace("0.24", "0.25"))["reasons"])
+
+
+def test_only_reviewed_discussion_sentence_deletions_are_eligible():
+    before = MANUSCRIPT.replace(r"\end{document}", "")
+    before += "\n" + r"\section{Discussion} The endpoint was met. This phrasing repeats the context."
+    after = before.replace(" This phrasing repeats the context.", "")
+    assert flow.substantive_delta(before, after)["reasons"]
+    assert flow.substantive_delta(before, after, reviewed_deletions=True)["reasons"] == []
+    assert flow.substantive_delta(before.replace("Discussion", "Results"),
+                                  after.replace("Discussion", "Results"), reviewed_deletions=True)["reasons"]
+
+
+@pytest.mark.parametrize("case", ["ready", "unmapped", "numeric", "figure", "formal", "bad_hash"])
+def test_resynthesis_records_the_current_decision_and_revalidates_at_delivery(tmp_path, monkeypatch, case):
+    from paper_writing import operations, resynthesis
+
+    after = MANUSCRIPT.replace("The estimator follows a standard design.",
+                               "The estimator follows a standard design with fixed weights.")
+    if case == "numeric":
+        after = after.replace("120 counties", "118 counties")
+    basis, response, pre, calls = _formal_only_fixture(tmp_path, monkeypatch, after, figure_changed=case == "figure")
+    meta, written = _apply_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(operations, "_review_workspace_fingerprints", lambda *args: pre["fingerprints"])
+    monkeypatch.setattr(flow, "preflight", lambda *args, **kwargs: pre | {
+        "build_inputs": [], "preparation_advisories": []})
+    monkeypatch.setattr(flow, "body_length_block", lambda *args: {})
+    monkeypatch.setattr(flow, "expanded_review_documents", lambda *args: after)
+    monkeypatch.setattr(flow, "run_role", lambda **kw: pytest.fail("Replay started a model"))
+    formal_file = basis.parent / "formal.json"
+    archive = {"inventory": {}, "issue_summary": {"raw_findings": [
+        dict(category="scientific", status="gap", aggregate=False, root="p", location="p:F1",
+             reason="Presentation left a definition implicit", message="Unspecified term")
+    ]}}
+    data = json.loads(basis.read_text())
+    data.update(process=flow.PROCESS, manuscript_version="1.0",
+                formal_check={"valid": False, "path": formal_file.relative_to(tmp_path).as_posix(),
+                              "sha256": flow._json_dump(formal_file, archive)})
+    digest = flow._json_dump(basis, data)
+    monkeypatch.setattr(flow.formal_checks, "validate_binding", lambda *args, **kwargs: [])
+    monkeypatch.setattr(flow.formal_checks, "archived_inputs", lambda *args: ([{"id": "main", "text": MANUSCRIPT}], ""))
+    monkeypatch.setattr(flow.formal_checks, "current_inputs", lambda *args: ([{"id": "main", "text": after}], ""))
+    annotations = {"formal-1": {"reader_misconclusion": "", "evidence": "Frozen analysis already uses fixed weights."}}
+    changes = [dict(change, item="formal-1", author_response="State the weights explicitly.",
+                    verification="Compared the edit against the unchanged reviewed estimator.")
+               for change in resynthesis.change_inventory(MANUSCRIPT, after)]
+    assert changes
+    flow._json_dump(response, {"decision_sha256": "bad" if case == "bad_hash" else digest,
+                               "manuscript_sha256": flow._sha256(after.encode()),
+                               "explanation": "Apply the materiality rule to the archival gap.",
+                               "formal_findings": {} if case == "formal" else annotations,
+                               "changes": [] if case == "unmapped" else changes})
+    result = resynthesis.run("p", root=tmp_path, decision=basis.parent, response=response,
+                            actor="independent operator", reason="Apply current gate")
+    assert calls == []
+    assert result["round_for_target"] == 1 and not result["consumes_scientific_round"]
+    if case != "ready":
+        assert result["merged"]["outcome"] == "full_review_required"
+        assert result["merged"]["full_review_reasons"]
+        assert not written
+        return
+    assert result["merged"]["outcome"] == "ready", result["merged"]
+    assert result["resynthesis"]["basis_decision_sha256"] == digest
+    assert written[-1]["writing_release"]["advisory_changes"][0]["location"] == "p:F1"
+    assert flow.validate_unified_release("p", meta, tmp_path, "snapshot") == []
+    response_archive = tmp_path / result["run_dir"] / "resynthesis-response.json"
+    response_archive.write_text("{}")
+    assert any("Archived response changed" in issue
+               for issue in flow.validate_unified_release("p", meta, tmp_path, "snapshot"))

@@ -130,7 +130,7 @@ def test_delta_only_runs_the_delta_review_for_a_citation_change(tmp_path, monkey
 
 @pytest.mark.parametrize('replacement,eligible', [
     (r'\url{https://doi.org/10.5281/zenodo.17000001}', True),
-    ('doi:10.5281/zenodo.17000001', False),  # bare DOI digits count as new numbers
+    ('doi:10.5281/zenodo.17000001', True),
 ])
 def test_doi_wording_decides_whether_the_delta_rule_applies(replacement, eligible):
     new = MANUSCRIPT.replace('The estimator follows a standard design.',

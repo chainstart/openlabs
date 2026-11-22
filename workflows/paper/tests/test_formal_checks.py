@@ -956,3 +956,18 @@ def test_unverifiable_reference_with_error_verdict_still_blocks(tmp_path, monkey
 
     binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, runner)
     assert binding["valid"] is False and any(b == "u: error" for b in binding["blockers"])
+
+
+def test_archived_formal_binding_checks_original_receipts_after_the_manuscript_changes(tmp_path, monkeypatch):
+    metadata, binding, report = run_fixture(tmp_path, monkeypatch)
+    path = tmp_path / metadata["manuscript_dir"] / "main.tex"
+    path.write_text(path.read_text().replace("For real", "For any real"))
+    metadata["version"] = "1.1"
+
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE)
+    assert formal.validate_binding(binding, metadata, tmp_path, ROLE, archived_version="1.0") == []
+
+    output = tmp_path / report["receipts"][0]["workdir"] / "output.json"
+    output.write_text("{}")
+    assert any("actual output changed" in issue for issue in
+               formal.validate_binding(binding, metadata, tmp_path, ROLE, archived_version="1.0"))

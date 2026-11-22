@@ -312,6 +312,11 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Only the post-ready delta review; report full_review_required instead of "
                               "starting the editor and referees.")
     unified.add_argument("--root", default=str(default_repo_root()))
+    replay = review_commands.add_parser("resynthesize", help="Replay a bound archived review offline.")
+    for name in ("paper-id", "decision", "response", "actor", "reason"):
+        replay.add_argument("--" + name, required=True)
+    replay.add_argument("--no-apply", action="store_true", help="Record a replay without updating the registry.")
+    replay.add_argument("--root", default=str(default_repo_root()))
     runtime_preflight = review_commands.add_parser(
         "runtime-preflight",
         help="Check that an independent referee runtime can open the registered materials, "
@@ -877,6 +882,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
+    if args.command == "review" and args.review_command == "resynthesize":
+        from paper_writing import resynthesis
+        from paper_writing.registry import PaperFrozenError
+
+        try:
+            result = resynthesis.run(args.paper_id, root=args.root, decision=args.decision,
+                                     response=args.response, actor=args.actor, reason=args.reason,
+                                     apply=not args.no_apply)
+        except (ValueError, OSError, PaperFrozenError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+            return 2
+        print(json.dumps({
+            "run_dir": result.get("run_dir"),
+            "decision_sha256": result.get("decision_sha256"),
+            "round_for_target": result.get("round_for_target"),
+            "outcome": result["merged"]["outcome"],
+            "full_review_reasons": result["merged"].get("full_review_reasons", []),
+        }, ensure_ascii=False, indent=2))
+        return 0 if result["merged"]["outcome"] == "ready" else 2
     if args.command == "review" and args.review_command == "unified-run":
         from paper_writing.registry import PaperFrozenError
         from paper_writing.review_flow import run_review

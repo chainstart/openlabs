@@ -1627,25 +1627,41 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
     return binding
 
 
+def archived_inputs(result: Mapping[str, Any], root: Path) -> tuple[list[dict[str, str]], str]:
+    """Recover the exact documents and bibliography from a bound formal packet."""
+    documents = result.get("documents")
+    if documents is None:
+        first = result["receipts"][0]
+        prompt = _safe_file(root, first["workdir"] + "/prompt.txt").read_bytes()
+        system = _safe_file(root, first["workdir"] + "/system.txt").read_bytes()
+        if sha(prompt) != first["receipt"]["prompt_sha256"] or not prompt.startswith(system + b"\n\n"):
+            raise ValueError("Archived formal-check packet changed")
+        documents = json.loads(prompt[len(system) + 2:])["complete_manuscript"]
+    return documents, "\n\n".join(row["text"] for row in result["inventory"]["references"])
+
+
 def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
-                     expected_role: Mapping[str, Any] | None = None) -> list[str]:
+                     expected_role: Mapping[str, Any] | None = None, *,
+                     archived_version: str | None = None) -> list[str]:
     """Revalidate evidence bytes, exact coverage and policy at apply/handoff."""
     try:
-        if not isinstance(binding, Mapping) or binding.get("schema") != VERSION or binding.get("valid") is not True:
+        if not isinstance(binding, Mapping) or binding.get("schema") != VERSION or (archived_version is None and binding.get("valid") is not True):
             raise ValueError("Missing passing mandatory formal check; rerun unified review")
         path = _safe_file(root, binding["path"])
         if sha(path.read_bytes()) != binding["sha256"]:
             raise ValueError("Formal-check report changed")
         result = json.loads(path.read_text())
-        if result.get("paper_id") != metadata.get("paper_id") or result.get("manuscript_version") != str(metadata.get("version") or ""):
+        if result.get("paper_id") != metadata.get("paper_id") or result.get("manuscript_version") != (archived_version if archived_version is not None else str(metadata.get("version") or "")):
             raise ValueError("Formal-check paper/version identity mismatch")
-        if not policy_accepted(result["policy"]) or result["valid"] is not True or result["blockers"]:
+        if not policy_accepted(result["policy"]) or (archived_version is None and (
+                result["valid"] is not True or result["blockers"])):
             raise ValueError("Formal-check policy changed or verification is incomplete")
         if expected_role is not None and result.get("role") != dict(expected_role):
             raise ValueError("Formal verification used a different configured role")
         if result["source_plan_sha256"] != digest(source_plan(metadata)):
             raise ValueError("Registered primary-source plan changed")
-        documents, bibliography = current_inputs(metadata, root)
+        documents, bibliography = (archived_inputs(result, root) if archived_version is not None
+                                   else current_inputs(metadata, root))
         prior = result.get("previous_formal_check")
         if prior and _safe_file(root, prior["path"]).parent.parent >= path.parent.parent:
             raise ValueError("Previous formal check must precede this run")
@@ -1741,8 +1757,14 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
                                    unverifiable_keys=keys, followup=materiality)
         if result.get('issue_summary') != issue_summary(findings):
             raise ValueError('Formal issue summary differs from actual raw findings')
+        if archived_version is not None:
+            if (blockers != result["blockers"] or binding.get("blockers") != blockers
+                    or result["valid"] != (not blockers) or binding.get("valid") != result["valid"]
+                    or binding.get("issue_summary") != result["issue_summary"]):
+                raise ValueError("Archived formal verdict differs from the independently verified outputs")
+            return []
         return blockers
-    except (ValueError, KeyError, TypeError, OSError, LaunchError) as exc:
+    except (ValueError, KeyError, IndexError, TypeError, OSError, LaunchError) as exc:
         return [f"Mandatory formal check: {exc}"]
 
 
