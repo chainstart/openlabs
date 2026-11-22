@@ -539,6 +539,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read-only: what is left between review ready and delivery (release pipeline).",
     )
     program_status.add_argument("--paper-id", required=True)
+    program_metadata = program_commands.add_parser(
+        "prepare-publication-metadata", help="Project the verified draft DOI into a ready release.")
+    program_metadata.add_argument("--paper-id", required=True)
     program_adopt = program_commands.add_parser(
         "adopt",
         help="Copy a campaign-workspace paper into the data repository (never overwrites).",
@@ -602,7 +605,7 @@ def build_parser() -> argparse.ArgumentParser:
     program_revision_evidence.add_argument("--decision",
                                            help="Basis decision (default: latest full unified decision).")
     for command in (program_escalation, program_fallback, program_confirm, program_deliver,
-                    program_assign, program_status, program_adopt, program_waive, program_bind,
+                    program_assign, program_status, program_metadata, program_adopt, program_waive, program_bind,
                     program_unwaive, program_bind_payloads, program_relocate, program_declarations,
                     program_revision_evidence):
         command.add_argument("--root", default=str(default_repo_root()))
@@ -1042,6 +1045,10 @@ def _run_program(args: argparse.Namespace) -> int:
             from paper_writing.release_pipeline import release_status
 
             result = release_status(args.paper_id, root=args.root)
+        elif args.program_command == "prepare-publication-metadata":
+            from paper_writing.publication_metadata import prepare
+
+            result = prepare(args.paper_id, root=args.root)
         elif args.program_command == "adopt":
             from paper_writing.program_adopt import adopt
 

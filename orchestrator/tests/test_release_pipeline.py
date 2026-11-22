@@ -1140,3 +1140,40 @@ def test_changed_published_support_stops_at_a_retryable_checkpoint(tmp_path, mon
     assert state["attempts"] == {"support_prepare": 1}
     assert "Cannot reuse the published support version" in state["last_error"]
     assert set(_commands(log)) == {"program release-status"}
+
+
+def test_registered_ready_decision_queues_only_after_binding_validation(tmp_path, monkeypatch):
+    from openlabs.program import mark_topic_in_review, open_topic_ledger
+
+    paths, db, settings, topic, _ = _setup(tmp_path, monkeypatch, auto_release=False)
+    topic_id = topic["topic_id"]
+    ledger = open_topic_ledger(paths, settings.program)
+    mark_topic_in_review(ledger, topic_id, db=db, decided_by="review")
+    draft = paths.data / "draft" / "publication" / "registry" / "papers" / f"{PAPER_ID}.yaml"
+    draft.parent.mkdir(parents=True)
+    draft.write_text("paper_id: " + PAPER_ID)
+    read_campaign = db.campaign
+    monkeypatch.setattr(db, "campaign", lambda key: {**read_campaign(key),
+                                                      "state_path": str(paths.data / "draft")})
+    monkeypatch.setattr(db, "has_active_tasks", lambda _: False)
+    record = _paper(paths)
+    record["writing_release"] = {"status": "ready", "review_mode": "resynthesize"}
+    _write_paper(paths, record)
+    review = {"ready": True, "decision_current": False, "review_mode": "resynthesize",
+              "decision_sha256": "b" * 64}
+    monkeypatch.setattr(program_autonomy, "run_release_status", lambda *args: {
+        "review": review, "version": "1.0.0", "target_journal": "Journal",
+    })
+    from openlabs.engine import TickReport
+
+    report = TickReport()
+    with pytest.raises(program_autonomy.DeliveryError, match="current ready"):
+        program_autonomy.queue_registered_ready(db, paths, settings, report, topic_id)
+    assert ledger.topic(topic_id)["status"] == "in_review"
+    review["decision_current"] = True
+    program_autonomy._queue_resynthesized(db, paths, settings, report)
+    result = ledger.topic(topic_id)
+    assert result["status"] == "ready_queue"
+    assert result["handoff"]["status"] == "queued"
+    assert result["paper_id"] == PAPER_ID
+    assert not program_autonomy.queue_registered_ready(db, paths, settings, report, topic_id)["changed"]

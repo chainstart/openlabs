@@ -1908,6 +1908,80 @@ def _code_update_retry(db, paths, settings, ledger, topic) -> dict[str, Any] | N
     return ledger.topic(topic_id)
 
 
+def _registered_topic_paper(db, paths, topic):
+    from .paper_figures import draft_paper_id
+    from .program_reconcile import _paper_id
+
+    campaign = db.campaign(str(topic.get("campaign_id") or ""))
+    paper_id, _ = _paper_id(db, topic, campaign)
+    if not paper_id and campaign:
+        paper_id = draft_paper_id(paths, campaign)
+    if paper_id and re.fullmatch(r"[\w.-]+", paper_id) and paper_id not in {".", ".."}:
+        return paper_id
+    return None
+
+
+def queue_registered_ready(db, paths, settings, report, topic_id, *, automatic=False):
+    """Queue a bound decision applied outside a factory review task."""
+    from .target_stage import tier2_topic
+
+    topic = find_topic(_ledger(paths, settings).read(), topic_id)
+    if topic and topic.get("status") == "ready_queue":
+        return {"topic_id": topic_id, "status": "ready_queue", "changed": False}
+    if not topic or topic.get("status") != "in_review":
+        raise DeliveryError(f"Topic {topic_id} is not in review")
+    paper_id = _registered_topic_paper(db, paths, topic)
+    if not paper_id:
+        raise DeliveryError(f"Topic {topic_id} has no uniquely linked paper")
+    campaign = str(topic.get("campaign_id") or "")
+    if db.has_active_tasks(campaign) or pending_decision(db, campaign):
+        raise DeliveryError(f"Topic {topic_id} has active work")
+    status = run_release_status(paths, settings, paper_id)
+    review = status["review"]
+    if (status.get("frozen") or not review.get("decision_current")
+            or (automatic and review.get("review_mode") != "resynthesize")):
+        raise DeliveryError(f"Paper {paper_id} has no eligible current ready decision")
+    if tier2_topic(topic) and (topic.get("venue_grade") or {}).get("journal") != status.get("target_journal"):
+        raise DeliveryError(f"Paper {paper_id} needs a recorded acceptance grade")
+    source = "registered-review:" + review["decision_sha256"]
+    evidence = [_write_evidence(paths, topic_id, "registered-review", {
+        "paper_id": paper_id, "version": status["version"], "review": review,
+    })]
+    queue_ready_topic(db, paths, settings, report, topic=topic, task={"task_id": source},
+                      outcome={"paper_id": paper_id, "target_journal": status.get("target_journal")},
+                      payload={}, evidence=evidence)
+    return {"topic_id": topic_id, "paper_id": paper_id, "status": "ready_queue", "changed": True}
+
+
+def _queue_resynthesized(db, paths, settings, report):
+    import yaml
+
+    for topic in topics_by_status(_ledger(paths, settings).read(), "in_review"):
+        paper_id = _registered_topic_paper(db, paths, topic)
+        if not paper_id:
+            continue
+        for suffix in (".yaml", ".yml", ".json"):
+            path = paths.data / "registry" / "papers" / (paper_id + suffix)
+            if not path.is_file():
+                continue
+            try:
+                record = yaml.safe_load(path.read_text())
+            except (OSError, yaml.YAMLError) as exc:
+                _info(report, "registered_review_waiting").append({
+                    "topic_id": topic["topic_id"], "reason": f"Cannot read paper registry: {type(exc).__name__}",
+                })
+                break
+            release = record.get("writing_release") if isinstance(record, Mapping) else None
+            if isinstance(release, Mapping) and release.get("status") == "ready" and release.get("review_mode") == "resynthesize":
+                try:
+                    queue_registered_ready(db, paths, settings, report, topic["topic_id"], automatic=True)
+                except DeliveryError as exc:
+                    _info(report, "registered_review_waiting").append({
+                        "topic_id": topic["topic_id"], "reason": str(exc),
+                    })
+            break
+
+
 def _deliver_ready(db, paths, settings, report) -> None:
     program = settings.program
     ledger = _ledger(paths, settings)
@@ -2469,6 +2543,7 @@ def commit_paper_paths(paths: WorkspacePaths, settings: FactorySettings, *, pape
     message = settings.program.git_message.format(**fields) + (
         "\n\nLocal commit by the OpenLabs release pipeline (not pushed).\n"
         f"Paper: {paper_id}\nVersion: {version or '?'}\nAction: {action}\nTopic: {topic_id}\n"
+        "\nCo-Authored-By: GPT (Codex) via Claude Code orchestration"
     )
     _git(root, "add", "-A", "--", *present)
     _git(root, "commit", "-q", "--only", "-m", message, "--", *present, identity=identity)
@@ -2685,6 +2760,15 @@ class _ReleasePipeline:
                       detail={"files": result.get("files"), "manifest": result.get("manifest"),
                               "manifest_sha256": result.get("manifest_sha256")})
             self.entry("payloads_bound", files=len(result.get("files") or []))
+            return True
+        publication_metadata = any(item.get("remedy") == "publication_metadata" for item in issues)
+        if (publication_metadata or status.get("publication_metadata_pending")) and not support.get("prepare_needed"):
+            self.stage = "publication_metadata"
+            result = _run_paper_command(self.paths, self.settings,
+                                        ["program", "prepare-publication-metadata", "--paper-id", self.paper_id])
+            if result.get("status") not in {"projected", "bound"}:
+                raise ReleaseError("Publication metadata preparation did not complete")
+            self.entry("publication_metadata", status=result["status"])
             return True
         infrastructure = [item for item in issues if item.get("remedy") == "control_plane"]
         if infrastructure:
@@ -3464,7 +3548,7 @@ def run_program_autonomy(
     if not settings.program.enabled:
         return
     for name, step in (("limits", _check_limits), ("decisions", _check_decision_tasks),
-                       ("delivery", _deliver_ready),
+                       ("registered_reviews", _queue_resynthesized), ("delivery", _deliver_ready),
                        ("delivery_repairs", _repair_delivery), ("delivery_chain", report_delivery_chain)):
         try:
             step(db, paths, settings, report)

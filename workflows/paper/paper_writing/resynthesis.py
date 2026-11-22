@@ -69,7 +69,7 @@ def _check_changes(old, new, response, items):
         + [reason for reason in full_reasons if not reason.startswith("conclusion-bearing sections changed:")]))
 
 
-def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_basis=False, notes=None):
+def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_basis=False, notes=None, fingerprints=None):
     from paper_writing import rebuttal
     from paper_writing.operations import _review_workspace_fingerprints
 
@@ -100,7 +100,8 @@ def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_
            and row["stage_reached"] == "decision"
            for row in flow.completed_rounds(root, paper_id, base["target_journal"])):
         reasons.append("A later full decision supersedes this archive")
-    fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
+    if fingerprints is None:
+        fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
     for key in INPUT_FINGERPRINTS:
         if key not in base["fingerprints"] or fingerprints[key] != base["fingerprints"][key]:
             reasons.append(f"Reviewed inputs changed: {key}")
@@ -260,7 +261,7 @@ def _run(paper_id, *, root, decision, response, actor, reason, apply):
     return record | {"run_dir": str(directory.relative_to(root)), "decision_sha256": digest}
 
 
-def validate(record, path, root, metadata, *, as_basis=False):
+def validate(record, path, root, metadata, *, as_basis=False, fingerprints=None):
     """Check the replay receipts at apply and delivery, including the original formal evidence."""
     if record.get("review_mode") != "resynthesize":
         return []
@@ -282,7 +283,8 @@ def validate(record, path, root, metadata, *, as_basis=False):
         if not as_basis and current != flow.expanded_review_documents(manuscript):
             raise ValueError("The resynthesized manuscript snapshot changed")
         merged, reasons, fingerprints, _, _, _ = _replay(
-            paper_id, root, base, basis_sha, json.loads(raw), metadata, current, as_basis=as_basis)
+            paper_id, root, base, basis_sha, json.loads(raw), metadata, current, as_basis=as_basis,
+            fingerprints=fingerprints)
         if reasons:
             return reasons
         for key in ("editor_screen", "referee_reports", "formal_check", "prior_decisions", "receipts"):
@@ -296,7 +298,7 @@ def validate(record, path, root, metadata, *, as_basis=False):
         return [f"Resynthesis provenance: {exc}"]
 
 
-def validate_delta_basis(record, root, metadata):
+def validate_delta_basis(record, root, metadata, *, fingerprints=None):
     delta = record.get("delta_review") or {}
     if delta.get("basis_mode") != "resynthesize":
         return []
@@ -311,7 +313,7 @@ def validate_delta_basis(record, root, metadata):
                 or any(base.get(key) != record.get(key) for key in
                        ("editor_screen", "referee_reports", "prior_decisions", "followup_items"))):
             raise ValueError("The resynthesized basis or carried judgments changed")
-        return validate(base, path, root, metadata, as_basis=True)
+        return validate(base, path, root, metadata, as_basis=True, fingerprints=fingerprints)
     except _ARCHIVE_ERRORS as exc:
         return [f"Resynthesized delta basis: {exc}"]
 

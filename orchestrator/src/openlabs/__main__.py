@@ -202,6 +202,9 @@ def _parser() -> argparse.ArgumentParser:
         "--conditions-met", action="store_true",
         help="Confirm that the admission conditions due before submission are met",
     )
+    queue_ready = program_commands.add_parser(
+        "queue-ready", help="Queue one topic with a current registered ready decision.")
+    queue_ready.add_argument("--topic", required=True)
     release_retry = program_commands.add_parser(
         "release-retry",
         help="After resolving the cause, let a ready paper's exhausted release pipeline (or "
@@ -783,6 +786,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                                args.task_id, by=args.by, reason=args.reason,
                                allow_needs_human=args.allow_needs_human)}
             except ValueError as exc:
+                print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
+                return 1
+        elif args.program_command == "queue-ready":
+            from .engine import TickReport
+            from .program_autonomy import queue_registered_ready
+
+            try:
+                payload = queue_registered_ready(db, paths, settings, TickReport(), args.topic)
+            except DeliveryError as exc:
                 print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
                       file=sys.stderr)
                 return 1

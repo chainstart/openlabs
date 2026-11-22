@@ -318,13 +318,22 @@ def _review_status(paper_id: str, metadata: Mapping[str, Any], root: Path,
     release = metadata.get("writing_release") or {}
     ready = isinstance(release, Mapping) and release.get("status") == "ready"
     problems: list[str] = []
+    decision_current = False
     if ready:
         try:
             manuscript, pdf, _ = _release_paths(paper_id, root, metadata)
             problems = validate_unified_release(paper_id, metadata, root,
                                                 manuscript_snapshot_sha256(manuscript, pdf))
+            if not problems:
+                record = json.loads((root / release["decision_record"]).read_bytes())
+                if (record.get("paper_id") != paper_id
+                        or record.get("manuscript_version") != str(metadata.get("version") or "")):
+                    problems.append("The unified decision belongs to another paper or version")
         except Exception as exc:  # noqa: BLE001 - any failure means "not current"
             problems = [f"{type(exc).__name__}: {exc}"]
+        if str(release.get("manuscript_version") or "") != str(metadata.get("version") or ""):
+            problems.append("The ready decision is for a different manuscript version")
+        decision_current = not problems
         if support.get("required") and support.get("package_sha256") and not support.get("bound_to_review"):
             problems.append("The ready decision is not bound to the current support package")
     cap = None
@@ -337,6 +346,8 @@ def _review_status(paper_id: str, metadata: Mapping[str, Any], root: Path,
             maximum = (override or review_flow.review_config(root))["max_rounds_per_target"]
             cap = review_flow.exhausted_review(root, paper_id, target, rounds, maximum)
     return {"exhausted_review": cap, "ready": ready, "current": ready and not problems, "problems": problems,
+            "decision_current": decision_current,
+            "decision_sha256": release.get("decision_record_sha256"),
             "review_mode": release.get("review_mode", "full") if ready else None,
             "decision_record": release.get("decision_record"),
             "version": str(metadata.get("version") or "")}
@@ -346,6 +357,7 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
     """Everything the release pipeline decides its next step from (read-only)."""
     from paper_writing.declarations import missing_default_contributions
     from paper_writing.review_flow import delivery_issues
+    from paper_writing.publication_metadata import CODES
 
     repo_root = Path(root).resolve()
     metadata = load_paper_metadata(paper_id, repo_root)
@@ -378,7 +390,11 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
                        "remedy": "control_plane"})
     for item in raw_issues:
         code = str(item.get("code") or "")
-        if code in PREPARE_CODES:
+        if code in CODES and support["prepare_needed"] and review.get("decision_current"):
+            remedy = "zenodo_prepare"
+        elif code in CODES and support["release_needed"] and review.get("decision_current"):
+            remedy = "publication_metadata"
+        elif code in PREPARE_CODES:
             remedy = "zenodo_prepare" if not support["published"] else "human"
         else:
             remedy = "control_plane"
@@ -415,6 +431,8 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "issues": issues,
         "notes": [{"kind": str(note.get("kind") or ""), "code": str(note.get("code") or ""),
                    "message": str(note.get("message") or note.get("note") or "")} for note in notes],
+        "publication_metadata_pending": bool(release.get("publication_metadata"))
+                                        and support["release_needed"] and not support["bound_to_review"],
         "missing_default_contributions": missing_default_contributions(metadata, repo_root),
         "writer_scope": WRITER_SCOPE.replace("<paper_id>", paper_id),
         "release_artifacts_unbound": ([] if manuscript_missing

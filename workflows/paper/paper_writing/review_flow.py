@@ -3621,13 +3621,33 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
         problems.append("Review policy changed after this decision; a fresh review is required")
     from paper_writing import resynthesis
 
-    problems.extend(resynthesis.validate_delta_basis(record, root, metadata))
+    fingerprints = None
+    if release.get("publication_metadata"):
+        from paper_writing.publication_metadata import baseline_fingerprints
+        from paper_writing.support import SupportPackageError
+
+        try:
+            if record.get("paper_id") != paper_id or record.get("manuscript_version") != str(metadata.get("version") or ""):
+                raise ValueError("The source decision belongs to a different paper or version")
+            fingerprints = baseline_fingerprints(root, metadata, release)
+            if fingerprints != record["fingerprints"]:
+                raise ValueError("The reconstructed inputs differ from the ready decision")
+        except (OSError, KeyError, TypeError, ValueError, SupportPackageError) as exc:
+            return [f"Publication metadata: {exc}"]
+    problems.extend(resynthesis.validate_delta_basis(record, root, metadata, fingerprints=fingerprints))
     if record.get("review_mode") == "resynthesize":
-        problems.extend(resynthesis.validate(record, path, root, metadata))
+        problems.extend(resynthesis.validate(record, path, root, metadata, as_basis=fingerprints is not None,
+                                             fingerprints=fingerprints))
         if release.get("resynthesis") != record.get("resynthesis"):
             problems.append("The release is not bound to the resynthesis receipt")
     else:
-        problems.extend(formal_checks.validate_binding(record.get("formal_check"), metadata, root, formal_role(config["roles"])))
+        archived = {}
+        if fingerprints is not None:
+            if record.get("formal_check", {}).get("valid") is not True:
+                problems.append("Missing passing mandatory formal check")
+            archived["archived_version"] = record["manuscript_version"]
+        problems.extend(formal_checks.validate_binding(record.get("formal_check"), metadata, root,
+                                                       formal_role(config["roles"]), **archived))
     problems.extend(_formal_recheck_binding(record, path, root, metadata))
     if release.get("formal_check") != record.get("formal_check"):
         problems.append("The release is not bound to the actual mandatory formal check")
@@ -3656,7 +3676,9 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
             record["editor_screen"].get("review_standard") != "materiality_v1"
             and "followup_items" not in record and record["editor_screen"]["decision"] != "send_to_review"):
         problems.append("The unified decision is not a ready decision")
-    if record["fingerprints"]["manuscript_snapshot_sha256"] != snapshot:
+    expected_snapshot = (release["manuscript_snapshot_sha256"] if fingerprints is not None
+                         else record["fingerprints"]["manuscript_snapshot_sha256"])
+    if expected_snapshot != snapshot:
         problems.append("Manuscript changed after the unified review")
     if record.get("target_journal") != metadata.get("target_journal"):
         problems.append("Target journal changed after the unified review")
