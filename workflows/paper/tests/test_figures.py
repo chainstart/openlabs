@@ -395,3 +395,16 @@ def test_compiled_figure_placement(tmp_path):
     assert item["smallest_span_pt"] == pytest.approx(6)
     assert item["min_stroke_pt"] == pytest.approx(.2)
     assert item["unembedded_fonts"]
+
+
+def test_printed_raster_uses_placed_pixels(tmp_path):
+    image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 60, 120), False)
+    image.clear_with(128)
+    png = tmp_path / "camera.png"
+    image.save(png)
+    with fitz.open() as doc:
+        page = doc.new_page()
+        page.insert_image(fitz.Rect(15, 30, 87, 174), filename=str(png))
+        doc.save(tmp_path / "main.pdf")
+    item, = fig.proof_figures(tmp_path, [png])["camera.png"]
+    assert item["min_ppi"] == pytest.approx(60)

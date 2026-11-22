@@ -22,6 +22,7 @@ import colorsys
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import shutil
@@ -960,13 +961,24 @@ def _finding(figure: str, code: str, message: str) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------- check
-def proof_figures(manuscript):
+def _image_ppi(image):
+    a, b, c, d, _, _ = image["transform"]
+    width, height = math.hypot(a, b), math.hypot(c, d)
+    if width and height:
+        return min(72 * image["width"] / width, 72 * image["height"] / height)
+    return None
+
+
+def proof_figures(manuscript: Path, raster_files=()):
     """Locate pdfTeX figure placements on the rendered page using in-memory marker rectangles."""
     fitz = _fitz()
     proof = manuscript / "main.pdf"
     results = {}
     if not proof.is_file():
         return results
+    raster_names = {}
+    for path in raster_files:
+        raster_names.setdefault(fitz.Pixmap(str(path)).digest, []).append(path.name)
     with fitz.open(proof) as doc, fitz.open(proof) as markers:
         for page in doc:
             objects = {}
@@ -981,10 +993,13 @@ def proof_figures(manuscript):
                 stream = "%f %f %f rg %f %f %f %f re f" % (*color, x, y, right-x, top-y)
                 markers.update_stream(xref, stream.encode())
                 objects[tuple(round(c, 5) for c in color)] = (Path(filename).stem, xref)
+            images = page.get_image_info(hashes=bool(raster_names))
+            for image in images:
+                for name in raster_names.get(image.get("digest"), []):
+                    results.setdefault(name, []).append({"page": page.number + 1, "min_ppi": _image_ppi(image)})
             if not objects:
                 continue
             drawings = page.get_drawings()
-            images = page.get_image_info()
             for mark in markers[page.number].get_drawings():
                 match = objects.get(tuple(round(c, 5) for c in mark.get("fill") or ()))
                 if not match:
@@ -1000,12 +1015,8 @@ def proof_figures(manuscript):
                         if len(span["text"].strip()) > 4 or span["size"] >= .85 * max(s["size"] for s in line)]
                 strokes = [d["width"] for d in drawings if d["type"] in ("s", "fs") and rect.contains(d["rect"])
                            and d.get("width") is not None]
-                ppi = []
-                for item in images:
-                    if rect.contains(fitz.Rect(item["bbox"])):
-                        a, b, c, d, _, _ = item["transform"]
-                        if (a or b) and (c or d):
-                            ppi.extend((72 * item["width"] / (a*a+b*b)**.5, 72 * item["height"] / (c*c+d*d)**.5))
+                ppi = [resolution for image in images if rect.contains(fitz.Rect(image["bbox"]))
+                       if (resolution := _image_ppi(image)) is not None]
                 owners = {xref}
                 for child, _, parent, _ in page.get_xobjects():
                     if parent in owners:
@@ -1069,7 +1080,7 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
             blocking.append(_finding(stem, "FIG-NOT-BUILT", f"{src.path.name} has no figures/{stem}.pdf; "
                                      "run figures build"))
     try:
-        placements = proof_figures(ws.manuscript)
+        placements = proof_figures(ws.manuscript, [path for path in rasters if uses_of(path)])
     except (RuntimeError, ValueError, OSError) as exc:
         advisory.append(_finding("proof", "FIG-PROOF-UNREADABLE", str(exc)))
         placements = {}
@@ -1182,6 +1193,10 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
         figures.append(record)
     for raster in rasters:
         if uses_of(raster):
+            for item in placements.get(raster.name, []):
+                if item["min_ppi"] is not None and item["min_ppi"] < 299.99:
+                    required.append(_finding(raster.stem, "FIG-PROOF-READABILITY",
+                        f"Page {item['page']}: {raster.name} measures {item['min_ppi']:.1f} ppi."))
             if planned.get(raster.stem, {}).get("kind") == "result":
                 required.append(_finding(raster.stem, "FIG-RASTER-RESULT",
                                          "Export the result plot as vector PDF and include that file."))
@@ -1194,6 +1209,7 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
     required += [item for item in advisory if item["code"] in PLOT_FINDINGS]
     return {"manuscript": str(ws.manuscript), "paper_id": ws.paper_id,
             "layout": {k: (round(v / 72 * 25.4, 1) if isinstance(v, float) else v) for k, v in widths.items()},
+            "raster_placements": {p.name: placements.get(p.name, []) for p in rasters if uses_of(p)},
             "layout_units": "mm", "min_font_pt": min_font_pt, "figures": figures, "assets": licenses,
             "blocking": blocking, "advisory": advisory, "repair_required": required, "valid": not blocking}
 
