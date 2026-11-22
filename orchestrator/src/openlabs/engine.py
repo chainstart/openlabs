@@ -97,7 +97,6 @@ from .program_flow import (
     parallel_admission_room,
     parallel_routing_reasons,
     record_admission_deferral,
-    report_scheduling_counts,
     run_program_pipeline,
     workstream_admitted,
 )
@@ -2166,7 +2165,7 @@ def _replenish_continuous_campaign(
 ) -> None:
     campaign_id = str(campaign["campaign_id"])
     # A program admission campaign may review several batches at once
-    # ([program].max_admissions_per_line); every other campaign runs one task.
+    # ([program].max_admissions_per_domain); every other campaign runs one task.
     admission_room = parallel_admission_room(db, settings, campaign)
     if db.has_active_tasks(campaign_id) and not admission_room:
         return
@@ -4202,11 +4201,6 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     asset_library.run_assets_tick(db, paths, settings, report)
     if settings.auto_continue:
         _replenish_continuous_campaigns(db, paths, settings, report)
-    if settings.program.enabled and "pipeline_error" not in report.program:
-        try:
-            report_scheduling_counts(db, paths, settings, report)
-        except (OSError, TopicLedgerError, ValueError) as exc:
-            report.errors.append(f"program scheduling counts: {exc}")
     # Any campaign whose recent tasks keep ending without progress waits, then stops.
     try:
         report.no_progress_guard = spin_guard.guard_queued_tasks(db, settings, report)

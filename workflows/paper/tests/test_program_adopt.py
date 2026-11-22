@@ -115,10 +115,8 @@ def _bundle(root, evidence, pdf_bytes):
     return root / "result.json"
 
 
-@pytest.mark.parametrize("workspace_path", ["physics/campaign", "lines/photometry/campaign"])
-def test_adopt_copies_the_paper_and_restores_hash_bound_files(tmp_path, workspace_path):
-    data = tmp_path / "data"
-    workspace = data / "workspaces" / workspace_path
+def test_adopt_copies_the_paper_and_restores_hash_bound_files(tmp_path):
+    workspace, data = tmp_path / "workspace", tmp_path / "data"
     data.mkdir()
     evidence, pdf_bytes = _workspace(workspace)
     bundle = _bundle(tmp_path / "bundle", evidence, pdf_bytes)

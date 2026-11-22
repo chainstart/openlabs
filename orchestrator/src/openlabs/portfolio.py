@@ -551,18 +551,9 @@ def materialize_candidate(
     raw_branch = branch
     candidate_id = str(raw_branch.get("candidate_id") or "").strip()
     campaign_id = _candidate_campaign_id(project.project_id, candidate_id)
+    campaign_root = paths.data / "workspaces" / project.domain / campaign_id
+    state_path = campaign_root / "research_state.json"
     existing = db.campaign(campaign_id)
-    legacy_root = paths.data / "workspaces" / project.domain / campaign_id
-    if existing and existing.get("workstream_state_path"):
-        state_path = Path(str(existing["workstream_state_path"]))
-    elif existing and existing.get("state_path"):
-        state_path = Path(str(existing["state_path"])) / "research_state.json"
-    elif project.research_line and not (legacy_root / "research_state.json").is_file():
-        state_path = (paths.data / "workspaces" / "lines" / project.research_line
-                      / campaign_id / "research_state.json")
-    else:
-        state_path = legacy_root / "research_state.json"
-    campaign_root = state_path.parent
     current_validation = (
         validate_protocol_state(
             lab,

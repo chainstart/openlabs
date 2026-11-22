@@ -1,7 +1,7 @@
 """Bring a campaign-workspace paper into the data repository, and waive its public deposit.
 
 Owner-mode research writes and reviews its paper inside the campaign workspace
-(``workspaces/lines/<line>/<campaign>/`` or a legacy domain path, not tracked by Git). The release pipeline,
+(``workspaces/<domain>/<campaign>/``, not tracked by Git). The release pipeline,
 the commits and the delivery work on the data repository root, so a ready paper
 is first *adopted*:
 

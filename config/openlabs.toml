@@ -78,15 +78,18 @@ max_active_topics = 5
 max_ready_unsubmitted = 6
 # Relative to the data repository root.
 ledger_path = "registry/topic-ledger.json"
-# A topic scout is scheduled only while fewer proposed (not yet judged) topics on its line
+# A topic scout is scheduled only while fewer proposed (not yet judged) topics
 # than this wait for the admission gate, a slot is free, admissions are not
 # paused and the lead tier has quota. Scouts and the gate need a [runners]
 # table: the gate must run on a different model family than the scout.
 candidate_pool_low_water = 3
-# Default minimum interval per line, even with one scout globally.
-# Optional line_scout_min_interval_hours = { "line-id" = 0.5 } overrides by line.
+# Minimum hours between two scheduled scouts: program-wide while
+# max_concurrent_scouts = 1, per domain when scouts run in parallel.
 scout_min_interval_hours = 12
-# Global ceiling on scouts in flight, with at most one per line.
+# Scouts in flight at once, at most one per domain (1 = the original single
+# scout). Above 1, a scout is added only while candidate pool + in-flight scouts
+# x expected cards stays below candidate_pool_low_water, and each new scout asks
+# for its share of what is missing. Instance presets use the number of domains.
 max_concurrent_scouts = 1
 # Cards one scout is expected to register (replaced by this instance's own mean
 # once three scouts have finished).
@@ -98,10 +101,12 @@ scout_expected_cards = 2.0
 # until its supply changes (0 = never).
 scout_empty_backoff_hours = [1, 6, 24]
 scout_exhausted_after = 4
-# Admission batches in flight per research line (legacy domain fallback).
-# The former max_admissions_per_domain key is accepted as an alias.
-max_admissions_per_line = 1
-# Admission reviews in flight across all lines (0 = no global cap).
+# Admission reviews of one domain in flight at once, each on a different batch
+# of its proposed topics (1 = one review per domain). The batches share the
+# admission campaign; reviewers do not edit campaign state, so they do not
+# collide on promotion.
+max_admissions_per_domain = 1
+# Admission reviews in flight across all domains (0 = no global cap).
 max_concurrent_admissions = 0
 # true: a new researcher/experimenter workstream of an ordinary (non-program)
 # project is not activated unless the ledger links it to an admitted topic.
@@ -109,12 +114,13 @@ enforce_admission = false
 # Reusable scripts/SOP index offered to scouts and the gate when the file exists
 # (relative to the data repository root).
 asset_index_path = "registry/reusable-assets.json"
-# Legacy host-domain filter and preference order when research_lines is empty.
+# Domains in scout rotation, in preference order; empty = every domain with an
+# active program project (project.json with "program": true).
 domains = []
 # Research lines in scout rotation, in preference order (owner direction
 # 2026-11-12: scout by research line, not by lab). When set, only program
-# projects with a matching "research_line" are scouted. When empty, active
-# projects rotate by line where available, with domains as the fallback filter.
+# projects with a matching "research_line" are scouted, keyed per line; domain
+# projects keep their admissions and campaigns. Empty = rotate by domain.
 research_lines = []
 # Direction file read by scouts and the admission gate; an admitted card of a
 # line whose environment.status is not "ready" is held until it is.
