@@ -100,3 +100,15 @@ def test_formal_material_error_and_missing_consequence():
     findings = []
     assert formal.report_blockers(report, inv, [], findings=findings, followup=True) == []
     assert findings[0]["category"] == "advisory"
+
+
+def test_new_formal_blocker_requires_reason_for_prior_omission():
+    inv = formal.inventory([dict(id="main", text="The two estimates have opposite signs.")], "")
+    inv["previous_blocker_roots"] = []
+    row = dict(passage_id=inv["passages"][0]["id"], status="error", coverage_rationale="Signs swapped.",
+               prerequisites=[], citations=[], formulas=[], finding_kind="numeric_or_statistical_error",
+               reader_misconclusion="Readers would reverse the direction of the effect.")
+    report = {"references": [], "passages": [row]}
+    assert not formal.report_blockers(report, inv, [], followup=True)
+    row["coverage_rationale"] += "\nWhy missed: the sign was changed in this revision."
+    assert formal.report_blockers(report, inv, [], followup=True)

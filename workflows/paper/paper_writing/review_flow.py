@@ -3237,9 +3237,7 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
             **with_images, **with_materials) for name in panel}
         for name, future in futures.items():
             referees[name], receipts[name] = future.result()
-            expected = set(previous['items']) if previous else set()
-            if {i['item'] for i in referees[name]['previous_items']} != expected:
-                raise ValueError('Referee omitted or introduced a previous mandatory item')
+            _check_followup_items(referees[name], previous or {"items": []})
         editor, receipts["editor"] = editor_future.result()
         if previous is not None:
             _check_followup_items(editor, previous)
@@ -3427,6 +3425,8 @@ def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
                 message="Main text exceeds the registered venue limit", text="Main text exceeds the registered venue limit"))
     if notes is not None:
         notes.extend((record or {}).get("preparation_advisories", []))
+        notes.extend(dict(item, kind="review_suggestion") for item in
+                     ((record or {}).get("merged") or {}).get("advisory_items", []))
         notes.extend({"kind": "review_suggestion", **change} for change in
                      ((record or {}).get("merged") or {}).get("required_changes", []) if change.get("advisory"))
         formal_summary = ((record or {}).get("formal_check") or {}).get("issue_summary") or {}
@@ -3578,7 +3578,7 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
         problems.append(f'Active journal revision context: {exc}')
     if record.get("merged", {}).get("outcome") != "ready" or (
             record["editor_screen"].get("review_standard") != "materiality_v1"
-            and record["editor_screen"]["decision"] != "send_to_review"):
+            and "followup_items" not in record and record["editor_screen"]["decision"] != "send_to_review"):
         problems.append("The unified decision is not a ready decision")
     if record["fingerprints"]["manuscript_snapshot_sha256"] != snapshot:
         problems.append("Manuscript changed after the unified review")
