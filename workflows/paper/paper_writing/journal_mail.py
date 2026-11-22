@@ -5,10 +5,11 @@ import imaplib
 import json
 import os
 import re
+import signal
 import sqlite3
 import subprocess
 import ssl
-import time
+from threading import Event
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 import fcntl
@@ -151,14 +152,20 @@ def parse(raw, papers):
                 action=("prepare_revision" if reviews else "upload_reviews") if decision == "revision_requested" else "verify_status")
 
 
-def record(directory, event):
+def record(directory, event, raw):
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     if directory.stat().st_mode & 0o077:
         raise ValueError("Private journal directory requires mode 0700")
     with sqlite3.connect(directory / "events.sqlite") as db:
         db.execute("CREATE TABLE IF NOT EXISTS events (message_key TEXT PRIMARY KEY, paper_id TEXT, payload TEXT)")
-        return bool(db.execute("INSERT OR IGNORE INTO events VALUES (?,?,?)",
-                               (event["message_key"], event["paper_id"], json.dumps(event))).rowcount)
+        db.execute("CREATE TABLE IF NOT EXISTS originals (message_key TEXT PRIMARY KEY, raw BLOB NOT NULL)")
+        inserted = db.execute("INSERT OR IGNORE INTO events VALUES (?,?,?)",
+                              (event["message_key"], event["paper_id"], json.dumps(event))).rowcount
+        # Backfill a legacy event only if the same paper and parsed event match.
+        db.execute("INSERT OR IGNORE INTO originals SELECT message_key, ? FROM events "
+                   "WHERE message_key=? AND paper_id=? AND payload=?",
+                   (raw, event["message_key"], event["paper_id"], json.dumps(event)))
+        return bool(inserted)
 
 
 def poll(args, api):
@@ -203,7 +210,7 @@ def poll(args, api):
                 if isinstance(row, tuple):
                     event = parse(row[1], entries)
                     if event:
-                        record(args.state, event)
+                        record(args.state, event, row[1])
             checkpoint(uid)
 
 
@@ -219,8 +226,9 @@ def main():
     if args.interval_minutes < 1:
         parser.error("interval must be positive")
     if args.eml:
-        event = parse(args.eml.read_bytes(), catalog(args.root))
-        print("recorded" if event and record(args.state, event) else "duplicate or unmatched")
+        raw = args.eml.read_bytes()
+        event = parse(raw, catalog(args.root))
+        print("recorded" if event and record(args.state, event, raw) else "duplicate or unmatched")
         return
     from openlabs.program_autonomy import _credentials_file_values
     from paper_writing.handoff import ManageApiClient, HandoffError
@@ -237,7 +245,9 @@ def main():
         parser.error(error)
     args.loop = Path(__file__).resolve().parents[3] / "bin/openlabs-container-loop"
     api = ManageApiClient(credentials["ARA_PAPER_MANAGE_API_URL"], credentials["ARA_PAPER_MANAGE_API_KEY"])
-    while True:
+    stop = Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    while not stop.is_set():
         try:
             try:
                 poll(args, api)
@@ -246,7 +256,7 @@ def main():
             print(datetime.now(timezone.utc).isoformat(), "journal poll complete", flush=True)
         except (HandoffError, OSError, imaplib.IMAP4.error, ValueError, sqlite3.Error, KeyError, LookupError) as exc:
             print("Journal poll failed", type(exc).__name__, flush=True)
-        time.sleep(args.interval_minutes * 60)
+        stop.wait(args.interval_minutes * 60)
 
 
 if __name__ == "__main__":
