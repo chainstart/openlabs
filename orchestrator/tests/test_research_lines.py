@@ -362,14 +362,14 @@ def test_a_line_that_stops_being_ready_during_review_is_still_held(tmp_path, mon
     assert db.campaign(f"{entry['topic_id']}") is None
 
 
-@pytest.mark.parametrize("with_field", [False, True])
-def test_ready_line_admits_and_the_precheck_is_the_first_task(tmp_path, monkeypatch, with_field):
+@pytest.mark.parametrize("field, short", [(None, None), ("reliability", "phm"), ("medicine", "ecg")])
+def test_ready_line_admits_and_the_precheck_is_the_first_task(tmp_path, monkeypatch, field, short):
     paths, db, settings = _line_setup(tmp_path, "ready")
-    profile = {"field": "reliability", "line_short_name": "phm"} if with_field else None
+    profile = {"field": field, "line_short_name": short} if field else None
     if profile:
         lines = paths.data / "registry" / "research-lines.yaml"
         lines.write_text(lines.read_text().replace("    host_domain: ai\n",
-                         "    host_domain: ai\n    field: reliability\n    line_short_name: phm\n"))
+                         f"    host_domain: ai\n    field: {field}\n    line_short_name: {short}\n"))
     _, admission, _ = flow._to_admission(paths, db, settings, monkeypatch, [_line_card(0)])
     entry = flow._packet(admission)["topic_cards"][0]
     flow._complete(db, paths, admission["task_id"],
@@ -417,8 +417,9 @@ def test_ready_line_admits_and_the_precheck_is_the_first_task(tmp_path, monkeypa
     job = json.loads(spec.read_text())
     assert job.get("paper_profile") == profile
     skills = job["runtime_policy"]["skills"]
-    assert ("$openlabs-reliability-paper" in skills) == with_field
-    assert ("$openlabs-ai-paper" in skills) != with_field
+    if field:
+        assert f"$openlabs-{field}-paper" in skills
+    assert ("$openlabs-ai-paper" in skills) == (field is None)
 
 
 def test_materialization_keeps_a_persisted_legacy_workspace(tmp_path, monkeypatch):
