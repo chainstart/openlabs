@@ -1,0 +1,15 @@
+"""Illustrative edge-on transit and distant observer; lengths are schematic."""
+from object_scene import Scene
+s = Scene(185)
+s.label(12,22,"Transit geometry in the orbital plane",16,"start",True)
+s.object("astronomy/star.svg",110,94,165)
+s.line([(110,94),(299,94)],dashed=True)
+s.parts.append('<circle cx="311" cy="94" r="8" fill="#222222"/>')
+s.flow([(323,94),(553,94)])
+s.object("astronomy/tess.svg",616,94,136)
+s.label(110,171,"Host star")
+s.label(310,134,"Transiting planet")
+s.label(434,81,"Line of sight")
+s.label(616,165,"TESS observer")
+s.label(287,57,"Edge-on orbit · i = 90°")
+s.save()

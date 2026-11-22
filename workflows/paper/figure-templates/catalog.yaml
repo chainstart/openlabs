@@ -107,3 +107,38 @@ templates:
     file: specimen-failure.py
     figure_kind: result
     use_when: "Synthetic vibration RMS, fixed baseline and forecasts for two complete units. Replace illustrative inputs before manuscript use."
+  - name: plant-connections
+    field: energy
+    file: plant-connections.py
+    figure_kind: schematic
+    use_when: Matched PV and two-hour storage layouts in the five-minute NEM replay.
+  - name: plant-dispatch
+    field: energy
+    file: plant-dispatch.py
+    figure_kind: schematic
+    use_when: Illustrative AC-bus balance over a single five-minute interval.
+  - name: market-interval
+    field: energy
+    file: market-interval.py
+    figure_kind: schematic
+    use_when: Worked constant-price settlement interval with metered export.
+  - name: rig-instrumentation
+    field: reliability
+    file: rig-instrumentation.py
+    figure_kind: schematic
+    use_when: Worked vibration acquisition layout, with a radial accelerometer.
+  - name: bearing-protocol
+    field: reliability
+    file: bearing-protocol.py
+    figure_kind: schematic
+    use_when: Illustrative specimen-level split before signal segmentation.
+  - name: viewing-geometry
+    field: astronomy
+    file: viewing-geometry.py
+    figure_kind: schematic
+    use_when: Illustrative edge-on transit and distant observer; lengths are schematic.
+  - name: transit-formation
+    field: astronomy
+    file: transit-formation.py
+    figure_kind: schematic
+    use_when: Uniform disk, central transit; geometric flux loss at full overlap.

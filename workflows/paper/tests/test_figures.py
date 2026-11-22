@@ -411,3 +411,30 @@ def test_printed_raster_uses_placed_pixels(tmp_path):
         doc.save(tmp_path / "main.pdf")
     item, = fig.proof_figures(tmp_path, [png])["camera.png"]
     assert item["min_ppi"] == pytest.approx(60)
+
+
+def test_object_library_and_templates(tmp_path, monkeypatch):
+    import runpy
+    import xml.etree.ElementTree as ET
+
+    root = fig.STYLE_DIR.parent
+    library = root / "assets"
+    monkeypatch.syspath_prepend(str(fig.STYLE_DIR))
+    monkeypatch.setenv("OPENLABS_FIG_ASSETS", str(library))
+    helpers = fig._style_helpers()
+    for asset in library.glob("*/*.svg"):
+        meta = helpers.asset_license(asset)
+        assert all(meta[key] for key in ("source", "url", "license", "attribution"))
+        assert meta["sha256"] == hashlib.sha256(asset.read_bytes()).hexdigest()
+        assert fig.classify_license(meta["license"])[0] in {"ok", "attribution"}
+    assert "Twitter" in helpers.credits([library / "astronomy/telescope.svg"])[0]
+    drawings = ("plant-connections", "plant-dispatch", "market-interval",
+                "rig-instrumentation", "bearing-protocol", "viewing-geometry", "transit-formation")
+    catalog = {item["name"]: item for item in fig.template_catalog()}
+    for name in drawings:
+        output = tmp_path / (name + ".svg")
+        monkeypatch.setenv("FIG_SVG", str(output))
+        runpy.run_path(str(root / catalog[name]["file"]))
+        svg = ET.parse(output).getroot()
+        assert len(svg.findall(".//{*}path")) >= 3
+        assert "ns0:" not in output.read_text()  # Chromium embeds SVG in HTML

@@ -1,0 +1,20 @@
+"""Worked vibration acquisition layout, with a radial accelerometer."""
+from object_scene import Scene
+s = Scene(205)
+s.label(14,21,"a   Bearing test rig",16,"start",True)
+s.label(392,21,"b   Radial vibration channel",16,"start",True)
+s.object("reliability/motor.svg",89,100,145)
+s.object("reliability/bearing.svg",253,100,106)
+s.line([(150,102),(236,102)],width=5)
+s.line([(29,146),(301,146)],width=5)
+s.line([(56,138),(56,146)])
+s.line([(252,134),(252,146)])
+s.object("reliability/sensor.svg",251,54,46)
+s.flow([(270,46),(345,46),(345,100),(451,100)],signal=True)
+s.object("reliability/daq.svg",510,100,135)
+s.flow([(572,100),(612,100)],signal=True)
+s.line([(615,108),(623,102),(629,110),(637,76),(644,120),(651,88),(659,109),(668,99),(680,105),(694,101)])
+for x,title in [(87,"Drive motor"),(251,"Test bearing"),(507,"DAQ"),(655,"Acceleration")]:
+    s.label(x,169,title,bold=True)
+s.label(318,195,"Example acquisition: 12.8 kHz × 1 s = 12,800 samples per window")
+s.save()
