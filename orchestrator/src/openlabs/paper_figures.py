@@ -90,9 +90,8 @@ def queue(db, paths, settings, report, *, task, packet, result_path, paper_id, r
     task_id = f"figure-repair:{key}"
     if db.task(task_id):
         return task_id
-    runner = next((name for name, spec in sorted(settings.runners.items())
-                   if spec.tier == "worker" and spec.provider == "openai-codex"), None)
-    if runner is None:
+    runner = str(task["runner"] or "")
+    if runner not in settings.runners:
         return None
     manuscript = Path(audit.get("manuscript") or root / "papers" / paper_id / "manuscript")
     if (not manuscript.is_absolute() or not manuscript.is_relative_to(root)

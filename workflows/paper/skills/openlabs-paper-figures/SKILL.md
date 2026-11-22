@@ -16,13 +16,12 @@ In OpenLabs this skill overrides the sentence in the vendored `scientific-writin
 tools below. Everything else in that component's figure section (provenance, units, sample sizes,
 accessibility) still applies.
 
-A method, mechanism or study-design paper needs at least one useful vector schematic.
+Choose an observation, comparison or schematic that makes the design intelligible.
 Use only figures that serve the story line.
 
 ## 1. Figure plan: part of the story line
 
-Before drafting, link `manuscript/figure-plan.json` from the Figures section of
-`writing/storyline.md` and connect each figure to a step in the argument. The plan uses
+Draw the decisive comparison before writing Results. An optional plan template uses
 `paper_type` (`method`, `mechanism`, `study_design` or `other`) and a `figures` array:
 
 ```json
@@ -173,7 +172,7 @@ assets here or in the acknowledgments as their licence requires.
 
 ## Evidence plan before drawing
 
-Read paper_writing/figure-standards.json. Choose manuscript_type from its profiles (for an unrepresented design use other with a substantive count_reason). Keep the existing paper_type. For every figure list evidence_stages (profile stage IDs), panels (integer), and source and data_source. Supply count_reason for justified departures, single_panel_reason for a standalone result, and supplement_coverage mapping checks to appendix figure/table identifiers or explaining complete main-text coverage. The first main figure carries first_stage. Plan evidence before drawing. Use actual study outputs for every result and anchor every schematic in a real measured example or comparison. Explain n, units, intervals and every visual encoding in captions. Compare axes, ordering and color limits at final column width.
+Use the genre profiles as design references. At final column width, check units, sample, intervals and visual encodings. Anchor results in traceable study outputs.
 
 
 |模式|适用问题|画面要素与阅读顺序|评审时怎么辨别|

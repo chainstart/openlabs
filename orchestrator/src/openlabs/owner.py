@@ -998,6 +998,9 @@ def writing_plan(settings: FactorySettings, state: Mapping[str, Any],
         return None, "no_writer"
     if writer not in settings.runners:
         return PLAN_OWNER, "writer_unknown"
+    tiers = {"light": 0, "worker": 1, "lead": 2}
+    if runner in settings.runners and tiers.get(settings.runners[writer].tier, 0) < tiers.get(settings.runners[runner].tier, 0):
+        return PLAN_OWNER, "writer_below_owner_tier"
     if runner == writer:
         return PLAN_OWNER, "writer_is_owner"
     if _history(state) or state.get("review_round") or state.get("review_stage"):
@@ -1043,6 +1046,7 @@ _OWNER_WRITES_WHY = {
     "writer_is_owner": "the configured writer is your own runner",
     "writer_unknown": "the configured writer is not a known runner",
     "writer_seat_elsewhere": "the writer holds the topic",
+    "writer_below_owner_tier": "the configured writer is below the research owner tier",
     "writer_removed": "the writer this topic was handed to is no longer configured",
     "recorded": "recorded earlier",
 }
@@ -1812,6 +1816,11 @@ def _figure_gate(db, paths, settings, report, *, task, packet, result_path, stat
     issues = ([*audit.get("blocking", []), *audit.get("repair_required", [])] if root is not None else
               [{"figure": "manuscript", "code": "FIG-DRAFT-MISSING",
                 "message": "Locate the supplementary revision in the campaign workspace."}])
+    requested = packet.get("request_figure_assistant")
+    prior = state.get("figure_repair") or {}
+    if isinstance(requested, str) and requested.strip() and not prior.get("rounds"):
+        issues.append({"figure": "manuscript", "code": "FIG-AUTHOR-REQUEST", "message": requested.strip()})
+        audit = dict(audit, repair_required=issues[len(audit.get("blocking", [])):])
     if not issues:
         manuscript = Path(audit.get("manuscript") or root / "papers" / paper_id / "manuscript")
         if manuscript.resolve() == manuscript and manuscript.is_relative_to(root) and manuscript.is_dir():
@@ -1825,7 +1834,8 @@ def _figure_gate(db, paths, settings, report, *, task, packet, result_path, stat
     if record.get("paper_id") != paper_id:
         record = {}
     rounds = int(record.get("rounds") or 0)
-    if root is not None and not record.get("owner_recovery") and rounds < paper_figures.MAX_ROUNDS:
+    if (root is not None and (requested is True or isinstance(requested, str) and requested.strip())
+            and not record.get("owner_recovery") and rounds < paper_figures.MAX_ROUNDS):
         repair_id = paper_figures.queue(
             db, paths, settings, report, task=task, packet=packet, result_path=result_path,
             paper_id=paper_id, root=root, audit=audit, round_number=rounds + 1,
@@ -1854,7 +1864,7 @@ def _figure_gate(db, paths, settings, report, *, task, packet, result_path, stat
     next_seat = enqueue_seat(
         db, settings, report, campaign=campaign, parent=task, input_path=str(result_path),
         routing_reason=ROUTING_RETRY,
-        note=f"The automatic figure repair could not clear the pre-review check for {paper_id}. "
+        note=f"The figure check found a repair needed for {paper_id}. "
              f"Resolve these figure issues yourself, or decide the topic's direction: {findings} "
              "Inspect the rendered PNGs, run figures check, and return ready_for_review when clear.",
         task_id=_seat_id(campaign_id, f"figure-recovery:{task['task_id']}"),
@@ -1952,9 +1962,9 @@ CONTEXT_RULE = (
     "`max_output_tokens` <= 2000); bulk reading -> a sub-agent that returns a summary."
 )
 WRITING_RULES = (
-    "Writing rules (binding): read openlabs-paper-readability/SKILL.md and openlabs-paper-figures "
-    "under CODE/workflows/paper/skills/. Link manuscript/figure-plan.json from the pre-draft "
-    "story line. Run narrative-check, reader-check and figures check before review."
+    "Use the owner's 2–4 reader takeaways. Run paper-writing story-review on the one-page storyline before drafting: "
+    "reader, question, decisive comparison, quantitative answer, meaning, key limitation and cuts. "
+    "Draw the decisive figures first and inspect the renders. For a substantive visual repair, put the located issue from the author or review in request_figure_assistant. Narrative-check and reader-check are optional."
 )
 REVISION_RULE = (
     " Placement (readability skill, section 5): put added qualifications, checks and explanations "

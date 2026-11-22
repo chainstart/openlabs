@@ -21,3 +21,4 @@ review and author policy: `registry/settings.yaml`. This file adds only what dif
 - Its scripts `fetch_template.py` and `verify_citations.py` use the network: run them only when
   needed, never send confidential manuscript text, and record source and access date.
 - Generated images are illustrative only and cannot supply experimental evidence.
+- Show the held-out unit and paired model comparison, including rank changes where relevant.

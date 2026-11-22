@@ -43,23 +43,13 @@ assigned reviewer role. Repository rules override vendored instructions; in part
 
 ## Write
 
-Read `../openlabs-paper-readability/SKILL.md` before drafting and again before every revision.
-Its rules are binding, not a reference: a one-page story line before the first sentence, a main
-text that carries only the problem-method-experiment-result line (robustness, resolution,
-sensitivity and secondary checks in the appendix), a plain abstract, one layer of qualification
-per conclusion, no revision history, and revisions that do not grow the main text. Before drafting, read
-`../openlabs-paper-figures/SKILL.md`, use the handover's two to four reader-facing points,
-and link `manuscript/figure-plan.json` from the story line. Choose a manuscript_type in paper_writing/figure-standards.json and map each figure to its evidence_stages before drafting. Follow the figure skill for panel counts, caption encodings, supplements and reasoned exceptions.
+Use the owner's two to four takeaways and the claim–evidence map to draft one page in
+`writing/storyline.md`: intended reader, question, decisive comparison, quantitative answer,
+meaning, the limitation that changes interpretation and what belongs outside the main text.
+Run `paper-writing story-review --paper-id <id>` once and use the editor’s reading before drafting. Draw the decisive figures first. Figure 1
+orients the reader and each subsequent figure answers one question. Write Results from these
+comparisons, with headings that state findings. Consult the readability and figure skills.
 
-1. Build or update the claim–evidence map before strengthening any claim or adding numbers.
-2. Fix one main conclusion and its contribution boundary against the closest published work,
-   write `papers/<paper_id>/writing/storyline.md` (reader, main result, three or four support
-   points, the main limitation, what goes to the appendix), then write the canonical LaTeX from it.
-   The figure plan is part of the story line: list each figure with the one point it shows the
-   reader -- usually one entry schematic (mechanism, geometry, framework or study design) that
-   carries structure prose cannot, plus the result figures for the primary endpoint. Draw them as
-   vector figures from source with `paper-writing figures` and the templates and style rules in
-   `../openlabs-paper-figures/SKILL.md`; look at every rendered PNG before handing over.
 3. Keep negative, mixed, null and incomplete results. Do not choose an analysis after seeing
    which result is favorable; record design, exclusions, uncertainty, seeds and versions.
 4. Verify each citation's metadata and its support for the specific sentence; a search hit or
@@ -112,23 +102,19 @@ Handling a rejection: `docs/JOURNAL_HISTORY.md#handling-a-rejection`.
    narrative part of `style-check` (`paper-writing narrative-check --paper-id <id>` for the full
    report with line numbers) fails a main text over its length limit and any revision-history
    wording; those two stop the unified review before a round is spent.
-2. Run `paper-writing reader-check --paper-id <id>` (a one-pass reader in a fresh model process,
-   your own tool call, not a review) and compare its one-sentence summary and main result with
-   the story line; fix what it shows before handing off.
+2. Use reader-check or narrative-check when an outside reading would help.
 3. Unless the record is `not_required` with a reason, prepare the Zenodo draft
    (`paper-writing zenodo prepare`, code-first per `docs/ZENODO_GUIDE.md`), cite its Version DOI
    in the bibliography, first substantive support mention and availability statement with
    wording that stays true after publication, then run `zenodo verify-draft` and
    `support-check`. Use the configured default licence without asking; surface a real licence
    conflict instead of changing files or licence silently.
-4. Run the editor-facing rewrite pass (`paper-writing rewrite run <paper_id>`,
-   `settings.yaml#quality_gate.editorial_rewrite`) once per target before its first review; its
-   verdict is advice.
+4. Editorial rewriting is available on request.
 5. In a factory `writer` task, stop at the frozen `paper_candidate`; never run or impersonate a
    reviewer. The scheduler starts a fresh `$openlabs-paper-review` task. On `paper_revision`,
    apply only the declared request; new evidence goes through `evidence_remediation` first.
    Requested qualifications, checks and explanations go to the appendix and the response letter
-   by default; the main text changes by at most one sentence per item and does not grow net
+   where scientifically relevant. File checks and rerun logs go in the archive. Aim for zero net growth
    unless a referee placed the request in the main text (readability skill, section 5).
 6. After a passing gate, run `paper-writing zenodo release` under the standing authorization,
    commit the DOI/receipt, then `paper-writing handoff release` (research-program papers are

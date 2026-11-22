@@ -23,3 +23,4 @@ review and author policy: `registry/settings.yaml`. This file adds only what dif
   and exclusions. Never fabricate consent, ethics approval or human checks.
 - Report denominators, uncertainty at the actual unit, held-out validation and matched
   baselines; residual discrepancies stay in the paper.
+- Pair the observed biological effect with its comparator and uncertainty.

@@ -347,7 +347,8 @@ See Figure~\ref{fig:design}.
     }))
     ws = fig.workspace(manuscript=ms)
     result = fig.check(ws, rebuild=False, text_width="160mm")
-    assert {f["code"] for f in result["repair_required"]} == {"FIG-PLAN-MISSING", "FIG-SCHEMATIC-MISSING"}
+    assert not result["repair_required"]
+    assert {"FIG-PLAN-MISSING", "FIG-SCHEMATIC-MISSING"} <= {f["code"] for f in result["advisory"]}
     (ms / "figure-src/design.svg").write_text(SVG)
     _pdf(ms / "figures/design.pdf", 200, 80, [((30, 40), "Paired split", 9)])
     assert fig.check(ws, rebuild=False, text_width="160mm")["repair_required"] == []

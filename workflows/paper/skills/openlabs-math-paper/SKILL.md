@@ -28,3 +28,4 @@ mathematics.
   the exact current ZIP (and `--relative-base` when the prose uses a sub-directory base).
 - Figures never encode distinct mathematical roles by colour alone; add a redundant cue, state
   the mapping in the caption and check the PDF in grayscale.
+- Orient the reader with the decisive example or construction and state the hypothesis on which the conclusion turns.

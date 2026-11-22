@@ -23,3 +23,4 @@ review and author policy: `registry/settings.yaml`. This file adds only what dif
   provenance before strengthening a claim. Keep non-convergence and disagreement with reference
   calculations. Say "causal mechanism" only when the design identifies it; agreement with
   experiment alone may be error cancellation.
+- Connect the measured material response to the relevant structural comparison.

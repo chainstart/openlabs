@@ -1,4 +1,4 @@
-"""Presentation requirements for numbered TeX figures, shared by repair and review."""
+"""Design references for numbered TeX figures, shared by repair and review."""
 import json
 from pathlib import Path
 import re
@@ -27,7 +27,7 @@ def findings(plan, tex):
     main = re.split(r"\\(?:appendix\b|begin\{appendices\})", re.sub(r"(?<!\\)%[^\n]*", "", tex))[0]
     figures = list(ENV.finditer(main))
     if profile and not profile["main_figures"][0] <= len(figures) <= profile["main_figures"][1] and not justified:
-        issue("plan", "COUNT", f"{len(figures)} main figures; reference {profile['main_figures']}. Supply a count_reason.")
+        issue("plan", "COUNT", f"{len(figures)} main figures; reference {profile['main_figures']}. Choose the sequence that explains the decisive comparison.")
     by_name = {item["figure"]: item for item in plan.get("figures", [])}
     covered = set()
     if profile:

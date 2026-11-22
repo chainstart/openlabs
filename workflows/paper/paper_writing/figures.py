@@ -975,25 +975,26 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
 
     included = {pdf.stem for pdf in pdfs if uses_of(pdf)}
     included_rasters = {raster.stem for raster in rasters if uses_of(raster)}
-    required = standard_findings(plan, manuscript_text)
+    required = []
+    advisory.extend(standard_findings(plan, manuscript_text))
     if plan_error:
-        required.append(_finding("plan", "FIG-PLAN", plan_error))
+        advisory.append(_finding("plan", "FIG-PLAN", plan_error))
     if plan.get("paper_type") in {"method", "mechanism", "study_design"} and not any(
         item["kind"] == "schematic" and name in included and name in by_stem
         for name, item in planned.items()
     ):
-        required.append(_finding("plan", "FIG-SCHEMATIC-MISSING",
+        advisory.append(_finding("plan", "FIG-SCHEMATIC-MISSING",
                                  "Include a source-built vector schematic of the method, mechanism or study design."))
     for name, item in planned.items():
         if name not in included and not (item["kind"] == "object" and name in included_rasters):
-            required.append(_finding(name, "FIG-PLAN-MISSING",
+            advisory.append(_finding(name, "FIG-PLAN-MISSING",
                                      f"Include the planned {item['figure_type']} showing {item['point']}."))
         elif not (ws.manuscript / item["source"]).is_file():
             required.append(_finding(name, "FIG-PLAN-SOURCE",
                                      f"Update the plan to point to the existing source for {name}."))
     if plan:
         for name in sorted((included | included_rasters) - set(planned)):
-            required.append(_finding(name, "FIG-PLAN-UNLISTED",
+            advisory.append(_finding(name, "FIG-PLAN-UNLISTED",
                                      f"Describe {name} in the figure plan and link its source and evidence."))
 
     for stem, src in by_stem.items():

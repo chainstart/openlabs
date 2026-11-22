@@ -13,8 +13,10 @@ from test_owner_mode import _latest, _owner_program
 
 def _fixture(tmp_path, monkeypatch):
     paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    seat = _latest(db, topic["campaign_id"])
+    runner = seat["runner"]
     settings = replace(settings, runners={
-        "worker_gpt": RunnerSpec(name="worker_gpt", provider="openai-codex", tier="worker", model="gpt"),
+        runner: RunnerSpec(name=runner, provider="openai-codex", tier="lead", model="gpt"),
     })
     campaign_root = Path(db.campaign(topic["campaign_id"])["state_path"])
     manuscript = campaign_root / "papers" / "p" / "manuscript"
@@ -24,7 +26,7 @@ def _fixture(tmp_path, monkeypatch):
     shared.mkdir(parents=True)
     (shared / "main.tex").write_text("delivered")
     report = SimpleNamespace(enqueued=[], program={}, errors=[])
-    return paths, db, settings, manuscript, report, _latest(db, topic["campaign_id"])
+    return paths, db, settings, manuscript, report, seat
 
 
 def test_missing_schematic_queues_worker_twice_then_owner(tmp_path, monkeypatch):
@@ -34,11 +36,11 @@ def test_missing_schematic_queues_worker_twice_then_owner(tmp_path, monkeypatch)
         "repair_required": [{"figure": "plan", "code": "FIG-SCHEMATIC-MISSING", "message": "Draw design."}],
     })
     result_path = tmp_path / "owner-result.json"
-    args = {"task": seat, "packet": {"paper_id": "p"}, "result_path": result_path}
+    args = {"task": seat, "packet": {"paper_id": "p", "request_figure_assistant": True}, "result_path": result_path}
     assert owner._enqueue_review(db, paths, settings, report, **args) is None
     first = db.task(report.enqueued[-1])
     assert first["task_type"] == paper_figures.TASK_TYPE
-    assert first["runner"] == "worker_gpt" and first["max_attempts"] == 1
+    assert first["runner"] == seat["runner"] and first["max_attempts"] == 1
     assert "rendered PNG" in first["objective"]
     owner._after_figure_repair(db, paths, settings, report, task=first, successful=False)
     second = db.task(report.enqueued[-1])
@@ -58,7 +60,7 @@ def test_bound_repair_is_imported_and_original_writer_hands_off_review(tmp_path,
         ],
     })
     owner._enqueue_review(db, paths, settings, report, task=seat,
-                          packet={"paper_id": "p"}, result_path=tmp_path / "owner-result.json")
+                          packet={"paper_id": "p", "request_figure_assistant": True}, result_path=tmp_path / "owner-result.json")
     task = db.task(report.enqueued[-1])
     bundle = tmp_path / "bundle.json"
     output = tmp_path / "artifacts" / "figure-edits.zip"

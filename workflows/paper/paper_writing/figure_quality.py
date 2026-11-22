@@ -15,7 +15,7 @@ PLOT_FINDINGS = {
 def read_plan(manuscript):
     path = manuscript / PLAN_NAME
     if not path.is_file():
-        return {}, "Write figure-plan.json before drafting, linked from the story line."
+        return {}, "Optional design template: figure-plan.json."
     try:
         plan = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(plan, dict) or plan.get("paper_type") not in PAPER_TYPES:

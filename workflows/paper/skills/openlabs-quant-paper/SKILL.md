@@ -23,3 +23,4 @@ review and author policy: `registry/settings.yaml`. This file adds only what dif
   methods under matched information and risk.
 - A backtest is conditional historical evidence, not a forecast or investment advice; no
   real-money trading.
+- Show the matched counterfactual, denominator and information available at decision time.

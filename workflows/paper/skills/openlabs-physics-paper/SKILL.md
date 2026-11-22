@@ -22,3 +22,4 @@ review and author policy: `registry/settings.yaml`. This file adds only what dif
 - Say explicitly whether a result is a new theorem, computation, constraint, conjecture, no-go
   result or reproduction, checked against current primary sources.
 - Include equations, definitions, error controls and limiting checks needed to reproduce it.
+- Lead from observed signal to inference. Show the degeneracy or held-out prediction that limits interpretation.
