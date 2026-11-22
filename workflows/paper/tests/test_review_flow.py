@@ -1804,10 +1804,9 @@ def test_stale_selectors_and_local_evidence_are_advisories_and_the_review_contin
         (editor(), {}) if kw['role_name'] == 'editor' else
         ({'letter': 'fixed'}, {}) if kw['role_name'] == 'decision_letter' else (referee('accept'), {})))
     record = flow.run_review('p', root=tmp_path, apply=False)
-    assert record["merged"]["outcome"] == ("ready" if has_plan else "revision_required")
+    assert record["merged"]["outcome"] == "ready"
     assert record["merged"]["scientific_blockers"] == []
-    if not has_plan:
-        assert any(c["type"] == "figure" for c in record["merged"]["required_changes"])
+    assert not record["merged"]["required_changes"]
     assert {'SOURCE-SELECTOR-STALE', 'LOCAL-EVIDENCE-UNBOUND'} <= {a['code'] for a in record['preparation_advisories']}
 
 
@@ -1925,3 +1924,41 @@ def test_identical_referee_models_are_refused_when_the_settings_load(monkeypatch
     with pytest.raises(ValueError, match='different models'):
         flow.check_referee_models({'referee_a': astra, 'referee_b': dict(astra, model='GPT-6.2-ASTRA')},
                                   ['referee_a', 'referee_b'])
+
+
+@pytest.mark.parametrize("axis", flow.DIMENSIONS)
+def test_single_dimension_veto(axis):
+    report = referee("accept")
+    report["dimension_repairs"] = {name: ["Repair at Fig 2"] if name == axis else []
+                                   for name in flow.DIMENSIONS}
+    result = flow.merge(editor(), {"one": report})
+    assert result["outcome"] == "revision_required"
+    assert bool(result["scientific_blockers"]) == (axis == "science")
+    assert result["next_action"] == ("evidence_remediation" if axis == "science" else "text_revision")
+
+
+def test_delivery_reader_packet_excludes_methods_story_and_appendix():
+    from paper_writing.reader_check import delivery_packet
+    source = (r"\title{Q}\begin{abstract}A\end{abstract}\section{Methods}SECRET"
+              r"\begin{figure}\caption{Paired {units}}\end{figure}\section{Conclusions}C\appendix SECRET")
+    packet = delivery_packet(source)
+    assert "Paired {units}" in packet and "SECRET" not in packet
+    assert all(part in packet for part in ("Q", "A", "C"))
+
+
+def test_reader_repair_cap_and_independence(tmp_path, monkeypatch):
+    from paper_writing import reader_check
+    readers = []
+    def read(source, images, role, path, timeout):
+        readers.append(role["model"])
+        return {"question": "", "comparison": "pair", "answer": "higher", "meaning": "limit", "repairs": []}, {}
+    monkeypatch.setattr(reader_check, "delivery_read", read)
+    config = dict(cross_model_basis="model", roles={"a": {"model": "sol"}, "b": {"model": "astra"}},
+                  referee_roles=["a", "b"], timeout_seconds=1)
+    monkeypatch.setattr(flow, "completed_rounds", lambda *args: [{"delivery_reader": {"repairs": ["missing"]}}]*2)
+    record = dict(writer_model="sol", writer_model_family="gpt")
+    merged = dict(outcome="ready", required_changes=[], scientific_blockers=[])
+    assert not flow._delivery_gate(record, merged, config, {"expanded": "text"}, [], {}, "p", "J",
+                                   tmp_path, tmp_path, editor())
+    assert readers == ["astra"] and merged["next_action"] == "direction_decision"
+    assert not merged["scientific_blockers"] and merged["required_changes"]

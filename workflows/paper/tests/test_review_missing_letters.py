@@ -135,7 +135,7 @@ def test_mandatory_formal_policy_and_scoped_history_are_hash_bound(tmp_path, mon
     assert flow.review_policy_sha256(config) != expected
     assert flow.review_policy_sha256(config) == hashlib.sha256(json.dumps(dict(config,
         formal_check=flow.formal_checks.policy(),
-        stage_order='editor_scientific_referee_core_verification_decision'), sort_keys=True).encode()).hexdigest()
+        stage_order='editor_three_dimensions_core_verification_blind_reader_decision'), sort_keys=True).encode()).hexdigest()
     assert flow.rejection_history_policy({}, tmp_path, 'other') is None
     policy = flow.rejection_history_policy(meta, tmp_path)
     assert flow.review_policy_sha256(config, policy) != expected

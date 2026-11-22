@@ -67,12 +67,10 @@ fresh review.
 
 ## What decides readiness
 
-Only scientific substance blocks. `ready` requires `send_to_review`, no scientific blocker, no
-`evidence` change, no main-claim narrowing, no unresolved previous scientific or evidence item,
-and an `accept` or `minor_revision` recommendation. When referees disagree the more favourable
-recommendation stands unless the stricter one is backed by such an item. `text` changes and
-the editor's presentation notes are advisory: they reach the letter and `advisory_changes`, but
-are not tracked into the next round. Under the escalation track every referee must also reach
+Ready requires a passing scientific, narrative and visual judgment and an accurate independent
+reader reconstruction. A scientific defect independently vetoes delivery. Return narrative and
+visual defects to the author with a location and the reader's difficulty. Local polish is advisory.
+Under the escalation track every referee must also reach
 the configured escalation score without low confidence. Scores are otherwise kept for
 calibration.
 
@@ -130,9 +128,8 @@ them.
 
 Fix what the letter asks. Answer a "claim too strong" point by changing the claim or the
 structure, never by adding a disclaimer ("we do not claim ..."): referees are instructed to
-treat such patches as unresolved. Every referee item carries a `placement`: `appendix_or_response`
-(the default) goes to the appendix, supplement or response letter with at most a one-sentence
-pointer in the main text; `main_text` changes the main text; `cut` removes text. The main text
+treat such patches as unresolved. Each required item identifies its destination: main text, supplement, archive or response only.
+A cut removes a detour. The main text
 must not grow net through a revision except for `main_text` items; the editor checks the
 deterministic main-text count against the last reviewed version (`main_text_length` in the
 letter packet). Rules: `../openlabs-paper-readability/SKILL.md`. Never put process narration (scripts, versions, review rounds,

@@ -137,6 +137,10 @@ def build_parser() -> argparse.ArgumentParser:
     narrative.add_argument("--json", action="store_true")
     narrative.add_argument("--out", help="Also write the Markdown report to this file.")
 
+    story = subparsers.add_parser("story-review", help="Have the active editor read the one-page storyline.")
+    story.add_argument("--paper-id", required=True)
+    story.add_argument("--root", default=str(default_repo_root()))
+
     reader = subparsers.add_parser(
         "reader-check",
         help="One-pass simulated reader of the main text in a fresh model process (writer's own "
@@ -796,6 +800,10 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.out).write_text(report, encoding="utf-8")
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else report, end="" if not args.json else "\n")
         return 0 if result["valid"] else 1
+    if args.command == "story-review":
+        from paper_writing.reader_check import review_story
+        print(json.dumps(review_story(args.paper_id, Path(args.root)), ensure_ascii=False, indent=2))
+        return 0
     if args.command == "reader-check":
         from paper_writing import reader_check
 

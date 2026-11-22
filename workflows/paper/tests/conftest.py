@@ -5,3 +5,10 @@ import pytest
 @pytest.fixture(autouse=True)
 def _no_real_download_bridge(monkeypatch):
     monkeypatch.setenv("OPENLABS_FORMAL_BRIDGE", "off")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_delivery_reader(monkeypatch):
+    from paper_writing import reader_check
+    monkeypatch.setattr(reader_check, "delivery_read", lambda *args: (dict.fromkeys(
+        ("question", "comparison", "answer", "meaning"), "supported") | {"repairs": []}, {}))

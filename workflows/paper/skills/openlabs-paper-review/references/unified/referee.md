@@ -86,10 +86,8 @@ When you recommend `reject`, put your most important reason first: as the first
 `scientific_blocker` when it concerns correctness or support, otherwise as the opening
 sentence of `significance`.
 
-Separate what decides whether the conclusions hold from what would merely improve the paper.
-The two kinds are treated differently: the first keeps the paper in revision, the second is
-passed to the authors as advice and does not hold the paper back. A stricter recommendation
-only takes effect when you substantiate it with an item of the first kind, so state that item.
+Separate scientific validity, narrative and visual communication. Each can require repair.
+Reserve advice for optional refinements.
 
 - Affects whether the conclusions hold: put an unsupported main claim, an essential proof gap or
   an error in `scientific_blockers`. In `required_changes`, type a needed new proof step,
@@ -102,10 +100,10 @@ only takes effect when you substantiate it with an item of the first kind, so st
 Every item in `required_changes` must say what to change and where, and where the change
 belongs (`placement`):
 
-- `appendix_or_response` (the default): an added check, robustness test, numerical-resolution
-  test, sensitivity analysis, qualification or explanation. It goes in the appendix or
-  supplement, or is answered in the response letter; the main text gets at most one sentence
-  pointing to it. Most requests belong here.
+- `supplement`: secondary scientific analyses that a reader needs to assess the result.
+- `archive`: file-level verification, hashes, provenance detail and rerun logs.
+- `response_only`: item-by-item editorial correspondence.
+
 - `main_text`: only when the main line of the paper (question, method, key experiment, main
   result, the one limitation that changes how the result is read) cannot be followed or
   trusted without it. Say why in the change itself.
@@ -157,9 +155,7 @@ Scores are integers from 1 to 10 relative to the journal named in the packet; wh
 integers choose the lower. Return only the JSON object required by the schema.
 
 
-① 只看首图，能否说出研究对象、关键差异和待检验的问题？② 每个核心结论能否定位到特定面板、可识别的分母或比较基线？③ 点、线、带、颜色、方向和误差约定是否在图注中解释，缩到刊物栏宽后仍可辨认？④ 模型与观测、相关与因果、敏感性与独立验证能否在图内区分？⑤ 附录能否追到正文图的样本和失败情形？数量偏离参考区间、图文面积偏离一半均可接受，但独立审稿人无法从图回到观测或比较条件时，应退回补证据。
-
-能源检查充电来源、共享上限、配对单位、分母与成本承担者；区分实测和政策情景。排名审计检查试件泄漏、性能下降与换位。寿命预测检查预测起点、终点、删失及失效窗口。
+Read the figures once with the body hidden. Can the reader identify the object, comparison, direction and condition from the panels and captions? In dimension_repairs independently list the located changes needed for science, narrative/readability and figures. Empty means pass. Any necessary repair vetoes delivery. Put minor polish in advice. Repair confusing narrative or figures using existing evidence unless a separate scientific defect justifies new work.
 
 Set `requires_new_artifact` on every required change. Use true when answering the
 request requires new calculation, data, analysis or a new simulation or experiment.

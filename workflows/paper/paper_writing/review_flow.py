@@ -54,7 +54,7 @@ PROMPTS = Path(__file__).resolve().parents[1] / "skills" / "openlabs-paper-revie
 CLEAN_SOURCE_SUFFIXES = {".tex", ".sty", ".cls", ".bst", ".bib", ".eps", ".png", ".jpg", ".jpeg", ".svg",
                          ".tikz", ".pgf", ".clo", ".def", ".fd", ".cfg"}
 
-PLACEMENTS = ("main_text", "appendix_or_response", "cut")
+PLACEMENTS = ("main_text", "supplement", "archive", "response_only", "cut")
 _TEXT = {"type": "string"}
 _TEXT_LIST = {"type": "array", "items": _TEXT}
 EDITOR_SCHEMA: dict[str, Any] = {
@@ -133,6 +133,16 @@ REFEREE_SCHEMA: dict[str, Any] = {
             "coverage_complete": {"type": "boolean"}, "omissions_or_errors": _TEXT_LIST}),
     },
 }
+# Each list contains only located repairs necessary for this dimension to pass.
+DIMENSIONS = ("science", "narrative", "figures")
+for schema in (EDITOR_SCHEMA, REFEREE_SCHEMA):
+    schema["required"].append("dimension_repairs")
+    schema["properties"]["dimension_repairs"] = {
+        "type": "object", "required": list(DIMENSIONS), "additionalProperties": False,
+        "properties": {name: _TEXT_LIST for name in DIMENSIONS},
+    }
+
+
 LETTER_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": False,
                                  "required": ["letter"], "properties": {"letter": _TEXT}}
 
@@ -583,7 +593,7 @@ def review_policy_sha256(config: Mapping[str, Any], history_policy: Mapping[str,
                          formal_policy: Mapping[str, Any] | None = None) -> str:
     policy = {k: config[k] for k in ("process", "roles", "referee_roles", "rejection_clearance_required")}
     policy["formal_check"] = dict(formal_policy) if formal_policy is not None else formal_checks.policy()
-    policy['stage_order'] = 'editor_scientific_referee_core_verification_decision'
+    policy['stage_order'] = 'editor_three_dimensions_core_verification_blind_reader_decision'
     if history_policy is not None:
         policy["missing_rejection_letter_policy"] = history_policy
     if round_limit_override is not None:
@@ -1804,6 +1814,28 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
           history_blockers: list[str] | None = None, *,
           previous_ids: set[str] | None = None, formal_blockers: list[str] | None = None,
           formal_summary: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    result = _merge_reports(editor, referees, history_blockers, previous_ids=previous_ids,
+                            formal_blockers=formal_blockers, formal_summary=formal_summary)
+    verdict = {dimension: [] for dimension in DIMENSIONS}
+    for role, report in {"editor": editor, **referees}.items():
+        for dimension, repairs in report.get("dimension_repairs", {}).items():
+            for repair in repairs:
+                verdict[dimension].append({"reviewer": role, "repair": repair})
+                if dimension == "science":
+                    if repair not in result["scientific_blockers"]:
+                        result["scientific_blockers"].append(repair)
+                else:
+                    result["required_changes"].append(dict(type="figure" if dimension == "figures" else "narrative",
+                        referee=role, location=dimension, change=repair, advisory=False, placement="main_text"))
+    result["dimension_repairs"] = verdict
+    if verdict["science"] and result.get("next_action") == "text_revision":
+        result["next_action"] = "evidence_remediation"
+    if any(verdict.values()) and result["outcome"] == "ready":
+        result.update(outcome="revision_required", next_action="evidence_remediation" if verdict["science"] else "text_revision")
+    return result
+
+
+def _merge_reports(editor, referees, history_blockers, *, previous_ids, formal_blockers, formal_summary):
     """Merge scientific merits and concrete presentation requirements.
 
     A paper is ready when no referee reports a scientific blocker, an ``evidence``
@@ -1979,12 +2011,12 @@ def previous_tracked_items(last: Mapping[str, Any],
     """
     merged = last.get("merged") or {}
     items = list(merged.get("scientific_blockers", []))
-    items += [tracked_item(c) for c in merged.get("required_changes", []) if change_blocks(c) or c["type"] == "figure"]
+    items += [tracked_item(c) for c in merged.get("required_changes", []) if change_blocks(c) or c["type"] in {"figure", "narrative"}]
     # The opted-in four-paper continuation must not silently forget scientific
     # requests that the last referee explicitly left unresolved.
     for item in merged.get("unresolved_previous_items", []):
         text = item.get("item") if isinstance(item, Mapping) else None
-        if isinstance(text, str) and text.lstrip().startswith("[figure]") and text not in items:
+        if isinstance(text, str) and text.lstrip().startswith(("[figure]", "[narrative]")) and text not in items:
             items.append(text)
     if history_policy is not None:
         for item in merged.get('unresolved_previous_items', []):
@@ -2301,7 +2333,7 @@ def figure_review_packet(pre: Mapping[str, Any], run: Path, changed: list[str]) 
                      + json.dumps(coverage, ensure_ascii=False) + "\n")
 
     if standard:
-        plan_text += "\nRequired figure revisions: " + json.dumps(standard, ensure_ascii=False) + "\n"
+        plan_text += "\nFigure design references (advisory): " + json.dumps(standard, ensure_ascii=False) + "\n"
     files = list(pre.get("figure_files") or [])
     if not files:
         return ("\n## Figures\nThe manuscript contains no figures.\n" + plan_text, [],
@@ -2403,6 +2435,37 @@ def _formal_stage(pre: Mapping[str, Any], root: Path, run: Path, roles: Mapping[
     return pre, formal_blockers, summary
 
 
+def _delivery_gate(record, merged, config, pre, figure_images, receipts, paper_id, target, root, run, editor):
+    from paper_writing.reader_check import delivery_read
+
+    independent = cross_model_referees(config, record["writer_model_family"], writer_model=record["writer_model"])
+    if not independent:
+        raise ValueError("An independent delivery reader is required")
+    role = config["roles"][independent[0]]
+    recall, receipts["delivery_reader"] = delivery_read(pre["expanded"], figure_images, role,
+                                                        run / "delivery-reader", config["timeout_seconds"])
+    missing = [point for point in ("question", "comparison", "answer", "meaning")
+               if not str(recall.get(point) or "").strip()]
+    recall["repairs"].extend(f"Reader could not restate the {point}." for point in missing)
+    if pre.get("figure_files") and not figure_images:
+        recall["repairs"].append("Render the manuscript figures for the independent reader.")
+    record["delivery_reader"] = dict(model=role.get("model"), **recall)
+    if recall["repairs"]:
+        attempts = 1 + sum(bool((row.get("delivery_reader") or {}).get("repairs"))
+                           for row in completed_rounds(root, paper_id, target))
+        merged.update(outcome="revision_required", next_action="text_revision")
+        for repair in recall["repairs"]:
+            merged["required_changes"].append(dict(type="narrative", referee="delivery_reader",
+                location="Title, abstract, figures and conclusion", change=repair,
+                advisory=False, placement="main_text"))
+        if attempts >= 3:
+            merged.update(next_action="direction_decision", direction_context={**direction_context(editor),
+                          "trigger": "reader_repairs_exhausted", "attempts": attempts,
+                          "reader_repairs": list(recall["repairs"])})
+        return False
+    return True
+
+
 def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, Any], pre: Mapping[str, Any],
                       config: Mapping[str, Any], track: Mapping[str, Any], delta: Mapping[str, Any],
                       history_policy: Mapping[str, Any] | None, rounds: list[dict[str, Any]],
@@ -2437,6 +2500,12 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
                "previous_required_items": [],
                "same_provider_panel": len({roles[n]["provider"] for n in panel}) == 1,
                "finished_at": _now()}
+    if merged["outcome"] == "ready":
+        _, images, record["figure_review"] = figure_review_packet(pre, run, [])
+        _delivery_gate(record, merged, config, pre, images, record["receipts"],
+                       paper_id, pre["target"], root, run, editor)
+        if merged["outcome"] != "ready":
+            record["letter"] = "\n".join(record["delivery_reader"]["repairs"])
     digest = _json_dump(run / "decision.json", record)
     if apply:
         apply_decision(paper_id, root=root, decision_path=run / "decision.json", digest=digest)
@@ -2635,12 +2704,7 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
                                       system_prompt=(PROMPTS / "editor.md").read_text(),
                                       user_prompt=editor_packet(pre, decisions), schema=editor_schema_for_policy(history_policy),
                                       workdir=run / "editor", timeout=config["timeout_seconds"], **with_images)
-    # Preserve the independent editor receipt. Add deterministic presentation items at merge.
-    decision_editor = dict(editor, figure_changes=[
-        *editor.get("figure_changes", []),
-        *(dict(type="figure", location=i["figure"], change=i["message"])
-          for i in record["figure_review"].get("standard", [])),
-    ])
+    decision_editor = editor
     referees: dict[str, Any] = {}
     receipts = {"editor": editor_receipt}
     history_blockers = rejection_clearance_blockers(editor, decisions, history_policy)
@@ -2675,11 +2739,15 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
     merged |= stalled_signal(rounds, referees, merged)
     consumes_round = not (formal_blockers and formal_summary is not None
                           and not merged['scientific_blockers'] and not history_blockers)
+    if merged["outcome"] == "ready":
+        consumes_round = _delivery_gate(record, merged, config, pre, figure_images, receipts,
+                                        paper_id, target, root, run, editor)
     reader = _reader_check_packet(paper_id, root, metadata)
     letter_packet = json.dumps({"fixed_decision": merged, "editor_screen": editor, "referee_reports": referees,
                                "formal_check": record.get("formal_check"),
                                "formal_check_report": pre.get("formal_check_packet"),
                                "main_text_length": pre.get("body_length"),
+                               "delivery_reader": record.get("delivery_reader"),
                                "author_reader_check": reader},
                                indent=2, ensure_ascii=False)
     letter, letter_receipt = run_role(role_name="decision_letter", role=roles["editor"],

@@ -351,7 +351,7 @@ def test_referee_items_carry_a_placement() -> None:
 
     item = review_flow.REFEREE_SCHEMA["properties"]["required_changes"]["items"]
     assert "placement" in item["required"]
-    assert item["properties"]["placement"]["enum"] == ["main_text", "appendix_or_response", "cut"]
+    assert item["properties"]["placement"]["enum"] == ["main_text", "supplement", "archive", "response_only", "cut"]
     # The derived per-round schema keeps it.
     derived = review_flow.referee_schema_for_previous(None)
     assert "placement" in derived["properties"]["required_changes"]["items"]["required"]
@@ -379,7 +379,7 @@ def test_review_prompts_state_the_placement_rules() -> None:
     from paper_writing import review_flow
 
     referee = (review_flow.PROMPTS / "referee.md").read_text()
-    assert "appendix_or_response" in referee and "ask for cuts" in referee
+    assert "response_only" in referee and "ask for cuts" in referee
     assert "main_text_length" in (review_flow.PROMPTS / "decision.md").read_text()
     assert "main-text word count" in (review_flow.PROMPTS / "editor.md").read_text()
     assert "do not mark a gap or error because the main text does not repeat it" in \

@@ -1,8 +1,5 @@
 You are the handling editor. The referee reports and your own initial screening are in the
-packet, together with the decision that has already been fixed by the journal's rule (only
-scientific blockers, evidence requests, main-claim narrowing and unresolved scientific items keep a
-paper in revision; when referees disagree without such an item, the more favourable recommendation
-stands; no blocker can be overruled). Do not change that decision.
+packet. The fixed decision gives independent scientific, narrative and visual judgments. Each dimension must pass. Preserve the scientific veto and list presentation repairs under their own dimension.
 
 Write the decision letter the authors will receive: state the decision, then list, in order of
 importance, what must be done, merging duplicate points from the referees and keeping their
@@ -17,8 +14,7 @@ after an earlier round, the count of the last reviewed version) and possibly
 `author_reader_check` (the authors' own one-pass reader check: advice, not a review). In the
 letter, check that the main text has not grown through revision: if it is over its limit or grew
 since the last round without a main-text request (`placement: main_text`), say so and ask for the
-cuts. For each required item, keep its placement: additions marked `appendix_or_response` go to
-the appendix or the response letter, not into the main text. Include cut requests among what must
+cuts. For each required item, keep its placement: distinguish main text, supplement, reproducibility archive and response-only changes. Include cut requests among what must
 be done when they concern the main line.
 
 List every required `figure` item from the fixed decision, including the location and the

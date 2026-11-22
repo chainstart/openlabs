@@ -205,3 +205,75 @@ def current_record(notes: Path, main_text_sha256: str | None = None) -> dict[str
     if main_text_sha256 is not None:
         data["matches_current_main_text"] = data.get("main_text_sha256") == main_text_sha256
     return data
+
+
+def delivery_packet(source: str) -> str:
+    """Extract only reader-visible opening, captions and conclusion from expanded TeX."""
+    import re
+    source = re.sub(r"(?<!\\)%[^\n]*", "", source)
+    source = narrative_check._expand_macros(source, narrative_check._macros(source))
+    regions = narrative_check.find_regions(source)
+    source = source[:regions.body[1]]
+    chunks = []
+    title = re.search(r"\\title\s*(?:\[[^\]]*\]\s*)?\{", source)
+    if title:
+        chunks.append(source[title.end():narrative_check._balanced(source, title.end()-1)-1])
+    if regions.abstract:
+        chunks.append(source[slice(*regions.abstract)])
+    from paper_writing.figure_standard import ENV, CAPTION
+    for number, figure in enumerate(ENV.finditer(source), 1):
+        caption = CAPTION.search(figure[2])
+        if caption:
+            end = narrative_check._balanced(figure[2], caption.end()-1)
+            chunks.append(f"Figure {number}. " + figure[2][caption.end():end-1])
+    sections = list(re.finditer(r"\\section\*?\s*\{([^}]+)\}", source))
+    for index, match in enumerate(sections):
+        if re.search("conclu|summary|closing", match[1], re.I):
+            end = sections[index+1].start() if index+1 < len(sections) else len(source)
+            chunks.append(source[match.end():end])
+    return "\n\n".join(chunks)
+
+
+def delivery_read(source, images, role, workdir, timeout):
+    from paper_writing.review_launcher import run_role
+
+    points = ["question", "comparison", "answer", "meaning"]
+    schema = {"type": "object", "additionalProperties": False, "required": points + ["repairs"],
+              "properties": {**{key: _TEXT for key in points},
+                             "repairs": {"type": "array", "items": _TEXT}}}
+    recall, receipt = run_role(role_name="delivery_reader", role=role, workdir=workdir, timeout=timeout,
+                    images=images, user_prompt=delivery_packet(source), schema=schema,
+                    system_prompt="Read once. Retell the question, comparison, answer and meaning in your own "
+                    "words. Identify the supporting panel for each. If a point is missing, unsupported, "
+                    "unintelligible or only an internal criterion, list the necessary repair. Otherwise "
+                    "leave repairs empty. Do not propose experiments.")
+    judgment, _ = run_role(role_name="recall_verifier", role=role, workdir=workdir.parent / "recall-verifier",
+                           timeout=timeout, images=images,
+                           schema={"type": "object", "additionalProperties": False, "required": ["misreadings"],
+                                   "properties": {"misreadings": {"type": "array", "items": _TEXT}}},
+                           system_prompt="Check the independent recall against the manuscript and figures. "
+                           "List only material differences in comparison, direction, magnitude, conditions "
+                           "or panel attribution. Each finding must cite both statements.",
+                           user_prompt=json.dumps({"manuscript": source, "recall": recall}, ensure_ascii=False))
+    recall["repairs"].extend(judgment["misreadings"])
+    return recall, receipt
+
+def review_story(paper_id, root):
+    from paper_writing.registry import load_paper_metadata
+    from paper_writing.review_flow import review_config
+    from paper_writing.review_launcher import run_role
+
+    root = root.resolve()
+    load_paper_metadata(paper_id, root)
+    notes = notes_dir(paper_id, root)
+    story = (notes / "storyline.md").read_text()
+    config = review_config(root)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    feedback, _ = run_role(role_name="story_editor", role=config["roles"]["editor"],
+                           workdir=notes / "story-reviews" / stamp, timeout=config["timeout_seconds"],
+                           system_prompt="Read this storyline once before drafting. State the intended reader, "
+                           "decisive comparison and quantitative answer as you understand them. Identify the "
+                           "one change most needed for the figures and Results to tell that story.",
+                           user_prompt=story, schema={"type": "object", "additionalProperties": False,
+                           "required": ["reading", "advice"], "properties": {"reading": _TEXT, "advice": _TEXT}})
+    return feedback
