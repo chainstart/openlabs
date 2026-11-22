@@ -219,3 +219,21 @@ def test_review_inventory_counts_only_included_and_binds_source(tmp_path, monkey
     assert len(sources) == 1 and sources[0]["source"] == source.name
     audit["repair_required"].append("missing")
     assert figures.review_inventory(pre)[0]["check_passed"] is False
+
+
+from paper_writing.reader_check import delivery_images as actual_delivery_images
+
+
+def test_reader_sees_only_main_panels_in_print_order(tmp_path, monkeypatch):
+    from paper_writing import figures
+    seen = []
+    def render(manuscript, ordered, output):
+        seen.extend(item["path"] for item in ordered)
+        return {"images": [{"png": str(output / "sheet.png")}], "notes": []}
+    monkeypatch.setattr(figures, "review_images", render)
+    source = "".join(r"\begin{figure}\includegraphics{" + name + r"}\end{figure}"
+                     for name in ("z", "a")) + r"\appendix\begin{figure}\includegraphics{hidden}\end{figure}"
+    paths = [{"path": "figures/" + name + ".pdf"} for name in ("a", "hidden", "z")]
+    images, issues = actual_delivery_images({"expanded": source, "figure_files": paths,
+                                                   "manuscript_path": str(tmp_path)}, tmp_path)
+    assert seen == ["figures/z.pdf", "figures/a.pdf"] and len(images) == 1 and not issues

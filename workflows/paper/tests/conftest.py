@@ -10,5 +10,6 @@ def _no_real_download_bridge(monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolate_delivery_reader(monkeypatch):
     from paper_writing import reader_check
+    monkeypatch.setattr(reader_check, "delivery_images", lambda *args: ([], []))
     monkeypatch.setattr(reader_check, "delivery_read", lambda *args: (dict.fromkeys(
         ("question", "comparison", "answer", "meaning"), "supported") | {"repairs": []}, {}))

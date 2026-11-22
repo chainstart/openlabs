@@ -234,6 +234,36 @@ def delivery_packet(source: str) -> str:
     return "\n\n".join(chunks)
 
 
+def delivery_images(pre, run):
+    """Select compiled main-text graphics in figure/panel order, excluding supplementary images."""
+    from paper_writing.figure_standard import ENV, GRAPHIC
+    from paper_writing.figures import review_images
+
+    source = pre["expanded"]
+    source = source[:narrative_check.find_regions(source).body[1]]
+    files = pre.get("figure_files") or []
+    ordered = []
+    problems = []
+    for number, figure in enumerate(ENV.finditer(source), 1):
+        graphics = GRAPHIC.findall(figure[2])
+        if not graphics:
+            problems.append(f"Figure {number}: no standalone panel could be associated with the rendered figure.")
+        for graphic in graphics:
+            key = Path(graphic).with_suffix("").as_posix()
+            matches = [item for item in files if
+                       ("/" + Path(item["path"]).with_suffix("").as_posix()).endswith("/" + key)]
+            if len(matches) == 1:
+                ordered.append(matches[0])
+            else:
+                problems.append(f"Figure {number}: could not resolve panel {graphic} uniquely.")
+    if not ordered:
+        return [], problems
+    result = review_images(Path(pre["manuscript_path"]), ordered, run / "reader-figures")
+    if not result["images"]:
+        problems.extend(result["notes"])
+    return [Path(row["png"]) for row in result["images"]], problems
+
+
 def delivery_read(source, images, role, workdir, timeout):
     from paper_writing.review_launcher import run_role
 

@@ -1958,7 +1958,7 @@ def test_reader_repair_cap_and_independence(tmp_path, monkeypatch):
     monkeypatch.setattr(flow, "completed_rounds", lambda *args: [{"delivery_reader": {"repairs": ["missing"]}}]*2)
     record = dict(writer_model="sol", writer_model_family="gpt")
     merged = dict(outcome="ready", required_changes=[], scientific_blockers=[])
-    assert not flow._delivery_gate(record, merged, config, {"expanded": "text"}, [], {}, "p", "J",
+    assert not flow._delivery_gate(record, merged, config, {"expanded": "text"}, {}, "p", "J",
                                    tmp_path, tmp_path, editor())
     assert readers == ["astra"] and merged["next_action"] == "direction_decision"
     assert not merged["scientific_blockers"] and merged["required_changes"]

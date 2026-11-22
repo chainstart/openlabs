@@ -2435,20 +2435,20 @@ def _formal_stage(pre: Mapping[str, Any], root: Path, run: Path, roles: Mapping[
     return pre, formal_blockers, summary
 
 
-def _delivery_gate(record, merged, config, pre, figure_images, receipts, paper_id, target, root, run, editor):
-    from paper_writing.reader_check import delivery_read
+def _delivery_gate(record, merged, config, pre, receipts, paper_id, target, root, run, editor):
+    from paper_writing.reader_check import delivery_read, delivery_images
 
     independent = cross_model_referees(config, record["writer_model_family"], writer_model=record["writer_model"])
     if not independent:
         raise ValueError("An independent delivery reader is required")
     role = config["roles"][independent[0]]
+    figure_images, image_errors = delivery_images(pre, run)
     recall, receipts["delivery_reader"] = delivery_read(pre["expanded"], figure_images, role,
                                                         run / "delivery-reader", config["timeout_seconds"])
     missing = [point for point in ("question", "comparison", "answer", "meaning")
                if not str(recall.get(point) or "").strip()]
     recall["repairs"].extend(f"Reader could not restate the {point}." for point in missing)
-    if pre.get("figure_files") and not figure_images:
-        recall["repairs"].append("Render the manuscript figures for the independent reader.")
+    recall["repairs"].extend(image_errors)
     record["delivery_reader"] = dict(model=role.get("model"), **recall)
     if recall["repairs"]:
         attempts = 1 + sum(bool((row.get("delivery_reader") or {}).get("repairs"))
@@ -2501,8 +2501,7 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
                "same_provider_panel": len({roles[n]["provider"] for n in panel}) == 1,
                "finished_at": _now()}
     if merged["outcome"] == "ready":
-        _, images, record["figure_review"] = figure_review_packet(pre, run, [])
-        _delivery_gate(record, merged, config, pre, images, record["receipts"],
+        _delivery_gate(record, merged, config, pre, record["receipts"],
                        paper_id, pre["target"], root, run, editor)
         if merged["outcome"] != "ready":
             record["letter"] = "\n".join(record["delivery_reader"]["repairs"])
@@ -2740,7 +2739,7 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
     consumes_round = not (formal_blockers and formal_summary is not None
                           and not merged['scientific_blockers'] and not history_blockers)
     if merged["outcome"] == "ready":
-        consumes_round = _delivery_gate(record, merged, config, pre, figure_images, receipts,
+        consumes_round = _delivery_gate(record, merged, config, pre, receipts,
                                         paper_id, target, root, run, editor)
     reader = _reader_check_packet(paper_id, root, metadata)
     letter_packet = json.dumps({"fixed_decision": merged, "editor_screen": editor, "referee_reports": referees,
