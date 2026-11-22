@@ -1105,3 +1105,38 @@ def test_exhausted_support_stage_waits_for_control_plane_retry(tmp_path, monkeyp
     assert item["state"] == "waiting" and item["stage"] == "support_prepare"
     assert "release-retry" in item["condition"]
     assert not item.get("repair")
+
+
+def test_prepared_package_binding_mismatch_runs_automatic_delta_review(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, support="draft",
+        issues=[{"code": "REVIEW-SNAPSHOT-MISMATCH", "remedy": "delta_review"}],
+    )
+    paper = _paper(paths)
+    paper["support"]["package_sha"] = "prepared-package"
+    _write_paper(paths, paper)
+
+    _ready(paths, db, settings, monkeypatch, topic)
+
+    commands = _commands(log)
+    assert "zenodo prepare" not in commands
+    assert commands.index("review unified-run") < commands.index("zenodo release")
+
+
+def test_changed_published_support_stops_at_a_retryable_checkpoint(tmp_path, monkeypatch):
+    paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, support="published")
+    real_status = program_autonomy.run_release_status
+
+    def stale_status(*args):
+        status = real_status(*args)
+        status["support"]["published_package_stale"] = "Support source changed"
+        return status
+
+    monkeypatch.setattr(program_autonomy, "run_release_status", stale_status)
+    _ready(paths, db, settings, monkeypatch, topic)
+
+    state = _topic(paths, settings, topic["topic_id"])["release"]
+    assert state["status"] == "failed" and state["stage"] == "support_prepare"
+    assert state["attempts"] == {"support_prepare": 1}
+    assert "Cannot reuse the published support version" in state["last_error"]
+    assert set(_commands(log)) == {"program release-status"}

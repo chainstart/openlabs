@@ -52,7 +52,7 @@ from paper_writing.review import (
     reviewer_role_for_domain,
     validate_review_panel_files,
 )
-from paper_writing.support import SupportPackageError
+from paper_writing.support import SupportPackageError, _record_version
 from paper_writing.revision_policy import EXCEPTION_FIELD, revision_round_policy
 from paper_writing.support_policy import publication_policy
 from paper_writing.support_citations import audit_manuscript_support, support_audit_blockers
@@ -891,10 +891,10 @@ def reuse_review_for_metadata_only_revision(
     zenodo = publication.get("zenodo")
     zenodo = zenodo if isinstance(zenodo, Mapping) else {}
     package_version = str(zenodo.get("version") or "")
-    current_version = str(payload.get("version") or "1.0.0")
+    current_version = _record_version(payload)
     if package_sha256 and package_version and package_version != current_version:
         raise ValueError(
-            "Support package is still bound to the previous paper version; run "
+            "Support package is still bound to a different support release version; run "
             "`zenodo prepare` before reusing the review"
         )
 

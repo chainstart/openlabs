@@ -2642,6 +2642,13 @@ class _ReleasePipeline:
         ):
             raise ReleaseWait("check", "venue_grade_pending",
                               {"hint": "The current target needs a recorded acceptance grade."})
+        if support.get("published_package_stale"):
+            self.stage = "support_prepare"
+            raise ReleaseError(
+                "Cannot reuse the published support version. Restore the registered package "
+                "and sources or select a new support release version: "
+                f"{support['published_package_stale']}"
+            )
         if (self.settings.program.support_release == "none" and support.get("required")
                 and not support.get("published")):
             self.waive_support()

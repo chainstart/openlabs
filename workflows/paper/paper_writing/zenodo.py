@@ -30,6 +30,7 @@ from paper_writing.support_policy import (
     publication_policy,
 )
 from paper_writing.support import (
+    _record_version,
     SupportPackageError,
     build_support_archive,
     git_head,
@@ -660,8 +661,8 @@ def prepare_zenodo_release(
         and str(registered_zenodo.get("version") or "") == _record_version(record)
     ):
         raise ZenodoError(
-            "The current paper version already has a published Zenodo release; start a new "
-            "paper revision/version before preparing replacement support files"
+            "The current support version already has a published Zenodo release; select a new "
+            "support release version before preparing replacement support files"
         )
     if (
         current_status == "draft"
@@ -993,7 +994,7 @@ def publish_zenodo_release(
     if archive_result.get("paper_id") != paper_id:
         raise ZenodoError("Support archive paper_id does not match the requested paper")
     if archive_result.get("paper_version") != _record_version(record):
-        raise ZenodoError("Support archive version does not match the manuscript version")
+        raise ZenodoError("Support archive version does not match the selected support release version")
     expected_sha256 = str(publication.get("package_sha256") or "")
     if sha256_file(archive) != expected_sha256:
         raise ZenodoError("Support archive SHA-256 no longer matches the paper registry")
@@ -1147,7 +1148,7 @@ def verify_prepared_zenodo_draft(
     if archive_result.get("paper_id") != paper_id:
         raise ZenodoError("Support archive paper_id does not match the requested paper")
     if archive_result.get("paper_version") != _record_version(record):
-        raise ZenodoError("Support archive version does not match the manuscript version")
+        raise ZenodoError("Support archive version does not match the selected support release version")
     with ZenodoClient(environment, token) as client:
         draft = client.get_deposition(deposition_id)
         if str(_deposition_id(draft)) != str(deposition_id):
@@ -1304,30 +1305,6 @@ def publication_registration(record: Mapping[str, Any], response: Mapping[str, A
             }
         },
     }
-
-
-def _record_version(record: Mapping[str, Any]) -> str:
-    support = record.get("support")
-    publication = support.get("publication") if isinstance(support, Mapping) else None
-    release_version = publication.get("release_version") if isinstance(publication, Mapping) else None
-    if isinstance(release_version, str) and release_version.strip():
-        return release_version.strip()
-    direct = record.get("version")
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip()
-    metadata = record.get("metadata")
-    if isinstance(metadata, Mapping):
-        value = metadata.get("version")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    manuscript = record.get("manuscript")
-    if isinstance(manuscript, Mapping):
-        version = manuscript.get("version")
-        if isinstance(version, Mapping):
-            value = version.get("label")
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return "1.0.0"
 
 
 def _mutable_publication(record: dict[str, Any]) -> dict[str, Any]:

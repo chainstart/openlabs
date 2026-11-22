@@ -863,7 +863,7 @@ def _support_readme(
         "# Supporting materials\n\n"
         f"- Public paper ID: `{_public_id(record)}`\n"
         f"- Paper title: {record.get('title') or _public_id(record)}\n"
-        f"- Paper version: `{version}`\n"
+        f"- Support release version: `{version}`\n"
         f"- Zenodo Version DOI: `{doi_line}`\n"
         f"- Declared license: `{license_id}`\n\n"
         "`ZENODO_MANIFEST.json` records the archive-relative path, byte size and SHA-256 "

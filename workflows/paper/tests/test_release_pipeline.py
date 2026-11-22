@@ -46,17 +46,17 @@ def _git_repo(root):
 
 
 def _status_fixture(tmp_path, monkeypatch, *, publication, release=None, settings=None,
-                    style=(), support=()):
+                    style=(), support=(), paper_id="p"):
     _git_repo(tmp_path)
     (tmp_path / 'registry/papers').mkdir(parents=True)
-    (tmp_path / 'registry/papers/p.yaml').write_text('paper_id: p\n')
-    (tmp_path / 'papers/p/manuscript').mkdir(parents=True)
-    (tmp_path / 'papers/p/manuscript/main.tex').write_text('x')
+    (tmp_path / f'registry/papers/{paper_id}.yaml').write_text(f'paper_id: {paper_id}\n')
+    (tmp_path / f'papers/{paper_id}/manuscript').mkdir(parents=True)
+    (tmp_path / f'papers/{paper_id}/manuscript/main.tex').write_text('x')
     (tmp_path / 'other.txt').write_text('unrelated')
     subprocess.run(['git', '-C', str(tmp_path), 'add', '-A'], check=True)
     subprocess.run(['git', '-C', str(tmp_path), 'commit', '-qm', 'base'], check=True)
-    metadata = {'paper_id': 'p', 'version': '1.2.0', 'title': 'T',
-                'manuscript_dir': 'papers/p/manuscript', 'support': {'publication': publication},
+    metadata = {'paper_id': paper_id, 'version': '1.2.0', 'title': 'T',
+                'manuscript_dir': f'papers/{paper_id}/manuscript', 'support': {'publication': publication},
                 'writing_release': release or {'status': 'ready', 'review_process': 'unified_v1'}}
     monkeypatch.setattr(rp, 'load_paper_metadata', lambda *args, **kwargs: metadata)
     monkeypatch.setattr(rp, 'load_registry_settings', lambda *args, **kwargs: settings or {
@@ -204,3 +204,65 @@ def test_previous_published_support_requires_new_version(tmp_path, monkeypatch):
         'status': 'published', 'zenodo': {'version': '1.1.0', 'deposition_id': 123}})
     support = rp.release_status('p', root=tmp_path)['support']
     assert support['prepare_needed'] and not support['published']
+
+
+@pytest.mark.parametrize("publication_status", ["draft", "published"])
+def test_pinned_support_version_reuses_the_same_bytes_across_paper_revisions(
+    tmp_path, monkeypatch, publication_status,
+):
+    import zipfile
+
+    from paper_writing.support import build_support_archive, support_sources_snapshot_sha256
+
+    paper_id = "20261111-ai-health-temporal-retrieval"
+    publication = {
+        "status": publication_status,
+        "release_version": " 1.1.0 ",
+        "license": "cc-by-4.0",
+        "source_files": [f"papers/{paper_id}/public-support-v1.1.0"],
+        "zenodo": {"version": "1.1.0", "environment": "production", "deposition_id": 123},
+    }
+    metadata = _status_fixture(tmp_path, monkeypatch, publication=publication, paper_id=paper_id)
+    metadata["version"] = "1.1.0"
+    source = tmp_path / publication["source_files"][0] / "README.md"
+    source.parent.mkdir()
+    source.write_text("# How to reproduce the results\n")
+    package = build_support_archive(metadata, [source], repo_root=tmp_path, origin_commit="a" * 40)
+    publication.update(
+        package_files=[package["archive"].relative_to(tmp_path).as_posix()],
+        package_sha256=package["archive_sha256"],
+    )
+    source_digest = support_sources_snapshot_sha256(metadata, repo_root=tmp_path)
+    metadata["version"] = "1.2.0"
+    assert support_sources_snapshot_sha256(metadata, repo_root=tmp_path) == source_digest
+    with zipfile.ZipFile(package["archive"]) as archive:
+        readme = next(name for name in archive.namelist() if name.endswith("/ARA_SUPPORT_README.md"))
+        text = archive.read(readme).decode()
+        assert "- Support release version: `1.1.0`" in text
+        assert "- Paper title: T" in text
+
+    support = rp.release_status(paper_id, root=tmp_path)["support"]
+    assert not support["prepare_needed"]
+    assert support["package_stale"] is None
+    assert support["published"] == (publication_status == "published")
+
+    source.write_text("# Revised reproduction instructions\n")
+    support = rp.release_status(paper_id, root=tmp_path)["support"]
+    assert "Support source changed" in support["package_stale"]
+    assert support["prepare_needed"] == (publication_status == "draft")
+    assert not support["published"]
+    if publication_status == "published":
+        assert support["published_package_stale"] == support["package_stale"]
+
+
+def test_release_status_routes_ready_binding_changes_to_delta_review(tmp_path, monkeypatch):
+    _status_fixture(tmp_path, monkeypatch, publication={"mode": "not_required"})
+    monkeypatch.setattr(rp, "_review_status", lambda *args: {
+        "ready": True, "current": False,
+        "problems": ["The ready decision is not bound to the current support package"],
+    })
+
+    status = rp.release_status("p", root=tmp_path)
+    assert [(issue["code"], issue["remedy"]) for issue in status["issues"]] == [
+        ("REVIEW-SNAPSHOT-MISMATCH", "delta_review"),
+    ]

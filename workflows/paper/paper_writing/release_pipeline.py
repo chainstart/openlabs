@@ -32,6 +32,7 @@ from typing import Any
 
 from paper_writing.registry import (freeze_block_reason, load_paper_metadata, load_registry_settings, paper_layout_problems,
                                     paper_metadata_path)
+from paper_writing.support import _record_version
 from paper_writing.support_policy import effective_publication_mode, publication_policy
 
 STATUS_SCHEMA = "openlabs.release_status.v1"
@@ -241,8 +242,8 @@ def oversize_payloads(paper_id: str, paths: list[str], root: Path) -> list[str]:
 
 
 def _package_stale(metadata: Mapping[str, Any], root: Path) -> str | None:
-    """Why the prepared draft package no longer matches its registered sources (None: current)."""
-    from paper_writing.support import verify_support_archive
+    """Why the package no longer matches its registered sources (None: current)."""
+    from paper_writing.support import resolve_support_sources, verify_support_archive
     from paper_writing.zenodo import _verify_archive_sources
 
     publication = ((metadata.get("support") or {}).get("publication") or {})
@@ -252,9 +253,13 @@ def _package_stale(metadata: Mapping[str, Any], root: Path) -> str | None:
         return "the prepared package or its source list is not registered"
     try:
         archive = verify_support_archive(root / files[0])
-        if str(archive.get("paper_version") or "") != str(metadata.get("version") or ""):
-            return "the prepared package was built for another paper version"
-        _verify_archive_sources(archive, [root / str(item) for item in sources], root)
+        if archive.get("paper_version") != _record_version(metadata):
+            return "the package was built for another support release version"
+        if archive.get("paper_id") != metadata.get("paper_id"):
+            return "the package belongs to another paper"
+        if archive.get("archive_sha256") != publication.get("package_sha256"):
+            return "the package SHA-256 differs from the registry"
+        _verify_archive_sources(archive, resolve_support_sources(metadata, repo_root=root), root)
     except Exception as exc:  # noqa: BLE001 - any mismatch means "prepare again"
         return str(exc)
     return None
@@ -275,8 +280,12 @@ def _support_status(metadata: Mapping[str, Any], settings: Mapping[str, Any],
     required = mode != "not_required"
     environment = str(zenodo.get("environment") or "")
     previous_version = (status == "published" and zenodo.get("version")
-                        and str(zenodo["version"]) != str(metadata.get("version")))
-    stale = _package_stale(metadata, root) if required and status == "draft" else None
+                        and str(zenodo["version"]) != _record_version(metadata))
+    pinned_version = publication.get("release_version")
+    reusing_published = (status == "published" and not previous_version
+                         and isinstance(pinned_version, str) and bool(pinned_version.strip()))
+    stale = _package_stale(metadata, root) if required and (
+        status == "draft" or reusing_published) else None
     return {
         "mode": mode,
         "required": required,
@@ -285,7 +294,6 @@ def _support_status(metadata: Mapping[str, Any], settings: Mapping[str, Any],
         "version_doi": publication.get("version_doi"),
         "package_sha256": package or None,
         "bound_to_review": bool(package) and release.get("support_package_sha256") == package,
-        # A draft is needed (or must be moved from the sandbox to production).
         # A draft is needed, must move from the sandbox to production, or its
         # package no longer matches the registered sources/version.
         "prepare_needed": required and (status == "planned" or bool(previous_version)
@@ -293,7 +301,8 @@ def _support_status(metadata: Mapping[str, Any], settings: Mapping[str, Any],
                                                                    or stale is not None))),
         "package_stale": stale,
         "release_needed": required and status == "draft",
-        "published": required and status == "published" and not previous_version,
+        "published": required and status == "published" and not previous_version and stale is None,
+        "published_package_stale": stale if reusing_published else None,
         "zenodo_environment": str(raw.get("zenodo_environment") or "production"),
         "release_after_ready": raw.get("release_after_ready"),
         "standing_production_release_authorization":
@@ -374,9 +383,11 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         else:
             remedy = "control_plane"
         issues.append({**item, "remedy": remedy})
+    # These diagnostics go through the existing delta-only gate, which can refuse
+    # the carry-forward and route the paper back to independent review.
     if review.get("ready") and not review.get("current") and not support.get("prepare_needed"):
         issues.extend(dict(source="review_binding", code="REVIEW-SNAPSHOT-MISMATCH", location="registry",
-                           message=problem, text=problem, remedy="control_plane")
+                           message=problem, text=problem, remedy="delta_review")
                       for problem in review.get("problems", []))
     paths = commit_paths(paper_id, metadata, repo_root)
     try:

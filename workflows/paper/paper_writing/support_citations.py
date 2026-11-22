@@ -21,7 +21,7 @@ from typing import Any, Mapping
 import yaml
 
 from paper_writing.registry import load_paper_metadata, load_registry_settings
-from paper_writing.support import sha256_file, verify_support_archive
+from paper_writing.support import _record_version, sha256_file, verify_support_archive
 from paper_writing.support_policy import (
     SUPPORT_PUBLICATION_MODES,
     effective_publication_license,
@@ -631,7 +631,7 @@ def _citations(text: str) -> set[str]:
 def _receipt_checks(
     *,
     paper_id: str,
-    paper_version: str,
+    expected_release_version: str,
     publication: Mapping[str, Any],
     status: str,
     doi: str,
@@ -653,8 +653,8 @@ def _receipt_checks(
     if str(receipt.get("paper_id") or "") != paper_id:
         issues.append(_issue("SUPPORT-RECEIPT-PAPER", "receipt paper_id does not match the registry", path=receipt_path, root=root))
     receipt_version = str(receipt.get("paper_version") or "")
-    if status == "draft" and receipt_version != paper_version:
-        issues.append(_issue("SUPPORT-RECEIPT-VERSION", f"draft receipt version {receipt_version!r} does not match manuscript version {paper_version!r}", path=receipt_path, root=root))
+    if status == "draft" and receipt_version != expected_release_version:
+        issues.append(_issue("SUPPORT-RECEIPT-VERSION", f"draft receipt version {receipt_version!r} does not match expected support release version {expected_release_version!r}", path=receipt_path, root=root))
     if version and receipt_version and receipt_version != version:
         issues.append(_issue("SUPPORT-RECEIPT-ZENODO-VERSION", f"receipt version {receipt_version!r} does not match current Zenodo version {version!r}", path=receipt_path, root=root))
     receipt_doi = str(receipt.get("reserved_version_doi") if status == "draft" else receipt.get("version_doi") or "").removeprefix("https://doi.org/")
@@ -1272,10 +1272,7 @@ def audit_manuscript_support(paper_id: str, *, root: str | Path) -> dict[str, An
     mode = effective_publication_mode(publication, policy)
     license_id = effective_publication_license(publication, policy)
     status, doi, version = _current_identity(metadata)
-    paper_version = str(metadata.get("version") or "")
-    # An explicit material version is independent of manuscript revision labels.
-    # Legacy publication.version is deliberately not an override.
-    expected_release_version = str(publication.get("release_version") or paper_version).strip()
+    expected_release_version = _record_version(metadata)
     review_gate = lifecycle_gate(policy, "before_review")
     minimum_status = str(review_gate.get("minimum_status") or "").strip()
     require_version_doi = bool(review_gate.get("require_version_doi", False))
@@ -1411,7 +1408,7 @@ def audit_manuscript_support(paper_id: str, *, root: str | Path) -> dict[str, An
     issues.extend(
         _receipt_checks(
             paper_id=paper_id,
-            paper_version=expected_release_version,
+            expected_release_version=expected_release_version,
             publication=publication,
             status=status,
             doi=doi,
