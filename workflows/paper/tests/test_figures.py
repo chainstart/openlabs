@@ -390,8 +390,11 @@ def test_compiled_figure_placement(tmp_path):
         target = doc.new_page()
         xref = target.show_pdf_page(fitz.Rect(20, 20, 70, 70), source, 0)
         doc.xref_set_key(xref, "PTEX.FileName", "(figures/result.pdf)")
+        second = doc.new_page()
+        second.show_pdf_page(fitz.Rect(10, 20, 110, 120), source, 0)
         doc.save(tmp_path / "main.pdf")
-    item, = fig.proof_figures(tmp_path)["result"]
+    item, repeated = fig.proof_figures(tmp_path)["result"]
+    assert repeated["min_body_pt"] == pytest.approx(12)
     assert item["smallest_span_pt"] == pytest.approx(6)
     assert item["min_stroke_pt"] == pytest.approx(.2)
     assert item["unembedded_fonts"]

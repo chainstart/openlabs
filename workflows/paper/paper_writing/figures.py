@@ -992,7 +992,7 @@ def proof_figures(manuscript: Path, raster_files=()):
                 color = ((xref % 251 + 1) / 255, ((xref // 251) % 251 + 1) / 255, .314159)
                 stream = "%f %f %f rg %f %f %f %f re f" % (*color, x, y, right-x, top-y)
                 markers.update_stream(xref, stream.encode())
-                objects[tuple(round(c, 5) for c in color)] = (Path(filename).stem, xref)
+                objects[tuple(round(c * 255) for c in color)] = (Path(filename).stem, xref)
             images = page.get_image_info(hashes=bool(raster_names))
             for image in images:
                 for name in raster_names.get(image.get("digest"), []):
@@ -1001,7 +1001,7 @@ def proof_figures(manuscript: Path, raster_files=()):
                 continue
             drawings = page.get_drawings()
             for mark in markers[page.number].get_drawings():
-                match = objects.get(tuple(round(c, 5) for c in mark.get("fill") or ()))
+                match = objects.get(tuple(round(c * 255) for c in mark.get("fill") or ()))
                 if not match:
                     continue
                 name, xref = match
