@@ -13,7 +13,32 @@ def fields(names):
             "properties": {name: {"type": "string"} for name in names}}
 
 
+POINTS = ["question", "comparison", "answer", "meaning"]
+WEIGHTS = {"accurate": 1, "missing": 0, "misread": -1}
+
+
+def call(slot, name, model, instruction, body, schema):
+    provider, tool = ("anthropic", "Claude Code") if model.startswith("claude") else ("openai-codex", "Codex")
+    return run_role(role_name=name, role={"model": model, "provider": provider, "tool": tool},
+                    system_prompt=instruction, user_prompt=body, schema=schema, workdir=slot / name)[0]
+
+
+def score_recall(slot, reader, packet, recall):
+    schema = fields(POINTS + ["reasoning"])
+    for point in POINTS:
+        schema["properties"][point]["enum"] = list(WEIGHTS)
+    judgment = call(slot, "scorer", reader, "Read the entire recall across field boundaries. For each of the "
+                    "four points mark accurate, missing or misread. Missing means absent everywhere. Cite "
+                    "the specific evidence and recalled wording for each mark in reasoning. Distinguish "
+                    "a proposed panel citation from a scientific claim about its data.",
+                    json.dumps({"evidence": packet, "recall": recall}), schema)
+    marks = {point: judgment[point] for point in POINTS}
+    return dict(marks=marks, reasoning=judgment["reasoning"], score=sum(WEIGHTS[v] for v in marks.values()))
+
+
 def run(evidence, output, authors, reader):
+    if len(set(authors)) < 2 or reader in authors:
+        raise ValueError("Choose distinct writing candidates and an independent reader model")
     output.mkdir(parents=True, exist_ok=False)
     packet = "\n\n".join(p.name + "\n" + p.read_text() for p in evidence)
     (output / "evidence.txt").write_text(packet)
@@ -23,23 +48,12 @@ def run(evidence, output, authors, reader):
     for index, model in enumerate(authors):
         slot = output / str(index + 1)
 
-        def call(name, model_id, instruction, body, schema):
-            role = {"provider": "anthropic" if model_id.startswith("claude") else "openai-codex", "tool": "Claude Code" if model_id.startswith("claude") else "Codex", "model": model_id}
-            return run_role(role_name=name, role=role, system_prompt=instruction, user_prompt=body,
-                            schema=schema, workdir=slot / name)[0]
-
-        draft = call("author", model, "Write a journal opening and one results section. Order and describe "
+        draft = call(slot, "author", model, "Write a journal opening and one results section. Order and describe "
                      "the figures the supplied evidence supports. Preserve the main comparison and limitations.",
                      packet, fields(["title", "abstract", "figure_sequence", "results"]))
-        points = ["question", "comparison", "answer", "meaning"]
-        recall = call("reader", reader, "Retell each point and identify the supporting figure. Use only the draft.",
-                      json.dumps(draft), fields(points))
-        schema = fields(points)
-        schema["properties"] = {p: {"type": "string", "enum": ["accurate", "missing", "misread"]} for p in points}
-        marks = call("scorer", reader, "Compare each recalled point to the evidence, checking direction, magnitude "
-                     "and conditions. Mark unsupported inferences misread.", packet + "\n" + json.dumps(recall), schema)
-        results.append(dict(slot=index + 1, author=model, marks=marks,
-                            score=sum({"accurate": 1, "missing": 0, "misread": -1}[v] for v in marks.values())))
+        recall = call(slot, "reader", reader, "Retell each point and identify the supporting figure. Use only the draft.",
+                      json.dumps(draft), fields(POINTS))
+        results.append(dict(slot=index + 1, author=model, **score_recall(slot, reader, packet, recall)))
     summary = dict(evidence_sha256=hashlib.sha256(packet.encode()).hexdigest(), reader=reader, results=results)
     (output / "scores.json").write_text(json.dumps(summary, indent=2) + "\n")
 

@@ -14,12 +14,12 @@ def test_comparison_keeps_sources_and_reader_blind(tmp_path, monkeypatch):
         if role == "reader":
             assert "evidence secret" not in prompt and "writer-a" not in prompt
             return dict.fromkeys(["question", "comparison", "answer", "meaning"], "recall"), {}
-        return dict(question="accurate", comparison="missing", answer="misread", meaning="accurate"), {}
+        return dict(question="accurate", comparison="missing", answer="misread", meaning="accurate", reasoning="supported"), {}
     monkeypatch.setattr(writing_trial, "run_role", call)
     evidence = tmp_path / "numbers.txt"
     evidence.write_text("evidence secret")
     output = tmp_path / "trial"
-    writing_trial.run([evidence], output, ["writer-a", "writer-b"], "reader",)
+    writing_trial.run([evidence], output, ["writer-a", "writer-b"], "reader")
     result = json.loads((output / "scores.json").read_text())
     assert packets[0] == packets[1]
     assert [row["score"] for row in result["results"]] == [1, 1]
