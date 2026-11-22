@@ -1962,15 +1962,14 @@ CONTEXT_RULE = (
     "`max_output_tokens` <= 2000); bulk reading -> a sub-agent that returns a summary."
 )
 WRITING_RULES = (
-    "Use the owner's 2–4 reader takeaways. Run paper-writing story-review on the one-page storyline before drafting: "
-    "reader, question, decisive comparison, quantitative answer, meaning, key limitation and cuts. "
-    "Draw the decisive figures first and inspect the renders. For a substantive visual repair, put the located issue from the author or review in request_figure_assistant. Narrative-check and reader-check are optional."
+    "Writing: openlabs-paper-readability/SKILL.md. Give 2–4 takeaways; run story-review before drafting. "
+    "Draw decisive figures first. Request visual help via request_figure_assistant. "
+    "Author reader-check and narrative-check are optional."
 )
 REVISION_RULE = (
-    " Placement (readability skill, section 5): put added qualifications, checks and explanations "
-    "in the appendix or supplement and answer in the response letter; change the main text by at "
-    "most one sentence per item, do the requested cuts, and do not let the main text grow unless "
-    "the reviewer placed the item in the main text. Rerun `paper-writing narrative-check`."
+    " Keep conclusion-changing comparisons, magnitudes and conditions in the main text. Put secondary "
+    "science in the appendix or supplement, rerun logs and hashes in the archive, and editorial replies "
+    "in the response letter. Cut duplication to aim for zero net growth; narrative-check is optional."
 )
 
 

@@ -43,6 +43,8 @@ assigned reviewer role. Repository rules override vendored instructions; in part
 
 ## Write
 
+Give the research and its communication equal importance. Within the paper, give prose and figures equal editorial attention. Use the narrative and visual standards of leading applied research journals across submission tiers.
+
 Use the owner's two to four takeaways and the claim–evidence map to draft one page in
 `writing/storyline.md`: intended reader, question, decisive comparison, quantitative answer,
 meaning, the limitation that changes interpretation and what belongs outside the main text.
@@ -98,10 +100,7 @@ Handling a rejection: `docs/JOURNAL_HISTORY.md#handling-a-rejection`.
 
 1. Compile the real manuscript; run repository validation, `paper-writing style-check` and the
    declaration checks under the resource guard. The review only reports most of these findings
-   as preparation advisories, but delivery requires them clean, so fix them while drafting. The
-   narrative part of `style-check` (`paper-writing narrative-check --paper-id <id>` for the full
-   report with line numbers) fails a main text over its length limit and any revision-history
-   wording; those two stop the unified review before a round is spent.
+   as preparation advisories, but delivery requires them clean, so fix them while drafting.
 2. Use reader-check or narrative-check when an outside reading would help.
 3. Unless the record is `not_required` with a reason, prepare the Zenodo draft
    (`paper-writing zenodo prepare`, code-first per `docs/ZENODO_GUIDE.md`), cite its Version DOI

@@ -125,7 +125,7 @@ def test_brief_and_review_notes_carry_the_writing_rules(tmp_path, monkeypatch) -
     text = owner.render_brief(
         paths, settings, task=seat, campaign=db.campaign(topic["campaign_id"]), topic=topic,
         adapter_family=None, deadline=__import__("datetime").datetime(2026, 11, 14))
-    assert "openlabs-paper-readability/SKILL.md" in text and "binding" in text
+    assert "openlabs-paper-readability/SKILL.md" in text and "story-review" in text
     assert "narrative-check" in text and "reader-check" in text
     assert (Path(owner.__file__).parents[3]
             / "workflows/paper/skills/openlabs-paper-readability/SKILL.md").is_file()
