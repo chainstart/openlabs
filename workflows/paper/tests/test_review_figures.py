@@ -233,7 +233,8 @@ def test_reader_sees_only_main_panels_in_print_order(tmp_path, monkeypatch):
     monkeypatch.setattr(figures, "review_images", render)
     source = "".join(r"\begin{figure}\includegraphics{" + name + r"}\end{figure}"
                      for name in ("z", "a")) + r"\appendix\begin{figure}\includegraphics{hidden}\end{figure}"
-    paths = [{"path": "figures/" + name + ".pdf"} for name in ("a", "hidden", "z")]
-    images, issues = actual_delivery_images({"expanded": source, "figure_files": paths,
+    paths = [{"path": "figures/" + name + ".pdf", "sha256": name} for name in ("a", "hidden", "z")]
+    images, issues, bindings = actual_delivery_images({"expanded": source, "figure_files": paths,
                                                    "manuscript_path": str(tmp_path)}, tmp_path)
     assert seen == ["figures/z.pdf", "figures/a.pdf"] and len(images) == 1 and not issues
+    assert bindings == {"figures/z.pdf": "z", "figures/a.pdf": "a"}

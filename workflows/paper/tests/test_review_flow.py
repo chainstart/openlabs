@@ -1123,7 +1123,7 @@ def test_delivery_blockers_include_an_unpackaged_claim_map(tmp_path, monkeypatch
     monkeypatch.setattr(support_citations, 'audit_manuscript_support', lambda *args, **kwargs: {'errors': []})
     monkeypatch.setattr(editorial_rewrite, 'abstract_findings', lambda *args: [])
     blockers = flow.delivery_blockers('p', metadata, tmp_path)
-    assert len(blockers) == 1 and 'not in the current support package' in blockers[0]
+    assert sum('not in the current support package' in blocker for blocker in blockers) == 1
 
 
 def test_decision_record_keeps_claim_map_provenance(tmp_path, monkeypatch):
@@ -1858,7 +1858,8 @@ def test_delivery_exit_only_notes_unused_routes(tmp_path, monkeypatch):
     monkeypatch.setattr(support_citations, 'audit_manuscript_support', lambda *args, **kwargs: {'errors': []})
     monkeypatch.setattr(editorial_rewrite, 'abstract_findings', lambda *args: [])
     notes = []
-    assert flow.delivery_blockers('p', metadata, tmp_path, {'build_inputs': ['main.tex']}, notes=notes) == []
+    issues = flow.delivery_issues('p', metadata, tmp_path, {'build_inputs': ['main.tex']}, notes=notes)
+    assert all(issue['source'] == 'delivery_floor' for issue in issues)
     stale = [n for n in notes if n['kind'] == 'stale_registration_route']
     assert {(n['code'], n['route']) for n in stale} == {
         ('SOURCE-SELECTOR-STALE', 'https://publisher.example/original'),
@@ -2237,3 +2238,21 @@ def test_resynthesis_records_the_current_decision_and_revalidates_at_delivery(tm
     response_archive.write_text("{}")
     assert any("Archived response changed" in issue
                for issue in flow.validate_unified_release("p", meta, tmp_path, "snapshot"))
+
+
+@pytest.mark.parametrize("files", [[], [{"path": "bad.pdf", "sha256": "a"}]])
+def test_failed_figure_render_stops_the_full_review(tmp_path, monkeypatch, files):
+    from paper_writing import figures
+
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT)
+    pre = flow.preflight('p', tmp_path, tmp_path / 'build')
+    pre.update(manuscript_path=str(tmp_path), build_inputs=["main.tex"], figure_files=files)
+    monkeypatch.setattr(flow, "delta_review_basis", lambda *args: None)
+    monkeypatch.setattr(flow, "scientific_rounds", lambda *args: [])
+    monkeypatch.setattr(figures, "review_images", lambda *args: {"images": [], "notes": ["renderer unavailable"]})
+    result = flow.run_review('p', root=tmp_path, apply=False)
+    assert calls == []
+    assert result["stage_reached"] == "figure_preflight"
+    assert result["merged"]["outcome"] == "formal_check_blocked"
+    assert result["merged"]["next_action"] == "retry_review"
+    assert not result["consumes_scientific_round"]

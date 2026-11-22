@@ -32,6 +32,7 @@ from typing import Any, Iterable, Mapping
 DEFAULT_LIMITS: dict[str, Any] = {
     # Main text = from the end of the abstract to the first appendix, back-matter heading or
     # bibliography; captions count, tables, displayed mathematics and declarations do not.
+    "min_body_words": 2000,
     "max_body_words": 7000,
     # Estimated pages (words / words_per_page + floats * pages_per_float). Off unless set.
     "max_body_pages": None,
@@ -62,8 +63,8 @@ DEFAULT_LIMITS: dict[str, Any] = {
 # mathematics paper longer. Venue limits recorded for a paper override these.
 ARTICLE_TYPE_LIMITS: dict[str, dict[str, Any]] = {
     "article": {},
-    "letter": {"max_body_words": 3500, "abstract_max_words": 150, "abstract_max_numbers": 6},
-    "conference": {"max_body_words": 6500, "abstract_max_words": 200},
+    "letter": {"min_body_words": 1000, "max_body_words": 3500, "abstract_max_words": 150, "abstract_max_numbers": 6},
+    "conference": {"min_body_words": 1500, "max_body_words": 6500, "abstract_max_words": 200},
     "review": {"max_body_words": 12000, "abstract_max_words": 300},
     "math": {"max_body_words": 14000, "abstract_max_numbers": 6},
 }

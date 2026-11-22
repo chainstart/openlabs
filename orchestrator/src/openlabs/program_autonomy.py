@@ -2793,7 +2793,7 @@ class _ReleasePipeline:
             return True
         writer = [item for item in issues if item.get("remedy") == "writer"]
         ai_issues = any(str(item.get("code") or "").startswith(
-            ("STYLE-AI-DISCLOSURE-", "STYLE-AI-DECLARATION-")) for item in writer)
+            ("STYLE-AI-DISCLOSURE-", "STYLE-AI-DECLARATION-", "AI-USE-UNVERIFIED")) for item in writer)
         if ai_issues or status.get("missing_default_contributions"):
             command = ["program", "apply-default-declarations", "--paper-id", self.paper_id]
             if not ai_issues:

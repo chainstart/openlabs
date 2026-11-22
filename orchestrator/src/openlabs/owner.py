@@ -1960,7 +1960,11 @@ WRITING_RULES = (
     "Writing: openlabs-paper-readability/SKILL.md. Give 2–4 takeaways; run story-review before drafting. "
     "Draw decisive figures first. Request visual help via request_figure_assistant. "
     "Use the indexed endpoint and precedent evidence when drafting claims. "
-    "Author reader-check and narrative-check are optional."
+    "Author reader-check and narrative-check are optional. "
+    "Before requesting unified review, run paper-writing program apply-default-declarations and "
+    "paper-writing delivery-floor --author on the registered draft. Fix every reported minimum before "
+    "requesting review. Use the approved byline and affiliations, never assign authorship. Generate "
+    "the AI declaration from hash-bound actual model usage, never configured model names."
 )
 REVISION_RULE = (
     " Keep conclusion-changing comparisons, magnitudes and conditions in the main text. Put secondary "

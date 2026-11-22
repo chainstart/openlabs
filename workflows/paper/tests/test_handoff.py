@@ -1004,8 +1004,8 @@ writing_release:
         encoding="utf-8",
     )
     monkeypatch.setattr(review_flow, "validate_unified_release", lambda *args: [])
-    # The declaration was checked before review. Handoff trusts the bound snapshot.
-    validate_release_preconditions(paper_id, root=tmp_path)
+    with pytest.raises(HandoffError, match="BYLINE-MISSING"):
+        validate_release_preconditions(paper_id, root=tmp_path)
     monkeypatch.setattr(review_flow, "delivery_blockers", lambda *args, **kwargs: [])
     unified = validate_release_preconditions(paper_id, root=tmp_path)
     assert unified["decision_standard"] == "unified_v1" and unified["decision"] == "minor_revision"

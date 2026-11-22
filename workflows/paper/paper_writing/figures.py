@@ -1246,7 +1246,7 @@ def review_figure_files(manuscript: Path, build_inputs: Iterable[str]) -> list[d
         path = (manuscript / rel).resolve()
         if (path.suffix.lower() not in REVIEW_GRAPHIC_SUFFIXES or not path.is_file()
                 or manuscript.resolve() not in path.parents
-                or (path.parent == manuscript.resolve() and path.suffix.lower() == ".pdf")):
+                or (path.parent == manuscript.resolve() and path.name in {"main.pdf", "supplement.pdf"})):
             continue  # root PDFs are compiled outputs (main, supplement), not figures
         files.append({"path": Path(rel).as_posix(),
                       "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
@@ -1257,7 +1257,7 @@ def review_images(manuscript: Path, figure_files: list[Mapping[str, Any]], outdi
                   max_images: int = 10, max_pixels: int = 1600) -> dict[str, Any]:
     """PNG renderings for the reviewers: one per figure, or a contact sheet when there are many.
 
-    Never raises: a missing renderer only leaves the reviewers without images (noted).
+    On rendering failure return no images and a diagnostic for the review gate.
     """
     if not figure_files:
         return {"images": [], "notes": []}
@@ -1286,7 +1286,7 @@ def review_images(manuscript: Path, figure_files: list[Mapping[str, Any]], outdi
             images = [{"figure": "contact sheet of all figures", "sha256": "", "png": str(sheet),
                        "png_sha256": hashlib.sha256(sheet.read_bytes()).hexdigest()}]
             notes.append(f"{len(pngs)} figures: attached as one contact sheet")
-    except Exception as exc:  # noqa: BLE001 - images are an aid; the review proceeds without them
+    except Exception as exc:  # noqa: BLE001 - convert renderer errors into gate diagnostics
         notes.append(f"figure images unavailable: {exc}")
         images = []
     return {"images": images, "notes": notes}

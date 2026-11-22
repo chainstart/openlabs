@@ -137,6 +137,11 @@ def build_parser() -> argparse.ArgumentParser:
     narrative.add_argument("--json", action="store_true")
     narrative.add_argument("--out", help="Also write the Markdown report to this file.")
 
+    floor = subparsers.add_parser("delivery-floor", help="Audit the mechanical delivery minimums without editing files.")
+    floor.add_argument("--paper-id", required=True)
+    floor.add_argument("--root", default=str(default_repo_root()))
+    floor.add_argument("--author", action="store_true", help="Check author-controlled items before independent review.")
+
     story = subparsers.add_parser("story-review", help="Have the active editor read the one-page storyline.")
     story.add_argument("--paper-id", required=True)
     story.add_argument("--root", default=str(default_repo_root()))
@@ -836,6 +841,12 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.out).write_text(report, encoding="utf-8")
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else report, end="" if not args.json else "\n")
         return 0 if result["valid"] else 1
+    if args.command == "delivery-floor":
+        from paper_writing.delivery_floor import audit
+
+        result = audit(args.paper_id, args.root, author=args.author)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return int(bool(result["issues"]))
     if args.command == "story-review":
         from paper_writing.reader_check import review_story
         print(json.dumps(review_story(args.paper_id, Path(args.root)), ensure_ascii=False, indent=2))

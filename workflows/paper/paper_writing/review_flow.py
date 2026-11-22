@@ -762,8 +762,14 @@ def _build(manuscript: Path, workdir: Path, *, document: str = "main.tex") -> tu
         raise ValueError(f"LaTeX build failed; see {workdir / 'build.log'}")
     used = set()
     for line in (copy / (stem + ".fls")).read_text(errors="replace").splitlines():
-        if line.startswith("INPUT ") and not line[6:].startswith("/"):
-            used.add(os.path.normpath(line[6:].removeprefix("./")))
+        if not line.startswith("INPUT "):
+            continue
+        dependency = Path(line[6:])
+        if dependency.is_absolute():
+            if not dependency.is_relative_to(copy.absolute()):
+                continue
+            dependency = dependency.relative_to(copy.absolute())
+        used.add(os.path.normpath(dependency))
     blg = copy / (stem + ".blg")
     if blg.is_file():
         for name in re.findall(r"(?:Database file #\d+|The style file): (\S+)", blg.read_text(errors="replace")):
@@ -2643,7 +2649,7 @@ def figure_review_packet(pre: Mapping[str, Any], run: Path, changed: list[str]) 
                                  for item in files))
     else:
         lines.append("The figure files could not be rendered for this review (" + "; ".join(result["notes"])
-                     + "); judge the figures from their captions and references only, and say so.")
+                     + "); visual review is unavailable.")
     record = {"standard": standard, "images": [{"figure": item["figure"], "sha256": item["sha256"], "png_sha256": item["png_sha256"],
                           "png": Path(item["png"]).relative_to(run).as_posix()} for item in result["images"]],
               "notes": result["notes"], "changed_since_previous_round": changed}
@@ -2737,11 +2743,15 @@ def _reader_role(record, config, pre, run):
     if not independent:
         raise ValueError("An independent delivery reader is required")
     role = config["roles"][independent[0]]
-    figure_images, image_errors = delivery_images(pre, run)
+    figure_images, image_errors, image_inputs = delivery_images(pre, run)
+    if image_errors:
+        return {"model": role.get("model"), "image_errors": image_errors, "repairs": []}, {}
     context = {"previous": pre["previous_review"]} if pre.get("previous_review") else {}
     recall, receipt = delivery_read(pre["expanded"], figure_images, role,
                                                         run / "delivery-reader", config["timeout_seconds"], **context)
-    return dict(model=role.get("model"), image_errors=image_errors, **recall), receipt
+    return dict(model=role.get("model"), image_errors=image_errors,
+                image_inputs=image_inputs,
+                image_sha256=[_sha256(path.read_bytes()) for path in figure_images], **recall), receipt
 
 
 def _merge_reader(merged, recall, previous=None):
@@ -3266,6 +3276,20 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
     last = rounds[-1] if rounds else None
     changed = figure_changes(last, pre) if last is not None else []
     figure_packet, figure_images, record["figure_review"] = figure_review_packet(pre, run, changed)
+    unreadable = any(item.get("code") == "FIGURE-FILES-UNREADABLE"
+                     for item in pre.get("preparation_advisories", []))
+    from paper_writing.figure_standard import GRAPHIC
+    visible_source = re.sub(r"(?<!\\)%[^\n]*", "", pre["expanded"])
+    expects_images = bool(pre.get("figure_files") or (
+        "build_inputs" in pre and GRAPHIC.search(visible_source)
+    ))
+    if unreadable or (expects_images and not figure_images):
+        blockers = record["figure_review"]["notes"] or ["Compiled figure inventory is unavailable"]
+        record.update(stage_reached="figure_preflight", consumes_scientific_round=False, finished_at=_now(),
+                      merged={"outcome": "formal_check_blocked", "next_action": "retry_review",
+                              "technical_blockers": blockers})
+        digest = _json_dump(run / "decision.json", record)
+        return record | {"run_dir": str(run.relative_to(root)), "decision_sha256": digest}
     pre = dict(pre, figure_packet=figure_packet)
     with_images = {"images": figure_images} if figure_images else {}
     pre = dict(pre, previous_review=previous)
@@ -3479,7 +3503,9 @@ def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
                               "message": str(issue.get("message") or ""), "text": render({"errors": [issue]})[0]})
         return items
 
-    problems = []
+    from paper_writing.delivery_floor import check
+
+    problems = check(paper_id, metadata, root, record)["issues"]
     if ((record or {}).get("merged", {}).get("review_standard") == "materiality_v1"
             or (record or {}).get("editor_screen", {}).get("review_standard") == "materiality_v1"):
         fit = metadata.get("target_journal_fit") or {}

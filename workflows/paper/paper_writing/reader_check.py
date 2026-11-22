@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -239,8 +240,9 @@ def delivery_images(pre, run):
     from paper_writing.figure_standard import ENV, GRAPHIC
     from paper_writing.figures import review_images
 
-    source = pre["expanded"]
-    source = source[:narrative_check.find_regions(source).body[1]]
+    source = re.sub(r"(?<!\\)%[^\n]*", "", pre["expanded"])
+    start, end = narrative_check.find_regions(source).body
+    source = source[start:end]
     files = pre.get("figure_files") or []
     ordered = []
     problems = []
@@ -257,11 +259,12 @@ def delivery_images(pre, run):
             else:
                 problems.append(f"Figure {number}: could not resolve panel {graphic} uniquely.")
     if not ordered:
-        return [], problems
+        return [], problems, {}
     result = review_images(Path(pre["manuscript_path"]), ordered, run / "reader-figures")
     if not result["images"]:
         problems.extend(result["notes"])
-    return [Path(row["png"]) for row in result["images"]], problems
+    bindings = {item["path"]: item["sha256"] for item in ordered}
+    return [Path(row["png"]) for row in result["images"]], problems, bindings
 
 
 def delivery_read(source, images, role, workdir, timeout, previous=None):

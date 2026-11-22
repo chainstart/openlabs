@@ -59,7 +59,10 @@ RELEASE_ARTIFACT_SUFFIXES = frozenset({".pdf", ".bbl"})
 PAYLOAD_MANIFEST_TEMPLATE = "papers/{paper_id}/production/payload-artifacts.json"
 # What the writer is told it may touch for each class of problem.
 WRITER_SCOPE = (
-    "Fix only the listed delivery-exit formal problems: unresolved TODO/draft markers, "
+    "Fix only the listed delivery checks, including the body-text minimum, approved byline and "
+    "affiliations, missing design schematic or result figures, and unresolved TODO/draft markers. "
+    "Use only previously verified results in figures. Add needed methodological or result context "
+    "from the supplement and run paper-writing delivery-floor --author before returning the draft. Fix "
     "internal paths, abstract length or venue format, first-person or voice findings, the "
     "AI-use declaration wording (state exactly the tools and model identifiers registered "
     "under declarations.ai_use.model_usage), the support-material citation (cite the current "
@@ -69,7 +72,7 @@ WRITER_SCOPE = (
     "text-only delta), support-source README/CITATION "
     "identity, and source files the build does not read (move them to "
     "papers/<paper_id>/retained-sources/, outside the manuscript directory). Do not change any "
-    "number, table, figure content, result, claim or conclusion, and do not change the title."
+    "number, table, result, claim, conclusion or title. Preserve existing figure results."
 )
 
 
@@ -394,6 +397,12 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
             remedy = "zenodo_prepare"
         elif code in CODES and support["release_needed"] and review.get("decision_current"):
             remedy = "publication_metadata"
+        elif code == "FIGURES-NOT-REVIEWED":
+            remedy = "delta_review"
+            if review.get("ready"):
+                review["current"] = False
+        elif item.get("source") == "delivery_floor" and code != "FLOOR-SOURCE-MISSING":
+            remedy = "writer"
         elif code in PREPARE_CODES:
             remedy = "zenodo_prepare" if not support["published"] else "human"
         else:

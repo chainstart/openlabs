@@ -1405,3 +1405,25 @@ cc-sg 的邮件服务独立于调度 tick。运行 `bin/openlabs-journal-mail --
 旧 PDF 保存在 `revisions/pdf-history/`。流水线编译当前 PDF、复用草稿重打包，
 并通过原始评审指纹核对生成差异。这个步骤保留原评审凭据和建议，
 也保留管理网站上的业主审阅与人工确认投稿流程。
+
+### 交付机械下限
+
+写作坐席在独立评审前运行 `paper-writing program apply-default-declarations --paper-id ID --root DATA`，
+再运行 `paper-writing delivery-floor --author --paper-id ID --root DATA`。作者及单位沿用批准的署名，
+AI 声明由有哈希和 JSON 指针的实际模型记录生成。模型名来自调用记录，配置名不能代替记录。
+去掉 `--author` 可只读审计已登记版本（含图片评审回执）。命令发现缺项时退出码为 1。
+
+正文采用 narrative-check 的计数口径。常规正文最低 2,000 词，短文 1,000 词，会议论文 1,500 词。
+可按 `registry/settings.yaml#quality_gate.narrative`、研究线 `paper_narrative` 或稿件
+`narrative_limits.min_body_words` 配置。期刊登记可在 `verified-venues.yaml` 的
+`venues[].article_types.<文章类型>.min_body_words` 写入依据明确的下限。稿件登记优先于期刊，
+期刊优先于研究线和全局默认。数字属产线形式下限，写作时仍按期刊要求处理。
+
+正文至少有一幅已分类的原理图。结果图至少达到 figure-standards 对应稿型的正文图下限减一。
+没有专用稿型时最低一幅结果图。重复引用和附录图不计。独立读者回执保存实际发送的图像哈希，
+并绑定本次评审的源图文件。渲染失败属于技术阻断，可重试且不消耗科学评审轮次。
+
+cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`。若 PyMuPDF 缺失，
+使用 WSL 下载桥获取 `workflows/paper/uv.lock` 中对应当前解释器及架构的 wheel，核对 SHA-256 后
+用该 venv 的 `python -m pip install --no-index --no-deps /path/to/verified.whl` 安装。
+`paperfig-python` 是绘图环境。在论文工作流解释器中执行 `import pymupdf` 验证。
