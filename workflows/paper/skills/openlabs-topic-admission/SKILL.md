@@ -193,6 +193,13 @@ above do not apply to reaching them, and the fallback venues stay the stated fal
 
 ## Verdicts
 
+For an entry stamped `target_stage: tier2_aim`, independently judge whether the
+idea has a plausible CAS Zones 1–2 contribution. Check the named recent precedent,
+data scale and access, controls and external validation. Reject clearly insufficient
+contributions, including for template, queue and revision cards. An admit records
+`tier2_contribution_supported: true` and the evidence in `tier_rationale`. The
+eventual journal is chosen after research from the achieved evidence.
+
 - `admit` — meets the routine standard (or the escalation conditions). Needs `target_tier`,
   `tier_rationale`, the pre-registration and `data_access_confirmed: true`; optional
   `conditions`.

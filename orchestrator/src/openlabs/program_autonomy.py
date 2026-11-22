@@ -86,6 +86,7 @@ TRIGGER_REVIEW_DIRECTION = "review_direction_decision"
 TRIGGER_REVIEW_RETARGET = "review_retarget_required"
 TRIGGER_REVIEW_STALLED = "review_stalled"
 TRIGGER_REVIEW_ROUNDS = "review_rounds_exhausted"
+TRIGGER_VENUE_GRADE = "review_venue_grade"
 # A research executor stopped with needs_human on a scientific/process question
 # (not an infrastructure miss): the lead decides instead of the topic waiting
 # for the 28-day calendar trigger while it holds a slot (2026-11-14: two astro
@@ -395,6 +396,7 @@ def _trigger_reason_text(trigger: str, detail: Mapping[str, Any]) -> str:
         TRIGGER_REVIEW_RETARGET: "The unified review requires a retarget.",
         TRIGGER_REVIEW_STALLED: "The unified review is stalled: scores no longer improve.",
         TRIGGER_REVIEW_ROUNDS: "The unified review used all rounds for this target.",
+        TRIGGER_VENUE_GRADE: "Assess which journal tier the completed evidence supports.",
         "owner_review_rejected": (
             "The independent recompute review rejected the manuscript: its main conclusion "
             "does not hold and the reviewer sees no revision of this topic that rescues it."
@@ -574,11 +576,15 @@ def schedule_direction_decision(
             _resource("settings.yaml#research_portfolio", registry / "settings.yaml"),
         ) if item is not None
     ]
+    grading = trigger == TRIGGER_VENUE_GRADE
     cap = trigger in {TRIGGER_REVIEW_ROUNDS, "owner_review_rounds_exhausted"}
     options = ["retarget_or_short_format", "freeze"]
     candidates = []
     zone = (topic.get("delivered_revision") or {}).get("target_zone")
-    if cap and (registry / "verified-venues.yaml").is_file():
+    if grading:
+        candidates = _run_paper_command(paths, settings, ["venue", "alternatives"],
+                                        json_flag=False)["venues"]
+    elif cap and (registry / "verified-venues.yaml").is_file():
         target = detail.get("target_journal") or (direction_context or {}).get("target_journal")
         args = ["venue", "alternatives"]
         if zone:
@@ -586,7 +592,7 @@ def schedule_direction_decision(
         if target:
             args.extend(["--exclude", str(target)])
         candidates = _run_paper_command(paths, settings, args, json_flag=False)["venues"]
-    if not cap:
+    if not grading and not cap:
         options.insert(0, "targeted_core_analysis")
     routine = _routine_names(topic)
     exclude = research_provider(db, settings, campaign_id)
@@ -641,7 +647,8 @@ def schedule_direction_decision(
         "producer_model": research_model(db, settings, campaign_id),
         "options": options,
         **({"delivered_revision": topic["delivered_revision"]} if topic.get("delivered_revision") else {}),
-        **({"verified_alternatives": candidates, "short_format_value": None if zone else "short_format"} if cap else {}),
+        **({"verified_alternatives": candidates,
+            "short_format_value": None if zone or grading else "short_format"} if cap or grading else {}),
         "created_at": utc_now(),
     })
     packet_path = (
@@ -671,6 +678,16 @@ def schedule_direction_decision(
                + ("verified_alternatives journal name. Read the operator revision and assess subject fit."
                   if zone else "verified_alternatives journal name or short_format. Preserve the target cap.")
                if cap else "")
+            + (" The manuscript cleared review. Use retarget_or_short_format to record the "
+               "chosen exact journal name, including when keeping the current target. Set "
+               "retarget.achieved_band to \"zones_1_2\" or \"zones_3_4\" and choose a verified "
+               "journal in that band. Assess the actual increment over the closest recent work, "
+               "data scale, controls, external validation and strength of the result. Explain "
+               "this grading with specific evidence in rationale, and explain journal scope in "
+               "retarget.why_fits. Zones 3–4 are successful delivery when the evidence supports "
+               "that band. If no suitable verified journal exists in the supported band, "
+               "use freeze with no_eligible_venue and a concrete reopen condition. "
+               "Preserve the review, writing and figure standards." if grading else "")
         ),
         input_path=str(packet_path),
         skill_path=DIRECTION_SKILL,
@@ -1046,6 +1063,24 @@ def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payl
     task_id = str(task["task_id"])
     paper_id = str(outcome.get("paper_id") or payload.get("paper_id") or topic.get("paper_id")
                    or "").strip() or None
+    from . import target_stage
+
+    if target_stage.tier2_topic(topic):
+        journal = outcome.get("target_journal")
+        decision_record = outcome.get("decision_record")
+        if isinstance(decision_record, str) and decision_record:
+            decision_path = paths.data / decision_record
+            if decision_path.is_file():
+                journal = json.loads(decision_path.read_text()).get("target_journal") or journal
+        grade = topic.get("venue_grade") or {}
+        if not grade or grade.get("journal") != journal:
+            schedule_direction_decision(
+                db, paths, settings, report, topic=topic, trigger=TRIGGER_VENUE_GRADE,
+                source_task_id=task_id, evidence=evidence,
+                detail={"paper_id": paper_id, "target_journal": journal,
+                        "review_outcome": dict(outcome)},
+            )
+            return
     if topic.get("status") == "active":
         mark_topic_in_review(ledger, topic_id, db=db, decided_by=task_id, paper_id=paper_id)
     mark_topic_ready(ledger, topic_id, db=db, decided_by=task_id, paper_id=paper_id,
@@ -1190,13 +1225,25 @@ def apply_direction_decision(
         problems.append("answers_reason does not quote one of reasons_to_answer verbatim")
     if not problems and "verified_alternatives" in packet:
         allowed = {entry["journal"] for entry in packet["verified_alternatives"]}
-        if not (packet.get("delivered_revision") or {}).get("target_zone"):
+        if packet.get("short_format_value") == "short_format":
             allowed.add("short_format")
         if decision["choice"] not in packet["options"] or (
             decision["choice"] == "retarget_or_short_format" and
             decision["retarget"]["venue_or_format"] not in allowed
         ):
-            problems.append("choose a verified alternative, short_format or freeze")
+            problems.append("choose an exact verified journal" if trigger == TRIGGER_VENUE_GRADE
+                            else "choose a verified alternative, short_format or freeze")
+    grade = None
+    if not problems and trigger == TRIGGER_VENUE_GRADE:
+        from .target_stage import venue_grade
+
+        if decision["choice"] == "freeze":
+            if decision["freeze"]["reason_class"] != "no_eligible_venue":
+                problems.append("acceptance grading may freeze only when no verified journal fits")
+        else:
+            grade = venue_grade(decision, packet["verified_alternatives"])
+            if grade is None:
+                problems.append("the selected journal must be verified and match retarget.achieved_band")
     if problems:
         db.record_event_once("topic", topic_id, "direction_decision_invalid",
                              {"task_id": task_id, "errors": problems}, event_key=task_id)
@@ -1215,8 +1262,26 @@ def apply_direction_decision(
         "answers_reason": decision.get("answers_reason"), "decisions_used": used,
         "decision_limits": limits,
     }
-    rejection = _reject_choice(choice, used=used, limits=limits, decision=decision,
-                               campaign=campaign, settings=settings)
+    if grade is not None:
+        detail = packet["trigger"]["detail"]
+        record_topic_note(
+            ledger, topic_id, db=db, event_type="venue_grade_decided", reason=grade["achieved_band"],
+            decided_by=task_id, detail=grade, evidence=[*packet["evidence"], *evidence],
+            updates={"venue_grade": grade}, key=f"venue_grade:{task_id}",
+        )
+        if grade["journal"] == detail.get("target_journal"):
+            queue_ready_topic(
+                db, paths, settings, report, topic={**topic, "venue_grade": grade},
+                task={"task_id": record["source_task_id"]},
+                outcome={**detail["review_outcome"], "target_journal": grade["journal"]},
+                payload={"paper_id": detail.get("paper_id")}, evidence=packet["evidence"],
+            )
+            return finish("venue_retained", {"venue_grade": grade})
+    # The first acceptance grade gets one journal choice even after exploratory retargets.
+    first_grade = grade is not None and not topic.get("venue_grade")
+    rejection = _reject_choice(choice, used={} if first_grade else used,
+                               limits={choice: 1} if first_grade else limits,
+                               decision=decision, campaign=campaign, settings=settings)
     if rejection is not None:
         reason_class = (
             "budget_exhausted" if rejection != "direction_limit_exhausted"
@@ -1345,6 +1410,7 @@ def _enqueue_targeted_analysis(db, settings, *, campaign, decision, decision_tas
 def _enqueue_retarget(db, settings, *, topic, campaign, decision, decision_task_id,
                       source_task_id, input_path) -> str:
     from .engine import _paper_skill
+    from .target_stage import tier2_topic
 
     retarget = decision["retarget"]
     requested = str(retarget.get("venue_or_format") or "").strip()
@@ -1361,7 +1427,8 @@ def _enqueue_retarget(db, settings, *, topic, campaign, decision, decision_task_
         f"{routine[0]!r} and mark target_escalation as superseded by the fallback. Before "
         f"switching to it run `paper-writing program check-fallback --paper-id <id>` (add "
         f"`--fallback-evidence <file>` to complete an older record); it must pass."
-        if str(topic.get("target_tier") or "") == "escalation" and routine else ""
+        if str(topic.get("target_tier") or "") == "escalation" and routine and not tier2_topic(topic)
+        else ""
     )
     objective = (
         f"handoff_kind=retarget. Retarget the manuscript to {target} "
@@ -2567,6 +2634,14 @@ class _ReleasePipeline:
             self.return_to_review(status, {"reason": "writing_release is no longer ready",
                                            "problems": review.get("problems") or []})
             return False
+        from .target_stage import tier2_topic
+
+        graded_journal = (self.topic.get("venue_grade") or {}).get("journal")
+        if tier2_topic(self.topic) and (
+            not graded_journal or graded_journal != status.get("target_journal")
+        ):
+            raise ReleaseWait("check", "venue_grade_pending",
+                              {"hint": "The current target needs a recorded acceptance grade."})
         if (self.settings.program.support_release == "none" and support.get("required")
                 and not support.get("published")):
             self.waive_support()

@@ -167,6 +167,13 @@ def _parser() -> argparse.ArgumentParser:
         "program", help="Research-program topic ledger maintenance"
     )
     program_commands = program.add_subparsers(dest="program_command", required=True)
+    stage = program_commands.add_parser(
+        "target-stage", help="Replay unattended delivery progress or set a research line target stage"
+    )
+    stage.add_argument("--line")
+    stage.add_argument("--stage", choices=("run_in", "tier2_aim"))
+    stage.add_argument("--by")
+    stage.add_argument("--reason")
     backfill = program_commands.add_parser(
         "backfill",
         help="Register existing active research campaigns as grandfathered active topics "
@@ -596,6 +603,42 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(reopen_report(paths, load_settings(paths)), ensure_ascii=False,
                          indent=2, sort_keys=True, default=str))
         return 0
+    if args.command == "program" and args.program_command == "target-stage":
+        from . import target_stage
+        from .locking import factory_operation_lock
+        from .program import open_topic_ledger
+        from .program_flow import program_projects
+        from .utilization import ReadOnlyFactoryDB
+
+        settings = load_settings(paths)
+        try:
+            lines = settings.program.research_lines or tuple(sorted({
+                project.research_line for project in program_projects(paths) if project.research_line
+            }))
+            if args.line is not None and args.line not in lines:
+                raise ValueError(f"unknown configured research line {args.line!r}")
+            if not paths.database_file.is_file():
+                raise ValueError(f"no database at {paths.database_file}")
+            if args.stage:
+                with factory_operation_lock(paths):
+                    payload = target_stage.set_stage(
+                        FactoryDB(paths.database_file), args.line, args.stage,
+                        by=args.by or "", reason=args.reason or "",
+                    )
+            else:
+                if args.by is not None or args.reason is not None:
+                    raise ValueError("--by and --reason require --stage")
+                payload = target_stage.replay(
+                    ReadOnlyFactoryDB(paths.database_file),
+                    open_topic_ledger(paths, settings.program).read(),
+                    [args.line] if args.line else lines,
+                )
+        except (ValueError, sqlite3.Error) as exc:
+            print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
+                  file=sys.stderr)
+            return 1
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
     if args.command == "program" and args.program_command == "utilization":
         # Read-only: the database is opened with mode=ro and nothing is created.
         from .utilization import ReadOnlyFactoryDB, utilization_report
@@ -884,6 +927,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             priority=args.priority,
             skill_path=args.skill,
             routing_reason=args.routing_reason,
+            operator_dispatched=True,
             runner=args.runner,
             max_attempts=settings.max_attempts,
             agent_role=args.agent_role or _agent_role(args.task_type),

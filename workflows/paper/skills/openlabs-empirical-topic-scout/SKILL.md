@@ -235,6 +235,10 @@ Each field is there because the gate needs it to decide:
 - templated cards: `paper_template` (a template id of the line), `occupancy_search`
   (`queries`, `databases`, `searched_at`, `findings`), optional `series` (`members` with at least
   two systems, `shared_pipeline`).
+- for `target_stage: tier2_aim`, include `tier_rationale` explaining the substantive
+  advance over the closest recent precedent, the accessible data and its scale, the
+  controls, and the external validation design. Prefer ideas with a plausible CAS
+  Zones 1–2 contribution. The shortlist may include suitable lower-zone fallbacks.
 - optional `target_tier` (`routine`/`escalation`), `reopens`, `reopen_basis` (`type`,
   `description`). In a revision task the control plane sets `revises`; add
   `condition_responses[]` (`condition`: index into the packet's `target.reopen_conditions`,

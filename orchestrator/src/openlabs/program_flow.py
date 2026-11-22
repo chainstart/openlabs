@@ -41,6 +41,7 @@ from . import budget as budget_control
 from . import card_precheck as card_checks
 from . import line_facts
 from . import supply_screen
+from . import target_stage
 from .config import FactorySettings, WorkspacePaths, dispatch_runner
 from .utilization import compute_backlog
 from .contracts import (
@@ -1067,9 +1068,11 @@ def _schedule_one_scout(
     rotation = scout_key(project)
     line = project.research_line
     line_fields: dict[str, Any] = {}
+    stage = target_stage.stage_for(db, line)
     if line:
         line_fields = {
             "research_line": line,
+            "target_stage": stage,
             "research_line_summary": line_summary(research_lines_document(paths, settings), line),
         }
         room = line_scout_room(status, document, line)
@@ -1152,6 +1155,7 @@ def _schedule_one_scout(
             "with its file:// URI and SHA-256 (a PDF in the workspace fails promotion). An "
             "empty `topic_cards` array is a "
             "valid outcome when nothing clears the bar. Do not start the research itself."
+            + (target_stage.TIER2_INSTRUCTION if stage == target_stage.TIER2_AIM else "")
         ),
         input_path=str(packet_path),
         skill_path=SCOUT_SKILL,
@@ -1473,6 +1477,7 @@ def card_problems(
     receipt_digests: set[str] | None,
     ledger_document: Mapping[str, Any] | None = None,
     warnings: list[str] | None = None,
+    stage: str = target_stage.RUN_IN,
 ) -> list[str]:
     """Every machine check of a card: contract, asset references, compute plan, receipt.
 
@@ -1483,7 +1488,7 @@ def card_problems(
     """
 
     validation = validate_topic_card(card)
-    errors = list(validation.errors)
+    errors = [*validation.errors, *target_stage.card_errors(card, stage)]
     notes = warnings if warnings is not None else []
     notes.extend(validation.warnings)
     template = str(card.get("paper_template") or "").strip()
@@ -1563,6 +1568,7 @@ def intake_card(
     # Topic identity is the control plane's (card hash), never agent-chosen.
     card.pop("topic_id", None)
     card.pop("repair_of", None)
+    card.pop("target_stage", None)
     card["domain"] = project.domain
     if project.research_line:
         # A line project's cards belong to its line, never an agent-chosen one.
@@ -1582,9 +1588,12 @@ def intake_card(
         card, raised = card_checks.apply_compute_floor(
             card, card_checks.compute_floor(line_entry, template_entry))
         normalized = [*normalized, *raised]
+    stage = target_stage.stage_for(db, card.get("research_line"))
+    if stage == target_stage.TIER2_AIM:
+        card["target_stage"] = stage
     warnings: list[str] = []
     errors = card_problems(paths, settings, card, receipt_digests=receipt_digests,
-                           ledger_document=ledger.read(), warnings=warnings)
+                           ledger_document=ledger.read(), warnings=warnings, stage=stage)
     metadata = _card_metadata(project, card, source_task_id=source_task_id, provider=provider,
                               proposer_task_id=proposer_task_id)
     if normalized or warnings:
@@ -2098,8 +2107,11 @@ def schedule_card_repairs(
             continue
         provider = str(topic.get("proposer_provider") or HUMAN_PROVIDER)
         source_task_id = str(topic.get("source_task_id") or "") or None
-        errors = card_problems(paths, settings, normalize_topic_card(card)[0],
-                               receipt_digests=digests, ledger_document=ledger.read())
+        errors = card_problems(
+            paths, settings, normalize_topic_card(card)[0],
+            receipt_digests=digests, ledger_document=ledger.read(),
+            stage=target_stage.stage_for(db, project.research_line),
+        )
         if not errors:
             # The card passes the current checks as it stands: register it again.
             outcome = intake_card(
@@ -2204,6 +2216,8 @@ def _enqueue_card_repair(
             "one must be a hash-bound artifact of your result. If the card cannot be fixed "
             "without changing the topic, return `topic_cards: []` and say why. This is the "
             "card's only repair. Do not start the research."
+            + (target_stage.TIER2_INSTRUCTION if target_stage.stage_for(
+                db, project.research_line) == target_stage.TIER2_AIM else "")
         ),
         input_path=str(packet_path),
         skill_path=SCOUT_SKILL,
@@ -2375,6 +2389,8 @@ def _enqueue_revision(
             "one concretely. When a condition cannot be met now (data not yet released, an "
             "external result pending), return `topic_cards: []` and say which and why. This is "
             "the topic's only revision. Do not start the research."
+            + (target_stage.TIER2_INSTRUCTION if target_stage.stage_for(
+                db, project.research_line) == target_stage.TIER2_AIM else "")
         ),
         input_path=str(packet_path),
         skill_path=SCOUT_SKILL,
@@ -2618,6 +2634,7 @@ def schedule_topic_admission(
             "card_sha256": topic["card_sha256"],
             "proposer_provider": provider,
             "card": card,
+            "target_stage": target_stage.stage_for(db, card.get("research_line")),
         }
         if isinstance(topic.get("card_check"), Mapping):
             # Non-blocking gaps found at intake (audience evidence, licence notes, ...).
@@ -2766,6 +2783,9 @@ def schedule_topic_admission(
                 "(target_tier routine) and its fallback venues stay the stated fallback."
                 if line_ids else ""
             )
+            + (target_stage.TIER2_INSTRUCTION + target_stage.ADMISSION_INSTRUCTION if any(
+                entry["target_stage"] == target_stage.TIER2_AIM for entry in entries
+            ) else "")
         ),
         input_path=str(packet_path),
         skill_path=ADMISSION_SKILL,
@@ -2966,6 +2986,7 @@ def _write_admission_record(
                 if branch.get(key) is not None
             },
             "admission": dict(admission),
+            "target_stage": entry.get("target_stage", target_stage.RUN_IN),
             "conditions": admission_conditions(admission),
             "card": dict(card),
             "card_sha256": entry.get("card_sha256"),
@@ -3078,13 +3099,31 @@ def materialize_admission_decisions(
         decided.add(topic_id)
         assert isinstance(admission, Mapping)
         card = entry.get("card") if isinstance(entry.get("card"), Mapping) else {}
-        summary = _summary(admission, review_task_id)
+        stage = entry.get("target_stage", target_stage.RUN_IN)
+        summary = {**_summary(admission, review_task_id), "target_stage": stage}
+        if stage == target_stage.TIER2_AIM:
+            summary["tier2_contribution_supported"] = admission.get("tier2_contribution_supported")
         status = str(topic.get("status"))
         verdict = str(admission.get("verdict"))
         if status != "proposed" and not _decided_by(topic, review_task_id):
             # Decided elsewhere (another review, admission_undecided): leave it.
             note("unchanged", f"topic_already_{status}")
             continue
+        if verdict == "admit" and status == "proposed":
+            current = target_stage.stage_for(db, card.get("research_line"))
+            if stage != current and current == target_stage.TIER2_AIM:
+                note("undecided", "line_stage_changed_during_review")
+                continue
+            if stage == target_stage.TIER2_AIM:
+                gaps = target_stage.card_errors(card, stage)
+                if admission.get("tier2_contribution_supported") is not True:
+                    gaps.append("Independent review must support the prospective Zone 1–2 contribution.")
+                if gaps:
+                    reject_topic(ledger, topic_id, db=db, reason="admission_rejected",
+                                 decided_by=review_task_id, evidence=evidence,
+                                 admission={**summary, "strongest_rejection_reason": " ".join(gaps)})
+                    note("rejected", "tier2_aim_admission_requirements")
+                    continue
         if verdict == "admit":
             problem = ""
             cost = admission.get("cost_judgement") or {}
@@ -3193,6 +3232,7 @@ def _research_state(
         "program_role": "research",
         "topic_id": topic["topic_id"],
         "target_tier": admission.get("target_tier"),
+        "target_stage": record.get("target_stage", target_stage.RUN_IN),
         "tier_rationale": admission.get("tier_rationale"),
         "routine_fallback": venues.get("routine"),
         "escalation_target": venues.get("escalation"),
@@ -3475,10 +3515,10 @@ def report_scheduling_counts(
 ) -> None:
     """Snapshot topic supply and queued/running work after all scheduling passes."""
 
-    lines: dict[str, dict[str, int]] = {}
+    lines: dict[str, dict[str, Any]] = report.program.get("by_line", {})
     legacy: dict[str, dict[str, int]] = {}
 
-    def bucket(key: str) -> dict[str, int]:
+    def bucket(key: str) -> dict[str, Any]:
         if key.startswith("domain/"):
             return legacy.setdefault(key.removeprefix("domain/") or "unknown", {})
         return lines.setdefault(key, {})
@@ -3542,6 +3582,13 @@ def run_program_pipeline(
                 "detail": str(backlog["detail"]),
             })
     try:
+        stage_document = open_topic_ledger(paths, settings.program).read()
+        lines = set(settings.program.research_lines)
+        lines.update(project.research_line for project in program_projects(paths)
+                     if project.research_line)
+        lines.update(topic["research_line"] for topic in stage_document.get("topics", [])
+                     if topic.get("research_line"))
+        info["by_line"] = target_stage.refresh(db, stage_document, sorted(lines))
         outcomes = register_scout_results(db, paths, settings)
         info["cards_registered"] = [item for item in outcomes if item["status"] == "proposed"]
         info["rejected_cards"] = [item for item in outcomes if item["status"] == "rejected"]

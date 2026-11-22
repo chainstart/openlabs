@@ -1344,7 +1344,8 @@ class FactoryDB:
                       "prior_max_attempts": int(row["max_attempts"] or 0),
                       "prior_error": (str(row["last_error"])[:300] if row["last_error"]
                                       else None)}
-            self._event(connection, "task", task_id, "manual_requeue", detail)
+            self._event(connection, "task", task_id, "manual_requeue",
+                        {**detail, "campaign_id": row["campaign_id"]})
         return {"task_id": task_id, "status": "queued", **detail}
 
     def escalate_task_tier(
@@ -1541,6 +1542,7 @@ class FactoryDB:
         exclude_provider: str | None = None,
         initial_status: str = "queued",
         last_error: str | None = None,
+        operator_dispatched: bool = False,
     ) -> str:
         identifier = task_id or str(uuid.uuid4())
         now = utc_now()
@@ -1683,11 +1685,13 @@ class FactoryDB:
                 "task_enqueued",
                 {
                     "status": initial_status,
+                    "campaign_id": campaign_id,
                     "agent_role": agent_role,
                     "session_mode": mode,
                     "session_source_task_id": session_source_task_id,
                     "parent_task_id": parent_task_id,
                     "routing_reason": routing_reason,
+                    **({"operator_dispatched": True} if operator_dispatched else {}),
                     "resources": resources,
                 },
             )

@@ -393,6 +393,7 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "paper_id": paper_id,
         "version": version,
         "title": metadata.get("title"),
+        "target_journal": metadata.get("target_journal"),
         # Non-null for a frozen paper: the pipeline must take no step for it.
         "frozen": freeze_block_reason(metadata, paper_id),
         # Non-empty for a record still laid out relative to a private root; `program adopt`

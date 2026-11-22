@@ -3104,6 +3104,10 @@ def render_brief(
         f"- Target: {research.get('target_tier') or 'routine'}; venues: {routine}"
         + (f"; escalation: {escalation}" if escalation else "") + f". Admission conditions: "
         f"{len(conditions) if isinstance(conditions, list) else 0} (`admission_conditions`).",
+        *(["- CAS Zone 1–2 evidence design: plan data scale, independent/external validation, "
+           "strong controls and uncertainty checks against the closest recent precedent. "
+           "Preserve the preregistered endpoint and document what the actual results support "
+           "for journal selection."] if research.get("target_stage") == "tier2_aim" else []),
         f"- Budget: {used}/{maximum} Agent seconds used; this seat ends by "
         f"{deadline.strftime('%Y-%m-%d %H:%M')} UTC.",
         *(["- Compute now:", *queue] if (queue := compute_brief_lines(

@@ -329,6 +329,22 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
 `program.by_line` 按研究线显示课题状态、已配置名额及侦察和立项批次的计数；只有领域的历史课题
 列在 `program.legacy_by_domain`。等待远程作业的在研课题仍占已绑定线的研究名额。
 
+每条线默认处于 `run_in`，按中科院 3–4 区水平跑通产线。自 2026-11-22 01:35 UTC
+（P1/P2/S6/G1 最后一项合入）起，首次记录完整的自动提案、立项、研究启动、评审、就绪和
+管理网站交付，且关联事件中没有人工重排、复开授权、人工派发、手工交付重试等介入，
+即自动进入 `tier2_aim` 并写入 `research_line_target_stage_changed`。在
+`program.by_line` 查看 `target_stage`、最近切换依据和 `run_in_progress`。
+`bin/openlabs-container-loop cli -- program target-stage` 只读回放。负责人可加
+`--line <线> --stage <run_in|tier2_aim> --by <操作者> --reason <理由>` 切换并留痕。
+手动切回 `run_in` 后，从这次切换起重新累计自动交付。
+
+`tier2_aim` 对此后新立项生效。卡片说明最近先例、实质增量、数据规模、对照与外部验证，
+独立立项关口筛掉贡献明显达不到 2 区的题。负责人按相同的证据要求规划实验与分析。
+成果通过独立评审后，方向决策按实际证据在已核实期刊中选档，理由写入 `venue_grade_decided`
+事件与台账。达到 2 区以上选 1–2 区，实际成果支持 3–4 区时可在该档正常交付。
+换刊仍需通过目标刊评审。只有 1 区可考虑付费，其余需核实免费路径，支出和投稿由人确认。
+稿件写作、图件和评审标准继续沿用统一要求。
+
 有研究线的新 campaign 写入 `workspaces/lines/<line>/<campaign>/`。已有 campaign 继续从持久化
 路径读取状态、证据和交付输入。项目配置与侦察、立项工作流仍在宿主领域工作区。
 

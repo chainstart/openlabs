@@ -23,6 +23,21 @@ they exist. Read the evidence it points to.
 Write down, before choosing, the single strongest reason this paper will not be accepted as it
 stands. It must be one of `reasons_to_answer`; quote it verbatim in `answers_reason`.
 
+## Grade a reviewed manuscript
+
+For trigger `review_venue_grade`, read the completed review and its evidence. Assess the
+actual advance over the closest recent work, data scale, controls and external validation.
+If the evidence supports CAS Zones 1–2, choose a verified journal in that band. If it
+supports Zones 3–4, choose a verified journal in that band for normal delivery. Explain
+the evidence in `rationale` and audience fit in `retarget.why_fits`. Use
+`retarget_or_short_format` with the exact verified journal name even to keep the current
+journal. Add `retarget.achieved_band` with `zones_1_2` or `zones_3_4`. Quote the packet's
+grading prompt in `answers_reason`. Check rejection history and the eligible fee route.
+When there is no suitable verified journal in the supported band, use `freeze` with
+`no_eligible_venue` and a venue-policy reopen condition. A switch requires review at the
+new journal. Apply this section to the grading trigger and use the following choices for
+other triggers.
+
 ## Choose
 
 Use the choices listed in the packet's `options`. When it includes

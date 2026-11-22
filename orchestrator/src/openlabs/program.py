@@ -872,7 +872,7 @@ def transition_topic(
 NOTE_FIELDS = frozenset(
     {"delivered_revision", "awaiting_owner_review", "handoff", "paper_id", "release", "delivery_repair", "card_repair", "revision",
      # A retried line admission precheck (program_flow.retry_held_prechecks).
-     "card_check"}
+     "card_check", "venue_grade"}
 )
 
 
