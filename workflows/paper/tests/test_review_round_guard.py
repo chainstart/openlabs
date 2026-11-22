@@ -12,9 +12,9 @@ from test_review_flow import MANUSCRIPT, _delta_fixture, _round_response
     ("missing_response", "Provide --response"),
     ("stale_response", "Provide --response"),
     ("omitted_figure", "Supply an evidence location"),
-    ("only_wording", "Substantive revision required"),
-    ("cooldown", "Cooldown until"),
-    ("override_wrong_target", "Cooldown until"),
+    ("only_wording", "Cite a new registered"),
+    ("cooldown", None),
+    ("override_wrong_target", None),
     ("override_empty_actor", "actor and reason"),
     ("old_artifact", "Cite a new registered"),
     ("old_job", "Cite a new registered"),
@@ -121,3 +121,29 @@ def test_parallel_review_does_not_start_a_second_pipeline(tmp_path, monkeypatch)
     result = flow.run_review("p", root=tmp_path, apply=False)
     assert result["merged"]["next_action"] == "wait"
     assert flow.scientific_rounds(tmp_path, "p", "J") == []
+
+
+def test_no_required_items_needs_no_response(tmp_path):
+    assert flow.review_round_guard.response_blockers(tmp_path, None, "previous", [], [], set(), set(), set(), set()) == []
+
+
+def test_scientific_rebuttal_requires_verifiable_evidence(tmp_path):
+    item = "Repeat the observation"
+    (tmp_path / "methods.tex").write_text("The existing observation covers this interval.")
+    row = {"item": item, "status": "rebutted", "explanation": "The interval is already covered."}
+    def blockers(locations):
+        raw = json.dumps({"items": [{**row, "evidence": locations}]})
+        return flow.review_round_guard.response_blockers(tmp_path, raw, "previous", [item], [item],
+                                                         set(), set(), set(), set())
+    assert blockers([]) and not blockers(["methods.tex:1"])
+
+
+def test_removing_evidence_is_a_change_for_the_referees(tmp_path):
+    snapshot = tmp_path / "manuscript-expanded.tex"
+    snapshot.write_text("Same text")
+    last = {"_path": tmp_path / "decision.json", "round_evidence_files": {"old.csv": "old"},
+            "figure_files": []}
+    guard = flow.review_round_guard
+    result = guard.check(tmp_path, "p", "J", last, {"expanded": snapshot.read_text()}, {}, {},
+                         None, [], {}, "previous", None, datetime.now(UTC), guard.settings({}))
+    assert result["blockers"] == [] and result["new_data"] == {}

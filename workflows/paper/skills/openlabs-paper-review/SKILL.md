@@ -85,8 +85,7 @@ title, abstract, introduction, statements, tables, conclusion-bearing sections a
 unchanged and few lines changed, the earlier judgment is reused, the formal verification
 reruns, and no round is consumed. Anything more gets a full review.
 
-For a second or later full review at the same venue, bind `--response RESPONSE.json`
-to the latest counted decision. The command returns `review_round_blocked` with
+For a second or later full review at the same venue, supply `--response RESPONSE.json` when the latest counted decision has required items. The controller binds that decision automatically. The command returns `review_round_blocked` with
 `round_guard.required_items`, `previous_decision_sha256`, `requires_new_artifact`,
 `blockers` and `retry_at` when admission fails. No editor or referee starts and no
 round is charged. Use the exact item strings from this output.
@@ -109,9 +108,9 @@ Include every required item once. For an unaddressed item, use `unaddressed` and
 explain why. New calculations, data and analyses require an addressed item with the
 hash of a new registered support artifact or `job:<id>` from a new registered JSON
 result containing that top-level `job_id`. For a full re-review with zero mandatory
-items, send a response with an empty `items` array. The guard also checks the
+items, omit the response file. The guard also checks the
 expanded manuscript, figures and registered evidence against the previous review
-and enforces the default three-hour cooldown. See operations.zh.md for policy
+and backs off repeated snapshots. See operations.zh.md for policy
 settings and owner grants.
 
 The round limit per target is `review.max_rounds_per_target`; a paper may carry a

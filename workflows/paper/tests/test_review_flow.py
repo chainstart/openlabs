@@ -1321,7 +1321,7 @@ def test_numeric_change_after_ready_requires_full_review(tmp_path, monkeypatch):
 
 
 def test_policy_change_after_ready_requires_full_review_but_does_not_supply_a_substantive_change(tmp_path, monkeypatch):
-    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT.replace("width=0.8", "width=0.6"))
+    calls = _delta_fixture(tmp_path, monkeypatch, MANUSCRIPT)
     monkeypatch.setattr(flow.formal_checks, "POLICY_VERSION", flow.formal_checks.POLICY_VERSION + 1)
     record = flow.run_review('p', root=tmp_path, response_letter=_round_response(tmp_path), apply=False)
     assert calls == [] and record["merged"]["outcome"] == "review_round_blocked"

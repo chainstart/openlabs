@@ -28,12 +28,9 @@ NEW_WORK = re.compile(
 
 def settings(review):
     hours = review.get("round_cooldown_hours", 3)
-    words = review.get("round_min_changed_words", 80)
     grants = review.get("round_cooldown_overrides", [])
     if type(hours) not in {int, float} or not math.isfinite(hours) or not 0 <= hours <= 8760:
         raise ValueError("review.round_cooldown_hours must be between 0 and 8760")
-    if type(words) is not int or words < 1:
-        raise ValueError("review.round_min_changed_words must be a positive integer")
     if not isinstance(grants, list):
         raise ValueError("review.round_cooldown_overrides must be a list of owner grants")
     for grant in grants:
@@ -43,7 +40,7 @@ def settings(review):
                 or not re.fullmatch(r"[0-9a-f]{64}", grant["decision_sha256"])):
             raise ValueError("Each review cooldown override needs paper_id, target_journal, "
                              "decision_sha256, actor and reason")
-    return {"cooldown_hours": hours, "min_changed_words": words, "cooldown_overrides": grants}
+    return {"cooldown_hours": hours, "cooldown_overrides": grants}
 
 
 def evidence_snapshot(root, pre):
@@ -149,11 +146,13 @@ def evidence_location(root, value, hashes, jobs):
 
 
 def response_blockers(root, raw, digest, items, needs_work, hashes, jobs, new_hashes, new_jobs):
+    if not items and not raw:
+        return []
     try:
         letter = json.loads(raw) if raw else None
     except ValueError:
         letter = None
-    if not isinstance(letter, dict) or letter.get("decision_sha256") != digest:
+    if not isinstance(letter, dict) or letter.get("decision_sha256", digest) != digest:
         return ["Provide --response with a JSON response bound to decision_sha256"]
     entries = letter.get("items")
     if not isinstance(entries, list) or any(
@@ -167,11 +166,15 @@ def response_blockers(root, raw, digest, items, needs_work, hashes, jobs, new_ha
         row = indexed.get(item, {})
         status, explanation = row.get("status"), row.get("explanation")
         locations = row.get("evidence", [])
-        if status not in ("addressed", "unaddressed") or not isinstance(explanation, str) or not explanation.strip():
-            blockers.append(f"Specify addressed/unaddressed and explain the handling of {item}")
+        if status not in ("addressed", "unaddressed", "rebutted") or not isinstance(explanation, str) or not explanation.strip():
+            blockers.append(f"Specify addressed, unaddressed or rebutted and explain the handling of {item}")
             continue
         if not isinstance(locations, list) or any(not evidence_location(root, ref, hashes, jobs) for ref in locations):
             blockers.append(f"Supply valid evidence locations for {item}")
+            continue
+        if status == "rebutted":
+            if not locations:
+                blockers.append(f"Supply an evidence location for the rebuttal of {item}")
             continue
         if item in needs_work:
             if status != "addressed" or not any(
@@ -201,20 +204,27 @@ def check(root, paper_id, target, last, pre, current, jobs, raw, items, explicit
     snapshot = last["_path"].with_name("manuscript-expanded.tex")
     if not snapshot.is_file():
         problems.append("Previous expanded manuscript snapshot is missing")
-    words = changed_words(snapshot.read_text(), pre["expanded"]) if snapshot.is_file() else 0
-    if not new_data and not new_figures and words < policy["min_changed_words"]:
-        problems.append(f"Substantive revision required: {words} changed words "
-                        f"(minimum {policy['min_changed_words']}), no new figure or registered data bytes")
+    old_text = snapshot.read_text() if snapshot.is_file() else None
+    words = changed_words(old_text, pre["expanded"]) if old_text is not None else 0
+    removed_data = (set(last.get("round_evidence_files", {}).values()) - set(current.values()))
+    removed_figures = ({row["sha256"] for row in last.get("figure_files", [])}
+                       - {row["sha256"] for row in pre.get("figure_files", [])})
+    repeated = old_text == pre["expanded"] and not (new_data or new_figures or removed_data or removed_figures)
+    if repeated:
+        problems.append("Previous manuscript and evidence snapshot is unchanged")
+    else:
+        cooldown_blocker = None
+        retry_at = None
     needs_work = [item for item in items if explicit.get(item, bool(NEW_WORK.search(item)))]
     current_hashes = set(current.values()) | {row["sha256"] for row in pre.get("figure_files", [])}
     problems.extend(response_blockers(root, raw, digest, items, needs_work, current_hashes,
                                       set(jobs.values()), set(new_data.values()),
                                       {jobs[path] for path in new_data if path in jobs}
                                       - set(last.get("round_evidence_jobs", {}).values())))
-    cooldown_only = bool(cooldown_blocker and retry_at and not problems)
+    cooldown_only = bool(cooldown_blocker and retry_at and repeated and len(problems) == 1)
     if cooldown_blocker:
         problems.append(cooldown_blocker)
-    return {"previous_decision_sha256": digest, "required_items": items,
+    return {"paper_id": paper_id, "target_journal": target, "previous_decision_sha256": digest, "required_items": items,
             "requires_new_artifact": needs_work, "blockers": problems, "cooldown_only": cooldown_only,
             "changed_words": words, "new_data": new_data, "new_figure_sha256": sorted(new_figures),
             "retry_at": retry_at.isoformat() if retry_at else None, "cooldown_override": override}
