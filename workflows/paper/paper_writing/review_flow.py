@@ -2781,10 +2781,15 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
     formal_summary = None
     if "followup_items" in base:
         record["followup_items"] = base["followup_items"]
-    if apply_review_track(_recorded_merge(base, history_blockers), referees, track)["outcome"] == "ready":
+    from paper_writing import resynthesis
+
+    # A resynthesized basis may carry blockers withdrawn on sustained factual rebuttals.
+    science = resynthesis.science_view(base, root, pre["metadata"])
+    if apply_review_track(_recorded_merge(science, history_blockers), science["referee_reports"],
+                          track)["outcome"] == "ready":
         pre, formal_blockers, formal_summary = _formal_stage(pre, root, run, roles, config, pre["metadata"], record)
-    merged = apply_review_track(_recorded_merge(base, history_blockers, formal_blockers=formal_blockers,
-                                      formal_summary=formal_summary), referees, track)
+    merged = apply_review_track(_recorded_merge(science, history_blockers, formal_blockers=formal_blockers,
+                                      formal_summary=formal_summary), science["referee_reports"], track)
     if base.get("review_mode") == "resynthesize":
         previous_advice = base["merged"].get("advisory_items", [])
         advice = merged.setdefault("advisory_items", [])
@@ -3378,7 +3383,7 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
         if any("formal_check_assessment" not in r for r in record["referee_reports"].values()):
             raise ValueError("Ready decision lacks independent scientific coverage assessment")
         blockers = rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy)
-        if _recorded_merge(record, blockers)['outcome'] != 'ready':
+        if _recorded_merge(resynthesis.science_view(record, root, metadata), blockers)['outcome'] != 'ready':
             raise ValueError("Ready decision contradicts the editor, rejection letters, or referees")
     if rejection_context_blockers(record, metadata, root):
         raise ValueError('Rejection history or original letter changed during the review; rerun')
@@ -3631,7 +3636,7 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
     if record.get("referee_reports"):
         try:
             history = rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy)
-            if _recorded_merge(record, history)['outcome'] != "ready":
+            if _recorded_merge(resynthesis.science_view(record, root, metadata), history)['outcome'] != "ready":
                 problems.append("The merged gate contradicts the actual referee or formal-check assessment")
         except (KeyError, TypeError, ValueError):
             problems.append("The actual referee reports are incomplete or malformed")

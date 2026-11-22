@@ -30,6 +30,73 @@ paper-writing review unified-run --root DATA_ROOT --paper-id PID \
 `full_review_required` 在新记录中列明拒绝原因。复核通过后沿用原科学裁决，绑定新正式核验记录，
 并绑定统一评审中的读者记录后进入机械交付。全程不计入目标刊科学轮次，投稿由人确认。
 
+### 与送审快照不符的阻断：独立裁定（2026-11-22）
+
+审稿意见的事实前提与同轮送审快照不符时，作者可以对这一条阻断提出反驳，不必再开完整评审。
+例如意见称表中印 0.248，而 `manuscript-expanded.tex` 对应行印的是 0.247–0.298。
+
+```bash
+paper-writing review rebut --root DATA_ROOT --paper-id PID \
+  --decision reviews/unified/PID/RUN --rebuttal REBUTTAL.json \
+  --actor OPERATOR --reason REASON [--adjudicator-role ROLE] [--no-model]
+```
+
+反驳 JSON 每次只针对一条阻断，字段如下：
+
+- `schema`：`openlabs.review_rebuttal.v1`。
+- `claim`：`factual_error`。
+- `decision_sha256`：原轮决定的哈希。
+- `blocker`：阻断原文。可以是 `merged.required_changes[].change`、未解决的上轮条目或科学阻断的原文。
+- `rebuttal`：作者的说明。
+- `asserted_text`：意见声称稿中印的值。
+- `expected_text`：快照实际印的值，也是意见自己推出的值。
+- `snapshot`：`sha256`、`line`、`quote`，分别是快照哈希、行号和该行原文片段。
+- `recomputations`：复算文件列表，每项含 `path`、`sha256`，可选 `value`。文件须在 `papers/PID/` 下。
+
+裁定分三步：
+
+1. **核对证据，不成立即驳回。** 决定哈希、快照哈希（须与审稿人提示中的快照一致）、行内引文、
+   复算文件哈希和数值，以及阻断原文是否确为原轮阻断，任一项不符即判 `rejected`，阻断保留。
+2. **确定性判定。** 先找意见位置里点名的 `\label`（如 `tab:prof1500`），取包含该行的整个表或图环境；
+   没有点名标签时取整份快照。若意见原句声称稿中“印/给出/列出”某值，该值在上述范围内展开宏后一次也不出现，
+   引用行又印着意见自己推出的值，行首单元格也与意见所说的行对应，则判 `sustained`，不调用模型。
+   引用行恰好印着意见所说的值时判 `rejected`。
+3. **独立模型裁定。** 前两步都定不了时，派一个模型会话。模型须不同于提出该阻断的角色和写作模型，
+   优先跨族；Claude 停用、`cross_model.basis: model` 期间用同族的另一模型。会话只看这条阻断、反驳、
+   检查结果、引用行前后 12 行和复算文件，判 `sustained` 或 `rejected` 并给出理由，拿不准时判驳回。
+   `--no-model` 时记为 `undetermined`。
+
+记录写在 `reviews/rebuttals/PID/RUN/`，含 `rebuttal.json`、`adjudication.json` 和模型会话的 `adjudicator/`。
+`adjudication.json` 写明逐项检查、证据哈希、裁定方（`deterministic` 或模型及其独立性）和理由。
+裁定本身不计科学轮次，也不改归档决定。
+
+反驳成立后，在 `review resynthesize` 的回复 JSON 中加入：
+
+```json
+"rebuttals": [{"adjudication": "reviews/rebuttals/PID/RUN/adjudication.json", "sha256": "…"}]
+```
+
+重合成时在内存中撤下该条阻断，改为建议，其余仍按现行规则合成；归档的审稿报告保持原样。
+应用决定、后续差异复核和交付前，都会重新核对裁定记录：确定性裁定重算一遍，模型裁定核对输出哈希。
+记录被改动、驳回或判 `undetermined` 时，阻断照常保留，决定为 `full_review_required`。
+
+### 修订证据与支撑源
+
+`support.publication.source_files` 是评审绑定的支撑源，文件名和字节构成 `support_sources_sha256`。
+只为答复归档决定而做的复算脚本和结果，例如重合成回复或事实反驳所用的文件，应登记为修订证据
+`support.publication.revision_evidence`。这类文件放在 `papers/PID/revisions/` 下，在回复中按路径和哈希引用，
+不进支撑包，也不改变评审指纹。要开新一轮完整评审时，若需审稿人看到这些文件，仍按原流程登记为支撑源。
+
+```bash
+paper-writing program register-revision-evidence --root DATA_ROOT --paper-id PID \
+  --path papers/PID/revisions/.../verify.py --path papers/PID/revisions/.../result.json \
+  --actor OPERATOR --reason REASON [--decision reviews/unified/PID/RUN]
+```
+
+命令只改登记，不动文件和稿件。已误登记在 `source_files` 的条目会被移出，并标记
+`removed_from_support_sources`。输出给出移动前后的支撑指纹，以及是否等于基准决定（默认取当前目标刊最近一次完整决定）
+所审的指纹。如果当前指纹本来就等于基准决定所审的指纹，说明这些文件当时就在审稿人眼前，命令拒绝移出。
+
 ## 手工演练
 
 所有命令都以外层工作空间为边界：

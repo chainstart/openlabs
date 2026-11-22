@@ -69,7 +69,8 @@ def _check_changes(old, new, response, items):
         + [reason for reason in full_reasons if not reason.startswith("conclusion-bearing sections changed:")]))
 
 
-def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_basis=False):
+def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_basis=False, notes=None):
+    from paper_writing import rebuttal
     from paper_writing.operations import _review_workspace_fingerprints
 
     if not isinstance(response, dict):
@@ -83,9 +84,15 @@ def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_
     round_limit = flow.review_round_limit_override(metadata, root, paper_id)
     track = flow.review_track(metadata, root)
     history = flow.rejection_clearance_blockers(base["editor_screen"], base.get("prior_decisions", []), history_policy)
+    # Sustained factual rebuttals (rebuttal.py) withdraw single archived blockers in memory.
+    withdrawn, reasons, rebuttal_notes = rebuttal.sustained(root, paper_id, base, basis_sha,
+                                                            response.get("rebuttals", []))
+    if notes is not None:
+        notes["rebuttals"] = rebuttal_notes
+    view = rebuttal.withdrawn_view(base, withdrawn)
     pre = {"metadata": metadata, "journal_response": flow._journal_response_packet(metadata, root, paper_id),
            "active_revision_context": flow.active_revision_context(metadata, root)}
-    reasons = flow._delta_context_reasons(base, pre, config, track, root, history_policy, round_limit)
+    reasons += flow._delta_context_reasons(base, pre, config, track, root, history_policy, round_limit)
     target = metadata.get("target_conference" if metadata.get("venue_type") == "conference" else "target_journal")
     if base["target_journal"] != target:
         reasons.append("The target venue changed")
@@ -125,9 +132,10 @@ def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_
     if set(annotations) - set(eligible):
         raise ValueError("Only legacy scientific gaps without a recorded materiality judgment can be annotated")
     revised = []
-    archived_science = flow._recorded_merge(base, history)
+    archived_science = flow._recorded_merge(view, history)
     items = {change["change"] for change in archived_science.get("required_changes", [])}
     items.update(item["item"] for item in archived_science.get("unresolved_previous_items", []))
+    items.update(withdrawn)
     for index, finding in enumerate(findings, 1):
         item = f"formal-{index}"
         items.add(item)
@@ -143,7 +151,7 @@ def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_
     summary = formal.issue_summary(revised)
     blockers = [m for category, messages in summary["by_category"].items()
                 if category != "advisory" for m in messages]
-    editor, referees = base["editor_screen"], base["referee_reports"]
+    editor, referees = view["editor_screen"], view["referee_reports"]
     if editor.get("review_standard") != "materiality_v1" and "followup_items" not in base:
         # Legacy findings have no structured account of the wrong conclusion.
         # Carry the scientific judgment below, and feed its advice into the
@@ -159,7 +167,9 @@ def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_
         followup_items=base.get("followup_items")), referees, track)
     # Legacy prose without structured materiality retains its original scientific weight.
     old_merged = base["merged"]
-    if (old_merged.get("outcome") not in {"ready", "formal_check_blocked"}
+    rebutted = (old_merged.get("outcome") == "revision_required" and bool(withdrawn)
+                and {item["text"] for item in rebuttal.blocking_items(old_merged)} <= set(withdrawn))
+    if ((old_merged.get("outcome") not in {"ready", "formal_check_blocked"} and not rebutted)
             or archived_science["outcome"] != "ready"):
         reasons.extend(archived_science.get("scientific_blockers") or
                        [f"The archived scientific judgments require {archived_science['outcome']}"])
@@ -219,8 +229,11 @@ def _run(paper_id, *, root, decision, response, actor, reason, apply):
             pre = flow.preflight(paper_id, root, Path(scratch), update_manuscript=False)
         current = pre["expanded"]
         (directory / "manuscript-expanded.tex").write_text(current)
+        notes = {}
         merged, reasons, fingerprints, config, history, limit = _replay(
-            paper_id, root, base, basis_sha, response, metadata, current)
+            paper_id, root, base, basis_sha, response, metadata, current, notes=notes)
+        if notes.get("rebuttals"):
+            record["resynthesis"]["rebuttals"] = notes["rebuttals"]
         reasons.extend(pre["blockers"])
         if ("figure_files" not in base or flow.figure_changes(base, pre)
                 or any(a["code"] == "FIGURE-FILES-UNREADABLE" for a in pre["preparation_advisories"])):
@@ -301,3 +314,25 @@ def validate_delta_basis(record, root, metadata):
         return validate(base, path, root, metadata, as_basis=True)
     except _ARCHIVE_ERRORS as exc:
         return [f"Resynthesized delta basis: {exc}"]
+
+
+def science_view(record, root, metadata):
+    """``record`` with the blockers its resynthesis (or resynthesized delta basis) withdrew
+    on sustained factual rebuttals; unchanged when none apply or they no longer verify."""
+    from paper_writing import rebuttal
+
+    root = Path(root).resolve()
+    paper_id = metadata.get("paper_id") or record.get("paper_id")
+    try:
+        source = record
+        delta = record.get("delta_review") or {}
+        if record.get("review_mode") != "resynthesize" and delta.get("basis_mode") == "resynthesize":
+            source = json.loads(formal._safe_file(root, delta["basis_decision"]).read_bytes())
+        if source.get("review_mode") != "resynthesize" or not (source.get("resynthesis") or {}).get("rebuttals"):
+            return record
+        reply = json.loads((flow.runs_dir(root, paper_id) / source["run_id"] / "resynthesis-response.json").read_bytes())
+        base, basis_sha = _basis(root, paper_id, Path(source["resynthesis"]["basis_decision"]))
+        withdrawn, problems, _ = rebuttal.sustained(root, paper_id, base, basis_sha, reply.get("rebuttals", []))
+        return record if problems else rebuttal.withdrawn_view(record, withdrawn)
+    except _ARCHIVE_ERRORS:
+        return record

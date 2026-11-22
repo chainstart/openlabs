@@ -317,6 +317,17 @@ def build_parser() -> argparse.ArgumentParser:
         replay.add_argument("--" + name, required=True)
     replay.add_argument("--no-apply", action="store_true", help="Record a replay without updating the registry.")
     replay.add_argument("--root", default=str(default_repo_root()))
+    rebut = review_commands.add_parser(
+        "rebut",
+        help="Adjudicate a factual rebuttal of one archived blocker (deterministic check first, "
+             "then one independent model session); cite the record in a resynthesize reply.")
+    for name in ("paper-id", "decision", "rebuttal", "actor", "reason"):
+        rebut.add_argument("--" + name, required=True)
+    rebut.add_argument("--adjudicator-role", help="Configured review role to adjudicate (default: chosen "
+                                                  "for independence from the item's author and the writer).")
+    rebut.add_argument("--no-model", action="store_true",
+                       help="Record 'undetermined' instead of starting a model when the checks cannot decide.")
+    rebut.add_argument("--root", default=str(default_repo_root()))
     runtime_preflight = review_commands.add_parser(
         "runtime-preflight",
         help="Check that an independent referee runtime can open the registered materials, "
@@ -577,9 +588,23 @@ def build_parser() -> argparse.ArgumentParser:
              "copies program adopt made (reviewed names kept in adopted_sources).",
     )
     program_relocate.add_argument("--paper-id", required=True)
+    program_revision_evidence = program_commands.add_parser(
+        "register-revision-evidence",
+        help="Register response recomputations under papers/<id>/revisions/ as revision evidence "
+             "(support.publication.revision_evidence, outside support_sources_sha256); moves "
+             "entries mistakenly listed in support.publication.source_files. Registry only.",
+    )
+    program_revision_evidence.add_argument("--paper-id", required=True)
+    program_revision_evidence.add_argument("--path", action="append", required=True,
+                                           help="Repository-relative file; repeat for several.")
+    program_revision_evidence.add_argument("--actor", required=True)
+    program_revision_evidence.add_argument("--reason", required=True)
+    program_revision_evidence.add_argument("--decision",
+                                           help="Basis decision (default: latest full unified decision).")
     for command in (program_escalation, program_fallback, program_confirm, program_deliver,
                     program_assign, program_status, program_adopt, program_waive, program_bind,
-                    program_unwaive, program_bind_payloads, program_relocate, program_declarations):
+                    program_unwaive, program_bind_payloads, program_relocate, program_declarations,
+                    program_revision_evidence):
         command.add_argument("--root", default=str(default_repo_root()))
         command.add_argument("--json", action="store_true", help="Print one JSON object.")
     return parser
@@ -901,6 +926,25 @@ def main(argv: list[str] | None = None) -> int:
             "full_review_reasons": result["merged"].get("full_review_reasons", []),
         }, ensure_ascii=False, indent=2))
         return 0 if result["merged"]["outcome"] == "ready" else 2
+    if args.command == "review" and args.review_command == "rebut":
+        from paper_writing import rebuttal
+        from paper_writing.review_launcher import LaunchError
+
+        try:
+            result = rebuttal.run(args.paper_id, root=args.root, decision=args.decision,
+                                  rebuttal=args.rebuttal, actor=args.actor, reason=args.reason,
+                                  adjudicator_role=args.adjudicator_role, allow_model=not args.no_model)
+        except (ValueError, OSError, KeyError, LaunchError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+            return 2
+        if "run_dir" not in result:  # another review holds the paper lock
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps({key: result.get(key) for key in (
+            "run_dir", "adjudication_sha256", "verdict", "decided_by", "reason_for_verdict", "adjudicator")}
+                         | {"adjudication": f"{result['run_dir']}/adjudication.json"},
+                         ensure_ascii=False, indent=2))
+        return 0 if result["verdict"] == "sustained" else 2
     if args.command == "review" and args.review_command == "unified-run":
         from paper_writing.registry import PaperFrozenError
         from paper_writing.review_flow import run_review
@@ -1021,6 +1065,12 @@ def _run_program(args: argparse.Namespace) -> int:
             from paper_writing.program_adopt import relocate_support_sources
 
             result = relocate_support_sources(args.paper_id, root=args.root)
+        elif args.program_command == "register-revision-evidence":
+            from paper_writing import revision_evidence
+
+            result = revision_evidence.register(args.paper_id, root=args.root, paths=args.path,
+                                                actor=args.actor, reason=args.reason,
+                                                decision=args.decision)
         elif args.program_command == "bind-oversize-payloads":
             from paper_writing.program_adopt import bind_oversize_payloads
 
