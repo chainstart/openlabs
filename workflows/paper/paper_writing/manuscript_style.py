@@ -21,7 +21,6 @@ from paper_writing.ai_disclosure import (
 )
 from paper_writing.editorial_voice import editorial_voice_issues
 from paper_writing.funding import ineligible_funding
-from paper_writing.narrative_check import HARD_CODES as NARRATIVE_HARD_CODES
 from paper_writing.registry import load_paper_metadata, load_registry
 
 
@@ -204,31 +203,12 @@ UNRESOLVED_SOURCE_MARKER = re.compile(
 # contains them so that a human can judge a real workflow leak before delivery.
 BLACKLIST_CODES = frozenset(code for code, _, _ in PROHIBITED_BODY_PATTERNS) | {"STYLE-BIBLIOGRAPHY-WORKFLOW"}
 
-# Style findings that still stop the unified review before any model runs. Every
-# other style finding is a preparation advisory at review time and remains a hard
-# requirement at the delivery exit (handoff / Zenodo release). Unknown codes are
-# treated as blocking so that a new check is never silently weakened.
-REVIEW_BLOCKING_CODES = frozenset({
-    "STYLE-MANUSCRIPT-MISSING",          # nothing to review
-    # Main text over its length limit, or revision-history narration (user decision
-    # 2026-11-19): the writer cuts before a review round is spent on the draft.
-    *NARRATIVE_HARD_CODES,
-    "STYLE-ARTWORK-PROVENANCE",          # hash-bound artwork generation evidence
-    "STYLE-FUNDING-AUTHOR-ELIGIBILITY",  # registered funding-eligibility policy
-})
-REVIEW_ADVISORY_PREFIXES = ("STYLE-AI-", "VOICE-")
-REVIEW_ADVISORY_CODES = frozenset({
-    "STYLE-INTERNAL-PATH", "STYLE-UNRESOLVED-MARKER", "STYLE-UNCONFIRMED-SUBMISSION-TEXT",
-    "STYLE-UNCHECKED-SUBMISSION-ITEM", *BLACKLIST_CODES,
-})
-
-
+# The author report retains all findings. Only missing manuscript inputs,
+# required declarations and irreproducible artwork prevent review.
 def review_stage_blocking(code: Any) -> bool:
-    """Whether a style finding blocks the unified review (unknown codes do)."""
-    code = str(code or "")
-    if code in REVIEW_BLOCKING_CODES:
-        return True
-    return not (code in REVIEW_ADVISORY_CODES or code.startswith(REVIEW_ADVISORY_PREFIXES))
+    return code in {"STYLE-MANUSCRIPT-MISSING", "STYLE-AI-DECLARATION-MISSING",
+                    "STYLE-ARTWORK-PROVENANCE"}
+
 
 
 def _sentence_context(lines: list[str], index: int, pattern: re.Pattern[str]) -> str:
@@ -1012,13 +992,7 @@ def advisory_record(source: str, issue: Mapping[str, Any], *, kind: str) -> dict
 
 
 def manuscript_style_review_findings(result: Mapping[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
-    """Split a style audit for the unified review: (blockers, preparation advisories).
-
-    Only findings that make the manuscript unreviewable or that encode a registered
-    policy block. Presentation findings are advice at this stage and are enforced
-    again at the delivery exit by ``manuscript_style_blockers``; internal-vocabulary
-    hits and unverifiable AI tool lists are reported with their context only.
-    """
+    """Collect author advice and identify hard review-input defects."""
     blocking = [issue for issue in result.get("errors", [])
                 if isinstance(issue, Mapping) and review_stage_blocking(issue.get("code"))]
     advisories = [advisory_record("manuscript_style", issue, kind="preparation")

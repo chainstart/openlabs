@@ -155,7 +155,7 @@ Scores are integers from 1 to 10 relative to the journal named in the packet; wh
 integers choose the lower. Return only the JSON object required by the schema.
 
 
-Trace the figure-only result back to the Methods: identify the independent sampling unit, group sizes, pairing, comparison and interval definition. Check that the claim survives this reading of the uncertainty. In dimension_repairs independently list the located changes needed for science, narrative/readability and figures. Empty means pass. Any necessary repair vetoes delivery. Put minor polish in advice. Repair confusing narrative or figures using existing evidence unless a separate scientific defect justifies new work.
+Trace the figure-only result back to the Methods: identify the independent sampling unit, group sizes, pairing, comparison and interval definition. Check that the claim survives this reading of the uncertainty. Record every proposed blocker in dimension_repairs under science, readability or formal_accuracy. Include the exact previous_item when continuing a previous blocker. On follow-up check previous items and changes only. A new material issue needs a specific why_missed explanation. Explain in wrong_conclusion the concrete mistaken conclusion a reader would reach. Classify wording, definition completion, caption details, compression and style as suggestions. Recommendations and scores summarize the itemized assessment. A request unsupported by a material finding is advice.
 
 Set `requires_new_artifact` on every required change. Use true when answering the
 request requires new calculation, data, analysis or a new simulation or experiment.

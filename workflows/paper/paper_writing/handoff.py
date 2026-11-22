@@ -1398,9 +1398,8 @@ def validate_release_preconditions(
             raise HandoffError(
                 "A published Zenodo Version DOI is required before manuscript handoff"
             )
-        if minimum_support_status or bool(
-            support_gate.get("require_manuscript_citation", False)
-        ):
+        if configured_gate.get("review_process") != "unified_v1" and (minimum_support_status or
+                support_gate.get("require_manuscript_citation", False)):
             support_audit = audit_manuscript_support(paper_id, root=repo_root)
             if not support_audit.get("valid"):
                 first = next(iter(support_audit.get("errors", [])), {})

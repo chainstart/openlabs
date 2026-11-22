@@ -34,9 +34,8 @@ def test_delivery_issues_carry_codes_and_the_unchanged_blocker_text(tmp_path, mo
     items = flow.delivery_issues('p', {'paper_id': 'p'}, tmp_path, record, notes=[])
     assert [i['text'] for i in items] == flow.delivery_blockers('p', {'paper_id': 'p'}, tmp_path, record)
     codes = {i['code'] for i in items}
-    assert {'STYLE-UNRESOLVED-MARKER', 'SUPPORT-DOI-MISSING', 'ABSTRACT-VENUE-FORMAT',
-            'UNUSED-SOURCE-FILES'} <= codes
-    assert next(i for i in items if i['code'] == 'UNUSED-SOURCE-FILES')['files'] == ['leftover.tex']
+    assert {'SUPPORT-DOI-MISSING', 'ABSTRACT-VENUE-FORMAT'} <= codes
+    assert not {'STYLE-UNRESOLVED-MARKER', 'UNUSED-SOURCE-FILES'} & codes
     assert 'STYLE-INTERNAL-AUDIT' not in codes  # a note, never a blocker
 
 
@@ -75,8 +74,8 @@ def test_release_status_classifies_remedies_and_reads_the_standing_authorization
                     style=['STYLE-UNRESOLVED-MARKER'], support=['SUPPORT-RECEIPT-DOI', 'SUPPORT-BIB-DOI'])
     status = rp.release_status('p', root=tmp_path)
     remedies = {i['code']: i['remedy'] for i in status['issues']}
-    assert remedies == {'STYLE-UNRESOLVED-MARKER': 'writer', 'SUPPORT-RECEIPT-DOI': 'zenodo_prepare',
-                        'SUPPORT-BIB-DOI': 'writer'}
+    assert remedies == {'STYLE-UNRESOLVED-MARKER': 'control_plane', 'SUPPORT-RECEIPT-DOI': 'zenodo_prepare',
+                        'SUPPORT-BIB-DOI': 'control_plane'}
     support = status['support']
     assert support['prepare_needed'] and not support['release_needed']
     assert support['standing_production_release_authorization'] is True

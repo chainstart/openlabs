@@ -1807,10 +1807,13 @@ def _figure_gate(db, paths, settings, report, *, task, packet, result_path, stat
         return False
     campaign_id = str(task["campaign_id"])
     audit = paper_figures.check(paths, settings, paper_id, root) if root is not None else {}
-    issues = ([*audit.get("blocking", []), *audit.get("repair_required", [])] if root is not None else
+    issues = ([item for item in audit.get("blocking", []) if item["code"] in {
+        "FIG-NO-SOURCE", "FIG-NOT-BUILT", "FIG-REBUILD-FAILED", "FIG-UNREADABLE", "FIG-CHECK-FAILED"}] if root is not None else
               [{"figure": "manuscript", "code": "FIG-DRAFT-MISSING",
                 "message": "Locate the supplementary revision in the campaign workspace."}])
     requested = packet.get("request_figure_assistant")
+    if requested is True and root is not None:
+        issues = [*audit.get("blocking", []), *audit.get("repair_required", [])]
     prior = state.get("figure_repair") or {}
     if isinstance(requested, str) and requested.strip() and not prior.get("rounds"):
         issues.append({"figure": "manuscript", "code": "FIG-AUTHOR-REQUEST", "message": requested.strip()})

@@ -134,12 +134,21 @@ REFEREE_SCHEMA: dict[str, Any] = {
     },
 }
 # Each list contains only located repairs necessary for this dimension to pass.
-DIMENSIONS = ("science", "narrative", "figures")
+DIMENSIONS = ("science", "readability", "formal_accuracy")
+DIMENSION_FINDING = formal_checks.object_schema({
+    "repair": _TEXT,
+    "kind": {"type": "string", "enum": ["substantive", "wording", "definition_detail",
+                                         "caption_detail", "length", "style"]},
+    "wrong_conclusion": _TEXT,
+    "why_missed": _TEXT,
+    "previous_item": _TEXT,
+})
 for schema in (EDITOR_SCHEMA, REFEREE_SCHEMA):
-    schema["required"].append("dimension_repairs")
+    schema["properties"]["review_standard"] = {"type": "string", "enum": ["materiality_v1"]}
+    schema["required"].extend(["dimension_repairs", "review_standard"])
     schema["properties"]["dimension_repairs"] = {
         "type": "object", "required": list(DIMENSIONS), "additionalProperties": False,
-        "properties": {name: _TEXT_LIST for name in DIMENSIONS},
+        "properties": {name: {"type": "array", "items": DIMENSION_FINDING} for name in DIMENSIONS},
     }
 
 
@@ -590,10 +599,11 @@ def _lead_round_extension(extension: Any, root: Path, *, paper_id: str, target: 
 
 def review_policy_sha256(config: Mapping[str, Any], history_policy: Mapping[str, Any] | None = None,
                          round_limit_override: Mapping[str, Any] | None = None, *,
-                         formal_policy: Mapping[str, Any] | None = None) -> str:
+                         formal_policy: Mapping[str, Any] | None = None,
+                         stage_order: str = "parallel_materiality_v1") -> str:
     policy = {k: config[k] for k in ("process", "roles", "referee_roles", "rejection_clearance_required")}
     policy["formal_check"] = dict(formal_policy) if formal_policy is not None else formal_checks.policy()
-    policy['stage_order'] = 'editor_three_dimensions_core_verification_blind_reader_decision'
+    policy['stage_order'] = stage_order
     if history_policy is not None:
         policy["missing_rejection_letter_policy"] = history_policy
     if round_limit_override is not None:
@@ -616,9 +626,15 @@ def review_policy_matches(record: Mapping[str, Any], config: Mapping[str, Any], 
         return True
     binding = record.get("formal_check")
     legacy = formal_checks.recorded_policy(binding, root) if isinstance(binding, Mapping) else None
-    return (legacy is not None and legacy != formal_checks.policy() and formal_checks.policy_accepted(legacy)
-            and recorded == review_policy_sha256(config, history_policy, round_limit_override,
-                                                 formal_policy=legacy))
+    if (record.get("editor_screen") or {}).get("review_standard") == "materiality_v1":
+        return False
+    historic_order = "editor_three_dimensions_core_verification_blind_reader_decision"
+    return any(recorded == review_policy_sha256(config, history_policy, round_limit_override,
+               formal_policy=version, stage_order=order)
+               for order in (historic_order, "parallel_materiality_v1")
+               for version in (formal_checks.policy(), legacy)
+               if version is not None and formal_checks.policy_accepted(version))
+
 
 
 def unified_enabled(root: str | Path) -> bool:
@@ -832,21 +848,7 @@ def _preparation_advisory(source: str, code: str, message: str, *, kind: str = "
 
 
 def preflight(paper_id: str, root: Path, workdir: Path) -> dict[str, Any]:
-    """Deterministic checks; no model is started when any blocker is found.
-
-    Only what makes a review impossible or meaningless blocks here: a manuscript
-    that does not build, missing registration, broken evidence/data hash bindings,
-    the user's venue policy (excluded journals, fee-free route, SCIE/zone
-    eligibility) and a declared source routed to an absent bibliography key.
-    Presentation and preparation findings (internal vocabulary, AI-declaration
-    wording, abstract length/person, TODO markers, unused source files,
-    support-record identifiers, the pre-review Zenodo draft and a selected
-    claim-evidence map not yet in the current-version support ZIP) are returned as
-    ``preparation_advisories``: they never fail the preflight, and the delivery exit
-    enforces them (see ``delivery_blockers``). Registered passage selectors and
-    local evidence files that no longer match are advisories too; nothing uses them
-    since the formal check was narrowed, so the delivery exit only notes them.
-    """
+    """Check the review inputs and attach the author's diagnostic findings."""
     from paper_writing.journal_history import tolerate_stale_ledger
 
     # Internal review: a stale team rejection ledger is a warning here. Journal
@@ -874,15 +876,12 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
         # venue-neutral fit record shared with journals.
         target = str(metadata.get("target_conference") or "")
         if not target:
-            blockers.append("A verified CCF-ranked target conference is required")
+            advisories.append(_preparation_advisory("venue", "TARGET-MISSING", "Target conference missing"))
     elif venue_type == "journal":
         target = str(metadata.get("target_journal") or "")
     else:
         target = ""
         blockers.append("The unified review supports journal and conference manuscripts only")
-    fit = metadata.get("target_journal_fit") or {}
-    if not target or not isinstance(fit, Mapping) or fit.get("status") != "approved":
-        blockers.append("A verified target venue with an approved fit record is required")
     manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
     pdf, used = _build(manuscript, workdir)  # a manuscript that does not build stops here
     canonical = root / str(metadata.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf")
@@ -893,6 +892,21 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
         shutil.copyfile(fresh_bbl, manuscript / "main.bbl")
     used |= build_registered_supplement(metadata, root, manuscript, workdir)
     used |= standalone_document_files(manuscript)
+    if (manuscript / "figures").is_dir():
+        from paper_writing import figures
+        audit = figures.check(figures.workspace(manuscript=manuscript), rebuild=True)
+        # The figure tool can resolve archived external generators but cannot
+        # run one without its invocation and inputs. A pathname is not a rebuild.
+        for figure in audit["figures"]:
+            if figure.get("source_external"):
+                blockers.append(f"FIG-REBUILD-UNVERIFIED: {figure['figure']}: external source "
+                                "was located but the registered figure tool could not rebuild it")
+        for item in audit["blocking"] + audit["advisory"] + audit["repair_required"]:
+            if item["code"] in {"FIG-REBUILD-FAILED", "FIG-NO-SOURCE", "FIG-UNREADABLE", "FIG-STALE"}:
+                blockers.append(f"{item['code']}: {item['figure']}: {item['message']}")
+            else:
+                advisories.append(_preparation_advisory("figures", item["code"], item["message"],
+                                                      location=item["figure"]))
     unused = unused_source_files(manuscript, used)
     if unused:
         advisories.append(_preparation_advisory(
@@ -901,6 +915,9 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
             location=manuscript.relative_to(root).as_posix()))
     style_blockers, style_advice = manuscript_style_review_findings(
         audit_manuscript_style(paper_id, root=root, require_ai_declaration=True))
+    from paper_writing.declarations import missing_default_contributions
+    if missing_default_contributions(metadata, root):
+        blockers.append("Required author contribution declaration is missing")
     blockers.extend(style_blockers)
     advisories.extend(style_advice)
     support_blockers, support_advice = support_review_findings(audit_manuscript_support(paper_id, root=root))
@@ -946,9 +963,7 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
     except ValueError as exc:
         blockers.append(f"Active journal revision context: {exc}")
         revision_context = None
-    from paper_writing.editorial_rewrite import (abstract_findings, advisory as rewrite_advisory,
-                                                 preflight_blockers as rewrite_blockers)
-    blockers.extend(rewrite_blockers(metadata, root, paper_id))
+    from paper_writing.editorial_rewrite import abstract_findings, advisory as rewrite_advisory
     advisories.extend(_preparation_advisory("editorial_rewrite", "ABSTRACT-VENUE-FORMAT", problem)
                       for problem in abstract_findings(metadata, root, paper_id))
     advisories.extend(_preparation_advisory("journal_history", "LEDGER-STALE", warning, kind="warning")
@@ -1400,7 +1415,11 @@ def apply_review_track(merged: Mapping[str, Any], referees: Mapping[str, Mapping
                 for name, r in referees.items() if r["scores"]["overall"] < minimum]
     blockers += [f"Escalation bar: {name} reported low confidence" for name, r in referees.items()
                  if r.get("confidence") == "low"]
-    if blockers:
+    if blockers and result.get("review_standard") == "materiality_v1":
+        result["required_changes"] = [*result["required_changes"], *(
+            dict(type="text", location="target fit", referee="editor", change=message, advisory=True)
+            for message in blockers)]
+    elif blockers:
         result.update(outcome="revision_required", next_action="evidence_remediation",
                       escalation_blockers=blockers,
                       scientific_blockers=sorted(set(result.get("scientific_blockers", [])) | set(blockers)))
@@ -1851,6 +1870,8 @@ _FOLLOWUP_FINDING = formal_checks.object_schema({
 
 def followup_schema(schema, previous):
     schema = copy.deepcopy(schema)
+    # The follow-up protocol classifies each new issue only once in new_findings.
+    schema["properties"]["dimension_repairs"]["properties"] = {name: _TEXT_LIST for name in DIMENSIONS}
     schema["properties"]["new_findings"] = formal_checks.array(_FOLLOWUP_FINDING)
     schema["required"].append("new_findings")
     if "previous_items" not in schema["properties"]:
@@ -1921,7 +1942,7 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
           history_blockers: list[str] | None = None, *,
           previous_ids: set[str] | None = None, formal_blockers: list[str] | None = None,
           formal_summary: Mapping[str, Any] | None = None,
-          followup_items: list[str] | None = None) -> dict[str, Any]:
+          followup_items: list[str] | None = None, reader_report=None, previous=None) -> dict[str, Any]:
     if followup_items is not None:
         if not referees and not (history_blockers or formal_blockers):
             raise ValueError("A same-journal follow-up requires the configured referee panel")
@@ -1940,6 +1961,15 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
         result.update(required_changes=changes, unresolved_previous_items=unresolved,
                       advisory_items=advice,
                       referee_recommendations={name: r["recommendation"] for name, r in referees.items()})
+        if editor.get("review_standard"):
+            result["review_standard"] = editor["review_standard"]
+        if reader_report is not None:
+            _merge_reader(result, reader_report, previous)
+        return result
+    if editor.get("review_standard") == "materiality_v1":
+        result = _material_decision(editor, referees, history_blockers, formal_blockers, formal_summary)
+        if reader_report is not None:
+            _merge_reader(result, reader_report, previous)
         return result
     result = _merge_reports(editor, referees, history_blockers, previous_ids=previous_ids,
                             formal_blockers=formal_blockers, formal_summary=formal_summary)
@@ -1951,7 +1981,7 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
     for role, report in {"editor": editor, **referees}.items():
         for dimension, repairs in report.get("dimension_repairs", {}).items():
             for repair in repairs:
-                verdict[dimension].append({"reviewer": role, "repair": repair})
+                verdict.setdefault(dimension, []).append({"reviewer": role, "repair": repair})
                 if dimension == "science":
                     if repair not in result["scientific_blockers"]:
                         result["scientific_blockers"].append(repair)
@@ -1959,11 +1989,71 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
                     result["required_changes"].append(dict(type="figure" if dimension == "figures" else "narrative",
                         referee=role, location=dimension, change=repair, advisory=False, placement="main_text"))
     result["dimension_repairs"] = verdict
-    if verdict["science"] and result.get("next_action") == "text_revision":
+    if verdict.get("science") and result.get("next_action") == "text_revision":
         result["next_action"] = "evidence_remediation"
     if any(verdict.values()) and result["outcome"] == "ready":
         result.update(outcome="revision_required", next_action="evidence_remediation" if verdict["science"] else "text_revision")
+    if reader_report is not None:
+        _merge_reader(result, reader_report, previous)
     return result
+
+
+def _material_finding(finding, previous_items):
+    return (finding["kind"] == "substantive" and bool(finding["wrong_conclusion"].strip())
+            and (previous_items is None or finding.get("previous_item", "") in previous_items
+                 or bool(finding["why_missed"].strip())))
+
+
+def _material_decision(editor, referees, history_blockers, formal_blockers, formal_summary):
+    if not referees:
+        raise ValueError("A unified decision requires the configured referee reports")
+    changes, science, unresolved = [], [], []
+    verdict = {dimension: [] for dimension in DIMENSIONS}
+    reports = {"editor": editor, **referees}
+    prior = {p["item"] for r in referees.values() for p in r["previous_items"]}
+    followup = bool(prior) or any(r.get("followup_review") for r in reports.values())
+    for name, report in reports.items():
+        for dimension, findings in report["dimension_repairs"].items():
+            for finding in findings:
+                repair = finding["repair"]
+                material = _material_finding(finding, prior if followup else None)
+                change = dict(finding, type="evidence" if dimension == "science" else "narrative",
+                              change=repair, location=dimension, advisory=not material, referee=name,
+                              placement="main_text" if material else "response_only")
+                changes.append(change)
+                if material:
+                    verdict[dimension].append(change)
+                    if dimension == "science":
+                        science.append(repair)
+        for item in report.get("previous_items", []):
+            if not item["resolved"]:
+                # A prior blocker already met the materiality threshold and is
+                # explicitly bound to this round by the response schema.
+                unresolved.append(dict(item, referee=name, advisory=False))
+        advice = list(report.get("optional_suggestions", [])) + list(report.get("presentation_problems", []))
+        advice.extend(item["change"] for item in report.get("required_changes", []) + report.get("figure_changes", []))
+        advice.extend(report.get("scientific_blockers", []))
+        listed = {item["change"] for item in changes if item["referee"] == name}
+        for item in dict.fromkeys(advice):
+            if item in listed:
+                continue
+            changes.append(dict(type="text", change=item, location="manuscript", referee=name, advisory=True))
+    outcome = "revision_required" if any(verdict.values()) or unresolved else "ready"
+    action = ("evidence_remediation" if science else "text_revision") if outcome != "ready" else None
+    categories = (formal_summary or {}).get("by_category", {})
+    if formal_blockers:
+        outcome, action = "formal_check_blocked", "evidence_remediation"
+        science.extend(categories.get("scientific", formal_blockers))
+    if history_blockers:
+        outcome, action = "rejection_history_blocked", "evidence_remediation"
+        science.extend(history_blockers)
+    return dict(review_standard="materiality_v1", outcome=outcome, next_action=action, scientific_blockers=list(dict.fromkeys(science)),
+                required_changes=changes, dimension_repairs=verdict, unresolved_previous_items=unresolved,
+                raw_formal_blockers=formal_blockers or [], recommendation="accept" if outcome == "ready" else None,
+                referee_recommendations={name: r["recommendation"] for name, r in referees.items()},
+                technical_blockers=categories.get("technical", []),
+                source_routing_blockers=categories.get("source_routing", []),
+                preparation_blockers=categories.get("preparation", []))
 
 
 def _merge_reports(editor, referees, history_blockers, *, previous_ids, formal_blockers, formal_summary):
@@ -2142,9 +2232,11 @@ def previous_tracked_items(last: Mapping[str, Any],
     """
     merged = last.get("merged") or {}
     items = list(merged.get("scientific_blockers", []))
-    items += [tracked_item(c) for c in merged.get("required_changes", [])
-              if not c.get("advisory") and (change_blocks(c) or c["type"] in {"figure", "narrative"})]
-    # Carry unresolved mandatory items forward without recreating retired advice.
+    items += [tracked_item(c) for c in merged.get("required_changes", []) if not c.get("advisory")
+              and c.get("change") not in items
+              and (change_blocks(c) or c["type"] in {"figure", "narrative"})]
+    # The opted-in four-paper continuation must not silently forget scientific
+    # requests that the last referee explicitly left unresolved.
     for item in merged.get("unresolved_previous_items", []):
         text = item.get("item") if isinstance(item, Mapping) else None
         if (isinstance(text, str) and not item.get("advisory") and not item_is_advisory(text)
@@ -2190,6 +2282,8 @@ def referee_schema_for_previous(previous: Mapping[str, Any] | None) -> dict[str,
     merely because a referee lists them as unimplemented previous items.
     """
     schema = json.loads(json.dumps(REFEREE_SCHEMA))
+    schema["required"].append("followup_review")
+    schema["properties"]["followup_review"] = {"type": "boolean", "enum": [previous is not None]}
     items = list(previous['items']) if previous else []
     array = schema['properties']['previous_items']
     array['minItems'] = array['maxItems'] = len(items)
@@ -2238,7 +2332,7 @@ DELTA_RULE = ("Reuse the last ready full review only when, after removing commen
               "results/evaluation/discussion/conclusion section and the multiset of numbers in the "
               "document bodies are identical, at most {fraction:.0%} of lines changed, and every figure "
               "file the build reads has the SHA-256 recorded by that review (a changed figure is shown "
-              "to the referees in a full review). The mandatory reference/core verification always reruns.")
+              "to the referees in a full review). The verifier checks changed units and outstanding blockers against bound prior receipts.")
 DELTA_MAX_CHANGED_FRACTION = 0.15
 _DELTA_HEADINGS = re.compile(r"\b(results?|findings?|experiments?|empirical|numerical|evaluation|"
                              r"discussion|conclusions?|concluding|summary)\b", re.I)
@@ -2578,7 +2672,7 @@ def _formal_stage(pre: Mapping[str, Any], root: Path, run: Path, roles: Mapping[
         prior = next((row["formal_check"] for row in reversed(history)
                       if (row.get("formal_check") or {}).get("path")), None)
         formal = formal_checks.run_checks(dict(pre, previous_formal_check=prior,
-                                             materiality="followup_items" in record),
+                                             materiality=True, require_late_reason=True),
                                           root, run, verifier, config['timeout_seconds'], run_role)
         formal_blockers = formal['blockers']
         if not formal_blockers:
@@ -2596,7 +2690,7 @@ def _formal_stage(pre: Mapping[str, Any], root: Path, run: Path, roles: Mapping[
     return pre, formal_blockers, summary
 
 
-def _delivery_gate(record, merged, config, pre, receipts, paper_id, target, root, run, editor):
+def _reader_role(record, config, pre, run):
     from paper_writing.reader_check import delivery_read, delivery_images
 
     independent = cross_model_referees(config, record["writer_model_family"], writer_model=record["writer_model"])
@@ -2604,33 +2698,31 @@ def _delivery_gate(record, merged, config, pre, receipts, paper_id, target, root
         raise ValueError("An independent delivery reader is required")
     role = config["roles"][independent[0]]
     figure_images, image_errors = delivery_images(pre, run)
-    recall, receipts["delivery_reader"] = delivery_read(pre["expanded"], figure_images, role,
-                                                        run / "delivery-reader", config["timeout_seconds"])
-    missing = [point for point in ("question", "comparison", "answer", "meaning")
-               if not str(recall.get(point) or "").strip()]
-    recall["repairs"].extend(f"Reader could not restate the {point}." for point in missing)
-    recall["repairs"].extend(image_errors)
-    record["delivery_reader"] = dict(model=role.get("model"), **recall)
-    if recall["repairs"] and "followup_items" in record:
-        merged.setdefault("advisory_items", []).extend(
-            dict(referee="delivery_reader", change=repair, location="Title, abstract, figures and conclusion")
-            for repair in recall["repairs"] if repair not in image_errors)
-    if recall["repairs"] and ("followup_items" not in record or image_errors):
-        if "followup_items" in record:
-            recall = dict(recall, repairs=image_errors)
-        attempts = 1 + sum(bool((row.get("delivery_reader") or {}).get("repairs"))
-                           for row in completed_rounds(root, paper_id, target))
-        merged.update(outcome="revision_required", next_action="text_revision")
-        for repair in recall["repairs"]:
-            merged["required_changes"].append(dict(type="narrative", referee="delivery_reader",
-                location="Title, abstract, figures and conclusion", change=repair,
-                advisory=False, placement="main_text"))
-        if attempts >= 3:
-            merged.update(next_action="direction_decision", direction_context={**direction_context(editor),
-                          "trigger": "reader_repairs_exhausted", "attempts": attempts,
-                          "reader_repairs": list(recall["repairs"])})
-        return False
-    return True
+    context = {"previous": pre["previous_review"]} if pre.get("previous_review") else {}
+    recall, receipt = delivery_read(pre["expanded"], figure_images, role,
+                                                        run / "delivery-reader", config["timeout_seconds"], **context)
+    return dict(model=role.get("model"), image_errors=image_errors, **recall), receipt
+
+
+def _merge_reader(merged, recall, previous=None):
+    for finding in recall["repairs"]:
+        repair = finding["repair"]
+        material = _material_finding(finding, previous["items"] if previous is not None else None)
+        merged["required_changes"].append(dict(finding, type="narrative", referee="delivery_reader",
+            location="Title, abstract, figures and conclusion", change=repair,
+            advisory=not material, placement="main_text"))
+        if material:
+            merged.setdefault("dimension_repairs", {}).setdefault("readability", []).append(
+                {"reviewer": "delivery_reader", **finding})
+            if merged["outcome"] == "ready":
+                merged.update(outcome="revision_required", recommendation="minor_revision", next_action="text_revision")
+    technical = list(recall.get("image_errors") or [])
+    for point in ("question", "comparison", "answer", "meaning"):
+        if not str(recall.get(point) or "").strip() and not recall["repairs"]:
+            technical.append(f"Incomplete independent reader response: {point}")
+    if technical and merged["outcome"] == "ready":
+        merged.update(outcome="formal_check_blocked", next_action="retry_review",
+                      technical_blockers=technical)
 
 
 def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, Any], pre: Mapping[str, Any],
@@ -2679,10 +2771,13 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
         if formal_blockers:
             record["letter"] = "\n".join(formal_blockers)
     if merged["outcome"] == "ready":
-        _delivery_gate(record, merged, config, pre, record["receipts"],
-                       paper_id, pre["target"], root, run, editor)
+        previous = ({"items": previous_tracked_items(base), "changes": delta["summary"]}
+                    if base.get("delivery_reader") else None)
+        pre = dict(pre, previous_review=previous)
+        record["delivery_reader"], record["receipts"]["delivery_reader"] = _reader_role(record, config, pre, run)
+        _merge_reader(merged, record["delivery_reader"], previous)
         if merged["outcome"] != "ready":
-            record["letter"] = "\n".join(record["delivery_reader"]["repairs"])
+            record["letter"] = "\n".join(r["repair"] for r in record["delivery_reader"]["repairs"])
     if merged.get("advisory_items"):
         record["letter"] += "\n\n## Advisory items for final preparation\n\n" + "\n".join(
             f"- {item['referee']}, {item['location']}: {item['change']}" for item in merged["advisory_items"])
@@ -2797,7 +2892,8 @@ def _run_formal_recheck(paper_id, target, root, run, record, pre, config, track,
     reasons = _delta_context_reasons(base, pre, config, track, root, history_policy, round_limit)
     history = rejection_clearance_blockers(editor, base.get("prior_decisions", []), history_policy)
     scientific = apply_review_track(_recorded_merge(base, history), referees, track)
-    if (scientific["outcome"] != "ready"
+    if (any(not c.get("advisory") and c.get("referee") == "delivery_reader"
+            for c in base["merged"].get("required_changes", [])) or scientific["outcome"] != "ready"
             or any(r["recommendation"] != "accept"
                    or (r.get("formal_check_assessment") or {}).get("coverage_complete") is not True
                    for r in referees.values())):
@@ -3113,57 +3209,50 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
     figure_packet, figure_images, record["figure_review"] = figure_review_packet(pre, run, changed)
     pre = dict(pre, figure_packet=figure_packet)
     with_images = {"images": figure_images} if figure_images else {}
+    pre = dict(pre, previous_review=previous)
+    packet = referee_packet(pre, root, previous, decisions)
+    schema = referee_schema_for_previous(previous)
     editor_prompt = editor_packet(pre, decisions)
     editor_schema = editor_schema_for_policy(history_policy)
     if previous is not None:
         record["followup_items"] = previous["items"]
         editor_prompt += followup_packet(previous)
         editor_schema = followup_schema(editor_schema, previous)
-    editor, editor_receipt = run_role(role_name="editor", role=roles["editor"],
-                                      system_prompt=(PROMPTS / "editor.md").read_text(),
-                                      user_prompt=editor_prompt, schema=editor_schema,
-                                      workdir=run / "editor", timeout=config["timeout_seconds"], **with_images)
-    referees: dict[str, Any] = {}
-    receipts = {"editor": editor_receipt}
-    history_blockers = rejection_clearance_blockers(editor, decisions, history_policy)
-    formal_blockers: list[str] = []
-    formal_summary = None
-    if previous is not None:
-        _check_followup_items(editor, previous)
-    if (previous is not None or editor["decision"] == "send_to_review") and not history_blockers:
-        packet = referee_packet(pre, root, previous, decisions)
-        schema = referee_schema_for_previous(previous)
+        schema = followup_schema(schema, previous)
+    materials = review_sandbox.materials_from_support(metadata, root,
+        registered_sha256=(pre.get("fingerprints") or {}).get("support_sources_sha256"))
+    with_materials = {"materials": materials} if materials is not None else {}
+    referees = {}
+    receipts = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(panel) + 3) as pool:
+        editor_future = pool.submit(run_role, role_name="editor", role=roles["editor"],
+            system_prompt=(PROMPTS / "editor.md").read_text(), user_prompt=editor_prompt,
+            schema=editor_schema, workdir=run / "editor",
+            timeout=config["timeout_seconds"], **with_images)
+        reader_future = pool.submit(_reader_role, record, config, pre, run)
+        formal_future = pool.submit(_formal_stage, pre, root, run, roles, config, metadata, record)
+        futures = {name: pool.submit(run_role, role_name=name, role=roles[name],
+            system_prompt=(PROMPTS / "referee.md").read_text(), user_prompt=packet,
+            schema=schema, workdir=run / name, timeout=config["timeout_seconds"],
+            **with_images, **with_materials) for name in panel}
+        for name, future in futures.items():
+            referees[name], receipts[name] = future.result()
+            expected = set(previous['items']) if previous else set()
+            if {i['item'] for i in referees[name]['previous_items']} != expected:
+                raise ValueError('Referee omitted or introduced a previous mandatory item')
+        editor, receipts["editor"] = editor_future.result()
         if previous is not None:
-            schema = followup_schema(schema, previous)
-        # The registered support sources the referees may open and run: under Codex's
-        # bubblewrap sandbox in place, otherwise in a hashed read-only copy (review_sandbox).
-        materials = review_sandbox.materials_from_support(
-            metadata, root, registered_sha256=(pre.get("fingerprints") or {}).get("support_sources_sha256"))
-        with_materials = {"materials": materials} if materials is not None else {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(panel)) as pool:
-            futures = {name: pool.submit(run_role, role_name=name, role=roles[name],
-                                         system_prompt=(PROMPTS / "referee.md").read_text(), user_prompt=packet,
-                                         schema=schema, workdir=run / name,
-                                         timeout=config["timeout_seconds"], **with_images, **with_materials)
-                       for name in panel}
-            for name, future in futures.items():
-                referees[name], receipts[name] = future.result()
-                _check_followup_items(referees[name], previous or {"items": []})
-        # Scientific merit/correctness is evaluated before the narrower check;
-        # an output-format defect must not prevent an overall referee report.
-        scientific_decision = apply_review_track(
-            merge(editor, referees, history_blockers, followup_items=record.get("followup_items")), referees, track)
-        if scientific_decision['outcome'] == 'ready':
-            pre, formal_blockers, formal_summary = _formal_stage(pre, root, run, roles, config, metadata, record)
-    merged = apply_review_track(
-        merge(editor, referees, history_blockers, formal_blockers=formal_blockers,
-              formal_summary=formal_summary, followup_items=record.get("followup_items")), referees, track)
+            _check_followup_items(editor, previous)
+        pre, formal_blockers, formal_summary = formal_future.result()
+        record["delivery_reader"], receipts["delivery_reader"] = reader_future.result()
+    history_blockers = rejection_clearance_blockers(editor, decisions, history_policy)
+    merged = merge(editor, referees, history_blockers, formal_blockers=formal_blockers,
+                   formal_summary=formal_summary, followup_items=record.get("followup_items"), reader_report=record["delivery_reader"], previous=previous)
+    merged = apply_review_track(merged, referees, track)
     merged |= stalled_signal(rounds, referees, merged)
-    consumes_round = not (formal_blockers and formal_summary is not None
-                          and not merged['scientific_blockers'] and not history_blockers)
-    if merged["outcome"] == "ready":
-        consumes_round = _delivery_gate(record, merged, config, pre, receipts,
-                                        paper_id, target, root, run, editor)
+    consumes_round = not ((formal_blockers or merged.get("technical_blockers")) and
+                          not merged["scientific_blockers"] and not history_blockers and
+                          not any(not c.get("advisory") for c in merged["required_changes"]))
     reader = _reader_check_packet(paper_id, root, metadata)
     letter_packet = json.dumps({"fixed_decision": merged, "editor_screen": editor, "referee_reports": referees,
                                "formal_check": record.get("formal_check"),
@@ -3178,7 +3267,8 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
                                       timeout=config["timeout_seconds"])
     receipts["decision_letter"] = letter_receipt
     figure_edits = [c for c in merged.get("required_changes", [])
-                    if c["type"] == "figure" or (c["type"] == "evidence" and c["referee"] == "editor")]
+                    if not c.get("advisory") and (c["type"] == "figure" or
+                    (c["type"] == "evidence" and c["referee"] == "editor"))]
     figure_requirements = [f"- {c['location']} ({c['referee']}): {c['change']}" for c in figure_edits]
     figure_requirements += [
         f"- {item['item']} ({item['referee']}) — open: {item['evidence']}"
@@ -3309,25 +3399,8 @@ def delivery_blockers(paper_id: str, metadata: Mapping[str, Any], root: Path,
 def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
                     record: Mapping[str, Any] | None = None, *,
                     notes: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-    """The formal checks moved from the review entry to the delivery exit.
-
-    Everything the unified preflight reports as a preparation advisory is a hard
-    requirement here: the full manuscript-style audit (AI-use declaration,
-    TODO/draft markers, internal paths), the full support-record audit (Zenodo
-    DOI, versions, filenames, titles, README wording, citation), the verified
-    venue abstract limits and the absence of source files that the build does not
-    read. Internal-vocabulary hits are reported with their sentence for a human
-    decision and do not block (see manuscript_style.BLACKLIST_CODES); they are
-    appended to ``notes`` together with references that could not be verified for
-    lack of source access and with registered passage selectors / local evidence
-    files that no longer match (nothing uses them; see ``stale_route_notes``).
-
-    Each item is ``{"source", "code", "location", "message", "text"}``; ``text`` is
-    the stable blocker string that ``delivery_blockers`` reports.
-    """
+    """Check mechanical handoff requirements and collect bound author advice."""
     from paper_writing.editorial_rewrite import abstract_findings
-    from paper_writing.manuscript_style import audit_manuscript_style, manuscript_style_blockers
-    from paper_writing.registry import load_registry_settings
     from paper_writing.support_citations import audit_manuscript_support, support_audit_blockers
 
     def audit_items(source: str, result: Mapping[str, Any], render) -> list[dict[str, Any]]:
@@ -3341,38 +3414,43 @@ def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
                               "message": str(issue.get("message") or ""), "text": render({"errors": [issue]})[0]})
         return items
 
-    gate = load_registry_settings(root).get("quality_gate") or {}
-    style = audit_manuscript_style(
-        paper_id, root=root, require_ai_declaration=bool(gate.get("require_ai_use_declaration", True)))
-    problems = audit_items("manuscript_style", style, manuscript_style_blockers)
+    problems = []
+    if (record or {}).get("editor_screen", {}).get("review_standard") == "materiality_v1":
+        fit = metadata.get("target_journal_fit") or {}
+        if fit.get("status") != "approved":
+            problems.append(dict(source="venue", code="TARGET-UNVERIFIED", location="registry",
+                message="A verified target venue is required", text="A verified target venue is required"))
+        length = (record or {}).get("body_length") or {}
+        bound = (metadata.get("narrative_limits") or {}).get("max_body_words")
+        if bound and (length.get("main_text_words") or 0) > bound:
+            problems.append(dict(source="venue", code="VENUE-BODY-LENGTH", location="main_text",
+                message="Main text exceeds the registered venue limit", text="Main text exceeds the registered venue limit"))
     if notes is not None:
-        notes.extend({"kind": "internal_vocabulary", **dict(item)} for item in style.get("blacklist_findings", []))
+        notes.extend((record or {}).get("preparation_advisories", []))
+        notes.extend({"kind": "review_suggestion", **change} for change in
+                     ((record or {}).get("merged") or {}).get("required_changes", []) if change.get("advisory"))
+        formal_summary = ((record or {}).get("formal_check") or {}).get("issue_summary") or {}
+        notes.extend(dict(finding, kind="formal_suggestion") for finding in formal_summary.get("raw_findings", [])
+                     if finding.get("category") == "advisory")
         access = ((record or {}).get("formal_check") or {}).get("unverifiable_source_access")
         if access:
             notes.append({"kind": "unverifiable_source_access", **dict(access)})
         notes.extend(stale_route_notes(metadata, root))
-    problems += audit_items("support_citations", audit_manuscript_support(paper_id, root=root),
-                            support_audit_blockers)
+    for item in audit_items("support_citations", audit_manuscript_support(paper_id, root=root),
+                            support_audit_blockers):
+        if item["code"] in {"SUPPORT-PROCESS-NARRATIVE", "SUPPORT-ARCHIVE-PROCESS-NARRATIVE",
+                            "SUPPORT-ARCHIVE-PROSE-INVALID", "SUPPORT-ARCHIVE-EVALUATION-PROJECTION",
+                            "SUPPORT-FIRST-CITATION", "SUPPORT-AVAILABILITY-CITATION"}:
+            if notes is not None:
+                notes.append(dict(item, kind="preparation"))
+        else:
+            problems.append(item)
     problems += [{"source": "editorial_rewrite", "code": "ABSTRACT-VENUE-FORMAT", "location": "",
                   "message": str(p), "text": f"Venue abstract format: {p}"}
                  for p in abstract_findings(metadata, root, paper_id)]
     problems += claim_map_delivery_issues(metadata, root)
-    problems += availability_location_issues(paper_id, metadata, root)
-    if record is not None:
-        used = record.get("build_inputs")
-        manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
-        if isinstance(used, list):
-            # The manuscript snapshot is bound to the decision, so the reviewed build's
-            # inputs are still the current build's inputs.
-            unused = unused_source_files(manuscript, {str(u) for u in used})
-            if unused:
-                text = ("Source files not read by the build would enter the journal package: "
-                        + ", ".join(unused[:12]))
-                problems.append({"source": "review_flow", "code": "UNUSED-SOURCE-FILES",
-                                 "location": manuscript.relative_to(root).as_posix(), "message": text,
-                                 "files": unused, "text": text})
-        # Decisions written before build_inputs existed were made by a preflight that
-        # still rejected unused source files, and their snapshot is bound: nothing to add.
+    if notes is not None:
+        notes.extend(dict(item, kind="preparation") for item in availability_location_issues(paper_id, metadata, root))
     return problems
 
 
@@ -3498,7 +3576,9 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
             problems.append('Active journal revision context differs from the reviewed originals')
     except ValueError as exc:
         problems.append(f'Active journal revision context: {exc}')
-    if record.get("merged", {}).get("outcome") != "ready" or record["editor_screen"]["decision"] != "send_to_review":
+    if record.get("merged", {}).get("outcome") != "ready" or (
+            record["editor_screen"].get("review_standard") != "materiality_v1"
+            and record["editor_screen"]["decision"] != "send_to_review"):
         problems.append("The unified decision is not a ready decision")
     if record["fingerprints"]["manuscript_snapshot_sha256"] != snapshot:
         problems.append("Manuscript changed after the unified review")

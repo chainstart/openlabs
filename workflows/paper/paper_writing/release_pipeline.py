@@ -7,8 +7,8 @@ management-site handoff, and then calls the existing commands itself:
 * the delivery-exit formal problems (``review_flow.delivery_issues``), each with
   a remedy: ``zenodo_prepare`` for support-record identity that ``zenodo
   prepare`` regenerates from the registry (receipt, draft version, packaged
-  version/DOI, Zenodo record title), ``writer`` for everything that needs an edit
-  of the manuscript or of the support sources, ``human`` when the support record
+  version/DOI, Zenodo record title), a control-plane retry for mechanical
+  discrepancies, and ``human`` when the support record
   is already published and only a new Zenodo version could change it;
 * whether the ready decision is still bound to the current manuscript snapshot
   and support package (otherwise ``review unified-run --delta-only``);
@@ -49,8 +49,6 @@ PREPARE_CODES = frozenset({
     # A selected claim-evidence map not (or not identically) in the current-version ZIP.
     "SUPPORT-CLAIM-MAP-UNPACKAGED", "SUPPORT-CLAIM-MAP-PACKAGE-MISMATCH",
 })
-# Problems no text edit can fix: the pipeline waits for the owner instead of a writer.
-CONTROL_PLANE_CODES = frozenset({"DELIVERY-CHECK-FAILED", "STYLE-MANUSCRIPT-MISSING"})
 # Release build products Git ignores; delivery freezes them through
 # papers/<id>/production/release-artifacts.json (``program bind-release-artifacts``).
 RELEASE_ARTIFACT_SUFFIXES = frozenset({".pdf", ".bbl"})
@@ -322,7 +320,7 @@ def _review_status(paper_id: str, metadata: Mapping[str, Any], root: Path,
             problems.append("The ready decision is not bound to the current support package")
     cap = None
     target = metadata.get("target_journal")
-    if target and (not ready or problems):
+    if target and not ready:
         from paper_writing import review_flow
         rounds = review_flow.scientific_rounds(root, paper_id, target)
         if rounds:
@@ -373,11 +371,13 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         code = str(item.get("code") or "")
         if code in PREPARE_CODES:
             remedy = "zenodo_prepare" if not support["published"] else "human"
-        elif code in CONTROL_PLANE_CODES or manuscript_missing:
-            remedy = "control_plane"
         else:
-            remedy = "writer"
+            remedy = "control_plane"
         issues.append({**item, "remedy": remedy})
+    if review.get("ready") and not review.get("current") and not support.get("prepare_needed"):
+        issues.extend(dict(source="review_binding", code="REVIEW-SNAPSHOT-MISMATCH", location="registry",
+                           message=problem, text=problem, remedy="control_plane")
+                      for problem in review.get("problems", []))
     paths = commit_paths(paper_id, metadata, repo_root)
     try:
         head = _git(repo_root, "rev-parse", "HEAD").strip()

@@ -1004,10 +1004,8 @@ writing_release:
         encoding="utf-8",
     )
     monkeypatch.setattr(review_flow, "validate_unified_release", lambda *args: [])
-    # Formal checks are enforced directly at this exit: the fixture has no AI-use
-    # declaration, which the unified review only reports as an advisory.
-    with pytest.raises(HandoffError, match="Delivery formal check failed.*STYLE-AI-DECLARATION-MISSING"):
-        validate_release_preconditions(paper_id, root=tmp_path)
+    # The declaration was checked before review. Handoff trusts the bound snapshot.
+    validate_release_preconditions(paper_id, root=tmp_path)
     monkeypatch.setattr(review_flow, "delivery_blockers", lambda *args, **kwargs: [])
     unified = validate_release_preconditions(paper_id, root=tmp_path)
     assert unified["decision_standard"] == "unified_v1" and unified["decision"] == "minor_revision"

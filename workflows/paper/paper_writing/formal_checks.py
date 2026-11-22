@@ -1034,7 +1034,10 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
             category = 'preparation' if row.get('kind') == 'artifact_preparation' else 'scientific'
             if followup:
                 consequence = row["reader_misconclusion"].strip()
-                if row["finding_kind"] == "advisory" or not consequence:
+                rationale = "\n".join(str(row.get(field, "")) for field in fields)
+                late = ("previous_blocker_roots" in inv and context["root"] not in inv["previous_blocker_roots"])
+                if (row["finding_kind"] == "advisory" or not consequence or
+                        (late and not re.search(r"(?im)^Why missed:[ \t]*\S", rationale))):
                     category = "advisory"
                 fields = (*fields, "reader_misconclusion")
                 # A gap or unchecked result must still identify a concrete
@@ -1165,6 +1168,10 @@ def batch_packet(group: str, batch: list[dict[str, Any]], documents: list[dict[s
         instructions["followup_scope"] = (
             "Check only the listed prior blockers and changed passages or bibliography entries. "
             "Use the manuscript as context. Keep all findings within the listed items.")
+    if "previous_blocker_roots" in inv:
+        instructions["previous_blocker_roots"] = inv["previous_blocker_roots"]
+        instructions["new_blockers"] = ("For a negative finding outside these prior roots, include a line "
+            "starting with 'Why missed:' in its check rationale explaining the previous omission.")
     if inv.get("materiality") or inv.get("followup"):
         instructions["materiality"] = (
             "For each negative verdict provide finding_kind and the concrete reader_misconclusion. "
@@ -1419,11 +1426,12 @@ def batch_coverage(output: Mapping[str, Any], group: str, batch: list[dict[str, 
             _exact(row["citations"], "citation_id", {c["id"] for c in unit["citations"]}, "Citation uses")
 
 
-def _delta_inventory(documents, bibliography, prior_documents, prior_inventory, blocked_roots):
+def _delta_inventory(documents, bibliography, prior_documents, prior_inventory, blocked_roots, late=False):
     """Map unchanged paragraphs across line moves and select prior negatives and edits."""
     inv = inventory(documents, bibliography)
     core = {p["id"]: p for p in verification_inventory(documents, bibliography)["passages"]}
     selected = set()
+    tracked = set(blocked_roots)
     for doc in documents:
         current = [p for p in inv["passages"] if p["document"] == doc["id"]]
         previous = [p for p in prior_documents["passages"] if p["document"] == doc["id"]]
@@ -1431,6 +1439,8 @@ def _delta_inventory(documents, bibliography, prior_documents, prior_inventory, 
                                          [p["text"] for p in current], autojunk=False)
         for tag, old_start, old_stop, start, stop in matcher.get_opcodes():
             if tag == "equal":
+                tracked.update(p["id"] for old, p in zip(previous[old_start:old_stop], current[start:stop])
+                               if old["id"] in blocked_roots)
                 selected.update(p["id"] for old, p in zip(previous[old_start:old_stop], current[start:stop])
                                 if old["id"] in blocked_roots)
             elif start == stop and current:
@@ -1445,13 +1455,13 @@ def _delta_inventory(documents, bibliography, prior_documents, prior_inventory, 
     passages = [p for p in inv["passages"] if p["id"] in selected
                 or any(c["key"] in changed_refs for c in p["citations"])]
     passages = [core.get(p["id"], dict(p, formulas=[])) for p in passages]
-    return dict(inv, followup=True, passages=passages,
+    return dict(inv, **({"previous_blocker_roots": sorted(tracked)} if late else {}), followup=True, passages=passages,
                 task_reference_keys=sorted(changed_refs),
                 proof_context={pid: {"text": p["text"]} for pid, p in core.items()},
                 scope={"name": "prior_blockers_and_changed_passages"})
 
 
-def _followup_inventory(binding, metadata, root, role, documents, bibliography):
+def _followup_inventory(binding, metadata, root, role, documents, bibliography, late=False):
     if not binding:
         return None
     path = _safe_file(root, binding["path"])
@@ -1486,7 +1496,7 @@ def _followup_inventory(binding, metadata, root, role, documents, bibliography):
     if incomplete:
         roots.update(p["id"] for p in old_inv["passages"])
         roots.update(r["key"] for r in _task_references(old_inv))
-    return _delta_inventory(documents, bibliography, inventory(old_docs, old_bib), old_inv, roots)
+    return _delta_inventory(documents, bibliography, inventory(old_docs, old_bib), old_inv, roots, late)
 
 
 def _task_references(inv):
@@ -1501,7 +1511,7 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
     metadata = pre["metadata"]
     documents, bibliography = current_inputs(metadata, root)
     prior = pre.get("previous_formal_check")
-    inv = _followup_inventory(prior, metadata, root, role, documents, bibliography)
+    inv = _followup_inventory(prior, metadata, root, role, documents, bibliography, pre.get("require_late_reason", False))
     if inv is None:
         inv = verification_inventory(documents, bibliography)
         prior = None
@@ -1639,7 +1649,8 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
         prior = result.get("previous_formal_check")
         if prior and _safe_file(root, prior["path"]).parent.parent >= path.parent.parent:
             raise ValueError("Previous formal check must precede this run")
-        expected_inv = (_followup_inventory(prior, metadata, root, result["role"], documents, bibliography)
+        expected_inv = (_followup_inventory(prior, metadata, root, result["role"], documents, bibliography,
+                                            "previous_blocker_roots" in result["inventory"])
                         if prior else verification_inventory(documents, bibliography))
         if not prior and result["inventory"].get("materiality") is True:
             expected_inv["materiality"] = True

@@ -264,29 +264,26 @@ def delivery_images(pre, run):
     return [Path(row["png"]) for row in result["images"]], problems
 
 
-def delivery_read(source, images, role, workdir, timeout):
+def delivery_read(source, images, role, workdir, timeout, previous=None):
     from paper_writing.review_launcher import run_role
+    from paper_writing.review_flow import DIMENSION_FINDING
 
-    points = ["question", "comparison", "answer", "meaning"]
+    points = ["question", "comparison", "answer", "meaning", "supporting_panel"]
     schema = {"type": "object", "additionalProperties": False, "required": points + ["repairs"],
               "properties": {**{key: _TEXT for key in points},
-                             "repairs": {"type": "array", "items": _TEXT}}}
-    recall, receipt = run_role(role_name="delivery_reader", role=role, workdir=workdir, timeout=timeout,
-                    images=images, user_prompt=delivery_packet(source), schema=schema,
-                    system_prompt="Read once. Retell the question, comparison, answer and meaning in your own "
-                    "words. First read only figures and captions. State one result with its panel, comparator and uncertainty. Identify the supporting panel for each. If a point is missing, unsupported, "
-                    "unintelligible or only an internal criterion, list the necessary repair. Otherwise "
-                    "leave repairs empty. Do not propose experiments.")
-    judgment, _ = run_role(role_name="recall_verifier", role=role, workdir=workdir.parent / "recall-verifier",
-                           timeout=timeout, images=images,
-                           schema={"type": "object", "additionalProperties": False, "required": ["misreadings"],
-                                   "properties": {"misreadings": {"type": "array", "items": _TEXT}}},
-                           system_prompt="Check the independent recall against the manuscript and figures. "
-                           "List only material differences in comparison, direction, magnitude, conditions "
-                           "or panel attribution. Each finding must cite both statements.",
-                           user_prompt=json.dumps({"manuscript": source, "recall": recall}, ensure_ascii=False))
-    recall["repairs"].extend(judgment["misreadings"])
-    return recall, receipt
+                             "repairs": {"type": "array", "items": DIMENSION_FINDING}}}
+    packet = delivery_packet(source)
+    if previous is not None:
+        packet += "\nPrevious blockers and changes:\n" + json.dumps(previous, ensure_ascii=False)
+    return run_role(role_name="delivery_reader", role=role, workdir=workdir, timeout=timeout,
+        images=images, user_prompt=packet, schema=schema,
+        system_prompt="Read the figures and captions, then the supplied text. Restate the question, "
+        "comparison, answer and meaning. Identify the supporting panel and state its uncertainty. "
+        "For each repair state the actual wrong conclusion, or leave it empty for advice. Classify "
+        "wording, definition details, caption polish, compression and style as suggestions. On follow-up "
+        "check the previous blockers and changed text only. Identify any previous item exactly. "
+        "For a new blocker explain why the earlier review missed it. Do not propose experiments.")
+
 
 def review_story(paper_id, root):
     from paper_writing.registry import load_paper_metadata

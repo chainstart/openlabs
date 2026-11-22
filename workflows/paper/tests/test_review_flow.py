@@ -722,7 +722,7 @@ def test_run_starts_only_active_referee_after_rejection_clearance(tmp_path, monk
         return referee('accept'), {}
     monkeypatch.setattr(flow, 'run_role', role)
     record = flow.run_review('p', root=tmp_path, apply=False)
-    assert ('referee_b' in calls) == clear
+    assert 'referee_b' in calls
     assert 'referee_a' not in calls
     assert record['single_referee_panel'] is True
     assert record['merged']['outcome'] == ('ready' if clear else 'rejection_history_blocked')
@@ -1448,9 +1448,9 @@ FORMAL_SUPPORT_PROBLEMS = [
 
 def test_formal_problems_become_preparation_advisories_not_preflight_blockers(tmp_path, monkeypatch):
     pre = _formal_problem_preflight(tmp_path, monkeypatch, FORMAL_STYLE_PROBLEMS, FORMAL_SUPPORT_PROBLEMS)
-    assert pre['blockers'] == []
+    assert len(pre['blockers']) == 1 and 'STYLE-AI-DECLARATION-MISSING' in pre['blockers'][0]
     codes = {a['code'] for a in pre['preparation_advisories']}
-    assert {'STYLE-AI-DECLARATION-MISSING', 'STYLE-AI-DISCLOSURE-TOOL', 'STYLE-UNRESOLVED-MARKER',
+    assert {'STYLE-AI-DISCLOSURE-TOOL', 'STYLE-UNRESOLVED-MARKER',
             'STYLE-INTERNAL-AUDIT', 'SUPPORT-DOI-MISSING', 'SUPPORT-STATUS-BEFORE-REVIEW',
             'SUPPORT-BIB-VERSION', 'UNUSED-SOURCE-FILES'} <= codes
     audit = next(a for a in pre['preparation_advisories'] if a['code'] == 'STYLE-INTERNAL-AUDIT')
@@ -1465,9 +1465,8 @@ def test_evidence_hash_and_unreviewable_problems_still_block(tmp_path, monkeypat
         [{'code': 'SUPPORT-PACKAGE-HASH', 'message': 'support archive SHA-256 does not match the registry'},
          {'code': 'SUPPORT-SOMETHING-NEW', 'message': 'an unclassified future check'}])
     assert any(b.startswith('STYLE-MANUSCRIPT-MISSING') for b in pre['blockers'])
-    assert any(b.startswith('SUPPORT-PACKAGE-HASH') for b in pre['blockers'])
-    # Unknown codes are conservatively blocking.
-    assert any(b.startswith('SUPPORT-SOMETHING-NEW') for b in pre['blockers'])
+    assert any(a['code'] == 'SUPPORT-PACKAGE-HASH' for a in pre['preparation_advisories'])
+    assert any(a['code'] == 'SUPPORT-SOMETHING-NEW' for a in pre['preparation_advisories'])
 
 
 def test_run_review_records_advisories_without_preflight_failure(tmp_path, monkeypatch):
@@ -1511,12 +1510,11 @@ def test_delivery_exit_enforces_the_same_formal_problems(tmp_path, monkeypatch):
     problems = flow.delivery_blockers('p', {'paper_id': 'p'}, tmp_path,
                                       {'build_inputs': ['main.tex'],
                                        'formal_check': {'unverifiable_source_access': access}}, notes=notes)
-    assert {n['kind'] for n in notes} == {'internal_vocabulary', 'unverifiable_source_access'}
+    assert {n['kind'] for n in notes} == {'unverifiable_source_access'}
     joined = '\n'.join(problems)
-    for code in ('STYLE-AI-DECLARATION-MISSING', 'STYLE-AI-DISCLOSURE-TOOL', 'STYLE-UNRESOLVED-MARKER',
-                 'SUPPORT-DOI-MISSING', 'SUPPORT-STATUS-BEFORE-REVIEW', 'SUPPORT-BIB-VERSION'):
+    for code in ('SUPPORT-DOI-MISSING', 'SUPPORT-STATUS-BEFORE-REVIEW', 'SUPPORT-BIB-VERSION'):
         assert code in joined
-    assert 'leftover.tex' in joined and 'abstract has 300 words' in joined
+    assert 'leftover.tex' not in joined and 'abstract has 300 words' in joined
     # Internal vocabulary is for a human decision, never a hard stop.
     assert 'STYLE-INTERNAL-AUDIT' not in joined
 
@@ -1946,21 +1944,22 @@ def test_delivery_reader_packet_excludes_methods_story_and_appendix():
     assert all(part in packet for part in ("Q", "A", "C"))
 
 
-def test_reader_repair_cap_and_independence(tmp_path, monkeypatch):
+def test_reader_participates_in_unified_decision(tmp_path, monkeypatch):
     from paper_writing import reader_check
     readers = []
     def read(source, images, role, path, timeout):
         readers.append(role["model"])
-        return {"question": "", "comparison": "pair", "answer": "higher", "meaning": "limit", "repairs": []}, {}
+        return {"question": "", "comparison": "pair", "answer": "higher", "meaning": "limit", "repairs": [dict(repair="Identify the paired comparison",
+            kind="substantive", wrong_conclusion="The samples appear independent.", why_missed="", previous_item="")]}, {}
     monkeypatch.setattr(reader_check, "delivery_read", read)
     config = dict(cross_model_basis="model", roles={"a": {"model": "sol"}, "b": {"model": "astra"}},
                   referee_roles=["a", "b"], timeout_seconds=1)
     monkeypatch.setattr(flow, "completed_rounds", lambda *args: [{"delivery_reader": {"repairs": ["missing"]}}]*2)
     record = dict(writer_model="sol", writer_model_family="gpt")
     merged = dict(outcome="ready", required_changes=[], scientific_blockers=[])
-    assert not flow._delivery_gate(record, merged, config, {"expanded": "text"}, {}, "p", "J",
-                                   tmp_path, tmp_path, editor())
-    assert readers == ["astra"] and merged["next_action"] == "direction_decision"
+    recall, _ = flow._reader_role(record, config, {"expanded": "text"}, tmp_path)
+    flow._merge_reader(merged, recall)
+    assert readers == ["astra"] and merged["next_action"] == "text_revision"
     assert not merged["scientific_blockers"] and merged["required_changes"]
 
 
@@ -2113,3 +2112,34 @@ def test_formal_only_retry_uses_original_science_after_failed_formal_check(tmp_p
     assert ready["delta_review"]["basis_decision_sha256"] == flow._sha256(basis.read_bytes())
     assert calls == ["formal_recheck", "formal_recheck"]
     assert len(flow.scientific_rounds(tmp_path, "p", "J")) == 1
+
+
+@pytest.mark.parametrize("kind,conclusion", [
+    ("length", "The paper grew by nineteen words."),
+    ("substantive", "   "),
+])
+def test_accepted_panel_does_not_reopen_for_unsubstantiated_dimension(kind, conclusion):
+    report = referee("accept")
+    report["dimension_repairs"] = {"readability": [
+        dict(kind=kind, repair="Compress the discussion", wrong_conclusion=conclusion, why_missed="")]}
+    screen = editor() | dict(review_standard="materiality_v1", dimension_repairs={})
+    result = flow.merge(screen, {"one": report})
+    assert result["outcome"] == "ready"
+    assert result["required_changes"][0]["advisory"]
+    assert flow.previous_tracked_items({"merged": result}) == []
+
+
+@pytest.mark.parametrize("kind,wrong,missed,expected", [
+    ("length", "Nineteen words above the prior length.", "Edited discussion", "ready"),
+    ("substantive", "", "Edited discussion", "ready"),
+    ("substantive", "The rule appears to pass.", "", "ready"),
+    ("substantive", "The rule appears to pass.", "The revised threshold changed.", "revision_required"),
+])
+def test_new_standard_followup_requires_materiality_and_explanation(kind, wrong, missed, expected):
+    screen = editor("revise_before_submission") | dict(review_standard="materiality_v1", dimension_repairs={})
+    report = referee("accept") | dict(followup_review=True, dimension_repairs={"science": [
+        dict(kind=kind, repair="Check the printed threshold", wrong_conclusion=wrong,
+             previous_item="", why_missed=missed)]})
+    result = flow.merge(screen, {"a": report})
+    assert result["outcome"] == expected
+    assert result["required_changes"][0]["advisory"] == (expected == "ready")

@@ -44,11 +44,7 @@ journal would decline the paper.
    The AI-use declaration is governed by the authors' disclosure policy: it must name every
    tool and model actually used. Do not ask to remove or shorten that list; judge only that the
    declaration is factual and free of preparation chronology.
-   Judge length and focus too. The packet gives a deterministic main-text word count and its
-   limit for this paper. A main text that walks through every robustness check and caveat, or
-   that grew from round to round by added qualifications, is a presentation failure: name what
-   should move to the appendix or be cut. Each presentation problem says whether the fix is in
-   the main text, a cut, or the appendix/response letter; additions default to the latter.
+   Use the main-text word count when offering advice. Offer cuts or moves to the appendix as optional suggestions.
    In `presentation_problems`, list only concrete, actionable defects present in this
    current manuscript. Before naming a countable or checkable defect (title or abstract length,
    tense, a missing statement), check it in the supplied text and quote what you counted. Positive observations belong in the contribution or rationale
@@ -108,7 +104,7 @@ journal would decline the paper.
 Return only the JSON object required by the schema.
 
 
-Read the title, abstract and opening against the decisive panel. State whose decision changes, relative to which alternative and within what boundary. Locate the first claim that promises more than the panel shows. In dimension_repairs independently list the located changes needed for science, narrative/readability and figures. Empty means pass. Any necessary repair vetoes delivery. Put minor polish in advice. Repair confusing narrative or figures using existing evidence unless a separate scientific defect justifies new work.
+Read the title, abstract and opening against the decisive panel. State whose decision changes, relative to which alternative and within what boundary. Locate the first claim that promises more than the panel shows. Record every proposed blocker in dimension_repairs under science, readability or formal_accuracy. Include the exact previous_item when continuing a previous blocker. On follow-up check previous items and changes only. A new material issue needs a specific why_missed explanation. Explain in wrong_conclusion the concrete mistaken conclusion a reader would reach. Classify wording, definition completion, caption details, compression and style as suggestions. Recommendations and scores summarize the itemized assessment. A request unsupported by a material finding is advice.
 
 When indexed evidence includes a precedent or counterexample, you may open the cited passage
 and check whether the source actually makes the claimed comparison under the stated conditions.

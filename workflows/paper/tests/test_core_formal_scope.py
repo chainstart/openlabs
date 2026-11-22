@@ -77,7 +77,7 @@ def test_formal_failure_cannot_hide_completed_scientific_objection():
     assert merged['required_changes'] and merged['unresolved_previous_items']
 
 
-def test_scientific_rejection_does_not_spend_more_formal_calls(tmp_path, monkeypatch):
+def test_formal_and_scientific_roles_return_one_decision(tmp_path, monkeypatch):
     monkeypatch.setattr(flow,'review_config',lambda root:{'process':flow.PROCESS,
         'roles':{'editor':ROLE,'referee_b':ROLE},'referee_roles':['referee_b'],
         'timeout_seconds':1,'max_rounds_per_target':15,'rejection_clearance_required':True})
@@ -92,7 +92,8 @@ def test_scientific_rejection_does_not_spend_more_formal_calls(tmp_path, monkeyp
             'required_changes':[],'previous_items':[],
             'formal_check_assessment':{'coverage_complete':True,'omissions_or_errors':[]}},{}
     monkeypatch.setattr(flow,'run_role',role)
-    monkeypatch.setattr(f,'run_checks',lambda *args: (_ for _ in ()).throw(AssertionError('No formal calls after scientific rejection')))
+    monkeypatch.setattr(f,'run_checks',lambda *args: {'valid': True, 'blockers': []})
+    monkeypatch.setattr(f,'validate_binding',lambda *args: [])
     record=flow.run_review('p',root=tmp_path,apply=False)
-    assert calls==['editor','referee_b','decision_letter']
-    assert record['merged']['outcome']=='revision_required' and 'formal_check' not in record
+    assert sorted(calls[:-1]) == ['editor','referee_b'] and calls[-1] == 'decision_letter'
+    assert record['merged']['outcome']=='revision_required' and record['formal_check']['valid']
