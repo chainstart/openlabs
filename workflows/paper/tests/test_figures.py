@@ -368,3 +368,30 @@ def test_result_plot_checks_panels_reference_legend_and_units(tmp_path):
         doc.save(str(pdf))
     diagnostic = dict(fig.inspect_pdf(pdf, result_plot=True)["plot_findings"])
     assert set(diagnostic) == {"FIG-PANEL-LABELS", "FIG-AXIS-UNITS", "FIG-REFERENCE-LABEL", "FIG-LEGEND-OVERLAP"}
+
+
+def test_nature_profile_and_quantitative_colors(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENLABS_FIG_PROFILE", "nature")
+    helpers = fig._style_helpers()
+    assert helpers.SINGLE_COLUMN_MM == 89 and helpers.DOUBLE_COLUMN_MM == 183
+    assert "onehalf" not in helpers.WIDTHS_IN
+    assert helpers.profile_name("Energy Policy") == "elsevier"
+    assert r"\def\olpanel{8}" in helpers.tex_profile("nature")
+    asset = tmp_path / "data.svg"
+    asset.write_text('<svg viewBox="0 0 1 1"><path fill="#123456"/></svg>')
+    assert "#123456" in helpers.svg_fragment(asset, x=0, y=0, width=1)
+
+
+def test_compiled_figure_placement(tmp_path):
+    with fitz.open() as source, fitz.open() as doc:
+        page = source.new_page(width=100, height=100)
+        page.insert_text((5, 30), "Scale", fontsize=12)
+        page.draw_line((4, 40), (94, 40), width=.4)
+        target = doc.new_page()
+        xref = target.show_pdf_page(fitz.Rect(20, 20, 70, 70), source, 0)
+        doc.xref_set_key(xref, "PTEX.FileName", "(figures/result.pdf)")
+        doc.save(tmp_path / "main.pdf")
+    item, = fig.proof_figures(tmp_path)["result"]
+    assert item["smallest_span_pt"] == pytest.approx(6)
+    assert item["min_stroke_pt"] == pytest.approx(.2)
+    assert item["unembedded_fonts"]

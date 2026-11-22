@@ -61,3 +61,6 @@ legend.handlelength: 1.6
 legend.borderaxespad: 0.3
 
 text.color: 222222
+
+image.cmap: viridis
+errorbar.capsize: 2

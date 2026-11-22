@@ -22,33 +22,32 @@
 \RequirePackage{xcolor}
 \RequirePackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds,shapes.geometric,
-  shapes.misc,shapes.arrows,decorations.pathreplacing,decorations.markings,patterns,matrix,shadows,patterns.meta}
+  shapes.misc,shapes.arrows,decorations.pathreplacing,decorations.markings,patterns,matrix,patterns.meta}
 
 % ---------------------------------------------------------------- fonts
 \ifolfig@serif\else
   \iftutex
     \RequirePackage{fontspec}
-    \setsansfont{TeX Gyre Heros}[Scale=0.95]
+    \setsansfont{TeX Gyre Heros}
   \else
     \RequirePackage[T1]{fontenc}
-    \RequirePackage[scale=0.95]{tgheros}
+    \RequirePackage{tgheros}
   \fi
   \renewcommand{\familydefault}{\sfdefault}
 \fi
-% Design every figure at its final printed width: body text 8 pt, small 7 pt,
-% never below 6 pt (`figures check` measures this after scaling).
-\newcommand{\olfigfont}{\fontsize{8}{9.6}\selectfont}
-\newcommand{\olfigsmall}{\fontsize{7}{8.4}\selectfont}
-\newcommand{\olfigtiny}{\fontsize{6.5}{7.6}\selectfont}
+\InputIfFileExists{openlabs-profile.tex}{}{\def\olsingle{88}\def\olonehalf{120}\def\oldouble{180}\def\olbody{8}\def\olsmall{7}\def\olpanel{9}\def\olline{1.1}\def\olaxis{0.6}}
+\newcommand{\olfigfont}{\fontsize{\olbody bp}{\dimexpr\olbody bp+1.4bp\relax}\selectfont}
+\newcommand{\olfigsmall}{\fontsize{\olsmall bp}{\dimexpr\olsmall bp+1.4bp\relax}\selectfont}
+\newcommand{\olfigtiny}{\olfigsmall}
 % sample sizes and counts in text figures: \olN{4\,812} -> n = 4 812
 \newcommand{\olN}[1]{\textit{n}\,=\,#1}
 \newcommand{\olstep}[1]{\tikz[baseline=(olstep.base)]\node[ol/badge](olstep){#1};}
 \newcommand{\olfigtitle}{\fontsize{8.5}{10}\selectfont\bfseries}
 
 % ---------------------------------------------------------------- widths
-\newlength{\olSingleColumn}\setlength{\olSingleColumn}{88mm}
-\newlength{\olOneHalfColumn}\setlength{\olOneHalfColumn}{120mm}
-\newlength{\olDoubleColumn}\setlength{\olDoubleColumn}{180mm}
+\newlength{\olSingleColumn}\setlength{\olSingleColumn}{\olsingle mm}
+\newlength{\olOneHalfColumn}\ifdefined\olonehalf\setlength{\olOneHalfColumn}{\olonehalf mm}\fi
+\newlength{\olDoubleColumn}\setlength{\olDoubleColumn}{\oldouble mm}
 
 % ---------------------------------------------------------------- colours
 \definecolor{olBlue}{HTML}{0072B2}
@@ -73,25 +72,24 @@
     \thickmuskip=5mu\medmuskip=4mu\thinmuskip=3mu}},% rigid maths spacing in ragged boxes
   % a numbered step badge inline in text: \olstep{2}
   % boxes -------------------------------------------------------------
-  ol/box/.style={draw=olInk, line width=0.6pt, rounded corners=1.6pt, fill=white,
+  ol/box/.style={draw=olInk, line width=\olaxis bp, rounded corners=1.6pt, fill=white,
     inner xsep=3.2pt, inner ysep=2.6pt, align=center, minimum height=6.5mm},
   ol/process/.style={ol/box, draw=#1!75!black, fill=#1!13},
   ol/process/.default=olBlue,
   ol/strong/.style={ol/box, draw=#1!80!black, fill=#1!32, font=\olfigfont\bfseries},
   ol/strong/.default=olBlue,
-  ol/data/.style={ol/box, draw=#1!75!black, fill=#1!13, rounded corners=0.8pt,
-    double copy shadow={shadow xshift=1.1pt, shadow yshift=-1.1pt, draw=#1!75!black, fill=#1!6}},
+  ol/data/.style={ol/box, draw=#1!75!black, fill=#1!13, rounded corners=0.8pt},
   ol/data/.default=olGray,
   ol/io/.style={trapezium, trapezium left angle=72, trapezium right angle=108,
-    trapezium stretches body, draw=#1!75!black, fill=#1!13, line width=0.6pt,
+    trapezium stretches body, draw=#1!75!black, fill=#1!13, line width=\olaxis bp,
     align=center, inner xsep=2pt, inner ysep=2.6pt, minimum height=6.5mm},
   ol/io/.default=olGray,
   ol/decision/.style={diamond, aspect=2.1, draw=#1!80!black, fill=#1!15,
-    line width=0.6pt, align=center, inner sep=1.2pt},
+    line width=\olaxis bp, align=center, inner sep=1.2pt},
   ol/decision/.default=olOrange,
-  ol/terminal/.style={rounded rectangle, draw=olInk, fill=olPaper, line width=0.6pt,
+  ol/terminal/.style={rounded rectangle, draw=olInk, fill=olPaper, line width=\olaxis bp,
     align=center, inner xsep=4pt, minimum height=6mm},
-  ol/endpoint/.style={ol/box, draw=#1!80!black, fill=#1!20, line width=0.9pt},
+  ol/endpoint/.style={ol/box, draw=#1!80!black, fill=#1!20, line width=\olline bp},
   ol/endpoint/.default=olWine,
   % groups and panels -------------------------------------------------
   ol/group/.style={draw=#1!70!black, line width=0.5pt, dash pattern=on 2.2pt off 1.4pt,
@@ -100,14 +98,14 @@
   ol/group title/.style={font=\olfigsmall\bfseries, text=#1!75!black, inner sep=1pt},
   ol/group title/.default=olGray,
   ol/panel/.style={draw=olLight, line width=0.5pt, rounded corners=3pt, inner sep=5pt},
-  ol/panel label/.style={font=\fontsize{9}{10}\selectfont\bfseries, text=olInk,
+  ol/panel label/.style={font=\fontsize{\olpanel bp}{\dimexpr\olpanel bp+1bp\relax}\selectfont\bfseries, text=olInk,
     anchor=north west, inner sep=0pt},
   ol/badge/.style={circle, fill=#1, text=white, font=\olfigtiny\bfseries,
     inner sep=0pt, minimum size=3.6mm},
   ol/badge/.default=olInk,
   % connectors ----------------------------------------------------------
-  ol/flow/.style={->, draw=olInk, line width=0.7pt, shorten >=0.6pt, shorten <=0.6pt},
-  ol/flow strong/.style={ol/flow, line width=1.1pt, draw=#1},
+  ol/flow/.style={->, draw=olInk, line width=\olaxis bp, shorten >=0.6pt, shorten <=0.6pt},
+  ol/flow strong/.style={ol/flow, line width=\olline bp, draw=#1},
   ol/flow strong/.default=olBlue,
   ol/feedback/.style={ol/flow, draw=olGray, dash pattern=on 2.4pt off 1.6pt},
   ol/link/.style={draw=olGray, line width=0.5pt},

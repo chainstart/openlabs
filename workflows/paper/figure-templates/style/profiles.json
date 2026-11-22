@@ -1,0 +1,72 @@
+{
+  "profiles": {
+    "generic": {
+      "single": 88,
+      "onehalf": 120,
+      "double": 180,
+      "body": 7.5,
+      "small": 6.5,
+      "panel": 9,
+      "line": 1.1,
+      "axis": 0.6
+    },
+    "nature": {
+      "single": 89.0,
+      "onehalf": null,
+      "double": 183.0,
+      "body": 7,
+      "small": 6.5,
+      "panel": 8,
+      "line": 0.9,
+      "axis": 0.6
+    },
+    "elsevier": {
+      "single": 88.57,
+      "onehalf": 140,
+      "double": 183.46,
+      "body": 8,
+      "small": 7,
+      "panel": 9,
+      "line": 0.9,
+      "axis": 0.6
+    },
+    "springer": {
+      "single": 76.0,
+      "onehalf": null,
+      "double": 160.0,
+      "body": 8,
+      "small": 7,
+      "panel": 9,
+      "line": 0.9,
+      "axis": 0.6
+    },
+    "ieee": {
+      "single": 88.57,
+      "onehalf": null,
+      "double": 181.35,
+      "body": 9,
+      "small": 8,
+      "panel": 10,
+      "line": 1,
+      "axis": 0.65
+    }
+  },
+  "journals": {
+    "Applied Energy": "elsevier",
+    "Energy Policy": "elsevier",
+    "Energy Economics": "elsevier",
+    "New Astronomy": "elsevier",
+    "Mechanical Systems and Signal Processing": "elsevier",
+    "Reliability Engineering & System Safety": "elsevier",
+    "Engineering Applications of Artificial Intelligence": "elsevier",
+    "MSSP": "elsevier",
+    "RESS": "elsevier",
+    "EAAI": "elsevier",
+    "Astrophysics and Space Science": "springer",
+    "Ap&SS": "springer",
+    "IEEE Transactions on Industrial Informatics": "ieee",
+    "IEEE TII": "ieee",
+    "Nature": "nature",
+    "Nature preview": "nature"
+  }
+}

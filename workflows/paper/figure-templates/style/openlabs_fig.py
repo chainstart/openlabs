@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Iterable, Mapping
 
-# Okabe-Ito colour-blind-safe colours; the first four also differ in grey value.
+# Extended Okabe-Ito palette; the first four also differ in grey value.
 PALETTE = {
     "blue": "#0072B2", "orange": "#E69F00", "wine": "#882255", "green": "#009E73",
     "sky": "#56B4E9", "vermilion": "#D55E00", "purple": "#CC79A7", "yellow": "#F0E442",
@@ -21,11 +21,41 @@ PALETTE = {
 CYCLE = [PALETTE[k] for k in ("blue", "orange", "wine", "green", "sky", "vermilion", "purple", "gray")]
 
 MM_PER_IN = 25.4
-SINGLE_COLUMN_MM, ONE_HALF_COLUMN_MM, DOUBLE_COLUMN_MM = 88.0, 120.0, 180.0
-SINGLE_COLUMN_IN = SINGLE_COLUMN_MM / MM_PER_IN
-ONE_HALF_COLUMN_IN = ONE_HALF_COLUMN_MM / MM_PER_IN
-DOUBLE_COLUMN_IN = DOUBLE_COLUMN_MM / MM_PER_IN
-WIDTHS_IN = {"single": SINGLE_COLUMN_IN, "onehalf": ONE_HALF_COLUMN_IN, "double": DOUBLE_COLUMN_IN}
+_catalog = json.loads(Path(__file__).with_name("profiles.json").read_text())
+
+
+def profile_name(journal):
+    names = {k.casefold().replace("&", "and"): v for k, v in _catalog["journals"].items()}
+    return names.get(str(journal).casefold().replace("&", "and"), "generic")
+
+
+PROFILE_NAMES = frozenset(_catalog["profiles"])
+PROFILE = _catalog["profiles"][os.environ.get("OPENLABS_FIG_PROFILE", "generic")]
+WIDTHS_IN = {k: PROFILE[k] / MM_PER_IN for k in ("single", "onehalf", "double") if PROFILE[k]}
+SINGLE_COLUMN_MM, ONE_HALF_COLUMN_MM, DOUBLE_COLUMN_MM = (PROFILE[k] for k in ("single", "onehalf", "double"))
+SINGLE_COLUMN_IN, ONE_HALF_COLUMN_IN, DOUBLE_COLUMN_IN = (WIDTHS_IN.get(k) for k in ("single", "onehalf", "double"))
+
+
+def apply_profile(plt):
+    p = PROFILE
+    plt.rcParams.update({"figure.figsize": (SINGLE_COLUMN_IN, SINGLE_COLUMN_IN * .68),
+                         "font.size": p["body"], "axes.labelsize": p["body"], "axes.titlesize": p["body"],
+                         "xtick.labelsize": p["small"], "ytick.labelsize": p["small"], "legend.fontsize": p["small"],
+                         "lines.linewidth": p["line"], "axes.linewidth": p["axis"],
+                         "xtick.major.width": p["axis"], "ytick.major.width": p["axis"]})
+
+
+def panel_label(ax, letter):
+    return ax.text(0, 1, letter, transform=ax.transAxes, va="top", ha="left",
+                   fontsize=PROFILE["panel"], fontweight="bold", fontstyle="normal")
+
+
+def tex_profile(name):
+    p = _catalog["profiles"][name]
+    return "".join(r"\def\ol%s{%s}" % (key, value) + "\n"
+                   for key, value in p.items() if value is not None)
+
+
 STYLE_SHEET = Path(__file__).with_name("openlabs.mplstyle")
 DEFAULT_ASSET_LIBRARY = "/workspace/openlabs/build/figure-assets"
 
@@ -52,7 +82,10 @@ def output_path(default: str = "figure.pdf") -> Path:
 
 def save(fig, path: str | os.PathLike | None = None) -> Path:
     target = Path(path) if path is not None else output_path()
-    fig.savefig(target, format="pdf")
+    suffix = target.suffix.lower().lstrip(".")
+    if suffix not in {"pdf", "svg", "png", "tif", "tiff", "jpg", "jpeg", "eps"}:
+        raise ValueError(f"Unsupported figure extension: {target.suffix}")
+    fig.savefig(target, format=suffix)
     return target
 
 
@@ -142,7 +175,7 @@ def recolor_svg(svg: str, mapping: Mapping[str, str] | None = None,
 
 
 def svg_fragment(asset: str | os.PathLike, *, x: float, y: float, width: float,
-                 recolor: Mapping[str, str] | bool | None = True, ident: str | None = None) -> str:
+                 recolor: Mapping[str, str] | bool | None = False, ident: str | None = None) -> str:
     """Inline an SVG asset as a nested ``<svg>`` at (x, y) scaled to ``width`` user units."""
     text = Path(asset).read_text(encoding="utf-8")
     if recolor:

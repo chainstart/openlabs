@@ -103,12 +103,9 @@ Elsevier do not accept generative-AI images in figures.
 
 ## 3. Style
 
-- Draw at the printed width: 88 mm single column, 120 mm one-and-a-half, 180 mm double
-  (`\olSingleColumn`, `\olOneHalfColumn`, `\olDoubleColumn`; `olf.figure("single")`). Include it
-  at that width (`\includegraphics[width=\linewidth]` for a column figure) so nothing is scaled.
-- Text 7-8 pt, never below 6 pt after scaling; one sans face (TeX Gyre Heros/Arial) in all figures.
-- Colours from the shared palette (Okabe-Ito; blue, orange, wine, green are also distinct in
-  grey). Colour is never the only cue: label directly, or add a pattern or line style.
+- Build at the measured column width in the [journal proof catalog](../../templates/journal-proofs/README.md). Building by paper ID selects the registered target; a source sidecar may select a named profile for a preview. Python uses `olf.figure("single")` or `"double"`, TikZ uses the matching column lengths. Match the float width in the manuscript.
+- Apply the profile's body, tick and panel sizes. Anchor panel letters at the upper left. Inspect the final PDF's measured placements, embedded fonts, thinnest strokes and effective raster resolution. Repair unreadable encodings at source.
+- Keep a stable colour and second cue per group. The shared palette extends Okabe–Ito. Preserve measured image colours and colour scales. Opt in to recolouring only for schematic assets.
 - Label things where they are; prefer direct labels to legends. No figure title repeating the
   caption; panel letters a, b, c in bold at the top left.
 - Arrows start and end at box edges and never run through text; route orthogonally, merge on a

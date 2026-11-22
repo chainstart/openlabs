@@ -179,13 +179,18 @@ def discover(ws: Workspace) -> list[FigureSource]:
     """Renderable sources at the top of ``figure-src/`` (``_*`` helpers and ``assets/`` excluded)."""
     if not ws.src_dir.is_dir():
         return []
+    helpers = _style_helpers()
+    profile = helpers.profile_name(ws.metadata.get("target_journal"))
     found: dict[str, FigureSource] = {}
     for path in sorted(ws.src_dir.iterdir()):
         if not path.is_file() or path.name.startswith(("_", ".")) or path.suffix.lower() not in RENDERABLE:
             continue
         if path.stem in found:
             raise FigureToolError(f"Two sources for figure {path.stem}: {found[path.stem].path.name}, {path.name}")
-        found[path.stem] = FigureSource(path.stem, path, _sidecar(path))
+        sidecar = {"profile": profile, **_sidecar(path)}
+        if sidecar["profile"] not in helpers.PROFILE_NAMES:
+            raise FigureToolError(f"{path.name}: unknown figure profile {sidecar['profile']!r}")
+        found[path.stem] = FigureSource(path.stem, path, sidecar)
     return list(found.values())
 
 
@@ -259,7 +264,8 @@ def _render_tex(src: FigureSource, tmp: Path) -> Path:
         document.write_text(TEX_WRAPPER.format(options=options, preamble=preamble,
                                                source=src.path.resolve().as_posix()), encoding="utf-8")
     env = dict(os.environ)
-    env["TEXINPUTS"] = os.pathsep.join([str(src.path.parent), str(STYLE_DIR), env.get("TEXINPUTS", "")])
+    (tmp / "openlabs-profile.tex").write_text(_style_helpers().tex_profile(src.sidecar.get("profile", "generic")))
+    env["TEXINPUTS"] = os.pathsep.join([str(tmp), str(src.path.parent), str(STYLE_DIR), env.get("TEXINPUTS", "")])
     env["SOURCE_DATE_EPOCH"], env["FORCE_SOURCE_DATE"] = "1767225600", "1"  # 2026-01-01; stable bytes
     command = [engine, "-interaction=nonstopmode", "-halt-on-error", f"-output-directory={tmp}", str(document)]
     try:
@@ -281,6 +287,8 @@ try:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     plt.style.use(os.environ["OPENLABS_FIG_MPLSTYLE"])
+    from openlabs_fig import apply_profile
+    apply_profile(plt)
 except ImportError:
     pass
 script = sys.argv[1]
@@ -297,6 +305,7 @@ def _render_py(src: FigureSource, tmp: Path) -> Path:
     out_pdf, out_svg = tmp / "figure.pdf", tmp / "figure.svg"
     env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
     env |= {"FIG_OUT": str(out_pdf), "FIG_SVG": str(out_svg), "FIG_NAME": src.stem,
+            "OPENLABS_FIG_PROFILE": src.sidecar.get("profile", "generic"),
             "FIG_SRC_DIR": str(src.path.parent), "OPENLABS_FIG_MPLSTYLE": str(STYLE_DIR / "openlabs.mplstyle"),
             "PYTHONPATH": str(STYLE_DIR), "MPLBACKEND": "Agg", "SOURCE_DATE_EPOCH": "1767225600"}
     _run([python, str(boot), str(src.path.resolve())], cwd=src.path.parent, env=env, timeout=900,
@@ -951,6 +960,64 @@ def _finding(figure: str, code: str, message: str) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------- check
+def proof_figures(manuscript):
+    """Locate pdfTeX figure placements on the rendered page using in-memory marker rectangles."""
+    fitz = _fitz()
+    proof = manuscript / "main.pdf"
+    results = {}
+    if not proof.is_file():
+        return results
+    with fitz.open(proof) as doc, fitz.open(proof) as markers:
+        for page in doc:
+            objects = {}
+            for xref, _, _, _ in page.get_xobjects():
+                kind, filename = doc.xref_get_key(xref, "PTEX.FileName")
+                if kind != "string" or Path(filename).suffix.lower() != ".pdf":
+                    continue
+                bbox = doc.xref_get_key(xref, "BBox")[1]
+                x, y, right, top = map(float, bbox.strip("[]").split())
+                # Identify repeated placements independently, including transformed XObjects.
+                color = ((xref % 251 + 1) / 255, ((xref // 251) % 251 + 1) / 255, .314159)
+                stream = "%f %f %f rg %f %f %f %f re f" % (*color, x, y, right-x, top-y)
+                markers.update_stream(xref, stream.encode())
+                objects[tuple(round(c, 5) for c in color)] = (Path(filename).stem, xref)
+            if not objects:
+                continue
+            drawings = page.get_drawings()
+            images = page.get_image_info()
+            for mark in markers[page.number].get_drawings():
+                match = objects.get(tuple(round(c, 5) for c in mark.get("fill") or ()))
+                if not match:
+                    continue
+                name, xref = match
+                rect = mark["rect"]
+                text = page.get_text("dict", clip=rect, flags=fitz.TEXTFLAGS_TEXT)
+                lines = [[span for span in line["spans"] if span["text"].strip()]
+                         for block in text["blocks"] for line in block.get("lines", [])]
+                fonts = [span["size"] for line in lines for span in line]
+                # Exclude short superscripts/subscripts from the body-text minimum.
+                body = [span["size"] for line in lines for span in line
+                        if len(span["text"].strip()) > 4 or span["size"] >= .85 * max(s["size"] for s in line)]
+                strokes = [d["width"] for d in drawings if d["type"] in ("s", "fs") and rect.contains(d["rect"])
+                           and d.get("width") is not None]
+                ppi = []
+                for item in images:
+                    if rect.contains(fitz.Rect(item["bbox"])):
+                        a, b, c, d, _, _ = item["transform"]
+                        if (a or b) and (c or d):
+                            ppi.extend((72 * item["width"] / (a*a+b*b)**.5, 72 * item["height"] / (c*c+d*d)**.5))
+                owners = {xref}
+                for child, _, parent, _ in page.get_xobjects():
+                    if parent in owners:
+                        owners.add(child)
+                missing = [f[3] for f in page.get_fonts(full=True) if f[-1] in owners and f[2] != "Type3"
+                           and not doc.extract_font(f[0])[-1]]
+                results.setdefault(name, []).append(dict(page=page.number+1, width_mm=rect.width*25.4/72,
+                    min_body_pt=min(body, default=None), smallest_span_pt=min(fonts, default=None), min_stroke_pt=min(strokes, default=None),
+                    min_ppi=min(ppi, default=None), unembedded_fonts=missing))
+    return results
+
+
 def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
           min_font_pt: float = MIN_FONT_PT) -> dict[str, Any]:
     """Blocking and advisory findings for every manuscript figure (no file is changed)."""
@@ -1001,6 +1068,11 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
         if not (ws.out_dir / f"{stem}.pdf").is_file():
             blocking.append(_finding(stem, "FIG-NOT-BUILT", f"{src.path.name} has no figures/{stem}.pdf; "
                                      "run figures build"))
+    try:
+        placements = proof_figures(ws.manuscript)
+    except (RuntimeError, ValueError, OSError) as exc:
+        advisory.append(_finding("proof", "FIG-PROOF-UNREADABLE", str(exc)))
+        placements = {}
     for pdf in pdfs:
         stem = pdf.stem
         src = by_stem.get(stem)
@@ -1043,6 +1115,21 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
             continue
         natural = info["page_pt"][0]
         final_widths = [u["width_bp"] or (natural * u["scale"] if u["scale"] else natural) for u in use]
+        record["proof_placements"] = placements.get(stem, [])
+        if record["proof_placements"]:
+            final_widths = [item["width_mm"] * 72 / 25.4 for item in record["proof_placements"]]
+            for item in record["proof_placements"]:
+                for field, limit, unit in (("min_stroke_pt", .25, "bp"), ("min_ppi", 300, "ppi")):
+                    if item[field] is not None and item[field] < limit - .01:
+                        required.append(_finding(stem, "FIG-PROOF-READABILITY",
+                            f"Page {item['page']}: {field} {item[field]:.2f} {unit}; readability target {limit}."))
+                if item["min_body_pt"] is not None and item["min_body_pt"] < min_font_pt - FONT_TOLERANCE_PT:
+                    required.append(_finding(stem, "FIG-PROOF-TEXT",
+                        f"Page {item['page']}: body text measures {item['min_body_pt']:.2f} bp."))
+                if item["unembedded_fonts"]:
+                    required.append(_finding(stem, "FIG-PROOF-FONT", str(item["unembedded_fonts"])))
+        elif use:
+            advisory.append(_finding(stem, "FIG-PROOF-UNMEASURED", "Placement unavailable in main.pdf; using source estimate."))
         final = min(final_widths) if final_widths else natural
         scale = final / natural if natural else 1.0
         record |= {"page_mm": info["page_mm"], "final_width_mm": round(final / 72 * 25.4, 1),
