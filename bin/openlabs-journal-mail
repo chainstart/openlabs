@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+code=$(cd "$(dirname "$0")/.." && pwd)
+vault=/workspace/secret-key
+archive=$(cat "$vault/LATEST.txt")
+[[ $archive =~ ^inventory-[0-9-]+$ ]]
+source "$vault/$archive/loaders.sh"
+load_sdju_mail_credentials
+export PYTHONPATH="$code/workflows/paper:$code/orchestrator/src:${PYTHONPATH:-}"
+exec python3 -m paper_writing.journal_mail "$@"

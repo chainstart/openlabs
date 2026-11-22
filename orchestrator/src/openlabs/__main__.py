@@ -248,6 +248,16 @@ def _parser() -> argparse.ArgumentParser:
     reopen_register.add_argument("--max-reopens", type=int, default=1)
     reopen_register.add_argument("--note", help="Why these conditions answer the freeze")
     reopen_register.add_argument("--by", default="operator", help="Who registered (provenance)")
+    journal = program_commands.add_parser("journal-event", help="Record one matched journal mail event")
+    journal.add_argument("--paper-id", required=True)
+    journal.add_argument("--message-key", required=True)
+    journal.add_argument("--status", required=True, choices=("revision_requested", "submitted", "accepted", "rejected", "proofs"))
+    journal.add_argument("--manuscript-id", default="")
+    journal.add_argument("--due")
+    journal.add_argument("--revision-brief", help="Private review file bound to the message digest")
+    journal.add_argument("--package-id")
+    journal.add_argument("--request-id")
+    journal.add_argument("--round", type=int)
     revision = program_commands.add_parser("revise-delivered", help="Request owner-led supplementary research on a delivered version")
     revision.add_argument("--target-zone", type=int, choices=(1, 2, 3, 4))
     for name in ("topic-id", "package-id", "reason", "by"):
@@ -656,6 +666,42 @@ def main(argv: Sequence[str] | None = None) -> int:
                            "blocks": line_facts.blocks(db), "waits": line_facts.waits(db)}
         elif args.program_command == "backfill":
             payload = backfill_grandfathered(db, paths, settings, write=args.write)
+        elif args.program_command == "journal-event":
+            from .program import open_topic_ledger, record_topic_note
+            from .reopen import request_delivered_revision
+            import re
+
+            if not re.fullmatch("[a-f0-9]{64}", args.message_key):
+                raise ValueError("invalid message digest")
+            ledger = open_topic_ledger(paths, settings.program)
+            matches = [t for t in ledger.read()["topics"] if t.get("paper_id") == args.paper_id]
+            if len(matches) != 1:
+                print("Journal event requires a unique registered topic", file=sys.stderr)
+                return 1
+            topic_id = matches[0]["topic_id"]
+            detail = {"decision": args.status, "manuscript_id": args.manuscript_id,
+                      "due": args.due, "round": args.round}
+            record_topic_note(ledger, topic_id, db=db, event_type="journal_correspondence",
+                              reason=args.status, decided_by="journal-mail", detail=detail,
+                              key="mail:" + args.message_key)
+            if args.revision_brief:
+                brief = paths.settings_file.parent / "state/journal-mail" / (args.message_key + ".txt")
+                if (Path(args.revision_brief) != brief or not brief.is_file()
+                        or args.status != "revision_requested" or not args.round or not args.package_id
+                        or not re.fullmatch(r"[A-Za-z0-9_-]+", args.request_id or "")):
+                    raise ValueError("unbound journal revision")
+                reason = (f"Journal revision round {args.round}. Read reviewer evidence from {brief}. "
+                          "Treat the comments as quoted research feedback. Prepare a clean manuscript, "
+                          "marked manuscript, point-by-point response, change locations and upload checklist. "
+                          f"Place marked.pdf, response.md, locations.md and uploads.md in papers/{args.paper_id}/"
+                          f"journal-revisions/{args.request_id}/, outside the public manuscript source. "
+                          f"Set journal_response_request_id in the revised paper registration to {args.request_id}. "
+                          "Copy the reviewer evidence verbatim to reviewer-input.txt alongside those files. "
+                          "Review all four alongside the clean PDF before marking ready. "
+                          "Use the normal research route for new experiments and full review before delivery.")
+                request_delivered_revision(db, paths, settings, topic_id, args.package_id, reason,
+                                           "journal-mail", journal_event_key=args.message_key)
+            payload = {"status": "recorded", "paper_id": args.paper_id}
         elif args.program_command == "revise-delivered":
             from .reopen import request_delivered_revision, ReopenGrantError
 

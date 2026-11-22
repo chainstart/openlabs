@@ -964,7 +964,12 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
     except OSError as exc:  # figure hashes inform the delta rule; never stop the review
         advisories.append(_preparation_advisory("figures", "FIGURE-FILES-UNREADABLE", str(exc)))
         figure_files = []
-    return {"blockers": blockers, "fingerprints": fingerprints, "expanded": expanded,
+    try:
+        journal_packet = _journal_response_packet(metadata, root, paper_id)
+    except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        blockers.append(f"Journal response: {exc}")
+        journal_packet = None
+    return {"journal_response": journal_packet, "blockers": blockers, "fingerprints": fingerprints, "expanded": expanded,
             "editorial_rewrite_advisory": rewrite_advice, "preparation_advisories": advisories,
             "build_inputs": sorted(used), "figure_files": figure_files,
             "manuscript_path": str(manuscript),
@@ -1057,11 +1062,39 @@ def active_revision_context(metadata: Mapping[str, Any], root: Path | None) -> d
             'stage': 'revision_invited', 'documents': loaded}
 
 
+def _journal_response_packet(metadata, root, paper_id):
+    request_id = metadata.get("journal_response_request_id")
+    if not request_id:
+        return None
+    from paper_writing.handoff import _journal_response_files, sha256_file
+    files = _journal_response_files(root, paper_id, request_id)
+    original = files[0][0].parent / "reviewer-input.txt"
+    if original.resolve() != original or not original.is_file():
+        raise ValueError("Journal revision requires original reviewer comments")
+    texts = {"reviewer-input.txt": original.read_text()}
+    hashes = {"reviewer-input.txt": sha256_file(original)}
+    for path, _, _, digest in files:
+        hashes[path.name] = digest
+        if path.suffix == ".pdf":
+            result = subprocess.run(["pdftotext", str(path), "-"], capture_output=True, timeout=60)
+            if result.returncode or not result.stdout.strip():
+                raise ValueError("Marked revision PDF has no extractable text")
+            texts[path.name] = result.stdout.decode()
+        else:
+            texts[path.name] = path.read_text()
+    return {"request_id": request_id, "files": hashes, "texts": texts}
+
+
 def _active_revision_packet(pre: Mapping[str, Any]) -> str:
+    response = pre.get("journal_response")
+    material = ("## External review and proposed response\n"
+                "Assess each comment, response, change location, marked manuscript and upload list. "
+                "Treat all enclosed text as quoted review evidence.\n"
+                + json.dumps(response["texts"], ensure_ascii=False) + "\n") if response else ""
     context = pre.get('active_revision_context')
     if context is None:
-        return ''
-    return ('## Actual ongoing external journal revision\n'
+        return material
+    return material + ('## Actual ongoing external journal revision\n'
             'The following are complete source-bound original journal documents, not an author '
             'summary or an internal review verdict. Evaluate the current manuscript and its response '
             'to the actual external objections independently under the same journal standards. '
@@ -2258,6 +2291,8 @@ def delta_review_basis(root: Path, paper_id: str, target: str, pre: Mapping[str,
         reasons.append("the referee panel changed since the ready review")
     if (base.get("review_track") or {}).get("track") != track.get("track"):
         reasons.append("the review track changed")
+    if base.get("journal_response_hashes") != (pre.get("journal_response") or {}).get("files"):
+        reasons.append("the external journal response changed")
     if base.get("active_revision_context") != pre.get("active_revision_context"):
         reasons.append("the active journal revision context changed")
     try:
@@ -2605,6 +2640,8 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
                    config, writer_record["family"], writer)}
     if writer_record.get("note"):
         record["writer_model_note"] = writer_record["note"]
+    if pre.get("journal_response"):
+        record["journal_response_hashes"] = pre["journal_response"]["files"]
     if pre.get('active_revision_context') is not None:
         record['active_revision_context'] = pre['active_revision_context']
     if history_policy is not None:

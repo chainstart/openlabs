@@ -785,7 +785,7 @@ __all__ = [
 ]
 
 
-def request_delivered_revision(db, paths, settings, topic_id, package_id, reason, by, target_zone=None):
+def request_delivered_revision(db, paths, settings, topic_id, package_id, reason, by, target_zone=None, *, journal_event_key=None):
     """Bind the request to one delivered package. The tick owns slot allocation."""
     from . import owner
     from .program_reconcile import delivery_receipts
@@ -793,6 +793,10 @@ def request_delivered_revision(db, paths, settings, topic_id, package_id, reason
     ledger = open_topic_ledger(paths, settings.program)
     topic = ledger.topic(topic_id) or {}
     handoff = topic.get("handoff") or {}
+    journal_revision = bool(journal_event_key and any(
+        item.get("kind") == "journal_correspondence" and item.get("reason") == "revision_requested"
+        and item.get("event_key") == "mail:" + journal_event_key for item in topic.get("history", [])
+    ))
     prior = topic.get("delivered_revision") or {}
     if not all(str(x).strip() for x in (package_id, reason, by)):
         raise ReopenGrantError("package, reason and operator are required")
@@ -803,12 +807,14 @@ def request_delivered_revision(db, paths, settings, topic_id, package_id, reason
     campaign = db.campaign(str(topic.get("campaign_id") or "")) or {}
     receipts = delivery_receipts(paths, str(topic.get("paper_id") or ""))
     if (topic.get("status") != "ready_queue" or handoff.get("status") != "delivered"
-            or handoff.get("submission_handler") or handoff.get("package_id") != package_id
+            or (handoff.get("submission_handler") and not journal_revision) or handoff.get("package_id") != package_id
             or not receipts or receipts[-1]["package_id"] != package_id
             or campaign.get("status") != "production_paused" or not owner.applies(settings, campaign)):
         raise ReopenGrantError("expected a delivered owner topic with matching latest receipt and no handler")
     request = {"package_id": package_id, "version": receipts[-1]["version"], "reason": reason,
                "by": by, "target_zone": target_zone, "requested_at": utc_now()}
+    if journal_revision:
+        request["journal_event_key"] = journal_event_key
     record_topic_note(ledger, topic_id, db=db, event_type="delivered_revision_requested",
                       reason="operator_request", decided_by=f"operator:{by}", detail=request,
                       updates={"delivered_revision": request}, key=f"revise:{package_id}")
@@ -835,7 +841,7 @@ def advance_delivered_revisions(db, paths, settings, report):
         campaign = db.campaign(campaign_id) or {}
         if topic["status"] == "ready_queue":
             handoff = topic.get("handoff") or {}
-            if (handoff.get("status") != "delivered" or handoff.get("submission_handler")
+            if (handoff.get("status") != "delivered" or (handoff.get("submission_handler") and not request.get("journal_event_key"))
                     or handoff.get("package_id") != request["package_id"]):
                 continue
             slots = slot_status(ledger.read(), settings.program, parked_program_projects(paths),

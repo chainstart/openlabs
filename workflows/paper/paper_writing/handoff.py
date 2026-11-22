@@ -841,6 +841,25 @@ def _verified_journal_source_archive(
     return archive_path, len(names)
 
 
+def _copyable_tex_fields(manuscript: Path) -> dict[str, str]:
+    source = manuscript / "main.tex"
+    if not source.is_file():
+        return {}
+    text = source.read_text(errors="replace")
+    fields = {}
+    for name in ("abstract", "keywords", "articletype"):
+        match = re.search(r"\\begin\{" + name + r"\}(.*?)\\end\{" + name + r"\}", text, re.S)
+        if match:
+            fields[name] = match[1].strip()
+        else:
+            match = re.search(r"\\" + name + r"\s*\{", text)
+            if match:
+                end = _balanced_group_end(text, match.end()-1, "{", "}")
+                if end:
+                    fields[name] = text[match.end():end-1].strip()
+    return fields
+
+
 def build_handoff_package(
     paper_id: str,
     *,
@@ -942,6 +961,41 @@ def build_handoff_package(
     version = str(metadata.get("version") or "1.0.0")
     origin_commit = _git_head(repo_root)
     release = _release_snapshot(metadata)
+    projection = _paper_projection(paper_id, metadata, origin_commit=origin_commit)
+    byline = projection["writing_metadata"]["authors"]
+    missing = "待负责人核实"
+    tex = _copyable_tex_fields(manuscript)
+    fmt = metadata.get("target_journal_format") or {}
+    support = _support_projection(metadata).get("publication", {})
+    preparation = metadata.get("retarget_preparation") or {}
+    portal = metadata.get("submission_url")
+    if preparation.get("target_journal") == metadata.get("target_journal"):
+        portal = portal or preparation.get("submission_portal")
+    roles = {"paper.pdf": "审稿正文", "source.zip": "稿源，上传前核对匿名要求"}
+    if supplement:
+        roles["supplement.pdf"] = "补充材料"
+    release["submission_checklist"] = {
+        "target_journal": metadata.get("target_journal") or missing,
+        "portal": portal or missing,
+        "article_type": metadata.get("article_type") or fmt.get("article_type") or tex.get("articletype") or missing,
+        "title": projection["title"],
+        "abstract": metadata.get("abstract") or tex.get("abstract") or missing,
+        "keywords": metadata.get("keywords") or tex.get("keywords") or missing,
+        "authors": [{**person, "orcid": missing} for person in byline["people"]],
+        "affiliations": byline["affiliations"] or missing,
+        "corresponding_author": [p["name"] for p in byline["people"] if p.get("corresponding") and p.get("name")] or missing,
+        "funding": byline["funding"] or missing,
+        "data_url": metadata.get("data_url") or support.get("record_url") or missing,
+        "code_url": metadata.get("code_url") or (support.get("github") or {}).get("repository_url") or missing,
+        "cover_letter_draft": f'Dear Editors, please consider "{projection["title"]}" for publication. [Add contribution and journal fit.]',
+        "ai_declaration_draft": "The authors used [tools and purposes]. [Describe author verification.]",
+        "interest_declaration_draft": "The authors declare [verified competing interests].",
+        "fees": json.loads(json.dumps(metadata.get("target_journal_fee_evidence") or missing, default=str)),
+        "files": roles,
+        "receipt_status_at_packaging": "待核实",
+        "handler_receipt_fields": {"manuscript_number": "", "submitted_at": "", "receipt_reference": ""},
+        "handler_action": "核对费用、声明、文件与系统生成的 PDF，确认后提交，在管理网站登记稿号和回执。",
+    }
     release_hash = hashlib.sha256(
         json.dumps(release, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
@@ -963,9 +1017,7 @@ def build_handoff_package(
         "origin_repository": WRITING_REPOSITORY,
         "origin_commit": origin_commit,
         "legacy_origin": dict(origin),
-        "paper": _paper_projection(
-            paper_id, metadata, origin_commit=origin_commit
-        ),
+        "paper": projection,
         "release": release,
         "source": {
             "path": source_zip.name,
@@ -1971,6 +2023,23 @@ def save_release_receipt(
     return receipt_path, receipt
 
 
+def _journal_response_files(root, paper_id, request_id):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", request_id):
+        raise HandoffError("Invalid revision request identifier")
+    base = Path(root).resolve() / "papers" / paper_id / "journal-revisions" / request_id
+    roles = {"marked.pdf": ("other", "application/pdf"),
+             "response.md": ("response_letter", "text/markdown"),
+             "locations.md": ("other", "text/markdown"),
+             "uploads.md": ("other", "text/markdown")}
+    files = []
+    for name, (kind, mime) in roles.items():
+        path = base / name
+        if path.resolve() != path or not path.is_file() or not path.stat().st_size:
+            raise HandoffError(f"Journal revision requires {name} for {request_id}")
+        files.append((path, kind, mime, sha256_file(path)))
+    return files
+
+
 def release_handoff(
     paper_id: str,
     *,
@@ -1982,6 +2051,33 @@ def release_handoff(
     """Validate, build, synchronize and receipt one finalized paper version."""
 
     before = validate_release_preconditions(paper_id, root=root)
+    metadata = load_paper_metadata(paper_id, root)
+    prior = (metadata.get("delivery") or {}).get("package_id")
+    journal_files = []
+    round_id = None
+    if prior:
+        requests = client.list_revision_requests(paper_id=paper_id)
+        matches = [r for r in requests if r.get("base_package_id") == prior
+                   and str(r.get("instructions") or "").startswith("OpenLabs journal ")]
+        if len(matches) > 1:
+            raise HandoffError("Multiple open journal revisions for the delivered package")
+        if matches:
+            request = matches[0]
+            if revision_request_id and revision_request_id != request["request_id"]:
+                raise HandoffError("Different revision request already bound")
+            revision_request_id = request["request_id"]
+            round_id = request["review_round_id"]
+            journal_files = _journal_response_files(root, paper_id, revision_request_id)
+            original = journal_files[0][0].parent / "reviewer-input.txt"
+            if original.resolve() != original or not original.is_file():
+                raise HandoffError("Missing journal reviewer input")
+            hashes = {path.name: digest for path, _, _, digest in journal_files}
+            hashes[original.name] = sha256_file(original)
+            decision_path = Path(root) / str((metadata.get("writing_release") or {}).get("decision_record") or "")
+            if (metadata.get("journal_response_request_id") != revision_request_id
+                    or not decision_path.is_file()
+                    or json.loads(decision_path.read_text()).get("journal_response_hashes") != hashes):
+                raise HandoffError("Journal response files require a matching unified review")
     with tempfile.TemporaryDirectory(prefix=f"ara-{paper_id}-release-") as temporary:
         build_handoff_package(
             paper_id,
@@ -1994,6 +2090,16 @@ def release_handoff(
         if before != after or manifest.get("origin_commit") != before["origin_commit"]:
             raise HandoffError("Paper or Git HEAD changed while the release was being built")
         manage_paper = client.sync_paper(manifest)
+        for path, kind, mime, digest in journal_files:
+            binding = f"journal:{revision_request_id}:{manifest['package_id']}:{path.name}:{digest}"
+            registered = client._request("POST", f"/v1/papers/{paper_id}/artifacts",
+                json={"kind": kind, "filename": path.name, "mime_type": mime, "sha256": digest,
+                      "size_bytes": path.stat().st_size, "review_round_id": round_id},
+                idempotency_key=binding)
+            if registered.get("upload"):
+                client._put_signed(registered["upload"], path, mime)
+            client._request("POST", f"/v1/artifacts/{registered['artifact']['id']}/complete",
+                            json={}, idempotency_key=binding + ":complete")
         manage_package = client.push_package(manifest)
         receipt_path, _ = save_release_receipt(
             manifest,
