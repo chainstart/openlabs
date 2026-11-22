@@ -52,9 +52,9 @@ PYTHONPATH=workflows/paper python3 -m paper_writing narrative-check --tex path/t
 
 | 代码 | 级别 | 含义 |
 |---|---|---|
-| `NARRATIVE-BODY-LENGTH` | 失败 | 正文词数超过 `max_body_words`；报告最大的几节并提示把什么移到附录 |
+| `NARRATIVE-BODY-LENGTH` | 通用阈值提示，稿件登记的刊规超限失败 | 正文词数超过 `max_body_words`；报告最大的几节并提示把什么移到附录 |
 | `NARRATIVE-BODY-PAGES` | 失败 | 设置了 `max_body_pages` 时，估算页数（词数/550 + 图表数×0.35）超限 |
-| `NARRATIVE-REVISION-HISTORY` | 失败 | 摘要、正文、附录里的修订史用语（“in the previous version”“had previously been excluded”“as requested by the referee”“上一版”“经复核后”“根据审稿意见”等），逐条给行号 |
+| `NARRATIVE-REVISION-HISTORY` | 提示 | 摘要、正文、附录里的修订史用语（“in the previous version”“had previously been excluded”“as requested by the referee”“上一版”“经复核后”“根据审稿意见”等），逐条给行号 |
 | `NARRATIVE-ABSTRACT-WORDS / -NUMBERS / -TEST-STATISTICS / -PARENTHETICALS` | 警告 | 摘要词数、数字个数（展开数值宏后计数）、检验量与推断术语（ΔlnL、χ²、p<、似然、后验、MCMC 等）、括号限定 |
 | `NARRATIVE-HEDGE-DENSITY` | 警告 | 英文/中文 hedging 词表的千词密度，列出最常见的几个 |
 | `NARRATIVE-STACKED-QUALIFIERS` | 警告 | 单句限定标记（hedge、范围限定、让步、括号旁白）≥ 4 的句子过多，逐句给行号；图表标题不计 |

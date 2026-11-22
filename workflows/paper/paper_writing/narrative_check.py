@@ -4,9 +4,9 @@ Single-object papers grew to 44 pages and 15,000 words because every review roun
 formal check asked for one more qualification and nothing ever asked for a cut. These
 deterministic counts make the symptoms visible and give the writer line numbers:
 
-* main-text length against a configurable limit (hard failure);
+* main-text length against generic length guidance and the recorded venue limit;
 * revision-history narration ("in the previous version", "经复核后") anywhere in the
-  scientific text (hard failure);
+  scientific text (warning);
 * abstract length, the number of numbers, test statistics and parenthetical qualifiers
   in it (warnings);
 * hedging density, sentences with stacked qualifiers, conclusion sentences with more than
@@ -68,7 +68,7 @@ ARTICLE_TYPE_LIMITS: dict[str, dict[str, Any]] = {
     "math": {"max_body_words": 14000, "abstract_max_numbers": 6},
 }
 
-HARD_CODES = frozenset({"NARRATIVE-BODY-LENGTH", "NARRATIVE-BODY-PAGES", "NARRATIVE-REVISION-HISTORY"})
+HARD_CODES = frozenset({"NARRATIVE-BODY-LENGTH", "NARRATIVE-BODY-PAGES"})
 
 
 def article_type(metadata: Mapping[str, Any]) -> str:
@@ -124,6 +124,7 @@ def resolve_limits(
     if _known(metadata.get("narrative_limits")):
         limits.update(_known(metadata.get("narrative_limits")))
         sources.append("paper.narrative_limits")
+    limits["body_limit_binding"] = "max_body_words" in _known(metadata.get("narrative_limits"))
     return limits, sources
 
 
@@ -575,7 +576,8 @@ def analyze(lines: list[SourceLine], limits: Mapping[str, Any] | None = None, *,
     biggest = ", ".join(f"{s['title']} ({s['words']})" for s in sorted(sections, key=lambda s: -s["words"])[:4])
     limit = config.get("max_body_words")
     if limit and body_count["words"] > int(limit):
-        errors.append(_hit(doc, body_start, "NARRATIVE-BODY-LENGTH",
+        findings = errors if config.get("body_limit_binding") else warnings
+        findings.append(_hit(doc, body_start, "NARRATIVE-BODY-LENGTH",
                            f"main text has {body_count['words']} words, limit {int(limit)} "
                            f"({body_count['words'] - int(limit)} over). Keep the problem-method-experiment-"
                            "result line in the main text and move robustness checks, numerical-resolution "
@@ -604,7 +606,7 @@ def analyze(lines: list[SourceLine], limits: Mapping[str, Any] | None = None, *,
                                           "current result as it stands; the history of the analysis and "
                                           "answers to reviewers belong in the response letter",
                                           _excerpt(prose, match.start(), match.end())))
-    errors.extend(sorted(revision_hits, key=lambda h: (h["path"], h["line"])))
+    warnings.extend(sorted(revision_hits, key=lambda h: (h["path"], h["line"])))
 
     # Abstract.
     abstract: dict[str, Any] | None = None
@@ -746,8 +748,9 @@ def analyze(lines: list[SourceLine], limits: Mapping[str, Any] | None = None, *,
                                      "without a main-text request from the reviewers: put added "
                                      "qualifications and checks in the appendix and the response letter"))
     if config.get("warnings_blocking"):
-        errors.extend(warnings)
-        warnings = []
+        advisory = {"NARRATIVE-REVISION-HISTORY", "NARRATIVE-BODY-LENGTH"}
+        errors.extend(row for row in warnings if row["code"] not in advisory)
+        warnings = [row for row in warnings if row["code"] in advisory]
     return {"valid": not errors, "limits": {k: config[k] for k in DEFAULT_LIMITS}, "metrics": metrics,
             "errors": errors, "warnings": warnings}
 

@@ -51,7 +51,8 @@ def test_main_text_over_limit_fails_and_appendix_tables_math_do_not_count(tmp_pa
     assert metrics["appendix_words"] >= 500
     assert result["valid"]
     result = _check(tmp_path, _doc(body + _words(50), tail=tail), {"max_body_words": 100})
-    assert "NARRATIVE-BODY-LENGTH" in _codes(result["errors"])
+    assert "NARRATIVE-BODY-LENGTH" in _codes(result["warnings"])
+    result = _check(tmp_path, _doc(body + _words(50)), {"max_body_words": 100, "body_limit_binding": True})
     failure = next(e for e in result["errors"] if e["code"] == "NARRATIVE-BODY-LENGTH")
     assert "appendix" in failure["message"] and "Introduction" in failure["message"]
 
@@ -64,16 +65,16 @@ def test_page_limit_is_optional_and_estimated(tmp_path: Path) -> None:
     assert result["metrics"]["body_pages_estimate"] == pytest.approx(1100 / 550 + 0.35, abs=0.1)
 
 
-def test_revision_history_fails_with_source_line_in_an_input_file(tmp_path: Path) -> None:
+def test_revision_history_warns_with_source_line_in_an_input_file(tmp_path: Path) -> None:
     (tmp_path / "sec-results.tex").write_text(
         "\\section{Results}\n"
         "The profiles are smooth.\n"
         "The high-resolution profiles replace all points, including those that had previously been excluded.\n"
         "经复核后，我们改用了新的星历。\n", encoding="utf-8")
     result = _check(tmp_path, _doc("\\input{sec-results}"))
-    hits = [e for e in result["errors"] if e["code"] == "NARRATIVE-REVISION-HISTORY"]
+    hits = [e for e in result["warnings"] if e["code"] == "NARRATIVE-REVISION-HISTORY"]
     assert [(h["path"], h["line"]) for h in hits] == [("sec-results.tex", 3), ("sec-results.tex", 4)]
-    assert not result["valid"]
+    assert result["valid"]
 
 
 @pytest.mark.parametrize("sentence", [
@@ -85,7 +86,7 @@ def test_revision_history_fails_with_source_line_in_an_input_file(tmp_path: Path
 ])
 def test_revision_history_phrases(tmp_path: Path, sentence: str) -> None:
     result = _check(tmp_path, _doc("\\section{Data}\n" + sentence))
-    assert "NARRATIVE-REVISION-HISTORY" in _codes(result["errors"])
+    assert "NARRATIVE-REVISION-HISTORY" in _codes(result["warnings"])
 
 
 @pytest.mark.parametrize("sentence", [
@@ -95,7 +96,7 @@ def test_revision_history_phrases(tmp_path: Path, sentence: str) -> None:
 ])
 def test_ordinary_scientific_sentences_are_not_revision_history(tmp_path: Path, sentence: str) -> None:
     result = _check(tmp_path, _doc("\\section{Data}\n" + sentence))
-    assert "NARRATIVE-REVISION-HISTORY" not in _codes(result["errors"])
+    assert "NARRATIVE-REVISION-HISTORY" not in _codes(result["warnings"])
 
 
 def test_credit_role_in_back_matter_is_not_scanned(tmp_path: Path) -> None:
@@ -215,16 +216,16 @@ def _paper(tmp_path: Path, body: str, *, record_extra: str = "", lines_yaml: str
     return manuscript
 
 
-def test_style_check_carries_narrative_failures_and_blocks_review(tmp_path: Path) -> None:
+def test_style_check_carries_generic_limits_as_advice(tmp_path: Path) -> None:
     _paper(tmp_path, "\\section{Results}\n" + _words(200) + "\nNotably, it holds.")
     result = audit_manuscript_style(PAPER, root=tmp_path, require_ai_declaration=False)
-    assert not result["valid"]
-    failure = next(e for e in result["errors"] if e["code"] == "NARRATIVE-BODY-LENGTH")
+    assert result["valid"]
+    failure = next(e for e in result["narrative_warnings"] if e["code"] == "NARRATIVE-BODY-LENGTH")
     assert failure["path"] == f"papers/{PAPER}/manuscript/main.tex"
     assert result["narrative"]["limits"]["max_body_words"] == 120
     assert "settings.quality_gate.narrative" in result["narrative"]["limit_sources"]
     blockers, advisories = manuscript_style_review_findings(result)
-    assert any(b.startswith("NARRATIVE-BODY-LENGTH") for b in blockers)
+    assert not any(b.startswith("NARRATIVE-BODY-LENGTH") for b in blockers)
     assert {a["kind"] for a in advisories if a["source"] == "narrative_check"} <= {"narrative"}
 
 
@@ -267,9 +268,9 @@ def test_cli_narrative_check_reports_and_exits(tmp_path: Path, capsys: pytest.Ca
     assert "Main-text words" in out.read_text()
     capsys.readouterr()
     path.write_text(_doc("\\section{Results}\nIn the previous draft we used a linear fit."), encoding="utf-8")
-    assert cli(["narrative-check", "--tex", str(path), "--json", "--root", str(tmp_path)]) == 1
+    assert cli(["narrative-check", "--tex", str(path), "--json", "--root", str(tmp_path)]) == 0
     printed = json.loads(capsys.readouterr().out)
-    assert printed["errors"][0]["code"] == "NARRATIVE-REVISION-HISTORY" and printed["errors"][0]["line"]
+    assert printed["warnings"][0]["code"] == "NARRATIVE-REVISION-HISTORY" and printed["warnings"][0]["line"]
 
 
 # --------------------------------------------------------------------------- reader check
