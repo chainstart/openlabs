@@ -11,6 +11,8 @@ Measure the two rules after printing. Supplementary Note~\ref{sec:print} gives t
 \section{Supplementary Note}\label{sec:print}
 Print at actual size. Scaling to fit changes both lengths.
 \begin{thebibliography}{1}
-\bibitem[BIPM(2019)]{si} BIPM. The International System of Units (SI), ninth edition, 2019. doi:10.59161/AUEZ1291.
+\makeatletter
+\@ifpackageloaded{natbib}{\bibitem[BIPM(2019)]{si}}{\bibitem{si}}
+\makeatother BIPM. The International System of Units (SI), ninth edition, 2019. doi:10.59161/AUEZ1291.
 \end{thebibliography}
 \end{document}
