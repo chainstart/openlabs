@@ -682,6 +682,19 @@ def test_optional_previous_suggestions_cannot_become_unresolved_mandatory_items(
     _validate_against_schema([{'item': 'Fix Lemma 2 proof gap', 'resolved': False, 'evidence': 'still absent'}], sub)
 
 
+@pytest.mark.parametrize('blocker', ['Line 1\nLine 2', 'Explain the "restricted" range'])
+def test_followup_accepts_provider_safe_schema_for_literal_blockers(blocker):
+    previous = {'items': [blocker]}
+    for base in (flow.EDITOR_SCHEMA, flow.referee_schema_for_previous(previous)):
+        schema = flow.followup_schema(base, previous)['properties']['previous_items']
+        assert 'enum' not in schema['items']['properties']['item']
+        row = {'item': blocker, 'resolved': True, 'evidence': 'Revised', 'reader_misconclusion': ''}
+        _validate_against_schema([row], schema)
+        flow._check_followup_items({'previous_items': [row]}, previous)
+        with pytest.raises(ValueError, match='omitted, duplicated or introduced'):
+            flow._check_followup_items({'previous_items': [row | {'item': 'Paraphrase'}]}, previous)
+
+
 def test_new_refusal_or_changed_letter_invalidates_clearance(tmp_path):
     row = {'journal': 'J', 'manuscript_number': '1'}
     identity = hashlib.sha256(json.dumps(['J', '1'], ensure_ascii=False).encode()).hexdigest()[:20]

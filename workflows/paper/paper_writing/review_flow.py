@@ -2291,7 +2291,13 @@ def referee_schema_for_previous(previous: Mapping[str, Any] | None) -> dict[str,
     array = schema['properties']['previous_items']
     array['minItems'] = array['maxItems'] = len(items)
     if items:
-        array['items']['properties']['item']['enum'] = items
+        item = array['items']['properties']['item']
+        if all(text.isprintable() and '"' not in text for text in items):
+            item['enum'] = items
+        else:
+            # The provider rejects quoted or multiline enum literals. The
+            # follow-up validator still requires every original item verbatim.
+            item['description'] = "Copy the mandatory item verbatim, including all line breaks and punctuation."
     return schema
 
 
