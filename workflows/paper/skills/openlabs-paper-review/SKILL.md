@@ -48,7 +48,7 @@ keep internal review negotiation and claims about editor approval outside the pa
    desk-reject reason and every available historical refusal letter.
 3. Independent scientific referees, each in a fresh process: complete manuscript and
    supplement, novelty, significance for the target, correctness, experimental credibility,
-   previous objections. Unsupported main claims go in `scientific_blockers`; requested changes
+   previous objections. Trace the central estimate to the panel, independent unit, comparator and interval definition. Unsupported main claims go in `scientific_blockers`; requested changes
    are typed `evidence`, `claim_narrowing` (with `main_claim`) or `text`.
 4. If the scientific decision can advance, independent bibliography and core-mathematics
    verification, run by `review.roles.formal_verifier` when configured (otherwise the editor's
@@ -69,7 +69,7 @@ fresh review.
 
 Ready requires a passing scientific, narrative and visual judgment and an accurate independent
 reader reconstruction. A scientific defect independently vetoes delivery. Return narrative and
-visual defects to the author with a location and the reader's difficulty. Local polish is advisory.
+visual defects (including a figure-only reading that changes the comparator, direction or uncertainty) to the author with a location and the reader's difficulty. Local polish is advisory.
 Under the escalation track every referee must also reach
 the configured escalation score without low confidence. Scores are otherwise kept for
 calibration.

@@ -274,7 +274,7 @@ def delivery_read(source, images, role, workdir, timeout):
     recall, receipt = run_role(role_name="delivery_reader", role=role, workdir=workdir, timeout=timeout,
                     images=images, user_prompt=delivery_packet(source), schema=schema,
                     system_prompt="Read once. Retell the question, comparison, answer and meaning in your own "
-                    "words. Identify the supporting panel for each. If a point is missing, unsupported, "
+                    "words. First read only figures and captions. State one result with its panel, comparator and uncertainty. Identify the supporting panel for each. If a point is missing, unsupported, "
                     "unintelligible or only an internal criterion, list the necessary repair. Otherwise "
                     "leave repairs empty. Do not propose experiments.")
     judgment, _ = run_role(role_name="recall_verifier", role=role, workdir=workdir.parent / "recall-verifier",
@@ -303,7 +303,7 @@ def review_story(paper_id, root):
                            workdir=notes / "story-reviews" / stamp, timeout=config["timeout_seconds"],
                            system_prompt="Read this storyline once before drafting. State the intended reader, "
                            "decisive comparison and quantitative answer as you understand them. Identify the "
-                           "one change most needed for the figures and Results to tell that story.",
+                           "panel that distinguishes the closest alternative and whose decision changes. Give one actionable edit.",
                            user_prompt=story, schema={"type": "object", "additionalProperties": False,
                            "required": ["reading", "advice"], "properties": {"reading": _TEXT, "advice": _TEXT}})
     return feedback
