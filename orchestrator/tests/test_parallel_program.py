@@ -124,13 +124,13 @@ def test_scout_interval_is_per_domain_when_parallel(tmp_path) -> None:
     # program-wide stamp.
     assert sorted(item.domain for item in scheduled) == ["physics", "quant"]
     assert reason == "scout_min_interval"
-    # The single-scout default keeps the program-wide interval.
+    # One scout at a time still uses the per-project scheduling scope.
     single = replace(settings, program=replace(settings.program, max_concurrent_scouts=1))
     _finish(db, [item.task_id for item in scheduled])
     db.update_meta({LAST_SCOUT_KEY: budget_control._iso(NOW - timedelta(hours=1))})
-    assert maybe_schedule_scout(db, paths, single, lead_short=False, now=NOW).reason == (
-        "scout_min_interval"
-    )
+    later = maybe_schedule_scout(db, paths, single, lead_short=False,
+                                 now=NOW + timedelta(hours=1))
+    assert later.task_id is not None and later.domain == "ai"
 
 
 def test_low_water_counts_in_flight_scouts_expected_cards(tmp_path) -> None:
@@ -175,7 +175,7 @@ def _two_admission_batches(tmp_path, monkeypatch, per_domain: int):
     flow._install_program(paths)
     db = flow._db(paths)
     settings = flow._settings(candidate_pool_low_water=5, scout_min_interval_hours=0,
-                              max_admissions_per_domain=per_domain)
+                              max_admissions_per_line=per_domain)
     # Fresh readings for both families: unknown ones would allow one task each.
     now = datetime.now(UTC)
     for runner, names in (("worker_gpt", ("seven_day",)),
@@ -233,7 +233,7 @@ def test_claim_keeps_one_task_per_campaign_without_parallel_reasons(tmp_path) ->
 def test_new_keys_load_and_default_to_the_old_behaviour(tmp_path) -> None:
     defaults = FactorySettings()
     assert defaults.program.max_concurrent_scouts == 1
-    assert defaults.program.max_admissions_per_domain == 1
+    assert defaults.program.max_admissions_per_line == 1
     assert defaults.routing.utilization_target == 0
     assert defaults.routing.stale_estimate_hours == 0
     assert defaults.budget.adaptive_parallel is False
@@ -249,6 +249,7 @@ def test_new_keys_load_and_default_to_the_old_behaviour(tmp_path) -> None:
     paths = replace(qr._paths(tmp_path / "w"), config_file=config)
     loaded = load_settings(paths)
     assert loaded.program.max_concurrent_scouts == 5
+    assert loaded.program.max_admissions_per_line == 2
     assert loaded.program.max_concurrent_admissions == 6
     assert loaded.program.scout_expected_cards == 1.5
     assert loaded.budget.adaptive_parallel and loaded.budget.adaptive_step == 1

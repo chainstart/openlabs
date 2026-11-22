@@ -310,14 +310,14 @@ Fable，再受 `lead_review_ceiling`。仍在 lead 档的方向决策照旧按 d
    研究 campaign 只能由立项关口物化产生。
 3. 先运行 `python -m openlabs program backfill`（默认 dry-run）检查现有在研 campaign，确认后加
    `--write`，把它们登记为 `admission: grandfathered` 的 active 题目，使名额计数如实。
-4. 设 `[program] enabled = true`。可选：`domains` 指定参与轮转的学科；`enforce_admission = true`
+4. 设 `[program] enabled = true`。可选：`research_lines` 指定参与轮转的研究线及顺序；`enforce_admission = true`
    让普通项目里新的研究 workstream 必须对应已立项题目（否则报告 `topic_not_admitted`）。人工
    题目用 `python -m openlabs program submit-card --project <计划项目 project.json> --card card.json`
    提交，与 scout 的卡片一样过立项关口。
 
-每个 tick：有空位、未暂停立项、候选池（proposed）低于 `candidate_pool_low_water`、距上次 scout
-超过 `scout_min_interval_hours`、负责人额度充足时，为在研题目最少的学科排一个 `topic_scout`
-（worker 档）。卡片按 `openlabs.topic_card.v1` 校验后登记为 proposed；不合格的记为 rejected 并
+每个 tick 按研究线检查空位、候选池（proposed）、侦察间隔和退避，优先为当前负载最小的线排
+`topic_scout`（worker 档）。某线候选积压、名额已满或仍在退避时，其他线仍可补题。
+全局名额、算力积压和负责人额度仍约束整体调度。卡片按 `openlabs.topic_card.v1` 校验后登记为 proposed；不合格的记为 rejected 并
 在 `card_errors` 写明原因，随后自动修正一次（`card_repair`）：先按现行校验重验原卡（规则放宽后可能
 直接通过，不花模型额度），否则排一个 light 档 `topic_card_repair` 任务带错误清单重交；修正卡仍不合格
 才是终态。立项审查是 `portfolio_review` 任务（路由原因 `topic_admission`、
@@ -326,6 +326,11 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
 初始 `research_state.json` 带预注册主终点及其哈希、目标档位、routine 退路和成本预算。tick
 报告的 `program` 字段给出候选池、等位题目、本 tick 排的 scout/立项任务和被拒卡片
 （以及 `card_repairs`、`holds_released`、`revisions_scheduled`）。
+`program.by_line` 按研究线显示课题状态、已配置名额及侦察和立项批次的计数；只有领域的历史课题
+列在 `program.legacy_by_domain`。等待远程作业的在研课题仍占已绑定线的研究名额。
+
+有研究线的新 campaign 写入 `workspaces/lines/<line>/<campaign>/`。已有 campaign 继续从持久化
+路径读取状态、证据和交付输入。项目配置与侦察、立项工作流仍在宿主领域工作区。
 
 立项判据（`openlabs.topic_admission_policy.v2`，2026-11-12，技能 `openlabs-topic-admission`）：
 routine 档读过最近已有工作后仍有可陈述的增量差别、决定性数据已确认、设计原理上能识别所称效应、
@@ -1113,16 +1118,22 @@ bin/openlabs-container-loop cli -- status    # 以本实例身份执行任意 py
 
 | 键 | 默认 | 推荐 | 含义 |
 | --- | --- | --- | --- |
-| `[program] max_concurrent_scouts` | 1 | 学科数（5） | 同时在跑的选题任务，每个学科至多一个；>1 时最小间隔按学科计 |
-| `[program] scout_expected_cards` | 2.0 | 2.0 | 一个选题任务预期登记的卡片数；跑完三个后改用本实例的实测均值 |
-| `[program] max_admissions_per_domain` | 1 | 2 | 一个学科同时审的立项批次（不同批次、不同出题模型族可并行） |
-| `[program] max_concurrent_admissions` | 0（不限） | 0 | 全部学科同时审的立项任务上限 |
+| `[program] max_concurrent_scouts` | 1 | 启用线数 | 全局侦察任务上限，每条线同时至多一个 |
+| `[program] scout_min_interval_hours` | 12 | 按实例设定 | 同一研究线两次侦察的默认间隔，单侦察并发时也按线计算 |
+| `[program] line_scout_min_interval_hours` | 空表 | 按需设置 | 按线 ID 覆盖侦察间隔，单位为小时 |
+| `[program] scout_expected_cards` | 2.0 | 2.0 | 旧领域项目共用候选池时的侦察产量估计，跑完三个后使用实测均值 |
+| `[program] max_admissions_per_line` | 1 | 2 | 每条研究线同时审的立项批次上限，同一线多个项目共用 |
+| `[program] max_concurrent_admissions` | 0（不限） | 0 | 全局立项任务上限 |
 | `[routing] utilization_target` | 0（关） | 0.9 | 大于 0 即开启"按相对充裕度分配 + 吞吐监督"；数值本身不再是上限（上限见下文"额度上限与配速"） |
 | `[routing] stale_refresh_minutes` | 未设 | 10 | 过期的 Codex 读数多久免费重读一次会话文件（Claude 探测仍按 `probe_idle_minutes`） |
 | `[routing] stale_estimate_hours` | 0（关） | 48 | 这么久以内的过期读数做保守外推（上次读数 + 窗口平均速度 × 经过时间 + 本实例在该 provider 的智能体时长 × `estimate_fraction_per_agent_hour`），不再把该 provider 限为 1 个任务 |
 | `[budget] adaptive_parallel` | false | true | 每轮按可运行任务、实测负载和额度配速调整并行上限，每轮最多变 `adaptive_step`（2）；`max_parallel_agents` 仍是硬顶 |
 | `[budget] host_utilization_target` | 0.8 | 0.8 | 容器实测 CPU（cgroup，按上一轮以来）与内存（不含页缓存）的目标；达到即不再加并行 |
 | `[budget] ailab_utilization_target` | 0.9 | 0.9 | ailab 已声明占用的目标，只用于报告和给智能体的指引 |
+
+已有实例的 `max_admissions_per_domain` 自动作为 `max_admissions_per_line` 的后备值，两者均填写时以
+新键为准。未配置 `research_lines` 时，旧 `domains` 仍按宿主领域筛选可参与轮转的项目，同宿主的
+不同研究线各自计数。旧领域项目沿用候选池预估和领域后备计数。
 
 怎么理解：
 

@@ -575,11 +575,17 @@ def test_support_release_none_waits_when_the_manuscript_cites_a_deposit(tmp_path
     assert "program deliver" not in _commands(log)
 
 
+@pytest.mark.parametrize("line_workspace", [False, True])
 def test_workspace_paper_is_adopted_into_the_data_repository_then_delivered(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, line_workspace,
 ):
     paths, db, settings, topic, log = _setup(tmp_path, monkeypatch, auto_release=False,
                                              support_release="none")
+    if line_workspace:
+        campaign = db.campaign(topic["campaign_id"])
+        root = paths.data / "workspaces" / "lines" / "line-id" / topic["campaign_id"]
+        db.register_campaign(topic["campaign_id"], domain=campaign["domain"],
+                             title=campaign["title"], state_path=str(root))
     # Owner mode: the paper exists only in the topic's campaign workspace.
     workspace = program_autonomy.asset_library.topic_workspace(db, paths, topic)
     for relative in (f"registry/papers/{PAPER_ID}.json", f"papers/{PAPER_ID}"):
