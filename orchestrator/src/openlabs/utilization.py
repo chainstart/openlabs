@@ -719,6 +719,13 @@ def utilization_report(
                 paused_topic_campaigns(db)).to_dict()
         except Exception:  # noqa: BLE001 - the ledger view is advisory.
             program = {}
+        else:
+            from .program_funnel import with_costs
+
+            try:
+                program["funnel"] = with_costs(document, db, paths, settings)
+            except (OSError, ValueError, TypeError):
+                program["funnel"] = {"status": "unavailable"}
     from .paper_figures import latest_metrics
     figures = list(latest_metrics(db).values())
     program["figure_metrics"] = {

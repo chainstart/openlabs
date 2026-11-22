@@ -169,7 +169,10 @@ Each field is there because the gate needs it to decide:
   on, `data_access_verified: true`, and `access_receipt` `{path, sha256}` matching your artifact.
 - `primary_endpoint` — `metric`, `matched_baseline` (the strongest fair baseline),
   `split` (external or temporal when possible), `decision_rule`, `stop_rule`. Written before any
-  analysis so a negative result is recognizable.
+  analysis so a negative result is recognizable. In the existing `stop_rule`, state in one
+  sentence which observation against the closest published result would make you abandon the
+  topic. Check shared controls and data coverage first. Cite any applicable same-version pilot
+  and use trial compute for the uncertainty that could still change the decision.
 - `data_sources[]` — each with `doi` or `url`, `version`, `license`. These identify the topic in
   the ledger.
 - `computational_only: true` and `computational_only_rationale`.

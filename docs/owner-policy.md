@@ -9,5 +9,11 @@ Independent admission and presubmission review use the authorized panel. During 
 Verify journal eligibility and fees. Paid publication requires a 2025 CAS zone-1 journal. Other targets require a verified fee-free route. Submission, payments and authorship decisions require human approval. Use only existing authorizations for support publication and delivery.
 
 Keep an evidence index and a short next action in the handover. For a change of writer include the endpoint, decisive comparisons, limitations and outstanding decisions.
+In the indexed evidence for the main endpoint, link the manuscript ID and revision, data version,
+split, baseline, run record and exact plotting inputs and command for the decisive figure. Keep the
+closest precedent and counterexample for the novelty claim and any external fact that could change
+the conclusion alongside that evidence. Record the source, supporting passage and conditions of
+applicability, or the search date, scope and terms when no source was found. Writers and reviewers
+can open these references and spot-check the comparison. These pointers are advisory.
 
 For an unsupported intake data format, the named data requirement accepts `equivalent_exports` keyed by original filename. For each file provide its `source_sha256`, a data-repository-relative `csv` path, `csv_sha256` and an `explanation` of the conversion, units and correspondence. The screen checks the bindings and requested columns. Admission assesses the equivalence. Include the actual dataset release in `data_version` when the admission pilot uses a versioned dataset.

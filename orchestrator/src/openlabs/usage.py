@@ -571,12 +571,14 @@ def campaign_core_hours(
     job_roots: Iterable[Path] | None = None,
     attempt_root: Path | None = None,
     now: datetime | None = None,
+    job_groups: Mapping[str, str] | None = None,
 ) -> dict[str, float]:
     """Core-hours per campaign from the job status files.
 
     A job belongs to a campaign when one of its tasks waited on it (remote-wait
     record) or, for local jobs, when its ``source`` directory lies in the campaign's
     canonical or attempt workspaces. ailab jobs that no task waited on are not seen.
+    When job_groups is supplied, each group gets one charge for a shared job.
     """
 
     from .attempts import _token
@@ -608,10 +610,11 @@ def campaign_core_hours(
             if not owners:
                 continue
             hours = job_core_hours(directory, now=now)
-            for campaign_id in owners:
-                if (campaign_id, job_id) in seen:
+            for campaign_id in sorted(owners):
+                key = ((job_groups or {}).get(campaign_id, campaign_id), job_id)
+                if key in seen:
                     continue
-                seen.add((campaign_id, job_id))
+                seen.add(key)
                 result[campaign_id] += hours
     return result
 

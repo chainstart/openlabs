@@ -445,6 +445,11 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   ailab 作业为 `result/receipt.json` 的 `elapsed_seconds` × 线程数，本机作业为 `started_at` 到
   `finished_at`（运行中算到现在）；只有任务曾 yield 等待过的作业，或本机作业的 `source` 在该题 campaign
   或其尝试工作区里，才归到该题。`program utilization` 输出同样的 `token_cost` 与 `topic_economics`。
+- `program utilization` 的 `program.funnel` 按线累计台账里实际经过的阶段，包含冻结及重新打开的课题。
+  交付、人工确认投稿和期刊决定分开计数，稿号去重，保留本地记录的撤回和改投事件。两组成本分别以同线
+  交付稿数和全部开题数作分母，使用可归属的历史观测值。墙钟为各尝试运行时长之和，缺测显示为
+  `null`，未定价尝试与未归线成本单列。仅在管理站登记的期刊事件可能缺测。每轮 tick 的
+  `program.funnel` 给出各阶段计数。
 - **token 记账改为每次尝试的增量**（2026-11-16）。成本核算发现：续接会话时 Codex 的 token 计数和 Claude 的
   `total_cost_usd` 是整个会话的累计值（Codex 相加虚高 4.6 倍，Claude 续接费用约 3 倍），Claude 的 token 计数
   则是本次调用的。现在入库时（`usage.record_increment`）按同一会话之前的记录扣除：原始值留在

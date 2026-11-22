@@ -691,3 +691,13 @@ def test_sensitive_endpoint_reuses_only_a_matching_independent_review(tmp_path):
     assert owner.needs_specialist_review(state, dict(packet, primary_endpoint_verdict="failed"), {})
     report.write_text("{}")
     assert owner.needs_specialist_review(state, packet, prereg)
+
+
+def test_decisive_figure_rebuild_is_optional_review_evidence():
+    block = owner.recompute_block({"recompute_review": {
+        "verdict": "accept",
+        "figure_rebuild": {"figure": "2", "outcome": "missing", "unexpected": "ignored"},
+    }})
+    assert block["verdict"] == "accept"
+    assert block["unverified"] == []
+    assert block["figure_rebuild"] == {"figure": "2", "outcome": "missing"}

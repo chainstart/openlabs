@@ -1956,6 +1956,7 @@ CONTEXT_RULE = (
 WRITING_RULES = (
     "Writing: openlabs-paper-readability/SKILL.md. Give 2–4 takeaways; run story-review before drafting. "
     "Draw decisive figures first. Request visual help via request_figure_assistant. "
+    "Use the indexed endpoint and precedent evidence when drafting claims. "
     "Author reader-check and narrative-check are optional."
 )
 REVISION_RULE = (
@@ -2108,11 +2109,17 @@ def _recompute_objective(round_number: int, max_rounds: int) -> str:
         "Read the packet at the input path. Recompute the core results yourself from the data "
         "and result files the manuscript cites, item by item along packet.checklist: reproduced "
         "/ not reproduced (by how much) / could not reproduce (what is missing). Keep your "
-        "scripts and their outputs in your large-outputs directory and list them. For a later "
+        "scripts and their outputs in your large-outputs directory and list them. When the evidence "
+        "index identifies a decisive figure, rebuild one from the registered plotting inputs. "
+        "Check direction, units and uncertainty against the matching manuscript revision. "
+        "Record figure_rebuild with figure, outcome, direction, units, uncertainty and output "
+        "(use outcome missing when the registered inputs cannot be opened). Keep this check "
+        "advisory and record substantive scientific discrepancies in the usual review fields. "
+        "For a later "
         "round check each required item of packet.previous_rounds against the author's "
         "response. Return the result field `recompute_review`: {verdict: accept|minor|major|"
         "reject, required: [...], optional: [...], unverified: [...], checks: [{item, outcome, "
-        "detail}], scripts: [paths], summary}. major: a core number or conclusion does not "
+        "detail}], scripts: [paths], summary, figure_rebuild (optional)}. major: a core number or conclusion does not "
         "hold as stated; minor: core results reproduce, fixes are local; reject: the main "
         "conclusion fails and no revision of this topic can rescue it. paper_candidate=false."
     )
@@ -2162,6 +2169,7 @@ def _enqueue_recompute_review(
         "line_spec": (f"{paths.data / settings.program.research_lines_path} (line {line}: "
                       "owner_requirements, analysis_package)") if line else None,
         "checklist": recompute_checklist(paths, settings, line),
+        "evidence_index": state.get("evidence_index") or [],
         "previous_rounds": history[-max_rounds:],
         "not_in_scope": "The literal pre-registration check and the venue/editor screen are "
                         "done by the unified review afterwards; do not repeat them here.",
@@ -2220,9 +2228,17 @@ def recompute_block(payload: Mapping[str, Any]) -> dict[str, Any] | None:
         values = value if isinstance(value, list) else [value] if value else []
         return [_short(item, 600) for item in values if str(item or "").strip()][:20]
 
-    return {"verdict": verdict, "required": items("required"), "optional": items("optional"),
-            "unverified": items("unverified"), "scripts": items("scripts"),
-            "summary": _short(block.get("summary") or "", 800)}
+    result = {"verdict": verdict, "required": items("required"), "optional": items("optional"),
+              "unverified": items("unverified"), "scripts": items("scripts"),
+              "summary": _short(block.get("summary") or "", 800)}
+    rebuild = block.get("figure_rebuild")
+    if isinstance(rebuild, Mapping):
+        result["figure_rebuild"] = {
+            key: _short(rebuild[key], 600)
+            for key in ("figure", "outcome", "direction", "units", "uncertainty", "output")
+            if isinstance(rebuild.get(key), str)
+        }
+    return result
 
 
 def _seat_after_review(
@@ -2291,6 +2307,8 @@ def _after_recompute(
              "result_path": str(result_path), "result_sha256": result_sha256,
              **{key: block[key] for key in ("verdict", "required", "optional", "unverified",
                                             "scripts", "summary")}}
+    if block.get("figure_rebuild"):
+        entry["figure_rebuild"] = block["figure_rebuild"]
     history = [*_history(state), entry][-12:]
     verdict = block["verdict"]
     stage = {"accept": STAGE_PASSED, "minor": STAGE_MINOR, "major": STAGE_MAJOR,

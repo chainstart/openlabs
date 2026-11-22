@@ -2196,6 +2196,11 @@ def report_delivery_chain(db, paths, settings, report) -> None:
                 f"{item['action']}")
     from .paper_figures import latest_metrics
     report.program["figure_metrics"] = latest_metrics(db)
+    from .program_funnel import funnel
+    report.program["funnel"] = {
+        line: {key: count for key, count in row.items() if key != "submission_events"}
+        for line, row in funnel(document, paths.data).items()
+    }
     report.program["delivery_chain"] = chain
     report.program["delivery_stuck"] = [item for item in chain
                                         if item["state"] in {"waiting", "needs_human"}]

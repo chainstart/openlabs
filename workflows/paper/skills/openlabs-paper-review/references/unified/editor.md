@@ -109,3 +109,6 @@ Return only the JSON object required by the schema.
 
 
 Read the title, abstract and opening against the decisive panel. State whose decision changes, relative to which alternative and within what boundary. Locate the first claim that promises more than the panel shows. In dimension_repairs independently list the located changes needed for science, narrative/readability and figures. Empty means pass. Any necessary repair vetoes delivery. Put minor polish in advice. Repair confusing narrative or figures using existing evidence unless a separate scientific defect justifies new work.
+
+When indexed evidence includes a precedent or counterexample, you may open the cited passage
+and check whether the source actually makes the claimed comparison under the stated conditions.
