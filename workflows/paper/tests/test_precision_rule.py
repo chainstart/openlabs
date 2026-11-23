@@ -21,12 +21,15 @@ BLOCKERS = ["L25: gap — contact phases alone do not fix q", "L92: error — in
 
 def test_scientific_gaps_are_downgraded_and_errors_and_references_still_block():
     material, downgraded = formal.material_blockers(BLOCKERS, SUMMARY)
-    assert downgraded == ["L25: gap — contact phases alone do not fix q"]
-    assert material == BLOCKERS[1:]
+    # 2026-11-23 audit item 12: a source-routing problem (here a missing catalogue URL) is
+    # checked at delivery, not a reason to withhold ready.
+    assert downgraded == [BLOCKERS[0], BLOCKERS[2]]
+    assert material == [BLOCKERS[1]]
     view = formal.precision_view(SUMMARY)
     assert "L25: gap — contact phases alone do not fix q" in view["by_category"]["advisory"]
+    assert BLOCKERS[2] in view["by_category"]["advisory"]
     assert view["by_category"]["scientific"] == ["L92: error — interval overlap is not a bound"]
-    assert view["by_category"]["source_routing"] == BLOCKERS[2:]
+    assert view["by_category"]["source_routing"] == []
 
 
 def test_only_gaps_leave_no_material_blocker():

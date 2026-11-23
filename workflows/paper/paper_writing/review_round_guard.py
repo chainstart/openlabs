@@ -263,6 +263,102 @@ def response_blockers(root, raw, digest, items, needs_work, hashes, jobs, new_ha
     return blockers
 
 
+# Strengthening words (2026-11-23 audit item 1): presentation.CLAIM_FAMILIES plus quantifiers
+# that turn a measured statement into a universal one ("only a schedule ...", "cannot fall").
+QUANTIFIERS = {
+    "only": r"^only\b(?! (?:a|an|one) (?:small|minor|few|fraction|part|sixth|third|quarter|half|single)\b)"
+            r"|\bonly (?:when|if|those|schedules?|cases?)\b"
+            r"|\bonly (?:a|an|the|one) (?!(?:small|minor|few|fraction|part|sixth|third|quarter|half|single)\b)\w+ "
+            r"(?:whose|that|which|with)\b",
+    "never": r"\bnever\b|\bcan ?not (?:fall|drop|exceed|rise|occur|happen|be (?:lower|higher|smaller|larger|less|"
+             r"greater|negative|positive|below|above|zero|improved|beaten))\b", "always": r"\balways\b",
+    "entirely": r"\b(?:entirely|completely|solely|wholly)\b",
+    "guarantee": r"\bguarantee(?:s|d)?\b", "necessarily": r"\bnecessarily\b",
+}
+_NEGATED = re.compile(r"\b(?:not|no|nor|without|rather than|neither|cannot|can not)\b[^.;:]{0,25}$|n't\s*$", re.I)
+
+
+_NEGATED_AFTER = re.compile(r"^\W*(?:\w+\W+){0,1}(?:does|do|did|is|are|was|were|would|could|can)\s*(?:not|n't)\b"
+                            r"|^\W*(?:\w+\W+){0,1}(?:cannot|fails?|failed)\b", re.I)
+
+
+def _strong_count(pattern: str, sentence: str) -> int:
+    return sum(1 for m in re.finditer(pattern, sentence, re.I)
+               if not _NEGATED.search(sentence[:m.start()]) and not _NEGATED_AFTER.search(sentence[m.end():]))
+# A revision that rewrites more than this share of the words while answering mandatory items
+# mixes a polishing rewrite into a scientific revision.
+MAX_REVISION_WORD_SHARE = 0.15
+MIN_REWRITE_WORDS = 200
+
+
+def _plain_sentences(expanded: str) -> list[str]:
+    from paper_writing.presentation import scientific_text
+
+    text = " ".join(scientific_text(expanded).split())
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[A-Z])", text) if s.strip()]
+
+
+def strengthening_additions(old: str, new: str) -> list[dict]:
+    """New sentences carrying a claim-strength word or quantifier their family did not have
+    in any removed or kept sentence of the same family count."""
+    from paper_writing.presentation import CLAIM_FAMILIES
+
+    families = {**CLAIM_FAMILIES, **QUANTIFIERS}
+    # "novel" is also ordinary vocabulary ("novel isolates"): only claims of priority count.
+    families["priority"] = (r"\bfor the first time\b|\bfirst (?:study|report|evidence|demonstration)\b"
+                            r"|\bnovel (?:approach|method|framework|finding|contribution|insight)s?\b"
+                            r"|\bunprecedented\b|\bbreakthrough\b")
+    old_sentences = _plain_sentences(old)
+    before = set(old_sentences)
+    found = []
+    for sentence in _plain_sentences(new):
+        if sentence in before:
+            continue
+        closest = difflib.get_close_matches(sentence, old_sentences, n=1, cutoff=0.5)
+        base = closest[0] if closest else ""
+        for name, pattern in families.items():
+            if _strong_count(pattern, sentence) > _strong_count(pattern, base):
+                found.append({"family": name, "sentence": sentence[:400]})
+    return found
+
+
+def _declared(raw) -> list[str]:
+    try:
+        letter = json.loads(raw) if raw else None
+    except ValueError:
+        return []
+    if not isinstance(letter, dict):
+        return []
+    texts = list(letter.get("new_text") or []) if isinstance(letter.get("new_text"), list) else []
+    for row in letter.get("items") or []:
+        if isinstance(row, dict) and isinstance(row.get("new_text"), list):
+            texts.extend(row["new_text"])
+    return [" ".join(str(t).split()) for t in texts if isinstance(t, str) and t.strip()]
+
+
+def revision_scope_blockers(old: str, new: str, raw, items, changed_words: int) -> list[str]:
+    """Minimum-change discipline: undeclared strengthening and a polish rewrite mixed into a
+    scientific revision are held before any model runs (a guard hold consumes no round)."""
+    blockers = []
+    declared = _declared(raw)
+    for row in strengthening_additions(old, new):
+        if not any(text in row["sentence"] or row["sentence"] in text for text in declared):
+            blockers.append(f"Undeclared strengthening ({row['family']}) in revised text: \"{row['sentence'][:200]}\". "
+                            "Keep the reviewer's wording, or declare the sentence in the response new_text")
+    from paper_writing.review_flow import front_matter
+
+    if " ".join(front_matter(old)["title"].split()) != " ".join(front_matter(new)["title"].split()):
+        title = " ".join(front_matter(new)["title"].split())
+        if not any(title and (title in text or text in title) for text in declared):
+            blockers.append("The title changed in a revision round; declare the new title in the response new_text")
+    words = max(1, len(re.findall(r"\w+", old)))
+    if items and changed_words >= MIN_REWRITE_WORDS and changed_words / words > MAX_REVISION_WORD_SHARE:
+        blockers.append(f"{changed_words / words:.0%} of the words changed while answering mandatory items "
+                        f"(limit {MAX_REVISION_WORD_SHARE:.0%}): a polishing rewrite and a scientific revision "
+                        "go in separate rounds")
+    return blockers
+
+
 def check(root, paper_id, target, last, pre, current, jobs, raw, items, explicit, digest, finished, now, policy):
     problems = []
     cooldown_blocker = None
@@ -301,6 +397,8 @@ def check(root, paper_id, target, last, pre, current, jobs, raw, items, explicit
         elif (found := new_work_basis(item)) is not None:
             basis[item] = found
     needs_work = [item for item in items if item in basis]
+    if old_text is not None and not repeated:
+        problems.extend(revision_scope_blockers(old_text, pre["expanded"], raw, items, words))
     hints = {item: hint for item in items if item not in basis and (hint := new_work_hint(item))}
     current_hashes = set(current.values()) | {row["sha256"] for row in pre.get("figure_files", [])}
     problems.extend(response_blockers(root, raw, digest, items, needs_work, current_hashes,

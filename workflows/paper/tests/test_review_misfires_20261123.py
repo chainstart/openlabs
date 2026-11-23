@@ -259,10 +259,10 @@ def test_tic_round6_quote_in_response_is_advice_and_ready():
     merged = _merge(TIC_ITEM, row, {"referee_a": _referee(TIC_ITEM), "referee_b": _referee(TIC_ITEM)},
                     _reader(TIC_READER))
     assert merged["outcome"] == "ready" and merged["next_action"] is None
-    assert merged["documentation_requests_downgraded"]["rule"] == "gate1_precision_v1"
+    # The reader cannot see the archive: its request is advice (also its own rule since phase 2).
     change = next(c for c in merged["required_changes"] if c["referee"] == "delivery_reader")
-    assert change["advisory"] and change["downgrade_reason"] == "documentation_request"
-    assert not any(merged["dimension_repairs"].values())
+    assert change["advisory"]
+    assert not any(merged.get("dimension_repairs", {}).values())
 
 
 def test_campylobacter_round12_unseen_script_is_advice_and_ready():
@@ -284,9 +284,9 @@ def test_a_present_error_keeps_blocking():
 
 
 def test_documentation_requests_block_while_a_referee_wants_major_revision():
-    row = {"item": TIC_ITEM, "resolved": True, "evidence": "Matches.", "reader_misconclusion": ""}
-    merged = _merge(TIC_ITEM, row, {"referee_a": _referee(TIC_ITEM),
-                                    "referee_b": _referee(TIC_ITEM, "major_revision")}, _reader(TIC_READER))
+    merged = _merge(CAMPY_ITEM, CAMPY_EDITOR_ROW, {"referee_a": _referee(CAMPY_ITEM),
+                                                   "referee_b": _referee(CAMPY_ITEM, "major_revision")},
+                    _reader())
     assert merged["outcome"] == "revision_required"
 
 

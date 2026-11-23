@@ -115,6 +115,18 @@ Handling a rejection: `docs/JOURNAL_HISTORY.md#handling-a-rejection`.
    Requested qualifications, checks and explanations go to the appendix and the response letter
    where scientifically relevant. File checks and rerun logs go in the archive. Aim for zero net growth
    unless a referee placed the request in the main text (readability skill, section 5).
+   Minimum change: edit only the sentences an item names and use a reviewer's replacement wording
+   verbatim. A revision adds no title change, new analysis or summary figure, and no new
+   quantifier or causal/proof/generality word ("only", "never", "cannot fall", "always",
+   "guarantee", "establish", "causal"); a sentence that must say so goes in the response JSON
+   `new_text`, or the round guard holds the review. Polishing and red-team rewrites run in their own
+   round, never together with a scientific revision. In the response JSON, answer description,
+   qualification and wording items with `addressed` and a `path:line`; cite a new artifact only when
+   the item asks for new computation, data or a figure; use `rebutted` with a location for an item
+   that is factually wrong. To withdraw a blocker of an archived decision run `review rebut ...
+   --check-resynthesis REPLY.json` (adjudication plus a dry-run resynthesis), then
+   `review resynthesize --response` with the saved draft; `review resynthesize --dry-run` checks a
+   reply without recording anything.
 6. After a passing gate, run `paper-writing zenodo release` under the standing authorization,
    commit the DOI/receipt, then `paper-writing handoff release` (research-program papers are
    delivered by the orchestrator when `[program] auto_handoff` is on). None of this submits the

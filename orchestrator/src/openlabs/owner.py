@@ -1976,6 +1976,21 @@ REVISION_RULE = (
     " Keep conclusion-changing comparisons, magnitudes and conditions in the main text. Put secondary "
     "science in the appendix or supplement, rerun logs and hashes in the archive, and editorial replies "
     "in the response letter. Cut duplication to aim for zero net growth; narrative-check is optional."
+    " Minimum change (2026-11-23): edit only the sentences a listed item names; when a reviewer supplies "
+    "replacement wording, use it verbatim. Do not change the title, add analyses or summary figures, or "
+    "add quantifiers or causal, proof or generality words (only, never, cannot fall, always, entirely, "
+    "guarantee, establish, demonstrate, causal) in a revision; a sentence that must say so is listed in "
+    "the response JSON new_text, otherwise the round guard holds the review (no round is used). Do not "
+    "combine a polishing or red-team rewrite with a scientific revision: run them in separate rounds."
+    " Answer a description, qualification or wording item with status addressed and a path:line "
+    "location; cite a new registered artifact only when the item itself asks for new computation, data "
+    "or a figure. Use status rebutted, with a path:line or artifact location, for an item that is "
+    "factually wrong; to withdraw a blocker of an archived decision, run `paper-writing review rebut "
+    "--paper-id ID --decision DECISION --rebuttal REBUTTAL.json --actor ACTOR --reason REASON "
+    "--check-resynthesis REPLY.json`, which adjudicates it and dry-runs the resynthesis with the "
+    "adjudication added; then `review resynthesize --response <the saved draft>`. A resynthesis change "
+    "may replace a number with its registered archived value when the change row carries archived_value "
+    "{path, sha256, value}."
 )
 
 

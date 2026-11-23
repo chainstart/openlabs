@@ -70,6 +70,52 @@ GATE1 原有的“写不出读者会得出的错误结论就降为建议”规�
   在写决定前以 “Reviewer omitted, duplicated or introduced a previous mandatory item” 中止（上轮必改项
   本身是 11 条、已去重；给审稿人的列表另外再保序去重一次）。
 
+### 评审—返修收敛（2026-11-23 审计第 4 节，第二批）
+
+依据 `maintenance/20261123-polish/audit-convergence/REPORT.md`。标准不变：数据和结论真实、正确、有效即可，
+语句不够精确不再开轮；数值、公式、图文不符、违反预注册和引用错误仍然阻断。
+
+1. **返修最小改动（round guard，`review_round_guard.revision_scope_blockers`）。** 与上一轮快照比较：新增或改写的
+   句子里出现上一版对应句子没有的强化词——`presentation.CLAIM_FAMILIES`（causal、prove、establish、confirm、
+   demonstrate、significant、universal、outperform 等；“novel” 只算 novel approach/method 一类）加量词
+   （句首或限定性的 only、never、cannot fall/exceed、always、entirely/solely、guarantee、necessarily），且前面
+   没有 not/no/cannot 等否定——必须在回复 JSON 的 `new_text`（顶层或逐项）里声明该句，否则拦截；标题改动同样需要
+   声明。回答必改项的同时改写超过 15% 的词（且至少 200 词）视为梳理改写混进科学返修，拦截。guard 拦截不调用模型、
+   不计轮次。REVISION_RULE（owner 提示）和写作技能写明：只改被点名的句子，审稿人给的替换句原样采用。
+2. **follow-up 合成（`_followup_reports`）。** 每轮记录 `followup_changed_text`（本轮 diff 的新增行）。新增阻断
+   必须引用（引号内 ≥12 字符）本轮改动过的文字，否则降为建议（`outside_changed_region`）；数值/统计、公式、
+   图文不符、违反预注册四类（`HARD_KINDS`）不受此限。审稿人都是 accept/minor 时 `unsupported_claim` 降为建议。
+   编辑、两位审稿人指向同一引文或位置的新增项合并为一条（`also_raised_by`），同一未解决旧项也只记一次。推荐与
+   下一步按剩余阻断的类型推导：有硬类型或 `[evidence]` 旧项为 major_revision/evidence_remediation，否则
+   minor_revision/text_revision（原来一律 major/evidence）。没有 `followup_changed_text` 的旧记录复算时按原规则。
+3. **形式核验不完整时不扩大扫描（`formal_checks._followup_inventory`）。** 新范围名
+   `prior_blockers_failed_items_and_changed_passages`：只把出问题的条目（finding 的 root，或消息里点名的段落 ID、
+   文献 key）加入复核；首轮全量扫描失败且定位不到条目时才整体重跑一次。登记的一手来源（source_plan）变化时只重核
+   来源变了的文献 key 及引用它们的段落。归档报告仍按其记录的旧范围名复核，不受影响。
+4. **停滞与定稿裁定（`stall_basis`、`apply_final_ruling`）。** 仍有阻断且满足任一条即停滞：最近两次转换阻断数
+   不降；本轮新增阻断数 ≥ 已解决的旧项数；审稿人首次都到 accept/minor 之后又过了 2 轮。停滞后不再开放式开轮：
+   剩余项分为必改（science 维度、硬类型、`[evidence]`/`error` 旧项、形式错误）和随包建议，记在
+   `merged.final_ruling`，决定记录写 `final_ruling_basis`。没有必改项即 ready；有必改项时下一轮是“定稿核查”
+   （`final_check`）：只跟踪必改项，新增项除硬类型外一律为建议；核查后仍有必改项才标 `stalled`，交由编排器决定方向。
+5. **policy 哈希不含 round_limit_override。** 追加轮次不再让已有 ready 基准失去 delta/presentation 资格，也不会让
+   运行中的评审在 apply 时报 policy changed。旧记录（哈希里含追加授权）按其记录的授权或当前授权仍可匹配；release
+   校验另加一条“本轮次数不超过授权上限”的直接检查。
+6. **调用模型前先校验（`preflight_review_schemas`）。** 上轮必改项去重；各角色 schema 的 previous_items 条数
+   （及 enum）必须与之一致，否则在付费调用前报错。抄写不精确的长条目按第一批规则对应回原条目。
+7. **交付读者只管可读性。** 读者看不到的归档类、回复格式类要求不阻断；审稿人都是 accept/minor 时读者项一律为
+   建议；读者的新增项（非旧项）不在本轮改动区内时为建议。读者模型优先选与 referee_b 不同的模型：配置的
+   `delivery_reader` 角色 → 独立审稿人 → `formal_verifier`，取第一个与 referee_b 模型不同者。
+8. 不再继承上一轮 guard 的正则判定（第一批已做）。
+9. **rebut 与重合成。** owner 提示与写作技能写明 rebutted 和 `review rebut` 的用法；新增
+   `review rebut ... --check-resynthesis REPLY.json`（裁定后把裁定记录加入回复、草稿存到裁定目录并干跑重合成）和
+   `review resynthesize --dry-run`（不写任何记录）。重合成的改动行可带
+   `archived_value: {path, sha256, value}`，把一个数字改成已登记归档文件里的值（文件哈希与数值都核对）不再被拒。
+12. **source_routing（缺目录 URL、403 等）降为交付出口检查。** 合成时按 `gate1_precision_v1` 归入建议，随交付
+    清单列出，不挡 ready，也不引发扩大扫描；文献行核验为错误或不存在的仍阻断。
+13. **篇幅小要求只作建议。** 只涉及缩短、压缩、字数的阻断项（不含错误陈述）降为建议；期刊硬限额仍在交付时机械检查。
+
+10、11 未做（单稿跨刊总轮次预算、发布流水线与人工返修互斥），见交回简报中的意见。
+
 ### 已接受稿件的核验复核
 
 

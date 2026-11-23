@@ -47,7 +47,27 @@ def change_inventory(old, new):
             for index, (i, j, k, l) in enumerate(edits, 1)]
 
 
-def _check_changes(old, new, response, items):
+def _archived_values(root, rows):
+    """Numbers an edit may introduce because they match a registered archived output
+    (2026-11-23 audit item 9: "change one number to match the archived value")."""
+    allowed = []
+    for row in rows:
+        spec = row.get("archived_value") if isinstance(row, dict) else None
+        if spec is None:
+            continue
+        if not isinstance(spec, dict) or not all(isinstance(spec.get(k), str) and spec[k] for k in ("path", "sha256", "value")):
+            raise ValueError("archived_value needs path, sha256 and value")
+        path = formal._safe_file(Path(root).resolve(), spec["path"])
+        raw = path.read_bytes()
+        if flow._sha256(raw) != spec["sha256"]:
+            raise ValueError(f"archived_value {spec['path']} does not match its sha256")
+        if spec["value"] not in raw.decode(errors="replace"):
+            raise ValueError(f"archived_value {spec['value']} does not occur in {spec['path']}")
+        allowed.append(spec["value"])
+    return allowed
+
+
+def _check_changes(old, new, response, items, root=None):
     changes = change_inventory(old, new)
     rows = response.get("changes", [])
     if not isinstance(rows, list) or len(rows) != len(changes):
@@ -58,12 +78,36 @@ def _check_changes(old, new, response, items):
             raise ValueError(f"{change['id']} must quote the exact edit and name an archived review item")
         _text(row, "author_response")
         _text(row, "verification")
+    allowed = _archived_values(root, rows) if root is not None else []
+    for change, row in zip(changes, rows):
         before, after = change["before"], change["after"]
-        if flow.substantive_parts(before)["numbers"] != flow.substantive_parts(after)["numbers"]:
-            raise ValueError(f"{change['id']} changes numeric results or other non-reference numbers")
+        old_numbers, new_numbers = (flow.substantive_parts(t)["numbers"] for t in (before, after))
+        if old_numbers != new_numbers:
+            added = list(new_numbers)
+            for number in old_numbers:
+                if number in added:
+                    added.remove(number)
+            spec = row.get("archived_value") if isinstance(row, dict) else None
+            if not (isinstance(spec, dict) and added and all(n in spec["value"] for n in added)
+                    and len(new_numbers) == len(old_numbers)):
+                raise ValueError(f"{change['id']} changes numeric results or other non-reference numbers")
+    # An edit that only replaces a number by its archived value is compared as unchanged.
+    for change, row in zip(changes, rows):
+        if isinstance(row, dict) and isinstance(row.get("archived_value"), dict):
+            numbers = re.compile(r"\d+(?:[.,]\d+)*")
+            if numbers.sub("#", change["before"]) == numbers.sub("#", change["after"]) and change["after"] in new:
+                new = new.replace(change["after"], change["before"], 1)
     main = [text.split(r"\appendix", 1)[0] for text in (old, new)]
-    main_reasons = flow.substantive_delta(*main, reviewed_deletions=True)["reasons"]
-    full_reasons = flow.substantive_delta(old, new, reviewed_deletions=True)["reasons"]
+    main_delta = flow.substantive_delta(*main, reviewed_deletions=True)
+    full_delta = flow.substantive_delta(old, new, reviewed_deletions=True)
+
+    def justified(delta):
+        added = delta["numbers_added"]
+        return bool(allowed) and added and all(any(n in value for value in allowed) for n in added) \
+            and len(delta["numbers_removed"]) == len(added)
+
+    main_reasons = [r for r in main_delta["reasons"] if not (r.startswith("numbers changed") and justified(main_delta))]
+    full_reasons = [r for r in full_delta["reasons"] if not (r.startswith("numbers changed") and justified(full_delta))]
     return list(dict.fromkeys(
         [reason for reason in main_reasons if "of lines changed" not in reason]
         + [reason for reason in full_reasons if not reason.startswith("conclusion-bearing sections changed:")]))
@@ -147,7 +191,7 @@ def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_
             revised.append(dict(finding, category="advisory", reason=_text(note, "evidence")))
         else:
             revised.append(finding)
-    reasons.extend(_check_changes(old.decode(), current, response, items))
+    reasons.extend(_check_changes(old.decode(), current, response, items, root))
 
     # Owner rule 2026-11-23 (formal.PRECISION_RULE): scientific gaps are advice.
     summary = formal.precision_view(formal.issue_summary(revised), formal.finding_kinds(report.get("report")))
@@ -167,7 +211,8 @@ def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_
         referees = {name: materiality_view(report) for name, report in referees.items()}
     merged = flow.apply_review_track(flow.merge(
         editor, referees, history, formal_blockers=blockers, formal_summary=summary,
-        followup_items=base.get("followup_items")), referees, track)
+        followup_items=base.get("followup_items"),
+        changed_text=base.get("followup_changed_text")), referees, track)
     # Legacy prose without structured materiality retains its original scientific weight.
     old_merged = base["merged"]
     rebutted = (old_merged.get("outcome") == "revision_required" and bool(withdrawn)
@@ -195,6 +240,23 @@ def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_
     merged["advisory_items"] = [item for item in merged.get("advisory_items", [])
                                 if item["referee"] != "formal"] + advice
     return merged, reasons, fingerprints, config, history_policy, round_limit
+
+
+def preview(paper_id, *, root, decision, response):
+    """Dry run: what a resynthesis with ``response`` would conclude; writes nothing."""
+    root = Path(root).resolve()
+    base, basis_sha = _basis(root, paper_id, Path(decision))
+    metadata = flow.load_paper_metadata(paper_id, root)
+    reply = json.loads(Path(response).read_bytes()) if not isinstance(response, dict) else response
+    try:
+        with tempfile.TemporaryDirectory(prefix="review-resynthesis-preview-") as scratch:
+            pre = flow.preflight(paper_id, root, Path(scratch), update_manuscript=False)
+        merged, reasons, _, _, _, _ = _replay(paper_id, root, base, basis_sha, reply, metadata, pre["expanded"])
+        reasons = list(reasons) + list(pre["blockers"])
+    except _ARCHIVE_ERRORS as exc:
+        return {"outcome": "full_review_required", "reasons": [str(exc)], "dry_run": True}
+    return {"outcome": merged["outcome"] if not reasons else "full_review_required",
+            "reasons": reasons, "dry_run": True}
 
 
 def run(paper_id, *, root, decision, response, actor, reason, apply=True):

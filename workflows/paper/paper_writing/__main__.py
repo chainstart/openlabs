@@ -337,6 +337,8 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("paper-id", "decision", "response", "actor", "reason"):
         replay.add_argument("--" + name, required=True)
     replay.add_argument("--no-apply", action="store_true", help="Record a replay without updating the registry.")
+    replay.add_argument("--dry-run", action="store_true",
+                        help="Only report what the replay would conclude; write nothing (actor/reason unused).")
     replay.add_argument("--root", default=str(default_repo_root()))
     rebut = review_commands.add_parser(
         "rebut",
@@ -346,6 +348,9 @@ def build_parser() -> argparse.ArgumentParser:
         rebut.add_argument("--" + name, required=True)
     rebut.add_argument("--adjudicator-role", help="Configured review role to adjudicate (default: chosen "
                                                   "for independence from the item's author and the writer).")
+    rebut.add_argument("--check-resynthesis", metavar="RESPONSE",
+                       help="After the adjudication, add it to this resynthesize reply, save the draft next "
+                            "to the adjudication and dry-run the resynthesis (nothing is applied).")
     rebut.add_argument("--no-model", action="store_true",
                        help="Record 'undetermined' instead of starting a model when the checks cannot decide.")
     rebut.add_argument("--root", default=str(default_repo_root()))
@@ -954,6 +959,15 @@ def main(argv: list[str] | None = None) -> int:
         from paper_writing import resynthesis
         from paper_writing.registry import PaperFrozenError
 
+        if args.dry_run:
+            try:
+                result = resynthesis.preview(args.paper_id, root=args.root, decision=args.decision,
+                                             response=args.response)
+            except (ValueError, OSError) as exc:
+                print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+                return 2
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result["outcome"] == "ready" else 2
         try:
             result = resynthesis.run(args.paper_id, root=args.root, decision=args.decision,
                                      response=args.response, actor=args.actor, reason=args.reason,
@@ -983,10 +997,26 @@ def main(argv: list[str] | None = None) -> int:
         if "run_dir" not in result:  # another review holds the paper lock
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 2
-        print(json.dumps({key: result.get(key) for key in (
+        summary = {key: result.get(key) for key in (
             "run_dir", "adjudication_sha256", "verdict", "decided_by", "reason_for_verdict", "adjudicator")}
-                         | {"adjudication": f"{result['run_dir']}/adjudication.json"},
-                         ensure_ascii=False, indent=2))
+        summary["adjudication"] = f"{result['run_dir']}/adjudication.json"
+        if args.check_resynthesis and result["verdict"] == "sustained":
+            from paper_writing import resynthesis
+
+            try:
+                draft = json.loads(Path(args.check_resynthesis).read_text())
+                cited = list(draft.get("rebuttals") or [])
+                if not any(isinstance(r, dict) and r.get("adjudication") == summary["adjudication"] for r in cited):
+                    cited.append({"adjudication": summary["adjudication"], "sha256": result["adjudication_sha256"]})
+                draft["rebuttals"] = cited
+                draft_path = Path(args.root) / result["run_dir"] / "resynthesis-response.draft.json"
+                draft_path.write_text(json.dumps(draft, ensure_ascii=False, indent=2))
+                summary["resynthesis_draft"] = draft_path.relative_to(Path(args.root)).as_posix()
+                summary["resynthesis_dry_run"] = resynthesis.preview(
+                    args.paper_id, root=args.root, decision=args.decision, response=draft)
+            except (ValueError, OSError) as exc:
+                summary["resynthesis_dry_run"] = {"error": str(exc)}
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0 if result["verdict"] == "sustained" else 2
     if args.command == "review" and args.review_command == "unified-run":
         from paper_writing.registry import PaperFrozenError

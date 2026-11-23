@@ -601,14 +601,20 @@ def _lead_round_extension(extension: Any, root: Path, *, paper_id: str, target: 
 def review_policy_sha256(config: Mapping[str, Any], history_policy: Mapping[str, Any] | None = None,
                          round_limit_override: Mapping[str, Any] | None = None, *,
                          formal_policy: Mapping[str, Any] | None = None,
-                         stage_order: str = "parallel_materiality_v1") -> str:
+                         stage_order: str = "parallel_materiality_v1",
+                         legacy_round_limit: Mapping[str, Any] | None = None) -> str:
+    del round_limit_override  # kept in the signature for callers; no longer hashed
     policy = {k: config[k] for k in ("process", "roles", "referee_roles", "rejection_clearance_required")}
     policy["formal_check"] = dict(formal_policy) if formal_policy is not None else formal_checks.policy()
     policy['stage_order'] = stage_order
     if history_policy is not None:
         policy["missing_rejection_letter_policy"] = history_policy
-    if round_limit_override is not None:
-        policy["review_round_limit_override"] = round_limit_override
+    # A round-limit extension changes how many rounds may run, not how a round judges: it is
+    # not part of the policy (2026-11-23 audit: granting extra rounds voided the ready basis
+    # for delta and presentation reviews and broke apply mid-run). Legacy records hashed it;
+    # ``review_policy_matches`` still accepts those (``legacy_round_limit``).
+    if legacy_round_limit is not None:
+        policy["review_round_limit_override"] = legacy_round_limit
     return _sha256(json.dumps(policy, sort_keys=True).encode())
 
 
@@ -625,15 +631,23 @@ def review_policy_matches(record: Mapping[str, Any], config: Mapping[str, Any], 
     recorded = record.get("review_policy_sha256")
     if recorded == review_policy_sha256(config, history_policy, round_limit_override):
         return True
+    # Records written while the round-limit override was hashed: accept the override they
+    # recorded and the one now in force.
+    for grant in (record.get("review_round_limit_override"), round_limit_override):
+        if grant is not None and recorded == review_policy_sha256(config, history_policy,
+                                                                  legacy_round_limit=grant):
+            return True
     binding = record.get("formal_check")
     legacy = formal_checks.recorded_policy(binding, root) if isinstance(binding, Mapping) else None
     if (record.get("editor_screen") or {}).get("review_standard") == "materiality_v1":
         return False
     historic_order = "editor_three_dimensions_core_verification_blind_reader_decision"
+    grants = [None, *(g for g in (record.get("review_round_limit_override"), round_limit_override) if g is not None)]
     return any(recorded == review_policy_sha256(config, history_policy, round_limit_override,
-               formal_policy=version, stage_order=order)
+               formal_policy=version, stage_order=order, legacy_round_limit=grant)
                for order in (historic_order, "parallel_materiality_v1")
                for version in (formal_checks.policy(), legacy)
+               for grant in grants
                if version is not None and formal_checks.policy_accepted(version))
 
 
@@ -1965,12 +1979,66 @@ def canonical_previous_items(report: Mapping[str, Any], expected: list[str]) -> 
             for index, row in enumerate(rows)]
 
 
-def _followup_reports(editor, referees, items):
+# Kinds that are wrong data, numbers, formulas, figure/result mismatches or preregistration
+# breaches: these block wherever they are found (owner 2026-11-23: real errors still block).
+HARD_KINDS = frozenset({"numeric_or_statistical_error", "formula_error", "figure_result_mismatch",
+                        "preregistration_violation"})
+_QUOTED = re.compile(r"[“\"‘]([^”\"’]{12,600})[”\"’]")
+
+
+def _plain(text: str) -> str:
+    text = re.sub(r"\\[A-Za-z]+\*?", " ", str(text or ""))
+    text = re.sub(r"[{}~$]", " ", text)
+    return " ".join(text.lower().split())
+
+
+def followup_changed_text(diff: str | None) -> str | None:
+    """The added lines of a follow-up diff, normalised for quote matching (None: unknown)."""
+    if diff is None:
+        return None
+    lines = [line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")]
+    return _plain(" ".join(lines))
+
+
+def in_changed_region(text: str, changed: str | None) -> bool:
+    """Whether a finding quotes text the authors added or changed this round.
+
+    With the change text unknown (records before 2026-11-23) everything counts as inside.
+    Otherwise a finding is inside when a quoted piece of at least 12 characters appears
+    among the added lines.
+    """
+    if changed is None:
+        return True
+    for span in _QUOTED.findall(str(text or "")):
+        for piece in re.split(r"\.\.\.|…|\[\.\.\.\]", span):
+            piece = _plain(piece).strip(" .,;:")
+            if len(piece) >= 12 and piece in changed:
+                return True
+    return False
+
+
+def _finding_key(change: Mapping[str, Any]) -> str:
+    quoted = _QUOTED.findall(str(change.get("change") or "") + " " + str(change.get("location") or ""))
+    return _plain(quoted[0])[:120] if quoted else _plain(change.get("location") or "")[:120]
+
+
+def _followup_reports(editor, referees, items, changed=None):
+    """Follow-up synthesis (2026-11-23 audit, 抓大放小).
+
+    A new finding blocks when it is material and complete, and either is a hard kind
+    (``HARD_KINDS``) or concerns text the authors changed this round; other new findings
+    are advice. The same new finding raised by several roles (one location or quotation)
+    is one item; an unresolved previous item reported by several roles is one item.
+    """
     changes, unresolved, advice = [], [], []
     for role, report in {"editor": editor, **referees}.items():
         for row in canonical_previous_items(report, items):
             if row["item"] in items and not row["resolved"]:
                 if row["evidence"].strip() and row.get("reader_misconclusion", "").strip():
+                    same = next((u for u in unresolved if u["item"] == row["item"]), None)
+                    if same is not None:
+                        same.setdefault("also_raised_by", []).append(role)
+                        continue
                     unresolved.append(dict(row, referee=role, advisory=False))
                 else:
                     advice.append(dict(referee=role, change=row["item"], location="Previous decision"))
@@ -1979,8 +2047,21 @@ def _followup_reports(editor, referees, items):
                     row[field].strip() for field in ("location", "finding", "reader_misconclusion", "why_missed")):
                 detail = (f"{row['finding']} Reader could infer: {row['reader_misconclusion']} "
                           f"Missed previously: {row['why_missed']}")
-                changes.append(dict(type="evidence", referee=role, location=row["location"],
-                                    change=detail, advisory=False, placement="main_text"))
+                hard = row["kind"] in HARD_KINDS
+                change = dict(type="evidence" if hard else "narrative", referee=role, location=row["location"],
+                              change=detail, advisory=False, placement="main_text", kind=row["kind"])
+                if not hard and not in_changed_region(row["finding"] + " " + row["location"], changed):
+                    advice.append(dict(change, advisory=True, placement="response_only",
+                                       downgrade_reason="outside_changed_region"))
+                    continue
+                key = _finding_key(change)
+                same = next((c for c in changes if key and _finding_key(c) == key), None)
+                if same is not None:
+                    same.setdefault("also_raised_by", []).append(role)
+                    if hard and same.get("kind") not in HARD_KINDS:
+                        same.update(kind=row["kind"], type="evidence")
+                    continue
+                changes.append(change)
             elif row["finding"].strip():
                 advice.append(dict(referee=role, change=row["finding"], location=row["location"]))
         for message in report.get("optional_suggestions", []) + report.get("presentation_problems", []):
@@ -1992,7 +2073,56 @@ def _followup_reports(editor, referees, items):
             advice.extend(dict(referee=role, change=message, location="Manuscript") for message in messages)
         if role == "editor" and report["decision"] != "send_to_review" and report.get("decision_rationale"):
             advice.append(dict(referee=role, change=report["decision_rationale"], location="Editor screen"))
+    recommendations = {r.get("recommendation") for r in referees.values()}
+    if referees and recommendations <= {"accept", "minor_revision"}:
+        # Owner rule 2026-11-23: with the referees at accept or minor revision, a sentence
+        # that is not fully supported as worded is advice.
+        for change in [c for c in changes if c.get("kind") == "unsupported_claim"]:
+            changes.remove(change)
+            advice.append(dict(change, advisory=True, placement="response_only",
+                               downgrade_reason="unsupported_claim_with_accepting_referees"))
     return changes, unresolved, advice
+
+
+def _followup_severity(changes, unresolved) -> tuple[str, str]:
+    """(recommendation, next_action) from what still blocks, by kind."""
+    hard = (any(c.get("kind") in HARD_KINDS or (c.get("type") == "evidence" and "kind" not in c) for c in changes)
+            or any(str(u.get("item") or "").lstrip().startswith("[evidence]") or ": error —" in str(u.get("item"))
+                   for u in unresolved))
+    return ("major_revision", "evidence_remediation") if hard else ("minor_revision", "text_revision")
+
+
+def preflight_review_schemas(previous: Mapping[str, Any] | None,
+                             schemas: Mapping[str, Mapping[str, Any]]) -> None:
+    """Fail before any paid model call when the follow-up items or the response schemas are
+    inconsistent (2026-11-23 audit: the duplicate-item check ran only after the calls).
+
+    The mandatory items must be distinct non-empty strings, and every role's schema must
+    require exactly that many previous items (with an enum, exactly those items).
+    """
+    items = list((previous or {}).get("items") or [])
+    if any(not isinstance(item, str) or not item.strip() for item in items):
+        raise ValueError("Review preflight: a previous mandatory item is empty or not text")
+    if len(set(items)) != len(items):
+        raise ValueError("Review preflight: previous mandatory items are duplicated")
+    for name, schema in schemas.items():
+        if not isinstance(schema, Mapping) or schema.get("type") != "object" or not isinstance(
+                schema.get("properties"), Mapping):
+            raise ValueError(f"Review preflight: the {name} schema is not an object schema")
+        missing = [key for key in schema.get("required", []) if key not in schema["properties"]]
+        if missing:
+            raise ValueError(f"Review preflight: the {name} schema requires undefined {missing}")
+        array = schema["properties"].get("previous_items")
+        if array is None:
+            if items:
+                raise ValueError(f"Review preflight: the {name} schema has no previous_items")
+            continue
+        if array.get("minItems") != len(items) or array.get("maxItems") != len(items):
+            raise ValueError(f"Review preflight: the {name} schema expects {array.get('minItems')}"
+                             f"-{array.get('maxItems')} previous items, not {len(items)}")
+        enum = ((array.get("items") or {}).get("properties") or {}).get("item", {}).get("enum")
+        if enum is not None and sorted(enum) != sorted(items):
+            raise ValueError(f"Review preflight: the {name} schema enumerates other previous items")
 
 
 def _check_followup_items(report, previous):
@@ -2003,8 +2133,14 @@ def _check_followup_items(report, previous):
 
 
 def _recorded_merge(record, history, **kwargs):
-    return merge(record["editor_screen"], record["referee_reports"], history,
-                 followup_items=record.get("followup_items"), **kwargs)
+    kwargs.setdefault("changed_text", record.get("followup_changed_text"))
+    kwargs.setdefault("final_check", bool(record.get("final_check")))
+    result = merge(record["editor_screen"], record["referee_reports"], history,
+                   followup_items=record.get("followup_items"), **kwargs)
+    basis = record.get("final_ruling_basis")
+    if isinstance(basis, Mapping) and result.get("outcome") == "revision_required" and not history:
+        result = apply_final_ruling(result, basis)
+    return result
 
 
 # Owner rule 2026-11-23 (抓大放小, part of formal_checks.PRECISION_RULE): once the science is
@@ -2040,8 +2176,51 @@ def documentation_request(*texts: Any) -> bool:
     return not any(_PRESENT_ERROR.search(s) and not _HEDGE.search(s) for s in sentences)
 
 
+_LENGTH_REQUEST = re.compile(
+    r"\b(?:shorten|condense|compress|trim|tighten|abridge|cut\s+(?:\w+\s+){0,3}?(?:words?|sentences?|paragraphs?|"
+    r"length|by\s+\d+)|reduce\s+(?:the\s+)?(?:length|word\s+count|main[- ]text)|word\s+count|too\s+long|lengthy|"
+    r"verbose|net\s+growth|over\s+length|page\s+count)\b|篇幅|字数|压缩|精简|删减", re.I)
+
+
+def length_request(*texts: Any) -> bool:
+    """A request only about length (owner 2026-11-23 audit item 13: small length requests are
+    advice; a journal's hard limits are enforced mechanically at delivery)."""
+    text = " ".join(t for t in texts if isinstance(t, str))
+    return bool(_LENGTH_REQUEST.search(text)) and not any(
+        _PRESENT_ERROR.search(s) and not _HEDGE.search(s) for s in re.split(r"(?<=[.!?;。；])\s+", text))
+
+
+def _length_requests_advice(result: dict[str, Any]) -> dict[str, Any]:
+    if result.get("outcome") != "revision_required":
+        return result
+    downgraded = []
+    for change in result.get("required_changes", []):
+        if (not change.get("advisory") and change.get("kind") not in HARD_KINDS
+                and change.get("location") != "science"
+                and length_request(change.get("change"), change.get("repair"))):
+            change.update(advisory=True, placement="response_only", downgrade_reason="length_request")
+            downgraded.append(change.get("change"))
+    repairs = result.get("dimension_repairs") or {}
+    for dimension in [d for d in repairs if d != "science"]:
+        kept = [row for row in repairs[dimension]
+                if not length_request(row.get("repair"), row.get("change"))]
+        downgraded.extend(row.get("repair") or row.get("change") for row in repairs[dimension] if row not in kept)
+        repairs[dimension] = kept
+    if not downgraded:
+        return result
+    result["length_requests_downgraded"] = list(dict.fromkeys(downgraded))
+    blocking = (any(repairs.values()) or result.get("scientific_blockers")
+                or any(not c.get("advisory") for c in result.get("required_changes", []))
+                or any(not i.get("advisory") for i in result.get("unresolved_previous_items", [])))
+    if not blocking:
+        result.update(outcome="ready", recommendation="accept", next_action=None)
+    return result
+
+
 def _documentation_requests_advice(result: dict[str, Any], referees: Mapping[str, Mapping[str, Any]],
                                    formal_blockers, history_blockers) -> dict[str, Any]:
+    if not formal_blockers and not history_blockers:
+        result = _length_requests_advice(result)
     recommendations = {r.get("recommendation") for r in referees.values()}
     repairs = result.get("dimension_repairs") or {}
     if (result.get("outcome") != "revision_required" or not referees or formal_blockers or history_blockers
@@ -2081,11 +2260,18 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
           history_blockers: list[str] | None = None, *,
           previous_ids: set[str] | None = None, formal_blockers: list[str] | None = None,
           formal_summary: Mapping[str, Any] | None = None,
-          followup_items: list[str] | None = None, reader_report=None, previous=None) -> dict[str, Any]:
+          followup_items: list[str] | None = None, reader_report=None, previous=None,
+          changed_text: str | None = None, final_check: bool = False) -> dict[str, Any]:
     if followup_items is not None:
         if not referees and not (history_blockers or formal_blockers):
             raise ValueError("A same-journal follow-up requires the configured referee panel")
-        changes, unresolved, advice = _followup_reports(editor, referees, followup_items)
+        changes, unresolved, advice = _followup_reports(editor, referees, followup_items, changed_text)
+        if final_check:
+            # After a final ruling only its must-fix items and hard errors can block.
+            for change in [c for c in changes if c.get("kind") not in HARD_KINDS]:
+                changes.remove(change)
+                advice.append(dict(change, advisory=True, placement="response_only",
+                                   downgrade_reason="final_check_new_finding"))
         formal_advice = (formal_summary or {}).get("by_category", {}).get("advisory", [])
         advice += [dict(referee="formal", change=message, location="Verification") for message in formal_advice]
         if history_blockers or formal_blockers:
@@ -2094,21 +2280,26 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
                 formal_blockers=formal_blockers, formal_summary=formal_summary)
         else:
             blocked = bool(changes or unresolved)
+            recommendation, action = _followup_severity(changes, unresolved)
             result = dict(outcome="revision_required" if blocked else "ready",
-                          recommendation="major_revision" if blocked else "accept", scientific_blockers=[],
-                          next_action="evidence_remediation" if blocked else None)
+                          recommendation=recommendation if blocked else "accept", scientific_blockers=[],
+                          next_action=action if blocked else None)
         result.update(required_changes=changes, unresolved_previous_items=unresolved,
                       advisory_items=advice,
                       referee_recommendations={name: r["recommendation"] for name, r in referees.items()})
         if editor.get("review_standard"):
             result["review_standard"] = editor["review_standard"]
-        if reader_report is not None:
-            _merge_reader(result, reader_report, previous)
+        if reader_report is not None and not final_check:
+            _merge_reader(result, reader_report, previous, changed_text)
+        elif reader_report is not None:
+            _merge_reader(result, dict(reader_report, repairs=[]), previous, changed_text)
+            result["advisory_items"] += [dict(referee="delivery_reader", change=r.get("repair"),
+                                              location="Final check") for r in reader_report.get("repairs") or []]
         return _documentation_requests_advice(result, referees, formal_blockers, history_blockers)
     if editor.get("review_standard") == "materiality_v1":
         result = _material_decision(editor, referees, history_blockers, formal_blockers, formal_summary)
         if reader_report is not None:
-            _merge_reader(result, reader_report, previous)
+            _merge_reader(result, reader_report, previous, changed_text)
         return _documentation_requests_advice(result, referees, formal_blockers, history_blockers)
     result = _merge_reports(editor, referees, history_blockers, previous_ids=previous_ids,
                             formal_blockers=formal_blockers, formal_summary=formal_summary)
@@ -2474,6 +2665,84 @@ def stalled_signal(rounds: list[Mapping[str, Any]], referees: Mapping[str, Mappi
     return {"stalled": flat, "stalled_basis": {"mean_scores_oldest_first": series,
                                                "transitions": STALL_TRANSITIONS,
                                                "evidence_changes_requested": False}}
+
+
+def blocking_count(merged: Mapping[str, Any]) -> int:
+    """Items that keep a decision from ready (scientific blockers, blocking changes, open items)."""
+    return (len(merged.get("scientific_blockers") or [])
+            + sum(1 for c in merged.get("required_changes") or [] if not c.get("advisory"))
+            + sum(1 for i in merged.get("unresolved_previous_items") or [] if not i.get("advisory")))
+
+
+def stall_basis(rounds: list[Mapping[str, Any]], referees: Mapping[str, Mapping[str, Any]],
+                merged: Mapping[str, Any], followup_items: list[str] | None) -> dict[str, Any] | None:
+    """Why the review stopped converging (2026-11-23 audit item 4), or None.
+
+    Stalled when, with something still blocking: the blocking count did not fall over the
+    last two transitions; or this follow-up raised at least as many new blockers as it
+    resolved; or two rounds have run since every referee first reached accept or minor.
+    """
+    current = blocking_count(merged)
+    if merged.get("outcome") != "revision_required" or current == 0:
+        return None
+    history = [r for r in rounds if isinstance(r.get("merged"), Mapping)]
+    counts = [blocking_count(r["merged"]) for r in history[-2:]] + [current]
+    if len(counts) == 3 and counts[0] <= counts[1] <= counts[2]:
+        return {"criterion": "blocking_count_not_falling", "counts_oldest_first": counts}
+    if followup_items:
+        unresolved = {i.get("item") for i in merged.get("unresolved_previous_items") or [] if not i.get("advisory")}
+        resolved = len(set(followup_items) - unresolved)
+        new = sum(1 for c in merged.get("required_changes") or [] if not c.get("advisory"))
+        if new and new >= resolved:
+            return {"criterion": "new_blockers_not_below_resolved", "new": new, "resolved": resolved}
+    recommendations = [set((r.get("merged") or {}).get("referee_recommendations", {}).values()) for r in history]
+    recommendations.append({r.get("recommendation") for r in referees.values()})
+    first = next((index for index, recs in enumerate(recommendations)
+                  if recs and recs <= {"accept", "minor_revision"}), None)
+    if first is not None and len(recommendations) - 1 - first >= 2:
+        return {"criterion": "rounds_after_accepting_referees", "rounds_since": len(recommendations) - 1 - first}
+    return None
+
+
+def _must_fix(change: Mapping[str, Any]) -> bool:
+    return (change.get("location") == "science" or change.get("kind") in HARD_KINDS
+            or (change.get("type") == "evidence" and "kind" not in change))
+
+
+def apply_final_ruling(merged: dict[str, Any], basis: Mapping[str, Any]) -> dict[str, Any]:
+    """定稿裁定: split what still blocks into must-fix (data, numbers, formulas, figure/result,
+    preregistration, science findings, formal errors) and advice that travels with the package.
+    No must-fix item: ready. Otherwise one final check of the must-fix items follows."""
+    must, advice = list(merged.get("scientific_blockers") or []), []
+    for change in merged.get("required_changes") or []:
+        if change.get("advisory"):
+            continue
+        if _must_fix(change):
+            must.append(tracked_item(change) if "type" in change and "location" in change else change["change"])
+        else:
+            change.update(advisory=True, placement="response_only", downgrade_reason="final_ruling")
+            advice.append(change.get("change"))
+    for item in merged.get("unresolved_previous_items") or []:
+        if item.get("advisory"):
+            continue
+        text = str(item.get("item") or "")
+        if text.lstrip().startswith("[evidence]") or ": error —" in text:
+            must.append(text)
+        else:
+            item.update(advisory=True, downgrade_reason="final_ruling")
+            advice.append(text)
+    repairs = merged.get("dimension_repairs") or {}
+    for dimension in [d for d in repairs if d != "science"]:
+        advice.extend(row.get("repair") or row.get("change") for row in repairs[dimension])
+        repairs[dimension] = []
+    merged["final_ruling"] = {"basis": dict(basis), "must_fix": list(dict.fromkeys(must)),
+                              "advice": list(dict.fromkeys(a for a in advice if a))}
+    if not must:
+        merged.update(outcome="ready", recommendation="accept", next_action=None)
+    else:
+        merged["next_action"] = "evidence_remediation" if merged.get("scientific_blockers") or any(
+            _must_fix(c) for c in merged.get("required_changes") or [] if not c.get("advisory")) else "text_revision"
+    return merged
 
 
 # --------------------------------------------------------------------------- delta review after ready
@@ -2966,15 +3235,39 @@ def _formal_stage(pre: Mapping[str, Any], root: Path, run: Path, roles: Mapping[
     return pre, formal_blockers, summary
 
 
+def reader_role_config(config: Mapping[str, Any], writer_family: str, writer_model: str) -> Mapping[str, Any]:
+    """The delivery reader's role: independent of the writer and, when possible, not the
+    model of referee_b (2026-11-23 audit: editor, referee_b and reader on one model raised the
+    same item three times). Order: a configured ``delivery_reader`` role, the independent
+    referees, then the formal verifier; the first whose model differs from referee_b wins."""
+    roles = config["roles"]
+    independent = cross_model_referees(config, writer_family, writer_model=writer_model)
+    if not independent:
+        raise ValueError("An independent delivery reader is required")
+
+    def independent_role(name: str) -> bool:
+        role = roles.get(name) or {}
+        if not role.get("model"):
+            return False
+        if writer_model is not None and cross_model_basis(config) == "model":
+            return str(role["model"]).strip().lower() != str(writer_model).strip().lower()
+        return model_family(role.get("model"), role.get("provider")) != writer_family
+
+    candidates = [name for name in ("delivery_reader",) if name in roles and independent_role(name)]
+    candidates += independent
+    candidates += [name for name in (FORMAL_ROLE,) if name in roles and independent_role(name)]
+    avoid = str((roles.get("referee_b") or {}).get("model") or "").strip().lower()
+    chosen = next((name for name in candidates
+                   if str((roles.get(name) or {}).get("model") or "").strip().lower() != avoid), independent[0])
+    return roles[chosen]
+
+
 def _reader_role(record, config, pre, run, presentation=None):
     """The independent delivery reader; with ``presentation`` (a packet) it is also the single
     light reviewer of a presentation revision."""
     from paper_writing.reader_check import delivery_read, delivery_images
 
-    independent = cross_model_referees(config, record["writer_model_family"], writer_model=record["writer_model"])
-    if not independent:
-        raise ValueError("An independent delivery reader is required")
-    role = config["roles"][independent[0]]
+    role = reader_role_config(config, record["writer_model_family"], record["writer_model"])
     figure_images, image_errors, image_inputs = delivery_images(pre, run)
     if image_errors:
         return {"model": role.get("model"), "image_errors": image_errors, "repairs": []}, {}
@@ -2988,10 +3281,18 @@ def _reader_role(record, config, pre, run, presentation=None):
                 image_sha256=[_sha256(path.read_bytes()) for path in figure_images], **recall), receipt
 
 
-def _merge_reader(merged, recall, previous=None):
+def _merge_reader(merged, recall, previous=None, changed=None):
+    """The independent reader judges readability (2026-11-23 audit): it does not block what
+    it cannot see (archive, response format), nothing of it blocks while every referee is at
+    accept or minor revision, and a new finding outside this round's changes is advice."""
+    recommendations = set((merged.get("referee_recommendations") or {}).values())
+    accepting = bool(recommendations) and recommendations <= {"accept", "minor_revision"}
     for finding in recall["repairs"]:
         repair = finding["repair"]
         material = _material_finding(finding, previous["items"] if previous is not None else None)
+        if material and (accepting or documentation_request(repair, finding.get("wrong_conclusion"))
+                         or (not finding.get("previous_item") and not in_changed_region(repair, changed))):
+            material = False
         merged["required_changes"].append(dict(finding, type="narrative", referee="delivery_reader",
             location="Title, abstract, figures and conclusion", change=repair,
             advisory=not material, placement="main_text"))
@@ -3634,9 +3935,13 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
     editor_schema = editor_schema_for_policy(history_policy)
     if previous is not None:
         record["followup_items"] = previous["items"]
+        record["followup_changed_text"] = followup_changed_text(previous.get("diff"))
+        if rounds and (rounds[-1].get("merged") or {}).get("final_ruling"):
+            record["final_check"] = True
         editor_prompt += followup_packet(previous)
         editor_schema = followup_schema(editor_schema, previous)
         schema = followup_schema(schema, previous)
+    preflight_review_schemas(previous, {"editor": editor_schema, **{name: schema for name in panel}})
     materials = review_sandbox.materials_from_support(metadata, root,
         registered_sha256=(pre.get("fingerprints") or {}).get("support_sources_sha256"))
     with_materials = {"materials": materials} if materials is not None else {}
@@ -3663,9 +3968,19 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
         record["delivery_reader"], receipts["delivery_reader"] = reader_future.result()
     history_blockers = rejection_clearance_blockers(editor, decisions, history_policy)
     merged = merge(editor, referees, history_blockers, formal_blockers=formal_blockers,
-                   formal_summary=formal_summary, followup_items=record.get("followup_items"), reader_report=record["delivery_reader"], previous=previous)
+                   formal_summary=formal_summary, followup_items=record.get("followup_items"), reader_report=record["delivery_reader"], previous=previous,
+                   changed_text=record.get("followup_changed_text"))
     merged = apply_review_track(merged, referees, track)
     merged |= stalled_signal(rounds, referees, merged)
+    if record.get("final_check"):
+        # The one check after a final ruling: what is still open is not converging; the
+        # orchestrator decides the direction instead of opening another round.
+        if merged.get("outcome") == "revision_required":
+            merged |= {"stalled": True, "stalled_basis": "final ruling: must-fix items remain after the final check"}
+    elif not formal_blockers and not history_blockers and (
+            basis := stall_basis(rounds, referees, merged, record.get("followup_items"))) is not None:
+        record["final_ruling_basis"] = basis
+        merged = apply_final_ruling(merged, basis)
     consumes_round = not ((formal_blockers or merged.get("technical_blockers")) and
                           not merged["scientific_blockers"] and not history_blockers and
                           not any(not c.get("advisory") for c in merged["required_changes"]))
@@ -4060,6 +4375,10 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
             problems.append("The actual referee reports are incomplete or malformed")
     if round_limit is not None and release.get("max_rounds_per_target") != round_limit["max_rounds_per_target"]:
         problems.append("The release does not report the authorized paper/target round limit")
+    # The round limit is no longer part of the policy hash; check the cap itself.
+    cap = round_limit["max_rounds_per_target"] if round_limit is not None else config.get("max_rounds_per_target")
+    if isinstance(cap, int) and int(record.get("round_for_target") or 0) > cap:
+        problems.append("The decision's round exceeds the authorized paper/target round limit")
     if set(record.get('referee_reports', {})) != set(config['referee_roles']):
         problems.append("The decision does not contain the configured referee panel")
     if rejection_clearance_blockers(record['editor_screen'], record.get('prior_decisions', []), history_policy):

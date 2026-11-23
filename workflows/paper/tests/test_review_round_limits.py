@@ -133,9 +133,16 @@ def test_formal_upgrade_changes_legacy_policy_but_cap_still_only_changes_opted_i
     new_policy['stage_order'] = 'parallel_materiality_v1'
     assert flow.review_policy_sha256(conf) == hashlib.sha256(json.dumps(new_policy, sort_keys=True).encode()).hexdigest()
     policy = flow.review_round_limit_override(authorized_metadata(tmp_path), tmp_path, BIO)
-    assert flow.review_policy_sha256(conf, None, policy) != expected
+    # 2026-11-23: a round-limit extension is not part of the review policy any more.
+    assert flow.review_policy_sha256(conf, None, policy) == flow.review_policy_sha256(conf)
     changed = copy.deepcopy(policy); changed["max_rounds_per_target"] = 21
-    assert flow.review_policy_sha256(conf, None, changed) != flow.review_policy_sha256(conf, None, policy)
+    assert flow.review_policy_sha256(conf, None, changed) == flow.review_policy_sha256(conf, None, policy)
+    # Records hashed with the override (before 2026-11-23) still match under the grant they recorded.
+    legacy = flow.review_policy_sha256(conf, legacy_round_limit=policy)
+    assert legacy != flow.review_policy_sha256(conf)
+    record = {"review_policy_sha256": legacy, "review_round_limit_override": policy}
+    assert flow.review_policy_matches(record, conf, tmp_path, None, changed)
+    assert not flow.review_policy_matches({"review_policy_sha256": legacy}, conf, tmp_path, None, None)
 
 
 def test_override_does_not_change_existing_workspace_fingerprint_components(tmp_path):

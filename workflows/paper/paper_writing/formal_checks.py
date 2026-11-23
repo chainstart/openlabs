@@ -1163,7 +1163,13 @@ def finding_kinds(report: Mapping[str, Any] | None) -> dict[str, str]:
 
 def precision_finding(finding: Mapping[str, Any], kinds: Mapping[str, str] | None = None) -> bool:
     """A scientific finding about precision: a ``gap`` (not fully supported as worded), or a
-    sentence-level unsupported-claim/citation-support finding (not wrong data or numbers)."""
+    sentence-level unsupported-claim/citation-support finding (not wrong data or numbers).
+
+    Also a ``source_routing`` problem (a missing catalogue URL, a 403 from a publisher):
+    it is about reaching a source, not about the manuscript, and is checked at delivery
+    (2026-11-23 audit item 12); a reference row found wrong or nonexistent still blocks."""
+    if finding.get("category") == "source_routing":
+        return True
     if finding.get("category") != "scientific":
         return False
     return finding.get("status") == "gap" or (kinds or {}).get(str(finding.get("location"))) in PRECISION_KINDS
@@ -1491,7 +1497,15 @@ def batch_coverage(output: Mapping[str, Any], group: str, batch: list[dict[str, 
             _exact(row["citations"], "citation_id", {c["id"] for c in unit["citations"]}, "Citation uses")
 
 
-def _delta_inventory(documents, bibliography, prior_documents, prior_inventory, blocked_roots, late=False):
+# Follow-up scope names: the original one widened to every passage after an incomplete prior
+# run and rescanned everything after a source-plan change; the targeted one (2026-11-23 audit)
+# adds only the items that failed or whose primary source changed.
+FOLLOWUP_SCOPE = "prior_blockers_and_changed_passages"
+TARGETED_FOLLOWUP_SCOPE = "prior_blockers_failed_items_and_changed_passages"
+
+
+def _delta_inventory(documents, bibliography, prior_documents, prior_inventory, blocked_roots, late=False,
+                     scope=FOLLOWUP_SCOPE):
     """Map unchanged paragraphs across line moves and select prior negatives and edits."""
     inv = inventory(documents, bibliography)
     core = {p["id"]: p for p in verification_inventory(documents, bibliography)["passages"]}
@@ -1523,10 +1537,32 @@ def _delta_inventory(documents, bibliography, prior_documents, prior_inventory, 
     return dict(inv, **({"previous_blocker_roots": sorted(tracked)} if late else {}), followup=True, passages=passages,
                 task_reference_keys=sorted(changed_refs),
                 proof_context={pid: {"text": p["text"]} for pid, p in core.items()},
-                scope={"name": "prior_blockers_and_changed_passages"})
+                scope={"name": scope})
 
 
-def _followup_inventory(binding, metadata, root, role, documents, bibliography, late=False):
+def _source_plan_changes(prior: Mapping[str, Any], metadata: Mapping[str, Any]) -> set[str] | None:
+    """Reference keys whose declared primary source differs from the one the prior run used.
+
+    None when the prior run's sources cannot be compared (then the whole run repeats)."""
+    try:
+        plan = source_plan(metadata).get("sources") or []
+    except ValueError:
+        return None
+    used = prior.get("sources")
+    if not isinstance(used, list):
+        return None
+
+    def ident(source: Mapping[str, Any]) -> tuple:
+        return (str(source.get("url")), tuple(sorted(source.get("reference_keys") or [])),
+                tuple(source.get("pages") or ()), str(source.get("kind")),
+                str(source.get("extraction_method", "text")))
+
+    old = {ident(source) for source in used if isinstance(source, Mapping)}
+    new = {ident(source) for source in plan}
+    return {key for source in old ^ new for key in source[1]}
+
+
+def _followup_inventory(binding, metadata, root, role, documents, bibliography, late=False, targeted=True):
     if not binding:
         return None
     path = _safe_file(root, binding["path"])
@@ -1534,14 +1570,19 @@ def _followup_inventory(binding, metadata, root, role, documents, bibliography, 
     if sha(raw) != binding["sha256"]:
         raise ValueError("Previous formal-check report changed")
     prior = json.loads(raw)
-    if (prior["paper_id"] != metadata["paper_id"] or prior["role"] != dict(role)
-            or not policy_accepted(prior["policy"])
-            or prior["source_plan_sha256"] != digest(source_plan(metadata))):
+    if prior["paper_id"] != metadata["paper_id"] or prior["role"] != dict(role) or not policy_accepted(prior["policy"]):
         return None
+    plan_changed: set[str] = set()
+    if prior["source_plan_sha256"] != digest(source_plan(metadata)):
+        changed = _source_plan_changes(prior, metadata) if targeted else None
+        if changed is None:
+            return None
+        plan_changed = changed
     findings = prior["issue_summary"]["raw_findings"]
     old_inv = prior["inventory"]
-    incomplete = any(f["category"] in {"technical", "source_routing", "preparation"} for f in findings)
-    if incomplete and not old_inv.get("followup"):
+    failed = [f for f in findings if f["category"] in {"technical", "source_routing", "preparation"}]
+    incomplete = bool(failed)
+    if incomplete and not old_inv.get("followup") and not targeted:
         return None
     old_docs = prior.get("documents")
     if old_docs is None:
@@ -1558,10 +1599,25 @@ def _followup_inventory(binding, metadata, root, role, documents, bibliography, 
         raise ValueError("Previous formal-check manuscript does not match its inventory")
     old_bib = "\n\n".join(r["text"] for r in old_inv["references"])
     roots = {f["root"] for f in findings if f["category"] == "scientific"}
-    if incomplete:
+    if incomplete and not targeted:
         roots.update(p["id"] for p in old_inv["passages"])
         roots.update(r["key"] for r in _task_references(old_inv))
-    return _delta_inventory(documents, bibliography, inventory(old_docs, old_bib), old_inv, roots, late)
+    elif incomplete:
+        # Only what failed: its root, or the passages and references its message names.
+        full = inventory(old_docs, old_bib)
+        known = {p["id"] for p in full["passages"]} | {r["key"] for r in old_inv["references"]}
+        for finding in failed:
+            text = f"{finding.get('message') or ''} {finding.get('location') or ''}"
+            named = {name for name in known
+                     if name and re.search(r"(?<![\w:.-])" + re.escape(name) + r"(?![\w-])", text)}
+            if finding.get("root") in known:
+                named.add(finding["root"])
+            if not named and not old_inv.get("followup"):
+                return None  # the first complete scan failed somewhere unknown: repeat it once
+            roots.update(named)
+    roots.update(plan_changed)
+    return _delta_inventory(documents, bibliography, inventory(old_docs, old_bib), old_inv, roots, late,
+                            scope=TARGETED_FOLLOWUP_SCOPE if targeted else FOLLOWUP_SCOPE)
 
 
 def _task_references(inv):
@@ -1736,8 +1792,9 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
         prior = result.get("previous_formal_check")
         if prior and _safe_file(root, prior["path"]).parent.parent >= path.parent.parent:
             raise ValueError("Previous formal check must precede this run")
+        targeted = (result["inventory"].get("scope") or {}).get("name") == TARGETED_FOLLOWUP_SCOPE
         expected_inv = (_followup_inventory(prior, metadata, root, result["role"], documents, bibliography,
-                                            "previous_blocker_roots" in result["inventory"])
+                                            "previous_blocker_roots" in result["inventory"], targeted=targeted)
                         if prior else verification_inventory(documents, bibliography))
         if not prior and result["inventory"].get("materiality") is True:
             expected_inv["materiality"] = True
