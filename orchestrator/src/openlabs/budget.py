@@ -131,6 +131,21 @@ def provider_of(settings: FactorySettings | None, runner: Any) -> str:
     return name
 
 
+def shared_probe_spec(specs: Iterable[RunnerSpec], provider: str) -> RunnerSpec:
+    """The runner whose windows stand for the provider in summaries and pace reports.
+
+    A runner without its own windows; for Antigravity, whose runners each declare
+    their pool, the worker-tier runner (its Gemini pool), not the other pools.
+    """
+
+    candidates = [s for s in specs if s.provider == provider and not s.protected]
+    shared = next((s for s in candidates if not s.windows), None)
+    if shared is None and provider == ANTIGRAVITY_PROVIDER and candidates:
+        order = {"worker": 0, "lead": 1, "light": 2}
+        shared = min(candidates, key=lambda s: (order.get(s.tier, 3), s.name))
+    return shared or RunnerSpec(name=f"{provider}:shared", provider=provider, tier="worker")
+
+
 def family_of(settings: FactorySettings | None, runner: Any) -> str:
     """Model family of a runner (independence); its provider unless that serves several."""
 
@@ -2239,9 +2254,7 @@ class QuotaRouter:
         providers = sorted({spec.provider for spec in self.settings.runners.values()})
         for provider in providers:
             specs = [s for s in self.settings.runners.values() if s.provider == provider]
-            shared = next((s for s in specs if not s.protected and not s.windows), None)
-            probe = shared or RunnerSpec(name=f"{provider}:shared", provider=provider,
-                                         tier="worker")
+            probe = shared_probe_spec(specs, provider)
             state = runner_availability(
                 probe, self.settings.runners, self.readings.get(provider, {}),
                 self.settings.routing, klass="ordinary", now=self.now,

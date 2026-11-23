@@ -210,9 +210,7 @@ def task_distribution(db: FactoryDB, settings: FactorySettings) -> dict[str, Any
 
 
 def _shared_spec(settings: FactorySettings, provider: str) -> RunnerSpec:
-    specs = [s for s in settings.runners.values() if s.provider == provider]
-    shared = next((s for s in specs if not s.protected and not s.windows), None)
-    return shared or RunnerSpec(name=f"{provider}:shared", provider=provider, tier="worker")
+    return budget_control.shared_probe_spec(settings.runners.values(), provider)
 
 
 def provider_pace(router: budget_control.QuotaRouter) -> dict[str, dict[str, Any]]:

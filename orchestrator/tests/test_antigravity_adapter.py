@@ -515,3 +515,20 @@ def test_antigravity_runner_is_bound_by_its_own_pool_only() -> None:
     undeclared = replace(worker, windows=())
     assert budget_control.runner_windows(undeclared, {"w": undeclared}, observed) == tuple(
         sorted(observed))
+
+
+def test_provider_summary_reads_the_gemini_pool(tmp_path) -> None:
+    _paths_, db = _setup(tmp_path)
+    settings = _three_family_settings()
+    budget_control.record_quota_snapshot(db, settings, {
+        "provider": ANTIGRAVITY_PROVIDER, "observed_at": budget_control._iso(NOW),
+        "windows": [
+            {"name": "gemini-weekly", "used_fraction": 0.1, "window_minutes": 10080,
+             "resets_at": budget_control._iso(NOW + timedelta(days=2))},
+            {"name": "gemini-argon-wtu-weekly", "used_fraction": 0.7, "window_minutes": 10080,
+             "resets_at": budget_control._iso(NOW + timedelta(days=2))}]}, runner="worker_gemini")
+    router = budget_control.QuotaRouter.build(db, settings, now=NOW)
+    summary = router.provider_summary()[ANTIGRAVITY_PROVIDER]
+    assert summary["binding_window"] in {"gemini-weekly", "gemini-5h"}
+    assert budget_control.shared_probe_spec(GEMINI.values(), ANTIGRAVITY_PROVIDER).name == (
+        "worker_gemini")
