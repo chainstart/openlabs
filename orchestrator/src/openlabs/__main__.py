@@ -249,6 +249,14 @@ def _parser() -> argparse.ArgumentParser:
     requeue.add_argument("--by", default="user", help="Who decided (provenance; default user)")
     requeue.add_argument("--allow-needs-human", action="store_true",
                          help="Also accept a task in needs_human")
+    cancel_task = program_commands.add_parser(
+        "cancel-task",
+        help="Cancel one queued task whose basis is gone (e.g. a release writer for a "
+        "superseded version); only queued tasks, records who and why (event manual_cancel)",
+    )
+    cancel_task.add_argument("--task-id", required=True)
+    cancel_task.add_argument("--reason", required=True, help="Why the task is no longer needed")
+    cancel_task.add_argument("--by", required=True, help="Who decided (provenance)")
     reconcile = program_commands.add_parser(
         "reconcile",
         help="List ledger/task drift (delivered papers still in review, parked legacy topics, "
@@ -856,6 +864,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                            **db.requeue_task_manually(
                                args.task_id, by=args.by, reason=args.reason,
                                allow_needs_human=args.allow_needs_human)}
+            except ValueError as exc:
+                print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
+                return 1
+        elif args.program_command == "cancel-task":
+            try:
+                payload = {"schema_version": "openlabs.program_cancel_task.v1",
+                           **db.cancel_task_manually(args.task_id, by=args.by,
+                                                     reason=args.reason)}
             except ValueError as exc:
                 print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
                       file=sys.stderr)

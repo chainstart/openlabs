@@ -1369,6 +1369,41 @@ class FactoryDB:
                         {**detail, "campaign_id": row["campaign_id"]})
         return {"task_id": task_id, "status": "queued", **detail}
 
+    def cancel_task_manually(self, task_id: str, *, by: str, reason: str) -> dict[str, Any]:
+        """Cancel one ``queued`` task on a person's decision (``program cancel-task``).
+
+        For a task whose basis is gone before it started (a release writer for a version
+        that was superseded, for example). Only a task that never left the queue is
+        cancelled; leased, running and finished tasks are refused. The event
+        ``manual_cancel`` records who, why and the prior state. Raises ``ValueError``.
+        """
+
+        if not str(reason or "").strip() or not str(by or "").strip():
+            raise ValueError("a reason and an actor are required")
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, attempt, task_type, campaign_id FROM tasks WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"no task {task_id}")
+            status = str(row["status"])
+            if status != "queued":
+                raise ValueError(f"task {task_id} is {status}; only queued tasks are cancelled")
+            connection.execute(
+                "UPDATE tasks SET status='cancelled', not_before=NULL, last_error=?, "
+                "updated_at=? WHERE task_id=? AND status='queued'",
+                (f"manual_cancel:{str(reason).strip()[:300]}", now, task_id),
+            )
+            detail = {"by": str(by).strip(), "reason": str(reason).strip(),
+                      "prior_status": status, "prior_attempt": int(row["attempt"] or 0),
+                      "task_type": row["task_type"]}
+            self._event(connection, "task", task_id, "manual_cancel",
+                        {**detail, "campaign_id": row["campaign_id"]})
+        return {"task_id": task_id, "status": "cancelled", **detail}
+
     def escalate_task_tier(
         self,
         task_id: str,

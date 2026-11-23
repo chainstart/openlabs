@@ -84,3 +84,35 @@ def test_cli_requeue(tmp_path, monkeypatch, capsys) -> None:
     assert payload["status"] == "queued" and payload["by"] == "user"
     assert main(["program", "requeue", task_id, "--reason", "config fixed"]) == 1
     assert "refused" in capsys.readouterr().err
+
+
+def test_cancel_task_only_queued_and_records_who_and_why(tmp_path, monkeypatch, capsys) -> None:
+    from openlabs import __main__ as cli
+
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    task_id = _latest(db, topic["campaign_id"])["task_id"]
+    with db.connect() as connection:
+        connection.execute("UPDATE tasks SET status='queued' WHERE task_id=?", (task_id,))
+    with pytest.raises(ValueError, match="reason"):
+        db.cancel_task_manually(task_id, by="user", reason=" ")
+    with pytest.raises(ValueError, match="no task"):
+        db.cancel_task_manually("missing", by="user", reason="stale")
+    monkeypatch.setattr(cli, "load_settings", lambda _paths: settings)
+    monkeypatch.setattr(cli, "workspace_paths", lambda _workspace: paths)
+    assert cli.main(["program", "cancel-task", "--task-id", task_id, "--reason",
+                     "version superseded", "--by", "operator"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "cancelled" and payload["prior_status"] == "queued"
+    task = db.task(task_id)
+    assert task["status"] == "cancelled"
+    assert task["last_error"] == "manual_cancel:version superseded"
+    assert db.count_events("task", task_id, "manual_cancel") == 1
+    # A second call (now cancelled) and a running task are refused; nothing changes.
+    assert cli.main(["program", "cancel-task", "--task-id", task_id, "--reason", "again",
+                     "--by", "operator"]) == 1
+    assert "only queued" in capsys.readouterr().err
+    with db.connect() as connection:
+        connection.execute("UPDATE tasks SET status='running' WHERE task_id=?", (task_id,))
+    with pytest.raises(ValueError, match="is running"):
+        db.cancel_task_manually(task_id, by="user", reason="stale")
+    assert db.task(task_id)["status"] == "running"
