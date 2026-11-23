@@ -191,3 +191,27 @@ def test_cli_command_parses() -> None:
     args = build_parser().parse_args(
         ["program", "sync-site-assignments", "--paper-id", PAPER, "--apply", "--json"])
     assert args.paper_id == [PAPER] and args.apply
+
+
+def test_stale_local_registry_does_not_take_a_site_ready_assignment_away(repo: Path) -> None:
+    # TIC 421871796, 2026-11-23 14:07Z: the shared data checkout still had the older
+    # revision_required record while the site showed the delivered 0.1.13 package as
+    # ready_to_submit; the sync parked the submitter. A lagging registry now only skips.
+    _registry(repo, status="revision_required", version="0.1.12")
+    site = FakeSite({PAPER: _paper(lifecycle="ready_to_submit", version="0.1.13", assignments=[
+        {"id": "a1", "submitter_id": OTHER, "active": True, "notes": "",
+         "assigned_at": "2026-11-23T20:00:00+08:00"}])})
+    result = sync_site_assignments(site, root=repo, apply=True)
+    entry = result["papers"][0]
+    assert entry["action"] == "skip" and entry["state"] == "stale_registry"
+    assert "older than the site's current package 0.1.13" in entry["why"]
+    assert not site.posts and _active(site) == [OTHER]
+    assert result["blocked"] == [entry] and result["ok"]
+
+
+def test_registry_ahead_of_the_site_still_parks(repo: Path) -> None:
+    # A revision in progress (local version newer than the delivered package) keeps the rule.
+    _registry(repo, status="revision_required", version="0.1.14")
+    site = FakeSite({PAPER: _paper(lifecycle="ready_to_submit", version="0.1.13")})
+    result = sync_site_assignments(site, root=repo, apply=True)
+    assert result["papers"][0]["action"] == "park" and _active(site) == [ADMIN]

@@ -24,6 +24,74 @@ NEW_WORK = re.compile(
     r"(?:analys[ie]s|tests?|checks?|fits?|simulations?|validations?|experiments?)\b"
     r"|新(?:的)?(?:计算|数据|分析|实验)|(?:重跑|重新计算|补做|重算)"
 )
+# NEW_WORK only flags a vocabulary hint (owner 2026-11-23, 抓大放小): "bootstrap", "analysis",
+# "checks" or "collect" also occur in requests to describe, qualify or reword. An item needs a
+# new registered artifact only when one of its sentences itself demands new computation, new
+# data or a new figure (``new_work_basis``); a hedged or alternative remedy ("would require
+# ... or qualify the sentence") is not a demand.
+_STRONG = (r"re-?run|re-?fit|re-?estimate|re-?compute|re-?calculate|re-?analy[sz]e|re-?collect|"
+           r"compute|calculate|quantify|simulate|repeat|perform|conduct|run|fit|estimate|test|measure")
+_STRONG_PARTICIPLE = (r"re-?run|re-?fitted|re-?estimated|re-?computed|re-?calculated|re-?analy[sz]ed|"
+                      r"computed|calculated|quantified|simulated|bootstrapped|collected|repeated|"
+                      r"performed|conducted|estimated|tested|measured")
+_ADJ = r"(?:new|additional|independent|external|fresh|further|separate|extra)"
+_OBJECT = (rf"(?:{_ADJ}\s+(?:\S+\s+)?(?:data(?:sets?)?|analys[ie]s|calculations?|computations?|"
+           r"simulations?|experiments?|observations?|measurements?|replicates?|runs?|fits?|estimates?|"
+           r"validations?|tests?|figures?|plots?|panels?)"
+           r"|(?:sensitivity|robustness|power|bootstrap|subgroup|stratified|simulation|placebo|ablation)\s+"
+           r"(?:analys[ie]s|checks?|tests?|study|studies|runs?|experiments?)"
+           r"|simulations?|experiments?|datasets?|figures?|plots?|panels?)\b")
+_WEAK = r"add|provide|include|report|present|show|supply|plot|produce|extend|collect|obtain"
+_LEAD = r"^(?:(?:please|also|then|first|finally|next|additionally|in\s[^,]{1,60},|for\s[^,]{1,60},)\s*)*"
+_DEMANDS = (
+    re.compile(rf"{_LEAD}(?P<t>(?:{_STRONG})\b)", re.I),
+    re.compile(rf"{_LEAD}(?P<t>(?:{_WEAK})\s+(?:\S+\s+){{0,2}}?{_OBJECT})", re.I),
+    re.compile(rf"(?P<t>\b(?:must|should|needs?\s+to|has\s+to|have\s+to|(?:is|are)\s+required\s+to|please)"
+               rf"\s+(?:also\s+)?(?:(?:{_STRONG})\b|be\s+(?:{_STRONG_PARTICIPLE})\b|"
+               rf"(?:{_WEAK})\s+(?:\S+\s+){{0,2}}?{_OBJECT}))", re.I),
+    re.compile(rf"(?P<t>\b(?:requires?|required|needs?|needed|necessary|calls?\s+for)\s+(?:\S+\s+){{0,3}}?"
+               rf"{_OBJECT})", re.I),
+    re.compile(rf"(?P<t>\b{_OBJECT}\s+(?:is|are)\s+(?:required|needed|necessary)\b)", re.I),
+    re.compile(r"(?P<t>补做|重跑|重新(?:计算|分析|拟合|估计|运行)|重算|新增(?:计算|数据|分析|实验|图)|"
+               r"需要(?:新的?|额外的?|补充的?)(?:数据|计算|分析|实验|图))"),
+)
+# A hedge, condition or alternative makes the remedy optional: wording can satisfy it.
+_CONDITIONAL = re.compile(r"\b(?:if|unless|whether|would|could|might|otherwise|alternatively|either|"
+                          r"(?:no|not|without|never|nothing)\s+(?:\w+\s+){0,2}?(?:new|additional|further|extra|"
+                          r"requires?|required|needs?|needed|necessary|computations?|calculations?|analys[ie]s)|"
+                          r"requires?\s+no|"
+                          r"or\s+(?:\w+\s+)?(?:qualify|narrow|soften|remove|drop|reword|rephrase|state|limit|label|justify|explain|"
+                          r"describe|acknowledge|note|mark|provide\s+(?:\w+\s+)?justification))\b"
+                          r"|^(?:why missed|reader could infer|missed previously|a reader)\b"
+                          r"|如果|若|如需|否则|或者|无需|不需要|不必", re.I)
+
+
+def _sentences(text: str) -> list[str]:
+    parts = re.split(r"\n+|(?<=[.!?;。；！？])\s+(?=[\"“'(\[A-Z0-9§])", text)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def new_work_basis(item: str) -> dict | None:
+    """The sentence and phrase by which ``item`` explicitly demands a new data/analysis artifact.
+
+    None when the item only asks to describe, state, qualify, document or reword (a text
+    location then satisfies it), or offers new work only as a conditional or alternative.
+    """
+    for sentence in _sentences(item):
+        body = re.sub(r"^(?:[\w./-]+:L\d+:[0-9a-f]{6,}(?::[^:]{0,80})*:\s*|\[\w+\]\s*)", "", sentence)
+        if _CONDITIONAL.search(body):
+            continue
+        for pattern in _DEMANDS:
+            match = pattern.search(body)
+            if match:
+                return {"source": "text", "trigger": match["t"].strip(), "sentence": body[:300]}
+    return None
+
+
+def new_work_hint(item: str) -> str | None:
+    """The NEW_WORK vocabulary word in ``item`` (a hint only; never a requirement by itself)."""
+    match = NEW_WORK.search(item)
+    return match.group(0) if match else None
 
 
 def settings(review):
@@ -145,7 +213,15 @@ def evidence_location(root, value, hashes, jobs):
         return False
 
 
-def response_blockers(root, raw, digest, items, needs_work, hashes, jobs, new_hashes, new_jobs):
+def _basis_text(basis):
+    if not basis:
+        return ""
+    if basis.get("source") == "editor":
+        return " (new work requested: the editor marked this change requires_new_artifact)"
+    return f" (new work requested: '{basis['trigger']}' in \"{basis['sentence']}\")"
+
+
+def response_blockers(root, raw, digest, items, needs_work, hashes, jobs, new_hashes, new_jobs, basis=None):
     if not items and not raw:
         return []
     try:
@@ -180,7 +256,8 @@ def response_blockers(root, raw, digest, items, needs_work, hashes, jobs, new_ha
             if status != "addressed" or not any(
                     (ref.startswith("sha256:") and ref[7:] in new_hashes)
                     or (ref.startswith("job:") and ref[4:] in new_jobs) for ref in locations):
-                blockers.append(f"Cite a new registered data/analysis artifact hash or job for {item}")
+                blockers.append(f"Cite a new registered data/analysis artifact hash or job for {item}"
+                                + _basis_text((basis or {}).get(item)))
         elif status == "addressed" and not locations:
             blockers.append(f"Supply an evidence location for {item}")
     return blockers
@@ -215,16 +292,26 @@ def check(root, paper_id, target, last, pre, current, jobs, raw, items, explicit
     else:
         cooldown_blocker = None
         retry_at = None
-    needs_work = [item for item in items if explicit.get(item, bool(NEW_WORK.search(item)))]
+    # The editor's explicit requires_new_artifact wins; otherwise the item's own sentences decide.
+    basis = {}
+    for item in items:
+        if item in explicit:
+            if explicit[item]:
+                basis[item] = {"source": "editor"}
+        elif (found := new_work_basis(item)) is not None:
+            basis[item] = found
+    needs_work = [item for item in items if item in basis]
+    hints = {item: hint for item in items if item not in basis and (hint := new_work_hint(item))}
     current_hashes = set(current.values()) | {row["sha256"] for row in pre.get("figure_files", [])}
     problems.extend(response_blockers(root, raw, digest, items, needs_work, current_hashes,
                                       set(jobs.values()), set(new_data.values()),
                                       {jobs[path] for path in new_data if path in jobs}
-                                      - set(last.get("round_evidence_jobs", {}).values())))
+                                      - set(last.get("round_evidence_jobs", {}).values()), basis))
     cooldown_only = bool(cooldown_blocker and retry_at and repeated and len(problems) == 1)
     if cooldown_blocker:
         problems.append(cooldown_blocker)
     return {"paper_id": paper_id, "target_journal": target, "previous_decision_sha256": digest, "required_items": items,
-            "requires_new_artifact": needs_work, "blockers": problems, "cooldown_only": cooldown_only,
+            "requires_new_artifact": needs_work, "new_artifact_basis": basis,
+            "new_artifact_hints": hints, "blockers": problems, "cooldown_only": cooldown_only,
             "changed_words": words, "new_data": new_data, "new_figure_sha256": sorted(new_figures),
             "retry_at": retry_at.isoformat() if retry_at else None, "cooldown_override": override}

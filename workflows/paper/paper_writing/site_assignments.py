@@ -186,6 +186,32 @@ def recorded_submitter(paper: Mapping[str, Any], root: Path, users: list[Mapping
     return None
 
 
+def _version_key(value: Any) -> tuple[int, ...] | None:
+    numbers = re.findall(r"\d+", str(value or ""))
+    return tuple(int(n) for n in numbers) if numbers else None
+
+
+def stale_registry(paper: Mapping[str, Any], registry: Mapping[str, Any] | None) -> str | None:
+    """Why the local registry, not the paper, makes a site-ready paper look not ready.
+
+    The shared data checkout can lag origin (agents push from their own worktrees). When the
+    site shows ``ready_to_submit`` with every site-side condition met and the registry's
+    version is older than the site's current package, the registry is out of date: skip and
+    report instead of taking the assignment away (TIC 421871796, 2026-11-23 14:07Z).
+    """
+    if registry is None or str(paper.get("lifecycle_status") or "") != "ready_to_submit":
+        return None
+    if classify(paper, None)[0] != "ready":
+        return None
+    package = next((item for item in paper.get("packages") or []
+                    if item.get("id") == paper.get("current_package_id")), None) or {}
+    local, site = _version_key(registry.get("version")), _version_key(package.get("version"))
+    if local is None or site is None or local >= site:
+        return None
+    return (f"local registry version {registry.get('version')} is older than the site's current "
+            f"package {package.get('version')}; the data checkout is behind, not the paper")
+
+
 def plan_paper(paper: Mapping[str, Any], *, root: Path, users: list[Mapping[str, Any]],
                placeholder: str, settings_authors: list[Mapping[str, Any]]) -> dict[str, Any]:
     paper_id = str(paper["paper_id"])
@@ -203,6 +229,9 @@ def plan_paper(paper: Mapping[str, Any], *, root: Path, users: list[Mapping[str,
     if state == "untouched":
         return entry
     fallback = default_submitter(registry, settings_authors, users, placeholder)
+    if state == "not_ready" and (stale := stale_registry(paper, registry)) is not None:
+        entry.update(state="stale_registry", action="skip", why=stale)
+        return entry
     if state == "not_ready":
         if real:
             row = real[0]
@@ -320,7 +349,7 @@ def sync_site_assignments(client: Any, *, root: str | Path,
         with log.open("a", encoding="utf-8") as handle:
             for entry in changed:
                 handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
-    blocked = [entry for entry in entries if entry["action"] == "blocked"]
+    blocked = [entry for entry in entries if entry["action"] in {"blocked", "skip"}]
     return {
         "schema_version": SCHEMA, "apply": apply, "placeholder_id": placeholder,
         "checked_at": _now(), "papers": entries, "changed": changed,

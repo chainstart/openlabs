@@ -838,6 +838,9 @@ class TickReport:
     # Tokens and list-price equivalent cost per task type over the same window
     # (usage.token_cost_summary; per-attempt increments).
     token_cost: dict[str, Any] = field(default_factory=dict)
+    # Fast-forward of the shared data checkout at tick start (data_sync.py); a skip is
+    # reported here with its reason and is never a tick error.
+    data_sync: dict[str, Any] = field(default_factory=dict)
     # Per program topic in research: seats, agent hours, tokens, cost, CPU core-hours,
     # phase; average cost of a paper that reached the confirmation queue.
     topic_economics: dict[str, Any] = field(default_factory=dict)
@@ -848,7 +851,7 @@ class TickReport:
         payload = self._base_dict()
         for name in (
             "parallel_limit", "host_usage", "ailab", "local_compute", "balance", "remote_waits",
-            "idle_metrics", "token_cost", "topic_economics", "no_progress_guard",
+            "idle_metrics", "token_cost", "topic_economics", "no_progress_guard", "data_sync",
         ):
             value = getattr(self, name)
             if value:
@@ -4148,6 +4151,13 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
     db = FactoryDB(paths.database_file)
     db.initialize()
     report = TickReport()
+    # Readers below (site assignments, release, ...) must see what agents pushed from
+    # their own worktrees: fast-forward the shared data checkout when that is safe.
+    from .data_sync import sync_data_checkout
+
+    synced = sync_data_checkout(paths.data)
+    if synced.get("reason") != "not_a_git_checkout":  # nothing to sync: default report shape
+        report.data_sync = synced
 
     _recover_attempt_workspaces(db, paths, report)
 

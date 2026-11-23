@@ -31,6 +31,45 @@ GATE1 原有的“写不出读者会得出的错误结论就降为建议”规�
 `reader_misconclusion` 或 `finding_kind: advisory` 即为建议）；实际核验几乎总会写一句“读者可能会……”，所以
 另加了上面按核验状态（gap/error）的确定性划分。
 
+### 评审关口三处误判与一处中止的修正（2026-11-23 晚）
+
+同日业主要求“抓大放小……只要数据和结论都是真实正确有效的就行”，以及评审轮次之间不设冷却。
+当晚梳理稿件时关口反复误判，修正如下（仍属 `gate1_precision_v1`，归档报告和提示词不变）：
+
+- **轮次守卫（`review_round_guard.py`）先看意见本身。** 只有意见中某一句明确要求新计算、新数据或
+  新图时（祈使句如 “Rerun/Quantify/Test …”，“should re-estimate …”，“Add a sensitivity
+  analysis …”，“A new simulation is required …”，“补做/重跑 …”），才要求回复引用新登记的数据或作业；
+  编辑在 required change 上标 `requires_new_artifact: true` 时照旧以编辑为准。带条件、否定或给出措辞
+  替代（“would require … and the sentence needs qualification”、“Either … or label …”、“No new
+  analysis is required”）的句子不算要求。描述、说明、限定、措辞类意见，回复给出文字位置（`path:line`）
+  即满足。原来的 `NEW_WORK` 正则只作提示，命中词记在 `round_guard.new_artifact_hints`；判定为需要新
+  产物时，判定依据记在 `new_artifact_basis`，拒绝信息末尾写明触发的词和所在句子，例如
+  `(new work requested: 'Rerun' in "Rerun the bootstrap with 2,000 replicates.")`。上一轮守卫的判定
+  只沿用编辑明确标注的那部分，正则命中不再一轮轮继承。冷却只在稿件与证据完全未变时才生效，有改动的
+  稿件照旧立即送评。
+  实例：PFAS 第 10 轮两条 bootstrap 意见（只要求在补充材料写明变体与局限）、NEM 五分钟结算的收窄措辞
+  意见（命中词 `collect`）和归因意见（“would require an additional analysis … needs qualification”）。
+- **差异复核（`review_flow.substantive_parts`）不把引用调整算作改结论。** 比较标题、摘要、引言、定理、
+  表格和结果/讨论/结论各节前，先去掉 `\cite*`/`\nocite`、`\ref` 一族（连同前面的 “Fig.~”“Table~”“§”
+  等）、`\label`、`\url`/`\href`/`\doi`、DOI 与 URL 文本、浮动体位置参数和 `\FloatBarrier`/`\clearpage`；
+  浮动体内容整体不变时只是换了位置，按去掉浮动体的正文比较。内联参考文献中只增删条目不算实质改动，
+  同一 key 的条目内容改了仍记 `bibliography entries changed`。这类改动走 delta（正式核验照常重跑，
+  引用逐条复核），不再触发完整评审。实例：弯曲杆菌讨论部分加一个 `\citep{…}`。
+- **合成决定时文档类、回复格式类要求降为建议。** 审稿人都是 accept 或 minor_revision、没有正式核验阻断、
+  科学阻断、science/formal_accuracy 维度实质项和技术阻断时，剩余阻断项（含独立读者的修复、跟进轮里
+  未解决的上轮条目）如果只是要求在回复里逐字引用、引用方式、补交文档/脚本/差异、或展示审稿人看不到的
+  材料，一律记为建议（`downgrade_reason: documentation_request`，汇总在
+  `merged.documentation_requests_downgraded`），没有其他阻断时结论为 ready。文字里写明错误仍然存在
+  （“still reports … incorrect”、“contradicts”、“does not match” 等，条件句除外）的条目照旧阻断。
+  `review resynthesize` 和 `apply_decision` 的复算用同一个 `merge`，结论一致。实例：TIC 421871796
+  第 6 轮（只差在回复里逐字引用 claim map 的 C5）、弯曲杆菌第 12 轮（编辑看不到修正后的脚本）。
+- **跟进轮的上轮条目抄写不再导致中止。** 多行长条目无法用 enum 约束，审稿人偶尔漏抄一句。
+  `_check_followup_items` 现在先精确匹配，其余按空白归一后相同、同一核验 ID 前缀
+  （`main:L134:e227b258a064`）或唯一的高相似度（≥0.85）对应回原条目，合成时按原文计；真正的漏项、
+  重复或新增仍然报错。实例：NEM 五分钟结算第 4 轮两位审稿人都给 accept，编辑把 L134 那一条少抄了一句，
+  在写决定前以 “Reviewer omitted, duplicated or introduced a previous mandatory item” 中止（上轮必改项
+  本身是 11 条、已去重；给审稿人的列表另外再保序去重一次）。
+
 ### 已接受稿件的核验复核
 
 
@@ -1557,6 +1596,10 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
   `registry/settings.yaml#defaults.authors[1]`。
 - 有投稿记录（已投稿、审稿中、返修、接收、发表）或生命周期已过投稿前阶段（含 `closed`）的论文
   一律不动。
+- 本地登记过时不收回分配（2026-11-23）：网站显示 `ready_to_submit`、网站侧条件全部满足，而本地
+  登记版本低于网站当前包版本时，说明共享数据工作区落后，不是论文回退；本次记为
+  `action: skip`（`state: stale_registry`，原因写在 `why`，tick 报告的 `program.site_assignments.blocked`
+  里可见），不动分配。本地版本高于网站版本（修订中）仍按上条收回。
 
 **调用位置**：
 - `release_handoff` 推包完成后对该论文执行一次（`program deliver` 与 `handoff release` 都经过
@@ -1568,6 +1611,15 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 - 手工：`python -m openlabs program sync-site-assignments [--paper-id ID ...] [--apply]`
   （默认只列计划）；或 `paper-writing program sync-site-assignments`（`--apply` 需
   `OPENLABS_ENABLE_EXTERNAL_WRITES=1`）。
+
+**共享数据工作区每轮快进（2026-11-23）**：各代理在自己的 worktree 提交并推送数据仓库，共享工作区
+（`paths.data`，即 `/workspace/openlabs/openlabs-data`）以前没人拉取，常落后 origin 十几个提交，
+网站分配对账、release 等按过时登记判断（TIC 421871796 已交付，却按旧的 revision_required 收走了投稿人，
+14:07Z）。现在每轮调度开头（`engine._tick_locked`，`orchestrator/src/openlabs/data_sync.py`）先
+`git fetch` 上游再 `git merge --ff-only`。有未提交的已跟踪改动、处于 rebase/merge/cherry-pick 中、HEAD
+游离、没有上游、fetch 失败或历史分叉无法快进时跳过，不碰工作区；结果写在 tick 报告的 `data_sync`
+（`outcome: fast_forwarded|up_to_date|skipped` 与 `reason`），跳过不进 `errors`。未跟踪文件不阻止快进。
+临时关闭：环境变量 `OPENLABS_DATA_SYNC=0`。
 
 **通知**：我们这边没有“分配后通知投稿人”的代码；投稿人通过网站自己的待办看到分配。期刊来信的
 转发（`journal_dispatch`）按当前唯一有效分配发信，占位期间不会发给原投稿人。

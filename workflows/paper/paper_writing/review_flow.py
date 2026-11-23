@@ -1907,10 +1907,68 @@ def followup_packet(previous):
             f"Source changes since the previous round (unified diff):\n{previous['diff']}\n")
 
 
+_ITEM_ID = re.compile(r"^\s*([\w./-]+:L\d+:[0-9a-f]{8,}(?::[\w.+-]+)*)\s*:")
+
+
+def followup_item_map(returned: list[str], expected: list[str]) -> dict[int, str] | None:
+    """Map each returned previous item (by position) to the mandatory item it answers.
+
+    Long multi-line items cannot be enum-constrained, and a reviewer occasionally copies
+    one with a sentence dropped or whitespace changed (NEM five-minute settlement round 4,
+    2026-11-23). Exact copies match first; a remaining copy matches a remaining item with
+    the same whitespace-normalised text, the same verification ID prefix, or a unique
+    close text (ratio >= 0.85). None when an item is omitted, duplicated or introduced.
+    """
+    expected = list(dict.fromkeys(expected))
+    if len(returned) != len(expected):
+        return None
+    mapping: dict[int, str] = {}
+    open_items = list(expected)
+    for index, text in enumerate(returned):
+        if text in open_items:
+            mapping[index] = text
+            open_items.remove(text)
+    pending = [index for index in range(len(returned)) if index not in mapping]
+
+    def norm(text: str) -> str:
+        return " ".join(text.split())
+
+    def ident(text: str) -> str | None:
+        match = _ITEM_ID.match(text)
+        return match.group(1) if match else None
+
+    for index in list(pending):
+        text = returned[index]
+        candidates = [item for item in open_items if norm(item) == norm(text)]
+        if len(candidates) != 1 and ident(text):
+            candidates = [item for item in open_items if ident(item) == ident(text)]
+        if len(candidates) != 1:
+            scored = sorted(((difflib.SequenceMatcher(None, norm(text), norm(item), autojunk=False).ratio(), item)
+                             for item in open_items), reverse=True)
+            candidates = [scored[0][1]] if scored and scored[0][0] >= 0.85 and (
+                len(scored) == 1 or scored[1][0] < scored[0][0] - 0.05) else []
+        if len(candidates) != 1:
+            return None
+        mapping[index] = candidates[0]
+        open_items.remove(candidates[0])
+        pending.remove(index)
+    return mapping if not open_items and not pending else None
+
+
+def canonical_previous_items(report: Mapping[str, Any], expected: list[str]) -> list[dict[str, Any]]:
+    """``report``'s previous items with each ``item`` replaced by the mandatory text it answers."""
+    rows = list(report.get("previous_items", []))
+    mapping = followup_item_map([row["item"] for row in rows], list(expected))
+    if mapping is None:
+        return rows
+    return [row if row["item"] == mapping[index] else dict(row, item=mapping[index], item_as_returned=row["item"])
+            for index, row in enumerate(rows)]
+
+
 def _followup_reports(editor, referees, items):
     changes, unresolved, advice = [], [], []
     for role, report in {"editor": editor, **referees}.items():
-        for row in report.get("previous_items", []):
+        for row in canonical_previous_items(report, items):
             if row["item"] in items and not row["resolved"]:
                 if row["evidence"].strip() and row.get("reader_misconclusion", "").strip():
                     unresolved.append(dict(row, referee=role, advisory=False))
@@ -1939,13 +1997,84 @@ def _followup_reports(editor, referees, items):
 
 def _check_followup_items(report, previous):
     returned = [row["item"] for row in report["previous_items"]]
-    if sorted(returned) != sorted(previous["items"]):
+    if sorted(returned) != sorted(dict.fromkeys(previous["items"])) and followup_item_map(
+            returned, previous["items"]) is None:
         raise ValueError("Reviewer omitted, duplicated or introduced a previous mandatory item")
 
 
 def _recorded_merge(record, history, **kwargs):
     return merge(record["editor_screen"], record["referee_reports"], history,
                  followup_items=record.get("followup_items"), **kwargs)
+
+
+# Owner rule 2026-11-23 (抓大放小, part of formal_checks.PRECISION_RULE): once the science is
+# clear, a request about how the response is written (quote an entry verbatim, cite a line),
+# about citation form, about supplying a document or script, or about showing something the
+# reviewer could not see is advice. A text that states a data, conclusion or citation error
+# that is still present keeps the item blocking.
+_DOCUMENT_REQUEST = re.compile(
+    r"\b(?:in|into|to)\s+the\s+(?:author'?s?\s+)?(?:response|rebuttal|reply)\b|\bresponse\s+letter\b|"
+    r"\bquot(?:e|ed|ing)\b|\bverbatim\b|\bcitation\s+(?:style|format|form|key)s?\b|\bcite\s+(?:it|this|the\s+line)\b|"
+    r"\b(?:not|never)\s+(?:been\s+)?(?:included|supplied|provided|shown|attached|submitted|uploaded|visible|"
+    r"available|quoted)\b|\bcould\s+not\s+(?:be\s+)?(?:retriev|inspect|see|access|open|verif|independently\s+verif)\w*|"
+    r"\b(?:remains?|is|was)\s+unverified\b|\bdiff\s+(?:is|was)\s+empty\b|\bempty\s+diff\b|"
+    r"\b(?:include|attach|supply|provide|upload|submit|show)\s+(?:the\s+)?(?:revised\s+|corrected\s+|updated\s+|"
+    r"regenerated\s+|fixed\s+)?(?:script|code|file|output|json|diff|archive|log|notebook|entry)\b|"
+    r"\bnot\s+yet\s+checkable\b|\bhas\s+not\s+been\s+shown\b|"
+    r"回复|逐字|引用方式|补交|未提供|看不到|未展示", re.I)
+_PRESENT_ERROR = re.compile(
+    r"\b(?:still|remains?|continues?\s+to)\s+(?:\w+\s+){0,2}?(?:wrong|incorrect|erroneous|inconsistent|"
+    r"contradict\w*|misstat\w*|mismatch\w*|overstat\w*)\b|\b(?:is|are)\s+(?:wrong|incorrect|erroneous)\b|"
+    r"\bcontradicts?\b|\bdoes\s+not\s+match\b|\bdisagrees?\s+with\b|\bnon-?existent\s+(?:reference|citation)\b|"
+    r"数据错误|结论错误|仍然错误|仍有错误|矛盾", re.I)
+_HEDGE = re.compile(r"\b(?:if|unless|whether|would|could|might)\b|如果|若", re.I)
+
+
+def documentation_request(*texts: Any) -> bool:
+    """Whether the current-round text of a blocking item only asks for a response, citation
+    form, document or display, with no data, conclusion or citation error stated as present."""
+    sentences = [s for text in texts if isinstance(text, str)
+                 for s in re.split(r"\n+|(?<=[.!?;。；])\s+", text) if s.strip()]
+    if not any(_DOCUMENT_REQUEST.search(s) for s in sentences):
+        return False
+    return not any(_PRESENT_ERROR.search(s) and not _HEDGE.search(s) for s in sentences)
+
+
+def _documentation_requests_advice(result: dict[str, Any], referees: Mapping[str, Mapping[str, Any]],
+                                   formal_blockers, history_blockers) -> dict[str, Any]:
+    recommendations = {r.get("recommendation") for r in referees.values()}
+    repairs = result.get("dimension_repairs") or {}
+    if (result.get("outcome") != "revision_required" or not referees or formal_blockers or history_blockers
+            or not recommendations <= {"accept", "minor_revision"} or result.get("scientific_blockers")
+            or repairs.get("science") or repairs.get("formal_accuracy")
+            or result.get("technical_blockers") or result.get("escalation_blockers")):
+        return result
+    downgraded = []
+    for change in result.get("required_changes", []):
+        if not change.get("advisory") and documentation_request(
+                change.get("change"), change.get("repair"), change.get("wrong_conclusion")):
+            change.update(advisory=True, placement="response_only", precision_downgraded=True,
+                          downgrade_reason="documentation_request")
+            downgraded.append(change.get("change"))
+    for item in result.get("unresolved_previous_items", []):
+        if not item.get("advisory") and documentation_request(item.get("evidence"), item.get("reader_misconclusion")):
+            item.update(advisory=True, precision_downgraded=True, downgrade_reason="documentation_request")
+            downgraded.append(item.get("item"))
+    for dimension, rows in list(repairs.items()):
+        kept = [row for row in rows if not documentation_request(
+            row.get("repair"), row.get("change"), row.get("wrong_conclusion"))]
+        downgraded.extend(row.get("repair") or row.get("change") for row in rows if row not in kept)
+        repairs[dimension] = kept
+    if not downgraded:
+        return result
+    result["documentation_requests_downgraded"] = {"rule": formal_checks.PRECISION_RULE,
+                                                   "items": list(dict.fromkeys(downgraded))}
+    blocking = (any(repairs.values())
+                or any(not c.get("advisory") for c in result.get("required_changes", []))
+                or any(not i.get("advisory") for i in result.get("unresolved_previous_items", [])))
+    if not blocking:
+        result.update(outcome="ready", recommendation="accept", next_action=None)
+    return result
 
 
 def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
@@ -1975,12 +2104,12 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
             result["review_standard"] = editor["review_standard"]
         if reader_report is not None:
             _merge_reader(result, reader_report, previous)
-        return result
+        return _documentation_requests_advice(result, referees, formal_blockers, history_blockers)
     if editor.get("review_standard") == "materiality_v1":
         result = _material_decision(editor, referees, history_blockers, formal_blockers, formal_summary)
         if reader_report is not None:
             _merge_reader(result, reader_report, previous)
-        return result
+        return _documentation_requests_advice(result, referees, formal_blockers, history_blockers)
     result = _merge_reports(editor, referees, history_blockers, previous_ids=previous_ids,
                             formal_blockers=formal_blockers, formal_summary=formal_summary)
     formal_advice = (formal_summary or {}).get("by_category", {}).get("advisory", [])
@@ -2290,7 +2419,8 @@ def _previous_round(root: Path, paper_id: str, target: str, expanded: str, respo
                     "to answer. Its advisory text requests are in the decision letter above.]")
     old = (last["_path"].parent / "manuscript-expanded.tex").read_text()
     diff = "".join(difflib.unified_diff(old.splitlines(True), expanded.splitlines(True), "previous", "current", n=2))
-    return {"letter": last.get("letter", ""), "items": items, "response": response, "diff": diff[:400000]}
+    return {"letter": last.get("letter", ""), "items": list(dict.fromkeys(items)), "response": response,
+            "diff": diff[:400000]}
 
 
 def referee_schema_for_previous(previous: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -2352,7 +2482,8 @@ def stalled_signal(rounds: list[Mapping[str, Any]], referees: Mapping[str, Mappi
 # its scientific content where the referees saw it. The rule is deliberately
 # simple and conservative; any doubt sends the paper to a full review.
 DELTA_RULE = ("Reuse the last ready full review only when, after removing comments, layout "
-              "commands, inactive figure fallbacks bound to reviewed image hashes, and delivery identifiers, the title, abstract, introduction, theorem-like statements, every table, every "
+              "commands, citation commands, bibliography entries, DOIs and URLs, cross-references, float placement "
+              "(a float that only moved), inactive figure fallbacks bound to reviewed image hashes, and delivery identifiers, the title, abstract, introduction, theorem-like statements, every table, every "
               "results/evaluation/discussion/conclusion section and the multiset of numbers in the "
               "document bodies (excluding DOI, version, file path and script line references) are identical, "
               "at most {fraction:.0%} of lines changed, and every figure "
@@ -2440,10 +2571,54 @@ def _norm(text: str) -> str:
     return " ".join(text.split())
 
 
+# Owner rule 2026-11-23 (抓大放小): adding or removing citations, bibliography entries, DOIs or
+# URLs, adjusting cross-references and moving floats change no data or conclusion. They are
+# compared away here; the formal verification still rechecks every reference on a delta.
+_DELTA_XREF_WORD = (r"(?:Figs?\.|Figures?|Tables?|Tabs?\.|Eqs?\.|Equations?|Sections?|Secs?\.|"
+                    r"Appendi(?:x|ces)|Algorithms?|Theorems?|Lemmas?|Supplementary\s+(?:Figures?|Tables?|"
+                    r"Notes?|Sections?)|Notes?|§)")
+_DELTA_XREF = re.compile(rf"(?:{_DELTA_XREF_WORD}\s*~?\s*)?\\(?:ref|eqref|cref|Cref|autoref|pageref|nameref|"
+                         r"vref|labelcref)\*?\{[^}]*\}")
+_DELTA_CITATION = re.compile(r"\\(?:[A-Za-z]*cite[A-Za-z]*|nocite)\*?(?:\s*\[[^\]]*\])*\s*\{[^}]*\}")
+_DELTA_LINK = re.compile(r"\\(?:url|doi)\{[^}]*\}|\\href\{[^}]*\}|\\label\{[^}]*\}|https?://[^\s{}]+")
+_DELTA_PLACEMENT = re.compile(r"(\\begin\{(?:figure|table|sidewaysfigure|sidewaystable|wrapfigure)\*?\})"
+                              r"(?:\s*\[[^\]]*\])+"
+                              r"|\\(?:FloatBarrier|clearpage|cleardoublepage|newpage|pagebreak|suppressfloats)"
+                              r"(?:\[[^\]]*\])?")
+_DELTA_FLOAT = re.compile(r"\\begin\{(figure\*?|table\*?|sidewaysfigure|sidewaystable|wrapfigure)\}"
+                          r".*?\\end\{\1\}", re.S)
+
+
+def _reference_neutral(text: str) -> str:
+    """``text`` without citation, cross-reference, link and float-placement commands."""
+    text = _DELTA_CITATION.sub(" ", text)
+    text = _DELTA_XREF.sub(" ", text)
+    text = _DELTA_LINK.sub(" ", text)
+    text = _DELTA_REFERENCE_IDENTIFIER.sub(" ", text)
+    text = _DELTA_PLACEMENT.sub(lambda m: m.group(1) or " ", text)
+    text = text.replace("~", " ")
+    text = re.sub(r"[(\[](?:\s|[,;]|\band\b|\bsee\b|\be\.g\.,?|\bcf\.)*[)\]]", " ", text)
+    text = re.sub(r"\s+([,.;:)\]])", r"\1", text)
+    return _norm(text)
+
+
+def _bibliography_entries(text: str) -> dict[str, str]:
+    """Inline ``\\bibitem`` entries by key, without DOIs, URLs and support versions."""
+    entries: dict[str, str] = {}
+    for block in _DELTA_BIBLIOGRAPHY.findall(text):
+        for match in re.finditer(r"\\bibitem(?:\[[^\]]*\])?\{([^}]*)\}(.*?)(?=\\bibitem|\\end\{thebibliography\})",
+                                 block, re.S):
+            entries[match.group(1)] = _norm(_DELTA_LINK.sub(" ", _DELTA_REFERENCE_IDENTIFIER.sub(" ", match.group(2))))
+    return entries
+
+
 def substantive_parts(expanded: str) -> dict[str, Any]:
     """The parts of an expanded manuscript whose change requires a full review."""
     text = re.sub(r"(?<!\\)%[^\n]*", "", expanded)
-    text = _DELTA_BIBLIOGRAPHY.sub(lambda m: _DELTA_REFERENCE_IDENTIFIER.sub(" ", m.group(0)), text)
+    # Adding or removing an inline reference entry is bibliography work (verified, not
+    # reviewed); an entry kept under the same key with other content still counts.
+    bibliography = _bibliography_entries(text)
+    text = _DELTA_BIBLIOGRAPHY.sub(" ", text)
     numeric = dict(re.findall(r"\\(?:newcommand|renewcommand|providecommand)\s*\{\\([A-Za-z]+)\}"
                               r"\s*\{([-+0-9.,]+)\}", text))
     head = front_matter(text)
@@ -2451,19 +2626,28 @@ def substantive_parts(expanded: str) -> dict[str, Any]:
     if numeric:  # generated result macros count as the numbers they print
         body = re.sub(r"\\([A-Za-z]+)\b", lambda m: numeric.get(m.group(1), m.group(0)), body)
     body = _citation_numbers(body)
-    headings = list(re.finditer(r"\\section\*?\{([^}]*)\}", body))
-    sections = []
-    for index, match in enumerate(headings):
-        if _DELTA_HEADINGS.search(match.group(1)):
-            end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
-            sections.append([_norm(match.group(1)), _norm(body[match.start():end])])
+    def conclusion_sections(source: str) -> list[list[str]]:
+        headings = list(re.finditer(r"\\section\*?\{([^}]*)\}", source))
+        found = []
+        for index, match in enumerate(headings):
+            if _DELTA_HEADINGS.search(match.group(1)):
+                end = headings[index + 1].start() if index + 1 < len(headings) else len(source)
+                found.append([_norm(match.group(1)), _reference_neutral(source[match.start():end])])
+        return found
+
+    sections = conclusion_sections(body)
+    floats = sorted(_reference_neutral(m.group(0)) for m in _DELTA_FLOAT.finditer(body))
+    # Sections with every float taken out: a float that only moved leaves these and the
+    # sorted float contents unchanged (a changed float falls back to ``sections``).
+    sections_without_floats = conclusion_sections(_DELTA_FLOAT.sub(" ", body))
     body = _DELTA_DELIVERY_SECTION.sub(_delivery_identifiers, body)
-    numbers = _DELTA_NUMBER.findall(_DELTA_LAYOUT.sub(" ", _DELTA_DIMENSION.sub(" ", body)))
-    return {"title": _norm(head["title"]), "abstract": _norm(head["abstract"]),
-            "introduction": _norm(head["introduction"]),
-            "statements": [_norm(m.group(0)) for m in _DELTA_STATEMENTS.finditer(body)],
-            "tables": [_norm(m.group(0)) for m in _DELTA_TABLES.finditer(body)],
-            "sections": sections, "numbers": numbers}
+    numbers = _DELTA_NUMBER.findall(_DELTA_LAYOUT.sub(" ", _DELTA_LINK.sub(" ", _DELTA_DIMENSION.sub(" ", body))))
+    return {"title": _reference_neutral(head["title"]), "abstract": _reference_neutral(head["abstract"]),
+            "introduction": _reference_neutral(head["introduction"]),
+            "statements": [_reference_neutral(m.group(0)) for m in _DELTA_STATEMENTS.finditer(body)],
+            "tables": sorted(_reference_neutral(m.group(0)) for m in _DELTA_TABLES.finditer(body)),
+            "sections": sections, "sections_without_floats": sections_without_floats, "floats": floats,
+            "bibliography": bibliography, "numbers": numbers}
 
 
 
@@ -2483,8 +2667,13 @@ def substantive_delta(old: str, new: str, *, reviewed_deletions: bool = False) -
         reasons.append("theorem-like statements changed")
     if a["tables"] != b["tables"]:
         reasons.append("table content changed")
-    if a["sections"] != b["sections"]:
-        old_sections, new_sections = dict(map(tuple, a["sections"])), dict(map(tuple, b["sections"]))
+    edited = sorted(k for k in set(a["bibliography"]) & set(b["bibliography"])
+                    if a["bibliography"][k] != b["bibliography"][k])
+    if edited:
+        reasons.append("bibliography entries changed: " + ", ".join(edited[:10]))
+    key = "sections_without_floats" if a["floats"] == b["floats"] else "sections"
+    if a[key] != b[key]:
+        old_sections, new_sections = dict(map(tuple, a[key])), dict(map(tuple, b[key]))
         names = sorted(n for n in set(old_sections) | set(new_sections) if old_sections.get(n) != new_sections.get(n))
         if reviewed_deletions and [row[0] for row in a["sections"]] == [row[0] for row in b["sections"]]:
             names = [name for name in names if not (
@@ -3379,7 +3568,11 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
     record["round_evidence_jobs"] = review_round_guard.artifact_jobs(root, record["round_evidence_files"])
     if rounds:
         last = rounds[-1]
-        explicit = dict.fromkeys((last.get("round_guard") or {}).get("requires_new_artifact", []), True)
+        # Carry over only the editor's explicit flags; an older guard's vocabulary match is
+        # re-judged from the item text (owner 2026-11-23: wording requests need no new artifact).
+        basis = (last.get("round_guard") or {}).get("new_artifact_basis") or {}
+        explicit = {item: True for item, row in basis.items()
+                    if isinstance(row, Mapping) and row.get("source") == "editor"}
         for change in (last.get("merged") or {}).get("required_changes", []):
             if "requires_new_artifact" in change:
                 item = tracked_item(change)
