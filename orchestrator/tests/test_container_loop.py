@@ -251,3 +251,32 @@ def test_state_logs_rotate_past_the_size_cap(instance) -> None:
     for name in ("loop.log", "tick.err", "ticks.jsonl"):
         assert (state / f"{name}.1").is_file(), name
         assert (state / name).stat().st_size < 1000, name
+
+
+def test_tex_environment_reaches_ticks_and_cli(instance) -> None:
+    tmp = Path(instance["tmp"])
+    texbin = tmp / "texbin"
+    texbin.mkdir()
+    (texbin / "latexmk").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (texbin / "latexmk").chmod(0o755)
+    texenv = tmp / "texenv.sh"
+    texenv.write_text(f'export PATH={texbin}:$PATH\n', encoding="utf-8")
+    probe = tmp / "probe-python"
+    probe.write_text(
+        '#!/usr/bin/env bash\n'
+        'echo "$(command -v latexmk || echo none) $3" >>"$FAKE_DIR/tex.log"\n'
+        'exec "$FAKE_DIR/fake-python" "$@"\n', encoding="utf-8")
+    probe.chmod(0o755)
+    env = {"OPENLABS_TEXENV": str(texenv), "OPENLABS_LOOP_PYTHON": str(probe),
+           "FAKE_TICK_SECONDS": "0", "OPENLABS_LOOP_MAX_TICKS": "1"}
+    _run_foreground(instance, env)
+    assert _loop(instance, "cli", "--", "--version", env=env).returncode == 2
+    lines = (tmp / "tex.log").read_text(encoding="utf-8").splitlines()
+    # Every interpreter call (tick, report append, cli) sees the TeX binaries.
+    assert lines and all(line.startswith(f"{texbin / 'latexmk'} ") for line in lines), lines
+    assert {f"{texbin / 'latexmk'} tick", f"{texbin / 'latexmk'} --version"} <= set(lines)
+
+    # Missing: the loop logs a warning, cli warns on stderr; neither refuses.
+    missing = {**env, "OPENLABS_TEXENV": str(tmp / "absent.sh")}
+    cli = _loop(instance, "cli", "--", "--version", env=missing)
+    assert cli.returncode == 2 and "LaTeX environment" in cli.stderr

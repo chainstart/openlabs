@@ -37,8 +37,9 @@
 # OPENLABS_LOOP_BACKOFF_BASE_SECONDS (30), OPENLABS_LOOP_BACKOFF_MAX_SECONDS (900),
 # OPENLABS_LOOP_LOG_MAX_BYTES (16777216; 0 = never rotate),
 # OPENLABS_LOOP_PYTHON (python3), OPENLABS_TEXENV ($HOME/.local/opt/texenv.sh;
-# sourced for LaTeX if present, else a warning), OPENLABS_LOOP_MAX_TICKS (0 = no
-# limit; drills only).
+# sourced by `run` and by `cli`, so ticks, the workers they start and manual
+# commands such as a delta review find latexmk/pdflatex/lualatex; a warning when
+# missing), OPENLABS_LOOP_MAX_TICKS (0 = no limit; drills only).
 # OPENLABS_LOOP_AGENT_PROXY (unset = keep the inherited proxy environment): an
 # http(s):// proxy URL exported as HTTP(S)_PROXY/ALL_PROXY (both cases) for the
 # ticks of `run` and for `cli`, so the Agent preflight and the workers it starts
@@ -62,6 +63,15 @@ env_file=$instance_dir/instance.env
 
 die() { printf 'openlabs-container-loop: %s\n' "$1" >&2; exit "${2:-1}"; }
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$state/loop.log"; }
+
+# TeX Live is installed without root and is not on the default PATH; paper builds
+# (release pipeline, delta review, latexmk) run in ticks, their workers and `cli`.
+load_texenv() {
+  texenv=${OPENLABS_TEXENV:-$HOME/.local/opt/texenv.sh}
+  [[ -r $texenv ]] || return 1
+  # shellcheck disable=SC1090
+  set +u; source "$texenv"; set -u
+}
 
 load_instance_env() {
   [[ -r $env_file ]] || die "no $env_file; run: python -m openlabs program init-instance --instance-dir $instance_dir --write" 78
@@ -157,19 +167,14 @@ run_loop() {
   local log_max=${OPENLABS_LOOP_LOG_MAX_BYTES:-16777216}
   [[ $backoff_base =~ ^[1-9][0-9]*$ && $backoff_max =~ ^[1-9][0-9]*$ && $log_max =~ ^[0-9]+$ ]] ||
     die "OPENLABS_LOOP_BACKOFF_BASE_SECONDS/_MAX_SECONDS must be positive integers and OPENLABS_LOOP_LOG_MAX_BYTES a non-negative integer" 65
-  local texenv=${OPENLABS_TEXENV:-$HOME/.local/opt/texenv.sh}
+  local texenv  # set by load_texenv
   local inbox=$OPENLABS_DATABASE_ROOT/inbox/results
   local guard=$PPID
   exec 9>"$state/loop.lock"
   flock -n 9 || die "instance $OPENLABS_INSTANCE already has a running loop" 75
   printf '%s\n' "$$" >"$state/loop.pid"
   rm -f "$state/drain"
-  if [[ -r $texenv ]]; then
-    # shellcheck disable=SC1090
-    set +u; source "$texenv"; set -u
-  else
-    log "warning: LaTeX environment $texenv not found; paper builds may fail"
-  fi
+  load_texenv || log "warning: LaTeX environment $texenv not found; paper builds may fail"
   local stop=""
   trap 'stop=1' TERM INT
   log "loop started pid=$$ guard=$guard instance=$OPENLABS_INSTANCE interval=${interval}s" \
@@ -316,6 +321,7 @@ print("last tick:", row["started_at"], "exit", row["exit_code"], counts)
   cli)
     load_instance_env
     apply_agent_proxy
+    load_texenv || printf 'openlabs-container-loop: warning: LaTeX environment %s not found; paper builds may fail\n' "$texenv" >&2
     [[ ${1-} == -- ]] && shift
     exec "${OPENLABS_LOOP_PYTHON:-python3}" -m openlabs "$@"
     ;;
