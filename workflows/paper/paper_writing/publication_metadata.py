@@ -40,11 +40,62 @@ def _identity(publication):
     return doi, version, author, title, year
 
 
+def _registered_entry(original, key):
+    """(start, end) byte span of the bibliography entry ``key``, or None."""
+    match = re.search(rb"@\w+\s*\{\s*" + re.escape(key.encode()) + rb"\s*,", original)
+    if match is None:
+        return None
+    depth = 0
+    for index in range(original.index(b"{", match.start()), len(original)):
+        character = original[index:index + 1]
+        if character == b"{":
+            depth += 1
+        elif character == b"}":
+            depth -= 1
+            if depth == 0:
+                return match.start(), index + 1
+    raise ValueError(f"Unbalanced support bibliography entry {key}")
+
+
+def citation_key(manuscript, publication):
+    """The key the support record is cited under after the projection.
+
+    A registry that names ``support.publication.bibliography_key`` with an entry already
+    in references.bib (the manuscript cites the previous support version under it) keeps
+    that key: the projection rewrites the entry's version, DOI and DOI URL in place.
+    Otherwise a new ``openlabsSupportArchive`` entry and citation sentence are added.
+    """
+    key = str(publication.get("bibliography_key") or "").strip()
+    bib = manuscript / "references.bib"
+    if key and bib.is_file() and _registered_entry(bib.read_bytes(), key) is not None:
+        return key
+    return KEY
+
+
+def _edits_in_place(bib, original, key, doi, version):
+    start, end = _registered_entry(original, key)
+    entry = original[start:end].decode()
+    for field, value in (("version", version), ("doi", doi)):
+        entry, count = re.subn(r"(\b" + field + r"\s*=\s*)\{[^{}]*\}",
+                               lambda match, value=value: match.group(1) + "{" + value + "}",
+                               entry, flags=re.I)
+        if count != 1:
+            raise ValueError(f"The registered support entry {key} needs exactly one {field} field")
+    entry = re.sub(r"(\burl\s*=\s*)\{https?://(?:dx\.)?doi\.org/10\.5281/zenodo\.\d+\}",
+                   lambda match: match.group(1) + "{https://doi.org/" + doi + "}", entry, flags=re.I)
+    return {bib: original[:start] + entry.encode() + original[end:]}
+
+
 def _edits(manuscript, publication):
     doi, version, author, title, year = _identity(publication)
     main = manuscript / "main.tex"
     bib = manuscript / "references.bib"
     original = bib.read_bytes()
+    key = citation_key(manuscript, publication)
+    if key != KEY:
+        if doi.encode() in original:
+            raise ValueError("The support DOI already occurs in the bibliography")
+        return _edits_in_place(bib, original, key, doi, version)
     if re.search(rb"\{\s*openlabsSupportArchive\s*,", original, re.I) or doi.encode() in original:
         raise ValueError("The support DOI or reserved citation key already occurs in the bibliography")
     entry = (f"\n@misc{{{KEY},\n  author = {{{author}}},\n  title = {{{{{title}}}}},\n"
@@ -218,6 +269,7 @@ def _prepare(paper_id, *, root):
     history = _history(root, metadata, release["decision_record_sha256"])
     if history.exists():
         raise ValueError(f"Publication history already exists: {history}")
+    key = citation_key(manuscript, publication)
     edits = _edits(manuscript, publication)
     maps = _archive_claim_maps(metadata, root)
     suffix = _claim_suffix(publication)
@@ -241,7 +293,7 @@ def _prepare(paper_id, *, root):
         )
         bibliography = build / "main.bbl"
         if (result.returncode or not bibliography.is_file() or not (build / "main.pdf").is_file()
-                or not re.search(r"\\bibitem(?:\[[^\]]*\])?\s*\{" + KEY + r"\}",
+                or not re.search(r"\\bibitem(?:\[[^\]]*\])?\s*\{" + re.escape(key) + r"\}",
                                  bibliography.read_text(errors="replace"), re.S)):
             raise ValueError(f"Publication PDF build failed: {result.stdout[-1400:]}")
         for source in [*edits, *([bbl] if had_bbl else [])]:

@@ -52,3 +52,53 @@ def test_paper_paths_default_when_registry_omits_manuscript_dir_and_latest_pdf(t
     explicit = pm._paper_paths(tmp_path, {"paper_id": "p", "manuscript_dir": "papers/p/manuscript",
                                           "latest_pdf": "papers/p/manuscript/p-v1.0.0.pdf"})
     assert explicit[2] == manuscript / "p-v1.0.0.pdf"
+
+
+def test_registered_support_key_is_rewritten_in_place_and_reversible(tmp_path):
+    # 2026-11-24: a manuscript that already cites the previous support version under the
+    # registered bibliography_key got a second openlabsSupportArchive entry, which the
+    # formal check then looked up as an external DOI (unpublished draft: 404).
+    paper = tmp_path / "papers" / "p"
+    manuscript = paper / "manuscript"
+    manuscript.mkdir(parents=True)
+    tex = manuscript / "main.tex"
+    tex.write_text(r"\section{Results}" + "\nThe result is 42.\n\n"
+                   r"\section*{Data availability}" + "\nCode is on Zenodo \\citep{solarSupport}.\n")
+    bib = manuscript / "references.bib"
+    old_entry = ("@misc{solarSupport,\n  author = {A Researcher},\n  title = {Supporting material},\n"
+                 "  year = {2026},\n  publisher = {Zenodo},\n  version = {1.0.0},\n"
+                 "  doi = {10.5281/zenodo.111},\n  url = {https://doi.org/10.5281/zenodo.111}\n}\n")
+    bib.write_text("@article{example, title={Study}}\n\n" + old_entry)
+    pdf = manuscript / "main.pdf"
+    pdf.write_bytes(b"reviewed pdf")
+    expected = manuscript_snapshot_sha256(manuscript, pdf)
+    publication = {"bibliography_key": "solarSupport",
+                   "zenodo": {"reserved_version_doi": "10.5281/zenodo.222",
+                              "version": "1.0.1", "creators": [{"name": "A Researcher"}],
+                              "title": "Supporting material", "publication_date": "2026-11-22"}}
+    assert pm.citation_key(manuscript, publication) == "solarSupport"
+    edits = pm._edits(manuscript, publication)
+    assert set(edits) == {bib}  # no new sentence in main.tex
+    new = edits[bib].decode()
+    assert "openlabsSupportArchive" not in new
+    assert "version = {1.0.1}" in new and "doi = {10.5281/zenodo.222}" in new
+    assert "url = {https://doi.org/10.5281/zenodo.222}" in new and "zenodo.111" not in new
+    assert new.startswith("@article{example, title={Study}}")
+
+    metadata = {"paper_id": "p", "version": "1.0.1", "support": {"publication": publication}}
+    release = {"decision_record_sha256": "b" * 64, "publication_metadata": {
+        "identity": list(pm._identity(publication)), "original_pdf": "main.pdf",
+        "had_bbl": False, "version": "1.0.1",
+    }}
+    history = pm._history(tmp_path, metadata, release["decision_record_sha256"])
+    (history / "sources").mkdir(parents=True)
+    shutil.copyfile(bib, history / "sources" / "references.bib")
+    bib.write_bytes(edits[bib])
+    pdf.rename(history / "main.pdf")
+    pdf.write_bytes(b"rebuilt pdf")
+    assert pm.baseline_fingerprints(tmp_path, metadata, release)["manuscript_snapshot_sha256"] == expected
+
+    # Without a registered key (or with a key absent from the bibliography) the
+    # original append behaviour is kept.
+    assert pm.citation_key(manuscript, {"bibliography_key": "missingKey"}) == pm.KEY
+    assert pm.citation_key(manuscript, {}) == pm.KEY
