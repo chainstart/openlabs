@@ -90,9 +90,11 @@ def _claim_suffix(publication):
 
 
 def _paper_paths(root, metadata):
-    paper = root / "papers" / metadata["paper_id"]
-    manuscript = root / metadata["manuscript_dir"]
-    pdf = root / metadata["latest_pdf"]
+    paper_id = metadata["paper_id"]
+    paper = root / "papers" / paper_id
+    # The same defaults as release_status/_release_paths: a registry may omit both fields.
+    manuscript = root / str(metadata.get("manuscript_dir") or f"papers/{paper_id}/manuscript")
+    pdf = root / str(metadata.get("latest_pdf") or f"papers/{paper_id}/manuscript/main.pdf")
     if (manuscript.resolve() != paper.resolve() / "manuscript"
             or pdf.resolve().parent != manuscript.resolve()):
         raise ValueError("Publication metadata requires a canonical manuscript tree")

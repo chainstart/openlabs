@@ -39,3 +39,16 @@ def test_publication_projection_recovers_reviewed_snapshot_and_refuses_science_e
     tex.write_text(tex.read_text().replace("42", "41"))
     with pytest.raises(ValueError, match="deterministic edit"):
         pm.baseline_fingerprints(tmp_path, metadata, release)
+
+
+def test_paper_paths_default_when_registry_omits_manuscript_dir_and_latest_pdf(tmp_path):
+    # 2026-11-24: a registry without latest_pdf (release-status defaults it to main.pdf)
+    # made prepare-publication-metadata fail with KeyError 'latest_pdf'.
+    (tmp_path / "papers" / "p" / "manuscript").mkdir(parents=True)
+    paper, manuscript, pdf = pm._paper_paths(tmp_path, {"paper_id": "p"})
+    assert paper == tmp_path / "papers" / "p"
+    assert manuscript == paper / "manuscript"
+    assert pdf == manuscript / "main.pdf"
+    explicit = pm._paper_paths(tmp_path, {"paper_id": "p", "manuscript_dir": "papers/p/manuscript",
+                                          "latest_pdf": "papers/p/manuscript/p-v1.0.0.pdf"})
+    assert explicit[2] == manuscript / "p-v1.0.0.pdf"
