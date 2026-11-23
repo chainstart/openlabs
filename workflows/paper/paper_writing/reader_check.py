@@ -267,7 +267,10 @@ def delivery_images(pre, run):
     return [Path(row["png"]) for row in result["images"]], problems, bindings
 
 
-def delivery_read(source, images, role, workdir, timeout, previous=None):
+def delivery_read(source, images, role, workdir, timeout, previous=None, presentation=None):
+    """The independent delivery reading; ``presentation`` (a packet from
+    ``paper_writing.presentation.reviewer_packet``) makes the same single session the light
+    reviewer of a presentation revision and adds its ``presentation`` assessment."""
     from paper_writing.review_launcher import run_role
     from paper_writing.review_flow import DIMENSION_FINDING
 
@@ -278,14 +281,22 @@ def delivery_read(source, images, role, workdir, timeout, previous=None):
     packet = delivery_packet(source)
     if previous is not None:
         packet += "\nPrevious blockers and changes:\n" + json.dumps(previous, ensure_ascii=False)
-    return run_role(role_name="delivery_reader", role=role, workdir=workdir, timeout=timeout,
-        images=images, user_prompt=packet, schema=schema,
-        system_prompt="Read the figures and captions, then the supplied text. Restate the question, "
+    system = ("Read the figures and captions, then the supplied text. Restate the question, "
         "comparison, answer and meaning. Identify the supporting panel and state its uncertainty. "
         "For each repair state the actual wrong conclusion, or leave it empty for advice. Classify "
         "wording, definition details, caption polish, compression and style as suggestions. On follow-up "
         "check the previous blockers and changed text only. Identify any previous item exactly. "
         "For a new blocker explain why the earlier review missed it. Do not propose experiments.")
+    if presentation is not None:
+        from paper_writing.presentation import REVIEW_SCHEMA
+
+        schema["required"] = schema["required"] + ["presentation"]
+        schema["properties"]["presentation"] = REVIEW_SCHEMA
+        packet += presentation
+        system += (" This is also the single light review of a presentation-only revision: fill "
+                   "`presentation` as the packet asks; never re-judge the accepted science.")
+    return run_role(role_name="delivery_reader", role=role, workdir=workdir, timeout=timeout,
+        images=images, user_prompt=packet, schema=schema, system_prompt=system)
 
 
 def review_story(paper_id, root):

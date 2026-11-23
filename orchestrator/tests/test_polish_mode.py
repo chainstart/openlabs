@@ -206,3 +206,41 @@ def test_polish_mode_cancels_queued_scouts_but_not_leased_ones(tmp_path, monkeyp
     assert report.program["polish_mode"]["cancelled"] == [scout_id]
     assert db.task(scout_id)["status"] == "cancelled"
     assert db.task(scout_id)["last_error"] == "polish_mode"
+
+
+def test_operator_freeze_records_the_decision_and_releases_the_topic(tmp_path, monkeypatch) -> None:
+    from openlabs.topic_freeze import TopicFreezeError, operator_freeze
+
+    paths, db, settings, topic = _active_topic(tmp_path, monkeypatch)
+    campaign_id = topic["campaign_id"]
+    record = Path(paths.data) / "papers/p/revisions/FREEZE-20261123.md"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text("contribution insufficient\n", encoding="utf-8")
+    common = dict(topic_id=topic["topic_id"], reason_class="contribution_insufficient",
+                  by="operator", reason="owner: freeze",
+                  reopen_conditions=["new_method=clean-data accuracy well above chance first"])
+    with pytest.raises(TopicFreezeError, match="evidence"):
+        operator_freeze(db, paths, settings, evidence=[], **common)
+    with pytest.raises(TopicFreezeError, match="inside the data repository"):
+        operator_freeze(db, paths, settings, evidence=["../x.md"], **common)
+    with pytest.raises(TopicFreezeError, match="reason-class"):
+        operator_freeze(db, paths, settings, evidence=["papers/p/revisions/FREEZE-20261123.md"],
+                        **dict(common, reason_class="bored"))
+    if any(status in {"leased", "running"} for status in _queued_or_leased(db, campaign_id).values()):
+        with pytest.raises(TopicFreezeError, match="running"):
+            operator_freeze(db, paths, settings, evidence=["papers/p/revisions/FREEZE-20261123.md"], **common)
+        with db.connect() as connection:
+            connection.execute("UPDATE tasks SET status='queued' WHERE campaign_id=?", (campaign_id,))
+    result = operator_freeze(db, paths, settings, evidence=["papers/p/revisions/FREEZE-20261123.md"], **common)
+    assert result["status"] == "frozen" and result["from_status"] == "active"
+    assert result["cancelled_tasks"]
+    frozen = open_topic_ledger(paths, settings.program).topic(topic["topic_id"])
+    assert frozen["status"] == "frozen" and frozen["freeze_reason_class"] == "contribution_insufficient"
+    assert frozen["freeze_evidence"][0]["path"] == "papers/p/revisions/FREEZE-20261123.md"
+    assert frozen["reopen_conditions"][0]["type"] == "new_method"
+    assert not [s for s in _queued_or_leased(db, campaign_id).values() if s in {"queued", "leased", "running"}]
+    again = operator_freeze(db, paths, settings, evidence=["papers/p/revisions/FREEZE-20261123.md"], **common)
+    assert again["status"] == "already_frozen"
+    report = _tick(paths, settings, monkeypatch)
+    assert report.errors == []
+    assert open_topic_ledger(paths, settings.program).topic(topic["topic_id"])["status"] == "frozen"

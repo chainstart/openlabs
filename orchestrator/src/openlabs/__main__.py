@@ -283,6 +283,20 @@ def _parser() -> argparse.ArgumentParser:
     pause_topic.add_argument("--by", required=True, help="Who decided it (provenance)")
     pause_topic.add_argument("--resume", action="store_true",
                              help="Resume a topic paused with this command")
+    freeze = program_commands.add_parser(
+        "freeze-topic",
+        help="Freeze one active or in-review topic on a recorded owner decision (2026-11-23): "
+        "ledger frozen with reason class, hash-bound evidence and reopen conditions; campaign "
+        "frozen, queued seats cancelled, research slot released",
+    )
+    freeze.add_argument("--topic-id", required=True)
+    freeze.add_argument("--reason-class", required=True)
+    freeze.add_argument("--evidence", action="append", default=[],
+                        help="Data-repository path of a decision record or assessment (repeatable)")
+    freeze.add_argument("--reopen-condition", action="append", default=[],
+                        help="TYPE=description (repeatable)")
+    freeze.add_argument("--reason", required=True)
+    freeze.add_argument("--by", required=True, help="Who decided it (provenance)")
     reopen_grant = program_commands.add_parser(
         "reopen-grant",
         help="Grant a topic frozen in review for a procedural reason (review_stalled, "
@@ -776,6 +790,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 payload = pause_topic(db, paths, settings, topic_id=args.topic_id,
                                       reason=args.reason, by=args.by, resume=args.resume)
             except (TopicPauseError, TopicLedgerError, KeyError, OSError) as exc:
+                print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
+                return 1
+        elif args.program_command == "freeze-topic":
+            from .program import TopicLedgerError
+            from .topic_freeze import TopicFreezeError, operator_freeze
+
+            try:
+                payload = operator_freeze(db, paths, settings, topic_id=args.topic_id,
+                                          reason_class=args.reason_class, evidence=args.evidence,
+                                          by=args.by, reason=args.reason,
+                                          reopen_conditions=args.reopen_condition)
+            except (TopicFreezeError, TopicLedgerError, KeyError, OSError) as exc:
                 print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
                       file=sys.stderr)
                 return 1

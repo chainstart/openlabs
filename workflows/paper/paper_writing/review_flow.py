@@ -2533,31 +2533,55 @@ def _delta_context_reasons(base, pre, config, track, root, history_policy, round
     return reasons
 
 
-def delta_review_basis(root: Path, paper_id: str, target: str, pre: Mapping[str, Any],
-                       config: Mapping[str, Any], track: Mapping[str, Any],
-                       history_policy: Mapping[str, Any] | None,
-                       round_limit: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    """Decide whether the last ready full review can carry over; None when there is none."""
+def ready_basis(root: Path, paper_id: str, target: str) -> dict[str, Any] | None:
+    """The ready decision whose scientific judgment a delta or presentation review carries over.
+
+    The last scientific round, or a later ready formal-only, resynthesized or presentation
+    decision; None unless it is ready, carries the editor and referee reports and kept its
+    expanded manuscript snapshot.
+    """
+    from paper_writing import presentation
+
     rounds = scientific_rounds(root, paper_id, target)
     base = rounds[-1] if rounds else None
     for row in reversed(completed_rounds(root, paper_id, target)):
         if base is not None and row["_path"].parent.name <= base["_path"].parent.name:
             break
-        if row.get("review_mode") in {"formal_only", "resynthesize"} and row["merged"]["outcome"] == "ready":
+        if row.get("review_mode") in presentation.BASIS_MODES and row["merged"]["outcome"] == "ready":
             base = row
             break
     if (base is None or (base.get("merged") or {}).get("outcome") != "ready"
             or not base.get("referee_reports") or not base.get("editor_screen")):
         return None
-    old_path = base["_path"].parent / "manuscript-expanded.tex"
-    if not old_path.is_file():
+    if not (base["_path"].parent / "manuscript-expanded.tex").is_file():
         return None
+    return base
+
+
+def basis_context_reasons(base, pre, config, track, root, history_policy, round_limit) -> list[str]:
+    """Why ``base`` cannot carry its judgment to the current manuscript (context and provenance)."""
+    from paper_writing import presentation
+
     reasons = _delta_context_reasons(base, pre, config, track, root, history_policy, round_limit)
     reasons.extend(_formal_recheck_binding(base, base["_path"], root, pre["metadata"]))
     if base.get("review_mode") == "resynthesize":
         from paper_writing import resynthesis
 
         reasons.extend(resynthesis.validate(base, base["_path"], root, pre["metadata"], as_basis=True))
+    reasons.extend(presentation.validate(base, base["_path"], root))
+    return reasons
+
+
+def delta_review_basis(root: Path, paper_id: str, target: str, pre: Mapping[str, Any],
+                       config: Mapping[str, Any], track: Mapping[str, Any],
+                       history_policy: Mapping[str, Any] | None,
+                       round_limit: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Decide whether the last ready full review can carry over; None when there is none."""
+    base = ready_basis(root, paper_id, target)
+    if base is None:
+        return None
+    old_path = base["_path"].parent / "manuscript-expanded.tex"
+    reasons = basis_context_reasons(base, pre, config, track, root, history_policy, round_limit)
     changed_figures = figure_changes(base, pre)
     reviewed_text = old_path.read_text()
     old = reviewed_text
@@ -2736,7 +2760,9 @@ def _formal_stage(pre: Mapping[str, Any], root: Path, run: Path, roles: Mapping[
     return pre, formal_blockers, summary
 
 
-def _reader_role(record, config, pre, run):
+def _reader_role(record, config, pre, run, presentation=None):
+    """The independent delivery reader; with ``presentation`` (a packet) it is also the single
+    light reviewer of a presentation revision."""
     from paper_writing.reader_check import delivery_read, delivery_images
 
     independent = cross_model_referees(config, record["writer_model_family"], writer_model=record["writer_model"])
@@ -2747,6 +2773,8 @@ def _reader_role(record, config, pre, run):
     if image_errors:
         return {"model": role.get("model"), "image_errors": image_errors, "repairs": []}, {}
     context = {"previous": pre["previous_review"]} if pre.get("previous_review") else {}
+    if presentation is not None:
+        context["presentation"] = presentation
     recall, receipt = delivery_read(pre["expanded"], figure_images, role,
                                                         run / "delivery-reader", config["timeout_seconds"], **context)
     return dict(model=role.get("model"), image_errors=image_errors,
@@ -2782,6 +2810,7 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
     """Recombine carried scientific judgments with fresh verification and delivery checks."""
     base = delta["base"]
     recheck = delta.get("formal_recheck")
+    presented = delta.get("presentation")
     roles, panel = config["roles"], config["referee_roles"]
     editor, referees = copy.deepcopy(base["editor_screen"]), copy.deepcopy(base["referee_reports"])
     decisions = copy.deepcopy(base.get("prior_decisions", []))
@@ -2817,7 +2846,8 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
                                 "basis_decision_sha256": _sha256(base_path.read_bytes()),
                                 "rule": delta["rule"], "summary": delta["summary"],
                                 **({"basis_mode": base["review_mode"]}
-                                   if base.get("review_mode") in {"formal_only", "resynthesize"} else {}),
+                                   if base.get("review_mode") in {"formal_only", "resynthesize",
+                                                                  "presentation"} else {}),
                                 **({"owner_directed": delta["owner_directed"]} if delta.get("owner_directed") else {})},
                "editor_screen": editor, "referee_reports": referees, "merged": merged,
                "letter": base.get("letter", ""), "receipts": copy.deepcopy(base.get("receipts", {})),
@@ -2833,14 +2863,33 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
                       formal_recheck=recheck, letter="")
         if formal_blockers:
             record["letter"] = "\n".join(formal_blockers)
+    if presented is not None:
+        merged["stalled_basis"] = "presentation review; no new referee judgment"
+        record.update(review_mode="presentation",
+                      round_count_basis="presentation revision reusing the accepted scientific judgment",
+                      presentation_review=presented["provenance"], letter="")
     if merged["outcome"] == "ready":
         previous = ({"items": previous_tracked_items(base), "changes": delta["summary"]}
                     if base.get("delivery_reader") else None)
         pre = dict(pre, previous_review=previous)
-        record["delivery_reader"], record["receipts"]["delivery_reader"] = _reader_role(record, config, pre, run)
+        record["delivery_reader"], record["receipts"]["delivery_reader"] = _reader_role(
+            record, config, pre, run, presentation=presented["packet"] if presented is not None else None)
         _merge_reader(merged, record["delivery_reader"], previous)
         if merged["outcome"] != "ready":
             record["letter"] = "\n".join(r["repair"] for r in record["delivery_reader"]["repairs"])
+        if presented is not None:
+            from paper_writing import presentation
+
+            review = record["delivery_reader"].get("presentation")
+            if not isinstance(review, Mapping):
+                if merged["outcome"] == "ready":
+                    merged.update(outcome="formal_check_blocked", next_action="retry_review",
+                                  technical_blockers=["The light presentation review returned no assessment"])
+            elif presentation.merge_review(merged, review) == "amplified_claims":
+                # Wording that strengthens a conclusion is a scientific change: normal review.
+                record.update(stage_reached="presentation_check", finished_at=_now())
+                digest = _json_dump(run / "decision.json", record)
+                return record | {"run_dir": str(run.relative_to(root)), "decision_sha256": digest}
     if merged.get("advisory_items"):
         record["letter"] += "\n\n## Advisory items for final preparation\n\n" + "\n".join(
             f"- {item['referee']}, {item['location']}: {item['change']}" for item in merged["advisory_items"])
@@ -3028,6 +3077,75 @@ def _run_formal_recheck(paper_id, target, root, run, record, pre, config, track,
                              history_policy, rounds, apply)
 
 
+def _run_presentation_review(paper_id, target, root, run, record, pre, config, track,
+                             history_policy, round_limit, rounds, response_letter, apply):
+    """Presentation revision (2026-11-23): carry the accepted science, no scientific round.
+
+    See :mod:`paper_writing.presentation`. Anything the deterministic check cannot show to be
+    presentation is ``full_review_required`` (registry untouched; a normal review counts).
+    """
+    from paper_writing import presentation
+    from paper_writing.delivery_floor import check as floor_check
+
+    def stop(outcome, next_action, reasons, **extra):
+        record.update(stage_reached="presentation_check", review_mode="presentation",
+                      consumes_scientific_round=False, round_for_target=len(rounds), finished_at=_now(),
+                      merged={"outcome": outcome, "next_action": next_action,
+                              ("full_review_reasons" if outcome == "full_review_required"
+                               else "presentation_blockers"): reasons}, **extra)
+        digest = _json_dump(run / "decision.json", record)
+        return record | {"run_dir": str(run.relative_to(root)), "decision_sha256": digest}
+
+    base = ready_basis(root, paper_id, target)
+    if base is None:
+        return stop("full_review_required", "full_review",
+                    ["No ready unified decision to carry: a presentation review needs an accepted basis"])
+    reasons = basis_context_reasons(base, pre, config, track, root, history_policy, round_limit)
+    if reasons:
+        return stop("full_review_required", "full_review", reasons)
+    basis_raw = base["_path"].read_bytes()
+    basis_sha = _sha256(basis_raw)
+    try:
+        raw = Path(response_letter).read_bytes() if response_letter else b""
+        request = presentation.load_request(raw, basis_sha)
+    except (OSError, presentation.PresentationError) as exc:
+        return stop("full_review_required", "full_review", [str(exc)])
+    (run / "presentation-request.json").write_bytes(raw)
+    old_text = (base["_path"].parent / "manuscript-expanded.tex").read_text()
+    deterministic = presentation.compare(old_text, pre["expanded"])
+    changed = figure_changes(base, pre) if "figure_files" in base else None
+    figures: list[dict[str, Any]] = []
+    if changed is None:
+        deterministic["reasons"].append("the basis review recorded no figure hashes")
+    elif changed:
+        try:
+            commit = presentation.basis_commit(root, base["_path"])
+            present = {item["path"] for item in pre.get("figure_files") or []}
+            figures, problems = presentation.check_figures(root, commit, changed, request, present)
+            deterministic["reasons"].extend(problems)
+            deterministic["basis_commit"] = commit
+        except presentation.PresentationError as exc:
+            deterministic["reasons"].append(str(exc))
+    deterministic["figures_changed"] = changed or []
+    provenance = {"rule": presentation.RULE, "request_sha256": _sha256(raw),
+                  "basis_expanded_sha256": _sha256(old_text.encode()),
+                  "revised_expanded_sha256": _sha256(pre["expanded"].encode()),
+                  "deterministic": deterministic, "figures": figures}
+    if deterministic["reasons"]:
+        return stop("full_review_required", "full_review", deterministic["reasons"],
+                    presentation_review=provenance)
+    floor = floor_check(paper_id, pre["metadata"], root, author=True)["issues"]
+    if floor:
+        return stop("preflight_failed", "text_revision", [item["text"] for item in floor],
+                    presentation_review=provenance)
+    packet = presentation.reviewer_packet(old_text, pre["expanded"], pre["metadata"], request)
+    delta = {"base": base, "eligible": True, "reasons": [], "rule": presentation.RULE,
+             "summary": {"figures_changed": changed or [], "numbers_removed": deterministic["numbers_removed"][:50]},
+             "presentation": {"provenance": provenance, "packet": packet}}
+    return _run_delta_review(paper_id, root, run, record, pre, config, track, delta,
+                             history_policy, rounds, apply)
+
+
 def _formal_recheck_binding(record, path, root, metadata):
     if record.get("review_mode") != "formal_only":
         delta = record.get("delta_review") or {}
@@ -3078,12 +3196,13 @@ def _formal_recheck_binding(record, path, root, metadata):
 
 def run_review(paper_id: str, *, root: str | Path, response_letter: str | Path | None = None,
                apply: bool = True, delta_only: bool = False,
-               formal_only: bool = False) -> dict[str, Any]:
+               formal_only: bool = False, presentation: bool = False) -> dict[str, Any]:
     """Run unified review, with explicit modes for reusing an independent judgment."""
-    if delta_only and formal_only:
+    if delta_only + formal_only + presentation > 1:
         raise ValueError("Choose one review mode")
     return _locked_review(paper_id, root, _run_review, response_letter=response_letter,
-                          apply=apply, delta_only=delta_only, formal_only=formal_only)
+                          apply=apply, delta_only=delta_only, formal_only=formal_only,
+                          presentation=presentation)
 
 
 def _locked_review(paper_id, root, operation, **kwargs):
@@ -3106,7 +3225,8 @@ def _locked_review(paper_id, root, operation, **kwargs):
 
 
 def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None,
-                apply: bool, delta_only: bool, formal_only: bool = False) -> dict[str, Any]:
+                apply: bool, delta_only: bool, formal_only: bool = False,
+                presentation: bool = False) -> dict[str, Any]:
     """Run the unified review; ``delta_only`` never starts the editor or the referees.
 
     With ``delta_only`` (the release pipeline after post-ready text, DOI or support
@@ -3173,6 +3293,8 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
                    config, writer_record["family"], writer)}
     if formal_only:
         record.update(review_mode="formal_only", consumes_scientific_round=False)
+    if presentation:
+        record.update(review_mode="presentation", consumes_scientific_round=False)
     if writer_record.get("note"):
         record["writer_model_note"] = writer_record["note"]
     if pre.get("journal_response"):
@@ -3204,6 +3326,9 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
     if formal_only:
         return _run_formal_recheck(paper_id, target, root, run, record, pre, config, track,
                                    history_policy, round_limit, rounds, response_letter, apply)
+    if presentation:
+        return _run_presentation_review(paper_id, target, root, run, record, pre, config, track,
+                                        history_policy, round_limit, rounds, response_letter, apply)
     delta = delta_review_basis(root, paper_id, target, pre, config, track, history_policy, round_limit)
     if delta is not None and delta["eligible"]:
         return _run_delta_review(paper_id, root, run, record, pre, config, track, delta,
@@ -3392,8 +3517,12 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     if record['merged']['outcome'] == 'ready':
         from paper_writing import resynthesis
 
+        from paper_writing import presentation
+
         provenance_errors = (_formal_recheck_binding(record, decision_path, root, metadata)
-                             + resynthesis.validate_delta_basis(record, root, metadata))
+                             + resynthesis.validate_delta_basis(record, root, metadata)
+                             + presentation.validate(record, decision_path, root)
+                             + presentation.validate_delta_basis(record, root))
         if provenance_errors:
             raise ValueError("; ".join(provenance_errors))
         panel = config['referee_roles']
@@ -3472,6 +3601,9 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     if record.get("review_mode") == "formal_only":
         release["review_mode"] = "formal_only"
         release["formal_recheck_basis_run_id"] = record["delta_review"]["basis_run_id"]
+    if record.get("review_mode") == "presentation":
+        release["review_mode"] = "presentation"
+        release["presentation_basis_run_id"] = record["delta_review"]["basis_run_id"]
     metadata["writing_release"] = release
     metadata["status_updated_at"] = _now()
     write_paper_metadata(paper_id, metadata, root)
@@ -3675,6 +3807,10 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
         problems.extend(formal_checks.validate_binding(record.get("formal_check"), metadata, root,
                                                        formal_role(config["roles"]), **archived))
     problems.extend(_formal_recheck_binding(record, path, root, metadata))
+    from paper_writing import presentation
+
+    problems.extend(presentation.validate(record, path, root))
+    problems.extend(presentation.validate_delta_basis(record, root))
     if release.get("formal_check") != record.get("formal_check"):
         problems.append("The release is not bound to the actual mandatory formal check")
     if any("formal_check_assessment" not in r for r in record.get("referee_reports", {}).values()):

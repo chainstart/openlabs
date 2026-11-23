@@ -308,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the unified editor-and-referee review (the only path to ready).",
     )
     unified.add_argument("--paper-id", required=True)
-    unified.add_argument("--response", help="Decision-bound JSON response for a full review or formal-only recheck.")
+    unified.add_argument("--response", help="Decision-bound JSON response for a full review, formal-only recheck or presentation review.")
     unified.add_argument("--no-apply", action="store_true", help="Record the decision without updating the registry.")
     review_mode = unified.add_mutually_exclusive_group()
     review_mode.add_argument("--formal-only", action="store_true",
@@ -316,6 +316,11 @@ def build_parser() -> argparse.ArgumentParser:
     review_mode.add_argument("--delta-only", action="store_true",
                          help="Only the post-ready delta review; report full_review_required instead of "
                               "starting the editor and referees.")
+    review_mode.add_argument("--presentation", action="store_true",
+                             help="Presentation-only revision (2026-11-23): deterministic science-invariance "
+                                  "check against the last ready decision plus one independent light review; "
+                                  "no scientific round. --response is the openlabs.presentation_revision.v1 "
+                                  "request. Any scientific change reports full_review_required.")
     unified.add_argument("--root", default=str(default_repo_root()))
     replay = review_commands.add_parser("resynthesize", help="Replay a bound archived review offline.")
     for name in ("paper-id", "decision", "response", "actor", "reason"):
@@ -965,7 +970,8 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             result = run_review(args.paper_id, root=args.root, response_letter=args.response,
-                                apply=not args.no_apply, delta_only=args.delta_only, formal_only=args.formal_only)
+                                apply=not args.no_apply, delta_only=args.delta_only, formal_only=args.formal_only,
+                                presentation=args.presentation)
         except PaperFrozenError as exc:
             print(json.dumps({"valid": False, "frozen": True, "error": str(exc)}, ensure_ascii=False))
             return 2

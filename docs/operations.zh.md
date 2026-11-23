@@ -1451,3 +1451,66 @@ bin/openlabs-container-loop cli -- program pause-topic --topic-id T --reason "<�
 预注册、预算与工作区不变，不占研究名额。campaign 有运行中任务时命令拒绝，等任务结束再执行。
 `--resume` 只恢复用本命令暂停的课题：状态改回 active，campaign 恢复，记录移入
 `operator_pause_history`，下一轮同步恢复续派，负责人照常接席。
+
+#### 呈现修订复核：只改呈现、不计科学轮次（2026-11-23）
+
+业主 2026-11-23 同意（“1-同意”）为梳理修订开一条复核通道：只改文字结构、叙事、图的排版与重绘、
+版式和文档类，不改科学内容的修订，不计目标刊科学评审轮次。
+
+```sh
+paper-writing review unified-run --root DATA_ROOT --paper-id PID --presentation --response REQUEST.json
+```
+
+`REQUEST.json`：
+
+```json
+{"schema": "openlabs.presentation_revision.v1",
+ "basis_decision_sha256": "<基准 ready 决定 decision.json 的 SHA-256>",
+ "summary": "改了什么（换 elsarticle、加结论节、方法移附录、重画图 2……）",
+ "figures": [{"path": "figures/fig1.pdf", "kind": "schematic"},
+             {"path": "figures/fig2.pdf", "kind": "result",
+              "data": ["papers/PID/support/results/table.csv"]}]}
+```
+
+- **基准**：与差异复核同一规则（`ready_basis`），即最近一次科学轮次，或其后 ready 的 formal-only、
+  resynthesize、presentation 决定；最近一次科学裁决不是 ready 的稿件没有可沿用的判断，只能走常规评审。
+  基准的上下文（评审策略、审稿组、轨道、期刊回执、拒稿史）变了也一样。
+- **确定性检查**（`paper_writing/presentation.py`，不调模型）：去掉注释、版式命令、交叉引用、
+  作者与单位、声明类小节（基金、CRediT、利益冲突、数据可用性、AI 声明）、DOI/版本号和参考文献后，
+  新稿不得出现基准稿没有的数（正文、表、图注、生成的数值宏、TikZ 节点文字都算；删数允许）；
+  定理类陈述不得变；不得新出现基准稿从未用过的强化结论词族（因果、证明、证实、首次/新颖、显著、
+  普适、优于等）。构建读入的图文件哈希有变的，每幅都要在请求里声明：示意图写 `schematic`；
+  结果图写 `result` 并列出数据文件，每个数据文件须与基准决定提交时的版本逐字节相同（`git show
+  <基准提交>:<路径>`，不在仓库里的数据不能走本通道）。还要过 GQ1 作者口径下限（`delivery-floor --author`）。
+- **轻量复核**：一次模型会话，就是交付读者（按跨族规则从独立族审稿角色中选），同一会话额外判断形式、
+  叙事、图示是否像目标刊，并对照新旧结论段列出被放大的结论。按 GATE1 抓大放小，只有编辑会因此退稿的
+  形式问题算阻断，其余作为建议随包。
+- **结果**：
+  - ready：`review_mode: presentation`、`consumes_scientific_round: false`，沿用基准的编辑与审稿判断，
+    正式核验在新稿上重跑并绑定，读者记录绑定新图（GQ1 的视觉复核要求照常满足）。登记
+    `writing_release.review_mode = presentation`、`presentation_basis_run_id`，之后由发布流水线照常
+    `zenodo prepare`、差异复核（以这次 presentation 决定为基准）、发布 Zenodo 和交付网站。
+    台账为 `in_review` 的课题，tick 像离线 resynthesize 一样自动把它排进 ready 队列
+    （`AUTO_QUEUED_REVIEW_MODES`，仍先核验决定绑定）。
+  - `full_review_required`（`stage_reached: presentation_check`，登记不动）：确定性检查发现科学内容变化、
+    请求未绑定基准、或轻量复核发现结论被放大。改走常规统一评审，照常计轮次。
+  - `preflight_failed`：作者口径下限未过，先补齐再申请，不调模型。
+  - `revision_required`（`text_revision`）：轻量复核有阻断性形式问题，不计轮次，改完再申请。
+- 交付、`apply_decision` 和以它为基准的差异复核都会重新核对绑定：基准决定与沿用判断未变、请求文件、
+  新旧稿快照哈希未变、确定性检查无拒绝理由。
+
+### 业主冻结课题：`program freeze-topic`（2026-11-23）
+
+业主研判后决定冻结（例如贡献不足）时，用正规命令写台账，不要手改：
+
+```sh
+bin/openlabs-container-loop cli -- program freeze-topic --topic-id T \
+  --reason-class contribution_insufficient \
+  --evidence papers/PID/revisions/FREEZE-YYYYMMDD.md --evidence <研判证据> \
+  --reopen-condition "new_method=<重启条件>" --reason "<业主原话与理由>" --by <谁>
+```
+
+走与负责人冻结相同的 `freeze_topic`：`active|in_review → frozen`，台账记理由类别、证据（数据仓库内路径，
+记 SHA-256）和重启条件；campaign 冻结、排队坐席取消、不再占研究名额。campaign 有运行中任务时拒绝。
+已冻结的再执行返回 `already_frozen`。稿件侧照 2026-11-12 的做法在登记文件写 `freeze_decision`、
+在 `revisions/` 写 FREEZE 记录；网站侧把当前包关闭，不留在待投列表。重启是新的决定，不改冻结记录。

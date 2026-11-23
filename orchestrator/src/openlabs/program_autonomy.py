@@ -1939,7 +1939,7 @@ def queue_registered_ready(db, paths, settings, report, topic_id, *, automatic=F
     status = run_release_status(paths, settings, paper_id)
     review = status["review"]
     if (status.get("frozen") or not review.get("decision_current")
-            or (automatic and review.get("review_mode") != "resynthesize")):
+            or (automatic and review.get("review_mode") not in AUTO_QUEUED_REVIEW_MODES)):
         raise DeliveryError(f"Paper {paper_id} has no eligible current ready decision")
     if tier2_topic(topic) and (topic.get("venue_grade") or {}).get("journal") != status.get("target_journal"):
         raise DeliveryError(f"Paper {paper_id} needs a recorded acceptance grade")
@@ -1951,6 +1951,11 @@ def queue_registered_ready(db, paths, settings, report, topic_id, *, automatic=F
                       outcome={"paper_id": paper_id, "target_journal": status.get("target_journal")},
                       payload={}, evidence=evidence)
     return {"topic_id": topic_id, "paper_id": paper_id, "status": "ready_queue", "changed": True}
+
+
+# Ready decisions applied outside a factory review task that the tick queues for delivery:
+# offline resyntheses and presentation reviews (2026-11-23), both bound and re-validated.
+AUTO_QUEUED_REVIEW_MODES = frozenset({"resynthesize", "presentation"})
 
 
 def _queue_resynthesized(db, paths, settings, report):
@@ -1972,7 +1977,8 @@ def _queue_resynthesized(db, paths, settings, report):
                 })
                 break
             release = record.get("writing_release") if isinstance(record, Mapping) else None
-            if isinstance(release, Mapping) and release.get("status") == "ready" and release.get("review_mode") == "resynthesize":
+            if (isinstance(release, Mapping) and release.get("status") == "ready"
+                    and release.get("review_mode") in AUTO_QUEUED_REVIEW_MODES):
                 try:
                     queue_registered_ready(db, paths, settings, report, topic["topic_id"], automatic=True)
                 except DeliveryError as exc:

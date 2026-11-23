@@ -327,8 +327,13 @@ def science_view(record, root, metadata):
     paper_id = metadata.get("paper_id") or record.get("paper_id")
     try:
         source = record
-        delta = record.get("delta_review") or {}
-        if record.get("review_mode") != "resynthesize" and delta.get("basis_mode") == "resynthesize":
+        # Follow carried judgments back through presentation decisions (2026-11-23) to the
+        # resynthesis that withdrew blockers, if any.
+        for _ in range(8):
+            delta = source.get("delta_review") or {}
+            if (source.get("review_mode") == "resynthesize"
+                    or delta.get("basis_mode") not in {"resynthesize", "presentation"}):
+                break
             source = json.loads(formal._safe_file(root, delta["basis_decision"]).read_bytes())
         if source.get("review_mode") != "resynthesize" or not (source.get("resynthesis") or {}).get("rebuttals"):
             return record

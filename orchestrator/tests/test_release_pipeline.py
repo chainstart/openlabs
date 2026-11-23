@@ -1142,7 +1142,8 @@ def test_changed_published_support_stops_at_a_retryable_checkpoint(tmp_path, mon
     assert set(_commands(log)) == {"program release-status"}
 
 
-def test_registered_ready_decision_queues_only_after_binding_validation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["resynthesize", "presentation"])
+def test_registered_ready_decision_queues_only_after_binding_validation(tmp_path, monkeypatch, mode):
     from openlabs.program import mark_topic_in_review, open_topic_ledger
 
     paths, db, settings, topic, _ = _setup(tmp_path, monkeypatch, auto_release=False)
@@ -1157,9 +1158,9 @@ def test_registered_ready_decision_queues_only_after_binding_validation(tmp_path
                                                       "state_path": str(paths.data / "draft")})
     monkeypatch.setattr(db, "has_active_tasks", lambda _: False)
     record = _paper(paths)
-    record["writing_release"] = {"status": "ready", "review_mode": "resynthesize"}
+    record["writing_release"] = {"status": "ready", "review_mode": mode}
     _write_paper(paths, record)
-    review = {"ready": True, "decision_current": False, "review_mode": "resynthesize",
+    review = {"ready": True, "decision_current": False, "review_mode": mode,
               "decision_sha256": "b" * 64}
     monkeypatch.setattr(program_autonomy, "run_release_status", lambda *args: {
         "review": review, "version": "1.0.0", "target_journal": "Journal",
