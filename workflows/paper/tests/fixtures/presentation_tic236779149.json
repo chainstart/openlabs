@@ -1,0 +1,78 @@
+{
+ "source": "reviews/unified/20261121-physics-photometry-tic236779149 (light presentation reviews, 2026-11-23)",
+ "reviews": {
+  "20261123T152425Z": {
+   "amplified_claims": [],
+   "figures_meet_standard": false,
+   "form_meets_venue": false,
+   "form_repairs": [
+    {
+     "blocking": true,
+     "location": "Figure 4 (panels a and b)",
+     "repair": "Increase horizontal spacing between panels (a) and (b) and reposition labels to remove direct text/data collisions: (1) the 'no shift' annotation at the right edge of panel (a) directly overlaps the rotated y-axis title 'Free-q QLP solution' of panel (b); (2) the upper error bar of the S73 primary-assignment point in panel (a) cuts directly through the legend text 'alternative assignment'; and (3) the '-64' label above S56 in panel (b) touches the y-axis tick at 0.39. Increasing inter-panel padding, shifting 'no shift' into clear space inside panel (a), raising the panel (a) y-limit or placing the legend above the axes, and adding slight left x-padding in panel (b) will resolve all three."
+    },
+    {
+     "blocking": true,
+     "location": "Figure 3 (panels a and b)",
+     "repair": "Relocate legends and annotations to eliminate collisions with plotted data and curves: (1) in panel (a), the amber square legend key for l_3 >= -0.3 lands directly on top of the vermilion data point on the l_3 >= 0 curve at q = 0.50, making the frameless legend marker look like a plotted point on the curve; (2) in panel (a), the 'catalogue values' label overlaps both the amber segment and the excluded open square at q = 0.30; and (3) in panel (b), the plum S73 curve runs straight through the '2' in the legend entry 'ΔNLL = 2'. Move the panel (a) legend into the open lower-right area (around q = 0.45–0.58, ΔNLL = 10–25), move 'catalogue values' higher inside the shaded catalogue band, and shift or add an opaque white background box to the panel (b) legend."
+    },
+    {
+     "blocking": false,
+     "location": "Figure 5 (panel b)",
+     "repair": "Give the bottom-left legend an opaque white background (or shift it slightly left) so the vertical dotted 10% threshold line does not cut through the word 'term' in 'rms extraction term', and nudge the grey '10%' label slightly downward into empty vertical space so it is less crowded against the 'Curvature (adopted)' filled circle at 11.22%."
+    },
+    {
+     "blocking": false,
+     "location": "Figure 1 (panels a and b)",
+     "repair": "Re-export the black outlines of the two sky-projection disks in panel (b) as smooth vector contours/ellipses to remove the slight stair-stepped/pixelated edge relative to the crisp vector envelope in panel (a). Optionally align singular/plural wording between panel (a) ('line of sight at conjunction') and the caption ('at the conjunctions')."
+    },
+    {
+     "blocking": false,
+     "location": "Figures 1, 3, 4, and 5 (math typography)",
+     "repair": "Standardize italicization of mathematical variables across figure labels (q is italic in Figs. 4b and 5a but upright in Figs. 1a, 3a–b, 4a, and 5b; f and i are upright in Fig. 1a–b while M_1, M_2, l_3, and T_2/T_1 are italic)."
+    }
+   ],
+   "narrative_meets_standard": true,
+   "summary": "This presentation-only revision (0.1.2) keeps the reviewed scientific text verbatim identical to the accepted 0.1.1 basis—there are zero amplified claims—and upgrades Figure 1 into a clean, accurate, colour-consistent vector schematic that matches the frozen Sector 86 parameters and light curve. The narrative structure (problem, gap, approach, finding, meaning), section organization, booktabs tables, self-contained captions, and visible Springer Nature LaTeX conventions (\\backmatter, \\bmhead{Acknowledgements}, author-year citations) fit Astrophysics and Space Science well (front-matter elements outside the supplied excerpt—document class header, byline, keywords, and declarations—were not present in the packet to verify directly). However, two unchanged result figures retain clear layout collisions that a journal editor or production check would return for repair before publication: in Figure 4, 'no shift' directly collides with 'Free-q QLP solution' and the S73 error bar pierces 'alternative assignment'; in Figure 3, the l_3 >= -0.3 legend square sits directly on the l_3 >= 0 data point at q = 0.50, 'catalogue values' prints over the q = 0.30 open square, and the S73 curve crosses 'ΔNLL = 2'. Fixing those collisions in Figures 3 and 4 (with optional polish on Figures 1b, 5b, and italic consistency) will make the presentation fully ready for Astrophysics and Space Science."
+  },
+  "20261123T154255Z": {
+   "amplified_claims": [],
+   "figures_meet_standard": false,
+   "form_meets_venue": true,
+   "form_repairs": [
+    {
+     "blocking": true,
+     "location": "Figure 3(b) (figures/fig-profiles.pdf)",
+     "repair": "The two-column legend sits directly over the rising S86 (vermilion) and S60 (amber) profile curves, which cut straight through the legend markers and lines for S56, S60 and S73. Move the legend completely clear of the curves—for example, compact it into the open upper-right space (q > 0.395, Delta NLL > 6.5) with tighter column spacing and an opaque background, or place it above panel (b)."
+    },
+    {
+     "blocking": true,
+     "location": "Figure 3(a) (figures/fig-profiles.pdf)",
+     "repair": "The 'catalogue values' label extends past the right edge of the shaded catalogue band and is crossed directly by the descending l_3 >= 0 (S86) curve through the letter 'u' of 'catalogue'. Reposition the label clear of the curve (e.g. set vertically inside the shaded band, or placed in open space to the right with a short leader line, or moved into the legend)."
+    },
+    {
+     "blocking": true,
+     "location": "Figure 4(a) (figures/fig-products.pdf)",
+     "repair": "The 'no shift' label sits too close to S79, so the lower vertical error bar of the Sector 79 primary point passes directly through the letter 't'. Move 'no shift' into clear whitespace (e.g. centred horizontally at S73 above the zero line, or below the zero line in the open negative region beneath S73–S86)."
+    },
+    {
+     "blocking": false,
+     "location": "Figure 5(b) (figures/fig-budget.pdf)",
+     "repair": "The opaque white legend box spans across x = 10% and masks the vertical dotted 10% threshold line below 'Cut-off Delta NLL < 6', leaving the reference line truncated above the bottom row. Shift or slightly narrow the legend (or place it above panel (b)) so the 10% threshold line runs cleanly to the x-axis."
+    },
+    {
+     "blocking": false,
+     "location": "Figure 4(b) (figures/fig-products.pdf)",
+     "repair": "At S86, the alternative-assignment square nearly obscures the primary-assignment circle underneath it; a slight horizontal offset (matching panel (a)) would keep both markers and their T_2/T_1 colours clearly visible. Also replace ASCII hyphens with typographic minus signs in '-64', '-72' and '-50' to match panel (a)."
+    },
+    {
+     "blocking": false,
+     "location": "Figure 1(a) and Figure 3(a) (figures/fig-roche.pdf, figures/fig-profiles.pdf)",
+     "repair": "Minor typographic polish: render the numeric subscripts in M_1 and M_2 upright in Fig. 1(a) (consistent with l_3 and T_2/T_1 in Figs. 3–4) and give slightly more vertical breathing room above 'dotted line: inner critical surface'; tighten the unary minus spacing in 'l_3 >= - 0.3' in Fig. 3(a)'s legend."
+    }
+   ],
+   "narrative_meets_standard": true,
+   "summary": "No claim-bearing text changed between the reviewed basis and the revision (the only text addition is a descriptive clause for the line-of-sight arrow in Fig. 1's caption), so there are zero amplified claims. The narrative structure (problem, gap, approach, finding, meaning) and the visible Astrophysics and Space Science typesetting conventions (Springer Nature backmatter macros, booktabs tables, author-year citations, inline figure placement near first citation; preamble/byline/keywords/declarations are outside the supplied excerpt) meet venue standards, and Figs. 1, 2, 5(a) and 6 are clean and consistent in style and colour palette. However, the figure suite does not yet pass because three direct data-element collisions remain after the second presentation pass: in Fig. 3(b) the S86 and S60 curves cut straight through the S56/S60/S73 legend icons, in Fig. 3(a) the l_3 >= 0 curve cuts through the 'catalogue' label, and in Fig. 4(a) the Sector 79 error bar cuts through the 't' of 'no shift'. Clearing those three overlaps (and ideally keeping Fig. 5(b)'s legend clear of the 10% threshold line) will bring all figures to publication standard."
+  }
+ }
+}

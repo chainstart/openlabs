@@ -1739,6 +1739,17 @@ paper-writing review unified-run --root DATA_ROOT --paper-id PID --presentation 
 - **轻量复核**：一次模型会话，就是交付读者（按跨族规则从独立族审稿角色中选），同一会话额外判断形式、
   叙事、图示是否像目标刊，并对照新旧结论段列出被放大的结论。按 GATE1 抓大放小，只有编辑会因此退稿的
   形式问题算阻断，其余作为建议随包。
+- **阻断标准（2026-11-23，业主：“抓大放小，大面上要像样子，不要过于纠结细节，只要数据和结论都是真实
+  正确有效的就行”）**：每条形式意见带 `category`。只有三类能阻断：`claim_or_data_mismatch`（图文不符、
+  数值错误）、`figure_missing_or_unreadable`（图缺失、整体不可读或关键内容被遮挡到无法理解）、
+  `venue_hard_requirement`（违反期刊硬性要求，如尺寸、字体嵌入）。`layout`、`typography`、`wording`、
+  `style`（图例或标注压住数据、标签与曲线相撞、斜体正体、负号、字号间距、锯齿、措辞）一律降为建议
+  随包，结论照判 ready。没有 `category` 的旧记录按关键词回退，碰撞类一律算 `layout`
+  （`presentation.category`）。结论被放大仍改走常规评审。
+- **收敛规则**：同一基准上的第 2 次及以后的呈现复核（`presentation.followup_items`，取上一份同基准、
+  已做轻量复核的 presentation 决定），只核对上一次按现行标准仍算阻断的项；复核者用 `previous_item`
+  指明未解决的旧项，新提的意见（`previous_item: 0`）一律只作建议。决定里记在
+  `presentation_review.followup`。
 - **结果**：
   - ready：`review_mode: presentation`、`consumes_scientific_round: false`，沿用基准的编辑与审稿判断，
     正式核验在新稿上重跑并绑定，读者记录绑定新图（GQ1 的视觉复核要求照常满足）。登记
@@ -1749,7 +1760,8 @@ paper-writing review unified-run --root DATA_ROOT --paper-id PID --presentation 
   - `full_review_required`（`stage_reached: presentation_check`，登记不动）：确定性检查发现科学内容变化、
     请求未绑定基准、或轻量复核发现结论被放大。改走常规统一评审，照常计轮次。
   - `preflight_failed`：作者口径下限未过，先补齐再申请，不调模型。
-  - `revision_required`（`text_revision`）：轻量复核有阻断性形式问题，不计轮次，改完再申请。
+  - `revision_required`（`text_revision`）：轻量复核有上述三类阻断问题（续审时仅限上一次的阻断项未解决），
+    不计轮次，改完再申请。
 - 交付、`apply_decision` 和以它为基准的差异复核都会重新核对绑定：基准决定与沿用判断未变、请求文件、
   新旧稿快照哈希未变、确定性检查无拒绝理由。
 

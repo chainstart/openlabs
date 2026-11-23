@@ -3392,7 +3392,7 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
                 if merged["outcome"] == "ready":
                     merged.update(outcome="formal_check_blocked", next_action="retry_review",
                                   technical_blockers=["The light presentation review returned no assessment"])
-            elif presentation.merge_review(merged, review) == "amplified_claims":
+            elif presentation.merge_review(merged, review, presented.get("followup")) == "amplified_claims":
                 # Wording that strengthens a conclusion is a scientific change: normal review.
                 record.update(stage_reached="presentation_check", finished_at=_now())
                 digest = _json_dump(run / "decision.json", record)
@@ -3645,10 +3645,13 @@ def _run_presentation_review(paper_id, target, root, run, record, pre, config, t
     if floor:
         return stop("preflight_failed", "text_revision", [item["text"] for item in floor],
                     presentation_review=provenance)
-    packet = presentation.reviewer_packet(old_text, pre["expanded"], pre["metadata"], request)
+    followup = presentation.followup_items(completed_rounds(root, paper_id, target), basis_sha)
+    if followup is not None:
+        provenance["followup"] = followup
+    packet = presentation.reviewer_packet(old_text, pre["expanded"], pre["metadata"], request, followup)
     delta = {"base": base, "eligible": True, "reasons": [], "rule": presentation.RULE,
              "summary": {"figures_changed": changed or [], "numbers_removed": deterministic["numbers_removed"][:50]},
-             "presentation": {"provenance": provenance, "packet": packet}}
+             "presentation": {"provenance": provenance, "packet": packet, "followup": followup}}
     return _run_delta_review(paper_id, root, run, record, pre, config, track, delta,
                              history_policy, rounds, apply)
 

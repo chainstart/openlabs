@@ -26,7 +26,10 @@ Any scientific change found by step 1, or an amplified claim found in step 2, is
 as ``full_review_required`` (registry untouched): the paper goes to a normal unified review,
 which counts rounds as usual. Material form findings return ``revision_required`` without a
 round. Following the GATE1 materiality rule only blocking findings stop the paper; the rest
-is advice.
+is advice. Since 2026-11-23 (owner: "抓大放小") a form finding blocks only when it is a
+claim/data mismatch, a missing or unreadable figure, or a violated hard venue requirement;
+layout, typography, wording and style are always advice. From the second presentation review
+against the same basis on, the light review only re-checks the previous blocking items.
 """
 
 from __future__ import annotations
@@ -315,16 +318,106 @@ def claim_text(expanded: str) -> dict[str, str]:
             "claim_sections": "\n\n".join(parts)[:60000]}
 
 
-def reviewer_packet(old: str, new: str, metadata: Mapping[str, Any], request: Mapping[str, Any]) -> str:
+# Light-review materiality (2026-11-23). The owner: "抓大放小，大面上要像样子，不要过于纠结细节，
+# 只要数据和结论都是真实正确有效的就行". A form finding stops the paper only in one of these
+# categories; layout, typography, wording and style findings are always advice that travels with
+# the delivery package (TIC 236779149 went seven rounds on label collisions and italics).
+BLOCKING_CATEGORIES = {
+    "claim_or_data_mismatch": "a figure, table or sentence disagrees with the reported data or with "
+                              "another part of the paper, or a value is wrong",
+    "figure_missing_or_unreadable": "a figure is missing, cannot be read as a whole, or its key content "
+                                    "is hidden so that a reader cannot understand what it shows",
+    "venue_hard_requirement": "a hard, checkable venue requirement is violated (for example figure "
+                              "size or resolution limits, font embedding, a mandatory section or file)",
+}
+ADVISORY_CATEGORIES = {
+    "layout": "legends or labels touching or overlapping data or curves, panel spacing, placement, "
+              "aliasing or pixelated edges",
+    "typography": "italic versus upright symbols, minus signs, font sizes, spacing",
+    "wording": "phrasing, consistency of terms, singular or plural, caption wording",
+    "style": "colours, line styles, general polish",
+}
+CATEGORIES = tuple(BLOCKING_CATEGORIES) + tuple(ADVISORY_CATEGORIES)
+# Records written before categories existed: only an explicit mismatch, missing/unreadable figure
+# or hard venue rule counts; collisions, italics and the like are layout.
+_LEGACY_BLOCKING = re.compile(
+    r"does not match|do not match|mismatch|contradict|inconsistent with the (?:text|data|table|caption)"
+    r"|(?:wrong|incorrect|erroneous) (?:value|number|unit|sign)|figure (?:is )?missing|missing figure"
+    r"|unreadable|illegible|cannot be read|not embedded|font embedding|exceeds the (?:page|word|size) limit",
+    re.I)
+
+
+def category(item: Mapping[str, Any]) -> str:
+    value = item.get("category")
+    if value in CATEGORIES:
+        return value
+    text = f"{item.get('location', '')} {item.get('repair', item.get('change', ''))}"
+    return "claim_or_data_mismatch" if _LEGACY_BLOCKING.search(text) else "layout"
+
+
+def is_blocking(item: Mapping[str, Any], previous: list[Mapping[str, Any]] | None = None) -> bool:
+    """A light-review finding blocks only if the reviewer marked it blocking, it falls in a
+    blocking category and, in a follow-up review, it is an unresolved previous blocking item."""
+    if not item.get("blocking") or category(item) not in BLOCKING_CATEGORIES:
+        return False
+    if previous is None:
+        return True
+    index = item.get("previous_item")
+    return isinstance(index, int) and not isinstance(index, bool) and 1 <= index <= len(previous)
+
+
+def followup_items(rows: list[Mapping[str, Any]], basis_sha256: str) -> dict[str, Any] | None:
+    """Convergence rule: the second and later presentation reviews against the same basis only
+    re-check the previous light review's blocking items (re-judged under the current rule)."""
+    for row in reversed(rows):
+        delta = row.get("delta_review") or {}
+        if (row.get("review_mode") != "presentation" or row.get("stage_reached") != "decision"
+                or delta.get("basis_decision_sha256") != basis_sha256
+                or not isinstance((row.get("delivery_reader") or {}).get("presentation"), Mapping)):
+            continue
+        items = [{"location": item.get("location", ""), "repair": item.get("change", ""),
+                  "category": category(item)}
+                 for item in (row.get("merged") or {}).get("required_changes") or []
+                 if item.get("type") == "presentation" and not item.get("advisory")]
+        return {"previous_run_id": row.get("run_id") or Path(row["_path"]).parent.name,
+                "items": [item for item in items if item["category"] in BLOCKING_CATEGORIES]}
+    return None
+
+
+def _standard() -> str:
+    blocking = "; ".join(f"`{k}`: {v}" for k, v in BLOCKING_CATEGORIES.items())
+    advisory = "; ".join(f"`{k}`: {v}" for k, v in ADVISORY_CATEGORIES.items())
+    return ("Materiality (the owner's rule: judge the big picture; data and conclusions must be true, "
+            "correct and supported; do not dwell on details or imprecise wording). Give every form repair "
+            "a `category`. Only these categories can block: " + blocking + ". Always advice, never "
+            "blocking, however visible: " + advisory + ". A label or legend touching a curve, an "
+            "annotation overlapping a marker, italics, minus signs, spacing or aliasing are `layout` or "
+            "`typography` unless the figure as a whole can no longer be understood. Set `blocking` true "
+            "only for a blocking category that an editor of the venue would return the paper for; "
+            "advice is delivered with the package and the paper is ready.\n")
+
+
+def reviewer_packet(old: str, new: str, metadata: Mapping[str, Any], request: Mapping[str, Any],
+                    followup: Mapping[str, Any] | None = None) -> str:
+    if followup is None:
+        scope = ("Judge only whether the revised paper now looks like a paper in the target venue: "
+                 "structure and story (problem, gap, approach, finding, meaning), main text versus appendix, "
+                 "figures (schematic, multi-panel results, consistent colours and type, self-contained "
+                 "captions, placement near first citation) and typesetting (venue document class, byline, "
+                 "keywords, declarations). Set `previous_item` to 0 for every repair.\n")
+    else:
+        listed = "\n".join(f"{n}. [{item['category']}] {item['location']}: {item['repair'][:1500]}"
+                            for n, item in enumerate(followup["items"], 1)) or "(none)"
+        scope = ("This is a follow-up presentation review (convergence rule). Check only whether the "
+                 "blocking items of the previous light review below are resolved; for each one that is not, "
+                 "return a form repair with `previous_item` set to its number. Do not raise new layout, "
+                 "typography, wording or style comments. A new finding (`previous_item` 0) is recorded as "
+                 "advice only and cannot stop the paper.\nPrevious blocking items:\n" + listed + "\n")
     return (
         "\n\n## Presentation review (no new scientific judgment)\n"
         "The scientific content passed an earlier independent review; the authors revised only the "
-        "presentation. Judge only whether the revised paper now looks like a paper in the target venue: "
-        "structure and story (problem, gap, approach, finding, meaning), main text versus appendix, "
-        "figures (schematic, multi-panel results, consistent colours and type, self-contained captions, "
-        "placement near first citation) and typesetting (venue document class, byline, keywords, "
-        "declarations). Report a form repair as blocking only when an editor of the venue would return "
-        "the paper for it; everything else is advice. Then compare the claim-bearing text before and "
+        "presentation. " + scope + _standard() +
+        "Then compare the claim-bearing text before and "
         "after and list every passage whose wording states a stronger, broader or more certain conclusion "
         "than the reviewed text supported (amplified_claims); reorganized or narrowed wording is fine.\n"
         f"Target venue: {metadata.get('target_journal')}\n"
@@ -333,9 +426,11 @@ def reviewer_packet(old: str, new: str, metadata: Mapping[str, Any], request: Ma
         "Revised claim-bearing text:\n" + json.dumps(claim_text(new), ensure_ascii=False) + "\n")
 
 
-_FINDING = {"type": "object", "additionalProperties": False, "required": ["location", "repair", "blocking"],
+_FINDING = {"type": "object", "additionalProperties": False,
+            "required": ["location", "repair", "category", "blocking", "previous_item"],
             "properties": {"location": {"type": "string"}, "repair": {"type": "string"},
-                           "blocking": {"type": "boolean"}}}
+                           "category": {"type": "string", "enum": list(CATEGORIES)},
+                           "blocking": {"type": "boolean"}, "previous_item": {"type": "integer"}}}
 _CLAIM = {"type": "object", "additionalProperties": False, "required": ["before", "after", "why"],
           "properties": {"before": {"type": "string"}, "after": {"type": "string"}, "why": {"type": "string"}}}
 REVIEW_SCHEMA = {
@@ -350,21 +445,29 @@ REVIEW_SCHEMA = {
 }
 
 
-def merge_review(merged: dict[str, Any], review: Mapping[str, Any]) -> str | None:
-    """Apply the light review to a merged decision; returns the routing reason, if any."""
+def merge_review(merged: dict[str, Any], review: Mapping[str, Any],
+                 followup: Mapping[str, Any] | None = None) -> str | None:
+    """Apply the light review to a merged decision; returns the routing reason, if any.
+
+    Amplified claims route to a full review; a form repair blocks only under :func:`is_blocking`;
+    everything else is advice delivered with the package.
+    """
     claims = [item for item in review.get("amplified_claims") or [] if str(item.get("after") or "").strip()]
     if claims:
         merged.update(outcome="full_review_required", next_action="full_review",
                       full_review_reasons=["the light review found amplified claims: "
                                            + "; ".join(str(c.get("why"))[:200] for c in claims[:5])])
         return "amplified_claims"
-    blocking = [item for item in review.get("form_repairs") or [] if item.get("blocking")]
-    advice = [item for item in review.get("form_repairs") or [] if not item.get("blocking")]
+    previous = list(followup["items"]) if followup is not None else None
+    repairs = list(review.get("form_repairs") or [])
+    blocking = [item for item in repairs if is_blocking(item, previous)]
+    advice = [item for item in repairs if not is_blocking(item, previous)]
     required = merged.setdefault("required_changes", [])
-    for item in review.get("form_repairs") or []:
+    for item in repairs:
         required.append({"type": "presentation", "referee": "presentation_reviewer",
                          "location": item.get("location", ""), "change": item.get("repair", ""),
-                         "advisory": not item.get("blocking"), "placement": "main_text"})
+                         "category": category(item), "advisory": not is_blocking(item, previous),
+                         "placement": "main_text"})
     if blocking and merged.get("outcome") == "ready":
         merged.update(outcome="revision_required", recommendation="minor_revision", next_action="text_revision")
         return "form_repairs"

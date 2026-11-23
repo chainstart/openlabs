@@ -2,6 +2,7 @@
 import copy
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -199,8 +200,10 @@ def test_amplified_claims_route_to_full_review(tmp_path, monkeypatch):
 def test_blocking_form_repair_returns_revision_without_a_round(tmp_path, monkeypatch):
     form = {"form_meets_venue": False, "narrative_meets_standard": True, "figures_meet_standard": True,
             "amplified_claims": [], "summary": "s",
-            "form_repairs": [{"location": "front matter", "repair": "Use the venue class", "blocking": True},
-                             {"location": "Fig. 1", "repair": "Larger ticks", "blocking": False}]}
+            "form_repairs": [{"location": "front matter", "repair": "Use the venue class", "blocking": True,
+                              "category": "venue_hard_requirement", "previous_item": 0},
+                             {"location": "Fig. 1", "repair": "Larger ticks", "blocking": False,
+                              "category": "typography", "previous_item": 0}]}
     root, request, _, _, _ = _fixture(tmp_path, monkeypatch, RESTRUCTURED, review=form)
     record = flow.run_review('p', root=root, response_letter=request, apply=False, presentation=True)
     assert record["merged"]["outcome"] == "revision_required"
@@ -255,3 +258,99 @@ def test_failing_author_floor_stops_before_the_light_review(tmp_path, monkeypatc
 def test_modes_are_exclusive():
     with pytest.raises(ValueError):
         flow.run_review('p', root='.', delta_only=True, presentation=True)
+
+
+TIC = json.loads((Path(__file__).parent / "fixtures/presentation_tic236779149.json").read_text())["reviews"]
+
+
+def _ready_merged():
+    return {"outcome": "ready", "scientific_blockers": [], "required_changes": []}
+
+
+@pytest.mark.parametrize("run", sorted(TIC))
+def test_tic236779149_layout_findings_are_advice(run):
+    """2026-11-23 regression: label/legend collisions, italics and minus signs that the light
+    review marked blocking (legacy records, no category) no longer stop the paper."""
+    merged = _ready_merged()
+    assert presentation.merge_review(merged, TIC[run]) is None
+    assert merged["outcome"] == "ready"
+    assert all(item["advisory"] and item["category"] == "layout" for item in merged["required_changes"])
+    assert len(merged["advisory_items"]) == len(TIC[run]["form_repairs"])
+
+
+@pytest.mark.parametrize("category, blocks", [("layout", False), ("typography", False), ("wording", False),
+                                              ("style", False), ("claim_or_data_mismatch", True),
+                                              ("figure_missing_or_unreadable", True),
+                                              ("venue_hard_requirement", True)])
+def test_only_material_categories_block(category, blocks):
+    review = {"amplified_claims": [], "form_repairs": [
+        {"location": "Fig. 2", "repair": "x", "blocking": True, "category": category, "previous_item": 0}]}
+    merged = _ready_merged()
+    assert (presentation.merge_review(merged, review) == "form_repairs") is blocks
+    assert (merged["outcome"] == "revision_required") is blocks
+
+
+def test_legacy_category_fallback():
+    assert presentation.category({"repair": "The y value in Fig. 3 does not match Table 2"}) == \
+        "claim_or_data_mismatch"
+    assert presentation.category({"repair": "Figure 2 is illegible at print size"}) == "claim_or_data_mismatch"
+    assert presentation.category({"repair": "The legend overlaps the curve"}) == "layout"
+
+
+def _presentation_row(run, basis_sha, required):
+    return {"run_id": run, "review_mode": "presentation", "stage_reached": "decision",
+            "delta_review": {"basis_decision_sha256": basis_sha},
+            "delivery_reader": {"presentation": {"form_repairs": []}},
+            "merged": {"outcome": "revision_required", "required_changes": required},
+            "_path": Path(run) / "decision.json"}
+
+
+def test_followup_only_rechecks_previous_blockers():
+    previous = [{"type": "presentation", "location": "Fig. 3", "change": "Panel b plots S60 data labelled S56",
+                 "category": "claim_or_data_mismatch", "advisory": False},
+                {"type": "presentation", "location": "Fig. 4", "change": "legend over curve",
+                 "category": "layout", "advisory": False},
+                {"type": "presentation", "location": "Fig. 5", "change": "italics", "advisory": True}]
+    rows = [_presentation_row("r1", "s" * 64, previous), _presentation_row("r0", "t" * 64, [])]
+    assert presentation.followup_items(rows, "u" * 64) is None
+    followup = presentation.followup_items(rows, "s" * 64)
+    assert followup["previous_run_id"] == "r1" and [i["location"] for i in followup["items"]] == ["Fig. 3"]
+    new = {"location": "Fig. 6", "repair": "Caption number disagrees with Table 1", "blocking": True,
+           "category": "claim_or_data_mismatch", "previous_item": 0}
+    merged = _ready_merged()
+    assert presentation.merge_review(merged, {"amplified_claims": [], "form_repairs": [new]}, followup) is None
+    assert merged["outcome"] == "ready" and merged["required_changes"][0]["advisory"]
+    still = dict(new, location="Fig. 3", previous_item=1)
+    merged = _ready_merged()
+    assert presentation.merge_review(merged, {"amplified_claims": [], "form_repairs": [still]}, followup) \
+        == "form_repairs"
+    packet = presentation.reviewer_packet(OLD, RESTRUCTURED, {"target_journal": "J"}, {"summary": "s"}, followup)
+    assert "follow-up" in packet and "1. [claim_or_data_mismatch] Fig. 3" in packet
+
+
+def test_tic236779149_second_review_converges(tmp_path, monkeypatch):
+    """End to end: a second presentation review against the same basis only re-checks the first
+    review's blocking items; the TIC 236779149 first-review blockers were all layout, so the
+    second review is ready and its new layout findings are delivered as advice."""
+    root, request, _, reads, _ = _fixture(tmp_path, monkeypatch, RESTRUCTURED, review=TIC["20261123T152425Z"])
+    first = flow.run_review('p', root=root, response_letter=request, apply=False, presentation=True)
+    assert first["merged"]["outcome"] == "ready"
+    assert "follow-up" not in reads[0] and "Materiality" in reads[0]
+    # Simulate a first review under the old rule that left the paper at revision_required.
+    path = root / first["run_dir"] / "decision.json"
+    old = json.loads(path.read_text())
+    old["merged"]["outcome"] = "revision_required"
+    for item in old["merged"]["required_changes"]:
+        item["advisory"] = False
+        item.pop("category")
+    path.write_text(json.dumps(old))
+    monkeypatch.setattr(reader_check, "delivery_read", lambda *a, **kw: (
+        reads.append(kw.get("presentation")) or (dict.fromkeys(("question", "comparison", "answer", "meaning"),
+                                                               "supported")
+                                                 | {"repairs": [], "presentation": TIC["20261123T154255Z"]}, {})))
+    import time
+    time.sleep(1.1)
+    second = flow.run_review('p', root=root, response_letter=request, apply=False, presentation=True)
+    assert "follow-up" in reads[-1] and "Previous blocking items:\n(none)" in reads[-1]
+    assert second["presentation_review"]["followup"]["items"] == []
+    assert second["merged"]["outcome"] == "ready"
