@@ -154,6 +154,10 @@ handoff_max_attempts = 3
 # days is stale (parked legacy topic -> archived as frozen/legacy_archived, orphaned
 # needs_human -> closed, admitted card never materialized -> reported).
 reconcile_stale_days = 5
+# A topic a person paused (research_state status "paused": `program pause-topic`,
+# an operator_hold, or no record) is only reported by reconcile, never archived;
+# above 0, archived once the pause is this many days old (2026-11-24; 0 = never).
+reconcile_operator_pause_days = 0
 # false: the pipeline stops before the first Zenodo write (zenodo prepare /
 # zenodo release) and marks the paper as waiting for a human. true: it runs them
 # on production, but only while settings.yaml#support_publication.

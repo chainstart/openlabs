@@ -13,7 +13,19 @@ drift and, only with ``--apply``, corrects it through the ordinary transition fu
 * ``archive``: an ``admitted``/``active`` topic without a running campaign (missing or
   not ``active``), with no live task and no activity for ``reconcile_stale_days`` ->
   ``frozen`` with reason class ``legacy_archived`` (:func:`program.freeze_topic`; the
-  history stays, no automatic reopen);
+  history stays, no automatic reopen). A topic a person holds (its ``research_state.json``
+  status ``paused``: ``program pause-topic``'s ``operator_pause``, an ``operator_hold``, or
+  no record) is not parked: it is only reported, unless ``[program]
+  reconcile_operator_pause_days`` is above 0 and the pause is that old (2026-11-24;
+  default 0 = never archived here);
+* ``record_delivery``: a ``ready_queue`` topic whose handoff is not ``delivered`` although
+  the paper's registry record shows its current version delivered (``delivery.version``
+  equals ``version``, the same test as ``paper-writing program release-status``) and the
+  matching receipt ``papers/<paper_id>/releases/pkg_*.json`` exists (a delivery made by
+  hand) -> handoff ``delivered``, release ``done`` (:func:`program.record_topic_note`, the
+  note the release pipeline itself writes), so turning ``auto_handoff`` on does not
+  deliver the version again. A release writer task still queued or running is reported
+  instead (cancel it first with ``program cancel-task``);
 * ``close``: a ``needs_human`` task that no topic in research owns (its topic is ready,
   submitted, frozen or absent, or its campaign is not active) and that is stale or was
   bypassed by a recorded release retry -> ``cancelled`` (:meth:`FactoryDB.close_needs_human`;
@@ -110,6 +122,61 @@ def delivery_receipts(paths: WorkspacePaths, paper_id: str) -> list[dict[str, An
     return sorted(receipts, key=lambda item: str(item.get("released_at") or ""))
 
 
+def registered_delivery(paths: WorkspacePaths, paper_id: str) -> dict[str, Any] | None:
+    """The paper's current version and its ``delivery`` block when that version is the
+    delivered one (``release-status`` ``delivered``), with the matching receipt; else None."""
+
+    import yaml
+
+    path = paths.data / "registry" / "papers" / f"{paper_id}.yaml"
+    if not paper_id or "/" in paper_id or not path.is_file():
+        return None
+    try:
+        record = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(record, Mapping):
+        return None
+    version = str(record.get("version") or "")
+    delivery = record.get("delivery")
+    if not isinstance(delivery, Mapping) or not version:
+        return None
+    package_id = str(delivery.get("package_id") or "")
+    if not package_id or str(delivery.get("version") or "") != version:
+        return None
+    receipt = next((item for item in delivery_receipts(paths, paper_id)
+                    if item.get("package_id") == package_id), None)
+    if receipt is None:
+        return None
+    return {"version": version, "package_id": package_id,
+            "delivered_at": delivery.get("delivered_at") or receipt.get("released_at"),
+            "receipt": receipt, "registry": str(path)}
+
+
+def _operator_pause(campaign: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """How a person holds a topic's research: ``{"record", "by", "at", "reason"}`` or None.
+
+    The campaign's ``research_state.json`` has ``status`` ``paused``: by ``program
+    pause-topic`` (``operator_pause``), by the hand-written ``operator_hold`` of
+    2026-11-19 (``set_by``/``set_at``), or without a record. Only a person or an owner
+    agent writes that status, so each form is a hold, not a parked legacy topic.
+    """
+
+    state_path = str((campaign or {}).get("workstream_state_path") or "")
+    if not state_path:
+        return None
+    state = _read_json(Path(state_path))
+    if state.get("status") != "paused":
+        return None
+    for record in ("operator_pause", "operator_hold"):
+        value = state.get(record)
+        if isinstance(value, Mapping):
+            return {"record": record, "by": value.get("by") or value.get("set_by"),
+                    "at": value.get("at") or value.get("set_at"),
+                    "reason": value.get("reason")}
+    return {"record": None, "by": None, "at": None, "reason": None}
+
+
 def _campaign_rows(db: FactoryDB) -> tuple[dict[str, dict[str, Any]], dict[str, int],
                                             dict[str, str]]:
     marks = ",".join("?" for _ in LIVE_STATUSES)
@@ -179,9 +246,64 @@ def plan(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings, *,
                              "paper_id": paper_id, "paper_id_source": source,
                              "receipt": latest, "basis": basis})
                 continue
+        if status == "ready_queue":
+            handoff = topic.get("handoff") if isinstance(topic.get("handoff"), Mapping) else {}
+            if str(handoff.get("status") or "queued") != "delivered":
+                paper_id = str(handoff.get("paper_id") or "").strip() or None
+                source = "handoff" if paper_id else None
+                if paper_id is None:
+                    paper_id, source = _paper_id(db, topic, campaign)
+                found = registered_delivery(paths, paper_id) if paper_id else None
+                if found:
+                    release = topic.get("release") if isinstance(topic.get("release"),
+                                                                  Mapping) else {}
+                    basis = (f"registry {Path(found['registry']).name}: version "
+                             f"{found['version']} delivered as {found['package_id']} "
+                             f"({found['delivered_at']}), receipt "
+                             f"{Path(found['receipt']['path']).name}; ledger handoff "
+                             f"{handoff.get('status') or 'queued'}, release "
+                             f"{release.get('status') or 'none'}")
+                    writer = str(release.get("writer_task_id") or "")
+                    writer_status = str((db.task(writer) or {}).get("status") or "") \
+                        if writer else ""
+                    if writer_status in LIVE_STATUSES:
+                        rows.append({**base, "action": "report", "proposed": status,
+                                     "basis": basis + f"; release writer {writer} is "
+                                              f"{writer_status}: cancel it first (program "
+                                              "cancel-task)"})
+                    else:
+                        rows.append({**base, "action": "record_delivery",
+                                     "proposed": "ready_queue (handoff delivered)",
+                                     "paper_id": paper_id, "paper_id_source": source,
+                                     "delivery": found, "basis": basis})
+            continue
         if status in {"admitted", "active"} and not running and campaign_status != "active":
             idle = activity is None or moment - activity >= stale
             where = ("no campaign" if campaign is None else f"campaign {campaign_status}")
+            pause = _operator_pause(campaign) if status == "active" else None
+            if pause is not None:
+                limit = settings.program.reconcile_operator_pause_days
+                since = _parse(pause.get("at")) or activity
+                if pause["record"]:
+                    held = (f"{where}, {pause['record']} by {pause.get('by')} since "
+                            f"{pause.get('at')} ({str(pause.get('reason') or '')[:120]})")
+                else:
+                    held = (f"{where}, research_state paused without a pause record (last "
+                            f"activity {_iso(activity) or 'unknown'})")
+                if limit > 0 and idle and since is not None \
+                        and moment - since >= timedelta(days=limit):
+                    rows.append({**base, "action": "archive", "proposed": "frozen",
+                                 "reason_class": "legacy_archived",
+                                 "operator_pause": pause["record"] or "paused",
+                                 "basis": f"{held}, paused for more than {limit:g} d "
+                                          "([program] reconcile_operator_pause_days)"})
+                else:
+                    rows.append({**base, "action": "report", "proposed": status,
+                                 "operator_pause": pause["record"] or "paused",
+                                 "basis": f"{held}: held, not archived "
+                                          "([program] reconcile_operator_pause_days = "
+                                          f"{limit:g})"})
+                continue
             if idle:
                 rows.append({**base, "action": "archive", "proposed": "frozen",
                              "reason_class": "legacy_archived",
@@ -299,7 +421,8 @@ def apply(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings,
           planned: Mapping[str, Any]) -> dict[str, Any]:
     """Carry out a plan (``--apply``) through the ordinary transition functions."""
 
-    from .program import freeze_topic, mark_topic_delivered, open_topic_ledger
+    from .program import (freeze_topic, mark_topic_delivered, open_topic_ledger,
+                          record_topic_note)
     from .program_autonomy import _write_evidence
 
     ledger = open_topic_ledger(paths, settings.program)
@@ -323,6 +446,37 @@ def apply(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings,
                 campaign_id = str(row.get("campaign_id") or "")
                 if campaign_id and (db.campaign(campaign_id) or {}).get("status") == "active":
                     db.pause_production_campaign(campaign_id, reason="topic_ready_queue")
+            elif action == "record_delivery":
+                found = row["delivery"]
+                receipt = found["receipt"]
+                topic = ledger.topic(str(row["id"])) or {}
+                if topic.get("status") != "ready_queue":
+                    raise ValueError(f"topic is {topic.get('status')!r}, not ready_queue")
+                release_before = dict(topic.get("release") or {})
+                handoff = {**dict(topic.get("handoff") or {}), "status": "delivered",
+                           "paper_id": row["paper_id"], "package_id": found["package_id"],
+                           "receipt": receipt["path"], "delivered_at": found["delivered_at"],
+                           "submission_handler": None, "last_error": None,
+                           "source": "program_reconcile"}
+                release = {**release_before, "status": "done", "stage": "done",
+                           "writer_task_id": None, "waiting_for": None,
+                           "waiting_detail": None, "last_error": None,
+                           "source": "program_reconcile",
+                           "seq": int(release_before.get("seq") or 0) + 1,
+                           "updated_at": utc_now()}
+                record_topic_note(
+                    ledger, str(row["id"]), db=db, event_type="handoff_delivered",
+                    reason="program_reconcile", decided_by=DECIDER,
+                    detail={"paper_id": row["paper_id"], "package_id": found["package_id"],
+                            "version": found["version"], "awaiting_owner_review": True,
+                            "submission_handler": None, "basis": row["basis"],
+                            "previous_handoff_status": (topic.get("handoff") or {}).get(
+                                "status"),
+                            "previous_release_status": release_before.get("status")},
+                    evidence=[{"path": receipt["path"], "sha256": receipt["sha256"]}],
+                    updates={"handoff": handoff, "release": release,
+                             "awaiting_owner_review": True},
+                    key=f"handoff_delivered:{row['paper_id']}:{found['package_id']}")
             elif action == "archive":
                 evidence = _write_evidence(paths, str(row["id"]), "reconcile-archive", {
                     "basis": row["basis"], "campaign_id": row.get("campaign_id"),
@@ -367,4 +521,4 @@ def render(planned: Mapping[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-__all__ = ["apply", "delivery_receipts", "plan", "render"]
+__all__ = ["apply", "delivery_receipts", "plan", "registered_delivery", "render"]

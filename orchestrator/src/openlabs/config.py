@@ -234,6 +234,10 @@ class ProgramSettings:
     # legacy topic is archived, an orphaned needs_human record closed, an admitted card
     # never materialized is reported without a next step).
     reconcile_stale_days: float = 5.0
+    # A topic held by ``program pause-topic`` (research_state ``operator_pause``) is not a
+    # parked legacy topic: reconcile only reports it. Above 0, reconcile proposes archiving
+    # it once the pause itself is this many days old (2026-11-24; 0 = never).
+    reconcile_operator_pause_days: float = 0.0
     # Release pipeline (runs while auto_handoff is on): publish the Zenodo support
     # material (prepare/release) on the standing production authorization of
     # registry/settings.yaml#support_publication. False: stop before the first
@@ -1440,6 +1444,8 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         credentials_file=_optional_path_text(program.get("credentials_file"),
                                              "[program].credentials_file"),
         reconcile_stale_days=_positive_float(program.get("reconcile_stale_days"), 5.0),
+        reconcile_operator_pause_days=_nonnegative_float(
+            program.get("reconcile_operator_pause_days"), 0.0),
         auto_release=program.get("auto_release", False) is True,
         support_release=_support_release(program.get("support_release")),
         support_none_reason=_nonempty_text(program.get("support_none_reason"),

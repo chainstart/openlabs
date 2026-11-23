@@ -689,6 +689,19 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   - `program.topics_without_next_step` 列出所有非终态台账课题中没有可执行下一步的，原因包括 campaign 暂停、campaign 缺失、负责人停派、交付流水线 exhausted、无活任务。
   - 写作者切换（同日修复）：简报与切换共用 `owner.writing_plan`。有评审历史或已在写的课题明确由负责人自己写，记 `writing.status = owner`，并写台账备注 `writing_owner`。写作者与负责人是同一 runner 时照旧由负责人写。
 - **台账对账**（2026-11-20）：`python3 -m openlabs program reconcile` 默认只读，列出每个课题或任务记录的现状态、建议状态和依据。加 `--apply` 才通过 `transition_topic`、`freeze_topic`、`mark_topic_delivered`、`close_needs_human` 写入，规则见 `program_reconcile.py`。停滞判据为 `[program].reconcile_stale_days`（默认 5 天）。
+  - 有人暂停的课题不算搁置（2026-11-24）：campaign 的 `research_state.json` 为 `status: paused`
+    （`program pause-topic` 写的 `operator_pause`、2026-11-19 天文线收缩手写的 `operator_hold`，或没有记录）时，
+    对账只列 `report`（依据里写明谁、何时、为何暂停），不提议 `archive` 冻结。要让长期暂停的课题也进入归档，
+    在实例 TOML 设 `[program] reconcile_operator_pause_days = N`（默认 0 = 永不），暂停满 N 天后才提议。
+  - 手工交付后的台账补记（2026-11-24，`record_delivery`）：`ready_queue` 课题的 handoff 不是 `delivered`，
+    但论文登记 `registry/papers/<paper_id>.yaml` 的 `delivery.version` 等于当前 `version`（与
+    `paper-writing program release-status` 的 `delivered` 同一判据），且 `papers/<paper_id>/releases/` 有对应
+    回执时，`--apply` 把 handoff 记为 `delivered`、release 记为 `done`（写一条 `handoff_delivered` 台账记录，
+    回执哈希为证据），打开 `auto_handoff` 后不会再交付一次。若 release 的 writer 任务还在排队或运行，只列
+    `report`，先用下面的 `cancel-task` 取消。
+- **人工取消排队任务**（2026-11-24）：`python3 -m openlabs program cancel-task --task-id ID --reason "<为何不再需要>" --by NAME`。
+  只取消 `queued` 的任务（已领取、运行中、已结束的一律拒绝，退出码 1），写一条 `manual_cancel` 事件（谁、为什么、原状态）。
+  用于基准已失效的任务，例如稿件已交付新版本后仍排着的旧版本格式修复 writer。
 - **人工重排被隔离的任务**（2026-11-20）：`python3 -m openlabs program requeue TASK_ID --reason "<修好了什么>" [--by NAME]`。只接受 `quarantined` 的任务（`needs_human` 要另加 `--allow-needs-human`），所属 campaign 须为 active；任务回到 `queued`，多给一次 attempt，写一条 `manual_requeue` 事件（谁、为什么、原状态与次数）。用于基础设施分流不会自动重试的失败，例如评审因配置错误三次失败被隔离。tick 报告 `program.topics_without_next_step` 里，若课题最新任务是这类被隔离/needs_human 的任务，会附 `blocked_task` 和 `suggested_command`。
 - **同刊复审关口**。控制面从同稿同刊最近计数判定绑定稿号和散列。零必改项免交 JSON。有必改项时用 `--response RESPONSE.json` 逐项提供原文、处理状态、解释与证据位置。声明完成新分析须引用登记的新数据散列或作业号；有证据的反驳可用 `rebutted` 提交，由独立评审裁决。
 - 原样重复仍拦截，可按 `round_cooldown_hours` 退避。有改动的稿件可立即送评。实际额度、四轮上限、独立评审及投稿人工确认照常执行。
@@ -1370,6 +1383,10 @@ bin/openlabs-container-loop cli -- status    # 以本实例身份执行任意 py
 （900），成功一轮复位，退避中仍响应 stop/--drain。`loop.log`、`tick.err`、`ticks.jsonl` 超过
 `OPENLABS_LOOP_LOG_MAX_BYTES`（16 MiB）时轮转为 `*.1`。`OPENLABS_LOOP_AGENT_PROXY=http://HOST:PORT`
 （默认不设 = 沿用启动者的代理环境）让 `run`/`cli` 显式使用该代理入口，预检和它拉起的 worker 都继承。
+TeX Live 是免 root 安装、不在默认 PATH 上：`run` 和 `cli` 都先 source `OPENLABS_TEXENV`
+（默认 `~/.local/opt/texenv.sh`），所以 tick、它拉起的 worker、发布流水线和手动执行的 delta 复核/构建
+都能找到 `latexmk`、`pdflatex`、`lualatex`、`xelatex`（2026-11-24 起 `cli` 也加载；此前只有 `run` 加载，
+手动 `cli` 命令要自己 source）。文件缺失时 `run` 在 `loop.log`、`cli` 在 stderr 给出警告，不拒绝执行。
 间隔等见脚本头部（`OPENLABS_LOOP_INTERVAL_SECONDS` 默认 180）。在容器环境文件里加
 `OPENLABS_REQUIRE_INSTANCE=1` 后，没有选实例的 `python -m openlabs tick` 会被拒绝。
 
