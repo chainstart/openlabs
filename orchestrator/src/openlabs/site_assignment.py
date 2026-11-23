@@ -114,6 +114,7 @@ def sync_tick(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings,
                  for entry in changed],
         blocked=[{"paper_id": e.get("paper_id"), "why": e.get("why")}
                  for e in result.get("blocked") or []],
+        held=list(result.get("held") or []),
         errors=list(result.get("errors") or [])[:10],
         warnings=list(result.get("warnings") or [])[:5],
     )

@@ -15,7 +15,11 @@ endpoint ``POST /v1/papers/<id>/assignments`` (the previous row is kept, ``activ
   (placeholder notes, the 2026-11-23 park receipts, the site's assignment history), else the
   paper's second author;
 * papers with submission attempts, or past the pre-submission lifecycle (submitted, under
-  review, accepted, published, closed), are never touched.
+  review, accepted, published, closed), are never touched;
+* papers under a manual-assignment hold are never touched either (2026-11-24, user: "撤回3篇论文
+  中的投稿负责人（将负责人从王琪盛改为未分配）"): the submitter is chosen by a person. The hold is
+  the registry field ``manual_assignment: {hold: true, ...}`` or, should the shared data checkout
+  lag, an active site assignment whose notes carry ``manual_assignment=hold``.
 
 ``可投稿`` means: lifecycle ``backlog|assigned|ready_to_submit``, no submission attempt, the
 site's ``readiness.ready_for_submission`` true, no held/recalled marker, a current package in
@@ -43,6 +47,7 @@ PRE_SUBMISSION_LIFECYCLES = frozenset({"backlog", "assigned", "ready_to_submit"}
 NOT_READY_REVISION = frozenset({"draft", "blocked", "revision_required"})
 HELD_SUBMISSION = frozenset({"on_hold", "abandoned", "withdrawn"})
 PARK_RECEIPT_GLOB = "SUBMITTER-HIDE-site-receipt-*.json"
+HOLD_NOTE = "manual_assignment=hold"
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 
@@ -186,6 +191,20 @@ def recorded_submitter(paper: Mapping[str, Any], root: Path, users: list[Mapping
     return None
 
 
+def manual_hold(paper: Mapping[str, Any],
+                registry: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The manual-assignment hold on this paper, if any: a person picks the submitter."""
+
+    record = (registry or {}).get("manual_assignment")
+    if isinstance(record, Mapping) and record.get("hold") is True:
+        return {"source": "registry",
+                **{key: record.get(key) for key in ("by", "date", "reason") if record.get(key)}}
+    for row in paper.get("assignments") or []:
+        if row.get("active") and HOLD_NOTE in str(row.get("notes") or ""):
+            return {"source": "site_assignment_notes", "assignment_id": row.get("id")}
+    return None
+
+
 def _version_key(value: Any) -> tuple[int, ...] | None:
     numbers = re.findall(r"\d+", str(value or ""))
     return tuple(int(n) for n in numbers) if numbers else None
@@ -227,6 +246,10 @@ def plan_paper(paper: Mapping[str, Any], *, root: Path, users: list[Mapping[str,
         "action": "none",
     }
     if state == "untouched":
+        return entry
+    if (hold := manual_hold(paper, registry)) is not None:
+        entry.update(action="hold", manual_assignment=hold,
+                     why="manual assignment hold: a person assigns the submitter")
         return entry
     fallback = default_submitter(registry, settings_authors, users, placeholder)
     if state == "not_ready" and (stale := stale_registry(paper, registry)) is not None:
@@ -350,10 +373,11 @@ def sync_site_assignments(client: Any, *, root: str | Path,
             for entry in changed:
                 handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
     blocked = [entry for entry in entries if entry["action"] in {"blocked", "skip"}]
+    held = [entry["paper_id"] for entry in entries if entry["action"] == "hold"]
     return {
         "schema_version": SCHEMA, "apply": apply, "placeholder_id": placeholder,
         "checked_at": _now(), "papers": entries, "changed": changed,
         "pending": [e for e in entries if e["action"] in {"park", "assign"} and not e.get("applied")],
-        "blocked": blocked, "untouched_by_lifecycle_or_scope": untouched,
+        "blocked": blocked, "held": held, "untouched_by_lifecycle_or_scope": untouched,
         "warnings": warnings, "errors": errors, "ok": not errors,
     }

@@ -1594,6 +1594,15 @@ cc-sg 的邮件服务独立于调度 tick。运行 `bin/openlabs-journal-mail --
 AI 声明由有哈希和 JSON 指针的实际模型记录生成。模型名来自调用记录，配置名不能代替记录。
 去掉 `--author` 可只读审计已登记版本（含图片评审回执）。命令发现缺项时退出码为 1。
 
+**登记署名也在下限内（2026-11-24）**：TIC 236779149 v0.1.2 的 main.tex 有作者和单位，登记记录却没有
+`authors`/`affiliations`，下限只查 main.tex，于是照常交付；网站读登记，显示“作者缺失”，投稿人分配退到
+默认名单。现在下限同时检查登记：没有带姓名的作者记 `REGISTRY-AUTHORS-MISSING`；作者缺 `affiliation_ids`
+或引用的单位不在登记 `affiliations`（id 与 name）里记 `REGISTRY-AFFILIATIONS-MISSING`；main.tex 署名里
+缺某位登记作者的姓（去掉 TeX 命令与重音后比较）记 `BYLINE-REGISTRY-MISMATCH`。三项都由写作坐席修复，
+没有特别约定时按 `registry/settings.yaml#defaults.authors` 与 `defaults.affiliations` 登记。交付
+（`validate_release_preconditions` → `delivery_blockers`）、`release-status` 和呈现修订预检都经过下限，
+缺登记署名的稿件不会再交付。
+
 图位检查读已编译的 `main.pdf`：正文图（附录图和 endfloat 稿件除外）所在页与首次引用页相差超过
 1 页即报 `FIG-FLOAT-FAR-FROM-REFERENCE`（图在后）或 `FIG-FLOAT-BEFORE-REFERENCE`（图在前），
 交付下限与 `figures check` 都会报；单独运行用 `paper-writing figures placement <paper_id>`
@@ -1669,6 +1678,17 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 
 **通知**：我们这边没有“分配后通知投稿人”的代码；投稿人通过网站自己的待办看到分配。期刊来信的
 转发（`journal_dispatch`）按当前唯一有效分配发信，占位期间不会发给原投稿人。
+
+**人工指定投稿人（2026-11-24）**：用户原话“撤回3篇论文中的投稿负责人（将负责人从王琪盛改为未分配）”。
+登记里写 `manual_assignment: {hold: true, by, date, quote, reason}` 的论文，同步代码不分配、不占位、
+不恢复，计划里记 `action: hold`（结果的 `held` 列表与 tick 的 `program.site_assignments.held`）。共享数据
+工作区落后时，网站上当前有效分配的 notes 含 `manual_assignment=hold` 也算。人工在网站上指定投稿人后，
+删掉登记里的 `manual_assignment`（或改 `hold: false`）才恢复自动规则。网站接口只有
+`POST /v1/papers/<id>/assignments`（必须给 `submitter_id`），没有停用或置空分配的接口，撤回只能挪到
+“ARA 管理员”占位。网站前端（ara-paper-manage `paperView.ts` 的 `resolveResponsibleSubmitter`）把有效
+分配的账号显示名当负责人，所以占位显示为“ARA 管理员”；没有有效分配时又退回显示二作（王琪盛，“二作
+（ARA 默认投稿人）”），只有作者为空才显示“未分配”。要显示“未分配”只能改网站：服务端加停用分配的接口
+（`active=false` 不新建），并让前端在分配是服务账号占位或分配历史里有停用记录时显示“未分配”，不退回二作。
 
 **做不到的部分**：角色为 admin 的用户（例如王琪盛）在网站上能看到全部稿件，与分配无关；网站
 在建论文时仍会先自动分配，我们只能事后挪走（建论文到对账之间有一个短窗口）。根治需要改网站服务端：

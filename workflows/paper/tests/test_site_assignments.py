@@ -215,3 +215,48 @@ def test_registry_ahead_of_the_site_still_parks(repo: Path) -> None:
     site = FakeSite({PAPER: _paper(lifecycle="ready_to_submit", version="0.1.13")})
     result = sync_site_assignments(site, root=repo, apply=True)
     assert result["papers"][0]["action"] == "park" and _active(site) == [ADMIN]
+
+
+def _hold_registry(root: Path) -> None:
+    path = root / "registry" / "papers" / f"{PAPER}.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["manual_assignment"] = {"hold": True, "by": "owner", "date": "2026-11-24",
+                                 "reason": "submitter withdrawn; a person assigns"}
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+def test_manual_hold_in_the_registry_blocks_the_automatic_assignment(repo: Path) -> None:
+    """2026-11-24: the owner withdrew the submitter; a ready paper must stay unassigned."""
+    _hold_registry(repo)
+    parked = [{"id": "11111111-1111-4111-8111-111111111111", "submitter_id": ADMIN, "active": True,
+               "notes": "[openlabs-site-assignment] withdrawn", "assigned_at": "2026-11-24T01:00:00+08:00"},
+              {"id": "acb74f5d-b7ff-40c7-9155-2d2030196c62", "submitter_id": SECOND, "active": False,
+               "notes": "Automatically assigned", "assigned_at": "2026-11-15T23:29:35+08:00"}]
+    site = FakeSite({PAPER: _paper(lifecycle="ready_to_submit", assignments=parked)})
+    result = sync_site_assignments(site, root=repo, apply=True)
+    assert not site.posts and _active(site) == [ADMIN]
+    assert [e["action"] for e in result["papers"]] == ["hold"] and result["held"] == [PAPER]
+    assert result["papers"][0]["manual_assignment"]["source"] == "registry"
+    assert result["pending"] == [] and result["blocked"] == []
+    # Without any active assignment, and when the paper is not ready: still untouched.
+    site = FakeSite({PAPER: _paper(lifecycle="ready_to_submit", assignments=[])})
+    sync_site_assignments(site, root=repo, paper_ids=[PAPER], apply=True)
+    assert not site.posts and _active(site) == []
+    site = FakeSite({PAPER: _paper(ready=False)})
+    sync_site_assignments(site, root=repo, apply=True)
+    assert not site.posts and _active(site) == [SECOND]
+
+
+def test_manual_hold_note_on_the_site_also_counts(repo: Path) -> None:
+    """A lagging data checkout without the registry hold still sees the site's hold note."""
+    parked = [{"id": "11111111-1111-4111-8111-111111111111", "submitter_id": ADMIN, "active": True,
+               "notes": "[openlabs-site-assignment] 撤回投稿负责人 manual_assignment=hold",
+               "assigned_at": "2026-11-24T01:00:00+08:00"}]
+    site = FakeSite({PAPER: _paper(lifecycle="ready_to_submit", assignments=parked)})
+    result = sync_site_assignments(site, root=repo, apply=True)
+    assert not site.posts and result["papers"][0]["action"] == "hold"
+    assert result["papers"][0]["manual_assignment"]["source"] == "site_assignment_notes"
+    # Lifting the hold (a person assigns, or the note is gone) restores the normal rule.
+    site.papers[PAPER]["assignments"][0]["notes"] = "[openlabs-site-assignment] parked"
+    result = sync_site_assignments(site, root=repo, apply=True)
+    assert result["changed"] and _active(site) == [SECOND]

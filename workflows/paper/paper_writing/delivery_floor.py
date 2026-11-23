@@ -1,8 +1,10 @@
 """Read-only mechanical checks shared by the author seat and delivery."""
+from collections.abc import Mapping
 import hashlib
 import json
 from pathlib import Path
 import re
+import unicodedata
 
 from . import declarations, narrative_check
 from .ai_disclosure import (
@@ -23,6 +25,49 @@ def _arguments(source, names):
             value = source[match.end():end - 1]
             if re.search(r"\w", re.sub(r"\\[A-Za-z]+", "", value)):
                 yield (match.group(1) or ""), value
+
+
+def _letters(text):
+    """Casefolded letters only; TeX accents and commands dropped (M\\"uller, \\fnm{A} -> a)."""
+    text = re.sub(r"\\[A-Za-z]+\*?|\\.", "", str(text or ""))
+    text = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    return re.sub(r"[^\w]|[\d_]", "", text).casefold()
+
+
+def registry_byline_issues(metadata, byline_text=None):
+    """The registered byline the management site, Zenodo and declarations read (2026-11-24).
+
+    The manuscript byline alone is not enough: TIC 236779149 v0.1.2 was delivered with authors
+    and affiliations in main.tex but none in its registry record, so the site showed "authors
+    missing" and the submitter fell back to the default roster. ``byline_text`` (the manuscript's
+    author arguments) is also checked to name every registered author's family name.
+    """
+    raw = metadata.get("authors")
+    people = raw.get("people") if isinstance(raw, Mapping) else raw
+    people = [p for p in people if isinstance(p, Mapping)] if isinstance(people, list) else []
+    named = [p for p in people if str(p.get("name") or "").strip()]
+    if not named:
+        return [("REGISTRY-AUTHORS-MISSING",
+                 "Register the approved byline (authors with affiliation_ids, default roster "
+                 "registry/settings.yaml#defaults.authors unless the paper has its own) in the paper "
+                 "record: the management site, Zenodo and the declarations read the registry, not main.tex.")]
+    issues = []
+    known = {str(item.get("id")) for item in metadata.get("affiliations") or []
+             if isinstance(item, Mapping) and item.get("id") and str(item.get("name") or "").strip()}
+    wanted = {str(ref) for person in named for ref in person.get("affiliation_ids") or []}
+    if any(not person.get("affiliation_ids") for person in named) or wanted - known:
+        issues.append(("REGISTRY-AFFILIATIONS-MISSING",
+                       "Give every registered author affiliation_ids that resolve to the paper record's "
+                       "affiliations (id and name)."))
+    if byline_text is not None and byline_text.strip():
+        present = _letters(byline_text)
+        missing = [str(p["name"]) for p in named
+                   if (family := _letters(str(p["name"]).split()[-1])) and family not in present]
+        if missing:
+            issues.append(("BYLINE-REGISTRY-MISMATCH",
+                           "The manuscript byline does not name these registered authors: "
+                           + ", ".join(missing) + ". Make main.tex and the registry byline agree."))
+    return issues
 
 
 def _main_figures(source, manuscript, plan):
@@ -106,6 +151,8 @@ def check(paper_id, metadata, root, record=None, *, author=False):
     affiliation_ids = {part.strip() for ids, _ in affiliations for part in ids.split(",") if part.strip()}
     if (not affiliations and not inline) or author_ids - affiliation_ids:
         issue("AFFILIATION-MISSING", "Include the approved affiliations and resolve each byline affiliation label.")
+    for code, message in registry_byline_issues(metadata, " ".join(value for _, value in authors)):
+        issue(code, message)
     minimum = limits["min_body_words"]
     if type(minimum) is not int or minimum < 1:
         raise ValueError("min_body_words must be a positive integer")
