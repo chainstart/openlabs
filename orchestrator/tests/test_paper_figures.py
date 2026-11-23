@@ -158,3 +158,92 @@ def test_metrics_follow_bound_decisions_and_count_distinct_seats(tmp_path, monke
         db.record_event_once("paper", "p", "figure_seat", {}, event_key="seat-1")
     assert paper_figures.latest_metrics(db) == {"p": {**metric, "figure_seats": 1}}
     assert len(db.events(entity_type="figure_review")) == 1
+
+
+def _with_figure_runners(settings, **owner_changes):
+    runners = dict(settings.runners)
+    runners["worker_claude"] = RunnerSpec(name="worker_claude", provider="anthropic", tier="worker",
+                                          model="claude-opus-5-5")
+    runners["light_claude"] = RunnerSpec(name="light_claude", provider="anthropic", tier="light",
+                                         model="claude-haiku-5-5")
+    return replace(settings, runners=runners, program=replace(
+        settings.program, owner=replace(settings.program.owner, **owner_changes)))
+
+
+def _queue_repair(tmp_path, monkeypatch, **owner_changes):
+    paths, db, settings, manuscript, report, seat = _fixture(tmp_path, monkeypatch)
+    settings = _with_figure_runners(settings, **owner_changes)
+    monkeypatch.setattr(paper_figures, "check", lambda *_: {
+        "manuscript": str(manuscript), "blocking": [],
+        "repair_required": [{"figure": "plan", "code": "FIG-SCHEMATIC-MISSING", "message": "Draw design."}],
+    })
+    owner._enqueue_review(db, paths, settings, report, task=seat,
+                          packet={"paper_id": "p", "request_figure_assistant": True},
+                          result_path=tmp_path / "owner-result.json")
+    repair = db.task(report.enqueued[-1])
+    assert repair["task_type"] == paper_figures.TASK_TYPE
+    return db, settings, report, seat, repair
+
+
+def test_figure_seat_goes_to_the_writing_runner(tmp_path, monkeypatch):
+    # User decision 2026-11-23: figures are drawn by the writer (Claude Opus).
+    db, settings, _report, seat, repair = _queue_repair(tmp_path, monkeypatch,
+                                                        writing_runner="worker_claude")
+    assert seat["runner"] != "worker_claude"
+    assert repair["runner"] == "worker_claude" and repair["runner_request"] is None
+    assert repair["parent_task_id"] == seat["task_id"]
+
+
+def test_figure_runner_overrides_the_writer_and_unset_keeps_the_asking_seat(tmp_path, monkeypatch):
+    _db, _s, _r, _seat, repair = _queue_repair(tmp_path / "a", monkeypatch,
+                                               writing_runner="worker_claude",
+                                               figure_runner="light_claude")
+    assert repair["runner"] == "light_claude"
+    _db, _s, _r, seat, repair = _queue_repair(tmp_path / "b", monkeypatch)
+    assert repair["runner"] == seat["runner"]
+    # A figure runner that is not configured (e.g. its provider suspended) counts as unset.
+    _db, _s, _r, seat, repair = _queue_repair(tmp_path / "c", monkeypatch,
+                                              writing_runner="worker_claude",
+                                              figure_runner="missing_runner")
+    assert repair["runner"] == "worker_claude"
+
+
+def test_figure_seat_waits_for_its_runner_then_falls_back_to_the_asking_runner(tmp_path, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    db, settings, report, seat, repair = _queue_repair(tmp_path, monkeypatch,
+                                                       writing_runner="worker_claude",
+                                                       writing_wait_hours=6)
+    monkeypatch.setattr(owner, "runner_usable", lambda _s, _r, name: name != "worker_claude")
+    now = datetime.now(UTC)
+    for hours in (0, 3, 5.9):
+        assert owner.supervise_figure_seats(db, settings, report, object(),
+                                            now=now + timedelta(hours=hours)) == []
+        assert db.task(repair["task_id"])["runner"] == "worker_claude"
+    moves = owner.supervise_figure_seats(db, settings, report, object(), now=now + timedelta(hours=6.1))
+    assert moves and moves[0]["to_runner"] == seat["runner"]
+    assert moves[0]["reason"] == "figure_runner_unavailable"
+    moved = db.task(repair["task_id"])
+    assert moved["runner"] == seat["runner"] and moved["session_mode"] == "fresh"
+    assert report.program["figure_repairs"][-1]["kind"] == "fallback"
+
+
+def test_usable_figure_runner_clears_the_wait(tmp_path, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    db, settings, report, _seat, repair = _queue_repair(tmp_path, monkeypatch,
+                                                        writing_runner="worker_claude",
+                                                        writing_wait_hours=6)
+    usable = {"value": False}
+    monkeypatch.setattr(owner, "runner_usable", lambda *_a: usable["value"])
+    now = datetime.now(UTC)
+    owner.supervise_figure_seats(db, settings, report, object(), now=now)
+    usable["value"] = True
+    owner.supervise_figure_seats(db, settings, report, object(), now=now + timedelta(hours=5))
+    usable["value"] = False
+    # The wait restarts: 6.1 h after the first sighting is only 1.1 h of a new wait.
+    assert owner.supervise_figure_seats(db, settings, report, object(),
+                                        now=now + timedelta(hours=5)) == []
+    assert owner.supervise_figure_seats(db, settings, report, object(),
+                                        now=now + timedelta(hours=6.1)) == []
+    assert db.task(repair["task_id"])["runner"] == "worker_claude"

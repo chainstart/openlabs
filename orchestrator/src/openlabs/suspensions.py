@@ -9,7 +9,8 @@ parsed TOML before the settings are built, so every consumer sees the same thing
   review, decision or light task is routed to them; with one family left the router
   runs single-family, ``same_family_different_model``);
 * ``[program.owner]`` ``runners`` / ``max_topics_per_runner`` lose those names, and a
-  ``writing_runner`` of that provider falls back to "the owner writes";
+  ``writing_runner`` of that provider falls back to "the owner writes" (a
+  ``figure_runner`` of that provider is dropped the same way);
 * ``protected_models`` of that provider are not protected, its ``probe_commands`` entry
   is skipped, its ``provider_ceilings`` entry is set aside (no "unknown provider" error).
 
@@ -143,6 +144,8 @@ def apply(payload: dict[str, Any], moment: datetime | None = None
                                               if name not in dropped}
         if owner.get("writing_runner") in dropped:
             owner.pop("writing_runner")  # the owner writes
+        if owner.get("figure_runner") in dropped:
+            owner.pop("figure_runner")  # figure seats follow the writer / asking seat
     return result, tuple(suspensions)
 
 

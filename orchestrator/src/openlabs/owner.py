@@ -2645,6 +2645,16 @@ def _blocked_since(db: FactoryDB, task_id: str) -> datetime | None:
     return budget_control.parse_time(db.meta_get(BLOCKED_META_PREFIX + task_id))
 
 
+def _blocked_wait_start(db: FactoryDB, task_id: str, moment: datetime) -> datetime:
+    """Since when a queued seat waits for its runner (recorded now on the first sight)."""
+
+    since = _blocked_since(db, task_id)
+    if since is None:
+        db.update_meta({BLOCKED_META_PREFIX + task_id: budget_control._iso(moment)})
+        since = moment
+    return since
+
+
 def _writing_seats(db: FactoryDB, writer: str, statuses: tuple[str, ...]) -> list[dict[str, Any]]:
     marks = ",".join("?" for _ in statuses)
     with db.connect() as connection:
@@ -2699,10 +2709,7 @@ def supervise_writing(
             if db.meta_get(BLOCKED_META_PREFIX + task_id) is not None:
                 db.update_meta({BLOCKED_META_PREFIX + task_id: None})
             continue
-        since = _blocked_since(db, task_id)
-        if since is None:
-            db.update_meta({BLOCKED_META_PREFIX + task_id: budget_control._iso(moment)})
-            since = moment
+        since = _blocked_wait_start(db, task_id, moment)
         reason = "writer_slots_full" if usable else "writer_unavailable"
         campaign_id = str(task["campaign_id"])
         if moment - since < timedelta(hours=owner.writing_wait_hours):
@@ -2742,6 +2749,67 @@ def supervise_writing(
     return moves
 
 
+def supervise_figure_seats(
+    db: FactoryDB,
+    settings: FactorySettings,
+    report: Any,
+    router: budget_control.QuotaRouter | None,
+    *,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Figure seats wait for the figure runner like writer seats wait for the writer.
+
+    User decision 2026-11-23: figures are drawn by the writer (``figure_runner``, default
+    ``writing_runner``). A queued figure seat pinned to it waits while it is not usable
+    (quota, pacing); after ``writing_wait_hours`` it goes, fresh session, to the runner of
+    the seat that asked for the repair (or another owner runner). No slot limit: a
+    figure seat is short (at most an hour) and does not hold a topic.
+    """
+
+    runner = paper_figures.figure_runner(settings)
+    if runner is None:
+        return []
+    owner = settings.program.owner
+    moment = now or datetime.now(UTC)
+    with db.connect() as connection:
+        rows = [dict(row) for row in connection.execute(
+            "SELECT * FROM tasks WHERE task_type=? AND runner=? AND status='queued' "
+            "ORDER BY created_at, rowid", (paper_figures.TASK_TYPE, runner),
+        ).fetchall()]
+    moves: list[dict[str, Any]] = []
+    for task in rows:
+        task_id = str(task["task_id"])
+        not_before = budget_control.parse_time(task.get("not_before"))
+        if not_before is not None and not_before > moment:
+            continue
+        if router is None or runner_usable(settings, router, runner):
+            if db.meta_get(BLOCKED_META_PREFIX + task_id) is not None:
+                db.update_meta({BLOCKED_META_PREFIX + task_id: None})
+            continue
+        since = _blocked_wait_start(db, task_id, moment)
+        if moment - since < timedelta(hours=owner.writing_wait_hours):
+            continue
+        parent = db.task(str(task.get("parent_task_id") or "")) or {}
+        target = str(parent.get("runner") or "")
+        if target == runner or target not in settings.runners:
+            target = choose_runner(db, settings, campaign_id=str(task["campaign_id"]),
+                                   exclude=[runner], router=router) or ""
+        if not target or target == runner:
+            continue
+        detail = {"from_runner": runner, "to_runner": target, "reason": "figure_runner_unavailable",
+                  "blocked_since": budget_control._iso(since),
+                  "waited_hours": round((moment - since).total_seconds() / 3600, 2)}
+        if not db.reassign_queued_task(task_id, runner=target, fresh_session=True,
+                                       event="figure_runner_fallback", detail=detail):
+            continue
+        db.update_meta({BLOCKED_META_PREFIX + task_id: None})
+        moves.append({"task_id": task_id, **detail})
+    if moves and report is not None:
+        report.program.setdefault("figure_repairs", []).extend(
+            {"kind": "fallback", **move} for move in moves)
+    return moves
+
+
 def supervise(
     db: FactoryDB,
     settings: FactorySettings,
@@ -2753,13 +2821,15 @@ def supervise(
 ) -> list[dict[str, Any]]:
     """Move a queued seat to the next usable runner once its own is blocked too long.
 
-    Writer seats are handled by :func:`supervise_writing` (they wait for the writer).
+    Writer seats are handled by :func:`supervise_writing` (they wait for the writer), figure
+    seats by :func:`supervise_figure_seats` (they wait for the figure runner).
     """
 
     if not mode_enabled(settings):
         return []
     expire_short_resumes(db, settings, report, now=now)
     writing_moves = supervise_writing(db, settings, report, router, now=now, paths=paths)
+    writing_moves += supervise_figure_seats(db, settings, report, router, now=now)
     if router is None:
         return writing_moves
     moment = now or datetime.now(UTC)

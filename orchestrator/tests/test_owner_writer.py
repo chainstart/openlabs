@@ -46,6 +46,9 @@ def test_config_parses_the_writer_keys() -> None:
     default = load_program_settings({}).owner
     assert default.writing_runner is None and default.max_writing_topics == 2
     assert default.writing_wait_hours == 12.0
+    assert default.figure_runner is None
+    assert load_program_settings({"owner": {"figure_runner": " light_claude "}}).owner.figure_runner \
+        == "light_claude"
 
 
 def test_declared_writing_phase_hands_the_topic_to_the_writer(tmp_path, monkeypatch) -> None:

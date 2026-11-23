@@ -726,6 +726,19 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
     不回退给 sol；连续等待满 `writing_wait_hours`（缺省 12 小时）才改派回原负责人（新会话），owner 状态改为
     `fallback`，课题台账记 `writing_fallback`。此后由原负责人写；回退后评审按交回稿件的坐席避开其模型族（既有规则）。
   - 名额与回退检查在 `owner.supervise_writing`，随路由开启时的 tick 运行（`[routing]` 关闭时不做名额限制，也不会有额度等待）。
+- **图件坐席跟随写稿者（2026-11-23）**：用户决定论文的写作和绘图都交 Claude Opus。`paper_figure_repair`（交
+  `ready_for_review` 时请求图件助手而排的修图坐席，`paper_figures.queue`）不再固定在提出请求的坐席的 runner 上，而是
+  pin 到 `[program.owner].figure_runner`（可选，缺省取 `writing_runner`；名字不在 `[runners]` 里——例如其提供方被
+  限时停用——时跳过）。两者都没配时保持旧行为（跟提出请求的坐席同一 runner）。
+  - **等待与回退**：与写稿坐席一致——图件 runner 不可用（额度/配速）时坐席排队等待，连续等满 `writing_wait_hours`
+    才改派给提出请求的坐席的 runner（它本身就是图件 runner 或已不在配置中时，按 `choose_runner` 另选负责人 runner），新会话，
+    记 `figure_runner_fallback` 事件，tick 报告 `program.figure_repairs` 记一条 `kind: fallback`。图件坐席不占
+    `max_writing_topics` 名额（单次至多 1 小时，不持有课题）。检查在 `owner.supervise_figure_seats`，随 `owner.supervise` 运行。
+  - **其他绘图工作**：写稿者在位时，写稿坐席里的绘图、以及图件修复两轮用尽后的 `figure-recovery` 坐席都是 owner 坐席，
+    由 `enqueue_seat` 经 `active_writer` pin 到写稿者，本来就在 `writing_runner` 上。`[routing.task_tiers]` 缺省表里的
+    `figure_redraw`（light）目前没有任何派发点，不受影响。
+  - **评审独立性不变**：修图完成后的复审仍以原 `ready_for_review` 坐席为父任务、按写稿者模型族排除（现行规则），
+    图件坐席的 runner 不参与审稿方选择。
 - 状态包可带 `phase`（`precheck`/`solving`/`writing`），只用于上面的 `topic_economics` 和写稿者交接。
 - 配置（`[program.owner]`）：`recompute_review`（默认 true；false 时 ready_for_review 直接进统一评审，
   即 2026-11-16 之前的行为）、`review_max_rounds`（默认 3）、`session_max_seats`（默认 1）、

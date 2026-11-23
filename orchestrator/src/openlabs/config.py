@@ -444,6 +444,13 @@ class OwnerSettings:
     # A writing seat waits for its writer (quota, pacing or a slot) this long before the
     # original owner writes instead; the fallback is noted on the topic.
     writing_wait_hours: float = 12.0
+    # Runner of the figure seats (``paper_figure_repair``; user decision 2026-11-23: the
+    # paper's writing and figures go to Claude Opus). None/empty: ``writing_runner``. A
+    # figure seat waits for it up to ``writing_wait_hours`` (as a writer seat does), then
+    # goes to the runner of the seat that asked for it. With neither set, or a runner not
+    # configured, the figure seat runs on that asking seat's runner (behaviour before);
+    # a figure_runner that is not configured is skipped in favour of writing_runner.
+    figure_runner: str | None = None
 
 
 DEFAULT_DIRECTION_LIMITS: dict[str, int] = {
@@ -1549,6 +1556,7 @@ def _owner_settings(value: Any) -> OwnerSettings:
                                          defaults.max_writing_topics),
         writing_wait_hours=_nonnegative_float(value.get("writing_wait_hours"),
                                               defaults.writing_wait_hours),
+        figure_runner=str(value.get("figure_runner") or "").strip() or None,
     )
 
 

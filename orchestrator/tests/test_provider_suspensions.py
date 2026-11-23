@@ -29,6 +29,7 @@ enabled = true
 runners = ["worker_gpt", "worker_claude"]
 max_topics_per_runner = { worker_claude = 3 }
 writing_runner = "worker_claude"
+figure_runner = "worker_claude"
 
 [routing]
 protected_models = ["claude-fable-5-2"]
@@ -81,6 +82,7 @@ def test_before_the_deadline_every_seat_is_gpt(tmp_path, monkeypatch) -> None:
     owner = settings.program.owner
     assert owner.runners == ("worker_gpt",) and owner.max_topics_per_runner == {}
     assert owner.writing_runner is None  # the owner writes
+    assert owner.figure_runner is None  # figure seats stay with the asking seat
     assert settings.routing.protected_models == ()
     assert "anthropic" not in settings.routing.probe_commands
     assert settings.routing.provider_ceilings == {}
@@ -95,6 +97,7 @@ def test_after_the_deadline_the_configuration_applies_as_written(tmp_path, monke
     assert owner.runners == ("worker_gpt", "worker_claude")
     assert owner.max_topics_per_runner == {"worker_claude": 3}
     assert owner.writing_runner == "worker_claude"
+    assert owner.figure_runner == "worker_claude"
     assert settings.routing.protected_models == ("claude-fable-5-2",)
     assert "anthropic" in settings.routing.probe_commands
     assert settings.routing.provider_ceilings["anthropic"][0] == 0.7

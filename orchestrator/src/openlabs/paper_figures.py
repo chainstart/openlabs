@@ -84,15 +84,29 @@ def check(paths, settings, paper_id, root):
                               "message": str(exc)}], "repair_required": []}
 
 
+def figure_runner(settings):
+    """Runner of the figure seats: ``figure_runner``, else ``writing_runner``; None if unset.
+
+    User decision 2026-11-23: the paper's figures are drawn by the writer (Claude Opus).
+    A name that is not a configured runner (e.g. its provider is suspended) is skipped.
+    """
+    owner = settings.program.owner
+    return next((name for name in (owner.figure_runner, owner.writing_runner)
+                 if name and name in settings.runners), None)
+
+
 def queue(db, paths, settings, report, *, task, packet, result_path, paper_id, root, audit, round_number):
     campaign_id = str(task["campaign_id"])
     key = hashlib.sha256(f"{task['task_id']}:{round_number}".encode()).hexdigest()[:32]
     task_id = f"figure-repair:{key}"
     if db.task(task_id):
         return task_id
-    runner = str(task["runner"] or "")
-    if runner not in settings.runners:
+    asking = str(task["runner"] or "")
+    if asking not in settings.runners:
         return None
+    # The figure runner first; owner.supervise_figure_seats hands the seat back to the
+    # asking seat's runner once the figure runner could not start for writing_wait_hours.
+    runner = figure_runner(settings) or asking
     manuscript = Path(audit.get("manuscript") or root / "papers" / paper_id / "manuscript")
     if (not manuscript.is_absolute() or not manuscript.is_relative_to(root)
             or not manuscript.is_dir() or manuscript.resolve() != manuscript):
