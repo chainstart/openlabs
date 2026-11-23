@@ -1125,6 +1125,71 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
     return blockers
 
 
+# Owner rule 2026-11-23 ("抓大放小 ... 只要数据和结论都是真实正确有效的就行，一些语句上不是那么精确，
+# 不要过于纠结"): only wrong data or numbers, conclusions contradicted by the evidence, references
+# that do not exist or cannot be verified, and hard formal errors block. A scientific ``gap`` -- the
+# statement is not fully supported *as worded* and could be stated more rigorously -- is advice
+# that travels with the delivery package. Errors, unchecked claims, reference rows and technical,
+# source-routing and preparation problems still block. Applied when the review is synthesized
+# (the verifier's report, prompt and schema are unchanged, so archived reports stay verifiable).
+PRECISION_RULE = "gate1_precision_v1"
+# Finding kinds that concern the wording or support of a sentence rather than wrong data, numbers,
+# formulas, figures or a preregistered rule; the referees' science dimension judges conclusions.
+PRECISION_KINDS = frozenset({"advisory", "unsupported_claim", "citation_error_or_unsupported"})
+
+
+def finding_kinds(report: Mapping[str, Any] | None) -> dict[str, str]:
+    """Map each verified-item label of a formal report to the verifier's ``finding_kind``."""
+    kinds: dict[str, str] = {}
+    if not isinstance(report, Mapping):
+        return kinds
+
+    def note(label: Any, row: Mapping[str, Any]) -> None:
+        if isinstance(row.get("finding_kind"), str):
+            kinds[str(label)] = row["finding_kind"]
+
+    for row in report.get("references") or []:
+        note(row.get("key"), row)
+    for row in report.get("passages") or []:
+        note(row.get("passage_id"), row)
+        for item in row.get("citations") or []:
+            note(item.get("citation_id"), item)
+        for item in row.get("formulas") or []:
+            note(item.get("formula_id"), item)
+        for item in row.get("prerequisites") or []:
+            note(f"{row.get('passage_id')}: {item.get('statement')}", item)
+    return kinds
+
+
+def precision_finding(finding: Mapping[str, Any], kinds: Mapping[str, str] | None = None) -> bool:
+    """A scientific finding about precision: a ``gap`` (not fully supported as worded), or a
+    sentence-level unsupported-claim/citation-support finding (not wrong data or numbers)."""
+    if finding.get("category") != "scientific":
+        return False
+    return finding.get("status") == "gap" or (kinds or {}).get(str(finding.get("location"))) in PRECISION_KINDS
+
+
+def precision_view(summary: Mapping[str, Any] | None, kinds: Mapping[str, str] | None = None) -> dict[str, Any] | None:
+    """``summary`` with precision findings recategorized as advice (``precision_downgraded``)."""
+    if not isinstance(summary, Mapping) or "raw_findings" not in summary:
+        return dict(summary) if isinstance(summary, Mapping) else summary
+    raw = [dict(f, category="advisory", precision_downgraded=True) if precision_finding(f, kinds) else dict(f)
+           for f in summary["raw_findings"]]
+    return issue_summary(raw)
+
+
+def material_blockers(blockers: list[str], summary: Mapping[str, Any] | None,
+                      kinds: Mapping[str, str] | None = None) -> tuple[list[str], list[str]]:
+    """Split formal blockers into (still blocking, downgraded to advice) under ``PRECISION_RULE``."""
+    findings = (summary or {}).get("raw_findings") if isinstance(summary, Mapping) else None
+    if not findings:
+        return list(blockers), []
+    downgraded = {f["message"] for f in findings if precision_finding(f, kinds)}
+    kept = {f["message"] for f in findings if f.get("category") != "advisory" and not precision_finding(f, kinds)}
+    material = [b for b in blockers if b not in downgraded or b in kept]
+    return material, [b for b in blockers if b not in material]
+
+
 def issue_summary(findings: list[dict[str, Any]]) -> dict[str, Any]:
     """Preserve raw coverage; collapse only a parent's nested failure aggregation."""
     nested = {(f['root'], f['category']) for f in findings if not f['aggregate'] and f.get('status') is not None}
@@ -1642,10 +1707,16 @@ def archived_inputs(result: Mapping[str, Any], root: Path) -> tuple[list[dict[st
 
 def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
                      expected_role: Mapping[str, Any] | None = None, *,
-                     archived_version: str | None = None) -> list[str]:
-    """Revalidate evidence bytes, exact coverage and policy at apply/handoff."""
+                     archived_version: str | None = None, precision: bool = False) -> list[str]:
+    """Revalidate evidence bytes, exact coverage and policy at apply/handoff.
+
+    With ``precision`` (a decision synthesized under ``PRECISION_RULE``) an invalid report is
+    accepted when every blocker it records is a downgraded scientific gap; the remaining
+    (material) blockers are returned.
+    """
+    strict = archived_version is None and not precision
     try:
-        if not isinstance(binding, Mapping) or binding.get("schema") != VERSION or (archived_version is None and binding.get("valid") is not True):
+        if not isinstance(binding, Mapping) or binding.get("schema") != VERSION or (strict and binding.get("valid") is not True):
             raise ValueError("Missing passing mandatory formal check; rerun unified review")
         path = _safe_file(root, binding["path"])
         if sha(path.read_bytes()) != binding["sha256"]:
@@ -1653,7 +1724,7 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
         result = json.loads(path.read_text())
         if result.get("paper_id") != metadata.get("paper_id") or result.get("manuscript_version") != (archived_version if archived_version is not None else str(metadata.get("version") or "")):
             raise ValueError("Formal-check paper/version identity mismatch")
-        if not policy_accepted(result["policy"]) or (archived_version is None and (
+        if not policy_accepted(result["policy"]) or (strict and (
                 result["valid"] is not True or result["blockers"])):
             raise ValueError("Formal-check policy changed or verification is incomplete")
         if expected_role is not None and result.get("role") != dict(expected_role):
@@ -1763,6 +1834,11 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
                     or binding.get("issue_summary") != result["issue_summary"]):
                 raise ValueError("Archived formal verdict differs from the independently verified outputs")
             return []
+        if precision:
+            if (blockers != result["blockers"] or binding.get("blockers", blockers) != blockers
+                    or binding.get("issue_summary", result["issue_summary"]) != result["issue_summary"]):
+                raise ValueError("Formal verdict differs from the independently verified outputs")
+            return material_blockers(blockers, result["issue_summary"], finding_kinds(result["report"]))[0]
         return blockers
     except (ValueError, KeyError, IndexError, TypeError, OSError, LaunchError) as exc:
         return [f"Mandatory formal check: {exc}"]

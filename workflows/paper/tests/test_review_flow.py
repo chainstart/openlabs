@@ -2200,8 +2200,10 @@ def test_resynthesis_records_the_current_decision_and_revalidates_at_delivery(tm
     monkeypatch.setattr(flow, "run_role", lambda **kw: pytest.fail("Replay started a model"))
     formal_file = basis.parent / "formal.json"
     archive = {"inventory": {}, "issue_summary": {"raw_findings": [
-        dict(category="scientific", status="gap", aggregate=False, root="p", location="p:F1",
-             reason="Presentation left a definition implicit", message="Unspecified term")
+        # 2026-11-23 owner rule: an unannotated scientific gap is advice; an error still blocks.
+        dict(category="scientific", status="error" if case == "formal" else "gap", aggregate=False,
+             root="p", location="p:F1", reason="Presentation left a definition implicit",
+             message="Unspecified term")
     ]}}
     data = json.loads(basis.read_text())
     data.update(process=flow.PROCESS, manuscript_version="1.0",

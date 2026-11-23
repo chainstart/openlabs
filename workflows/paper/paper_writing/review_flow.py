@@ -2047,6 +2047,14 @@ def _material_decision(editor, referees, history_blockers, formal_blockers, form
             if item in listed:
                 continue
             changes.append(dict(type="text", change=item, location="manuscript", referee=name, advisory=True))
+    recommendations = {r.get("recommendation") for r in referees.values()}
+    if (verdict["readability"] and recommendations <= {"accept", "minor_revision"}
+            and not verdict["science"] and not verdict["formal_accuracy"]):
+        # Owner rule 2026-11-23 (抓大放小): with every referee at accept or minor revision and
+        # no science or formal-accuracy finding left, readability repairs are wording: advice.
+        for change in verdict["readability"]:
+            change.update(advisory=True, placement="response_only", precision_downgraded=True)
+        verdict["readability"] = []
     outcome = "revision_required" if any(verdict.values()) or unresolved else "ready"
     action = ("evidence_remediation" if science else "text_revision") if outcome != "ready" else None
     categories = (formal_summary or {}).get("by_category", {})
@@ -2745,8 +2753,14 @@ def _formal_stage(pre: Mapping[str, Any], root: Path, run: Path, roles: Mapping[
                                              materiality=True, require_late_reason=True),
                                           root, run, verifier, config['timeout_seconds'], run_role)
         formal_blockers = formal['blockers']
+        # GATE1 / owner rule 2026-11-23: precision gaps are advice, not blockers.
+        kinds = formal_report_kinds(formal, root)
+        formal_blockers, downgraded = formal_checks.material_blockers(formal_blockers, formal.get('issue_summary'), kinds)
+        if downgraded:
+            record['formal_precision'] = {"rule": formal_checks.PRECISION_RULE, "downgraded": downgraded}
         if not formal_blockers:
-            formal_blockers = formal_checks.validate_binding(formal, metadata, root, verifier)
+            formal_blockers = formal_checks.validate_binding(formal, metadata, root, verifier,
+                                                             **({"precision": True} if downgraded else {}))
     except (ValueError, OSError, KeyError, TypeError, LaunchError) as exc:
         formal = {'valid': False, 'schema': formal_checks.VERSION}
         formal_blockers = [f'Mandatory core-verification stage failed: {exc}']
@@ -2755,6 +2769,8 @@ def _formal_stage(pre: Mapping[str, Any], root: Path, run: Path, roles: Mapping[
     record['formal_check'] = formal
     pre = dict(pre, formal_check_packet=formal_checks.packet(formal, root)) if formal.get('path') else dict(pre)
     summary = formal.get('issue_summary')
+    if record.get('formal_precision'):
+        summary = formal_checks.precision_view(summary, formal_report_kinds(formal, root))
     if formal_blockers and summary and not any(summary.get('by_category', {}).values()):
         summary = {'by_category': {'scientific': [], 'technical': formal_blockers}}
     return pre, formal_blockers, summary
@@ -3502,6 +3518,24 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
     return record | {"run_dir": str(run.relative_to(root)), "decision_sha256": digest}
 
 
+def formal_report_kinds(binding: Mapping[str, Any] | None, root: Path) -> dict[str, str]:
+    """The verifier's finding kinds of a bound formal report ({} when unreadable)."""
+    try:
+        result = json.loads(formal_checks._safe_file(root, binding["path"]).read_text())
+        return formal_checks.finding_kinds(result.get("report"))
+    except (ValueError, OSError, KeyError, TypeError):
+        return {}
+
+
+def formal_precision(record: Mapping[str, Any]) -> bool:
+    """The decision was synthesized with scientific gaps downgraded (``PRECISION_RULE``)."""
+    return (record.get("formal_precision") or {}).get("rule") == formal_checks.PRECISION_RULE
+
+
+def _precision_kwargs(record: Mapping[str, Any]) -> dict[str, Any]:
+    return {"precision": True} if formal_precision(record) else {}
+
+
 def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: str) -> dict[str, Any]:
     from paper_writing.operations import _review_workspace_fingerprints
 
@@ -3530,7 +3564,8 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
             raise ValueError("Ready decision is missing an active referee")
         formal_errors = (resynthesis.validate(record, decision_path, root, metadata)
                          if record.get("review_mode") == "resynthesize" else
-                         formal_checks.validate_binding(record.get("formal_check"), metadata, root, formal_role(config["roles"])))
+                         formal_checks.validate_binding(record.get("formal_check"), metadata, root, formal_role(config["roles"]),
+                                                        **_precision_kwargs(record)))
         if formal_errors:
             raise ValueError("; ".join(formal_errors))
         if any("formal_check_assessment" not in r for r in record["referee_reports"].values()):
@@ -3567,8 +3602,11 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
     if record.get("review_mode") == "resynthesize":
         release["review_mode"] = "resynthesize"
         release["resynthesis"] = record["resynthesis"]
-    if record.get("formal_check", {}).get("valid") is True or record.get("review_mode") == "resynthesize":
+    if (record.get("formal_check", {}).get("valid") is True or record.get("review_mode") == "resynthesize"
+            or (merged["outcome"] == "ready" and formal_precision(record))):
         release["formal_check"] = record["formal_check"]
+        if formal_precision(record):
+            release["formal_precision"] = record["formal_precision"]
         access = record["formal_check"].get("unverifiable_source_access")
         if access:
             # Not manuscript defects; listed for manual or other-environment checking.
@@ -3656,6 +3694,9 @@ def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
         notes.extend({"kind": "review_suggestion", **change} for change in
                      ((record or {}).get("merged") or {}).get("required_changes", []) if change.get("advisory"))
         formal_summary = ((record or {}).get("formal_check") or {}).get("issue_summary") or {}
+        if formal_precision(record or {}):
+            formal_summary = formal_checks.precision_view(
+                formal_summary, formal_report_kinds((record or {}).get("formal_check"), root)) or {}
         notes.extend(dict(finding, kind="formal_suggestion") for finding in formal_summary.get("raw_findings", [])
                      if finding.get("category") == "advisory")
         access = ((record or {}).get("formal_check") or {}).get("unverifiable_source_access")
@@ -3801,11 +3842,12 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
     else:
         archived = {}
         if fingerprints is not None:
-            if record.get("formal_check", {}).get("valid") is not True:
+            if record.get("formal_check", {}).get("valid") is not True and not formal_precision(record):
                 problems.append("Missing passing mandatory formal check")
             archived["archived_version"] = record["manuscript_version"]
         problems.extend(formal_checks.validate_binding(record.get("formal_check"), metadata, root,
-                                                       formal_role(config["roles"]), **archived))
+                                                       formal_role(config["roles"]), **archived,
+                                                       **_precision_kwargs(record)))
     problems.extend(_formal_recheck_binding(record, path, root, metadata))
     from paper_writing import presentation
 

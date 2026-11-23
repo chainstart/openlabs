@@ -149,7 +149,9 @@ def _replay(paper_id, root, base, basis_sha, response, metadata, current, *, as_
             revised.append(finding)
     reasons.extend(_check_changes(old.decode(), current, response, items))
 
-    summary = formal.issue_summary(revised)
+    # Owner rule 2026-11-23 (formal.PRECISION_RULE): scientific gaps are advice.
+    summary = formal.precision_view(formal.issue_summary(revised), formal.finding_kinds(report.get("report")))
+    revised = summary["raw_findings"]
     blockers = [m for category, messages in summary["by_category"].items()
                 if category != "advisory" for m in messages]
     editor, referees = view["editor_screen"], view["referee_reports"]

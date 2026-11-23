@@ -9,6 +9,28 @@
 2. **统一评审。** 编辑、配置的两位审稿人、独立读者与正式核验并行提交报告，合成一次决定。科学维度核对证据、统计、预注册和图文一致性；读者复述问题、比较、答案与意义并指出支撑图；形式维度核对引用、数值及期刊硬性要求。阻断项须写出读者会得出的具体错误结论。措辞、定义补全、图注细节、压缩和风格随包交给作者。次轮逐条核对上轮阻断和本轮改动，新增阻断须解释上次遗漏原因。轮次上限与逐条回复在同一评审内执行。
 3. **机械交付。** 控制面核对期刊资格和硬限额、材料登记、版本、评审快照、Zenodo 和网站回执。失败进入自动处理或可重试状态。用户收到完整材料后全面审核并确认投稿。
 
+### 抓大放小：什么能阻断（2026-11-23）
+
+业主 2026-11-23 原话：“记住抓大放小，大面上要像样子，不要过于纠结细节，只要数据和结论都是真实正确有效的就行，
+一些语句上不是那么精确，不要过于纠结”。合成决定时按以下规则（`formal_checks.PRECISION_RULE =
+gate1_precision_v1`）：
+
+- **能阻断**：数据或数值错误；结论与证据不符（核验结论为 `error`，或审稿人在 science 维度给出实质阻断）；
+  引用不存在或不能核实（参考文献行、`source_routing`）；形式硬错误（编译、缺作者等 `technical`/`preparation`）。
+- **降为建议**：正式核验中科学类 `gap`（表述在现有措辞下没有被完全支撑、可以写得更严谨），以及核验员标为
+  `unsupported_claim`、`citation_error_or_unsupported`、`advisory` 的单句级发现（不论 gap 还是 error）；
+  `numeric_or_statistical_error`、`formula_error`、`figure_result_mismatch`、`preregistration_violation` 的 error 仍阻断。决定记录写
+  `formal_precision: {rule, downgraded}`，这些条目进 `advisory_items` 并随交付包带出，不阻断、不开新轮。
+  核验报告本身、提示词和 schema 不变，归档报告照常可复核；`apply_decision`、交付核对在
+  `formal_precision` 声明下只要求“剩余阻断都是被降级的 gap”。
+- **审稿人都是 accept 或 minor_revision**、没有 science 和 formal_accuracy 维度的实质项时，readability 维度的
+  实质项（措辞类）一律降为建议，结论为 ready。
+- `review resynthesize` 重放归档决定时也按此规则：未标注的科学 gap 不再需要逐条写 `formal_findings` 注释。
+
+GATE1 原有的“写不出读者会得出的错误结论就降为建议”规则在正式核验里仍然生效（`materiality=True` 时空的
+`reader_misconclusion` 或 `finding_kind: advisory` 即为建议）；实际核验几乎总会写一句“读者可能会……”，所以
+另加了上面按核验状态（gap/error）的确定性划分。
+
 ### 已接受稿件的核验复核
 
 
