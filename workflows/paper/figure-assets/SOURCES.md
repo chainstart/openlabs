@@ -37,3 +37,7 @@ python3 workflows/paper/figure-assets/fetch_assets.py --dry-run  # 只列清单
 ### 安全与一致性
 
 所有 SVG 入库前都会检查：不得含脚本、事件属性、`foreignObject`、外部链接。渲染时元件以内联 `<svg>` 嵌入，id 自动加前缀以免冲突；元件内的 `<style>` 类规则会改写到各元素的 `style` 上，不会影响整页样式。上游文件不做修改，重着色只在使用时进行（`data-recolor`）。
+
+## 2026-11-24 补登记自绘生物医学元件
+
+弯曲杆菌稿 Fig. 1 重画（2026-11-23）新画的 hen、cow、pig、campylobacter 四件原先只在元件库的 `catalog.json` 里。现已放入仓库 `figure-templates/assets/biomedical/`（CC0 1.0，同名 `.license.json` 记录成品 SHA-256），关键词登记在 `manifest.json` 的 `local_keywords`，重建库时由 `fetch_assets.py` 第 4 步复制。自绘件合计 22 件。

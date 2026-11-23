@@ -273,3 +273,24 @@ def test_fetcher_builds_library_through_the_bridge(tmp_path, monkeypatch):
     (upstream / "b.svg").write_text(STROKE.replace("M4", "M5"))
     shutil.move(str(library / "_sources/files/b.svg"), str(tmp_path / "old-b.svg"))
     assert fetch.main(["--manifest", str(manifest), "--library", str(library)]) in (1, 2)
+
+
+def test_repository_self_drawn_assets_are_licensed_safe_and_registered():
+    """Every self-drawn asset kept in the repository is rebuilt into the library by
+    fetch_assets.py: it needs a matching licence record, a safe SVG and keywords
+    (2026-11-24: the Campylobacter redraw icons were only in the library catalog)."""
+    fetch = _fetcher()
+    root = Path(fetch.__file__).resolve().parent
+    local = root.parent / "figure-templates" / "assets"
+    keywords = json.loads((root / "manifest.json").read_text())["local_keywords"]
+    svgs = sorted(local.glob("*/*.svg"))
+    names = {svg.relative_to(local).as_posix() for svg in svgs}
+    assert {"biomedical/hen.svg", "biomedical/cow.svg", "biomedical/pig.svg",
+            "biomedical/campylobacter.svg"} <= names
+    for svg in svgs:
+        rel = svg.relative_to(local).as_posix()
+        meta = json.loads(svg.with_name(svg.stem + ".license.json").read_text())
+        assert meta["sha256"] == hashlib.sha256(svg.read_bytes()).hexdigest(), rel
+        assert meta.get("license") and meta.get("attribution"), rel
+        assert fetch.svg_problem(svg.read_text()) is None, rel
+        assert str(keywords.get(rel, "")).strip(), rel

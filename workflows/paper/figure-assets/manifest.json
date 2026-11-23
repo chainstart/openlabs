@@ -3667,6 +3667,10 @@
   "reliability/bench.svg": "test bench rig",
   "astronomy/star.svg": "star sun",
   "astronomy/telescope.svg": "telescope observatory",
-  "astronomy/tess.svg": "tess space telescope satellite photometer"
+  "astronomy/tess.svg": "tess space telescope satellite photometer",
+  "biomedical/hen.svg": "chicken poultry broiler animal source host",
+  "biomedical/cow.svg": "cattle bovine beef dairy animal source host",
+  "biomedical/pig.svg": "swine pork porcine animal source host",
+  "biomedical/campylobacter.svg": "bacterium spiral curved rod flagella pathogen"
  }
 }
