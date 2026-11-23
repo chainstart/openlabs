@@ -28,7 +28,7 @@ from typing import Any, Mapping
 from paper_writing.registry import (load_paper_metadata, load_registry, load_review_settings,
                                     paper_metadata_path, require_not_frozen, review_settings_path,
                                     write_paper_metadata)
-from paper_writing.review_launcher import LaunchError, role_runtime, run_role
+from paper_writing.review_launcher import FORMAL_PROVIDERS, LaunchError, role_runtime, run_role
 from paper_writing import review_round_guard
 from paper_writing import review_sandbox
 from paper_writing import formal_checks
@@ -180,8 +180,9 @@ def _check_formal_verifier(roles: Any, label: str) -> None:
             or any(not isinstance(verifier.get(k), str) or not verifier[k].strip()
                    for k in ("provider", "tool", "model"))):
         raise ValueError(f"{label}.{FORMAL_ROLE} needs provider, tool and model, like the other roles")
-    if verifier["provider"] != "openai-codex":
-        raise ValueError(f"{label}.{FORMAL_ROLE} must use an independent Codex process (provider openai-codex)")
+    if verifier["provider"] not in FORMAL_PROVIDERS:
+        raise ValueError(f"{label}.{FORMAL_ROLE} must use an independent tool-using process "
+                         f"(Codex, provider openai-codex, or Antigravity, provider google-antigravity)")
     try:
         role_runtime(verifier)
     except LaunchError as exc:
@@ -312,7 +313,7 @@ MODEL_FAMILY_PREFIXES = (
     ("glm", "zhipu"), ("kimi", "moonshot"), ("llama", "meta"), ("mistral", "mistral"),
 )
 PROVIDER_FAMILIES = {"anthropic": "anthropic", "openai-codex": "openai", "openai": "openai",
-                     "google": "google"}
+                     "google": "google", "google-antigravity": "google"}
 
 
 # ``model_family`` (default): a referee of another model family is required.

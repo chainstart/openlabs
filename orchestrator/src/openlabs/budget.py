@@ -43,6 +43,7 @@ from types import ModuleType
 from typing import Any
 
 from .config import (
+    ANTIGRAVITY_PROVIDER,
     LEGACY_RUNNER_TIERS,
     OWNER_TASK_TYPE,
     TIERS,
@@ -75,7 +76,9 @@ UNHEALTHY_FAILURE_CLASSES = frozenset(
 TASK_CLASSES = ("decision", "review", "ordinary")
 # Owner-mode seats: ordinary ceilings and pacing, without Fable's review ceiling.
 OWNER_CLASS = "owner"
-ADAPTER_PROVIDERS = {"claude": "anthropic", "codex": "openai-codex"}
+ADAPTER_PROVIDERS = {"claude": "anthropic", "codex": "openai-codex", "agy": ANTIGRAVITY_PROVIDER}
+# Probe commands that call no model (``agy -p /usage``): refreshed like Codex readings.
+FREE_PROBE_ADAPTERS = frozenset({"agy"})
 
 
 def current_time() -> datetime:
@@ -126,6 +129,17 @@ def provider_of(settings: FactorySettings | None, runner: Any) -> str:
     if name in LEGACY_RUNNER_TIERS:
         return settings.routing.legacy_runner_provider
     return name
+
+
+def family_of(settings: FactorySettings | None, runner: Any) -> str:
+    """Model family of a runner (independence); its provider unless that serves several."""
+
+    name = normalize_runner(runner)
+    if settings is not None and settings.runners:
+        spec = settings.runners.get(name)
+        if spec is not None:
+            return spec.family
+    return provider_of(settings, runner)
 
 
 def tier_of(settings: FactorySettings, runner: Any) -> str | None:
@@ -914,8 +928,14 @@ def runner_windows(
     """Windows constraining ``spec``: shared provider windows plus its own extras.
 
     A window some other runner of the provider declares as its own extra (Fable's
-    ``seven_day_overage_included``) does not constrain the others.
+    ``seven_day_overage_included``) does not constrain the others. An Antigravity
+    runner that declares windows is constrained by those alone: its account has one
+    quota pool per model group (Gemini; Claude and GPT-OSS; Argon), so the other
+    groups' windows say nothing about it.
     """
+
+    if spec.provider == ANTIGRAVITY_PROVIDER and spec.windows:
+        return tuple(sorted(set(spec.windows)))
 
     foreign = {
         name
@@ -1706,10 +1726,15 @@ class QuotaRouter:
         parent = self._task(task.get("parent_task_id"))
         if parent is None:
             return None
-        producer = provider_of(self.settings, parent.get("runner"))
+        # A model family, not a quota account: Claude served by the Antigravity CLI is
+        # still the anthropic family (``RunnerSpec.family``).
+        producer = family_of(self.settings, parent.get("runner"))
         # Independence is only derived when another family can serve this tier.
-        providers = {s.provider for s in self.settings.runners.values() if s.tier == tier}
-        return producer if providers - {producer} else None
+        families = {
+            s.family for s in self.settings.runners.values()
+            if s.tier == tier and s.accepts(klass)
+        }
+        return producer if families - {producer} else None
 
     def _producer_models(self, task: Mapping[str, Any]) -> frozenset[str]:
         """Models that produced what a review/decision task judges, when they can be known.
@@ -1759,14 +1784,16 @@ class QuotaRouter:
 
         if klass not in {"decision", "review"}:
             return None
-        providers = {spec.provider for spec in self.settings.runners.values()}
-        if len(providers) != 1:
+        families = {
+            spec.family for spec in self.settings.runners.values() if spec.accepts(klass)
+        }
+        if len(families) != 1:
             return None
-        (only,) = providers
+        (only,) = families
         if excluded is not None:
             return only if excluded == only else None
         parent = self._task(task.get("parent_task_id"))
-        if parent is not None and provider_of(self.settings, parent.get("runner")) == only:
+        if parent is not None and family_of(self.settings, parent.get("runner")) == only:
             return only
         return None
 
@@ -1810,8 +1837,8 @@ class QuotaRouter:
         pools = {
             level: [
                 spec for spec in self.settings.runners.values()
-                if spec.provider == provider and spec.tier == level
-                and spec.model not in producer_models
+                if spec.family == provider and spec.tier == level
+                and spec.model not in producer_models and spec.accepts(klass)
             ]
             for level in TIERS
         }
@@ -1937,6 +1964,10 @@ class QuotaRouter:
             usable.append((spec, state))
         if not usable:
             return None
+        primary = [item for item in usable if not item[0].overflow]
+        if primary:
+            # Overflow runners (Antigravity) only take what the others cannot take now.
+            usable = primary
         if klass == "decision":
             # Fable leads decisions while it is above its decision reserve; inside
             # the reserve another family's lead is preferred, and Fable spends its
@@ -2060,7 +2091,8 @@ class QuotaRouter:
                 spec
                 for spec in self.settings.runners.values()
                 if spec.tier == level
-                and spec.provider != excluded
+                and spec.family != excluded
+                and spec.accepts(klass)
                 and (sticky is None or spec.provider == sticky)
             ]
 
@@ -2419,7 +2451,8 @@ def probe_quota(
 
     Claude: run the configured cheap-model probe command (never Fable) and parse
     its stream-json ``rate_limit_event``. Codex: read the newest session file
-    under ``routing.codex_sessions_dir``; no model is called.
+    under ``routing.codex_sessions_dir``; no model is called. Antigravity: the
+    configured ``agy -p /usage --output-format json`` (no model call either).
     """
 
     parsers = _lab_runner_module()
@@ -2481,15 +2514,23 @@ def probe_stale_providers(
             provider == "openai-codex" and routing.codex_sessions_dir
         ):
             continue
+        command = routing.probe_commands.get(provider) or ()
+        # ``agy -p /usage`` calls no model: like the Codex session file it costs nothing,
+        # so its readings are refreshed every stale_refresh_minutes, not only when stale.
+        free = provider not in routing.probe_commands or (
+            bool(command) and Path(command[0]).name in FREE_PROBE_ADAPTERS
+        )
+        refresh = routing.stale_refresh_minutes if free else 0
         fresh = any(
             reading_is_fresh(item, now=moment, stale_hours=routing.snapshot_stale_hours)
+            and (not refresh or moment - item.observed_at < timedelta(minutes=refresh))
             for item in readings.get(provider, {}).values()
         )
         if fresh:
             continue
         last = parse_time(db.meta_get(QUOTA_PROBE_AT_PREFIX + provider))
         interval = routing.probe_idle_minutes
-        if provider not in routing.probe_commands and routing.stale_refresh_minutes:
+        if free and routing.stale_refresh_minutes:
             # Reading the newest Codex session file costs nothing: refresh often.
             interval = routing.stale_refresh_minutes
         if last is not None and moment - last < timedelta(minutes=interval):

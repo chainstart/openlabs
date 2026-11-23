@@ -31,7 +31,9 @@ LAB_RUNTIME_SCHEMA = "openlabs.lab_runtime_setup.v1"
 # Agent CLIs that receive the trusted lab runtime, the generated result-gate hooks
 # and the hook-receipt check.  Any other executable is a deterministic transport
 # test double.
-RUNTIME_ADAPTERS = frozenset({"codex", "claude"})
+RUNTIME_ADAPTERS = frozenset({"codex", "claude", "agy"})
+# Human-readable name of each native adapter (agent requests, errors).
+ADAPTER_LABELS = {"codex": "Codex", "claude": "Claude Code", "agy": "Antigravity"}
 # Owner-mode seat (orchestrator ``openlabs.owner``): its request is pre-rendered.
 OWNER_TASK_TYPE = "topic_owner"
 
@@ -381,7 +383,15 @@ automatically. Never copy staged changes to the canonical campaign yourself.
     )
     configured_skills = runtime_policy.get("skills")
     optional_methods = runtime_policy.get("optional_methods")
-    if adapter == "claude" and isinstance(configured_skills, list) and configured_skills:
+    if adapter == "agy" and isinstance(configured_skills, list) and configured_skills:
+        # Antigravity discovers workspace Skills under ``.agents/skills`` by bare name.
+        skill_instruction = (
+            "Invoke and follow the Skills "
+            + ", ".join(str(item).removeprefix("$") for item in configured_skills)
+            + "; their trusted project copies are under `.agents/skills/`, so read a SKILL.md "
+            "directly if one is not listed."
+        )
+    elif adapter == "claude" and isinstance(configured_skills, list) and configured_skills:
         # Claude Code invokes project Skills by bare name with its Skill tool.
         skill_instruction = (
             "Invoke and follow the Skills "
@@ -423,7 +433,7 @@ records, not process boundaries. Do not stop merely because a phase advanced. St
 epistemic-role boundary, an explicitly fresh boundary, a terminal scientific result, a genuine
 blocker, or when the remaining wall budget is needed to persist a safe result bundle. Other
 workers run independently; do not terminate this process merely to make room for them.
-""".replace("{process}", "Claude Code" if adapter == "claude" else "Codex")
+""".replace("{process}", ADAPTER_LABELS.get(str(adapter or ""), "Codex"))
     project = task.get("project") if isinstance(task.get("project"), Mapping) else {}
     read_resources = project.get("read_resources", [])
     read_resource_notice = ""
@@ -769,6 +779,12 @@ AGENT_QUOTA_MARKERS: tuple[tuple[str, str, str], ...] = (
     ("capacity", r"\bserver_overloaded\b", "cli-string"),
     ("capacity", r"\boverloaded_error\b", "unverified"),
     ("capacity", r"\bAPI Error: 529\b", "unverified"),
+    # Antigravity CLI (agy 1.5.14): per-minute limits are retried inside the CLI for up
+    # to 4 minutes; weekly/5-hour, individual-quota and spend-cap errors stop the turn
+    # and surface as an AGY_ERROR line or an ERROR result (strings from its changelog).
+    ("usage_limit", r"\b(?:weekly|five[- ]hour|5-hour|individual) (?:quota|limit)\b", "unverified"),
+    ("usage_limit", r"\bspend[- ]cap\b", "unverified"),
+    ("rate_limit", r"\bRESOURCE_EXHAUSTED\b", "unverified"),
 )
 _QUOTA_PATTERNS = tuple(
     (kind, re.compile(pattern, re.IGNORECASE), provenance)
@@ -918,6 +934,11 @@ def _provider_error_texts(event: Mapping[str, Any]) -> list[str]:
         texts.append(json.dumps(event, ensure_ascii=False))
     elif event_type == "result" and event.get("is_error") is True:
         texts.append(json.dumps(event, ensure_ascii=False))
+    elif event.get("event") == "result" and isinstance(event.get("result"), Mapping) and (
+        str(event["result"].get("status") or "") == "ERROR"
+    ):
+        # Antigravity stream-json: {"event": "result", "result": {"status": "ERROR", ...}}.
+        texts.append(json.dumps(event, ensure_ascii=False))
     elif "apiError" in event or isinstance(event.get("error"), (str, Mapping)):
         # Claude transcripts/stream events mark failed API turns with apiError/error.
         texts.append(json.dumps(event, ensure_ascii=False))
@@ -993,7 +1014,12 @@ def _agent_quota_failure(stdout_path: Path, stderr_path: Path) -> dict[str, Any]
 # ``{"provider", "observed_at", "model", "windows": [{"name", "window_minutes",
 # "used_fraction", "resets_at"}], "credits_balance"}``.
 QUOTA_SNAPSHOT_SCHEMA = "openlabs.quota_snapshot.v1"
-ADAPTER_PROVIDERS = {"claude": "anthropic", "codex": "openai-codex"}
+ADAPTER_PROVIDERS = {"claude": "anthropic", "codex": "openai-codex",
+                     "agy": "google-antigravity"}
+# ``agy -p /usage --output-format json`` costs no model call (num_turns 0): the
+# account's quota groups (Gemini; Claude and GPT-OSS; Argon) with one bucket per window.
+AGY_USAGE_ARGS = ("-p", "/usage", "--output-format", "json")
+_AGY_WINDOW_MINUTES = {"weekly": 10_080, "5h": 300, "daily": 1_440}
 _NAMED_WINDOW_MINUTES = {"five_hour": 300, "seven_day": 10_080, "one_day": 1_440}
 _WINDOW_NAME_PATTERN = re.compile(r"^(?P<count>\d+|one|five|seven)_(?P<unit>hour|day|minute)")
 _WORD_NUMBERS = {"one": 1, "five": 5, "seven": 7}
@@ -1274,7 +1300,83 @@ def extract_quota_snapshot(
         if session_file is None:
             return None
         return codex_session_quota(session_file, model=model)
+    if adapter == "agy":
+        return agy_usage_snapshot(stdout_text, model=model, now=now)
     return None
+
+
+def agy_quota_windows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Windows of one ``agy -p /usage --output-format json`` result.
+
+    Each bucket is a window named by its id (``gemini-weekly``, ``gemini-5h``,
+    ``3p-weekly``, ``3p-5h``, ``gemini-argon-wtu-weekly``); ``remaining_fraction`` is
+    converted to the used fraction the router reads.
+    """
+
+    command = payload.get("command")
+    data = command.get("data") if isinstance(command, Mapping) else None
+    groups = data.get("groups") if isinstance(data, Mapping) else None
+    windows: list[dict[str, Any]] = []
+    for group in groups if isinstance(groups, list) else []:
+        if not isinstance(group, Mapping):
+            continue
+        for bucket in group.get("buckets") or []:
+            if not isinstance(bucket, Mapping):
+                continue
+            name = str(bucket.get("id") or "").strip()
+            remaining = bucket.get("remaining_fraction")
+            if not name or isinstance(remaining, bool) or not isinstance(remaining, (int, float)):
+                continue
+            reset = bucket.get("reset_time")
+            windows.append({
+                "name": name,
+                "window_minutes": _AGY_WINDOW_MINUTES.get(str(bucket.get("window") or "")),
+                "used_fraction": max(0.0, min(1.0, 1.0 - float(remaining))),
+                "resets_at": reset if isinstance(reset, str) and reset else None,
+                "group": str(group.get("name") or "") or None,
+            })
+    return windows
+
+
+def agy_usage_snapshot(
+    text: str, *, model: str | None = None, now: datetime | None = None
+) -> dict[str, Any] | None:
+    """Quota snapshot from the JSON printed by ``agy -p /usage --output-format json``."""
+
+    observed_at = _iso_z((now or datetime.now(UTC)).astimezone(UTC))
+    payload: Any = None
+    stripped = text.strip()
+    try:
+        payload = json.loads(stripped) if stripped else None
+    except json.JSONDecodeError:
+        events = _jsonl_events(stripped)
+        payload = next((item for item in reversed(events) if "command" in item), None)
+    if not isinstance(payload, Mapping):
+        return None
+    return _snapshot(
+        "google-antigravity",
+        agy_quota_windows(payload),
+        observed_at=observed_at,
+        model=model,
+        source="agy_usage_command",
+    )
+
+
+def _agy_usage_probe(executable: str, *, model: str | None) -> dict[str, Any] | None:
+    """Read the Antigravity quota after a run (no model call, a few seconds)."""
+
+    try:
+        completed = subprocess.run(
+            [executable, *AGY_USAGE_ARGS],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return agy_usage_snapshot(str(completed.stdout or ""), model=model)
 
 
 def _agent_quota_snapshot(
@@ -1354,6 +1456,79 @@ def _claude_startup_health(path: Path) -> tuple[int, bool, bool]:
             ):
                 failures += 1
     return failures, meaningful_progress, any_event
+
+
+def _agy_startup_health(path: Path) -> tuple[int, bool, bool]:
+    """Antigravity ``stream-json``: an ``init`` event first, then ``step_update`` events.
+
+    A finished model response or tool step, or the final ``result``, is progress.
+    """
+
+    failures = 0
+    meaningful_progress = False
+    any_event = False
+    if not path.is_file():
+        return failures, meaningful_progress, any_event
+    for event in _jsonl_events(path.read_text(encoding="utf-8", errors="replace")):
+        any_event = True
+        kind = str(event.get("event") or "")
+        if kind == "result":
+            meaningful_progress = True
+            continue
+        step = event.get("step_update")
+        if kind == "step_update" and isinstance(step, Mapping):
+            if step.get("state") == "DONE" and step.get("step_type") in {
+                "agent_response", "tool"
+            }:
+                meaningful_progress = True
+        serialized = json.dumps(event, ensure_ascii=False).lower()
+        if kind != "step_update" and any(
+            marker in serialized for marker in _TRANSPORT_FAILURE_MARKERS
+        ):
+            failures += 1
+    return failures, meaningful_progress, any_event
+
+
+def _agy_runtime(path: Path) -> dict[str, Any]:
+    """Session (conversation) id, model and token usage of one ``agy`` process.
+
+    The final ``result`` carries the process totals; ``thinking_tokens`` are reasoning
+    output and ``cache_read_tokens`` the cached input (not included in ``input_tokens``).
+    """
+
+    runtime: dict[str, Any] = {}
+    if not path.is_file():
+        return runtime
+    for event in _jsonl_events(path.read_text(encoding="utf-8", errors="replace")):
+        kind = str(event.get("event") or "")
+        conversation = event.get("conversation_id")
+        if isinstance(conversation, str) and conversation:
+            runtime["session_id"] = conversation
+        if kind == "init" and isinstance(event.get("init"), Mapping):
+            model = event["init"].get("model")
+            if isinstance(model, str) and model:
+                runtime["model"] = model
+        if kind != "result" or not isinstance(event.get("result"), Mapping):
+            continue
+        result = event["result"]
+        conversation = result.get("conversation_id")
+        if isinstance(conversation, str) and conversation:
+            runtime["session_id"] = conversation
+        runtime["agy_status"] = result.get("status")
+        if result.get("error"):
+            runtime["agy_error"] = str(result.get("error"))[:2000]
+        if result.get("denied_actions"):
+            runtime["agy_denied_actions"] = result.get("denied_actions")
+        usage = result.get("usage")
+        if isinstance(usage, Mapping):
+            for source, target in (("input_tokens", "input_tokens"),
+                                   ("output_tokens", "output_tokens"),
+                                   ("thinking_tokens", "reasoning_output_tokens"),
+                                   ("cache_read_tokens", "cached_input_tokens")):
+                value = usage.get(source)
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    runtime[target] = value
+    return runtime
 
 
 def _jsonl_runtime(path: Path) -> dict[str, Any]:
@@ -1688,6 +1863,83 @@ def _prepare_codex_command(
     if trust_generated_hooks:
         policy.append("--dangerously-bypass-hook-trust")
     return [command[0], "exec", *policy, *tail]
+
+
+# Antigravity CLI policy. ``--dangerously-skip-permissions`` is required: headless
+# ``-p`` mode auto-denies every write and shell call otherwise (measured 2026-11-23),
+# and it is the agy counterpart of Codex's danger-full-access (no filesystem
+# boundary below the transaction workspace and promotion). The request goes in on
+# stdin as one ``stream-json`` user message, so its size is not limited by argv.
+AGY_FORBIDDEN = frozenset({"--settings", "--sandbox", "--remote-agent", "--remote-control",
+                           "--continue", "-c", "--new-project", "--project", "--agent",
+                           "--disable-slash-commands"})
+
+
+def agy_stdin_message(request: str) -> str:
+    """The request as the one NDJSON user message ``--input-format stream-json`` reads."""
+
+    return json.dumps(
+        {"event": "user", "message": {"role": "user",
+                                      "content": [{"type": "text", "text": request}]}},
+        ensure_ascii=False,
+    ) + "\n"
+
+
+def _prepare_agy_command(command: list[str], *, hooks_path: Path) -> list[str]:
+    """Apply the factory's invariant Antigravity policy to a configured argv."""
+
+    if Path(command[0]).name != "agy":
+        return command
+    if any(token in AGY_FORBIDDEN or any(token.startswith(f"{name}=") for name in AGY_FORBIDDEN)
+           for token in command[1:]):
+        raise ValueError("The Antigravity adapter may not override the factory session policy")
+    mode = _command_option(command, "--mode")
+    if mode not in {None, "auto"}:
+        raise ValueError("OpenLabs Antigravity tasks require the default (auto) mode")
+    for option, wanted in (("--output-format", "stream-json"), ("--input-format", "stream-json")):
+        if _command_option(command, option) not in {None, wanted}:
+            raise ValueError(f"OpenLabs Antigravity tasks require {option} {wanted}")
+    if not hooks_path.is_file():
+        raise ValueError("Generated Antigravity hooks with the result gate are missing")
+    tail = [token for token in command[1:] if not (
+        token in {"-p", "--print", "--prompt"}
+        or token.startswith(("-p=", "--print=", "--prompt="))
+    )]
+    tail = _remove_value_options(tail, {"--output-format", "--input-format", "--mode"})
+    tail = _remove_flags(tail, {"--dangerously-skip-permissions"})
+    policy = [
+        "-p=",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--dangerously-skip-permissions",
+    ]
+    return [command[0], *policy, *tail]
+
+
+def _apply_agy_policy(
+    command: list[str],
+    *,
+    task: Mapping[str, Any],
+    runtime_policy: Mapping[str, Any],
+    agent_workspace: Path,
+) -> list[str]:
+    """Bind an agy argv to this attempt's generated ``.agents/hooks.json``."""
+
+    raw_hooks = str(runtime_policy.get("agy_hooks") or "").strip()
+    expected = (agent_workspace / ".agents" / "hooks.json").resolve()
+    if (
+        runtime_policy.get("schema_version") != "openlabs.codex_runtime.v1"
+        or runtime_policy.get("hook_trust") != "orchestrator-generated"
+        or not raw_hooks
+        or Path(raw_hooks).expanduser().resolve() != expected
+    ):
+        raise ValueError("Antigravity research tasks require the generated result-gate hooks")
+    transaction = task.get("transaction")
+    if not (isinstance(transaction, Mapping) and transaction.get("attempt_root")):
+        raise ValueError("Antigravity research tasks require an isolated attempt transaction")
+    return _prepare_agy_command(command, hooks_path=expected)
 
 
 # Claude Code tool permissions for unattended research.  ``dontAsk`` denies every
@@ -2072,6 +2324,10 @@ def _transaction_sandbox(
 
     if Path(command[0]).name == "codex":
         return command, "codex-native-danger-full-access"
+    if Path(command[0]).name == "agy":
+        # The Codex trust model: the private attempt workspace, result-gate hooks and
+        # validated promotion are the state boundary (no bubblewrap layer).
+        return command, "agy-skip-permissions-full-access"
     transaction = task.get("transaction")
     if not isinstance(transaction, Mapping) or transaction.get("mode") != (
         "isolated_attempt_workspace"
@@ -2245,7 +2501,7 @@ def _run_agent(
             task,
             workspace=workspace,
             agent_workspace=agent_workspace,
-            agent_label="Claude Code" if adapter_name == "claude" else "Codex",
+            agent_label=ADAPTER_LABELS[adapter_name],
         )
     runtime_policy = (
         task.get("runtime_policy") if isinstance(task.get("runtime_policy"), Mapping) else {}
@@ -2264,6 +2520,13 @@ def _run_agent(
     )
     if adapter_name == "claude":
         agent_command = _apply_claude_policy(
+            agent_command,
+            task=task,
+            runtime_policy=runtime_policy,
+            agent_workspace=agent_workspace,
+        )
+    elif adapter_name == "agy":
+        agent_command = _apply_agy_policy(
             agent_command,
             task=task,
             runtime_policy=runtime_policy,
@@ -2325,7 +2588,9 @@ def _run_agent(
         try:
             try:
                 assert process.stdin is not None
-                process.stdin.write(request)
+                process.stdin.write(
+                    agy_stdin_message(request) if adapter_name == "agy" else request
+                )
                 process.stdin.close()
                 process.stdin = None
             except BrokenPipeError:
@@ -2366,6 +2631,10 @@ def _run_agent(
                         transport_failure_count, meaningful_progress, stream_started = (
                             _claude_startup_health(stdout_path)
                         )
+                    elif adapter_name == "agy":
+                        transport_failure_count, meaningful_progress, stream_started = (
+                            _agy_startup_health(stdout_path)
+                        )
                     else:
                         transport_failure_count, meaningful_progress = _jsonl_startup_health(
                             stdout_path
@@ -2387,7 +2656,7 @@ def _run_agent(
         finally:
             for signum, previous in previous_handlers.items():
                 signal.signal(signum, previous)
-    runtime = _jsonl_runtime(stdout_path)
+    runtime = _agy_runtime(stdout_path) if adapter_name == "agy" else _jsonl_runtime(stdout_path)
     raw_hook_receipts = str(runtime_policy.get("hook_receipts") or "").strip()
     if raw_hook_receipts:
         runtime["hooks"] = _hook_runtime(
@@ -2439,10 +2708,12 @@ def _run_agent(
             runtime["last_context_tokens"] = context
     if adapter_name in ADAPTER_PROVIDERS:
         runtime["provider_family"] = ADAPTER_PROVIDERS[adapter_name]
-        snapshot = _agent_quota_snapshot(
-            stdout_path,
-            adapter=adapter_name,
-            model=str(runtime.get("model") or runtime.get("configured_model") or "") or None,
+        model_name = str(runtime.get("model") or runtime.get("configured_model") or "") or None
+        snapshot = (
+            # agy prints no quota in its run stream; its /usage command is free.
+            _agy_usage_probe(agent_command[0], model=model_name)
+            if adapter_name == "agy"
+            else _agent_quota_snapshot(stdout_path, adapter=adapter_name, model=model_name)
         )
         if snapshot is not None:
             runtime["quota_snapshot"] = snapshot

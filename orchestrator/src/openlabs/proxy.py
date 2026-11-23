@@ -35,6 +35,7 @@ _DEFAULT_TARGET = "https://chatgpt.com/backend-api/codex"
 _ANTHROPIC_TARGET = "https://api.anthropic.com"
 OPENAI_PROVIDER = "openai-codex"
 ANTHROPIC_PROVIDER = "anthropic"
+ANTIGRAVITY_PROVIDER = "google-antigravity"
 # Credentials Claude Code accepts instead of a subscription login file (names only).
 _ANTHROPIC_CREDENTIAL_NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
@@ -206,7 +207,10 @@ def provider_preflight_targets(
 ) -> list[tuple[str, str]]:
     """(provider, URL) per provider to probe; ``None`` keeps the single Codex probe."""
 
-    selected = list(dict.fromkeys(providers or (OPENAI_PROVIDER,)))
+    # The Antigravity CLI's wrapper pins its own model channel (127.0.0.1:18080) and
+    # ignores the research proxy chosen here; its runs have their own startup watchdog.
+    selected = [item for item in dict.fromkeys(providers or (OPENAI_PROVIDER,))
+                if item != ANTIGRAVITY_PROVIDER] or [OPENAI_PROVIDER]
     targets: list[tuple[str, str]] = []
     for provider in selected:
         if provider == ANTHROPIC_PROVIDER:

@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 
 import httpx
 
-from paper_writing.review_launcher import LaunchError, _validate_against_schema
+from paper_writing.review_launcher import FORMAL_PROVIDERS, LaunchError, _validate_against_schema
 
 VERSION = "openlabs.formal_check.v2"
 PROMPT = Path(__file__).resolve().parents[1] / "skills/openlabs-paper-review/references/unified/formal.md"
@@ -1571,8 +1571,8 @@ def _task_references(inv):
 
 def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str, Any],
                timeout: int, runner) -> dict[str, Any]:
-    if role.get("provider") != "openai-codex":
-        raise ValueError("Formal verification requires an independent Codex role")
+    if role.get("provider") not in FORMAL_PROVIDERS:
+        raise ValueError("Formal verification requires an independent Codex or Antigravity role")
     metadata = pre["metadata"]
     documents, bibliography = current_inputs(metadata, root)
     prior = pre.get("previous_formal_check")
@@ -1776,7 +1776,9 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             if group != expected_group:
                 raise ValueError("Formal role batch order/scope changed")
             schema = batch_schema(group, batch, result['inventory'], result['sources'])
-            if (receipt.get("independent_context") is not True or receipt.get("provider") != "openai-codex"
+            if (receipt.get("independent_context") is not True
+                    or receipt.get("provider") != result["role"].get("provider")
+                    or receipt.get("provider") not in FORMAL_PROVIDERS
                     or receipt.get("model") != result["role"].get("model")
                     or receipt.get("model") not in receipt.get("runtime_reported_models", [])
                     or receipt.get("schema_sha256") != sha(json.dumps(schema, sort_keys=True).encode())):

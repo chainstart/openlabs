@@ -3,8 +3,9 @@
 The research agent owns scientific analysis and decisions.  This module only
 exposes selected Skills and installs lifecycle hooks that restate the transaction
 boundary and validate the result envelope before the agent stops.  The same
-Skills, context and Stop gate are generated for Codex (``.agents``/``.codex``)
-and Claude Code (``.claude``); the lab runner picks the one its adapter reads.
+Skills, context and Stop gate are generated for Codex (``.agents``/``.codex``),
+Claude Code (``.claude``) and the Antigravity CLI ``agy`` (``.agents/skills`` and
+``.agents/hooks.json``); the lab runner picks the one its adapter reads.
 """
 
 from __future__ import annotations
@@ -23,7 +24,11 @@ from .contracts import RESULT_SCHEMA, atomic_write_json
 RUNTIME_POLICY_SCHEMA = "openlabs.codex_runtime.v1"
 # Agent CLIs whose attempts run behind the generated result-gate hooks.  The
 # engine requires a passing Stop receipt from every one of them.
-HOOK_GATED_ADAPTERS = frozenset({"codex", "claude"})
+HOOK_GATED_ADAPTERS = frozenset({"codex", "claude", "agy"})
+# Antigravity CLI reads workspace hooks from ``.agents/hooks.json`` (named hook groups;
+# verified with agy 1.5.14 on 2026-11-23: SessionStart injection, Stop continuation and
+# PreToolUse all fire in ``-p`` mode without a workspace trust prompt).
+AGY_HOOKS_NAME = "hooks.json"
 # Claude Code reads hooks from a settings file passed with ``--settings``; the
 # file lives in the attempt-private ``.claude`` runtime directory so the
 # operator's user-level settings are never modified.
@@ -258,6 +263,22 @@ def configure_codex_runtime(
             ],
         }
 
+    def agy_hooks() -> dict[str, Any]:
+        """The same gate in the Antigravity layout: one named hook, flat handler lists."""
+
+        spec: dict[str, Any] = {
+            "SessionStart": [
+                {"type": "command", "command": command("session-start", "agy"), "timeout": 10}
+            ],
+            "Stop": [{"type": "command", "command": command("stop", "agy"), "timeout": 330}],
+        }
+        window = download_window_hooks("agy").get("PreToolUse")
+        if window:
+            spec["PreToolUse"] = [
+                {**group, "matcher": "run_command"} for group in window
+            ]
+        return {"openlabs-result-gate": spec}
+
     hooks = {"hooks": lifecycle_hooks("codex")}
     hooks_path = atomic_write_json(codex_root / "hooks.json", hooks)
     # The same result gate and receipt file serve a Claude Code attempt.  Claude
@@ -274,11 +295,13 @@ def configure_codex_runtime(
             "claudeMdExcludes": [str(Path.home() / ".claude" / "CLAUDE.md")],
         },
     )
+    agy_hooks_path = atomic_write_json(agents_root / AGY_HOOKS_NAME, agy_hooks())
     return {
         "schema_version": RUNTIME_POLICY_SCHEMA,
         "sandbox": "danger-full-access",
         "hooks": str(hooks_path),
         "claude_settings": str(claude_settings_path),
+        "agy_hooks": str(agy_hooks_path),
         "hook_trust": "orchestrator-generated",
         "hook_receipts": str(hook_receipt_path),
         "skills": skill_invocations,

@@ -225,6 +225,15 @@ def command_refusal(command: str, now: datetime | None = None,
 
 
 def _event_command(event: Mapping[str, Any]) -> str:
+    tool_call = event.get("toolCall")
+    if isinstance(tool_call, Mapping):
+        # Antigravity CLI (agy): ``{"toolCall": {"name": "run_command", "args":
+        # {"CommandLine": ...}}}`` in camelCase.
+        args = tool_call.get("args")
+        if isinstance(args, Mapping):
+            value = args.get("CommandLine", args.get("command"))
+            return str(value) if value is not None else json.dumps(args, ensure_ascii=False)
+        return ""
     tool_input = event.get("tool_input")
     if isinstance(tool_input, Mapping):
         value = tool_input.get("command", tool_input.get("cmd"))
@@ -241,6 +250,11 @@ def pre_tool_use(event: Mapping[str, Any], policy: ProxyDownloadWindow, *, adapt
     """``(exit code, stdout, stderr)`` of the PreToolUse hook for one event."""
 
     reason = command_refusal(_event_command(event), now, policy)
+    if adapter == "agy":
+        # Antigravity reads a decision object on stdout for every PreToolUse hook.
+        decision = {"decision": "allow"} if reason is None else {
+            "decision": "deny", "reason": reason}
+        return 0, json.dumps(decision, ensure_ascii=False), ""
     if reason is None:
         return 0, "", ""
     if adapter == "claude":
@@ -257,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m openlabs.download_window")
     sub = parser.add_subparsers(dest="command", required=True)
     hook = sub.add_parser("pre-tool-use")
-    hook.add_argument("--adapter", choices=("codex", "claude"), default="codex")
+    hook.add_argument("--adapter", choices=("codex", "claude", "agy"), default="codex")
     hook.add_argument("--policy", required=True, help="JSON of ProxyDownloadWindow.to_dict()")
     status = sub.add_parser("status")
     status.add_argument("--policy", default=None)

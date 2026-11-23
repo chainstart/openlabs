@@ -238,3 +238,50 @@ def test_reader_sees_only_main_panels_in_print_order(tmp_path, monkeypatch):
                                                    "manuscript_path": str(tmp_path)}, tmp_path)
     assert seen == ["figures/z.pdf", "figures/a.pdf"] and len(images) == 1 and not issues
     assert bindings == {"figures/z.pdf": "z", "figures/a.pdf": "a"}
+
+
+def test_antigravity_role_reviews_a_readonly_copy_and_reports_quota(tmp_path, monkeypatch):
+    """2026-11-23: a Gemini role through the Antigravity CLI (a third model family)."""
+    init = {"event": "init", "conversation_id": "c1", "init": {"model": "gemini-4-neon-high"}}
+    result = {"event": "result", "result": {"status": "SUCCESS", "structured_output": {"answer": "ok"}}}
+    usage = {"command": {"name": "usage", "data": {"groups": [{"name": "Gemini Models", "buckets": [
+        {"id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.6,
+         "reset_time": "2099-01-01T00:00:00Z"}]}]}}}
+    _fake(tmp_path, monkeypatch, "agy",
+          f"case \"$*\" in *\"/usage\"*) echo '{json.dumps(usage)}'; exit 0;; esac\n"
+          f"echo \"$@\" > {tmp_path}/args.txt\npwd > {tmp_path}/cwd.txt\ncat > {tmp_path}/stdin.txt\n"
+          f"echo '{json.dumps(init)}'\necho '{json.dumps(result)}'\n")
+    image = _png(tmp_path / "f.png")
+    out, receipt = run_role(role_name="referee_a",
+                            role={"provider": "google-antigravity", "tool": "Antigravity",
+                                  "model": "gemini-4-neon-high"},
+                            system_prompt="sys", user_prompt="read the figure", schema={"type": "object"},
+                            workdir=tmp_path / "run", images=[image])
+    assert out == {"answer": "ok"}
+    args = (tmp_path / "args.txt").read_text().split()
+    assert "--dangerously-skip-permissions" in args and "--json-schema" in args
+    assert args[args.index("--model") + 1] == "gemini-4-neon-high"
+    message = json.loads((tmp_path / "stdin.txt").read_text())
+    text = message["message"]["content"][0]["text"]
+    assert message["event"] == "user" and text.startswith("sys\n\nread the figure")
+    assert "Figure renderings to inspect" in text and "review-images/0/f.png" in text
+    assert receipt["runtime_reported_models"] == ["gemini-4-neon-high"]
+    assert receipt["sandbox_mode"] == "readonly-copy" and receipt["tools_enabled"] is True
+    assert receipt["image_transport"] == "agy read-only copy files"
+    quota = json.loads((tmp_path / "run" / "quota.json").read_text())
+    assert quota["provider"] == "google-antigravity" and quota["role"] == "referee_a"
+    assert abs(quota["windows"][0]["used_fraction"] - 0.4) < 1e-9
+
+
+def test_antigravity_role_refuses_a_different_reported_model(tmp_path, monkeypatch):
+    from paper_writing.review_launcher import LaunchError
+
+    init = {"event": "init", "init": {"model": "gemini-3.8-flash-low"}}
+    result = {"event": "result", "result": {"status": "SUCCESS", "structured_output": {"answer": "ok"}}}
+    _fake(tmp_path, monkeypatch, "agy",
+          f"case \"$*\" in *\"/usage\"*) echo '{{}}'; exit 0;; esac\ncat >/dev/null\n"
+          f"echo '{json.dumps(init)}'\necho '{json.dumps(result)}'\n")
+    with pytest.raises(LaunchError, match="expected gemini-4-neon-high"):
+        run_role(role_name="referee_a",
+                 role={"provider": "google-antigravity", "tool": "Antigravity", "model": "gemini-4-neon-high"},
+                 system_prompt="s", user_prompt="u", schema={"type": "object"}, workdir=tmp_path / "run")

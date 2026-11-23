@@ -1608,6 +1608,10 @@ def test_formal_verifier_config_is_validated(monkeypatch):
     settings['review']['roles']['formal_verifier'] = dict(VERIFIER_MODEL, model='gpt 6.1 sol')
     with pytest.raises(ValueError, match='exact model identifier'):
         flow.review_config('x')
+    # 2026-11-23: an Antigravity (Gemini) process may run the formal verification too.
+    gemini = {'provider': 'google-antigravity', 'tool': 'Antigravity', 'model': 'gemini-4-hydrogen-high'}
+    settings['review']['roles']['formal_verifier'] = dict(gemini)
+    assert flow.review_config('x')['roles']['formal_verifier'] == gemini
 
 
 def _panel_config(roles, previous=()):

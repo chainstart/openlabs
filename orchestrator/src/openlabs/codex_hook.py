@@ -5,6 +5,11 @@ Codex reads them from ``.codex/hooks.json``; Claude Code from the generated
 hook protocol used here: JSON event on stdin, ``{"decision": "block", "reason"}``
 on stdout to continue a Stop, ``hookSpecificOutput.additionalContext`` for
 SessionStart.  The result gate and the receipt file are the same for both.
+
+The Antigravity CLI (``--adapter agy``) reads ``.agents/hooks.json`` and speaks a
+camelCase dialect: ``conversationId``/``transcriptPath``/``executionNum`` in, and
+``{"decision": "continue", "reason"}`` (Stop) or ``{"injectSteps": [...]}``
+(SessionStart) out. It is translated at the edges; the gate itself is shared.
 """
 
 from __future__ import annotations
@@ -39,6 +44,40 @@ def _read_event() -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _agy_event(event: Mapping[str, Any]) -> dict[str, Any]:
+    """An Antigravity hook payload in the Codex/Claude field names the gate reads.
+
+    agy 1.5.14 counts Stop executions in ``executionNum`` (0 first) and documents
+    ``continuationActive``; either marks the re-entry after a continuation (measured
+    2026-11-23: ``continuationActive`` stayed false on the second Stop).
+    """
+
+    try:
+        executions = int(event.get("executionNum") or 0)
+    except (TypeError, ValueError):
+        executions = 0
+    return {
+        **event,
+        "session_id": event.get("conversationId"),
+        "transcript_path": event.get("transcriptPath"),
+        "stop_hook_active": event.get("continuationActive") is True or executions > 0,
+    }
+
+
+def _agy_output(event_name: str, output: Mapping[str, Any]) -> dict[str, Any]:
+    """The shared hook output in the Antigravity hook contract."""
+
+    if event_name == "session-start":
+        specific = output.get("hookSpecificOutput")
+        message = specific.get("additionalContext") if isinstance(specific, Mapping) else None
+        if not message:
+            return {}
+        return {"injectSteps": [{"systemMessage": {"systemMessage": str(message)}}]}
+    if output.get("decision") == "block":
+        return {"decision": "continue", "reason": str(output.get("reason") or "")}
+    return {}
+
+
 def _owner_session_context(context: Mapping[str, Any]) -> dict[str, Any]:
     owner = context.get("owner") if isinstance(context.get("owner"), Mapping) else {}
     # Fixed wording first, the seat's ids and paths after it (2026-11-20, prompt caching).
@@ -70,6 +109,11 @@ def _session_context(context: Mapping[str, Any], adapter: str = "codex") -> dict
             "the Skills " + ", ".join(names) + " (Skill tool)" if names else "the assigned Skill"
         )
         skill_root = context.get("claude_skill_source_root") or context.get("skill_source_root")
+    elif adapter == "agy":
+        # Antigravity discovers workspace Skills under ``.agents/skills`` by bare name.
+        names = [str(item).removeprefix("$") for item in context.get("skills", [])]
+        skills = "the Skills " + ", ".join(names) if names else "the assigned Skill"
+        skill_root = context.get("skill_source_root")
     else:
         skills = ", ".join(str(item) for item in context.get("skills", [])) or "the assigned Skill"
         skill_root = context.get("skill_source_root")
@@ -349,10 +393,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("event", choices=("session-start", "stop"))
     parser.add_argument("--context", type=Path, required=True)
-    parser.add_argument("--adapter", choices=("codex", "claude"), default="codex")
+    parser.add_argument("--adapter", choices=("codex", "claude", "agy"), default="codex")
     args = parser.parse_args()
     context = runtime_context(args.context.resolve())
     event = _read_event()
+    if args.adapter == "agy":
+        event = _agy_event(event)
     started_at = _utc_now()
     if args.event == "session-start":
         output = _session_context(context, args.adapter)
@@ -371,6 +417,8 @@ def main() -> int:
         output_summary=output_summary,
         adapter=args.adapter,
     )
+    if args.adapter == "agy":
+        output = _agy_output(args.event, output)
     json.dump(output, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0

@@ -18,7 +18,8 @@ GPT_ID = re.compile(
     re.I,
 )
 MODEL_RECORD_EFFECTIVE_DATE = date(2026, 9, 6)
-RECORDED_TOOLS = {("openai-codex", "Codex"), ("anthropic", "Claude Code")}
+RECORDED_TOOLS = {("openai-codex", "Codex"), ("anthropic", "Claude Code"),
+                  ("google-antigravity", "Antigravity")}
 
 
 def model_usage_for_record(metadata: Mapping[str, Any]) -> Any:

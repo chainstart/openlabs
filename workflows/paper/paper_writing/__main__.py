@@ -794,8 +794,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         config = review_config(root)
         role = formal_role(config["roles"])
-        if not role or role.get("provider") != "openai-codex":
-            raise ValueError("Formal verification requires an independent Codex process")
+        from paper_writing.review_launcher import FORMAL_PROVIDERS
+        if not role or role.get("provider") not in FORMAL_PROVIDERS:
+            raise ValueError("Formal verification requires an independent Codex or Antigravity process")
         run = root / "reviews/formal-check" / args.paper_id / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         run.mkdir(parents=True, exist_ok=False)
         result = formal_checks.run_checks({"metadata": metadata}, root, run, role, config["timeout_seconds"], run_role)

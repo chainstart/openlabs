@@ -500,6 +500,33 @@ class BudgetSettings:
 
 
 TIERS = ("lead", "worker", "light")
+# Task classes a runner may restrict itself to (``[runners.<name>].task_classes``); the
+# values ``budget.task_class`` returns.
+TASK_CLASSES = ("ordinary", "review", "decision", "owner")
+# The Antigravity CLI (``agy``, Google): one login, several quota pools, and models of
+# three families. Its runners draw quota from this provider; their review independence
+# follows the model family (``runner_family``).
+ANTIGRAVITY_PROVIDER = "google-antigravity"
+GOOGLE_FAMILY = "google"
+
+
+def runner_family(provider: str, model: str | None) -> str:
+    """Model family of a runner, for author/reviewer independence.
+
+    A provider is its own family, except the Antigravity CLI, which serves Gemini
+    (``google``), Claude (``anthropic``: the same models as Claude Code, from a
+    separate quota pool) and GPT-OSS (``openai-codex``: an OpenAI open-weight model;
+    counted with GPT so a GPT-OSS review never passes as independent of GPT work).
+    """
+
+    if provider != ANTIGRAVITY_PROVIDER:
+        return provider
+    name = str(model or "").strip().lower()
+    if name.startswith("claude"):
+        return "anthropic"
+    if name.startswith("gpt"):
+        return "openai-codex"
+    return GOOGLE_FAMILY
 # One owner-agent seat of a research-program topic in owner mode ([program].owner_mode).
 OWNER_TASK_TYPE = "topic_owner"
 # Pre-provider runner names. They request a tier, never a model family: with a
@@ -802,10 +829,28 @@ class RunnerSpec:
     # Claude sub-agent tools (Task, Agent) for this runner's tasks; None: the
     # tier decides (lead yes, worker and light no).
     allow_subagents: bool | None = None
+    # Task classes the router may give this runner (empty: all). A runner pinned
+    # by name (an owner seat, a manual pin) is not restricted.
+    task_classes: tuple[str, ...] = ()
+    # An overflow runner is chosen only when no other runner of the pool can take
+    # the task now (quota, backoff or parallelism): the Antigravity runners join as
+    # a supplement, never as the first choice.
+    overflow: bool = False
+    # Explicit model family; None derives it (``runner_family``).
+    family_override: str | None = None
 
     @property
     def subagents_allowed(self) -> bool:
         return self.tier == "lead" if self.allow_subagents is None else self.allow_subagents
+
+    @property
+    def family(self) -> str:
+        """Model family used for author/reviewer independence (not for quota)."""
+
+        return self.family_override or runner_family(self.provider, self.model)
+
+    def accepts(self, klass: str) -> bool:
+        return not self.task_classes or klass in self.task_classes
 
 
 @dataclass(frozen=True)
@@ -1684,6 +1729,14 @@ def load_runner_specs(payload: Any) -> dict[str, RunnerSpec]:
         if tier not in TIERS:
             raise ValueError(f"[runners.{name}].tier must be one of {TIERS}")
         model = str(raw.get("model") or "").strip() or None
+        classes = _string_tuple(raw.get("task_classes"), ())
+        unknown = sorted(set(classes) - set(TASK_CLASSES))
+        if unknown:
+            raise ValueError(
+                f"[runners.{name}].task_classes has unknown classes {unknown}; "
+                f"known: {list(TASK_CLASSES)}"
+            )
+        family = str(raw.get("family") or "").strip() or None
         specs[runner] = RunnerSpec(
             name=runner,
             provider=provider,
@@ -1694,6 +1747,9 @@ def load_runner_specs(payload: Any) -> dict[str, RunnerSpec]:
             protected=raw.get("protected") is True,
             allow_subagents=_optional_bool(raw.get("allow_subagents"),
                                            f"[runners.{name}].allow_subagents"),
+            task_classes=classes,
+            overflow=_optional_bool(raw.get("overflow"), f"[runners.{name}].overflow") is True,
+            family_override=family,
         )
     return specs
 
@@ -1911,15 +1967,7 @@ def apply_model_defaults(
             windows = routing.model_windows.get(spec.model or "", ())
         if "protected" not in entry:
             protected = bool(spec.model and spec.model in routing.protected_models)
-        resolved[name] = RunnerSpec(
-            name=spec.name,
-            provider=spec.provider,
-            tier=spec.tier,
-            model=spec.model,
-            windows=windows,
-            protected=protected,
-            allow_subagents=spec.allow_subagents,
-        )
+        resolved[name] = replace(spec, windows=windows, protected=protected)
     return resolved
 
 

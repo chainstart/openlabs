@@ -411,6 +411,67 @@ scout：修卡任务（light 档）只改格式，修好的卡片保留原 scout
 Fable，再受 `lead_review_ceiling`。仍在 lead 档的方向决策照旧按 decision 类。立项评审不再需要 lead，
 所以 lead 额度紧张时 `lead_shortage_paused` 不再暂停出题与立项（立项评审改回 lead 时自动恢复暂停）。
 
+### Antigravity CLI（agy）：第三个模型族（2026-11-23）
+
+用户 2026-11-23：“现在还有反重力cli可用，你可以将其加入产线中”。容器里的 `agy`（1.5.x，入口
+`~/.local/bin/agy`，包装脚本固定走 18080 模型通道、关闭自动更新）作为第三种 runner 工具接入，
+provider 为 `google-antigravity`。
+
+**适配层（lab runner `adapter = agy`）**，与 Codex、Claude Code 同一条研究执行路径：
+
+- 控制面另写 `.agents/hooks.json`（agy 的工作区 hook 位置，具名 hook 组、扁平 handler 列表），
+  SessionStart/Stop 调同一个 `openlabs.codex_hook ... --adapter agy`，回执写同一个
+  `.codex/hook-receipts.jsonl`；引擎对 `adapter = agy` 同样要求最终 Stop 回执通过。agy 的
+  hook 方言在边界上转换：`conversationId`→session、`executionNum>0` 视为已续过一次；Stop 阻断输出
+  `{"decision": "continue", "reason"}`，SessionStart 输出 `injectSteps`。闲时下载钩子挂在
+  `PreToolUse`/`run_command` 上。Skill 走与 Codex 共用的 `.agents/skills/`（agy 按名发现）。
+- 强制参数：`-p= --input-format stream-json --output-format stream-json
+  --dangerously-skip-permissions`。请求以一条 `{"event":"user","message":{...}}` 从 stdin 进入，
+  不受 argv 长度限制。headless 模式下不加 skip-permissions 会自动拒绝所有写文件和 shell 调用
+  （2026-11-23 实测），它与 Codex 的 danger-full-access 同级：文件边界是私有 attempt 工作区、
+  结果门禁与晋升校验，不另套 bubblewrap。禁止 `--settings`、`--sandbox`、`--mode plan`、远程会话等
+  会改变门禁或会话的参数。续接用 `--conversation {session_id}`。
+- 读数：`init` 事件给出实际模型，`result.usage` 给出整次进程用量（`thinking_tokens` 记为推理输出，
+  `cache_read_tokens` 记为缓存输入，不含在 input 里）。失败分类：`AGY_ERROR` 行与 `status=ERROR`
+  的 result 进入额度分类（周/5 小时/个人额度、spend cap、`RESOURCE_EXHAUSTED`）；超时退出码 3。
+
+**额度**：`agy -p /usage --output-format json` 不调用模型（num_turns 0），给出三个额度池：
+Gemini 组（Neon、Hydrogen、3.8 Flash；`gemini-weekly`、`gemini-5h`）、Claude 与 GPT-OSS 组
+（`3p-weekly`、`3p-5h`）、Argon 单独周额度（`gemini-argon-wtu-weekly`）。lab runner 每次 agy 运行后读一次
+写入 `quota_snapshot`；`[routing.probe_commands]` 配了它之后按 `stale_refresh_minutes` 免费刷新
+（与 Codex 会话文件同等对待）。agy runner 声明了 `windows` 时只受自己那个池约束。agy 里的 Claude
+走的是 Antigravity 账户自己的池，不占 Claude Code 订阅额度。
+
+**族别**：配速与额度按 provider（账户）算，独立性按模型族算（`RunnerSpec.family`，
+`config.runner_family`）：agy 的 `gemini-*` 是 `google` 族；`claude-*` 仍是 `anthropic` 族
+（同一批模型，只是额度池不同，不能审 Claude 的稿）；`gpt-oss-*` 记作 `openai-codex` 族（OpenAI 的
+开放权重模型，保守地与 GPT 同族）。`[runners.<name>].family` 可显式覆盖。作者/审稿人互斥、
+`exclude_provider`、写作者族、出题方族都改按模型族比较。
+
+**角色（保守起步）**：`[runners.<name>]` 新增两个开关。
+
+- `overflow = true`：同一候选池里有别的 runner 现在能接时不选它，只在其余 runner 因额度、退避
+  或并发接不了时补位；
+- `task_classes = [...]`（`ordinary`/`review`/`decision`/`owner`）：路由器只把这些类别的任务交给它；
+  按名字钉住的任务（负责人坐席）不受限。
+
+cc-sg 实例：`lead_gemini`（gemini-4-neon-xhigh，评审）、`worker_gemini`（gemini-4-hydrogen-high，
+评审与负责人坐席）、`light_gemini`（gemini-3.8-flash-medium，评审），全部 `overflow`。效果：
+GPT 的稿在 Claude 额度不够时由 Gemini 审，仍是跨族评审，而不是退到“同族不同模型”；
+Gemini 不接普通研究任务和方向决策。`[program.owner].runners` 把 `worker_gemini` 排在最后
+（每个 runner 最多 1 个课题），只在前面的 runner 都接不了时补位。写作与绘图仍由 Opus 负责
+（`writing_runner`、figure 坐席不变）。
+
+**交付前评审面板**（数据仓库 `registry/settings.yaml` 的 `review.roles`）现在可以写
+`{provider: google-antigravity, tool: Antigravity, model: gemini-...}`：审稿角色总在只读副本里运行
+（与 Codex 无 bubblewrap 时的做法相同：复制、去写权限、运行前后哈希），答案取
+`--json-schema` 的 `structured_output`，实际模型取 `init` 事件，额度读数写 `quota.json`。
+`formal_verifier` 也可以用它（以前只接受 Codex）。面板默认不变，换不换由用户决定。
+
+模型强弱（2026-11-23 粗测，三题全对）：Neon 最细（审稿题找出 10 条问题，含单双侧检验），
+Hydrogen 最快（约 22 秒、7 条），Argon 居中但单独的小额度池。故 lead=Neon xhigh、
+worker=Hydrogen high、light=3.8 Flash medium，Argon 暂不用。
+
 ## 研究计划：自动选题与立项关口
 
 研究计划默认关闭（`config/openlabs.toml` 的 `[program] enabled = false`），关闭时 tick 与以前

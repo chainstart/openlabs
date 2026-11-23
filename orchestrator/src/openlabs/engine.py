@@ -2650,7 +2650,8 @@ def _codex_hook_receipt_status(
     hook. Stop is the authoritative result gate and must always be present.
     """
 
-    agent = "Claude Code" if str(runtime.get("adapter") or "") == "claude" else "Codex"
+    agent = {"claude": "Claude Code", "agy": "Antigravity"}.get(
+        str(runtime.get("adapter") or ""), "Codex")
     hooks = runtime.get("hooks")
     if not isinstance(hooks, Mapping) or hooks.get("schema_version") != (
         "openlabs.hook_runtime.v1"

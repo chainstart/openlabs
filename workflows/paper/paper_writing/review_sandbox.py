@@ -232,7 +232,7 @@ class ReadonlyCopy:
                 "checked_files": len(copied)}
 
     # ----------------------------------------------------------------- run
-    def prompt(self, prompt: str) -> str:
+    def prompt(self, prompt: str, *, agent: str = "Codex") -> str:
         """The prompt with every original material path replaced by its copy, plus the rules."""
         materials = self.materials
         replacements = {str(source): str(self.inputs / materials.relative[name])
@@ -241,12 +241,14 @@ class ReadonlyCopy:
                              for original, relative in materials.directories.items()})
         for original in sorted(replacements, key=len, reverse=True):
             prompt = prompt.replace(original, replacements[original])
+        why = ("The Codex bubblewrap sandbox is unavailable on this host, so the registered "
+               "materials" if agent == "Codex" else
+               f"{agent} review roles always run on a copy: the registered materials")
         lines = [
             "## Review execution environment (read-only copy mode)",
-            "The Codex bubblewrap sandbox is unavailable on this host, so the registered materials "
-            f"were copied to {self.inputs} and made read-only (no write permission on any file or "
-            "directory). Your working directory is that copy. Read and run the registered files only "
-            "there; the paths listed above already point into it.",
+            f"{why} were copied to {self.inputs} and made read-only (no write permission on any "
+            "file or directory). Your working directory is that copy. Read and run the registered "
+            "files only there; the paths listed above already point into it.",
             f"Write anything you need (outputs, caches, temporary files) only below {self.output}; "
             "TMPDIR and OPENLABS_OUTPUT_DIR point there. Do not write to, chmod or move anything in "
             "the copy, the campaign workspace or the data repositories. The copy is hashed before and "

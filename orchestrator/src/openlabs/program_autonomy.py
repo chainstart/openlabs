@@ -241,7 +241,7 @@ def research_provider(db: FactoryDB, settings: FactorySettings, campaign_id: str
     """Model family of the topic's research executor (``None`` without routing)."""
 
     runner = _research_runner(db, settings, campaign_id)
-    return None if runner is None else budget_control.provider_of(settings, runner)
+    return None if runner is None else budget_control.family_of(settings, runner)
 
 
 def research_model(db: FactoryDB, settings: FactorySettings, campaign_id: str) -> str | None:

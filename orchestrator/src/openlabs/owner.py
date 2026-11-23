@@ -66,7 +66,13 @@ from typing import Any
 
 from . import budget as budget_control
 from . import paper_figures, spin_guard
-from .config import OWNER_TASK_TYPE, FactorySettings, WorkspacePaths, dispatch_runner
+from .config import (
+    ANTIGRAVITY_PROVIDER,
+    OWNER_TASK_TYPE,
+    FactorySettings,
+    WorkspacePaths,
+    dispatch_runner,
+)
 from .contracts import (
     IDENTIFIER,
     PRIMARY_ENDPOINT_VERDICTS,
@@ -953,7 +959,7 @@ def writer_provider(db: FactoryDB, settings: FactorySettings, campaign_id: str) 
     """Model family a review of this topic's manuscript must avoid (the active writer's)."""
 
     spec = settings.runners.get(active_writer(db, settings, campaign_id) or "")
-    return spec.provider if spec is not None else None
+    return spec.family if spec is not None else None
 
 
 # Plans of :func:`writing_plan` (who writes this topic's manuscript).
@@ -3088,7 +3094,17 @@ def render_brief(
     maximum = int(campaign.get("max_agent_seconds") or 0)
     tools = _line_tools(paths, settings, line)
     sub = owner.claude_subagent_model or "the session model"
-    if adapter_family == "openai-codex":
+    if adapter_family == ANTIGRAVITY_PROVIDER:
+        # Antigravity seat: its own sub-agents stay in its (Gemini) quota pool.
+        models = (
+            "  - Antigravity sub-agents: the invoke_subagent tool (the built-in `flash` "
+            "sub-agent for simple work).\n"
+            f"  - GPT through Codex: `codex exec -m {owner.codex_helper_model} -c "
+            "approval_policy='\"never\"' --sandbox danger-full-access --skip-git-repo-check "
+            "-C DIR -o ANSWER.md - < PROMPT.md` (cheaper: "
+            f"`-m {owner.codex_light_model}`; long runs in the background)."
+        )
+    elif adapter_family == "openai-codex":
         models = (
             f"  - You are explicitly authorized to start sub-agents with spawn_agent; set "
             f"`model` to \"{owner.codex_helper_model}\" (or \"{owner.codex_light_model}\" for "

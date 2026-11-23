@@ -1840,7 +1840,7 @@ def register_scout_results(
         payload = _read_object(result_path)
         cards = payload.get("topic_cards")
         cards = cards if isinstance(cards, list) else []
-        provider = budget_control.provider_of(settings, task.get("runner"))
+        provider = budget_control.family_of(settings, task.get("runner"))
         digests = set(artifact_digests(payload).values())
         task_type = str(task.get("task_type") or "")
         follow_up: dict[str, Any] = {}

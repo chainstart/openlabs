@@ -27,7 +27,14 @@ if TYPE_CHECKING:
 PROVIDERS = {
     ("anthropic", "Claude Code"): "claude",
     ("openai-codex", "Codex"): "codex",
+    # Antigravity CLI (agy): Gemini models, a third model family for cross-family panels.
+    ("google-antigravity", "Antigravity"): "agy",
 }
+AGY_PROVIDER = "google-antigravity"
+# Providers whose roles are independent tool-using processes over a read-only view of
+# the materials: they may run the formal (reference/formula) verification.
+FORMAL_PROVIDERS = frozenset({"openai-codex", AGY_PROVIDER})
+_AGY_WINDOW_MINUTES = {"weekly": 10_080, "5h": 300, "daily": 1_440}
 
 
 class LaunchError(RuntimeError):
@@ -112,6 +119,57 @@ def parse_claude_stream(stdout: str) -> tuple[dict[str, Any], dict[str, Any] | N
                 "model": model, "source": "unified_review_claude_stream_json", "windows": windows}
                if windows else None)
     return result, reading
+
+
+def parse_agy_stream(stdout: str) -> tuple[dict[str, Any], str | None]:
+    """(final ``result`` payload, model named by the ``init`` event) of an agy run."""
+    init_model: str | None = None
+    result: dict[str, Any] | None = None
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("event") == "init" and isinstance(event.get("init"), dict):
+            model = event["init"].get("model")
+            init_model = model if isinstance(model, str) else init_model
+        elif event.get("event") == "result" and isinstance(event.get("result"), dict):
+            result = event["result"]
+    if result is None:
+        raise LaunchError("Antigravity stream-json output has no final result event")
+    return result, init_model
+
+
+def agy_quota_reading(text: str, *, model: str | None) -> dict[str, Any] | None:
+    """Quota reading from ``agy -p /usage --output-format json`` (no model call)."""
+    try:
+        payload = json.loads(text.strip() or "null")
+    except json.JSONDecodeError:
+        return None
+    command = payload.get("command") if isinstance(payload, dict) else None
+    data = command.get("data") if isinstance(command, dict) else None
+    windows = []
+    for group in (data or {}).get("groups") or []:
+        for bucket in (group or {}).get("buckets") or []:
+            remaining = bucket.get("remaining_fraction") if isinstance(bucket, dict) else None
+            if not bucket.get("id") or isinstance(remaining, bool) or not isinstance(remaining, (int, float)):
+                continue
+            windows.append({"name": str(bucket["id"]),
+                            "window_minutes": _AGY_WINDOW_MINUTES.get(str(bucket.get("window") or "")),
+                            "used_fraction": max(0.0, min(1.0, 1.0 - float(remaining))),
+                            "resets_at": bucket.get("reset_time") or None})
+    if not windows:
+        return None
+    return {"schema_version": QUOTA_SCHEMA, "provider": AGY_PROVIDER, "observed_at": _now(),
+            "model": model, "source": "unified_review_agy_usage", "windows": windows}
+
+
+def agy_message(text: str) -> str:
+    """The prompt as the one NDJSON user message ``agy --input-format stream-json`` reads."""
+    return json.dumps({"event": "user", "message": {
+        "role": "user", "content": [{"type": "text", "text": text}]}}) + "\n"
 
 
 def _sha256(data: bytes) -> str:
@@ -221,6 +279,12 @@ def run_role(
     them with ``--image``; Claude, whose tools stay disabled, receives one
     stream-json user message whose content holds the text and the images.
 
+    An Antigravity (``agy``) role always runs like the Codex read-only-copy fallback:
+    the materials (and image files) are copied write-protected, the role works there
+    with ``--dangerously-skip-permissions`` (headless agy denies every shell call
+    otherwise), the copy and originals are hashed before and after, and the answer is
+    the ``--json-schema`` structured output. Its quota comes from ``agy -p /usage``.
+
     ``materials`` (the registered files a Codex role may inspect, see
     :mod:`paper_writing.review_sandbox`) select the isolation: the native ``-s read-only``
     sandbox when bubblewrap works, otherwise a write-protected copy outside the workspace
@@ -249,7 +313,40 @@ def run_role(
     copy_record_sha: str | None = None
     copy_violation: review_sandbox.ReadonlyCopyViolation | None = None
     sandbox_probe: dict[str, Any] | None = None
-    if runtime == "claude":
+    if runtime == "agy":
+        agy = _executable("agy")
+        inputs = materials or review_sandbox.ReviewMaterials(workdir, {}, {})
+        image_files = {f"review-images/{i}/{path.name}": path for i, path in enumerate(attached)}
+        if image_files:
+            if set(image_files) & (set(inputs.files) | set(inputs.relative.values())):
+                raise LaunchError(f"{role_name}: attachment collides with registered materials")
+            inputs = replace(inputs, files={**inputs.files, **image_files},
+                             relative={**inputs.relative, **{name: name for name in image_files}},
+                             extras=inputs.extras.union(image_files))
+        try:
+            copy = review_sandbox.ReadonlyCopy(inputs, role_name)
+        except (review_sandbox.ReadonlyCopyViolation, OSError) as exc:
+            raise LaunchError(f"{role_name}: read-only copy unavailable: {exc}") from exc
+        try:
+            copy.create()
+        except (review_sandbox.ReadonlyCopyViolation, OSError) as exc:
+            copy.write_record(workdir)
+            copy.release()
+            raise LaunchError(f"{role_name}: {exc}") from exc
+        if materials is not None:
+            prompt = copy.prompt(prompt, agent="Antigravity")
+        if image_files:
+            prompt += ("\n\nFigure renderings to inspect (open each image file with your file "
+                       "viewer):\n" + "\n".join(f"- {copy.inputs / name}" for name in image_files)
+                       + "\n")
+        (workdir / "prompt.txt").write_text(prompt)
+        stdin_text = agy_message(prompt)
+        env = copy.env(env)
+        sandbox = copy.inputs
+        command = [agy, "-p=", "--input-format", "stream-json", "--output-format", "stream-json",
+                   "--model", model, "--json-schema", schema_text, "--dangerously-skip-permissions",
+                   "--print-timeout", f"{int(timeout)}s"]
+    elif runtime == "claude":
         # One request per role, no session: the default 1-hour cache write (2x input)
         # is rarely read back (Fable referees: 37 runs, 14 % hits, 2.33 M tokens written).
         # Claude Code 2.1.329 honours FORCE_PROMPT_CACHING_5M (checked 2026-11-20: the
@@ -332,7 +429,26 @@ def run_role(
     if proc.returncode != 0:
         raise LaunchError(f"{role_name}: process exited {proc.returncode}; see {workdir / 'stderr.txt'}")
 
-    if runtime == "claude":
+    if runtime == "agy":
+        envelope, init_model = parse_agy_stream(proc.stdout)
+        if str(envelope.get("status") or "") != "SUCCESS":
+            raise LaunchError(f"{role_name}: agy result status {envelope.get('status')}: "
+                              f"{str(envelope.get('error') or '')[:300]}")
+        result = envelope.get("structured_output")
+        if result is None:
+            raise LaunchError(f"{role_name}: no structured output")
+        reported = sorted({init_model} if init_model else set())
+        out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+        try:
+            usage = subprocess.run([command[0], "-p", "/usage", "--output-format", "json"],
+                                   text=True, capture_output=True, timeout=60, env=env,
+                                   stdin=subprocess.DEVNULL)
+            reading = agy_quota_reading(usage.stdout, model=init_model)
+        except (OSError, subprocess.TimeoutExpired):
+            reading = None
+        if reading is not None:
+            (workdir / QUOTA_FILE).write_text(json.dumps({**reading, "role": role_name}, indent=2) + "\n")
+    elif runtime == "claude":
         envelope, reading = parse_claude_stream(proc.stdout)
         if reading is not None:
             # Read by the orchestrator into its quota snapshot; not part of the receipt.
@@ -361,10 +477,10 @@ def run_role(
         "independent_context": True,
         # Claude explicitly receives --tools "". Codex uses its read-only runtime;
         # that sandbox does not disable tools, even when none are requested.
-        "tools_enabled": runtime == 'codex',
+        "tools_enabled": runtime in {'codex', 'agy'},
         "tools_requested": False,
         "sandbox_mode": ((review_sandbox.READONLY_COPY if copy is not None else 'read-only')
-                         if runtime == 'codex' else 'tools-disabled'),
+                         if runtime in {'codex', 'agy'} else 'tools-disabled'),
         "author_conversation_supplied": False,
         "prior_scores_supplied": False,
         "system_prompt_sha256": _sha256(system_prompt.encode()),
@@ -372,6 +488,8 @@ def run_role(
         "schema_sha256": _sha256(schema_text.encode()),
         "output_sha256": _sha256(out_path.read_bytes()),
     }
+    if runtime == "agy":
+        receipt["isolation"] = "readonly_copy_agy_skip_permissions"
     if runtime == "codex":
         # "readonly-copy": bubblewrap was unavailable; the role ran with danger-full-access
         # inside a write-protected copy, hashed before and after (see review_sandbox).
@@ -387,6 +505,7 @@ def run_role(
         }
     if attached:
         receipt["images"] = [{"file": path.name, "sha256": _sha256(path.read_bytes())} for path in attached]
-        receipt["image_transport"] = "codex --image" if runtime == "codex" else "claude stream-json image blocks"
+        receipt["image_transport"] = {"codex": "codex --image", "agy": "agy read-only copy files"}.get(
+            runtime, "claude stream-json image blocks")
     (workdir / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return result, receipt
