@@ -544,6 +544,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     program_assign.add_argument("--paper-id", required=True)
     program_assign.add_argument("--handler", default="second_author")
+    program_site = program_commands.add_parser(
+        "sync-site-assignments",
+        help="Submitter assignments on the site follow readiness (2026-11-23): a paper that is "
+             "not ready to submit holds none (placeholder: the admin service account), a ready "
+             "one gets its recorded original submitter, else the second author. Dry run "
+             "unless --apply.",
+    )
+    program_site.add_argument("--paper-id", action="append", default=[])
+    program_site.add_argument("--apply", action="store_true")
+    program_site.add_argument("--log", help="Append applied changes (JSON lines) to this file")
+    program_site.add_argument("--api-url", default=os.environ.get("ARA_PAPER_MANAGE_API_URL"))
+    program_site.add_argument("--key-env", default="ARA_PAPER_MANAGE_API_KEY")
     program_status = program_commands.add_parser(
         "release-status",
         help="Read-only: what is left between review ready and delivery (release pipeline).",
@@ -614,7 +626,7 @@ def build_parser() -> argparse.ArgumentParser:
     program_revision_evidence.add_argument("--reason", required=True)
     program_revision_evidence.add_argument("--decision",
                                            help="Basis decision (default: latest full unified decision).")
-    for command in (program_escalation, program_fallback, program_confirm, program_deliver,
+    for command in (program_escalation, program_fallback, program_confirm, program_deliver, program_site,
                     program_assign, program_status, program_metadata, program_adopt, program_waive, program_bind,
                     program_unwaive, program_bind_payloads, program_relocate, program_declarations,
                     program_revision_evidence):
@@ -1111,6 +1123,21 @@ def _run_program(args: argparse.Namespace) -> int:
                                    decided_by=args.decided_by)
         elif args.program_command == "confirm-escalation":
             result = program_delivery.confirm_escalation(args.paper_id, root=args.root)
+        elif args.program_command == "sync-site-assignments":
+            from paper_writing.site_assignments import sync_site_assignments
+
+            if args.apply and os.environ.get("OPENLABS_ENABLE_EXTERNAL_WRITES") != "1":
+                raise HandoffError(
+                    "Site assignment changes are disabled. Set OPENLABS_ENABLE_EXTERNAL_WRITES=1 "
+                    "for this one operation (or omit --apply for the plan)."
+                )
+            if not args.api_url:
+                raise HandoffError("Missing --api-url or ARA_PAPER_MANAGE_API_URL")
+            with ManageApiClient.from_environment(
+                args.api_url, key_environment=args.key_env
+            ) as client:
+                result = sync_site_assignments(client, root=args.root, paper_ids=args.paper_id,
+                                               apply=args.apply, log_path=args.log)
         elif args.program_command == "deliver":
             # Same explicit switch as `handoff release`; the orchestrator sets it for
             # this one call only when [program] auto_handoff is enabled.
@@ -1129,7 +1156,7 @@ def _run_program(args: argparse.Namespace) -> int:
             result = program_delivery.assign_handler(
                 args.paper_id, root=args.root, handler=args.handler
             )
-    except (HandoffError, program_delivery.ProgramDeliveryError, OSError, ValueError,
+    except (HandoffError, program_delivery.ProgramDeliveryError, OSError, ValueError, RuntimeError,
             KeyError, AdoptError) as exc:
         print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False))
         return 1

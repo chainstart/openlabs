@@ -487,9 +487,9 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
   `[program.direction_limits]` 内选择一次定点分析、换刊/短文形式或冻结；次数用尽、决定任务
   两次失败或达到 `topic_max_agent_seconds` 时题目冻结。研究者返回的有据冻结直接登记。
 - 评审通过的论文离开研究名额进入 ready 队列；队列超过 `max_ready_unsubmitted` 时暂停新立项。
-  `auto_handoff = true` 时每篇走下面的发布流水线，交付到管理网站，不指定投稿人；业主审阅后运行
-  `python -m openlabs program assign-handler --paper-id <id>`（默认第二作者）。实际投稿、付费
-  和署名变更仍由人确认。
+  `auto_handoff = true` 时每篇走下面的发布流水线，交付到管理网站。网站上的投稿人分配按下文
+  “网站投稿人分配跟随可投稿状态”一节自动处理（2026-11-23 起）；`program assign-handler` 只在
+  数据仓库登记 `submission_contact`，不改网站分配。实际投稿、付费和署名变更仍由人确认。
 - 有 `[runners]` 表时按各模型族剩余额度派活，并为评审与决策保留余量（`[routing]`）；额度
   错误按 `[budget]` 退避，不消耗重试次数。Claude 的子 agent 工具（Task/Agent）只给 lead 档，
   `[runners.<name>] allow_subagents` 可改。
@@ -1449,6 +1449,61 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 使用 WSL 下载桥获取 `workflows/paper/uv.lock` 中对应当前解释器及架构的 wheel，核对 SHA-256 后
 用该 venv 的 `python -m pip install --no-index --no-deps /path/to/verified.whl` 安装。
 `paperfig-python` 是绘图环境。在论文工作流解释器中执行 `import pymupdf` 验证。
+
+### 网站投稿人分配跟随可投稿状态（2026-11-23）
+
+用户 2026-11-23 原话：“网站的交付逻辑要改一下，当处于'尚未投稿'状态的论文，不要分配投稿人，只有
+通过门禁，状态改为'可投稿'后，才分配投稿人”。
+
+**分配从哪来**：网站服务端在首次建论文（`POST /v1/papers`）时，自动把稿件分配给第二署名作者
+（分配记录的 notes 为 “Automatically assigned to the second declared author …”，`assigned_by`
+是 Agent API 账号本身）。建论文、推包、元数据同步的请求都没有跳过它的参数；我们的代码此前没有
+调用过分配接口，`program assign-handler` 只写数据仓库。署名为空的论文（authors missing）网站
+不自动分配。
+
+**规则**（`workflows/paper/paper_writing/site_assignments.py`，对网站做幂等对账）：
+
+- “可投稿”= 生命周期为 `backlog|assigned|ready_to_submit`、没有投稿记录、网站
+  `readiness.ready_for_submission` 为 true、评审状态不是 `draft|blocked|revision_required`、
+  `submission.status` 不是 `on_hold|abandoned|withdrawn`、没有 `polish_recall`、当前包状态为
+  `ready`；数据仓库登记了该论文时，还要求 `writing_release.status = ready` 且登记版本等于网站
+  当前包版本（新版本在修订中即视为回退，不等网站投影刷新）。
+- 不是可投稿：若有真实投稿人在分配上，用正规接口 `POST /v1/papers/<id>/assignments` 改由
+  “ARA 管理员”服务账号（API 账号本身，`GET /v1/me`）占位；原分配行保留为 inactive。占位分配
+  的 notes 以 `[openlabs-site-assignment]` 开头，写明原因和 `default_submitter_id=…`。没有分配的
+  论文保持无分配。
+- 可投稿且没有真实投稿人：分配给记录的原投稿人，查找顺序为占位 notes（含旧占位里写的
+  `assignment <id>`）、`papers/<id>/revisions/SUBMITTER-HIDE-site-receipt-*.json`、网站分配历史；
+  都没有时用论文署名的第二作者（按邮箱、中文名、别名匹配网站用户），再退到
+  `registry/settings.yaml#defaults.authors[1]`。
+- 有投稿记录（已投稿、审稿中、返修、接收、发表）或生命周期已过投稿前阶段（含 `closed`）的论文
+  一律不动。
+
+**调用位置**：
+- `release_handoff` 推包完成后对该论文执行一次（`program deliver` 与 `handoff release` 都经过
+  它）；失败不影响交付，结果在返回的 `site_assignment` 里。
+- 每轮调度的 `program autonomy` 步骤 `site_assignments`（受 `[program] auto_handoff` 授权）对全部
+  投稿前论文对账，报告在 tick 的 `program.site_assignments`；失败记在那里，不进 `errors`。实际
+  改动追加到实例数据库目录的 `site-assignments.jsonl`，并在对应课题的台账里记
+  `site_assignment_parked|assigned`。
+- 手工：`python -m openlabs program sync-site-assignments [--paper-id ID ...] [--apply]`
+  （默认只列计划）；或 `paper-writing program sync-site-assignments`（`--apply` 需
+  `OPENLABS_ENABLE_EXTERNAL_WRITES=1`）。
+
+**通知**：我们这边没有“分配后通知投稿人”的代码；投稿人通过网站自己的待办看到分配。期刊来信的
+转发（`journal_dispatch`）按当前唯一有效分配发信，占位期间不会发给原投稿人。
+
+**做不到的部分**：角色为 admin 的用户（例如王琪盛）在网站上能看到全部稿件，与分配无关；网站
+在建论文时仍会先自动分配，我们只能事后挪走（建论文到对账之间有一个短窗口）。根治需要改网站服务端：
+建论文时不自动分配，或在可投稿时才分配。
+
+### 登记已投稿（2026-11-23）
+
+`python -m openlabs program mark-submitted --paper-id ID --journal NAME --by WHO --reason TEXT
+[--submitted-by NAME] [--version V] [--evidence 数据仓库路径 ...]`：课题 `ready_queue → submitted`
+（`mark_topic_submitted`），回执写到实例数据库目录 `receipts/mark-submitted/`，台账另记一条
+`submission_registered`。只接受 ready_queue 的课题；已 submitted 的再次登记返回
+`already_submitted`。网站上的投稿记录仍按网站流程登记。
 
 ### 梳理模式：只停研究，保留写作与修订（2026-11-23）
 

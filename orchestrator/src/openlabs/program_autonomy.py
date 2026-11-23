@@ -3543,6 +3543,14 @@ def assign_submission_handler(
             "topic_id": topic.get("topic_id") if topic else None, **result}
 
 
+def _sync_site_assignments(db, paths, settings, report) -> None:
+    """Site submitter assignments follow readiness (user rule 2026-11-23; site_assignment.py)."""
+
+    from .site_assignment import sync_tick
+
+    sync_tick(db, paths, settings, report)
+
+
 def run_program_autonomy(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -3555,7 +3563,8 @@ def run_program_autonomy(
         return
     for name, step in (("limits", _check_limits), ("decisions", _check_decision_tasks),
                        ("registered_reviews", _queue_resynthesized), ("delivery", _deliver_ready),
-                       ("delivery_repairs", _repair_delivery), ("delivery_chain", report_delivery_chain)):
+                       ("delivery_repairs", _repair_delivery), ("site_assignments", _sync_site_assignments),
+                       ("delivery_chain", report_delivery_chain)):
         try:
             step(db, paths, settings, report)
         except (OSError, TopicLedgerError, KeyError, TypeError, ValueError,

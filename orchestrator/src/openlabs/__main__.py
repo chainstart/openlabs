@@ -202,6 +202,28 @@ def _parser() -> argparse.ArgumentParser:
         "--conditions-met", action="store_true",
         help="Confirm that the admission conditions due before submission are met",
     )
+    site_sync = program_commands.add_parser(
+        "sync-site-assignments",
+        help="Site submitter assignments follow readiness (user rule 2026-11-23): a paper that "
+        "is not ready to submit holds no submitter (placeholder: the admin service account, "
+        "default submitter recorded), a ready one gets the recorded original submitter, else "
+        "the second author. Submitted/closed papers are never touched. Dry run unless --apply",
+    )
+    site_sync.add_argument("--paper-id", action="append", default=[])
+    site_sync.add_argument("--apply", action="store_true")
+    mark_submitted = program_commands.add_parser(
+        "mark-submitted",
+        help="Record that a delivered paper was submitted to a journal: topic ready_queue -> "
+        "submitted with a receipt (instance database receipts/mark-submitted/)",
+    )
+    mark_submitted.add_argument("--paper-id", required=True)
+    mark_submitted.add_argument("--journal", required=True)
+    mark_submitted.add_argument("--by", required=True, help="Who records it (provenance)")
+    mark_submitted.add_argument("--reason", required=True)
+    mark_submitted.add_argument("--submitted-by", help="Who submitted it to the journal")
+    mark_submitted.add_argument("--version", help="Submitted version (default: delivered one)")
+    mark_submitted.add_argument("--evidence", action="append", default=[],
+                                help="Data-repository path of a receipt (repeatable)")
     queue_ready = program_commands.add_parser(
         "queue-ready", help="Queue one topic with a current registered ready decision.")
     queue_ready.add_argument("--topic", required=True)
@@ -855,6 +877,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 payload = retry_release(db, paths, settings, paper_id=args.paper_id,
                                         by=args.by, reason=args.reason)
             except DeliveryError as exc:
+                print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
+                return 1
+        elif args.program_command in {"sync-site-assignments", "mark-submitted"}:
+            from .site_assignment import SiteAssignmentError, mark_submitted, operator_sync
+
+            try:
+                if args.program_command == "sync-site-assignments":
+                    payload = operator_sync(db, paths, settings, paper_ids=args.paper_id,
+                                            apply=args.apply)
+                else:
+                    payload = mark_submitted(
+                        db, paths, settings, paper_id=args.paper_id, journal=args.journal,
+                        by=args.by, reason=args.reason, evidence=args.evidence,
+                        submitted_by=args.submitted_by, version=args.version)
+            except (SiteAssignmentError, OSError) as exc:
                 print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
                       file=sys.stderr)
                 return 1

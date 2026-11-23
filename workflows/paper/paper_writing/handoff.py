@@ -2109,6 +2109,17 @@ def release_handoff(
             receipt_dir=receipt_dir,
             manage_api_url=client.base_url,
         )
+    # 2026-11-23 rule: the site's automatic assignment at paper creation is held back
+    # until the paper is ready to submit (paper_writing.site_assignments). A failure here
+    # never fails the delivery; the scheduler's per-tick reconciliation retries it.
+    try:
+        from paper_writing.site_assignments import sync_site_assignments
+
+        site_assignment: dict[str, Any] = sync_site_assignments(
+            client, root=root, paper_ids=[paper_id], apply=True)
+    except Exception as exc:  # noqa: BLE001 - reported, retried by the reconciliation
+        site_assignment = {"ok": False, "errors": [{"paper_id": paper_id,
+                                                    "error": str(exc)[:400]}]}
     return {
         "paper_id": paper_id,
         "package_id": manifest["package_id"],
@@ -2117,6 +2128,8 @@ def release_handoff(
         "origin_commit": manifest["origin_commit"],
         "manage_package_status": manage_package.get("status"),
         "receipt": str(receipt_path),
+        "site_assignment": {key: site_assignment.get(key)
+                            for key in ("ok", "changed", "errors", "blocked")},
     }
 
 
