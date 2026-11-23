@@ -1,0 +1,130 @@
+"""Operator pause and resume of one topic in research (2026-11-23, polish mode).
+
+The owner asked to stop new experiments and polish the papers already written. A topic
+in research without a manuscript is held, not frozen: its ledger status (``active``),
+pre-registration, budget and workspace stay as they are. ``program pause-topic`` sets
+the campaign's ``research_state.json`` ``status`` to ``paused`` (with an
+``operator_pause`` record), pauses the campaign (queued seats are cancelled) and notes
+the decision in the topic ledger. A paused topic holds no research slot
+(:func:`openlabs.program.paused_topic_campaigns`), and project synchronization keeps the
+campaign paused while the state says so. ``program pause-topic --resume`` reverses it:
+state ``active`` again, the campaign resumed; the next tick's synchronization restores
+continuous renewal and the owner gets the next seat as usual.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+from .config import FactorySettings, WorkspacePaths
+from .contracts import atomic_write_json
+from .db import FactoryDB, utc_now
+from .program import open_topic_ledger, record_topic_note
+
+IN_FLIGHT = ("leased", "running")
+
+
+class TopicPauseError(ValueError):
+    """The topic cannot be paused or resumed in its current state."""
+
+
+def _state_path(campaign: Mapping[str, Any]) -> Path:
+    value = str(campaign.get("workstream_state_path") or "").strip()
+    if not value:
+        raise TopicPauseError("campaign has no research_state.json path")
+    return Path(value)
+
+
+def _read_state(path: Path) -> dict[str, Any]:
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise TopicPauseError(f"cannot read {path}: {exc}") from exc
+    if not isinstance(state, dict):
+        raise TopicPauseError(f"{path} is not a JSON object")
+    return state
+
+
+def _running_tasks(db: FactoryDB, campaign_id: str) -> list[str]:
+    with db.connect() as connection:
+        rows = connection.execute(
+            "SELECT task_id FROM tasks WHERE campaign_id=? AND status IN (?, ?) "
+            "ORDER BY task_id", (campaign_id, *IN_FLIGHT)).fetchall()
+    return [str(row["task_id"]) for row in rows]
+
+
+def pause_topic(
+    db: FactoryDB,
+    paths: WorkspacePaths,
+    settings: FactorySettings,
+    *,
+    topic_id: str,
+    reason: str,
+    by: str,
+    resume: bool = False,
+) -> dict[str, Any]:
+    """Pause (or, with ``resume``, resume) one active topic's research campaign."""
+
+    if not str(reason).strip() or not str(by).strip():
+        raise TopicPauseError("--reason and --by are required")
+    ledger = open_topic_ledger(paths, settings.program)
+    topic = ledger.topic(topic_id)
+    if topic is None:
+        raise TopicPauseError(f"unknown topic {topic_id}")
+    if topic.get("status") != "active":
+        raise TopicPauseError(
+            f"topic {topic_id} is {topic.get('status')!r}; only an active topic in research "
+            "is paused or resumed here")
+    campaign_id = str(topic.get("campaign_id") or "")
+    campaign = db.campaign(campaign_id) if campaign_id else None
+    if campaign is None:
+        raise TopicPauseError(f"topic {topic_id} has no campaign")
+    path = _state_path(campaign)
+    state = _read_state(path)
+    now = utc_now()
+    result: dict[str, Any] = {
+        "schema_version": "openlabs.program_topic_pause.v1",
+        "topic_id": topic_id, "campaign_id": campaign_id, "research_state": str(path),
+    }
+    if not resume:
+        if state.get("status") == "paused" and isinstance(state.get("operator_pause"), Mapping):
+            return {**result, "status": "already_paused", "operator_pause": state["operator_pause"]}
+        if state.get("status") != "active":
+            raise TopicPauseError(
+                f"research_state status is {state.get('status')!r}, not 'active'")
+        if str(campaign.get("status")) not in {"active", "production_paused"}:
+            raise TopicPauseError(f"campaign status is {campaign.get('status')!r}")
+        running = _running_tasks(db, campaign_id)
+        if running:
+            raise TopicPauseError(
+                "tasks of this campaign are running (" + ", ".join(running)
+                + "); pause after they finish")
+        record = {"by": by, "reason": reason, "at": now, "prior_status": "active"}
+        atomic_write_json(path, {**state, "status": "paused", "operator_pause": record})
+        cancelled = db.pause_production_campaign(campaign_id, reason=f"operator_pause:{by}")
+        record_topic_note(ledger, topic_id, db=db, event_type="topic_operator_paused",
+                          reason="operator_pause", decided_by=f"operator:{by}",
+                          detail={**record, "cancelled_tasks": list(cancelled)},
+                          key=f"operator_pause:{now}")
+        return {**result, "status": "paused", "operator_pause": record,
+                "cancelled_tasks": list(cancelled)}
+    pause = state.get("operator_pause")
+    if state.get("status") != "paused" or not isinstance(pause, Mapping):
+        raise TopicPauseError(
+            "research_state is not under an operator pause (status "
+            f"{state.get('status')!r}); nothing to resume")
+    resumed = {**dict(pause), "resumed_at": now, "resumed_by": by, "resume_reason": reason}
+    history = [item for item in state.get("operator_pause_history") or []
+               if isinstance(item, Mapping)]
+    updated = {key: value for key, value in state.items() if key != "operator_pause"}
+    updated.update({"status": str(pause.get("prior_status") or "active"),
+                    "operator_pause_history": [*history, resumed]})
+    atomic_write_json(path, updated)
+    changed = db.resume_paused_campaign(campaign_id, reason=f"operator_resume:{by}")
+    record_topic_note(ledger, topic_id, db=db, event_type="topic_operator_resumed",
+                      reason="operator_resume", decided_by=f"operator:{by}",
+                      detail=resumed, key=f"operator_resume:{now}")
+    return {**result, "status": "resumed", "campaign_resumed": changed, "operator_pause": resumed}

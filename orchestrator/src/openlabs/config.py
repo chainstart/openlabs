@@ -306,6 +306,14 @@ class ProgramSettings:
     # no admission review and no new campaign; ``max_active_topics`` still caps the
     # total. Lines not listed are bounded by the global limit only.
     line_max_active_topics: dict[str, int] = field(default_factory=dict)
+    # Polish mode (2026-11-23, owner: "stop new tasks and new experiments, polish the
+    # papers already produced"): no new topic supply and no new research starts -- no
+    # scout, card repair, card revision, admission review, admission pilot, auto-reopen
+    # of a frozen topic or materialization of an admitted topic. Writing, reviews,
+    # delivery, delivered-version revisions (revise-delivered), operator reopen grants,
+    # journal mail and topics already in research keep running. Off by default;
+    # turning it off restores normal supply on the next tick.
+    polish_mode: bool = False
 
 
 DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_gpt")
@@ -1403,6 +1411,7 @@ def load_program_settings(payload: Any) -> ProgramSettings:
             program.get("compute_backlog_max_queued_jobs"), 0
         ),
         campaign_compute_threads=_nonnegative_int(program.get("campaign_compute_threads"), 8),
+        polish_mode=program.get("polish_mode", False) is True,
         line_max_active_topics=_line_limits(program.get("line_max_active_topics")),
         **_git_settings(program.get("git")),
     )

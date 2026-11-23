@@ -1427,3 +1427,27 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 使用 WSL 下载桥获取 `workflows/paper/uv.lock` 中对应当前解释器及架构的 wheel，核对 SHA-256 后
 用该 venv 的 `python -m pip install --no-index --no-deps /path/to/verified.whl` 安装。
 `paperfig-python` 是绘图环境。在论文工作流解释器中执行 `import pymupdf` 验证。
+
+### 梳理模式：只停研究，保留写作与修订（2026-11-23）
+
+业主 2026-11-23 要求停止新任务、新实验，转向梳理已产出的论文。`[program] polish_mode = true` 时，
+控制面不再排出题（`topic_scout`）、卡片修正（`topic_card_repair`）、修订卡（`topic_revision`）、
+立项评审（`topic_admission`）、立项试算（admission pilot，不向 ailab 提交）、冻结课题的自动重开
+和已立项课题的建 campaign；开关打开前已排队、尚未开始的出题任务在下一轮取消（已领取的照常跑完，结果照常登记）。已 admitted 的课题保留立项，等开关关闭后按原顺序物化。
+写作、统一评审、交付、管理网站邮件、交付版补强（`revise-delivered`）、业主文字修改授权
+（`reopen-grant`）和已在研课题的坐席照常运行；已经提交的 ailab 作业照常跑完。tick 报告
+`program.polish_mode` 列出停与不停的环节，`program.scout_blocked` 为 `polish_mode`。
+关掉开关（删掉该键或设 `false`）后下一轮恢复。
+
+尚无稿件的在研课题用 `program pause-topic` 暂停，不冻结：
+
+```sh
+bin/openlabs-container-loop cli -- program pause-topic --topic-id T --reason "<理由>" --by <谁>
+bin/openlabs-container-loop cli -- program pause-topic --topic-id T --reason "<理由>" --by <谁> --resume
+```
+
+暂停把 campaign 的 `research_state.json` 写成 `status: paused` 并附 `operator_pause`，campaign
+转为 `production_paused`，排队坐席取消，台账记一条 `topic_operator_paused`。台账状态仍为 active，
+预注册、预算与工作区不变，不占研究名额。campaign 有运行中任务时命令拒绝，等任务结束再执行。
+`--resume` 只恢复用本命令暂停的课题：状态改回 active，campaign 恢复，记录移入
+`operator_pause_history`，下一轮同步恢复续派，负责人照常接席。

@@ -427,6 +427,8 @@ def _proposed_pool(document: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 LINE_SLOTS_FULL_REASON = "line_slots_full"
+# ``[program] polish_mode`` (2026-11-23): no new topic supply, no new research starts.
+POLISH_MODE_REASON = "polish_mode"
 
 
 def line_scout_room(status: Any, document: Mapping[str, Any], line: Any) -> int | None:
@@ -1204,6 +1206,8 @@ def schedule_scouts(
     program = settings.program
     if not program.enabled:
         return [], "program_disabled"
+    if program.polish_mode:
+        return [], POLISH_MODE_REASON
     if not budget_control.routing_enabled(settings):
         # Without provider routing the proposer and judge families cannot be
         # told apart, so the gate could not be independent.
@@ -2075,6 +2079,8 @@ def schedule_card_repairs(
     still invalid is final (``card_repair.status = not_repairable``).
     """
 
+    if settings.program.polish_mode:
+        return []
     ledger = open_topic_ledger(paths, settings.program)
     moment = now or _now_moment()
     outcomes: list[dict[str, Any]] = []
@@ -2252,6 +2258,8 @@ def schedule_revisions(
     program = settings.program
     if not program.enabled:
         return [], "program_disabled"
+    if program.polish_mode:
+        return [], POLISH_MODE_REASON
     if not budget_control.routing_enabled(settings):
         return [], "provider_routing_not_configured"
     ledger = open_topic_ledger(paths, program)
@@ -2526,6 +2534,9 @@ def schedule_topic_admission(
 
     if not settings.program.enabled:
         return ReviewSchedule(reason="program_disabled")
+    if settings.program.polish_mode:
+        # Polish mode: proposed cards stay proposed; no admission review starts.
+        return ReviewSchedule(reason=POLISH_MODE_REASON)
     if not budget_control.routing_enabled(settings):
         return ReviewSchedule(reason="admission_requires_provider_routing")
     if compute_backlogged(settings):
@@ -3306,6 +3317,9 @@ def materialize_waiting_topics(
 
     campaign_ids: list[str] = []
     task_ids: list[str] = []
+    if settings.program.polish_mode:
+        # Polish mode: admitted topics keep their admission and wait for their campaign.
+        return CandidateSpawn(campaign_ids=(), task_ids=())
     if compute_backlogged(settings):
         # Admitted topics wait for their campaign until the compute backlog falls.
         return CandidateSpawn(campaign_ids=(), task_ids=())
@@ -3572,6 +3586,21 @@ def run_program_pipeline(
     if not settings.program.enabled:
         return
     info = report.program
+    if settings.program.polish_mode:
+        info["polish_mode"] = {
+            "on": True,
+            "paused": ["topic_scout", "topic_card_repair", "topic_revision",
+                       "topic_admission", "admission_pilot", "auto_reopen",
+                       "materialize"],
+            "running": ["topics_in_research", "writing", "reviews", "delivery",
+                        "delivered_revisions", "operator_reopen_grants", "journal_mail"],
+            # Scouts queued before the switch never start (a leased one finishes).
+            "cancelled": list(db.cancel_queued_tasks(
+                [str(task["task_id"]) for task in _program_tasks(
+                    db, statuses=("queued",), where="AND task_type=?",
+                    parameters=(SCOUT_TASK_TYPE,))],
+                reason=POLISH_MODE_REASON)),
+        }
     backlog = compute_backlog(settings)
     if backlog is not None:
         info["compute_backlog"] = backlog

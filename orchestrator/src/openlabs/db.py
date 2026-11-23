@@ -1020,6 +1020,27 @@ class FactoryDB:
                     self._event(connection, "task", task_id, "task_cancelled", {"reason": reason})
         return tuple(cancelled)
 
+    def cancel_queued_tasks(self, task_ids: Iterable[str], *, reason: str) -> tuple[str, ...]:
+        """Cancel the given tasks that are still ``queued`` (never leased ones)."""
+
+        selected = sorted({str(item) for item in task_ids if str(item).strip()})
+        if not selected:
+            return ()
+        now = utc_now()
+        cancelled: list[str] = []
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for task_id in selected:
+                updated = connection.execute(
+                    "UPDATE tasks SET status='cancelled', not_before=NULL, last_error=?, "
+                    "updated_at=? WHERE task_id=? AND status='queued'",
+                    (reason, now, task_id),
+                )
+                if updated.rowcount:
+                    cancelled.append(task_id)
+                    self._event(connection, "task", task_id, "task_cancelled", {"reason": reason})
+        return tuple(cancelled)
+
     def record_event_once(
         self,
         entity_type: str,

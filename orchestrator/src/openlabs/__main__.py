@@ -272,6 +272,17 @@ def _parser() -> argparse.ArgumentParser:
     revision.add_argument("--target-zone", type=int, choices=(1, 2, 3, 4))
     for name in ("topic-id", "package-id", "reason", "by"):
         revision.add_argument("--" + name, required=True)
+    pause_topic = program_commands.add_parser(
+        "pause-topic",
+        help="Hold one active topic in research (polish mode, 2026-11-23): research_state "
+        "status paused, campaign paused, queued seats cancelled, ledger note; no slot held. "
+        "--resume reverses it",
+    )
+    pause_topic.add_argument("--topic-id", required=True)
+    pause_topic.add_argument("--reason", required=True)
+    pause_topic.add_argument("--by", required=True, help="Who decided it (provenance)")
+    pause_topic.add_argument("--resume", action="store_true",
+                             help="Resume a topic paused with this command")
     reopen_grant = program_commands.add_parser(
         "reopen-grant",
         help="Grant a topic frozen in review for a procedural reason (review_stalled, "
@@ -756,6 +767,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                                                      args.package_id, args.reason, args.by, args.target_zone)
             except ReopenGrantError as exc:
                 print(str(exc), file=sys.stderr)
+                return 1
+        elif args.program_command == "pause-topic":
+            from .program import TopicLedgerError
+            from .topic_pause import TopicPauseError, pause_topic
+
+            try:
+                payload = pause_topic(db, paths, settings, topic_id=args.topic_id,
+                                      reason=args.reason, by=args.by, resume=args.resume)
+            except (TopicPauseError, TopicLedgerError, KeyError, OSError) as exc:
+                print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
+                      file=sys.stderr)
                 return 1
         elif args.program_command == "reopen-grant":
             from .program import TopicLedgerError

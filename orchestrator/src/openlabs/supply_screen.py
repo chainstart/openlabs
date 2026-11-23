@@ -781,7 +781,8 @@ def advance_pilots(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettin
     from .research_lines import read_lines_or_none
 
     supply = _supply(settings)
-    if not supply.pilot:
+    if not supply.pilot or settings.program.polish_mode:
+        # Polish mode (2026-11-23): no admission pilot is submitted to ailab.
         return []
     ledger = open_topic_ledger(paths, settings.program)
     topics = ledger.read().get("topics") or []

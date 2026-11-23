@@ -373,7 +373,8 @@ def reopen_ready_topics(
     from . import owner as owner_mode
 
     cap = int(settings.program.auto_reopen_max)
-    if cap <= 0:
+    if cap <= 0 or settings.program.polish_mode:
+        # Polish mode (2026-11-23): a frozen topic does not return to research.
         return []
     ledger = open_topic_ledger(paths, settings.program)
     document = ledger.read()
