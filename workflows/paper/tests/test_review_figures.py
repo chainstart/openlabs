@@ -285,3 +285,38 @@ def test_antigravity_role_refuses_a_different_reported_model(tmp_path, monkeypat
         run_role(role_name="referee_a",
                  role={"provider": "google-antigravity", "tool": "Antigravity", "model": "gemini-4-neon-high"},
                  system_prompt="s", user_prompt="u", schema={"type": "object"}, workdir=tmp_path / "run")
+
+
+def test_reader_uses_main_document_when_a_title_page_document_follows(tmp_path, monkeypatch):
+    """2026-11-24 (PFAS v1.2.7): the expanded source appended a separate title-page
+    document; the body regions were taken from it and the reader got no figures, silently."""
+    from paper_writing import figures
+    seen = []
+    def render(manuscript, ordered, output):
+        seen.extend(item["path"] for item in ordered)
+        return {"images": [{"png": str(output / "sheet.png")}], "notes": []}
+    monkeypatch.setattr(figures, "review_images", render)
+    main = (r"\documentclass{article}\begin{document}\begin{abstract}A.\end{abstract}"
+            r"\section{Introduction}Text.\begin{figure}\includegraphics{figures/design}\end{figure}"
+            r"\section{Results}More.\end{document}")
+    title_page = (r"\documentclass{article}\begin{document}\maketitle"
+                  r"\section*{CRediT authorship contribution statement}A: Writing.\end{document}")
+    paths = [{"path": "figures/design.pdf", "sha256": "d"}]
+    images, issues, bindings = actual_delivery_images(
+        {"expanded": main + "\n" + title_page, "figure_files": paths,
+         "manuscript_path": str(tmp_path)}, tmp_path)
+    assert seen == ["figures/design.pdf"] and len(images) == 1 and not issues
+    assert bindings == {"figures/design.pdf": "d"}
+
+
+def test_reader_reports_figures_outside_the_detected_body(tmp_path, monkeypatch):
+    """Figures that exist but are not in the detected main text are a technical problem."""
+    from paper_writing import figures
+    monkeypatch.setattr(figures, "review_images", lambda *a: {"images": [], "notes": []})
+    source = (r"\begin{document}\section{Introduction}Text.\appendix"
+              r"\begin{figure}\includegraphics{figures/a}\end{figure}\end{document}")
+    images, issues, bindings = actual_delivery_images(
+        {"expanded": source, "figure_files": [{"path": "figures/a.pdf", "sha256": "a"}],
+         "manuscript_path": str(tmp_path)}, tmp_path)
+    assert images == [] and bindings == {}
+    assert issues == ["No main-text figure could be associated with the manuscript body."]

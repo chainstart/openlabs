@@ -240,9 +240,15 @@ def delivery_images(pre, run):
     from paper_writing.figure_standard import ENV, GRAPHIC
     from paper_writing.figures import review_images
 
-    source = re.sub(r"(?<!\\)%[^\n]*", "", pre["expanded"])
-    start, end = narrative_check.find_regions(source).body
-    source = source[start:end]
+    document = re.sub(r"(?<!\\)%[^\n]*", "", pre["expanded"])
+    # ``expanded`` may concatenate further registered documents after main.tex (a separate
+    # title page with its own \begin{document}); the regions are those of the main document.
+    # Without this the body of PFAS v1.2.7 was found in the title page, empty (2026-11-24).
+    closing = re.search(r"\\end\s*\{document\}", document)
+    if closing:
+        document = document[:closing.end()]
+    start, end = narrative_check.find_regions(document).body
+    source = document[start:end]
     files = pre.get("figure_files") or []
     ordered = []
     problems = []
@@ -259,6 +265,10 @@ def delivery_images(pre, run):
             else:
                 problems.append(f"Figure {number}: could not resolve panel {graphic} uniquely.")
     if not ordered:
+        if not problems and ENV.search(document):
+            # Figures exist but none sits in the detected main text: never let the reader
+            # pass without images (a silent empty selection is not a review of the figures).
+            problems.append("No main-text figure could be associated with the manuscript body.")
         return [], problems, {}
     result = review_images(Path(pre["manuscript_path"]), ordered, run / "reader-figures")
     if not result["images"]:
