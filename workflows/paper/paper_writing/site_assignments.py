@@ -95,7 +95,9 @@ def classify(paper: Mapping[str, Any],
     if held in HELD_SUBMISSION:
         reasons.append(f"site submission status {held}")
     recall = writing.get("polish_recall")
-    if isinstance(recall, Mapping) and recall.get("status") == "recalled_for_revision":
+    if (isinstance(recall, Mapping) and recall.get("status") == "recalled_for_revision"
+            and recall.get("recalled_package_id") in (None, paper.get("current_package_id"))):
+        # A recall applies to the package it recalled; a newer delivered package clears it.
         reasons.append("recalled for revision")
     package = next((item for item in paper.get("packages") or []
                     if item.get("id") == paper.get("current_package_id")), None)

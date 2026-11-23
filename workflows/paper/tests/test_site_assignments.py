@@ -171,6 +171,15 @@ def test_submitted_or_closed_papers_are_never_touched(repo: Path, paper: dict) -
     assert result["papers"][0]["state"] == "untouched" and site.posts == []
 
 
+def test_a_recall_of_an_older_package_does_not_block_a_new_one() -> None:
+    paper = _paper()
+    paper["writing_metadata"]["polish_recall"] = {"status": "recalled_for_revision",
+                                                  "recalled_package_id": "old-pkg"}
+    assert classify(paper, None)[0] == "ready"
+    paper["writing_metadata"]["polish_recall"]["recalled_package_id"] = "pkg-uuid"
+    assert classify(paper, None) == ("not_ready", ["recalled for revision"])
+
+
 def test_classify_requires_a_ready_current_package() -> None:
     paper = _paper()
     paper["packages"][0]["status"] = "uploading"
