@@ -237,6 +237,17 @@ def baseline_fingerprints(root, metadata, release):
         }
 
 
+def _build_pdf(build):
+    """latexmk in ``build``; the log is decoded leniently (bibtex output may be Latin-1)."""
+    latexmk = shutil.which("latexmk") or str(
+        Path.home() / ".local/opt/texlive/bin/x86_64-linux/latexmk")
+    return subprocess.run(
+        [latexmk, "-pdf", "-g", "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape", "main.tex"],
+        cwd=build, env={**os.environ, "PATH": f"{Path(latexmk).parent}:{os.environ.get('PATH', '')}"},
+        capture_output=True, text=True, errors="replace", timeout=180,
+    )
+
+
 def _prepare(paper_id, *, root):
     from paper_writing.operations import _review_workspace_fingerprints
     from paper_writing.release_pipeline import _package_stale
@@ -283,14 +294,7 @@ def _prepare(paper_id, *, root):
         _copy_sources(manuscript, pdf, build)
         for path, content in edits.items():
             (build / path.relative_to(manuscript)).write_bytes(content)
-        latexmk = shutil.which("latexmk") or str(
-            Path.home() / ".local/opt/texlive/bin/x86_64-linux/latexmk")
-        result = subprocess.run(
-            [latexmk, "-pdf", "-g", "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape", "main.tex"],
-            cwd=build, env={**os.environ,
-                            "PATH": f"{Path(latexmk).parent}:{__import__('os').environ.get('PATH', '')}"},
-            capture_output=True, text=True, timeout=180,
-        )
+        result = _build_pdf(build)
         bibliography = build / "main.bbl"
         if (result.returncode or not bibliography.is_file() or not (build / "main.pdf").is_file()
                 or not re.search(r"\\bibitem(?:\[[^\]]*\])?\s*\{" + re.escape(key) + r"\}",

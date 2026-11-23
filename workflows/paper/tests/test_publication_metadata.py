@@ -102,3 +102,17 @@ def test_registered_support_key_is_rewritten_in_place_and_reversible(tmp_path):
     # original append behaviour is kept.
     assert pm.citation_key(manuscript, {"bibliography_key": "missingKey"}) == pm.KEY
     assert pm.citation_key(manuscript, {}) == pm.KEY
+
+
+def test_build_log_with_non_utf8_bytes_is_decoded(tmp_path, monkeypatch):
+    # 2026-11-24: bibtex wrote a Latin-1 byte (0xfc) into latexmk's output and the
+    # projection failed with UnicodeDecodeError instead of building (TIC 421871796).
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "latexmk"
+    fake.write_bytes(b"#!/bin/sh\nprintf 'M\\374ller et al.\\n'\nexit 0\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(pm.shutil, "which", lambda name: str(fake))
+    result = pm._build_pdf(tmp_path)
+    assert result.returncode == 0
+    assert result.stdout.startswith("M") and "ller et al." in result.stdout
