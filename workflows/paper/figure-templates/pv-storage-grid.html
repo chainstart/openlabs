@@ -1,0 +1,56 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- Energy example of the SVG/HTML schematic route: a PV plant with a shared-connection
+     battery. Panel a shows the physical chain with power flows whose line width follows the
+     power (data-value, MW) and the price/control path; panel b carries a small result curve
+     drawn by the inset script from data (sidecar "insets"). Replace the example numbers
+     with the paper's own. Assets: `paper-writing figures assets energy`. -->
+<title>PV-storage plant at a shared grid connection</title>
+<style>
+  .chain { display: grid; grid-template-columns: 12mm 1fr 21mm 1fr 21mm 1fr 21mm 1fr 21mm; align-items: center;
+           row-gap: 6mm; }
+  .poi { border-color: var(--ol-gray); }
+  #panel-b { flex: 0 0 52mm; }
+</style></head>
+<body>
+<div class="ol-figure double" data-flow-max="5" data-flow-width="3.4">
+
+  <section class="ol-panel" data-panel="a" id="panel-a">
+    <span class="ol-title">Plant, connection and dispatch signal (12:30, illustrative)</span>
+    <div class="ol-group" style="margin-top:1mm">
+      <span class="ol-caption">Behind the connection point</span>
+      <div class="chain">
+        <div class="ol-card bare" id="sun"><img class="ol-icon l energy" src="asset:energy/tabler-sun-high.svg" data-stroke="1.6" alt="sun"><span class="ol-note">Irradiance</span></div>
+        <span></span>
+        <div class="ol-card" id="pv"><img class="ol-icon obj" src="asset:energy/pv.svg" alt="PV array"><span class="ol-name">PV array</span><span class="ol-note ol-num">5.0 MW</span></div>
+        <span></span>
+        <div class="ol-card" id="inv"><img class="ol-icon obj" src="asset:energy/inverter.svg" alt="inverter"><span class="ol-name">Inverters</span><span class="ol-note">AC bus</span></div>
+        <span></span>
+        <div class="ol-card poi" id="poi"><img class="ol-icon obj" src="asset:energy/meter.svg" alt="meter"><span class="ol-name">Connection</span><span class="ol-note ol-num">cap 4.0 MW</span></div>
+        <span></span>
+        <div class="ol-card" id="grid"><img class="ol-icon obj" src="asset:energy/tower.svg" alt="grid"><span class="ol-name">Grid</span><span class="ol-note">spot market</span></div>
+
+        <div class="ol-card" id="bess" style="grid-column:5"><img class="ol-icon obj" src="asset:energy/battery.svg" alt="battery"><span class="ol-name">Battery</span><span class="ol-note ol-num">2 MW / 4 MWh</span></div>
+        <div class="ol-card accent" id="ems" style="grid-column:7"><img class="ol-icon s data" src="asset:general/tabler-cpu.svg" data-stroke="1.6" alt="controller"><span class="ol-name">Dispatch rule</span><span class="ol-note">charge above cap</span></div>
+        <div class="ol-card bare" id="price" style="grid-column:9"><img class="ol-icon data" src="asset:energy/tabler-chart-candle.svg" data-stroke="1.6" alt="price"><span class="ol-note">5-min price</span></div>
+      </div>
+    </div>
+    <i class="ol-flow energy" data-from="sun" data-to="pv"></i>
+    <i class="ol-flow energy" data-from="pv" data-to="inv" data-value="5.0" data-label="5.0"></i>
+    <i class="ol-flow energy" data-from="inv" data-to="poi" data-value="3.2" data-label="3.2"></i>
+    <i class="ol-flow energy" data-from="poi" data-to="grid" data-value="3.2" data-label="3.2"></i>
+    <i class="ol-flow energy" data-from="inv" data-to="bess" data-value="1.8" data-label="1.8"></i>
+    <i class="ol-flow data" data-from="price" data-to="ems"></i>
+    <i class="ol-flow control" data-from="ems" data-to="bess"></i>
+    <div class="ol-legend" style="margin-top:1.6mm">
+      <span class="ol-key energy">Power, MW (line width scales with power)</span><span class="ol-key data">Price signal</span>
+      <span class="ol-key control">Set-point</span>
+    </div>
+  </section>
+
+  <section class="ol-panel" data-panel="b" id="panel-b">
+    <span class="ol-title">One day at the connection</span>
+    <img class="ol-inset" src="inset:day" alt="PV, export and battery power over one day">
+  </section>
+</div>
+</body></html>

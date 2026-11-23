@@ -20,6 +20,9 @@ Balance AC flows at the shared meter. Separate power (MW) from stored energy (MW
 - `shared-export` — Size shared export and compare storage with PV-only dispatch.
 - `settlement-clock` — Price the same dispatch on two settlement clocks.
 - `policy-periods` — Explain a matched policy-period contrast with contemporaneous comparison sites.
+- `pv-storage-grid` (HTML) — PV, battery, meter and grid as library objects, power flows sized in MW, price/control path and a one-day inset from data.
+
+Figure routes: result plots in matplotlib; principle, mechanism and system schematics in SVG/HTML with library objects (`paper-writing figures assets WORDS --field energy`), connectors whose width carries the quantity and small data insets; TikZ only for formula-dense theory diagrams. Keep schematic text to names, numbers and units.
 
 ## Evidence plan before drawing
 

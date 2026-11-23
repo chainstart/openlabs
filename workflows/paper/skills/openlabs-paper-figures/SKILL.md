@@ -81,12 +81,33 @@ The research owner records two to four reader-facing points and proposed figure 
 | train/validation/holdout, rolling backtest | windows on one calendar axis | `rolling-evaluation` | SVG |
 | method A versus B, one decisive difference | two panels on the same toy case | `concept-contrast` | TikZ |
 | a physical object or device | code-drawn object with gradients | `li-ion-cell` | SVG |
+| any system, pipeline or mechanism built from objects | cards, groups, icons, sized connectors | `schematic-flow` | HTML |
+| PV/storage plant at a grid connection | power flows sized by MW + one-day inset | `pv-storage-grid` | HTML |
+| contact binary, observer, light curve | computed Roche section, sky views, light-curve insets | `contact-binary` | HTML |
+| run-to-failure rig and the path to RUL | rig objects, sensor/data paths, HI and RUL insets | `bearing-testbed` | HTML |
+| isolates from reservoirs to cases; lab or clinical sample pipelines | sources, lab steps, tree and attribution insets | `isolate-tracing` | HTML |
 
 `paper-writing figures new --list` shows the catalogue (`workflows/paper/figure-templates/`).
-Geometry, curves and anything computed belong in Python so the drawing follows from the model;
-boxes, arrows and annotations are easiest in TikZ; SVG/HTML suits object drawings and dense
-layouts. Domain tools: rdkit for molecules, astropy/matplotlib for sky coordinates, circuitikz
-for circuits, chemfig for structural formulas, pgfplots for plots inside TikZ.
+
+**Which route draws what.**
+- **Result figures: matplotlib** (`.py`). Axes, uncertainty, many points: the plot comes from the
+  data file, so it is re-drawn when the numbers change.
+- **Principle, mechanism and system schematics: SVG/HTML with the element library first**
+  (`.html`, template `schematic-flow` and the field examples). HTML+CSS does the layout (grids,
+  groups, cards that size to their text), `<img class="ol-icon" src="asset:FIELD/NAME.svg">`
+  places a licensed vector object, `.ol-flow` connectors route themselves between boxes and their
+  width can carry a quantity (MW, share, sample count), and `<img class="ol-inset" src="inset:NAME">`
+  embeds a small matplotlib curve computed from data. Find objects with
+  `paper-writing figures assets WORDS [--field F]`.
+- **Formula-dense theory diagrams: TikZ** (`.tex`): commutative diagrams, derivation flows, labelled
+  geometry with many symbols, circuits (circuitikz), chemical formulas (chemfig).
+- **Geometry computed from a model** stays in Python (or a Python inset inside an HTML figure) so
+  the drawing follows from the model.
+
+A schematic shows the mechanism with objects, colour and line weight, not with sentences or
+equations: one or two words per label, numbers with units, at most one short formula. Domain
+tools: rdkit for molecules, astropy/matplotlib for sky coordinates, circuitikz for circuits,
+chemfig for structural formulas, pgfplots for plots inside TikZ.
 
 ### Objects that should look real (medicine, biology, materials, Nature/Science-type venues)
 
@@ -123,6 +144,7 @@ paper-writing figures build <paper_id> [--only NAME]                   # -> manu
 paper-writing figures check <paper_id>                                 # blocking / advisory findings
 paper-writing figures sheet <paper_id>                                 # one PNG of all figures
 paper-writing figures recolor in.svg out.svg [--map '#ff0000=vermilion']
+paper-writing figures assets solar battery [--field energy] [--no-credit]  # search the element library
 ```
 
 - Sources live in `manuscript/figure-src/` (`<stem>.tex|.py|.svg|.html`, optional `<stem>.json`
@@ -137,7 +159,20 @@ paper-writing figures recolor in.svg out.svg [--map '#ff0000=vermilion']
 - `.py`: run with `paperfig-python`, style `openlabs.mplstyle` applied, `import openlabs_fig as
   olf`; write the PDF to `$FIG_OUT` (`olf.save(fig)`) or an SVG to `$FIG_SVG`.
 - `.svg`/`.html`: printed by `chromium-pdf` (1 px = 0.75 pt). Filters (blur, drop-shadow) are
-  rasterized by Chromium: use gradients and semi-transparent shapes instead.
+  rasterized by Chromium: use gradients and semi-transparent shapes instead. Before printing, the
+  build inlines `asset:` references (HTML `<img src>`, SVG `<image href>`) as vector `<svg>`
+  (`data-recolor` maps colours to the palette, `data-stroke` thins outline icons), runs the
+  sidecar's `"insets": {"NAME": "_script.py"}` scripts (`$FIG_OUT` is an SVG, `$FIG_INSET` the
+  name; draw the inset at its printed size) and, for HTML, injects `style/openlabs-fig.css`, the
+  journal profile as CSS variables (`--ol-single`, `--ol-double`, `--ol-body`, `--ol-small`,
+  `--ol-panel`) and `openlabs-fig.js` (the connectors). Text is set in Liberation Sans (Arial
+  metrics, TrueType) so the PDF embeds real fonts; CFF/OpenType text would become Type 3 fonts.
+- Element library: `$OPENLABS_FIG_ASSETS` (default `/workspace/openlabs/build/figure-assets`),
+  about 290 licensed objects and icons by field (general, energy, reliability, astronomy,
+  biomedical) from Tabler, Material Symbols, Phosphor, Bioicons/Servier, Reactome and OpenLabs
+  drawings, each with `.license.json`; `catalog.json` indexes them. Rebuild or extend it with
+  `workflows/paper/figure-assets/fetch_assets.py` (downloads only through the WSL bridge; record
+  new sources in that directory's `SOURCES.md`).
 - Producing a figure elsewhere (an analysis script)? Put `{"source": "../../analysis/plot.py",
   "kind": "result"}` in `figure-src/<stem>.json` so the check knows where it comes from.
 - `build` refreshes `production/figure-artifacts.json`; commit it with the sources (the PDFs are

@@ -1,0 +1,40 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- Astronomy example of the SVG/HTML schematic route: a contact binary. The geometry is
+     computed (Roche potential, sky projections, light curve) by one inset script that the
+     sidecar runs three times ("insets": {"roche": ..., "phases": ..., "lc": ...}); the page
+     arranges the panels, names and the observing path. Replace q, fill-out and inclination
+     in the script with the paper's fitted values. -->
+<title>Contact-binary geometry and light curve</title>
+<style>
+  #panel-a { flex: 0 0 64mm; }
+  .phase-labels { display: grid; grid-template-columns: repeat(4, 1fr); text-align: center; margin-top: -0.6mm; }
+  .obs { display: grid; grid-template-columns: 1fr 17mm; column-gap: 3mm; align-items: center; }
+</style></head>
+<body>
+<div class="ol-figure double">
+  <section class="ol-panel" data-panel="a" id="panel-a">
+    <span class="ol-title">Common envelope (equatorial section)</span>
+    <img class="ol-inset" src="inset:roche" alt="Roche equipotential section">
+    <div class="ol-legend" style="margin-top:1mm">
+      <span class="ol-key swatch" style="--swatch:#B3DDF5">Envelope, fill-out 0.12</span>
+      <span class="ol-key control">Inner critical surface (L1)</span>
+      <span class="ol-key swatch" style="--swatch:var(--ol-vermilion)">Lagrange points</span>
+    </div>
+    <div class="ol-note" style="margin-top:0.8mm">q = M<sub>2</sub>/M<sub>1</sub> = 0.32; + marks the barycentre</div>
+  </section>
+
+  <section class="ol-panel" data-panel="b" id="panel-b">
+    <span class="ol-title">What the observer sees over one orbit (i = 82°)</span>
+    <div class="obs">
+      <div id="sky">
+        <img class="ol-inset" src="inset:phases" alt="sky projections at four phases">
+        <div class="phase-labels ol-note"><span>φ = 0 (M<sub>2</sub> in front)</span><span>0.25</span><span>0.5 (M<sub>1</sub> in front)</span><span>0.75</span></div>
+      </div>
+      <div class="ol-card bare" id="tel"><img class="ol-icon obj" src="asset:astronomy/tess.svg" alt="space telescope"><span class="ol-note">Photometer</span></div>
+    </div>
+    <img class="ol-inset" id="lc" src="inset:lc" alt="light curve" style="margin-top:1.5mm">
+    <i class="ol-flow data" data-from="sky" data-to="tel" data-label="flux"></i>
+  </section>
+</div>
+</body></html>

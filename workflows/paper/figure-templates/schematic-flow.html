@@ -1,0 +1,39 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- Generic SVG/HTML schematic: <what the reader should see, one sentence>.
+     Building blocks (style/openlabs-fig.css, injected by the build):
+       .ol-figure.double|.onehalf|.single   width from the journal profile; data-flow-max/-width
+       .ol-panel[data-panel=a] + .ol-title   panel letter and short title
+       .ol-group > .ol-caption               tinted region (.dashed for a boundary)
+       .ol-card (.bare .row .accent)         object: icon + .ol-name + .ol-note
+       <img class="ol-icon" src="asset:FIELD/NAME.svg">   library icon, inlined as vector
+                                             (find one: paper-writing figures assets WORDS)
+       <img class="ol-inset" src="inset:NAME">            matplotlib SVG from the sidecar "insets"
+       <i class="ol-flow KIND" data-from data-to data-value data-label>   connector, width scales with value
+       .ol-legend > .ol-key.KIND             legend line for energy|data|signal|material|control
+     Keep text short (names and numbers); mechanisms are shown by objects, colour and line width. -->
+<title>Schematic</title>
+<style>
+  .stages { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 9mm; align-items: center; }
+</style></head>
+<body>
+<div class="ol-figure double" data-flow-max="100">
+  <section class="ol-panel" data-panel="a">
+    <span class="ol-title">Input to decision</span>
+    <div class="stages" style="margin-top:1mm">
+      <div class="ol-group" id="g-in"><span class="ol-caption">Inputs</span>
+        <div class="ol-col">
+          <div class="ol-card row" id="d1"><img class="ol-icon s data" src="asset:general/tabler-database.svg" data-stroke="1.6" alt=""><span><span class="ol-name">Records</span><br><span class="ol-note ol-num">n = 1,240</span></span></div>
+          <div class="ol-card row" id="d2"><img class="ol-icon s data" src="asset:general/tabler-file-spreadsheet.svg" data-stroke="1.6" alt=""><span><span class="ol-name">Covariates</span><br><span class="ol-note">12 variables</span></span></div>
+        </div>
+      </div>
+      <div class="ol-card accent" id="m"><img class="ol-icon l data" src="asset:general/tabler-math-function.svg" data-stroke="1.5" alt=""><span class="ol-name">Model</span><span class="ol-note">what it estimates</span></div>
+      <div class="ol-card" id="out"><img class="ol-icon l" src="asset:general/tabler-target.svg" data-stroke="1.5" alt=""><span class="ol-name">Decision</span><span class="ol-note">the quantity reported</span></div>
+    </div>
+  </section>
+  <i class="ol-flow data" data-from="d1" data-to="m" data-to-at="0.3" data-value="100" data-label="100%"></i>
+  <i class="ol-flow data" data-from="d2" data-to="m" data-to-at="0.7" data-value="35" data-label="35%"></i>
+  <i class="ol-flow data" data-from="m" data-to="out"></i>
+  <div class="ol-legend" style="flex-basis:100%"><span class="ol-key data">Data (line width scales with share)</span></div>
+</div>
+</body></html>

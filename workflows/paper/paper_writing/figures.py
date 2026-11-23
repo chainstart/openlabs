@@ -34,6 +34,7 @@ from typing import Any, Iterable, Mapping
 
 from paper_writing.figure_standard import findings as standard_findings
 from paper_writing.figure_quality import PLOT_FINDINGS, plot_findings, read_plan
+from paper_writing import figure_markup
 
 TEMPLATES = Path(__file__).resolve().parents[1] / "figure-templates"
 STYLE_DIR = TEMPLATES / "style"
@@ -98,6 +99,28 @@ def _style_helpers():
 
 def asset_library() -> Path:
     return Path(os.environ.get("OPENLABS_FIG_ASSETS") or DEFAULT_ASSET_LIBRARY)
+
+
+def search_assets(query: Iterable[str] = (), *, field: str | None = None, library: str | None = None,
+                  no_credit: bool = False) -> list[dict[str, Any]]:
+    """Entries of the library's ``catalog.json`` matching every query word (best first)."""
+    catalog = asset_library() / "catalog.json"
+    if not catalog.is_file():
+        raise FigureToolError(f"No asset catalog at {catalog}: run workflows/paper/figure-assets/fetch_assets.py")
+    items = json.loads(catalog.read_text(encoding="utf-8")).get("assets") or []
+    words = [w.lower() for w in query if w.strip()]
+    scored = []
+    for item in items:
+        if field and item.get("field") != field or library and item.get("library") != library:
+            continue
+        if no_credit and item.get("credit_required"):
+            continue
+        haystack = " ".join([item.get("path", ""), item.get("name", ""), *item.get("keywords", [])]).lower()
+        if not all(w in haystack for w in words):
+            continue
+        exact = sum(w in item.get("keywords", []) or w in item.get("name", "").split() for w in words)
+        scored.append((-exact, item.get("library") != "openlabs", item["path"], item))
+    return [entry[-1] for entry in sorted(scored, key=lambda e: e[:3])]
 
 
 # --------------------------------------------------------------------------- workspace
@@ -299,18 +322,23 @@ runpy.run_path(script, run_name="__main__")
 """
 
 
-def _render_py(src: FigureSource, tmp: Path) -> Path:
-    python = require_tool("OPENLABS_FIG_PYTHON", "paperfig-python", f"matplotlib figure {src.path.name}")
+def _run_python(script: Path, src: FigureSource, tmp: Path, out_pdf: Path, out_svg: Path, log: str,
+                inset: str = "") -> None:
+    python = require_tool("OPENLABS_FIG_PYTHON", "paperfig-python", f"matplotlib figure {script.name}")
     boot = tmp / "_olfig_boot.py"
     boot.write_text(PY_BOOT, encoding="utf-8")
-    out_pdf, out_svg = tmp / "figure.pdf", tmp / "figure.svg"
     env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
     env |= {"FIG_OUT": str(out_pdf), "FIG_SVG": str(out_svg), "FIG_NAME": src.stem,
             "OPENLABS_FIG_PROFILE": src.sidecar.get("profile", "generic"),
             "FIG_SRC_DIR": str(src.path.parent), "OPENLABS_FIG_MPLSTYLE": str(STYLE_DIR / "openlabs.mplstyle"),
-            "PYTHONPATH": str(STYLE_DIR), "MPLBACKEND": "Agg", "SOURCE_DATE_EPOCH": "1767225600"}
-    _run([python, str(boot), str(src.path.resolve())], cwd=src.path.parent, env=env, timeout=900,
-         log=tmp / "python.log")
+            "PYTHONPATH": str(STYLE_DIR), "MPLBACKEND": "Agg", "SOURCE_DATE_EPOCH": "1767225600",
+            "FIG_INSET": inset}
+    _run([python, str(boot), str(script.resolve())], cwd=src.path.parent, env=env, timeout=900, log=tmp / log)
+
+
+def _render_py(src: FigureSource, tmp: Path) -> Path:
+    out_pdf, out_svg = tmp / "figure.pdf", tmp / "figure.svg"
+    _run_python(src.path, src, tmp, out_pdf, out_svg, "python.log")
     if out_pdf.is_file():
         return out_pdf
     if out_svg.is_file():  # a script that composes an SVG (e.g. with licensed assets)
@@ -318,11 +346,79 @@ def _render_py(src: FigureSource, tmp: Path) -> Path:
     raise FigureToolError(f"{src.path.name}: the script wrote neither $FIG_OUT (PDF) nor $FIG_SVG")
 
 
+def _insets(src: FigureSource, tmp: Path) -> dict[str, Path]:
+    """Run the sidecar's ``insets`` scripts (matplotlib, ``$FIG_OUT`` ends in .svg, ``$FIG_INSET`` is
+    the inset name, so one script can draw several)."""
+    declared = src.sidecar.get("insets") or {}
+    if not isinstance(declared, dict):
+        raise FigureToolError(f"{src.path.name}: sidecar \"insets\" must map NAME to a script")
+    made = {}
+    for name, script in declared.items():
+        path = (src.path.parent / str(script)).resolve()
+        if not path.is_file() or src.path.parent.resolve() not in path.parents:
+            raise FigureToolError(f"{src.path.name}: inset script {script} not found next to the figure")
+        out = tmp / f"inset-{name}.svg"
+        _run_python(path, src, tmp, out, out, f"inset-{name}.log", inset=str(name))
+        if not out.is_file():
+            raise FigureToolError(f"{src.path.name}: inset script {script} wrote no SVG to $FIG_OUT")
+        made[str(name)] = out
+    return made
+
+
+def _render_markup(src: FigureSource, tmp: Path) -> Path:
+    """HTML/SVG schematics: inline library assets and insets, inject the profile style, print."""
+    text = src.path.read_text(encoding="utf-8", errors="replace")
+    is_html = src.path.suffix.lower() in (".html", ".htm")
+    if not is_html and not re.search(r"(?:asset|inset):", text):
+        return _render_svg(src.path, tmp, label=src.path.name)
+    helpers = _style_helpers()
+
+    def find(name: str) -> Path:
+        try:
+            return helpers.find_asset(name, src.path.parent)
+        except FileNotFoundError as exc:
+            raise FigureToolError(f"{src.path.name}: {exc}") from exc
+
+    try:
+        prepared = figure_markup.prepare(
+            src.path, tmp=tmp, find_asset=find, style_dir=STYLE_DIR,
+            profile=helpers._catalog["profiles"][src.sidecar.get("profile", "generic")],
+            insets=_insets(src, tmp), recolor=helpers.recolor_svg)
+    except figure_markup.MarkupError as exc:
+        raise FigureToolError(str(exc)) from exc
+    return _render_svg(prepared, tmp, label=src.path.name, base=src.path.parent)
+
+
+FONT_DIRS = ("~/.local/opt/lo/usr/share/fonts/truetype/liberation2", "/usr/share/fonts/truetype/liberation2",
+             "/usr/share/fonts/truetype/liberation", "~/.local/opt/texlive/texmf-dist/fonts/opentype",
+             "~/.local/opt/texlive/texmf-dist/fonts/truetype")
+SANS_ALIASES = ("Arial", "Helvetica", "sans-serif", "Nimbus Sans", "TeX Gyre Heros")
+
+
+def _font_config(tmp: Path) -> Path:
+    """A fontconfig file for Chromium: TrueType sans fonts first (Liberation Sans, metric-compatible
+    with Arial). Skia embeds TrueType outlines as real fonts; CFF/OpenType fonts (the TeX Gyre
+    .otf files) become Type 3 fonts, which some journals reject. ``OPENLABS_FIG_FONT_DIRS``
+    (os.pathsep-separated) adds directories in front."""
+    extra = [d for d in os.environ.get("OPENLABS_FIG_FONT_DIRS", "").split(os.pathsep) if d]
+    dirs = [Path(d).expanduser() for d in (*extra, *FONT_DIRS)]
+    body = "".join(f"<dir>{d}</dir>" for d in dirs if d.is_dir())
+    alias = "".join(f"<alias binding=\"same\"><family>{name}</family><prefer><family>Liberation Sans</family>"
+                    "</prefer></alias>" for name in SANS_ALIASES)
+    conf = tmp / "fonts.conf"
+    conf.write_text("<?xml version=\"1.0\"?><!DOCTYPE fontconfig SYSTEM \"fonts.dtd\"><fontconfig>"
+                    f"{body}<cachedir>{Path.home() / '.cache' / 'fontconfig'}</cachedir>{alias}</fontconfig>\n",
+                    encoding="utf-8")
+    return conf
+
+
 def _render_svg(path: Path, tmp: Path, *, label: str, base: Path | None = None) -> Path:
     out = tmp / "figure-svg.pdf"
     chromium = resolve_tool("OPENLABS_FIG_CHROMIUM_PDF", "chromium-pdf")
     if chromium:
-        _run([chromium, str(path.resolve()), str(out)], cwd=base or path.parent, env=os.environ, timeout=300,
+        env = dict(os.environ)
+        env["FONTCONFIG_FILE"] = str(_font_config(tmp))
+        _run([chromium, str(path.resolve()), str(out)], cwd=base or path.parent, env=env, timeout=300,
              log=tmp / "chromium.log")
         if not out.is_file():
             raise FigureToolError(f"{label}: chromium-pdf produced no PDF")
@@ -396,7 +492,7 @@ def render(src: FigureSource, destination: Path) -> dict[str, Any]:
         elif suffix == ".py":
             pdf = _render_py(src, tmp)
         else:
-            pdf = _render_svg(src.path, tmp, label=src.path.name)
+            pdf = _render_markup(src, tmp)
         destination.parent.mkdir(parents=True, exist_ok=True)
         _normalize(pdf, destination)
         note = tmp / "renderer-note.txt"
@@ -546,6 +642,12 @@ def new_figure(ws: Workspace, name: str, *, template: str | None = None, kind: s
         raise FigureToolError(f"A source for {stem} already exists (use --force to replace)")
     ws.src_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
+    companions = []
+    for name in entry.get("companions") or []:  # inset scripts and other helpers (``_*`` files)
+        helper = ws.src_dir / Path(name).name
+        if not helper.exists() or force:
+            shutil.copyfile(TEMPLATES / name, helper)
+        companions.append(str(helper))
     sidecar = target.with_suffix(".json")
     if not sidecar.exists() or force:
         sidecar.write_text(json.dumps({
@@ -554,8 +656,9 @@ def new_figure(ws: Workspace, name: str, *, template: str | None = None, kind: s
             "key_point": "The story-line point this figure carries.",
             "data_inputs": [],
             "template": template,
+            **(entry.get("sidecar") or {}),
         }, indent=2) + "\n", encoding="utf-8")
-    return {"source": str(target), "sidecar": str(sidecar), "template": template}
+    return {"source": str(target), "sidecar": str(sidecar), "template": template, "companions": companions}
 
 
 # --------------------------------------------------------------------------- check helpers
@@ -709,6 +812,9 @@ def inspect_pdf(pdf: Path, *, scale: float = 1.0, result_plot: bool = False) -> 
         raster_fraction = len(covered) / grid ** 2
         colour_pairs = _color_findings(page)
         all_text = page.get_text("text")
+        fonts = page.get_fonts(full=True)
+        unembedded = sorted({f[3] for f in fonts if f[2] != "Type3" and f[1] in ("", "n/a")})
+        type3 = sum(1 for f in fonts if f[2] == "Type3")
         plot = plot_findings(fitz, drawings, lines, _segments, _segment_hits_rect) if result_plot else []
     def core(rect, fx: float = 0.12, fy: float = 0.22):
         w, h = rect.width, rect.height
@@ -755,7 +861,8 @@ def inspect_pdf(pdf: Path, *, scale: float = 1.0, result_plot: bool = False) -> 
             "smallest_script_text": [t for _, t in scripts[:3]],
             "overlaps": overlaps[:10], "clipped": clipped[:10],
             "strokes_through_text": crossings[:10], "raster_fraction": round(raster_fraction, 3),
-            "drawings": len(drawings), "grey_merge_pairs": colour_pairs, "plot_findings": plot}
+            "drawings": len(drawings), "grey_merge_pairs": colour_pairs, "plot_findings": plot,
+            "unembedded_fonts": unembedded, "type3_fonts": type3}
 
 
 # --------------------------------------------------------------------------- manuscript references
@@ -1175,6 +1282,21 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
             advisory.append(_finding(stem, "FIG-UPSCALED", f"drawn at {info['page_mm'][0]} mm but printed at "
                                      f"{record['final_width_mm']} mm (x{scale:.2f}); draw at the final width so "
                                      "strokes and text keep their designed size"))
+        if info.get("unembedded_fonts"):
+            advisory.append(_finding(stem, "FIG-FONT-NOT-EMBEDDED",  # the proof check (main.pdf) requires it
+                                     "fonts not embedded in figures/" + pdf.name + ": "
+                                     + ", ".join(info["unembedded_fonts"]) + "; journals require embedded fonts"))
+        if info.get("type3_fonts") and info["text_lines"]:
+            advisory.append(_finding(stem, "FIG-FONT-TYPE3",
+                                     f"{info['type3_fonts']} Type 3 font(s) in figures/{pdf.name}: some journals "
+                                     "(IEEE PDF eXpress) reject them; HTML/SVG figures embed TrueType when the "
+                                     "text uses Liberation Sans or Arial"))
+        profile = (src.sidecar.get("profile") if src else None) or "generic"
+        double = _style_helpers()._catalog["profiles"].get(profile, {}).get("double")
+        if double and info["page_mm"][0] > double + 1.0:
+            advisory.append(_finding(stem, "FIG-WIDER-THAN-PROFILE",
+                                     f"drawn {info['page_mm'][0]} mm wide; the {profile} double-column width is "
+                                     f"{double} mm, so the figure will be shrunk (draw it at a column width)"))
         if info["raster_fraction"] > 0.9 and info["text_lines"] == 0:
             blocking.append(_finding(stem, "FIG-RASTER-PAGE",
                                      f"figures/{pdf.name} is a bitmap inside a PDF; render the figure as vectors"))

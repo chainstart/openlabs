@@ -142,3 +142,38 @@ templates:
     file: transit-formation.py
     figure_kind: schematic
     use_when: Uniform disk, central transit; geometric flux loss at full overlap.
+  # SVG/HTML route: HTML + CSS layout, library icons inlined as vectors (asset:FIELD/NAME.svg,
+  # search with `paper-writing figures assets WORDS`), connectors whose width carries a value,
+  # and matplotlib insets drawn from data (sidecar "insets"). See style/openlabs-fig.css.
+  - name: schematic-flow
+    file: schematic-flow.html
+    figure_kind: schematic
+    use_when: Generic system, pipeline or mechanism schematic built from cards, groups, icons and connectors (line width can carry a quantity).
+  - name: pv-storage-grid
+    field: energy
+    file: pv-storage-grid.html
+    figure_kind: schematic
+    companions: [_pv-storage-day.py]
+    sidecar: {insets: {day: _pv-storage-day.py}}
+    use_when: PV plant with a battery at a shared grid connection; power flows sized by MW, price/control path, one-day inset.
+  - name: contact-binary
+    field: astronomy
+    file: contact-binary.html
+    figure_kind: schematic
+    companions: [_contact-binary-insets.py]
+    sidecar: {insets: {roche: _contact-binary-insets.py, phases: _contact-binary-insets.py, lc: _contact-binary-insets.py}}
+    use_when: Contact binary geometry computed from the Roche model (envelope, critical surfaces), sky views at four phases and the resulting light curve.
+  - name: bearing-testbed
+    field: reliability
+    file: bearing-testbed.html
+    figure_kind: schematic
+    companions: [_bearing-insets.py]
+    sidecar: {insets: {signal: _bearing-insets.py, hi: _bearing-insets.py}}
+    use_when: Run-to-failure rig (motor, test bearing, load, sensors, DAQ) and the data path to a health indicator and RUL.
+  - name: isolate-tracing
+    field: biology
+    file: isolate-tracing.html
+    figure_kind: schematic
+    companions: [_isolate-insets.py]
+    sidecar: {insets: {tree: _isolate-insets.py, attr: _isolate-insets.py}}
+    use_when: Microbial isolates from reservoirs and cases through culture and sequencing to a cgMLST tree and source attribution (also a pattern for clinical sample pipelines).

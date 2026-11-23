@@ -1,0 +1,48 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- Biology example of the SVG/HTML schematic route: tracing bacterial isolates (for example
+     Campylobacter) from reservoirs to human cases by genome sequencing. Sample sources and lab
+     steps are library illustrations (Servier Medical Art and Bioicons; the CC BY ones need the
+     credit line that `figures check` prints); the tree and the attribution shares are insets
+     drawn from data by _isolate-insets.py. Replace the synthetic profiles with the paper's. -->
+<title>Isolate source tracing by whole-genome sequencing</title>
+<style>
+  #panel-a { flex: 0 0 96mm; }
+  .sources { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5mm; }
+  .sources .ol-card { padding: 0.6mm; }
+  .lab { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5mm; margin-top: 7mm; }
+  .lab .ol-card { padding: 0.8mm 0.4mm; }
+  .src-c { color: var(--ol-ink); }
+</style></head>
+<body>
+<div class="ol-figure double">
+  <section class="ol-panel" data-panel="a" id="panel-a">
+    <span class="ol-title">Sampling and sequencing (illustrative)</span>
+    <div class="ol-group" id="src" style="margin-top:1mm">
+      <span class="ol-caption">Reservoirs and cases</span>
+      <div class="sources">
+        <div class="ol-card bare"><img class="ol-icon l" src="asset:biomedical/bioicons-chicken.svg" alt="chicken"><span class="ol-note">Broiler farms</span></div>
+        <div class="ol-card bare"><img class="ol-icon l" src="asset:biomedical/bioicons-steak.svg" alt="retail meat"><span class="ol-note">Retail meat</span></div>
+        <div class="ol-card bare"><img class="ol-icon l" src="asset:biomedical/bioicons-faucet.svg" alt="water"><span class="ol-note">Surface water</span></div>
+        <div class="ol-card bare"><img class="ol-icon l" src="asset:biomedical/bioicons-patient.svg" alt="patient"><span class="ol-note">Human cases</span></div>
+      </div>
+    </div>
+    <div class="lab">
+      <div class="ol-card" id="cult"><img class="ol-icon l" src="asset:biomedical/bioicons-petri-dish-with-colony-lightyellow.svg" alt="culture"><span class="ol-name">Culture</span><span class="ol-note">selective agar</span></div>
+      <div class="ol-card" id="dna"><img class="ol-icon l" src="asset:biomedical/bioicons-tube-screwcap-closed-orange.svg" alt="DNA"><span class="ol-name">DNA</span><span class="ol-note">extraction</span></div>
+      <div class="ol-card" id="seq"><img class="ol-icon l" src="asset:biomedical/bioicons-sequence-histogram.svg" alt="reads"><span class="ol-name">Sequencing</span><span class="ol-note">short reads</span></div>
+      <div class="ol-card" id="typing"><img class="ol-icon l" src="asset:biomedical/bioicons-workstation.svg" alt="analysis"><span class="ol-name">cgMLST</span><span class="ol-note">allele profiles</span></div>
+    </div>
+    <i class="ol-flow material" data-from="src" data-to="cult" data-from-side="bottom" data-to-side="top" data-from-at="0.12" data-label="isolates"></i>
+    <i class="ol-flow material" data-from="cult" data-to="dna"></i>
+    <i class="ol-flow material" data-from="dna" data-to="seq"></i>
+    <i class="ol-flow data" data-from="seq" data-to="typing"></i>
+  </section>
+
+  <section class="ol-panel" data-panel="b" id="panel-b">
+    <span class="ol-title">Clusters and source attribution</span>
+    <img class="ol-inset" id="tree" src="inset:tree" alt="cgMLST tree coloured by source">
+    <img class="ol-inset" id="attr" src="inset:attr" alt="attributed share of human cases" style="margin-top:1mm">
+  </section>
+</div>
+</body></html>

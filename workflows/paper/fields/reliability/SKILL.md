@@ -20,6 +20,9 @@ Assign specimens before windowing and show unit counts in train, tuning and hold
 - `specimen-split` — Assign physical specimens before segmenting time series.
 - `degradation-rul` — Trace a predictive RUL interval to a registered failure threshold.
 - `rank-agreement` — Show per-rig rank agreement and paired bootstrap uncertainty from inputs/ranks.csv.
+- `bearing-testbed` (HTML) — rig objects (motor, test bearing, load, sensors, DAQ), sensor and data paths, and health-indicator/RUL insets from data.
+
+Figure routes: result plots in matplotlib; principle, mechanism and system schematics in SVG/HTML with library objects (`paper-writing figures assets WORDS --field reliability`), connectors whose width carries the quantity and small data insets; TikZ only for formula-dense theory diagrams. Keep schematic text to names, numbers and units.
 
 For `rank-agreement` supply `inputs/ranks.csv` with scenario, rig, rho, lower and upper columns. Replace the registered cutoffs, group labels and interval definitions with those of the current protocol.
 

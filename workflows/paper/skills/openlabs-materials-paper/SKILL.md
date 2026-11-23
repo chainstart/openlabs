@@ -24,3 +24,4 @@ review and author policy: `registry/settings.yaml`. This file adds only what dif
   calculations. Say "causal mechanism" only when the design identifies it; agreement with
   experiment alone may be error cancellation.
 - Connect the measured material response to the relevant structural comparison.
+- Figures: structures render from data (CIF/POSCAR); device, synthesis and measurement set-ups are SVG/HTML schematics with library objects (`schematic-flow`); result plots stay matplotlib; formula-dense derivations may use TikZ.

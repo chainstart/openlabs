@@ -214,6 +214,14 @@ def build_parser() -> argparse.ArgumentParser:
     figures_recolor.add_argument("target")
     figures_recolor.add_argument("--map", action="append", default=[],
                                  help="Explicit mapping '#ff0000=vermilion' (repeatable).")
+    figures_assets = figure_commands.add_parser(
+        "assets", help="Search the licensed asset library (icons and objects for SVG/HTML schematics).")
+    figures_assets.add_argument("query", nargs="*", help="Words matched against name, keywords and path.")
+    figures_assets.add_argument("--field", help="energy, reliability, astronomy, biomedical or general.")
+    figures_assets.add_argument("--library", help="tabler, material, phosphor, bioicons, reactome or openlabs.")
+    figures_assets.add_argument("--no-credit", action="store_true", help="Only assets that need no credit line.")
+    figures_assets.add_argument("--limit", type=int, default=40)
+    figures_assets.add_argument("--json", action="store_true")
 
     formal_check = subparsers.add_parser("formal-check", help="Inspect or run mandatory reference/prerequisite verification without changing a paper gate.")
     formal_check.add_argument("--paper-id", required=True)
@@ -1429,6 +1437,18 @@ def _figures_command(args: argparse.Namespace) -> int:
         if args.figures_command == "recolor":
             mapping = dict(item.split("=", 1) for item in args.map)
             print(fig.recolor_file(Path(args.source), Path(args.target), mapping))
+            return 0
+        if args.figures_command == "assets":
+            found = fig.search_assets(args.query, field=args.field, library=args.library,
+                                      no_credit=args.no_credit)
+            if args.json:
+                print(json.dumps(found[:args.limit], ensure_ascii=False, indent=2))
+                return 0
+            for item in found[:args.limit]:
+                credit = "credit: " + item["attribution"] if item.get("credit_required") else "no credit needed"
+                print(f"asset:{item['path']:<52} {item['license']:<11} {credit}")
+            print(f"{len(found)} match(es) in {fig.asset_library()}; use <img class=\"ol-icon\" src=\"asset:PATH\"> "
+                  "in an HTML figure or <image href=\"asset:PATH\"> in an SVG one")
             return 0
         if args.figures_command == "new" and args.list:
             for entry in fig.template_catalog():

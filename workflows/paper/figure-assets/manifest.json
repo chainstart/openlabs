@@ -1,0 +1,3672 @@
+{
+ "schema_version": "openlabs.figure_assets.v1",
+ "libraries": {
+  "tabler": {
+   "title": "Tabler Icons",
+   "version": "3.52.0",
+   "license": "MIT",
+   "license_url": "https://github.com/tabler/tabler-icons/blob/main/LICENSE",
+   "attribution": "Tabler Icons",
+   "homepage": "https://tabler.io/icons",
+   "kind": "npm-tarball",
+   "package": "@tabler/icons",
+   "url": "https://registry.npmmirror.com/@tabler/icons/-/icons-3.52.0.tgz",
+   "official_url": "https://registry.npmjs.org/@tabler/icons/-/icons-3.52.0.tgz",
+   "tarball": "npm/tabler-icons-3.52.0.tgz",
+   "member": "package/icons/outline/{name}.svg",
+   "license_member": "package/LICENSE",
+   "style": "24 px outline, stroke=currentColor, stroke-width 2",
+   "integrity": "sha512-dldKlJNfO/gZnGLcIY0X2EFFKIMGwL/rEvTqglvBgAPFiwj9pZOCN5V3Sf0Gyjq6foX4VQmLdOmsS4w5FdWKAw=="
+  },
+  "material": {
+   "title": "Material Symbols (Outlined, weight 400)",
+   "version": "0.49.0",
+   "license": "Apache-2.0",
+   "license_url": "https://github.com/google/material-design-icons/blob/master/LICENSE",
+   "attribution": "Google Material Symbols",
+   "homepage": "https://fonts.google.com/icons",
+   "kind": "npm-tarball",
+   "package": "@material-symbols/svg-400",
+   "url": "https://registry.npmmirror.com/@material-symbols/svg-400/-/svg-400-0.49.0.tgz",
+   "official_url": "https://registry.npmjs.org/@material-symbols/svg-400/-/svg-400-0.49.0.tgz",
+   "tarball": "npm/material-symbols-svg-400-0.49.0.tgz",
+   "member": "package/outlined/{name}.svg",
+   "license_member": "package/LICENSE",
+   "style": "48 px grid, filled paths (default black)",
+   "integrity": "sha512-zXwn52xxfAqmmHdhiNmuP3qqHqr/xRp7XchR38Rfujk8kdx2jg4xmv9uLobU2nYHPMnaXew8eU3KadrdZqF2sA=="
+  },
+  "phosphor": {
+   "title": "Phosphor Icons (regular)",
+   "version": "2.1.1",
+   "license": "MIT",
+   "license_url": "https://github.com/phosphor-icons/core/blob/main/LICENSE",
+   "attribution": "Phosphor Icons",
+   "homepage": "https://phosphoricons.com",
+   "kind": "npm-tarball",
+   "package": "@phosphor-icons/core",
+   "url": "https://registry.npmmirror.com/@phosphor-icons/core/-/core-2.1.1.tgz",
+   "official_url": "https://registry.npmjs.org/@phosphor-icons/core/-/core-2.1.1.tgz",
+   "tarball": "npm/phosphor-core-2.1.1.tgz",
+   "member": "package/assets/regular/{name}.svg",
+   "license_member": "package/LICENSE",
+   "style": "256 grid, fill=currentColor",
+   "integrity": "sha512-v4ARvrip4qBCImOE5rmPUylOEK4iiED9ZyKjcvzuezqMaiRASCHKcRIuvvxL/twvLpkfnEODCOJp5dM4eZilxQ=="
+  },
+  "bioicons": {
+   "title": "Bioicons",
+   "version": "git 30f1dd71314bf99d22668318769e5f91834660ee",
+   "license": "per icon (folder name)",
+   "license_url": "https://bioicons.com",
+   "attribution": "Bioicons (bioicons.com)",
+   "homepage": "https://bioicons.com",
+   "kind": "file",
+   "base_url": "https://cdn.jsdelivr.net/gh/duerrsimon/bioicons@30f1dd71314bf99d22668318769e5f91834660ee/static/icons/",
+   "style": "full-colour illustrations",
+   "license_files": {
+    "LICENSE": "https://cdn.jsdelivr.net/gh/duerrsimon/bioicons@30f1dd71314bf99d22668318769e5f91834660ee/LICENSE",
+    "README.md": "https://cdn.jsdelivr.net/gh/duerrsimon/bioicons@30f1dd71314bf99d22668318769e5f91834660ee/README.md"
+   },
+   "official_base_url": "https://raw.githubusercontent.com/duerrsimon/bioicons/30f1dd71314bf99d22668318769e5f91834660ee/static/icons/",
+   "source_note": "raw.githubusercontent.com timed out from WSL (curl 28); jsDelivr serves the same pinned commit and every file is checked against its git blob id from the GitHub tree API.",
+   "license_file_bytes": {
+    "LICENSE": 1132,
+    "README.md": 2573
+   }
+  },
+  "reactome": {
+   "title": "Reactome Icon Library",
+   "version": "retrieved 2026-11-23",
+   "license": "CC BY 4.0",
+   "license_url": "https://reactome.org/license",
+   "attribution": "Reactome icon library",
+   "homepage": "https://reactome.org/icon-lib",
+   "kind": "file",
+   "base_url": "https://reactome.org/icon/",
+   "style": "full-colour illustrations",
+   "license_files": {
+    "license.html": "https://reactome.org/license"
+   }
+  }
+ },
+ "assets": [
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "data",
+    "store",
+    "archive",
+    "table"
+   ],
+   "upstream": "package/icons/outline/database.svg",
+   "path": "general/tabler-database.svg",
+   "name": "database",
+   "sha256": "9e551f1fcd0ce935e07076576acb50b8197697525f23d5e354ed64402f054d1c"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "server",
+    "compute",
+    "cluster"
+   ],
+   "upstream": "package/icons/outline/server.svg",
+   "path": "general/tabler-server.svg",
+   "name": "server",
+   "sha256": "af8c0d7ba2fa9e64563141b0c56960258f159331cc6e1c3aa7af17b9c3575405"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "processor",
+    "compute",
+    "chip"
+   ],
+   "upstream": "package/icons/outline/cpu.svg",
+   "path": "general/tabler-cpu.svg",
+   "name": "cpu",
+   "sha256": "0d7f49173c8b2053c5299977925a6e908ac5bc0d67717e146df02c2f3f9787e7"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "computer",
+    "workstation",
+    "monitor"
+   ],
+   "upstream": "package/icons/outline/device-desktop.svg",
+   "path": "general/tabler-device-desktop.svg",
+   "name": "device desktop",
+   "sha256": "a18c2a33a20de14bacbff9df97b7896006fb166379da84eb12c304abbd803286"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "laptop",
+    "computer"
+   ],
+   "upstream": "package/icons/outline/device-laptop.svg",
+   "path": "general/tabler-device-laptop.svg",
+   "name": "device laptop",
+   "sha256": "ee2e8cb5bd3037acb91ddcafdf4eb1b75a229ed247d77b14afa0f1f9d74728e9"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "time",
+    "series",
+    "line",
+    "plot"
+   ],
+   "upstream": "package/icons/outline/chart-line.svg",
+   "path": "general/tabler-chart-line.svg",
+   "name": "chart line",
+   "sha256": "55d02e68e62f3fc5e2346fc7aef8a61da37e4022c2066e0f48dce028b3b8df7e"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "bar",
+    "chart",
+    "histogram"
+   ],
+   "upstream": "package/icons/outline/chart-bar.svg",
+   "path": "general/tabler-chart-bar.svg",
+   "name": "chart bar",
+   "sha256": "a1d87c710350f12cbf7b31de29074bb719ea9ebbd308ee842067cf62c1eb4fae"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "scatter",
+    "plot"
+   ],
+   "upstream": "package/icons/outline/chart-dots.svg",
+   "path": "general/tabler-chart-dots.svg",
+   "name": "chart dots",
+   "sha256": "a85c4c31c6dd70ed29227f57c693588648aa5bc9eb5810a56b574ca28502d821"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "histogram",
+    "distribution"
+   ],
+   "upstream": "package/icons/outline/chart-histogram.svg",
+   "path": "general/tabler-chart-histogram.svg",
+   "name": "chart histogram",
+   "sha256": "da6052d6f928b5de5975a04f8fa3519edc84b6602513d4c3081cef18e294edeb"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "table",
+    "dataset",
+    "rows"
+   ],
+   "upstream": "package/icons/outline/table.svg",
+   "path": "general/tabler-table.svg",
+   "name": "table",
+   "sha256": "84e391f68fd2f93762366a6ee9cde7670abcea02736d0e46150fef8047c88a94"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "document",
+    "report",
+    "record"
+   ],
+   "upstream": "package/icons/outline/file-text.svg",
+   "path": "general/tabler-file-text.svg",
+   "name": "file text",
+   "sha256": "12e8c1a05fe3c14fb9f44e98145afa96c14ee0d9dddfdd69b75c53c31486cae8"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "spreadsheet",
+    "csv",
+    "data",
+    "file"
+   ],
+   "upstream": "package/icons/outline/file-spreadsheet.svg",
+   "path": "general/tabler-file-spreadsheet.svg",
+   "name": "file spreadsheet",
+   "sha256": "84246ebbaf7ea05c2fb22771ebabdd37aff34242f84c75f484d3fe7e59b86e3b"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "filter",
+    "selection",
+    "exclusion"
+   ],
+   "upstream": "package/icons/outline/filter.svg",
+   "path": "general/tabler-filter.svg",
+   "name": "filter",
+   "sha256": "eb4cf4b099901c28fab2e13a70c52e3318cee10e918bd99c39373c2b19085deb"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "tuning",
+    "parameters",
+    "settings"
+   ],
+   "upstream": "package/icons/outline/adjustments-horizontal.svg",
+   "path": "general/tabler-adjustments-horizontal.svg",
+   "name": "adjustments horizontal",
+   "sha256": "c07711c7f515e7707b97e32d9a18fed49bb200f1fcf0d1a987422f44e8ec8479"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "settings",
+    "configuration",
+    "gear"
+   ],
+   "upstream": "package/icons/outline/settings.svg",
+   "path": "general/tabler-settings.svg",
+   "name": "settings",
+   "sha256": "f885061801bae8e3d0bcead9ee473f7831d8a5dfe78506a17f8202f7a1949505"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "time",
+    "clock",
+    "interval"
+   ],
+   "upstream": "package/icons/outline/clock.svg",
+   "path": "general/tabler-clock.svg",
+   "name": "clock",
+   "sha256": "bb93c8284b6da432fafa0c9d210df3d43e4cc3b537aaf85cb4a2351933cd43b1"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "calendar",
+    "date",
+    "period"
+   ],
+   "upstream": "package/icons/outline/calendar.svg",
+   "path": "general/tabler-calendar.svg",
+   "name": "calendar",
+   "sha256": "15f82786ddd7df6dcf1a5ea83934a67d477f7a1f36783113d4de3767c4c1ec9f"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "globe",
+    "world",
+    "international"
+   ],
+   "upstream": "package/icons/outline/world.svg",
+   "path": "general/tabler-world.svg",
+   "name": "world",
+   "sha256": "25fd225860a3fefe84a028c0dc88b9335c9fca1d8e4b72f5f441f2e9c81c4a68"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "cloud",
+    "weather",
+    "computing"
+   ],
+   "upstream": "package/icons/outline/cloud.svg",
+   "path": "general/tabler-cloud.svg",
+   "name": "cloud",
+   "sha256": "c4f9da1cdfa1ffe874580fce24905f42df1079fcaa56366911bde7d108a9e57e"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "person",
+    "participant",
+    "operator"
+   ],
+   "upstream": "package/icons/outline/user.svg",
+   "path": "general/tabler-user.svg",
+   "name": "user",
+   "sha256": "89eb991dd629ba6ad556608bf70528de1e1ca7801a3c9d5566d4f1506e4404c6"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "group",
+    "population",
+    "cohort"
+   ],
+   "upstream": "package/icons/outline/users.svg",
+   "path": "general/tabler-users.svg",
+   "name": "users",
+   "sha256": "d101892f8e25d628d32a9011f75a7582878d917892c0a055ea1c80ffbf4b4340"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "location",
+    "site"
+   ],
+   "upstream": "package/icons/outline/map-pin.svg",
+   "path": "general/tabler-map-pin.svg",
+   "name": "map pin",
+   "sha256": "4ca0c252b79ea1dd51d6ad73e4187427a32db8b5d8b5225b40c3b5e132c4824c"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "tree",
+    "hierarchy",
+    "decision",
+    "tree"
+   ],
+   "upstream": "package/icons/outline/binary-tree.svg",
+   "path": "general/tabler-binary-tree.svg",
+   "name": "binary tree",
+   "sha256": "74e3634dde28411ca449fb8c90c1624173053900f402eddd640adb6481380aaf"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "hierarchy",
+    "structure",
+    "modules"
+   ],
+   "upstream": "package/icons/outline/sitemap.svg",
+   "path": "general/tabler-sitemap.svg",
+   "name": "sitemap",
+   "sha256": "fbff4fe370a4d9c1b1c9e78ab8785590b71b3b8389d442d4e1d005896021beac"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "function",
+    "model",
+    "equation"
+   ],
+   "upstream": "package/icons/outline/math-function.svg",
+   "path": "general/tabler-math-function.svg",
+   "name": "math function",
+   "sha256": "4e7b2efdcffa74f0d29f4f90e712f99466c75e4b0fe156657c899b363e1d9347"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "signal",
+    "oscillation",
+    "wave"
+   ],
+   "upstream": "package/icons/outline/wave-sine.svg",
+   "path": "general/tabler-wave-sine.svg",
+   "name": "wave sine",
+   "sha256": "3121625e0464fa7d69c290b90e70b279a1b6d4356cc027566aa44fe5050e980e"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "balance",
+    "comparison",
+    "trade-off"
+   ],
+   "upstream": "package/icons/outline/scale.svg",
+   "path": "general/tabler-scale.svg",
+   "name": "scale",
+   "sha256": "6f37bfb0358036ea914066675c455ffe6d181f7d5d4d942aa54db525fc6ecabc"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "target",
+    "objective"
+   ],
+   "upstream": "package/icons/outline/target.svg",
+   "path": "general/tabler-target.svg",
+   "name": "target",
+   "sha256": "e7912f33b58fbc46a661fc92adc4a785772e026847b749139c47b453a62417e7"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "model",
+    "intelligence",
+    "neural"
+   ],
+   "upstream": "package/icons/outline/brain.svg",
+   "path": "general/tabler-brain.svg",
+   "name": "brain",
+   "sha256": "865a8acb8e424a7724e42dedd48c73398d197d9b9742cd982227f1c2a40bb7b5"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "layers",
+    "stack"
+   ],
+   "upstream": "package/icons/outline/stack-2.svg",
+   "path": "general/tabler-stack-2.svg",
+   "name": "stack 2",
+   "sha256": "729d3e264f4e2e9670cd86f4531141baa78eb94e975198228a8167c8a1eb0572"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "split",
+    "branch"
+   ],
+   "upstream": "package/icons/outline/arrows-split.svg",
+   "path": "general/tabler-arrows-split.svg",
+   "name": "arrows split",
+   "sha256": "d9120bf0457a2f8edba1bd0acaccf28b64c4ac67d3e16a1679a1e6f456022c31"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "merge",
+    "combine"
+   ],
+   "upstream": "package/icons/outline/git-merge.svg",
+   "path": "general/tabler-git-merge.svg",
+   "name": "git merge",
+   "sha256": "2e0632885274c2e2b00feac217256ed7eafd09b23b698ca0c06a1cfa8b821b9d"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "warning",
+    "alarm"
+   ],
+   "upstream": "package/icons/outline/alert-triangle.svg",
+   "path": "general/tabler-alert-triangle.svg",
+   "name": "alert triangle",
+   "sha256": "92a951d8e90c1b1d986449e74a8b2e1c52982dc3dbe09b141ac11990420408f4"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "pass",
+    "accept"
+   ],
+   "upstream": "package/icons/outline/check.svg",
+   "path": "general/tabler-check.svg",
+   "name": "check",
+   "sha256": "012d69548a769f4287e0af4c535b2cdf6e40457651de8078c4e588f0488952d6"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "reject",
+    "fail"
+   ],
+   "upstream": "package/icons/outline/x.svg",
+   "path": "general/tabler-x.svg",
+   "name": "x",
+   "sha256": "445e1b53563ad7e089f94dee923c2ef3444c63d45294a733687471a76a3c3b8d"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "locked",
+    "frozen",
+    "sealed"
+   ],
+   "upstream": "package/icons/outline/lock.svg",
+   "path": "general/tabler-lock.svg",
+   "name": "lock",
+   "sha256": "748ef36a7e3b7a4dc2b44a16576dc60123968a6c8184155015f85cfa442ce7d7"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "search",
+    "inspect",
+    "query"
+   ],
+   "upstream": "package/icons/outline/search.svg",
+   "path": "general/tabler-search.svg",
+   "name": "search",
+   "sha256": "57e054b6c1508be40d5eba1ea434b702f5ff55dca04e28e5e3f22472c2f6176d"
+  },
+  {
+   "field": "general",
+   "library": "tabler",
+   "keywords": [
+    "report",
+    "analytics",
+    "dashboard"
+   ],
+   "upstream": "package/icons/outline/report-analytics.svg",
+   "path": "general/tabler-report-analytics.svg",
+   "name": "report analytics",
+   "sha256": "474d966b7c42f620eb487c577af0b32fae66255400171f576f8ff53c4fe8eac9"
+  },
+  {
+   "field": "general",
+   "library": "material",
+   "keywords": [
+    "hub",
+    "network",
+    "node"
+   ],
+   "upstream": "package/outlined/hub.svg",
+   "path": "general/material-hub.svg",
+   "name": "hub",
+   "sha256": "fc1c8d9fea11af9c181acad49eb84cdeb993a2357a722ef6b65322f037d18095"
+  },
+  {
+   "field": "general",
+   "library": "material",
+   "keywords": [
+    "tree",
+    "hierarchy",
+    "pipeline"
+   ],
+   "upstream": "package/outlined/account_tree.svg",
+   "path": "general/material-account-tree.svg",
+   "name": "account tree",
+   "sha256": "dda634a09d08ac089ecfd533d24a6203ba66160421fc14b3cd80cc8354dcf5fa"
+  },
+  {
+   "field": "general",
+   "library": "material",
+   "keywords": [
+    "model",
+    "training",
+    "learning"
+   ],
+   "upstream": "package/outlined/model_training.svg",
+   "path": "general/material-model-training.svg",
+   "name": "model training",
+   "sha256": "7a40fc8f92874b7a852b1ad80386c473ac76dfa3c9beb7aadb065ef972e171ed"
+  },
+  {
+   "field": "general",
+   "library": "material",
+   "keywords": [
+    "dataset",
+    "grid"
+   ],
+   "upstream": "package/outlined/dataset.svg",
+   "path": "general/material-dataset.svg",
+   "name": "dataset",
+   "sha256": "cd4414fd88eaac55205b8932bf986354d2eb1f9cbf6d0f2004554ee4e885fecf"
+  },
+  {
+   "field": "general",
+   "library": "material",
+   "keywords": [
+    "statistics",
+    "analysis"
+   ],
+   "upstream": "package/outlined/query_stats.svg",
+   "path": "general/material-query-stats.svg",
+   "name": "query stats",
+   "sha256": "94757ed0d2cb4c40f7abaf0cbfe6fe99c8e5c02fde6fd3c22bcbaaa779bb7dbe"
+  },
+  {
+   "field": "general",
+   "library": "material",
+   "keywords": [
+    "schema",
+    "flow",
+    "diagram"
+   ],
+   "upstream": "package/outlined/schema.svg",
+   "path": "general/material-schema.svg",
+   "name": "schema",
+   "sha256": "af137749b37614d82cf62029589db1070787d69fcc4bfd2062a477e7ccb9d862"
+  },
+  {
+   "field": "general",
+   "library": "phosphor",
+   "keywords": [
+    "network",
+    "graph",
+    "nodes"
+   ],
+   "upstream": "package/assets/regular/network.svg",
+   "path": "general/phosphor-network.svg",
+   "name": "network",
+   "sha256": "9f632e1b092871168c497d948fea25ea6814d52eda3106ad1a5b232c8d2d63ea"
+  },
+  {
+   "field": "general",
+   "library": "phosphor",
+   "keywords": [
+    "database",
+    "store"
+   ],
+   "upstream": "package/assets/regular/database.svg",
+   "path": "general/phosphor-database.svg",
+   "name": "database",
+   "sha256": "da7d3598430cbe3b334c308c03ca41e8c4c7bbbfa7891e914d7aa8e87d847423"
+  },
+  {
+   "field": "general",
+   "library": "phosphor",
+   "keywords": [
+    "line",
+    "chart"
+   ],
+   "upstream": "package/assets/regular/chart-line.svg",
+   "path": "general/phosphor-chart-line.svg",
+   "name": "chart line",
+   "sha256": "8a432fac53ae887b1726a96462aa8ea285e714b8e480261751361e4d6b2b226f"
+  },
+  {
+   "field": "general",
+   "library": "phosphor",
+   "keywords": [
+    "group",
+    "cohort",
+    "population"
+   ],
+   "upstream": "package/assets/regular/users-three.svg",
+   "path": "general/phosphor-users-three.svg",
+   "name": "users three",
+   "sha256": "0e326e4ef7d1ae16f9988791f68fde7bae513bdc8c06db437cfd55bf13670bcf"
+  },
+  {
+   "field": "general",
+   "library": "phosphor",
+   "keywords": [
+    "balance",
+    "trade-off"
+   ],
+   "upstream": "package/assets/regular/scales.svg",
+   "path": "general/phosphor-scales.svg",
+   "name": "scales",
+   "sha256": "0352fc7a9115929af431f42b12ffb3fbc5e23420a712bf4ec922ec1f591f870f"
+  },
+  {
+   "field": "general",
+   "library": "phosphor",
+   "keywords": [
+    "funnel",
+    "filter",
+    "selection"
+   ],
+   "upstream": "package/assets/regular/funnel.svg",
+   "path": "general/phosphor-funnel.svg",
+   "name": "funnel",
+   "sha256": "26b847aa9f8566707443669502dcf08bf0a2d1d3cfb2dc1136842f4033104abb"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "photovoltaic",
+    "pv",
+    "solar",
+    "panel"
+   ],
+   "upstream": "package/icons/outline/solar-panel.svg",
+   "path": "energy/tabler-solar-panel.svg",
+   "name": "solar panel",
+   "sha256": "3265a1b89644b7dabfd97e912f559486f065e448cd6b975d17406ed24d47b02d"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "photovoltaic",
+    "pv",
+    "array"
+   ],
+   "upstream": "package/icons/outline/solar-panel-2.svg",
+   "path": "energy/tabler-solar-panel-2.svg",
+   "name": "solar panel 2",
+   "sha256": "f885291157b1a7910161bc4b7239434626177b085886fc54e323037dde1eb839"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "solar",
+    "electricity",
+    "pv",
+    "generation"
+   ],
+   "upstream": "package/icons/outline/solar-electricity.svg",
+   "path": "energy/tabler-solar-electricity.svg",
+   "name": "solar electricity",
+   "sha256": "4ce3c3973e2f7de5c7c8c716dd706bccdaebd703d5945d48d6e124b86af546e6"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "battery",
+    "storage",
+    "charging",
+    "bess"
+   ],
+   "upstream": "package/icons/outline/battery-charging.svg",
+   "path": "energy/tabler-battery-charging.svg",
+   "name": "battery charging",
+   "sha256": "f0807f75712e498b2a203ab2380c302f031256b18aa2da498fa3bd9a33301a4e"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "battery",
+    "storage",
+    "container"
+   ],
+   "upstream": "package/icons/outline/battery-automotive.svg",
+   "path": "energy/tabler-battery-automotive.svg",
+   "name": "battery automotive",
+   "sha256": "7cf98c6708386ad48311fa5e9d0ec39634a2599af9023dde3f0a6c771774c81a"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "battery",
+    "storage",
+    "green"
+   ],
+   "upstream": "package/icons/outline/battery-eco.svg",
+   "path": "energy/tabler-battery-eco.svg",
+   "name": "battery eco",
+   "sha256": "8518d8f947c4b15bb7cb523eb80950e3f1090b4b04b283cc24c0f6142a78b6b8"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "wind",
+    "turbine",
+    "farm"
+   ],
+   "upstream": "package/icons/outline/building-wind-turbine.svg",
+   "path": "energy/tabler-building-wind-turbine.svg",
+   "name": "building wind turbine",
+   "sha256": "748608ba16f506b755833cdd959dd6578dd0c14c8a1c3df622a6807fda6d7ea4"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "wind",
+    "turbine"
+   ],
+   "upstream": "package/icons/outline/windmill.svg",
+   "path": "energy/tabler-windmill.svg",
+   "name": "windmill",
+   "sha256": "307cdfa3943a607b38ddeec0f2749fb2db0839561877419a5320626e31da8c05"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "electricity",
+    "power",
+    "lightning"
+   ],
+   "upstream": "package/icons/outline/bolt.svg",
+   "path": "energy/tabler-bolt.svg",
+   "name": "bolt",
+   "sha256": "01406965f01ce9076cda12228f13fd6a52bbc0dd36485303122da38e7b120bf6"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "plug",
+    "connection",
+    "load"
+   ],
+   "upstream": "package/icons/outline/plug.svg",
+   "path": "energy/tabler-plug.svg",
+   "name": "plug",
+   "sha256": "ace95e5abc99d5f7853add8245e54a5d7fa25e883cb46da8584c3c1e6af644e3"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "grid",
+    "connection"
+   ],
+   "upstream": "package/icons/outline/plug-connected.svg",
+   "path": "energy/tabler-plug-connected.svg",
+   "name": "plug connected",
+   "sha256": "ddfa8fee264960660766f8df44f590361940912afaa2d38f6443133c33d833ea"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "ev",
+    "charger",
+    "charging",
+    "station"
+   ],
+   "upstream": "package/icons/outline/charging-pile.svg",
+   "path": "energy/tabler-charging-pile.svg",
+   "name": "charging pile",
+   "sha256": "9baa942bf9c014b28c6bb30e649d390fcc64c826d7adcf881c0f41fbf7bf4b96"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "electric",
+    "vehicle",
+    "car"
+   ],
+   "upstream": "package/icons/outline/car.svg",
+   "path": "energy/tabler-car.svg",
+   "name": "car",
+   "sha256": "0c1e82f5dca99c5fd1090792b03bb3e825ae7783e3286da362649e5017492d12"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "household",
+    "residential",
+    "load"
+   ],
+   "upstream": "package/icons/outline/home.svg",
+   "path": "energy/tabler-home.svg",
+   "name": "home",
+   "sha256": "cb742a3b1aa0007ec0c3f26f898e5833c6e67476e136b8eae3c52e2f2c751b5c"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "household",
+    "electricity",
+    "prosumer"
+   ],
+   "upstream": "package/icons/outline/home-bolt.svg",
+   "path": "energy/tabler-home-bolt.svg",
+   "name": "home bolt",
+   "sha256": "9176c5e19c1e02a5920370bad963c0ce49bd0d0dd401afb7f0ab103e7ee2c1ed"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "industry",
+    "industrial",
+    "load",
+    "factory"
+   ],
+   "upstream": "package/icons/outline/building-factory.svg",
+   "path": "energy/tabler-building-factory.svg",
+   "name": "building factory",
+   "sha256": "a1098824050a6a8bf2ce55cda737bb1d584d450d05e92b5e4ff6fb63fc5e5e67"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "industry",
+    "plant"
+   ],
+   "upstream": "package/icons/outline/building-factory-2.svg",
+   "path": "energy/tabler-building-factory-2.svg",
+   "name": "building factory 2",
+   "sha256": "a572af7e57187f0268d55cdc43096a2ef1e8cf8662f95a88afed94c985ce90e8"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "commercial",
+    "building",
+    "city"
+   ],
+   "upstream": "package/icons/outline/building-skyscraper.svg",
+   "path": "energy/tabler-building-skyscraper.svg",
+   "name": "building skyscraper",
+   "sha256": "e7156119fc26c21765c9a5d3305315b381d3ef5d7e7a73be5afbc89ea2aac72d"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "community",
+    "town"
+   ],
+   "upstream": "package/icons/outline/building-community.svg",
+   "path": "energy/tabler-building-community.svg",
+   "name": "building community",
+   "sha256": "1c4bbe2078ebb0b1ae5c913a3890d277b79993474f0bcb1a7e13f697d55fd7f7"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "meter",
+    "gauge"
+   ],
+   "upstream": "package/icons/outline/gauge.svg",
+   "path": "energy/tabler-gauge.svg",
+   "name": "gauge",
+   "sha256": "37a907803ec36ca8e085352d12aa1155686a2fb51388bb57062417affd6844ee"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "sun",
+    "irradiance"
+   ],
+   "upstream": "package/icons/outline/sun.svg",
+   "path": "energy/tabler-sun.svg",
+   "name": "sun",
+   "sha256": "1753d34d4c09f4a0e32afbb417defeded055a88f8ac33963556570a53a76dfa9"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "sun",
+    "irradiance",
+    "noon"
+   ],
+   "upstream": "package/icons/outline/sun-high.svg",
+   "path": "energy/tabler-sun-high.svg",
+   "name": "sun high",
+   "sha256": "fcdeded7db14048b3e3468eb943f39e10ca0637a4f9995fdcc4e7f70a1bf0840"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "temperature",
+    "heat"
+   ],
+   "upstream": "package/icons/outline/temperature.svg",
+   "path": "energy/tabler-temperature.svg",
+   "name": "temperature",
+   "sha256": "320b0801050647cd25a403bdb17df6489ca6d48e1e8aed709fc8c3a6af46e644"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "price",
+    "revenue",
+    "cost"
+   ],
+   "upstream": "package/icons/outline/currency-dollar.svg",
+   "path": "energy/tabler-currency-dollar.svg",
+   "name": "currency dollar",
+   "sha256": "e4c041e2ccf29279c7bf1467af7a3cf0f4a4520a087cb2e8068c33bcd8e9d17c"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "revenue",
+    "money",
+    "settlement"
+   ],
+   "upstream": "package/icons/outline/coins.svg",
+   "path": "energy/tabler-coins.svg",
+   "name": "coins",
+   "sha256": "83b890e4d6e41d9b72304b9f07bb5077034efe76a652e5ffca8f7f064ce5e51b"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "market",
+    "price"
+   ],
+   "upstream": "package/icons/outline/chart-candle.svg",
+   "path": "energy/tabler-chart-candle.svg",
+   "name": "chart candle",
+   "sha256": "48ed253ed2b6314375074825d830adb1507116441188dc2967c0dd87d7431f60"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "market",
+    "operator",
+    "institution"
+   ],
+   "upstream": "package/icons/outline/building-bank.svg",
+   "path": "energy/tabler-building-bank.svg",
+   "name": "building bank",
+   "sha256": "e1e0562364007ab878d2293bd51e7371c9a1f79cee1b3d2cc10f3114b912149b"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "bill",
+    "settlement",
+    "invoice"
+   ],
+   "upstream": "package/icons/outline/receipt.svg",
+   "path": "energy/tabler-receipt.svg",
+   "name": "receipt",
+   "sha256": "75b8f85d748ccde4a24ad6e550e3da61517e6d351582db9e29965623fd2ca960"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "battery",
+    "symbol"
+   ],
+   "upstream": "package/icons/outline/circuit-battery.svg",
+   "path": "energy/tabler-circuit-battery.svg",
+   "name": "circuit battery",
+   "sha256": "33e7af5f9fadaaacb84191fb36f266b5229f441cf738d001987825613b981c6b"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "ground",
+    "symbol"
+   ],
+   "upstream": "package/icons/outline/circuit-ground.svg",
+   "path": "energy/tabler-circuit-ground.svg",
+   "name": "circuit ground",
+   "sha256": "1d5dbd34a2f52da9e5069366eab978e909eff6f7203775656c901bb884844cd2"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "switch",
+    "breaker"
+   ],
+   "upstream": "package/icons/outline/circuit-switch-open.svg",
+   "path": "energy/tabler-circuit-switch-open.svg",
+   "name": "circuit switch open",
+   "sha256": "e9db814860f45da9f8684c88621922bd2a1b88cfe1199f19e175d54c9b983e1d"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "resistor"
+   ],
+   "upstream": "package/icons/outline/circuit-resistor.svg",
+   "path": "energy/tabler-circuit-resistor.svg",
+   "name": "circuit resistor",
+   "sha256": "eef8511b531abd56a83e1c7e2591802dcfea1e4711f749abf28b8782f3405ea2"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "capacitor"
+   ],
+   "upstream": "package/icons/outline/circuit-capacitor.svg",
+   "path": "energy/tabler-circuit-capacitor.svg",
+   "name": "circuit capacitor",
+   "sha256": "aa50f322fb1d97c52b04298a0276b97a9d20ba4ae603fa1ba7c15dfcc83dc5b5"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "inductor"
+   ],
+   "upstream": "package/icons/outline/circuit-inductor.svg",
+   "path": "energy/tabler-circuit-inductor.svg",
+   "name": "circuit inductor",
+   "sha256": "81ee385215fbafba0b4210cce31d9e2212784b736b58ea82be3f00e54d6babf1"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "diode"
+   ],
+   "upstream": "package/icons/outline/circuit-diode.svg",
+   "path": "energy/tabler-circuit-diode.svg",
+   "name": "circuit diode",
+   "sha256": "750b9fe40e436f9282352aae97ebf3689041765cee670cb52139e629fe9a2403"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "motor"
+   ],
+   "upstream": "package/icons/outline/circuit-motor.svg",
+   "path": "energy/tabler-circuit-motor.svg",
+   "name": "circuit motor",
+   "sha256": "9248d4861f8118c3a9457a2d85a670e08a93c47f3e7103076050c8570e536a55"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "voltmeter",
+    "measurement"
+   ],
+   "upstream": "package/icons/outline/circuit-voltmeter.svg",
+   "path": "energy/tabler-circuit-voltmeter.svg",
+   "name": "circuit voltmeter",
+   "sha256": "0c32432790229211ba88e3b1ed205dbe691877401db8d4ea46d1ed5718f8f13b"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "ammeter"
+   ],
+   "upstream": "package/icons/outline/circuit-ammeter.svg",
+   "path": "energy/tabler-circuit-ammeter.svg",
+   "name": "circuit ammeter",
+   "sha256": "bf23989ed0bb60dfa2455b953d570bfa54c186107de6a28b31434cd9f0e08947"
+  },
+  {
+   "field": "energy",
+   "library": "tabler",
+   "keywords": [
+    "circuit",
+    "lamp",
+    "load"
+   ],
+   "upstream": "package/icons/outline/circuit-bulb.svg",
+   "path": "energy/tabler-circuit-bulb.svg",
+   "name": "circuit bulb",
+   "sha256": "104588b4b7c315f218270b55755289cca544260f28b1648379842e5e85510bcf"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "solar",
+    "pv",
+    "power"
+   ],
+   "upstream": "package/outlined/solar_power.svg",
+   "path": "energy/material-solar-power.svg",
+   "name": "solar power",
+   "sha256": "63cbfa47ff90f208e5ffcf6038d924b8716ebd72ce5d3fb3b071895511576d76"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "wind",
+    "turbine",
+    "power"
+   ],
+   "upstream": "package/outlined/wind_power.svg",
+   "path": "energy/material-wind-power.svg",
+   "name": "wind power",
+   "sha256": "6ecbc67aed1bd7cb9b667196468b5038098aa9e5535dd3ae456a44c6c84c658a"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "electricity",
+    "meter",
+    "metering"
+   ],
+   "upstream": "package/outlined/electric_meter.svg",
+   "path": "energy/material-electric-meter.svg",
+   "name": "electric meter",
+   "sha256": "b8e6a26362e71c5a910ee915e9e4de5feea030d409547f72f4ac0393d0ee7145"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "ev",
+    "charging",
+    "station"
+   ],
+   "upstream": "package/outlined/ev_station.svg",
+   "path": "energy/material-ev-station.svg",
+   "name": "ev station",
+   "sha256": "320c2a297628666069350ba65de83526485cc1988fa950b244594fb21f0391e5"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "electric",
+    "vehicle"
+   ],
+   "upstream": "package/outlined/electric_car.svg",
+   "path": "energy/material-electric-car.svg",
+   "name": "electric car",
+   "sha256": "5284e7f9784d79dc88765859c96aef390356c88e2b3b4a5e5bc909a359db7662"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "factory",
+    "industry"
+   ],
+   "upstream": "package/outlined/factory.svg",
+   "path": "energy/material-factory.svg",
+   "name": "factory",
+   "sha256": "0004643b53e1be0be73a86cdf5aa351b4ebd85d4d7221d12094d36fc61f9fc51"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "battery",
+    "charging"
+   ],
+   "upstream": "package/outlined/battery_charging_full.svg",
+   "path": "energy/material-battery-charging-full.svg",
+   "name": "battery charging full",
+   "sha256": "050bf96997158b315d509bd2e59f27245ad13d655e8f541c314792b885db73b0"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "heat",
+    "pump",
+    "heating"
+   ],
+   "upstream": "package/outlined/heat_pump.svg",
+   "path": "energy/material-heat-pump.svg",
+   "name": "heat pump",
+   "sha256": "172af91bd2317b75d7339e59b59622e285351a787107011eec0e4bd702170c75"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "efficiency",
+    "saving"
+   ],
+   "upstream": "package/outlined/energy_savings_leaf.svg",
+   "path": "energy/material-energy-savings-leaf.svg",
+   "name": "energy savings leaf",
+   "sha256": "755d8a257da229aa39963855ae92a1f82f5a5592f5ba1e50a9db2ae8d662ea54"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "electrical",
+    "service",
+    "grid"
+   ],
+   "upstream": "package/outlined/electrical_services.svg",
+   "path": "energy/material-electrical-services.svg",
+   "name": "electrical services",
+   "sha256": "9c87d9217a910fc68e5247b6826ea397547f963767eedbe71731ffeba8d12de0"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "gas",
+    "meter"
+   ],
+   "upstream": "package/outlined/gas_meter.svg",
+   "path": "energy/material-gas-meter.svg",
+   "name": "gas meter",
+   "sha256": "762978c39b4a591183850f65b2cb2f77f03d5193e3a5463cbb8297bcb83f57c9"
+  },
+  {
+   "field": "energy",
+   "library": "material",
+   "keywords": [
+    "pump",
+    "hydro"
+   ],
+   "upstream": "package/outlined/water_pump.svg",
+   "path": "energy/material-water-pump.svg",
+   "name": "water pump",
+   "sha256": "e9e618224b44eaa98847f04c5ccdf62724277c1a4461d6f4353d41d446045ce7"
+  },
+  {
+   "field": "energy",
+   "library": "phosphor",
+   "keywords": [
+    "solar",
+    "panel",
+    "pv"
+   ],
+   "upstream": "package/assets/regular/solar-panel.svg",
+   "path": "energy/phosphor-solar-panel.svg",
+   "name": "solar panel",
+   "sha256": "087d7a1dd2a06b117fb9f449252f5404a3e35daa63e38e542fe728cd6ca28088"
+  },
+  {
+   "field": "energy",
+   "library": "phosphor",
+   "keywords": [
+    "rooftop",
+    "pv",
+    "house"
+   ],
+   "upstream": "package/assets/regular/solar-roof.svg",
+   "path": "energy/phosphor-solar-roof.svg",
+   "name": "solar roof",
+   "sha256": "fa19e3b49ceaaf2f7f703cb8f64e5e1ac2b5ba63e8303b7c3fa6a2c7d783f56c"
+  },
+  {
+   "field": "energy",
+   "library": "phosphor",
+   "keywords": [
+    "wind",
+    "turbine"
+   ],
+   "upstream": "package/assets/regular/windmill.svg",
+   "path": "energy/phosphor-windmill.svg",
+   "name": "windmill",
+   "sha256": "acaa858699ab2863d1f821b26b9e907e6ba871d0c05edff7528cdfccf83b9db9"
+  },
+  {
+   "field": "energy",
+   "library": "phosphor",
+   "keywords": [
+    "charging"
+   ],
+   "upstream": "package/assets/regular/plug-charging.svg",
+   "path": "energy/phosphor-plug-charging.svg",
+   "name": "plug charging",
+   "sha256": "bf643a4533c7e4d16467caa0d7ef01e9b054aee909bf5e7806a236107b173e51"
+  },
+  {
+   "field": "energy",
+   "library": "phosphor",
+   "keywords": [
+    "power",
+    "plant",
+    "thermal",
+    "nuclear"
+   ],
+   "upstream": "package/assets/regular/nuclear-plant.svg",
+   "path": "energy/phosphor-nuclear-plant.svg",
+   "name": "nuclear plant",
+   "sha256": "9b72ec3b3612da58a8a1d1c7dd124ebb10da4447ca61bf2a3e4c0f3ea6ce1bff"
+  },
+  {
+   "field": "energy",
+   "library": "phosphor",
+   "keywords": [
+    "factory",
+    "industry"
+   ],
+   "upstream": "package/assets/regular/factory.svg",
+   "path": "energy/phosphor-factory.svg",
+   "name": "factory",
+   "sha256": "aa80d3459397014a15f50b525771dbd2edff9e005cfcda40a75e85c3c237f747"
+  },
+  {
+   "field": "energy",
+   "library": "phosphor",
+   "keywords": [
+    "electricity",
+    "power"
+   ],
+   "upstream": "package/assets/regular/lightning.svg",
+   "path": "energy/phosphor-lightning.svg",
+   "name": "lightning",
+   "sha256": "3a50c776266b21812f8ec5b5a841a81f54aa942569a31eb03a36fb0a5bfbe66e"
+  },
+  {
+   "field": "energy",
+   "library": "phosphor",
+   "keywords": [
+    "battery"
+   ],
+   "upstream": "package/assets/regular/car-battery.svg",
+   "path": "energy/phosphor-car-battery.svg",
+   "name": "car battery",
+   "sha256": "ba119b776c0039342952cb1b1f185a9d9683321f07b1f1070feb3a655d21d673"
+  },
+  {
+   "field": "energy",
+   "library": "phosphor",
+   "keywords": [
+    "house",
+    "household"
+   ],
+   "upstream": "package/assets/regular/house-line.svg",
+   "path": "energy/phosphor-house-line.svg",
+   "name": "house line",
+   "sha256": "5fc13c768e88725c7075dedc9c7e5df1a7d2c1aa603ffa071f36cbeec09656e5"
+  },
+  {
+   "field": "energy",
+   "library": "phosphor",
+   "keywords": [
+    "city",
+    "buildings",
+    "commercial"
+   ],
+   "upstream": "package/assets/regular/buildings.svg",
+   "path": "energy/phosphor-buildings.svg",
+   "name": "buildings",
+   "sha256": "76f3325b87588fc6786953e8b964d5b7cae58983b3dc1399f7b7a672a6c1b553"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "engine",
+    "machine"
+   ],
+   "upstream": "package/icons/outline/engine.svg",
+   "path": "reliability/tabler-engine.svg",
+   "name": "engine",
+   "sha256": "2c5c314146b58060112f6a6e17d8654a9b4a9225fd123887ec4476b25f0f4c21"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "gearbox",
+    "transmission"
+   ],
+   "upstream": "package/icons/outline/automatic-gearbox.svg",
+   "path": "reliability/tabler-automatic-gearbox.svg",
+   "name": "automatic gearbox",
+   "sha256": "0d0b101031176e2200726ab0e001d3505dfdccb25269a909d8fada6a48be5e33"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "gearbox"
+   ],
+   "upstream": "package/icons/outline/manual-gearbox.svg",
+   "path": "reliability/tabler-manual-gearbox.svg",
+   "name": "manual gearbox",
+   "sha256": "a5824422c45f4cde625ea2fcafc0101ec2ecf8e6cbd12f84174254bea25e9a3a"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "gauge",
+    "measurement"
+   ],
+   "upstream": "package/icons/outline/gauge.svg",
+   "path": "reliability/tabler-gauge.svg",
+   "name": "gauge",
+   "sha256": "37a907803ec36ca8e085352d12aa1155686a2fb51388bb57062417affd6844ee"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "signal",
+    "vibration",
+    "monitoring"
+   ],
+   "upstream": "package/icons/outline/activity.svg",
+   "path": "reliability/tabler-activity.svg",
+   "name": "activity",
+   "sha256": "73df47b691a55224346158f5b4c791fa699de2fd91ff225508a0db27a6b63010"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "signal",
+    "square",
+    "wave"
+   ],
+   "upstream": "package/icons/outline/wave-square.svg",
+   "path": "reliability/tabler-wave-square.svg",
+   "name": "wave square",
+   "sha256": "8afa24f8148e8d7e340a28ba9ee0eac8c628d99bbd0795f213cb6cfe84240a89"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "temperature",
+    "thermal"
+   ],
+   "upstream": "package/icons/outline/temperature.svg",
+   "path": "reliability/tabler-temperature.svg",
+   "name": "temperature",
+   "sha256": "320b0801050647cd25a403bdb17df6489ca6d48e1e8aed709fc8c3a6af46e644"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "measurement",
+    "dimension"
+   ],
+   "upstream": "package/icons/outline/ruler-measure.svg",
+   "path": "reliability/tabler-ruler-measure.svg",
+   "name": "ruler measure",
+   "sha256": "5908592a6a691268a0a64887884a4be793658a46eacb3d03c7911f7f37338666"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "maintenance",
+    "tool"
+   ],
+   "upstream": "package/icons/outline/tool.svg",
+   "path": "reliability/tabler-tool.svg",
+   "name": "tool",
+   "sha256": "1f7ac05376f788c16ac9d2569e232e8bebc2603a5d53a90f0d411cdaf9a166bc"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "maintenance",
+    "repair"
+   ],
+   "upstream": "package/icons/outline/tools.svg",
+   "path": "reliability/tabler-tools.svg",
+   "name": "tools",
+   "sha256": "f9212b654de71060756fc62ea8eca4b79bdebd90c00751b6f8e4c1d05f190d6e"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "robot",
+    "automation"
+   ],
+   "upstream": "package/icons/outline/robot.svg",
+   "path": "reliability/tabler-robot.svg",
+   "name": "robot",
+   "sha256": "0912894bf1fd7cd62a2da7cebac5035b1e4bab9d91a7d0b840356940c01c2c8c"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "turbine"
+   ],
+   "upstream": "package/icons/outline/car-turbine.svg",
+   "path": "reliability/tabler-car-turbine.svg",
+   "name": "car turbine",
+   "sha256": "8d6eb36a4ba0ca27cb438d482a6a1b93bb610dd60f4b805f7703a7dcf7559a03"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "rotor",
+    "propeller",
+    "fan"
+   ],
+   "upstream": "package/icons/outline/propeller.svg",
+   "path": "reliability/tabler-propeller.svg",
+   "name": "propeller",
+   "sha256": "4c87684f3af8824efa448c9268ab6b338fbeccdf11225828c40e66f6f4c09cb9"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "timeline",
+    "degradation"
+   ],
+   "upstream": "package/icons/outline/timeline.svg",
+   "path": "reliability/tabler-timeline.svg",
+   "name": "timeline",
+   "sha256": "70565936c915e95a1c48948a388a073e13520218a92a27d91e7ffb44a362a0f3"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "lifetime",
+    "remaining",
+    "useful",
+    "life"
+   ],
+   "upstream": "package/icons/outline/hourglass.svg",
+   "path": "reliability/tabler-hourglass.svg",
+   "name": "hourglass",
+   "sha256": "c7451e52ed16c9bb182db6e97da06721841637ca2bfafe9bd12e95d150c6864d"
+  },
+  {
+   "field": "reliability",
+   "library": "tabler",
+   "keywords": [
+    "health",
+    "monitoring"
+   ],
+   "upstream": "package/icons/outline/heartbeat.svg",
+   "path": "reliability/tabler-heartbeat.svg",
+   "name": "heartbeat",
+   "sha256": "4f5e8c9115cb8590c2e538056602300a18332cc5ba0978e433128e67bc4d4002"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "gear"
+   ],
+   "upstream": "package/assets/regular/gear.svg",
+   "path": "reliability/phosphor-gear.svg",
+   "name": "gear",
+   "sha256": "5c0cb3ba307c72babf78d952d9140c682ff30307fedc7fbb87c9a293c1e2fd64"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "gear",
+    "wheel"
+   ],
+   "upstream": "package/assets/regular/gear-six.svg",
+   "path": "reliability/phosphor-gear-six.svg",
+   "name": "gear six",
+   "sha256": "2bb05ec80cc37505a3f21c74989dbb297ab8442a668f5ffbd6a8f7c1d5794c7b"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "fine",
+    "gear"
+   ],
+   "upstream": "package/assets/regular/gear-fine.svg",
+   "path": "reliability/phosphor-gear-fine.svg",
+   "name": "gear fine",
+   "sha256": "ca000a36662d0049d39ea5cbe44a0133960d791dd95dd1929692211355fac4e0"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "engine"
+   ],
+   "upstream": "package/assets/regular/engine.svg",
+   "path": "reliability/phosphor-engine.svg",
+   "name": "engine",
+   "sha256": "3fd04a8c6f032346a6eedfc43046c6331c66ba04821bcfe3cd2ab19d347c83fc"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "wrench",
+    "maintenance"
+   ],
+   "upstream": "package/assets/regular/wrench.svg",
+   "path": "reliability/phosphor-wrench.svg",
+   "name": "wrench",
+   "sha256": "690d657aa4a9c99d620583cf6247cfefa5372c10e2bc60e9255a3ce19e3e9c47"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "toolbox"
+   ],
+   "upstream": "package/assets/regular/toolbox.svg",
+   "path": "reliability/phosphor-toolbox.svg",
+   "name": "toolbox",
+   "sha256": "1bc3a40ba89821d9defb144b0fa4ae3f40aefcda58b62216c7f30a5d64e7144e"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "speed",
+    "rpm"
+   ],
+   "upstream": "package/assets/regular/speedometer.svg",
+   "path": "reliability/phosphor-speedometer.svg",
+   "name": "speedometer",
+   "sha256": "46038ab9fb081574f685384c824f8d352ea0bba84009b418283ca5abc8ccee98"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "waveform",
+    "vibration",
+    "signal"
+   ],
+   "upstream": "package/assets/regular/waveform.svg",
+   "path": "reliability/phosphor-waveform.svg",
+   "name": "waveform",
+   "sha256": "8f6a47cff9b0fb3a8f25fe411b9cc1b24d063d6577c8d07cc53b0e9b080afaa0"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "temperature",
+    "sensor"
+   ],
+   "upstream": "package/assets/regular/thermometer.svg",
+   "path": "reliability/phosphor-thermometer.svg",
+   "name": "thermometer",
+   "sha256": "fbe42cf4910d02a41df98cd26044da36d706c347d4656b56ce343f67d2674cde"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "magnet"
+   ],
+   "upstream": "package/assets/regular/magnet.svg",
+   "path": "reliability/phosphor-magnet.svg",
+   "name": "magnet",
+   "sha256": "b62b4c2348845e7b498b274540b9eda464ab1f4f39176e5c5d51f7485f038f5d"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "pulse",
+    "signal"
+   ],
+   "upstream": "package/assets/regular/pulse.svg",
+   "path": "reliability/phosphor-pulse.svg",
+   "name": "pulse",
+   "sha256": "9c1cc6fc4b2cd292b798294f8759c9e146b41cc5606357532fe200dd07b1323b"
+  },
+  {
+   "field": "reliability",
+   "library": "phosphor",
+   "keywords": [
+    "fan",
+    "rotor"
+   ],
+   "upstream": "package/assets/regular/fan.svg",
+   "path": "reliability/phosphor-fan.svg",
+   "name": "fan",
+   "sha256": "21c69c625c627d2363d213bdb9d2f714b1175658a14647f212ff6f3b1b10c8c2"
+  },
+  {
+   "field": "reliability",
+   "library": "material",
+   "keywords": [
+    "robot",
+    "arm",
+    "manufacturing"
+   ],
+   "upstream": "package/outlined/precision_manufacturing.svg",
+   "path": "reliability/material-precision-manufacturing.svg",
+   "name": "precision manufacturing",
+   "sha256": "d8b5da136513e0f318d9afce08af13f5ed4df2e8c151f6959ed06b5a64cf9995"
+  },
+  {
+   "field": "reliability",
+   "library": "material",
+   "keywords": [
+    "sensor"
+   ],
+   "upstream": "package/outlined/sensors.svg",
+   "path": "reliability/material-sensors.svg",
+   "name": "sensors",
+   "sha256": "1191752ae9a4aea247078c398930d5cb584ccdee692652aae1316f84a116440d"
+  },
+  {
+   "field": "reliability",
+   "library": "material",
+   "keywords": [
+    "speed"
+   ],
+   "upstream": "package/outlined/speed.svg",
+   "path": "reliability/material-speed.svg",
+   "name": "speed",
+   "sha256": "fc9badac8b2dbda14afcfd77e7c54a728c72cb9100b05d4a3373c2e4e0da9ae3"
+  },
+  {
+   "field": "reliability",
+   "library": "material",
+   "keywords": [
+    "maintenance"
+   ],
+   "upstream": "package/outlined/build.svg",
+   "path": "reliability/material-build.svg",
+   "name": "build",
+   "sha256": "034d07d290421566b30ce590ecbe9d5ecfa9d8aabe13bf460176e731fcee9e4a"
+  },
+  {
+   "field": "reliability",
+   "library": "material",
+   "keywords": [
+    "engineering",
+    "gear"
+   ],
+   "upstream": "package/outlined/engineering.svg",
+   "path": "reliability/material-engineering.svg",
+   "name": "engineering",
+   "sha256": "c417af0ef074c3045fd4564905833e1a531f3303676bdc59ebc37f901221e657"
+  },
+  {
+   "field": "reliability",
+   "library": "material",
+   "keywords": [
+    "construction"
+   ],
+   "upstream": "package/outlined/construction.svg",
+   "path": "reliability/material-construction.svg",
+   "name": "construction",
+   "sha256": "1a8f853a1d58c25f738b8a30c53c3fde0bd34c249aed6b8ca8c56a58cf1c8edc"
+  },
+  {
+   "field": "reliability",
+   "library": "material",
+   "keywords": [
+    "conveyor",
+    "production",
+    "line"
+   ],
+   "upstream": "package/outlined/conveyor_belt.svg",
+   "path": "reliability/material-conveyor-belt.svg",
+   "name": "conveyor belt",
+   "sha256": "56c1dc823545a64fba36658538495f0dfb141c2ab67d488e2b49cdd4e5e11d0d"
+  },
+  {
+   "field": "reliability",
+   "library": "material",
+   "keywords": [
+    "monitoring",
+    "signal"
+   ],
+   "upstream": "package/outlined/monitoring.svg",
+   "path": "reliability/material-monitoring.svg",
+   "name": "monitoring",
+   "sha256": "f614c5f8dc7fac853070d0db83755e409834be48bb0427a7b5257094b1ad163c"
+  },
+  {
+   "field": "reliability",
+   "library": "material",
+   "keywords": [
+    "manufacturing",
+    "gears"
+   ],
+   "upstream": "package/outlined/manufacturing.svg",
+   "path": "reliability/material-manufacturing.svg",
+   "name": "manufacturing",
+   "sha256": "c6867e826895a4c222179ab32d84b59943ff19bd3588ab4e51416761318330f0"
+  },
+  {
+   "field": "reliability",
+   "library": "material",
+   "keywords": [
+    "fan",
+    "rotor"
+   ],
+   "upstream": "package/outlined/mode_fan.svg",
+   "path": "reliability/material-mode-fan.svg",
+   "name": "mode fan",
+   "sha256": "8803725f0e891523f9c978cdaecfd87726cb4a8a7719f394d5540bb405e1f1d9"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "telescope",
+    "observation"
+   ],
+   "upstream": "package/icons/outline/telescope.svg",
+   "path": "astronomy/tabler-telescope.svg",
+   "name": "telescope",
+   "sha256": "23ebec3572f6c8a2edd8428d8e0305ab49f6015fb5de40f526db341b99e0722c"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "planet"
+   ],
+   "upstream": "package/icons/outline/planet.svg",
+   "path": "astronomy/tabler-planet.svg",
+   "name": "planet",
+   "sha256": "0b3661cbe756c6eb33b49b577b4d68fbb8b79ffa1d86b1968e74f079fba28a99"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "satellite",
+    "spacecraft"
+   ],
+   "upstream": "package/icons/outline/satellite.svg",
+   "path": "astronomy/tabler-satellite.svg",
+   "name": "satellite",
+   "sha256": "c8c90ac8f7bf2b23229edb359b83b1139932d96d0c365fc572b2c7b0645dad8b"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "star",
+    "sun"
+   ],
+   "upstream": "package/icons/outline/sun.svg",
+   "path": "astronomy/tabler-sun.svg",
+   "name": "sun",
+   "sha256": "1753d34d4c09f4a0e32afbb417defeded055a88f8ac33963556570a53a76dfa9"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "moon"
+   ],
+   "upstream": "package/icons/outline/moon.svg",
+   "path": "astronomy/tabler-moon.svg",
+   "name": "moon",
+   "sha256": "57372c0f83966692ec9c8dfea4c28503df2d5a260825d24a230fab86bcbb3bdb"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "stars",
+    "field"
+   ],
+   "upstream": "package/icons/outline/stars.svg",
+   "path": "astronomy/tabler-stars.svg",
+   "name": "stars",
+   "sha256": "017f4b6c2aba250575ee0040ea28972abbb29d65a7b886f655bd6975fd32be8f"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "meteor",
+    "comet"
+   ],
+   "upstream": "package/icons/outline/meteor.svg",
+   "path": "astronomy/tabler-meteor.svg",
+   "name": "meteor",
+   "sha256": "32335b2ae2568b1a566fc9846b83a0b92c845b7c1845e90ef7021ed395da16a1"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "rocket",
+    "launch"
+   ],
+   "upstream": "package/icons/outline/rocket.svg",
+   "path": "astronomy/tabler-rocket.svg",
+   "name": "rocket",
+   "sha256": "fc760a34bb274135f13f698f2c5fa07becda6715194230fd38e978589e62d859"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "antenna",
+    "radio"
+   ],
+   "upstream": "package/icons/outline/antenna.svg",
+   "path": "astronomy/tabler-antenna.svg",
+   "name": "antenna",
+   "sha256": "efcc92bdc806353bf305a4c66361c43e44760b7e52a9196049c78990c995a987"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "radar"
+   ],
+   "upstream": "package/icons/outline/radar.svg",
+   "path": "astronomy/tabler-radar.svg",
+   "name": "radar",
+   "sha256": "583e6befb4894884ae07950ce6bd3ed750086eacf273bfb2ba614fb2a738884b"
+  },
+  {
+   "field": "astronomy",
+   "library": "tabler",
+   "keywords": [
+    "observer"
+   ],
+   "upstream": "package/icons/outline/eye.svg",
+   "path": "astronomy/tabler-eye.svg",
+   "name": "eye",
+   "sha256": "d74739aaa5c3e99e9b6519cd70089e550593b9495d39ac586de601c49ceaa9a6"
+  },
+  {
+   "field": "astronomy",
+   "library": "phosphor",
+   "keywords": [
+    "planet"
+   ],
+   "upstream": "package/assets/regular/planet.svg",
+   "path": "astronomy/phosphor-planet.svg",
+   "name": "planet",
+   "sha256": "6debb1f42963ba6e1095d993253d2a558c2badb03cadc654e16f2e98dcaefb3d"
+  },
+  {
+   "field": "astronomy",
+   "library": "phosphor",
+   "keywords": [
+    "meteor"
+   ],
+   "upstream": "package/assets/regular/meteor.svg",
+   "path": "astronomy/phosphor-meteor.svg",
+   "name": "meteor",
+   "sha256": "b7107a40b16702776b86808377bdf9c380f33143af7bb8f76d9aa57625d95502"
+  },
+  {
+   "field": "astronomy",
+   "library": "phosphor",
+   "keywords": [
+    "night",
+    "sky"
+   ],
+   "upstream": "package/assets/regular/moon-stars.svg",
+   "path": "astronomy/phosphor-moon-stars.svg",
+   "name": "moon stars",
+   "sha256": "a87d9314c9313a719a3297985a9d8cd1c4aa4602490b9286d8caf5bec82c466d"
+  },
+  {
+   "field": "astronomy",
+   "library": "phosphor",
+   "keywords": [
+    "star"
+   ],
+   "upstream": "package/assets/regular/star.svg",
+   "path": "astronomy/phosphor-star.svg",
+   "name": "star",
+   "sha256": "165cd96e51d60442fb9c7aa89592fa6ef28f22d18368c85771be302c2e977101"
+  },
+  {
+   "field": "astronomy",
+   "library": "phosphor",
+   "keywords": [
+    "star",
+    "sparkle"
+   ],
+   "upstream": "package/assets/regular/star-four.svg",
+   "path": "astronomy/phosphor-star-four.svg",
+   "name": "star four",
+   "sha256": "877f1c373b81f3eae0909031d73f7a10dfb47f459e3b13f773cf8f5e19c670cd"
+  },
+  {
+   "field": "astronomy",
+   "library": "phosphor",
+   "keywords": [
+    "rocket"
+   ],
+   "upstream": "package/assets/regular/rocket.svg",
+   "path": "astronomy/phosphor-rocket.svg",
+   "name": "rocket",
+   "sha256": "c7f97a562b9da6b8c05e6e6ca7f0af5c63a3bbb93b56d468a58955b70efa651d"
+  },
+  {
+   "field": "astronomy",
+   "library": "phosphor",
+   "keywords": [
+    "sunrise",
+    "horizon"
+   ],
+   "upstream": "package/assets/regular/sun-horizon.svg",
+   "path": "astronomy/phosphor-sun-horizon.svg",
+   "name": "sun horizon",
+   "sha256": "9d63240fd584ffdc66fc0a2f01dae36ef1e7b0e074d1771375f46179692adbcb"
+  },
+  {
+   "field": "astronomy",
+   "library": "phosphor",
+   "keywords": [
+    "earth"
+   ],
+   "upstream": "package/assets/regular/globe-hemisphere-west.svg",
+   "path": "astronomy/phosphor-globe-hemisphere-west.svg",
+   "name": "globe hemisphere west",
+   "sha256": "f3bfb061f4b5229afd1101c2b96aaffac3fae84c01d92fc6a22fba9437c1f99a"
+  },
+  {
+   "field": "astronomy",
+   "library": "material",
+   "keywords": [
+    "satellite"
+   ],
+   "upstream": "package/outlined/satellite_alt.svg",
+   "path": "astronomy/material-satellite-alt.svg",
+   "name": "satellite alt",
+   "sha256": "376c82fee7f9b2ed413c4795ef87cd9f9b9b37b505f81af183f0dc37091201df"
+  },
+  {
+   "field": "astronomy",
+   "library": "material",
+   "keywords": [
+    "flare",
+    "star"
+   ],
+   "upstream": "package/outlined/flare.svg",
+   "path": "astronomy/material-flare.svg",
+   "name": "flare",
+   "sha256": "e7a60641c38719e8e4689537e599e5c9e50bc88dedadb31de54dd4053835e39c"
+  },
+  {
+   "field": "astronomy",
+   "library": "material",
+   "keywords": [
+    "earth",
+    "globe"
+   ],
+   "upstream": "package/outlined/public.svg",
+   "path": "astronomy/material-public.svg",
+   "name": "public",
+   "sha256": "70a84f4a5621f9bf2ab434d7cd7c38d3ed79db0d806584bb452bc4995c3f6dcc"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "dna",
+    "genome"
+   ],
+   "upstream": "package/icons/outline/dna.svg",
+   "path": "biomedical/tabler-dna.svg",
+   "name": "dna",
+   "sha256": "d157bf678e4863e00619ae4ef5fe4ceffe03c3fd9330d5313fdfa7f528ca8043"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "dna",
+    "helix"
+   ],
+   "upstream": "package/icons/outline/dna-2.svg",
+   "path": "biomedical/tabler-dna-2.svg",
+   "name": "dna 2",
+   "sha256": "685781c5bdb5f7963ac9c2aca48424e536f190cda14d938ce635f9ff674b9d36"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "virus",
+    "pathogen"
+   ],
+   "upstream": "package/icons/outline/virus.svg",
+   "path": "biomedical/tabler-virus.svg",
+   "name": "virus",
+   "sha256": "a969788a9fdb2bbd34e13964d2ce283575f5f646be3ef73a3044c5f2c867d653"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "microscope"
+   ],
+   "upstream": "package/icons/outline/microscope.svg",
+   "path": "biomedical/tabler-microscope.svg",
+   "name": "microscope",
+   "sha256": "833f0e9f825a9aea1e77f4c608b2c303fb08f3c3121fa22a70ed64f54e1bd9b4"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "flask",
+    "chemistry",
+    "lab"
+   ],
+   "upstream": "package/icons/outline/flask.svg",
+   "path": "biomedical/tabler-flask.svg",
+   "name": "flask",
+   "sha256": "cdb463d1fe72491ff2c16f03e3cb26e866bf576b04b1a916cd8f2a07425ecb5c"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "flask"
+   ],
+   "upstream": "package/icons/outline/flask-2.svg",
+   "path": "biomedical/tabler-flask-2.svg",
+   "name": "flask 2",
+   "sha256": "8d195c3799379705f387628ab36c3c618c58e729c6c217ef7e351061d49cc916"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "test",
+    "tube",
+    "sample"
+   ],
+   "upstream": "package/icons/outline/test-pipe.svg",
+   "path": "biomedical/tabler-test-pipe.svg",
+   "name": "test pipe",
+   "sha256": "e32148cc76f0679ca2831cb4630f2ad8cc2f53a12b671fb8730bf454f0ffff96"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "vaccine",
+    "syringe"
+   ],
+   "upstream": "package/icons/outline/vaccine.svg",
+   "path": "biomedical/tabler-vaccine.svg",
+   "name": "vaccine",
+   "sha256": "1ec564e3f00fa2fcafa889c0e26eb89ab3c900e99b36170dca899651052895b2"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "drug",
+    "pill"
+   ],
+   "upstream": "package/icons/outline/pill.svg",
+   "path": "biomedical/tabler-pill.svg",
+   "name": "pill",
+   "sha256": "d060683cef839ed37d790daacf3948a9f1aa4fa0153ea9aef36429f0b07cde45"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "heart",
+    "ecg"
+   ],
+   "upstream": "package/icons/outline/heartbeat.svg",
+   "path": "biomedical/tabler-heartbeat.svg",
+   "name": "heartbeat",
+   "sha256": "4f5e8c9115cb8590c2e538056602300a18332cc5ba0978e433128e67bc4d4002"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "ecg",
+    "trace",
+    "heartbeat"
+   ],
+   "upstream": "package/icons/outline/activity-heartbeat.svg",
+   "path": "biomedical/tabler-activity-heartbeat.svg",
+   "name": "activity heartbeat",
+   "sha256": "4bd48ca1261248076ff73c91bb6c2e538766522bf7ac2d109b63e00104cfc44e"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "heart",
+    "rate",
+    "monitor",
+    "ecg"
+   ],
+   "upstream": "package/icons/outline/heart-rate-monitor.svg",
+   "path": "biomedical/tabler-heart-rate-monitor.svg",
+   "name": "heart rate monitor",
+   "sha256": "7b6d1c79a4733a184528bb0f7dc7db113379e3d5a2e9ad1965cbfdb248fcda5e"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "clinician",
+    "stethoscope"
+   ],
+   "upstream": "package/icons/outline/stethoscope.svg",
+   "path": "biomedical/tabler-stethoscope.svg",
+   "name": "stethoscope",
+   "sha256": "cd5432b1a9ff065f4a9517f5478e2a232486e0bb62a1da1114f4e5b9864e4d3f"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "hospital"
+   ],
+   "upstream": "package/icons/outline/building-hospital.svg",
+   "path": "biomedical/tabler-building-hospital.svg",
+   "name": "building hospital",
+   "sha256": "cd1d508bb6f06ca7a5551587230d0d8e60da40ccbe115a5ab397396f5288ddf9"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "nurse",
+    "clinician"
+   ],
+   "upstream": "package/icons/outline/nurse.svg",
+   "path": "biomedical/tabler-nurse.svg",
+   "name": "nurse",
+   "sha256": "4aa6cc516e73a1af7c69d50ca680d41d654f2722248068d10cd4fd001cc21eca"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "egg"
+   ],
+   "upstream": "package/icons/outline/egg.svg",
+   "path": "biomedical/tabler-egg.svg",
+   "name": "egg",
+   "sha256": "e861486943e160377160813743d48f3b4fd52b2c917ed517130466d8ab79e18a"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "meat",
+    "food"
+   ],
+   "upstream": "package/icons/outline/meat.svg",
+   "path": "biomedical/tabler-meat.svg",
+   "name": "meat",
+   "sha256": "c5973ecf93f490ad1726b587d9194ce4afe227037af67adf4cc281efec90101e"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "water",
+    "drop",
+    "liquid"
+   ],
+   "upstream": "package/icons/outline/droplet.svg",
+   "path": "biomedical/tabler-droplet.svg",
+   "name": "droplet",
+   "sha256": "89b0dc7bb91621af27adb3bdbe8a71644c9632777aa6e3126ea8807a15aa93e7"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "lungs"
+   ],
+   "upstream": "package/icons/outline/lungs.svg",
+   "path": "biomedical/tabler-lungs.svg",
+   "name": "lungs",
+   "sha256": "1f9249f1a3c0b6703389c1a4fe41136e991312224c4d6929497d44cbc2b803cd"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "medical",
+    "report",
+    "record"
+   ],
+   "upstream": "package/icons/outline/report-medical.svg",
+   "path": "biomedical/tabler-report-medical.svg",
+   "name": "report medical",
+   "sha256": "38f0a18b6199f1ca7b1c5e58fc70008ebb40f1490e64ae755129d84e77610004"
+  },
+  {
+   "field": "biomedical",
+   "library": "tabler",
+   "keywords": [
+    "patient",
+    "bed"
+   ],
+   "upstream": "package/icons/outline/emergency-bed.svg",
+   "path": "biomedical/tabler-emergency-bed.svg",
+   "name": "emergency bed",
+   "sha256": "7275af876a15f24369e24544ba8ab859703d2bd2c17e5656419065f05014911f"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "ecg",
+    "trace"
+   ],
+   "upstream": "package/outlined/ecg.svg",
+   "path": "biomedical/material-ecg.svg",
+   "name": "ecg",
+   "sha256": "3aee3fe92634fad138f374d5e60365b1e90e64f5872aad1c363b3cc194f16e15"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "ecg",
+    "heart"
+   ],
+   "upstream": "package/outlined/ecg_heart.svg",
+   "path": "biomedical/material-ecg-heart.svg",
+   "name": "ecg heart",
+   "sha256": "6682ce070c054a04f5bebab60f4fe4627f31f8da42d33ae4c9542e33e9989ffd"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "ecg",
+    "monitor"
+   ],
+   "upstream": "package/outlined/monitor_heart.svg",
+   "path": "biomedical/material-monitor-heart.svg",
+   "name": "monitor heart",
+   "sha256": "5a87fbc9ac1878b786e04cb2ffa27eb8bbc1447f833ce9baafc4a6af12fb3f2f"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "cardiology",
+    "heart"
+   ],
+   "upstream": "package/outlined/cardiology.svg",
+   "path": "biomedical/material-cardiology.svg",
+   "name": "cardiology",
+   "sha256": "640baf9937d79c509ef5ae624c490a1861b11c7307e213f53b229f797050e021"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "microbiology",
+    "bacteria"
+   ],
+   "upstream": "package/outlined/microbiology.svg",
+   "path": "biomedical/material-microbiology.svg",
+   "name": "microbiology",
+   "sha256": "04a67c108ca0a66687fdce3a3956b1d29b998a78f5898c85610634f27eb20a45"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "biotech",
+    "lab"
+   ],
+   "upstream": "package/outlined/biotech.svg",
+   "path": "biomedical/material-biotech.svg",
+   "name": "biotech",
+   "sha256": "4aa2a1a01a114f59ecaa8b35a53fc559f7105f9e1ad99e55ea847c421fef1b93"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "genetics",
+    "dna"
+   ],
+   "upstream": "package/outlined/genetics.svg",
+   "path": "biomedical/material-genetics.svg",
+   "name": "genetics",
+   "sha256": "de1d95f435381185c1df1f0107f679096e89a307ff1ce01b6730e618a1d8f468"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "lab",
+    "test",
+    "tubes"
+   ],
+   "upstream": "package/outlined/labs.svg",
+   "path": "biomedical/material-labs.svg",
+   "name": "labs",
+   "sha256": "a43e446669897a0e8ec20d5d238f1d1a1c373c45d3f2e0588fc5c9e300f79d27"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "science",
+    "flask"
+   ],
+   "upstream": "package/outlined/science.svg",
+   "path": "biomedical/material-science.svg",
+   "name": "science",
+   "sha256": "26da8a8de2e4bd587451e35e10e45c6d944c171e9ca545494aba741c90d4cf5b"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "blood"
+   ],
+   "upstream": "package/outlined/bloodtype.svg",
+   "path": "biomedical/material-bloodtype.svg",
+   "name": "bloodtype",
+   "sha256": "4134c86f2f048ce98f42e4d684e1511ad057651d169e34afd23cfb8b5981c510"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "stethoscope"
+   ],
+   "upstream": "package/outlined/stethoscope.svg",
+   "path": "biomedical/material-stethoscope.svg",
+   "name": "stethoscope",
+   "sha256": "91ba420ccf31460d4224c3712b31e4f79631164170981dff2d72214f47516087"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "vaccine"
+   ],
+   "upstream": "package/outlined/vaccines.svg",
+   "path": "biomedical/material-vaccines.svg",
+   "name": "vaccines",
+   "sha256": "a3f039c281e5beda3de3c987b6b975f6c265b20d5131264501e37e6b33593381"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "lungs"
+   ],
+   "upstream": "package/outlined/pulmonology.svg",
+   "path": "biomedical/material-pulmonology.svg",
+   "name": "pulmonology",
+   "sha256": "374e09a82da69d2538e8bfef999d702fa2933ca5c11d30da1f6f6dc97b219464"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "gut",
+    "stomach"
+   ],
+   "upstream": "package/outlined/gastroenterology.svg",
+   "path": "biomedical/material-gastroenterology.svg",
+   "name": "gastroenterology",
+   "sha256": "efd84fdc1d8864857944c0ddd07857db4c7a377e57bed073f316e39067488b4d"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "human",
+    "body"
+   ],
+   "upstream": "package/outlined/body_system.svg",
+   "path": "biomedical/material-body-system.svg",
+   "name": "body system",
+   "sha256": "46a90ce875cd30f6a6b711251564765f4e809fdd74f0c22518a164f0742b3f89"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "clinical",
+    "record"
+   ],
+   "upstream": "package/outlined/clinical_notes.svg",
+   "path": "biomedical/material-clinical-notes.svg",
+   "name": "clinical notes",
+   "sha256": "a701e077ac85ba38d48c2420bfdd71de745635fa593493770114aa4c38bd2316"
+  },
+  {
+   "field": "biomedical",
+   "library": "material",
+   "keywords": [
+    "egg"
+   ],
+   "upstream": "package/outlined/egg.svg",
+   "path": "biomedical/material-egg.svg",
+   "name": "egg",
+   "sha256": "0b94812f580643f8a9901ec8ff47129c02a0f01a5df9828121ec179eebd5233f"
+  },
+  {
+   "field": "biomedical",
+   "library": "phosphor",
+   "keywords": [
+    "dna"
+   ],
+   "upstream": "package/assets/regular/dna.svg",
+   "path": "biomedical/phosphor-dna.svg",
+   "name": "dna",
+   "sha256": "9101af3d760f4ca2f32d5a24e6c6593367cde12e4c2b0ee3cdcaf22875dfd648"
+  },
+  {
+   "field": "biomedical",
+   "library": "phosphor",
+   "keywords": [
+    "virus"
+   ],
+   "upstream": "package/assets/regular/virus.svg",
+   "path": "biomedical/phosphor-virus.svg",
+   "name": "virus",
+   "sha256": "8c5669c67f17045ac009c1d2136174d8a994116d900e4847fdfec92f623af19e"
+  },
+  {
+   "field": "biomedical",
+   "library": "phosphor",
+   "keywords": [
+    "microscope"
+   ],
+   "upstream": "package/assets/regular/microscope.svg",
+   "path": "biomedical/phosphor-microscope.svg",
+   "name": "microscope",
+   "sha256": "ad7b288180cb7ee0a914acb48d7fbecd1230cf677a5d554cc1c8a9c29d8e1729"
+  },
+  {
+   "field": "biomedical",
+   "library": "phosphor",
+   "keywords": [
+    "test",
+    "tube"
+   ],
+   "upstream": "package/assets/regular/test-tube.svg",
+   "path": "biomedical/phosphor-test-tube.svg",
+   "name": "test tube",
+   "sha256": "1abc795b2c617d3a829024765aae29055bf783357c5471a0feea806e1d4662ce"
+  },
+  {
+   "field": "biomedical",
+   "library": "phosphor",
+   "keywords": [
+    "heartbeat",
+    "ecg"
+   ],
+   "upstream": "package/assets/regular/heartbeat.svg",
+   "path": "biomedical/phosphor-heartbeat.svg",
+   "name": "heartbeat",
+   "sha256": "1b3225bb7cbc6a8fe3dd6f5013b61484f59cdfae3bd19120197eff0db362f9cc"
+  },
+  {
+   "field": "biomedical",
+   "library": "phosphor",
+   "keywords": [
+    "stethoscope"
+   ],
+   "upstream": "package/assets/regular/stethoscope.svg",
+   "path": "biomedical/phosphor-stethoscope.svg",
+   "name": "stethoscope",
+   "sha256": "93d2d423bba239d0927dd810f34d42508480d2d41bca7949d12a060b9216f8c1"
+  },
+  {
+   "field": "biomedical",
+   "library": "phosphor",
+   "keywords": [
+    "syringe"
+   ],
+   "upstream": "package/assets/regular/syringe.svg",
+   "path": "biomedical/phosphor-syringe.svg",
+   "name": "syringe",
+   "sha256": "b249d7be5c84b89bae2d06e330702591313c2e1a8b99f413e46a1414d4ae5b64"
+  },
+  {
+   "field": "biomedical",
+   "library": "phosphor",
+   "keywords": [
+    "bird",
+    "poultry"
+   ],
+   "upstream": "package/assets/regular/bird.svg",
+   "path": "biomedical/phosphor-bird.svg",
+   "name": "bird",
+   "sha256": "31673692ae794616d65c1e6f8aa4b57bad075953ab4498d76d60dbec8f97284c"
+  },
+  {
+   "field": "biomedical",
+   "library": "phosphor",
+   "keywords": [
+    "egg"
+   ],
+   "upstream": "package/assets/regular/egg.svg",
+   "path": "biomedical/phosphor-egg.svg",
+   "name": "egg",
+   "sha256": "a8dd8139c28a5ad8832cb7912e7079695bf1afcc6616bad4e86f8e54ec86daca"
+  },
+  {
+   "field": "biomedical",
+   "library": "phosphor",
+   "keywords": [
+    "drop",
+    "water"
+   ],
+   "upstream": "package/assets/regular/drop.svg",
+   "path": "biomedical/phosphor-drop.svg",
+   "name": "drop",
+   "sha256": "2b5396d046ce74fc645c6064226dd4875cf5e98eb1c7372611bf069f1adbc5aa"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "chicken",
+    "poultry",
+    "broiler",
+    "host"
+   ],
+   "upstream": "cc-by-3.0/General_items/Servier/chicken.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "General_items",
+   "path": "biomedical/bioicons-chicken.svg",
+   "name": "chicken",
+   "git_blob": "b185aacbbc40f63a0c88891dfbb33fabfca9cb3e",
+   "bytes": 24515,
+   "sha256": "2c0e2d7a9685c3d9f16dc4cdf20a264c4e96be1623e2db26ceebde2554c06032"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "petri",
+    "dish",
+    "culture",
+    "isolate",
+    "agar"
+   ],
+   "upstream": "cc-by-3.0/Microbiology/Servier/petri-dish-with-bacteria-red.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Microbiology",
+   "path": "biomedical/bioicons-petri-dish-with-bacteria-red.svg",
+   "name": "petri dish with bacteria red",
+   "git_blob": "3201b95afcaeb8f3a16b6ba7b3b9e3630e332070",
+   "bytes": 111427,
+   "sha256": "975d9d4a36b31774f7b0c506dfa8832f2b23b7d9942c7d50792ff0cfde4e1f63"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "petri",
+    "dish",
+    "colony",
+    "isolate"
+   ],
+   "upstream": "cc-by-3.0/Microbiology/Servier/petri-dish-with-colony-lightyellow.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Microbiology",
+   "path": "biomedical/bioicons-petri-dish-with-colony-lightyellow.svg",
+   "name": "petri dish with colony lightyellow",
+   "git_blob": "28a71cce8c7608928540315211159d3602210899",
+   "bytes": 7304,
+   "sha256": "4acee831d3abc9024b1ab1dd6d53d1fb13c37763aa11ddccc22adbb31fe05137"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "petri",
+    "dish",
+    "agar",
+    "plate"
+   ],
+   "upstream": "cc-by-3.0/Microbiology/Servier/petri-dish-yellow.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Microbiology",
+   "path": "biomedical/bioicons-petri-dish-yellow.svg",
+   "name": "petri dish yellow",
+   "git_blob": "04b075f5e537e657269a881b498f0af15d60aeca",
+   "bytes": 19353,
+   "sha256": "b82505b956dc4f274f161e87c9702f9a4a9b8cc3361457b80973cc74e25ce1f9"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "bacterium",
+    "bacteria",
+    "cell"
+   ],
+   "upstream": "cc-by-3.0/Microbiology/Servier/bacterium.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Microbiology",
+   "path": "biomedical/bioicons-bacterium.svg",
+   "name": "bacterium",
+   "git_blob": "6bc3e9617b7dec57a91b9e3324837c1f5804fdf5",
+   "bytes": 147348,
+   "sha256": "6a5f268757a4ef6146c532bb7463321e4d0966186ddf3157436197dd8b0e9fd0"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "test",
+    "tube",
+    "enrichment",
+    "broth"
+   ],
+   "upstream": "cc-by-3.0/Chemistry/Servier/testtube-yellow.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Chemistry",
+   "path": "biomedical/bioicons-testtube-yellow.svg",
+   "name": "testtube yellow",
+   "git_blob": "d1be0eb8cc1287ee5a64e15c93b77e4f0a8e2787",
+   "bytes": 5387,
+   "sha256": "cc4711ea09012a61d2887e4d22b1287b2818e3496a947e191bf71935d744077d"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "pipette"
+   ],
+   "upstream": "cc-by-3.0/Chemistry/Servier/pipette-plastic.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Chemistry",
+   "path": "biomedical/bioicons-pipette-plastic.svg",
+   "name": "pipette plastic",
+   "git_blob": "b2533d066d77c2d2a4159b05550fa87ed57abd50",
+   "bytes": 4499,
+   "sha256": "0c233825056b32f5c45b117a51f38270687aeda4059c16d92497281fba3bb805"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "centrifuge"
+   ],
+   "upstream": "cc-by-3.0/Lab_apparatus/Servier/centrifuge.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Lab_apparatus",
+   "path": "biomedical/bioicons-centrifuge.svg",
+   "name": "centrifuge",
+   "git_blob": "d99a3468c95c552aa399e91af35f062c3c1e8690",
+   "bytes": 43465,
+   "sha256": "9bf00067cb086ee76991fd16503f2707cfe6fe377bf8cf6c8bb6e12b2975b28c"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "gel",
+    "electrophoresis",
+    "pcr"
+   ],
+   "upstream": "cc-by-3.0/Lab_apparatus/Servier/gel-electrophoresis.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Lab_apparatus",
+   "path": "biomedical/bioicons-gel-electrophoresis.svg",
+   "name": "gel electrophoresis",
+   "git_blob": "5abf157764630b151cc6afe5de3ebfc631debd2e",
+   "bytes": 66546,
+   "sha256": "196fc0484d751840944092d5340d7fe12ec851effc2e0b6ee2638ba171a8656f"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "ecg",
+    "electrocardiogram",
+    "trace"
+   ],
+   "upstream": "cc-by-3.0/Human_physiology/Servier/electrocardiogram-ecg.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Human_physiology",
+   "path": "biomedical/bioicons-electrocardiogram-ecg.svg",
+   "name": "electrocardiogram ecg",
+   "git_blob": "aac11511ae4480a59c2fafd32ed9c5be3b160fef",
+   "bytes": 8520,
+   "sha256": "38ca1a562c81e280a00a169bbd76ad6f296de746e35a44545caf10d70b7a798c"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "heart",
+    "anatomy"
+   ],
+   "upstream": "cc-by-3.0/Human_physiology/Servier/heart-front.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Human_physiology",
+   "path": "biomedical/bioicons-heart-front.svg",
+   "name": "heart front",
+   "git_blob": "d514ae4e06d435641c6257e0271fcfd3e3140c32",
+   "bytes": 29583,
+   "sha256": "0be94046e87bc399dffeaa329d8f2f52437f4d80fcd93f3b57701de69046cc56"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "heart",
+    "outline"
+   ],
+   "upstream": "cc-by-3.0/Human_physiology/Servier/heart-outline.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Human_physiology",
+   "path": "biomedical/bioicons-heart-outline.svg",
+   "name": "heart outline",
+   "git_blob": "35313f3d7eb93c02f5c315388ea63e38b4af3c9d",
+   "bytes": 9994,
+   "sha256": "31f63e4f0dd1abb50ca95fd2bc1e63edf762dff7e4aa63b4147804f2e3effba7"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "intestine",
+    "gut"
+   ],
+   "upstream": "cc-by-3.0/Human_physiology/Servier/intestine.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Human_physiology",
+   "path": "biomedical/bioicons-intestine.svg",
+   "name": "intestine",
+   "git_blob": "9d81b94f510a62f2b44745b632a3dd83240778a7",
+   "bytes": 14178,
+   "sha256": "6daf0e7f508eb6f286fae1913f37a71a8e970503c16001230630de2fe9ff00c8"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "syringe",
+    "sample"
+   ],
+   "upstream": "cc-by-3.0/Human_physiology/Servier/syringe.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Human_physiology",
+   "path": "biomedical/bioicons-syringe.svg",
+   "name": "syringe",
+   "git_blob": "bf119f4eb197e3693458d1efc93d0d19e466a4af",
+   "bytes": 17578,
+   "sha256": "1750bfd7b575ce64e65e5d4965d74a023ac1fcee93046533c2e53f9c4c975869"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "dna",
+    "double",
+    "strand"
+   ],
+   "upstream": "cc-by-3.0/Nucleic_acids/Servier/dna-double-stranded-ribbon.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Nucleic_acids",
+   "path": "biomedical/bioicons-dna-double-stranded-ribbon.svg",
+   "name": "dna double stranded ribbon",
+   "git_blob": "1a6f207bde5ed7f780f771afaf5f9ce1e0da68fc",
+   "bytes": 52468,
+   "sha256": "f4add24191b74d4198bd86be26de6ac2d95b4a995ade47f24fd6139ee42ba776"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "sample",
+    "tube",
+    "screwcap"
+   ],
+   "upstream": "cc-by-3.0/Microbiology/Servier/tube-screwcap-closed-orange.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Microbiology",
+   "path": "biomedical/bioicons-tube-screwcap-closed-orange.svg",
+   "name": "tube screwcap closed orange",
+   "git_blob": "680352f958fce0a53ff074476593316b3af64df9",
+   "bytes": 23348,
+   "sha256": "7b22f0ce636fb54f67cc8687dc39dc6807d7439cbd4c278f7ad1ebdf50a686a5"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "microscope",
+    "lab"
+   ],
+   "upstream": "cc-by-3.0/Lab_apparatus/Servier/microscope.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Lab_apparatus",
+   "path": "biomedical/bioicons-microscope.svg",
+   "name": "microscope",
+   "git_blob": "f69c9515d0dbe26a20f1dda8d1716e8eb957f7dd",
+   "bytes": 24548,
+   "sha256": "2ed0c8dfa7ebdbb3eef88adeadac0499a23583ca04bad4cba0ed7cd3ba24098a"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "incubator",
+    "culture"
+   ],
+   "upstream": "cc-by-3.0/Lab_apparatus/Servier/incubator.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "Lab_apparatus",
+   "path": "biomedical/bioicons-incubator.svg",
+   "name": "incubator",
+   "git_blob": "9cb5018322e6fffaf401b6dd324cf81418ea6f58",
+   "bytes": 14738,
+   "sha256": "6a99d63204ac956d6b86b04093c0be4e28a0be32ff22fd2957f32b0e62bc0783"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "time",
+    "stopwatch"
+   ],
+   "upstream": "cc-by-3.0/General_items/Servier/stopwatch.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "General_items",
+   "path": "biomedical/bioicons-stopwatch.svg",
+   "name": "stopwatch",
+   "git_blob": "38fcf43ff05c6f1ba7b61b3d4a4003456b9562f0",
+   "bytes": 23037,
+   "sha256": "71dcdab2e910481b299a1243bef130744ed18c17af71308cf92d4cdf5373c120"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "water",
+    "tap",
+    "drinking",
+    "water"
+   ],
+   "upstream": "cc-by-3.0/General_items/Servier/faucet.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "General_items",
+   "path": "biomedical/bioicons-faucet.svg",
+   "name": "faucet",
+   "git_blob": "9393076be317e5c21ca3b00ea365405ad8ad867c",
+   "bytes": 13328,
+   "sha256": "e031c9ba65672f4a71ea1ee3ea55f7d6da889f702b11c48cdf86d3eeaeab28d3"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "meat",
+    "food"
+   ],
+   "upstream": "cc-by-3.0/General_items/Servier/steak.svg",
+   "license": "CC BY 3.0",
+   "creator": "Servier",
+   "category": "General_items",
+   "path": "biomedical/bioicons-steak.svg",
+   "name": "steak",
+   "git_blob": "c430af0a40b926f1e2c18c256001882c2f8b11af",
+   "bytes": 8450,
+   "sha256": "c8391b3891a308528192b35f034a0dc2ec3be2178715a9557480d83546d4567d"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "bacterium",
+    "rod",
+    "bacillus"
+   ],
+   "upstream": "cc-0/Microbiology/Pauline_Franz/generic-bacterium.svg",
+   "license": "CC0 1.0",
+   "creator": "Pauline Franz",
+   "category": "Microbiology",
+   "path": "biomedical/bioicons-generic-bacterium.svg",
+   "name": "generic bacterium",
+   "git_blob": "8cdadcaf8b8ee65903d815fd3d6d1fe6ce16f158",
+   "bytes": 1293,
+   "sha256": "2984b266eedfad88aed6701fb0f5d3d1a11dbbdc88326a0f160e170d32df21bf"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "bacterial",
+    "colonies"
+   ],
+   "upstream": "cc-0/Cell_culture/B--Gideon-Bergheim/Bacteria_colonies.svg",
+   "license": "CC0 1.0",
+   "creator": "B. Gideon Bergheim",
+   "category": "Cell_culture",
+   "path": "biomedical/bioicons-bacteria-colonies.svg",
+   "name": "bacteria colonies",
+   "git_blob": "3d2ed241d036ac964dae242188d589611a0cc6fb",
+   "bytes": 47503,
+   "sha256": "a96cdaf7fea8bbc0bbffccc908c35a7cdcbe62a2af284cab5791a2b554bfe1cf"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "inoculation",
+    "loop",
+    "culture"
+   ],
+   "upstream": "cc-0/Cell_culture/B--Gideon-Bergheim/bacteria_culture_loop.svg",
+   "license": "CC0 1.0",
+   "creator": "B. Gideon Bergheim",
+   "category": "Cell_culture",
+   "path": "biomedical/bioicons-bacteria-culture-loop.svg",
+   "name": "bacteria culture loop",
+   "git_blob": "d325997f56103daf72e6589e42abd822ce1c5b83",
+   "bytes": 3425,
+   "sha256": "e5108a17e3263fa8d24d8b4209fb15aa429e5601bf03394a602ff86667a6a350"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "qpcr",
+    "pcr",
+    "thermocycler"
+   ],
+   "upstream": "cc-0/Lab_apparatus/KeHan/qpcr_machine.svg",
+   "license": "CC0 1.0",
+   "creator": "KeHan",
+   "category": "Lab_apparatus",
+   "path": "biomedical/bioicons-qpcr-machine.svg",
+   "name": "qpcr machine",
+   "git_blob": "115428a1aa72d6b384e24ce6ea2861999ec3c45a",
+   "bytes": 17276,
+   "sha256": "e79c69dffc68dd9e37887b69178b2128fd335292f3b3613b87c79764e20fe614"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "sequencing",
+    "reads",
+    "short",
+    "read"
+   ],
+   "upstream": "cc-0/Genetics/umasstr/Illumina_sequencing_reads.svg",
+   "license": "CC0 1.0",
+   "creator": "umasstr",
+   "category": "Genetics",
+   "path": "biomedical/bioicons-illumina-sequencing-reads.svg",
+   "name": "illumina sequencing reads",
+   "git_blob": "547981e7bf6cc1dd6d4a056effa04970134af489",
+   "bytes": 17497,
+   "sha256": "a88d19f1e94d83b8fb402055b888a6e926a7cc7a955368ef6d32b20dea76ab45"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "sequencing",
+    "chromatogram"
+   ],
+   "upstream": "cc-0/Genetics/Marcel_Tisch/sequence_histogram.svg",
+   "license": "CC0 1.0",
+   "creator": "Marcel Tisch",
+   "category": "Genetics",
+   "path": "biomedical/bioicons-sequence-histogram.svg",
+   "name": "sequence histogram",
+   "git_blob": "65237167c73c0da5ba34f2f116c1b580934a8108",
+   "bytes": 1418,
+   "sha256": "70f1d3c46ebcf9f977f744dd0fb90066bf50238fe121949ddd395adb4ac3ff5b"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "sanger",
+    "sequencing"
+   ],
+   "upstream": "cc-0/Genetics/yangzs/Sanger_sequencing.svg",
+   "license": "CC0 1.0",
+   "creator": "yangzs",
+   "category": "Genetics",
+   "path": "biomedical/bioicons-sanger-sequencing.svg",
+   "name": "sanger sequencing",
+   "git_blob": "40a3183db37c26361f36ae298e13b46bf86cbc1b",
+   "bytes": 6691,
+   "sha256": "a555ea2ae45ed6b5157e666705edb5664d3b963ea268710b19b3b361ef11e84a"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "patient",
+    "person"
+   ],
+   "upstream": "cc-0/Human_physiology/Marcel_Tisch/patient.svg",
+   "license": "CC0 1.0",
+   "creator": "Marcel Tisch",
+   "category": "Human_physiology",
+   "path": "biomedical/bioicons-patient.svg",
+   "name": "patient",
+   "git_blob": "9d10548cf9b203ed346803dedf21f7db1b3f6649",
+   "bytes": 6797,
+   "sha256": "4e8861f7a1cf23ea2ea09f3cddac5b88050db3c30f0cc758c789a66cd1b62c06"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "phylogenetic",
+    "tree",
+    "prokaryotes"
+   ],
+   "upstream": "cc-0/Microbiology/Geomicrobio/Tree_Life_Prokarytes.svg",
+   "license": "CC0 1.0",
+   "creator": "Geomicrobio",
+   "category": "Microbiology",
+   "path": "biomedical/bioicons-tree-life-prokarytes.svg",
+   "name": "tree life prokarytes",
+   "git_blob": "73b4efcaacd13de972e9363db2bfbdab02115c69",
+   "bytes": 9386,
+   "sha256": "1be5e1703805df165f70a1d796a0adc2d83f283a1725f7e32c93fabda54ffc51"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "pipette"
+   ],
+   "upstream": "cc-0/Lab_apparatus/James-Lloyd/Pipette.svg",
+   "license": "CC0 1.0",
+   "creator": "James Lloyd",
+   "category": "Lab_apparatus",
+   "path": "biomedical/bioicons-pipette.svg",
+   "name": "pipette",
+   "git_blob": "c5ec9160b1828207088a7020170200fbbe4c3fce",
+   "bytes": 424925,
+   "sha256": "04f7a03d50413d1f0b70eb4c0234e3b0b57f32c9b5588ebe1ac40f84ff4cb232"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "96",
+    "well",
+    "plate",
+    "assay"
+   ],
+   "upstream": "cc-0/Cell_culture/Marcel_Tisch/96_well_plate.svg",
+   "license": "CC0 1.0",
+   "creator": "Marcel Tisch",
+   "category": "Cell_culture",
+   "path": "biomedical/bioicons-96-well-plate.svg",
+   "name": "96 well plate",
+   "git_blob": "609adf4e07fc21994adad91f0e093aea50f5c46d",
+   "bytes": 26968,
+   "sha256": "9954d153c6b6ee5907d83cc53a2ca8b12fff23c1de694c1124679f9fd2c5fb34"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "agarose",
+    "gel"
+   ],
+   "upstream": "cc-0/Microbiology/OpenClipart/agarose-gel.svg",
+   "license": "CC0 1.0",
+   "creator": "OpenClipart",
+   "category": "Microbiology",
+   "path": "biomedical/bioicons-agarose-gel.svg",
+   "name": "agarose gel",
+   "git_blob": "c7e9e9302da25315254c16e96b7d47df3dc79081",
+   "bytes": 3979,
+   "sha256": "710424a0a1ceed7b15d6ed70cd30a0827e2f9107b1f16978220e740e7aac174c"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "laptop",
+    "analysis"
+   ],
+   "upstream": "cc-0/Computer_hardware/Simon_Dürr/laptop.svg",
+   "license": "CC0 1.0",
+   "creator": "Simon Dürr",
+   "category": "Computer_hardware",
+   "path": "biomedical/bioicons-laptop.svg",
+   "name": "laptop",
+   "git_blob": "11cd5c10433913352cbc769cffd3abe77dbb4614",
+   "bytes": 2900,
+   "sha256": "7e2208b668267a80b08c439643d4876b0d8c806fe3b2ca339f36bd5957951c4f"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "hpc",
+    "cluster",
+    "computing"
+   ],
+   "upstream": "cc-0/Computer_hardware/Simon_Dürr/supercomputer.svg",
+   "license": "CC0 1.0",
+   "creator": "Simon Dürr",
+   "category": "Computer_hardware",
+   "path": "biomedical/bioicons-supercomputer.svg",
+   "name": "supercomputer",
+   "git_blob": "981a9980119cbe7df49b2ec32a857db0d497a11e",
+   "bytes": 104946,
+   "sha256": "1a73d2a7662ba7a26ab618fa422855c3d58fa5b85c6d06add36e15610c999c60"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "workstation",
+    "computer"
+   ],
+   "upstream": "cc-0/Computer_hardware/Simon_Dürr/workstation.svg",
+   "license": "CC0 1.0",
+   "creator": "Simon Dürr",
+   "category": "Computer_hardware",
+   "path": "biomedical/bioicons-workstation.svg",
+   "name": "workstation",
+   "git_blob": "a16edb70bfc5e13171be32cd8422f570ae6c40d2",
+   "bytes": 4073,
+   "sha256": "47afe2de00da4883bf582c3e6aef0cb6c7d3905163993640b1d0e7881b719ed2"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "neural",
+    "network",
+    "model"
+   ],
+   "upstream": "cc-0/Machine_Learning/Simon_Dürr/neural-network-1.svg",
+   "license": "CC0 1.0",
+   "creator": "Simon Dürr",
+   "category": "Machine_Learning",
+   "path": "biomedical/bioicons-neural-network-1.svg",
+   "name": "neural network 1",
+   "git_blob": "b3adf6be2a7e8d4baea0fe515da6f0b0cdf9c4d2",
+   "bytes": 4113,
+   "sha256": "65c9d5d2b266c367dc0fcc93939cf061cfcff2ad7ebd6fcbe40727b2bcd76b57"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "pipeline",
+    "workflow"
+   ],
+   "upstream": "cc-0/Machine_Learning/Simon_Dürr/pipeline.svg",
+   "license": "CC0 1.0",
+   "creator": "Simon Dürr",
+   "category": "Machine_Learning",
+   "path": "biomedical/bioicons-pipeline.svg",
+   "name": "pipeline",
+   "git_blob": "843b9f62c3a5cc3fa19347e8b66e3f937376ead4",
+   "bytes": 22929,
+   "sha256": "a67eb589efe5adc8c7195e890d9eeeb27b8b8fcb7ceb403c1c746a0e38083d6e"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "classification",
+    "model"
+   ],
+   "upstream": "cc-0/Machine_Learning/Simon_Dürr/classification.svg",
+   "license": "CC0 1.0",
+   "creator": "Simon Dürr",
+   "category": "Machine_Learning",
+   "path": "biomedical/bioicons-classification.svg",
+   "name": "classification",
+   "git_blob": "13c2033611499c6e2441073944047158b7bd3e0a",
+   "bytes": 10385,
+   "sha256": "4c9fb034e8d2fc80e36300bb0c959bf52149db6e4b7d0fc3c4cc078a66218603"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "dna",
+    "helix"
+   ],
+   "upstream": "cc-0/Nucleic_acids/James-Lloyd/DNA_double_helix.svg",
+   "license": "CC0 1.0",
+   "creator": "James Lloyd",
+   "category": "Nucleic_acids",
+   "path": "biomedical/bioicons-dna-double-helix.svg",
+   "name": "dna double helix",
+   "git_blob": "d3bb2a8348fa39cc168e8a080fedced47da8f46d",
+   "bytes": 137552,
+   "sha256": "8f75f329eb5c1f616df8b0ef68f513e43bcb030fa6f9008ff1e1e0110cc45c3b"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "heart",
+    "anatomy"
+   ],
+   "upstream": "cc-0/Tissues/Mariana_RuizVillareal/Human_heart.svg",
+   "license": "CC0 1.0",
+   "creator": "Mariana RuizVillareal",
+   "category": "Tissues",
+   "path": "biomedical/bioicons-human-heart.svg",
+   "name": "human heart",
+   "git_blob": "0eb521019d4a42bfe88cdc5b62dc702b3e1af866",
+   "bytes": 85200,
+   "sha256": "73316375eb78f57cde7f06d237988cb76efdbec51e0a7b3d8b8d63b91618d906"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "blood",
+    "sample",
+    "tube"
+   ],
+   "upstream": "cc-0/Blood_Immunology/Marcel_Tisch/blood_sample_tube.svg",
+   "license": "CC0 1.0",
+   "creator": "Marcel Tisch",
+   "category": "Blood_Immunology",
+   "path": "biomedical/bioicons-blood-sample-tube.svg",
+   "name": "blood sample tube",
+   "git_blob": "4c3c4123afd08a162e14e09cb2298609fbdb322e",
+   "bytes": 4303,
+   "sha256": "5f34965209758c8821d190aa7c0fabee2f3f4c31f8ec8f3b318aed1b770cf025"
+  },
+  {
+   "field": "biomedical",
+   "library": "bioicons",
+   "keywords": [
+    "cryo",
+    "tube",
+    "freezer",
+    "stock"
+   ],
+   "upstream": "cc-0/General_items/FGC/freezer_tube.svg",
+   "license": "CC0 1.0",
+   "creator": "FGC",
+   "category": "General_items",
+   "path": "biomedical/bioicons-freezer-tube.svg",
+   "name": "freezer tube",
+   "git_blob": "fe9419b62841b2d5c6412e9b4184773edae2ab17",
+   "bytes": 2471,
+   "sha256": "440f74b2d61901f0c9babf3d886df8121f24b13a964752548e1dfc4e7e46e073"
+  },
+  {
+   "field": "biomedical",
+   "library": "reactome",
+   "keywords": [
+    "heart"
+   ],
+   "upstream": "R-ICO-014671.svg",
+   "license": "CC BY 4.0",
+   "path": "biomedical/reactome-heart.svg",
+   "name": "heart",
+   "sha256": "0a620909e751870a28c95774f5c41d6c67eab4ea45d3b578fb8799195ab22d15"
+  },
+  {
+   "field": "biomedical",
+   "library": "reactome",
+   "keywords": [
+    "intestines",
+    "gut"
+   ],
+   "upstream": "R-ICO-012904.svg",
+   "license": "CC BY 4.0",
+   "path": "biomedical/reactome-intestines.svg",
+   "name": "intestines",
+   "sha256": "87bec936d1fd191a75e5d5f256183632ed8ffef11447d5f88ef81d050b78d1e7"
+  },
+  {
+   "field": "biomedical",
+   "library": "reactome",
+   "keywords": [
+    "liver"
+   ],
+   "upstream": "R-ICO-012959.svg",
+   "license": "CC BY 4.0",
+   "path": "biomedical/reactome-liver.svg",
+   "name": "liver",
+   "sha256": "d4e30218ab161e050bc502b2edc1a491820e18dd27805f1ad051f01cc87be804"
+  },
+  {
+   "field": "biomedical",
+   "library": "reactome",
+   "keywords": [
+    "gut"
+   ],
+   "upstream": "R-ICO-012808.svg",
+   "license": "CC BY 4.0",
+   "path": "biomedical/reactome-gut.svg",
+   "name": "gut",
+   "sha256": "fd676b3e28502fe7e970a67be9d8c8c87f033447df7a7a6d14704e595413558d"
+  },
+  {
+   "field": "biomedical",
+   "library": "reactome",
+   "keywords": [
+    "man",
+    "person"
+   ],
+   "upstream": "R-ICO-012976.svg",
+   "license": "CC BY 4.0",
+   "path": "biomedical/reactome-man.svg",
+   "name": "man",
+   "sha256": "0bd18480c7bf947c1a83eeac3ec67ce2674fe23be490273e8235a1e8ebd1d803"
+  },
+  {
+   "field": "biomedical",
+   "library": "reactome",
+   "keywords": [
+    "male",
+    "body",
+    "organs"
+   ],
+   "upstream": "R-ICO-013956.svg",
+   "license": "CC BY 4.0",
+   "path": "biomedical/reactome-male-body-organs.svg",
+   "name": "male body organs",
+   "sha256": "aec2ae28a7d47e35ad9663b8c80e75891aefed8f3362b5ae225dc53e6c29cb7b"
+  },
+  {
+   "field": "biomedical",
+   "library": "reactome",
+   "keywords": [
+    "female",
+    "body",
+    "organs"
+   ],
+   "upstream": "R-ICO-013954.svg",
+   "license": "CC BY 4.0",
+   "path": "biomedical/reactome-female-body-organs.svg",
+   "name": "female body organs",
+   "sha256": "93e2d29cd92bdbb19fc13d03ee542df5894cfdb5600ae41186fafd164407a26d"
+  },
+  {
+   "field": "biomedical",
+   "library": "reactome",
+   "keywords": [
+    "lungs"
+   ],
+   "upstream": "R-ICO-013964.svg",
+   "license": "CC BY 4.0",
+   "path": "biomedical/reactome-lungs.svg",
+   "name": "lungs",
+   "sha256": "5b5b37b0463684ea07f623aeb1fdb88d1b40c0ee02bf846874ab078159a07af5"
+  },
+  {
+   "field": "biomedical",
+   "library": "reactome",
+   "keywords": [
+    "kidneys",
+    "adrenal"
+   ],
+   "upstream": "R-ICO-012931.svg",
+   "license": "CC BY 4.0",
+   "path": "biomedical/reactome-kidneys-adrenal.svg",
+   "name": "kidneys adrenal",
+   "sha256": "9e22ac175e4020b6af34f8c531b6767692b64850767a991c0cf72b8a8565697b"
+  }
+ ],
+ "local_keywords": {
+  "energy/pv.svg": "photovoltaic pv solar panel array",
+  "energy/battery.svg": "battery storage bess container",
+  "energy/inverter.svg": "inverter power electronics converter",
+  "energy/transformer.svg": "transformer substation",
+  "energy/tower.svg": "transmission tower grid pylon",
+  "energy/meter.svg": "meter metering connection point",
+  "energy/market.svg": "market price exchange",
+  "energy/city.svg": "city load demand",
+  "energy/wind.svg": "wind turbine",
+  "reliability/bearing.svg": "bearing rolling element ball",
+  "reliability/motor.svg": "motor electric drive",
+  "reliability/gearbox.svg": "gearbox gear transmission",
+  "reliability/sensor.svg": "accelerometer sensor vibration",
+  "reliability/daq.svg": "daq data acquisition recorder",
+  "reliability/bench.svg": "test bench rig",
+  "astronomy/star.svg": "star sun",
+  "astronomy/telescope.svg": "telescope observatory",
+  "astronomy/tess.svg": "tess space telescope satellite photometer"
+ }
+}

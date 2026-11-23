@@ -1,0 +1,58 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- Reliability/PHM example of the SVG/HTML schematic route: a run-to-failure bearing rig
+     and the path from raw vibration to a remaining-useful-life estimate. Physical objects
+     are library drawings; the two curves are insets drawn from data by _bearing-insets.py
+     ("signal", "hi"). Replace the rig numbers and the synthetic signals with the paper's. -->
+<title>Bearing test rig and prognostics data flow</title>
+<style>
+  #panel-a { flex: 0 0 76mm; }
+  .rig { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: auto auto auto; gap: 4mm 7mm;
+         align-items: center; justify-items: center; }
+  .pipe { display: grid; grid-template-columns: 34mm 1fr; gap: 3mm 5mm; align-items: center; }
+  .pipe .ol-card { width: 100%; }
+</style></head>
+<body>
+<div class="ol-figure double">
+  <section class="ol-panel" data-panel="a" id="panel-a">
+    <span class="ol-title">Run-to-failure rig (illustrative)</span>
+    <div class="ol-group" style="margin-top:1mm">
+      <span class="ol-caption">Rig</span>
+      <div class="rig">
+        <span></span>
+        <div class="ol-card bare" id="acc"><img class="ol-icon obj" src="asset:reliability/sensor.svg" alt="accelerometer"><span class="ol-note">Accelerometers H/V on housing</span></div>
+        <div class="ol-card bare" id="tc"><img class="ol-icon s signal" src="asset:reliability/tabler-temperature.svg" data-stroke="1.6" alt="thermocouple"><span class="ol-note">Thermocouple</span></div>
+        <div class="ol-card" id="motor"><img class="ol-icon obj" src="asset:reliability/motor.svg" alt="motor"><span class="ol-name">Motor</span><span class="ol-note ol-num">2100 rpm</span></div>
+        <div class="ol-card accent" id="brg"><img class="ol-icon obj" src="asset:reliability/bearing.svg" alt="test bearing"><span class="ol-name">Test bearing</span><span class="ol-note">6204 deep groove</span></div>
+        <div class="ol-card" id="load"><img class="ol-icon l" src="asset:reliability/tabler-gauge.svg" data-stroke="1.5" alt="hydraulic load"><span class="ol-name">Hydraulic load</span><span class="ol-note ol-num">12 kN radial</span></div>
+        <span></span>
+        <div class="ol-card" id="daq"><img class="ol-icon obj" src="asset:reliability/daq.svg" alt="data acquisition"><span class="ol-name">DAQ</span><span class="ol-note ol-num">25.6 kHz, 1.28 s / min</span></div>
+        <span></span>
+      </div>
+    </div>
+    <i class="ol-flow material" data-from="motor" data-to="brg" data-label="shaft"></i>
+    <i class="ol-flow material" data-from="load" data-to="brg"></i>
+    <i class="ol-flow signal" data-from="acc" data-to="brg" data-from-side="bottom" data-to-side="top" data-head="0"></i>
+    <i class="ol-flow signal" data-from="brg" data-to="daq" data-from-side="bottom" data-to-side="top" data-label="vibration, temperature"></i>
+    <i class="ol-flow signal" data-from="tc" data-to="brg" data-from-side="bottom" data-to-side="top" data-to-at="0.85" data-head="0"></i>
+  </section>
+
+  <section class="ol-panel" data-panel="b" id="panel-b">
+    <span class="ol-title">From vibration records to remaining useful life</span>
+    <div class="pipe" style="margin-top:1mm">
+      <div class="ol-card row" id="seg"><img class="ol-icon s data" src="asset:general/tabler-wave-sine.svg" data-stroke="1.6" alt=""><span><span class="ol-name">Records</span><br><span class="ol-note">one per minute, split by bearing</span></span></div>
+      <img class="ol-inset" id="sig" src="inset:signal" alt="raw vibration and RMS trend">
+      <div class="ol-card row" id="feat"><img class="ol-icon s data" src="asset:general/tabler-chart-histogram.svg" data-stroke="1.6" alt=""><span><span class="ol-name">Features</span><br><span class="ol-note">RMS, kurtosis, envelope</span></span></div>
+      <img class="ol-inset" id="hi" src="inset:hi" alt="health indicator and RUL" style="grid-row: span 2">
+      <div class="ol-card row accent" id="model"><img class="ol-icon s data" src="asset:general/tabler-brain.svg" data-stroke="1.6" alt=""><span><span class="ol-name">Degradation model</span><br><span class="ol-note">fit up to prediction time t<sub>p</sub></span></span></div>
+    </div>
+    <i class="ol-flow data" data-from="seg" data-to="feat"></i>
+    <i class="ol-flow data" data-from="feat" data-to="model"></i>
+    <i class="ol-flow data" data-from="model" data-to="hi" data-from-side="right" data-to-side="left" data-route="straight"></i>
+    <div class="ol-legend" style="margin-top:1.2mm">
+      <span class="ol-key material">Mechanical path</span><span class="ol-key signal">Sensor signal</span>
+      <span class="ol-key data">Data processing</span>
+    </div>
+  </section>
+</div>
+</body></html>

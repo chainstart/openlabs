@@ -1,0 +1,93 @@
+/* openlabs-fig.css -- shared style for HTML schematic figures (figure-src/*.html).
+   `paper-writing figures build` injects this file, the journal profile variables
+   (--ol-single, --ol-double, --ol-body, ...) and openlabs-fig.js into every HTML source,
+   so a figure only writes structure: .ol-figure > panels > groups > cards, plus
+   .ol-flow connectors. 1 CSS px = 0.75 pt; sizes here are in pt and mm. */
+
+:root {
+  --ol-font: "Liberation Sans", Arial, Helvetica, sans-serif;  /* TrueType: embeds as a real font */
+  --ol-ink: #222222; --ol-gray: #666666; --ol-light: #E4E4E4; --ol-paper: #F5F5F5;
+  --ol-blue: #0072B2; --ol-orange: #E69F00; --ol-wine: #882255; --ol-green: #009E73;
+  --ol-sky: #56B4E9; --ol-vermilion: #D55E00; --ol-purple: #CC79A7; --ol-yellow: #F0E442;
+  /* flow kinds: colour of the connector and its legend key */
+  --ol-energy: #D55E00; --ol-data: #0072B2; --ol-signal: #009E73; --ol-material: #882255; --ol-control: #666666;
+  --ol-gap: 2.2mm; --ol-radius: 1.2mm;
+}
+
+html, body { margin: 0; padding: 0; background: #ffffff; }
+.ol-figure {
+  font-family: var(--ol-font); font-size: var(--ol-body); line-height: 1.18; color: var(--ol-ink);
+  width: var(--ol-double); box-sizing: border-box; position: relative; padding: 0.6mm;
+  display: flex; flex-wrap: wrap; gap: 3mm; align-items: stretch; background: #ffffff;
+}
+.ol-figure.single { width: var(--ol-single); }
+.ol-figure.onehalf { width: var(--ol-onehalf); }
+.ol-figure.column { flex-direction: column; flex-wrap: nowrap; }
+.ol-figure * { box-sizing: border-box; }
+
+/* panels with (a), (b) labels: <section class="ol-panel" data-panel="a"> */
+.ol-panel { position: relative; flex: 1 1 0; min-width: 0; padding-top: calc(var(--ol-panel) * 1.35); }
+.ol-panel::before {
+  content: attr(data-panel); position: absolute; left: 0; top: 0;
+  font-size: var(--ol-panel); font-weight: bold; line-height: 1;
+}
+.ol-panel > .ol-title { position: absolute; top: 0; left: calc(var(--ol-panel) * 1.1); font-weight: bold; line-height: 1.1; }
+
+/* layout helpers */
+.ol-row { display: flex; gap: var(--ol-gap); align-items: center; justify-content: space-between; }
+.ol-col { display: flex; flex-direction: column; gap: var(--ol-gap); align-items: stretch; }
+.ol-grid { display: grid; gap: var(--ol-gap); align-items: center; }
+.ol-spacer { flex: 1 1 auto; }
+
+/* groups: a tinted or dashed region with a caption in its top-left corner */
+.ol-group {
+  position: relative; border: var(--ol-axis) solid var(--ol-light); border-radius: var(--ol-radius);
+  background: var(--ol-paper); padding: calc(var(--ol-small) * 1.6) 1.6mm 1.6mm;
+}
+.ol-group.dashed { border-style: dashed; border-color: var(--ol-gray); background: transparent; }
+.ol-group > .ol-caption {
+  position: absolute; top: 0.5mm; left: 1.4mm; font-size: var(--ol-small); color: var(--ol-gray);
+  font-weight: bold; letter-spacing: 0.02em;
+}
+
+/* cards: an object (icon) with a short name and an optional one-line note */
+.ol-card {
+  display: flex; flex-direction: column; align-items: center; gap: 0.6mm; text-align: center;
+  padding: 1mm 1.2mm; border-radius: var(--ol-radius); background: #ffffff;
+  border: var(--ol-axis) solid var(--ol-light); min-width: 0;
+}
+.ol-card.bare { border: none; background: transparent; padding: 0.4mm; }
+.ol-card.row { flex-direction: row; text-align: left; }
+.ol-card.accent { border-color: var(--ol-blue); background: #EAF3F9; }
+.ol-card .ol-name { font-weight: bold; }
+.ol-card .ol-note, .ol-note { font-size: var(--ol-small); color: var(--ol-gray); }
+.ol-num { font-variant-numeric: tabular-nums; }
+
+/* icons: <img class="ol-icon" src="asset:energy/tabler-solar-panel.svg"> is inlined as <svg> */
+.ol-icon { width: 7mm; height: 7mm; color: var(--ol-ink); flex: none; display: block; }
+.ol-icon.s { width: 5mm; height: 5mm; }
+.ol-icon.l { width: 10mm; height: 10mm; }
+.ol-icon.xl { width: 14mm; height: 14mm; }
+.ol-icon.obj { width: 13mm; height: 9.1mm; }      /* OpenLabs object drawings (viewBox 100 x 70) */
+.ol-icon.obj.l { width: 17mm; height: 11.9mm; }
+.ol-icon.energy { color: var(--ol-energy); } .ol-icon.data { color: var(--ol-data); }
+.ol-icon.signal { color: var(--ol-signal); } .ol-icon.material { color: var(--ol-material); }
+
+/* embedded result plot: <img class="ol-inset" src="inset:NAME"> (matplotlib SVG) */
+.ol-inset { display: block; max-width: 100%; height: auto; }  /* keeps the size the script drew */
+
+/* legend: <div class="ol-legend"><span class="ol-key energy">Energy</span>...</div> */
+.ol-legend { display: flex; flex-wrap: wrap; gap: 1mm 3mm; font-size: var(--ol-small); align-items: center; }
+.ol-key { display: inline-flex; align-items: center; gap: 1mm; }
+.ol-key::before { content: ""; display: inline-block; width: 5mm; height: 0; border-top: 1.6pt solid var(--ol-ink); }
+.ol-key.energy::before { border-color: var(--ol-energy); } .ol-key.data::before { border-color: var(--ol-data); }
+.ol-key.signal::before { border-color: var(--ol-signal); } .ol-key.material::before { border-color: var(--ol-material); }
+.ol-key.control::before { border-color: var(--ol-control); border-top-style: dashed; }
+.ol-key.swatch::before { width: 2.6mm; height: 2.6mm; border: none; background: var(--swatch, var(--ol-gray));
+                         border-radius: 0.4mm; }
+
+/* connectors are declared as <i class="ol-flow" data-from="a" data-to="b" ...> and drawn
+   by openlabs-fig.js into one SVG layer; the declarations themselves take no space. */
+.ol-flow { display: none; }
+svg.ol-wires { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+svg.ol-wires text { font-family: var(--ol-font); font-size: var(--ol-small); fill: var(--ol-ink); }

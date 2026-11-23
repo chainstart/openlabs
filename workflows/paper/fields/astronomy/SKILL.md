@@ -19,6 +19,9 @@ Define q = M₂/M₁ and measure i from the orbital normal. Identify the compone
 
 - `contact-roche` — Contact envelope, inclination, eclipse projections and integrated light curve.
 - `sector-profiles` — Profile likelihood and matched extraction shifts by observing sector; supply the three verified input JSONs.
+- `contact-binary` (HTML) — Roche section, sky views at four phases and the light curve, all computed by the inset script; the page places the panels, observer and labels.
+
+Figure routes: result plots in matplotlib; principle, mechanism and system schematics in SVG/HTML with library objects (`paper-writing figures assets WORDS --field astronomy`), connectors whose width carries the quantity and small data insets; TikZ only for formula-dense theory diagrams. Keep schematic text to names, numbers and units.
 
 For `sector-profiles` put `budget_profile_inputs.json` (sector → [q, ΔNLL, capped] points), `restart_overlap_diagnostic.json` (allowed_range.overlap) and `matched_product_fits.json` (per-sector extraction shifts under both assignments) in the paper workspace’s `inputs/` directory. Adapt the registered threshold and show the crossing region at readable scale.
 

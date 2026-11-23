@@ -24,3 +24,4 @@ review and author policy: `registry/settings.yaml`. This file adds only what dif
 - Report denominators, uncertainty at the actual unit, held-out validation and matched
   baselines; residual discrepancies stay in the paper.
 - Pair the observed biological effect with its comparator and uncertainty.
+- Figures: draw sample flow and lab/sequencing pipelines as SVG/HTML schematics from the biomedical element library (`isolate-tracing` shows reservoirs, culture, sequencing, a cgMLST tree inset and source attribution); results stay matplotlib plots. Credit CC BY items (Servier Medical Art, Reactome) as `figures check` suggests.
