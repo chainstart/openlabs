@@ -1029,6 +1029,12 @@ def proof_figures(manuscript: Path, raster_files=()):
     return results
 
 
+def proof_pdf(ws: Workspace) -> Path:
+    """The compiled manuscript PDF: the registered ``latest_pdf`` when there is one."""
+    latest = ws.metadata.get("latest_pdf") if ws.root else None
+    return (ws.root / str(latest)).resolve() if latest else ws.manuscript / "main.pdf"
+
+
 def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
           min_font_pt: float = MIN_FONT_PT) -> dict[str, Any]:
     """Blocking and advisory findings for every manuscript figure (no file is changed)."""
@@ -1203,6 +1209,11 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
             advisory.append(_finding(raster.stem, "FIG-RASTER-FILE",
                                      f"figures/{raster.name} is a bitmap: fine for photographs and image data; "
                                      "schematics and plots belong in vector PDF"))
+    from paper_writing.float_placement import check as placement_check
+    placement = placement_check(ws.manuscript, pdf=proof_pdf(ws))
+    blocking += placement["errors"]
+    if placement["status"] in {"no_pdf", "unreadable"}:
+        advisory.append(_finding("proof", "FIG-PLACEMENT-UNMEASURED", "; ".join(placement["notes"])))
     lic_block, lic_advice, licenses = license_findings(ws, sources, manuscript_text)
     blocking += lic_block
     advisory += lic_advice
@@ -1211,6 +1222,7 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
             "layout": {k: (round(v / 72 * 25.4, 1) if isinstance(v, float) else v) for k, v in widths.items()},
             "raster_placements": {p.name: placements.get(p.name, []) for p in rasters if uses_of(p)},
             "layout_units": "mm", "min_font_pt": min_font_pt, "figures": figures, "assets": licenses,
+            "float_placement": placement,
             "blocking": blocking, "advisory": advisory, "repair_required": required, "valid": not blocking}
 
 

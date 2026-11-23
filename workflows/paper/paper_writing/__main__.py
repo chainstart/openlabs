@@ -166,7 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
     figures = subparsers.add_parser(
         "figures",
         help="Figure sources in manuscript/figure-src/ -> vector PDFs in manuscript/figures/ "
-             "(build, check, sheet, new).",
+             "(build, check, placement, sheet, new).",
     )
     figure_commands = figures.add_subparsers(dest="figures_command", required=True)
 
@@ -192,6 +192,9 @@ def build_parser() -> argparse.ArgumentParser:
     figures_check.add_argument("--text-width", help="Printed text width (e.g. 160mm) instead of probing.")
     figures_check.add_argument("--min-font", type=float, default=6.0)
     figures_check.add_argument("--out", help="Also write the JSON result to this file.")
+    figures_placement = figure_commands.add_parser(
+        "placement", help="Compiled main.pdf: each body figure must print within one page of its first mention.")
+    _figure_target(figures_placement)
     figures_sheet = figure_commands.add_parser("sheet", help="One contact-sheet PNG of all figures.")
     _figure_target(figures_sheet)
     figures_sheet.add_argument("--out", help="PNG path (default <preview-dir>/contact-sheet.png).")
@@ -1458,6 +1461,21 @@ def _figures_command(args: argparse.Namespace) -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else fig.render_check(result),
                   end="" if not args.json else "\n")
             return 0 if result["valid"] else 1
+        if args.figures_command == "placement":
+            from paper_writing.float_placement import check as placement_check
+            result = placement_check(ws.manuscript, pdf=fig.proof_pdf(ws))
+            if args.json:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                print(f"Float placement: {result['status']} ({result['pdf']})")
+                for item in result["figures"]:
+                    print(f"- Figure {item['number']}: page {item.get('figure_page')}, first mention page "
+                          f"{item.get('first_reference_page')}")
+                for item in result["errors"]:
+                    print(f"  BLOCK {item['code']} [{item['figure']}]: {item['message']}")
+                for note in result["notes"]:
+                    print(f"  NOTE {note}")
+            return 1 if result["errors"] else 0
         if args.figures_command == "sheet":
             print(fig.contact_sheet(ws, Path(args.out) if args.out else None))
             return 0

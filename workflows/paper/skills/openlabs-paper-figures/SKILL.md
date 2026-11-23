@@ -104,6 +104,7 @@ Elsevier do not accept generative-AI images in figures.
 ## 3. Style
 
 - Build at the measured column width in the [journal proof catalog](../../templates/journal-proofs/README.md). Building by paper ID selects the registered target; a source sidecar may select a named profile for a preview. Python uses `olf.figure("single")` or `"double"`, TikZ uses the matching column lengths. Match the float width in the manuscript.
+- Place each figure environment right after the paragraph that first cites it. In a single-column layout (elsarticle `preprint`, `onecolumn`) write `\begin{figure}[!htbp]`: `figure*` and `[t]` alone may only go to a page top, and once those slots fill every later figure drifts to the end. `figures check` and the delivery floor fail a figure printed more than one page from its first mention (`paper-writing figures placement`).
 - Apply the profile's body, tick and panel sizes. Anchor panel letters at the upper left. Inspect the final PDF's measured placements, embedded fonts, thinnest strokes and effective raster resolution. Repair unreadable encodings at source.
 - Keep a stable colour and second cue per group. The shared palette extends Okabe–Ito. Preserve measured image colours and colour scales. Opt in to recolouring only for schematic assets.
 - Label things where they are; prefer direct labels to legends. No figure title repeating the

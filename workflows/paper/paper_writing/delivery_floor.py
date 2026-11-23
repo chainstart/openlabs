@@ -131,6 +131,11 @@ def check(paper_id, metadata, root, record=None, *, author=False):
               f"Main text has {counts['result']} classified result figures; minimum is {min_results}.")
     if not author and not _reviewed_images(record or {}, manuscript, paths):
         issue("FIGURES-NOT-REVIEWED", "Obtain an independent visual review with image receipts bound to these figures.")
+    from .float_placement import check as placement_check
+    pdf = (root / str(metadata.get("latest_pdf") or manuscript / "main.pdf")).resolve()
+    placement = placement_check(manuscript, pdf=pdf, main=main)
+    for item in placement["errors"]:
+        issue(item["code"], f"{item['figure']}: {item['message']}")
     usage = model_usage_for_record(metadata)
     try:
         _, statement = declarations.section(source, "ai_use")
@@ -142,7 +147,8 @@ def check(paper_id, metadata, root, record=None, *, author=False):
     ):
         issue("AI-USE-UNVERIFIED", "Generate the AI-use declaration from verified runtime model records.")
     return {"metrics": {"main_text_words": words, "min_body_words": minimum, "length_sources": sources,
-                        "figure_profile": profile_id, "min_result_figures": min_results, **counts}, "issues": issues}
+                        "figure_profile": profile_id, "min_result_figures": min_results, **counts,
+                        "float_placement": placement["status"]}, "issues": issues}
 
 
 def audit(paper_id, root, *, author=False):

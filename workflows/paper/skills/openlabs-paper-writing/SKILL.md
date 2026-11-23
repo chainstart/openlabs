@@ -43,7 +43,7 @@ assigned reviewer role. Repository rules override vendored instructions; in part
 
 ## Write
 
-Select the article type and class from the [journal proof catalog](../../templates/journal-proofs/README.md). Compile the matching short sample, carry its measured column widths into the figure plan, and use the publisher’s current submission options for the actual manuscript. The Nature layout is a preview.
+Select the article type and class from the [journal proof catalog](../../templates/journal-proofs/README.md). Compile the matching short sample, carry its measured column widths into the figure plan, and use the publisher’s current submission options for the actual manuscript. The Nature layout is a preview. Floats follow the figure skill: in a single-column layout use `figure[!htbp]` after the first citing paragraph, never `figure*` or `[t]` alone.
 
 Use the owner's two to four takeaways and the claim–evidence map to draft one page in
 `writing/storyline.md`: intended reader, question, decisive comparison, quantitative answer,

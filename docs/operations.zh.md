@@ -1509,6 +1509,11 @@ cc-sg 的邮件服务独立于调度 tick。运行 `bin/openlabs-journal-mail --
 AI 声明由有哈希和 JSON 指针的实际模型记录生成。模型名来自调用记录，配置名不能代替记录。
 去掉 `--author` 可只读审计已登记版本（含图片评审回执）。命令发现缺项时退出码为 1。
 
+图位检查读已编译的 `main.pdf`：正文图（附录图和 endfloat 稿件除外）所在页与首次引用页相差超过
+1 页即报 `FIG-FLOAT-FAR-FROM-REFERENCE`（图在后）或 `FIG-FLOAT-BEFORE-REFERENCE`（图在前），
+交付下限与 `figures check` 都会报；单独运行用 `paper-writing figures placement <paper_id>`
+或 `--manuscript DIR`。没有 PDF 时只给状态 `no_pdf`，不报错。单栏版式下图用 `figure[!htbp]`。
+
 正文采用 narrative-check 的计数口径。常规正文最低 2,000 词，短文 1,000 词，会议论文 1,500 词。
 可按 `registry/settings.yaml#quality_gate.narrative`、研究线 `paper_narrative` 或稿件
 `narrative_limits.min_body_words` 配置。期刊登记可在 `verified-venues.yaml` 的
