@@ -10,6 +10,12 @@ the decision in the topic ledger. A paused topic holds no research slot
 campaign paused while the state says so. ``program pause-topic --resume`` reverses it:
 state ``active`` again, the campaign resumed; the next tick's synchronization restores
 continuous renewal and the owner gets the next seat as usual.
+
+Older holds (2026-11-24): the hand-written ``operator_hold`` of 2026-11-19 and a
+``paused`` status without any record are not resumable as such. ``pause-topic`` on such a
+topic records them as a regular ``operator_pause`` (status and campaign stay paused; the
+original hold is kept inside the record), after which ``--resume`` works like for any
+other pause. ``dry_run`` reports what a pause or resume would do and writes nothing.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
 from .config import FactorySettings, WorkspacePaths
@@ -56,6 +63,35 @@ def _running_tasks(db: FactoryDB, campaign_id: str) -> list[str]:
     return [str(row["task_id"]) for row in rows]
 
 
+def _legacy_hold(path: Path, state: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A paused state without an ``operator_pause``: the hold's form, start and prior status."""
+
+    if state.get("status") != "paused" or isinstance(state.get("operator_pause"), Mapping):
+        return None
+    hold = state.get("operator_hold")
+    if isinstance(hold, Mapping):
+        return {"form": "operator_hold", "since": hold.get("set_at"),
+                "since_source": "operator_hold.set_at", "by": hold.get("set_by"),
+                "prior_status": str(state.get("previous_status") or "active"),
+                "hold": dict(hold)}
+    try:
+        since = datetime.fromtimestamp(path.stat().st_mtime, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except OSError:
+        since = None
+    return {"form": "unrecorded", "since": since,
+            "since_source": "research_state.json modification time (paused at or before)",
+            "by": None, "prior_status": str(state.get("previous_status") or "active"),
+            "hold": None}
+
+
+def _queued_tasks(db: FactoryDB, campaign_id: str) -> list[str]:
+    with db.connect() as connection:
+        rows = connection.execute(
+            "SELECT task_id FROM tasks WHERE campaign_id=? AND status IN ('queued', "
+            "'awaiting_remote') ORDER BY task_id", (campaign_id,)).fetchall()
+    return [str(row["task_id"]) for row in rows]
+
+
 def pause_topic(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -65,8 +101,13 @@ def pause_topic(
     reason: str,
     by: str,
     resume: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Pause (or, with ``resume``, resume) one active topic's research campaign."""
+    """Pause (or, with ``resume``, resume) one active topic's research campaign.
+
+    A topic already held by an older form (``operator_hold`` or a bare ``paused``) gets a
+    regular ``operator_pause`` record instead; it stays paused. ``dry_run`` writes nothing.
+    """
 
     if not str(reason).strip() or not str(by).strip():
         raise TopicPauseError("--reason and --by are required")
@@ -89,9 +130,33 @@ def pause_topic(
         "schema_version": "openlabs.program_topic_pause.v1",
         "topic_id": topic_id, "campaign_id": campaign_id, "research_state": str(path),
     }
+    if dry_run:
+        result["dry_run"] = True
     if not resume:
         if state.get("status") == "paused" and isinstance(state.get("operator_pause"), Mapping):
             return {**result, "status": "already_paused", "operator_pause": state["operator_pause"]}
+        legacy = _legacy_hold(path, state)
+        if legacy is not None:
+            if str(campaign.get("status")) != "production_paused":
+                raise TopicPauseError(
+                    f"research_state is paused ({legacy['form']}) but the campaign is "
+                    f"{campaign.get('status')!r}; resolve that by hand first")
+            record = {"by": by, "reason": reason, "at": legacy["since"] or now,
+                      "at_source": legacy["since_source"] if legacy["since"] else "recorded_at",
+                      "prior_status": legacy["prior_status"], "recorded_at": now,
+                      "recorded_from": legacy["form"]}
+            if legacy["hold"] is not None:
+                record["operator_hold"] = legacy["hold"]
+            if dry_run:
+                return {**result, "status": "would_record_pause", "operator_pause": record}
+            updated = {key: value for key, value in state.items() if key != "operator_hold"}
+            atomic_write_json(path, {**updated, "status": "paused", "operator_pause": record})
+            record_topic_note(ledger, topic_id, db=db, event_type="topic_operator_pause_recorded",
+                              reason="operator_pause", decided_by=f"operator:{by}",
+                              detail={key: value for key, value in record.items()
+                                      if key != "operator_hold"},
+                              key=f"operator_pause_recorded:{now}")
+            return {**result, "status": "pause_recorded", "operator_pause": record}
         if state.get("status") != "active":
             raise TopicPauseError(
                 f"research_state status is {state.get('status')!r}, not 'active'")
@@ -103,6 +168,9 @@ def pause_topic(
                 "tasks of this campaign are running (" + ", ".join(running)
                 + "); pause after they finish")
         record = {"by": by, "reason": reason, "at": now, "prior_status": "active"}
+        if dry_run:
+            return {**result, "status": "would_pause", "operator_pause": record,
+                    "would_cancel": _queued_tasks(db, campaign_id)}
         atomic_write_json(path, {**state, "status": "paused", "operator_pause": record})
         cancelled = db.pause_production_campaign(campaign_id, reason=f"operator_pause:{by}")
         record_topic_note(ledger, topic_id, db=db, event_type="topic_operator_paused",
@@ -113,10 +181,21 @@ def pause_topic(
                 "cancelled_tasks": list(cancelled)}
     pause = state.get("operator_pause")
     if state.get("status") != "paused" or not isinstance(pause, Mapping):
+        legacy = _legacy_hold(path, state)
+        if legacy is not None:
+            raise TopicPauseError(
+                f"research_state is paused by an older {legacy['form']} without an "
+                "operator_pause record; record it first with pause-topic (without --resume)")
         raise TopicPauseError(
             "research_state is not under an operator pause (status "
             f"{state.get('status')!r}); nothing to resume")
     resumed = {**dict(pause), "resumed_at": now, "resumed_by": by, "resume_reason": reason}
+    if dry_run:
+        hold = pause.get("operator_hold") if isinstance(pause.get("operator_hold"), Mapping) else {}
+        return {**result, "status": "would_resume", "operator_pause": dict(pause),
+                "prior_status": str(pause.get("prior_status") or "active"),
+                "campaign_status": campaign.get("status"),
+                "resume_note": hold.get("resume")}
     history = [item for item in state.get("operator_pause_history") or []
                if isinstance(item, Mapping)]
     updated = {key: value for key, value in state.items() if key != "operator_pause"}

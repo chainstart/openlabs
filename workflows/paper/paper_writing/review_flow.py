@@ -270,7 +270,8 @@ def review_config(root: str | Path) -> dict[str, Any]:
             "panel_selected_at": started_at.isoformat(),
             "temporary_panel": temporary,
             "referee_roles": panel, "rejection_clearance_required": True,
-            "max_rounds_per_target": int(review.get("max_rounds_per_target", 10)),
+            # Default 4 (user 2026-11-11: 4 completed scientific rounds per target journal).
+            "max_rounds_per_target": int(review.get("max_rounds_per_target", 4)),
             "timeout_seconds": int(review.get("timeout_seconds", 3600)),
             "round_guard": review_round_guard.settings(review),
             "writer_model": str(review.get("writer_model") or ""),

@@ -95,7 +95,9 @@ def new_work_hint(item: str) -> str | None:
 
 
 def settings(review):
-    hours = review.get("round_cooldown_hours", 3)
+    # Default 0 (user 2026-11-23 "我记得删除了这条限制啊": no waiting time between rounds); an
+    # instance may still set a cooldown. An unchanged resubmission is refused either way.
+    hours = review.get("round_cooldown_hours", 0)
     grants = review.get("round_cooldown_overrides", [])
     if type(hours) not in {int, float} or not math.isfinite(hours) or not 0 <= hours <= 8760:
         raise ValueError("review.round_cooldown_hours must be between 0 and 8760")

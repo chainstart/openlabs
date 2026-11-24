@@ -2046,6 +2046,12 @@ _WAIT_STATES: dict[str, tuple[str, str]] = {
                                         "support record but deposits are switched off)"),
     "paper_not_found": ("waiting", "the paper's registry record in the data repository or in "
                                    "the topic's campaign workspace"),
+    # A tier-2 topic (target_stage.tier2_topic) is delivered only after a lead direction
+    # decision (trigger review_venue_grade) has recorded the acceptance grade for the current
+    # target journal in the topic's venue_grade; the review outcome schedules that decision.
+    "venue_grade_pending": ("waiting", "a recorded acceptance grade (topic venue_grade) for the "
+                                       "current target journal from the review_venue_grade "
+                                       "direction decision"),
     "needs_owner": ("needs_human", "fix the listed delivery-exit problems by hand (they are not "
                                    "text fixes a writer may make): {issues}"),
     "layout_unsupported": ("needs_human", "move the workspace paper under papers/<paper_id>/ (or "
@@ -2233,7 +2239,15 @@ def _apply_writer_files(db, paths, task_id: str) -> int:
 
 
 def _repair_delivery(db, paths, settings, report) -> None:
-    """Give a stopped topic two scoped GPT repair attempts under its original gates."""
+    """Give a stopped topic two scoped repair attempts under its original gates.
+
+    The repair is an author-side text fix (task class ``ordinary``, role ``writer``), so no
+    model family is excluded: the cross-family rule binds reviews and decisions, which the
+    router derives itself (``QuotaRouter._excluded_provider``), and the controller rechecks
+    every original gate afterwards. Until 2026-11-24 the seat excluded ``anthropic`` (left
+    over from the 2026-11-20 Claude suspension, now expired), although Claude Opus writes
+    the manuscripts (user 2026-11-19).
+    """
     if not settings.program.auto_handoff or not settings.program.auto_release:
         return
     ledger = _ledger(paths, settings)
@@ -2307,7 +2321,7 @@ def _repair_delivery(db, paths, settings, report) -> None:
                                        "or attestations. Do not publish, submit, assign a handler, or "
                                        "invoke release commands. The controller rechecks all gates."),
                             runner=dispatch_runner(settings, RELEASE_FIX_TASK_TYPE, RELEASE_FIX_ROUTING, "cheap"),
-                            exclude_provider="anthropic", routing_reason=RELEASE_FIX_ROUTING,
+                            routing_reason=RELEASE_FIX_ROUTING,
                             agent_role="writer", session_mode="fresh", max_attempts=1,
                             max_wall_seconds=min(7200, settings.max_task_wall_seconds),
                             **default_task_resources(settings).to_dict())

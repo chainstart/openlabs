@@ -1,7 +1,8 @@
 """Research-program pipeline: topic scouts, card intake and the admission gate.
 
 Deterministic bookkeeping and routing only. A ``topic_scout`` agent proposes
-topic cards, an independent lead-tier reviewer judges them in a
+topic cards, an independent worker-tier reviewer of another model family (user
+2026-11-18, ``[routing.task_tiers]``) judges them in a
 ``portfolio_review`` task (routing reason ``topic_admission``), and this module
 
 * schedules a scout when the program has room and the candidate pool is low,
@@ -2530,7 +2531,11 @@ def schedule_topic_admission(
     *,
     epoch: int,
 ) -> ReviewSchedule:
-    """Queue one lead-tier admission review of this program's proposed topics."""
+    """Queue one admission review of this program's proposed topics.
+
+    Worker tier by default (``portfolio_review:topic_admission``; user 2026-11-18),
+    routed away from the proposer's model family.
+    """
 
     if not settings.program.enabled:
         return ReviewSchedule(reason="program_disabled")

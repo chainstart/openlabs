@@ -244,3 +244,57 @@ def test_operator_freeze_records_the_decision_and_releases_the_topic(tmp_path, m
     report = _tick(paths, settings, monkeypatch)
     assert report.errors == []
     assert open_topic_ledger(paths, settings.program).topic(topic["topic_id"])["status"] == "frozen"
+
+
+@pytest.mark.parametrize("form", ["operator_hold", "unrecorded"])
+def test_pause_topic_records_older_holds_and_resume_dry_run_sees_them(
+        tmp_path, monkeypatch, form) -> None:
+    """2026-11-24: the 2026-11-19 operator_hold and a bare paused status become regular
+    operator_pause records (still paused); --dry-run writes nothing."""
+    paths, db, settings, topic = _active_topic(tmp_path, monkeypatch)
+    campaign_id = topic["campaign_id"]
+    state_path = Path(db.campaign(campaign_id)["workstream_state_path"])
+    with db.connect() as connection:
+        connection.execute("UPDATE tasks SET status='cancelled' WHERE campaign_id=?",
+                           (campaign_id,))
+    db.pause_production_campaign(campaign_id, reason="hand hold")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(status="paused", previous_status="active")
+    if form == "operator_hold":
+        state["operator_hold"] = {"set_at": "2026-11-19T00:59:30Z", "set_by": "operator",
+                                  "reason": "astro focus", "resume": "re-submit jobs"}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    original = state_path.read_bytes()
+
+    with pytest.raises(TopicPauseError, match="record it first"):
+        pause_topic(db, paths, settings, topic_id=topic["topic_id"], reason="r", by="op",
+                    resume=True, dry_run=True)
+    preview = pause_topic(db, paths, settings, topic_id=topic["topic_id"],
+                          reason="record the 11-19 hold", by="op", dry_run=True)
+    assert preview["status"] == "would_record_pause" and preview["dry_run"] is True
+    assert state_path.read_bytes() == original
+
+    recorded = pause_topic(db, paths, settings, topic_id=topic["topic_id"],
+                           reason="record the 11-19 hold", by="op")
+    assert recorded["status"] == "pause_recorded"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    pause = state["operator_pause"]
+    assert state["status"] == "paused" and "operator_hold" not in state
+    assert pause["recorded_from"] == form and pause["prior_status"] == "active"
+    if form == "operator_hold":
+        assert pause["at"] == "2026-11-19T00:59:30Z"
+        assert pause["operator_hold"]["resume"] == "re-submit jobs"
+    assert db.campaign(campaign_id)["status"] == "production_paused"
+    assert campaign_id in paused_topic_campaigns(db)
+    history = open_topic_ledger(paths, settings.program).topic(topic["topic_id"])["history"]
+    assert any(item.get("kind") == "topic_operator_pause_recorded" for item in history)
+    assert pause_topic(db, paths, settings, topic_id=topic["topic_id"], reason="r",
+                       by="op")["status"] == "already_paused"
+
+    before = state_path.read_bytes()
+    dry = pause_topic(db, paths, settings, topic_id=topic["topic_id"], reason="check",
+                      by="op", resume=True, dry_run=True)
+    assert dry["status"] == "would_resume" and dry["prior_status"] == "active"
+    assert dry["resume_note"] == ("re-submit jobs" if form == "operator_hold" else None)
+    assert state_path.read_bytes() == before
+    assert db.campaign(campaign_id)["status"] == "production_paused"

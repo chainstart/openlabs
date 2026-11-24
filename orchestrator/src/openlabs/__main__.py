@@ -306,13 +306,16 @@ def _parser() -> argparse.ArgumentParser:
         "pause-topic",
         help="Hold one active topic in research (polish mode, 2026-11-23): research_state "
         "status paused, campaign paused, queued seats cancelled, ledger note; no slot held. "
-        "--resume reverses it",
+        "--resume reverses it. On a topic held by the 2026-11-19 operator_hold or a bare "
+        "paused status it records a regular operator_pause (the topic stays paused)",
     )
     pause_topic.add_argument("--topic-id", required=True)
     pause_topic.add_argument("--reason", required=True)
     pause_topic.add_argument("--by", required=True, help="Who decided it (provenance)")
     pause_topic.add_argument("--resume", action="store_true",
                              help="Resume a topic paused with this command")
+    pause_topic.add_argument("--dry-run", action="store_true",
+                             help="Report what the pause, record or resume would do; write nothing")
     freeze = program_commands.add_parser(
         "freeze-topic",
         help="Freeze one active or in-review topic on a recorded owner decision (2026-11-23): "
@@ -818,7 +821,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             try:
                 payload = pause_topic(db, paths, settings, topic_id=args.topic_id,
-                                      reason=args.reason, by=args.by, resume=args.resume)
+                                      reason=args.reason, by=args.by, resume=args.resume,
+                                      dry_run=args.dry_run)
             except (TopicPauseError, TopicLedgerError, KeyError, OSError) as exc:
                 print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
                       file=sys.stderr)

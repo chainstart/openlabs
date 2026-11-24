@@ -809,13 +809,15 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
 
 `[program].owner_mode` 打开后，立项的题目由一个负责人 agent（`topic_owner` 坐席，一次一个进程，按
 `[program.owner].runners` 的顺序选 runner）从头负责：做不做子 agent、何时调用另一家模型都由它决定。控制面
-只给目标、资源、工具和硬限制（简报约 4.3 KB，`owner.render_brief`），并按负责人与评审交回的结果自动衔接。
+只给目标、资源、工具和硬限制（简报一般 8–14 KB，2026-11-21 至 11-22 的 `OWNER_BRIEF.md` 实测，含交接文件和
+上一轮评审要点；`owner.render_brief`），并按负责人与评审交回的结果自动衔接。
 
 **目标**是稿件达到独立“重算式复审”的小修或接受，而不只是写出稿件。状态机（存于 meta `owner_state:<campaign>`
 的 `review_round`、`review_stage`、`review_history`）：
 
 ```
-负责人坐席 --ready_for_review--> 重算式复审第 N 轮（paper_review，routing owner_recompute_review）
+负责人坐席 --ready_for_review，按风险--> 重算式复审第 N 轮（paper_review，routing owner_recompute_review）
+负责人坐席 --ready_for_review，无风险项--> 统一评审（routing owner_review）
    accept  ------------------------------------------------> 统一评审（routing owner_review）
    minor   --> 负责人小修 + 自查一致性 --ready_for_review----> 统一评审
    major   --> 负责人修改（可提交作业并 awaiting_remote）--ready_for_review--> 第 N+1 轮（新评审会话）
@@ -826,6 +828,11 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
 
 投稿前由人全面审核全文及相关材料。投稿操作仍由人单独确认。
 
+- **何时派重算式复审（2026-11-22 起按风险，57cb5ac）**：不是每次 ready_for_review 都先过重算复审。
+  `owner.needs_specialist_review` 只在下列情况派席：主终点判定与上次不同（判定翻转）、预注册标了
+  `high_sensitivity`、状态包的 `recompute_risk` 为 `high_sensitivity`/`disputed_data`/`verdict_flip`，或上一轮
+  重算复审为 major。上一轮重算已在同一工作区摘要、同一稿件上给出 accept/minor 且结果文件未变时也不再派。
+  其余情况直接走统一评审。`[program.owner].recompute_review = false` 时一律不派。
 - **重算式复审**：`paper_review` 任务、技能 `openlabs-recompute-review`、空白会话、父任务是负责人坐席，所以
   路由按父任务避开负责人的模型族（只有一个模型族、或另一族因额度不可用时同族不同模型，见"额度上限与配速"一节的独立性回退）。每轮都是新任务新会话，不继承上一轮
   评审的上下文；输入包（`program_control/recompute-reviews/<campaign>/round-N-*.json`）列出负责人结果、campaign
@@ -858,11 +865,13 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   11-18 至 11-20 的 sol 负责人坐席回放显示，新会话首请求约 20K token 且约 64% 命中缓存，续接带入的 40–100K 旧
   上下文在后续每次请求里重读，净多花。换 runner 时（`switch_after_minutes`）只有同一模型才保留会话；普通任务
   经额度路由换到同提供方的另一模型时也改为新会话（缓存按模型隔离）。
-- **写作规范（2026-11-19）**：简报的 Tools 段有一行“Writing rules (binding, not optional)”（`owner.WRITING_RULES`），
-  要求负责人动笔前、每次改稿前读 `workflows/paper/skills/openlabs-paper-readability/SKILL.md`，先写
-  `papers/<id>/writing/storyline.md`，交 ready_for_review 前跑 `paper-writing narrative-check`（正文超限、修订史用语为失败）
-  和 `paper-writing reader-check`（一遍读者自查，写稿者会话内的工具调用，不是新任务）。重算式复审与统一评审意见回到负责人时
-  附 `owner.REVISION_RULE`：补充内容默认进附录和回复信，正文不得净增。写稿仍由一个负责人从头写到尾，没有新增任务类型。
+- **写作规范（2026-11-19，2026-11-22 起部分改为可选）**：简报的 Tools 段有一行写作规则（`owner.WRITING_RULES`）：
+  读 `workflows/paper/skills/openlabs-paper-readability/SKILL.md`，给出 2–4 个要点并在动笔前跑 story-review，先画决定性的图。
+  `paper-writing narrative-check` 和 `paper-writing reader-check` 是**可选**的作者自查，不再是必经步骤，也不再标
+  “binding”。仍然必须做的只有：送统一评审前跑 `paper-writing program apply-default-declarations` 和
+  `paper-writing delivery-floor --author` 并修掉报告的每一项下限；沿用批准的署名与单位；AI 声明按哈希绑定的实际
+  调用记录生成。重算式复审与统一评审意见回到负责人时附 `owner.REVISION_RULE`：结论相关的比较留在正文，次要内容进
+  附录、归档和回复信，目标是正文零净增；返修只改被点名的句子（2026-11-23）。写稿仍由一个写稿者从头写到尾，没有新增任务类型。
   细节见 `workflows/paper/docs/WRITING_STYLE.zh.md`。
 - **写稿者交接（2026-11-19）**：`[program.owner].writing_runner`（如 `"worker_claude"`，缺省为空 = 负责人自己写，
   行为不变）。求解仍由原负责人做；写稿与之后所有改稿由写稿者一个模型完成，直到交付。

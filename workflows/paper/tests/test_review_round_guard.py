@@ -83,7 +83,9 @@ def test_round_guard(tmp_path, monkeypatch, case, blocked_by):
             with pytest.raises(ValueError, match=blocked_by):
                 flow.review_round_guard.settings({"round_cooldown_overrides": [grant]})
             return
-        config["round_guard"] = flow.review_round_guard.settings({"round_cooldown_overrides": [grant]})
+        # An instance-set cooldown (the default is 0 since 2026-11-24) that the grant lifts.
+        config["round_guard"] = flow.review_round_guard.settings(
+            {"round_cooldown_hours": 3, "round_cooldown_overrides": [grant]})
     role = flow.run_role
 
     def respond(**kwargs):

@@ -465,6 +465,11 @@ def test_every_release_state_has_an_owner(tmp_path):
                      "waiting_detail": {"missing": ["ARA_PAPER_MANAGE_API_KEY"]}})
     assert waiting["state"] == "waiting" and "ARA_PAPER_MANAGE_API_KEY" in waiting["condition"]
     assert state({"status": "waiting", "waiting_for": "needs_owner"})["state"] == "needs_human"
+    # 2026-11-24: a tier-2 paper waiting for its acceptance grade is waiting, not unowned.
+    graded = state({"status": "waiting", "waiting_for": "venue_grade_pending",
+                    "waiting_detail": {"hint": "The current target needs a recorded acceptance grade."}})
+    assert graded["state"] == "waiting" and "unrecognized" not in graded
+    assert "venue_grade" in graded["condition"]
     assert state({"status": "exhausted", "stage": "commit"})["state"] == "waiting"
     assert state({"status": "exhausted", "stage": "form_fix_writer",
                   "last_error": "writer exited without a result"})["state"] == "waiting"
@@ -496,3 +501,43 @@ def test_command_error_detail_never_reports_only_the_guard_banner() -> None:
     refusal = "OpenLabs GPU guard: STOP: requested GPU index is unavailable"
     assert detail("", banner + refusal) == refusal
     assert detail("plain text failure", "") == "plain text failure"
+
+
+def test_delivery_repair_seat_excludes_no_model_family(tmp_path, monkeypatch):
+    """2026-11-24: the form-fix writer no longer hard-codes exclude_provider="anthropic"."""
+    from openlabs.config import FactorySettings, ProgramSettings
+
+    topic = {"topic_id": "t", "status": "ready_queue", "domain": "physics", "paper_id": "p"}
+
+    class Ledger:
+        def read(self):
+            return {"topics": [topic]}
+
+    class DB:
+        enqueued: list[dict] = []
+
+        def task(self, task_id):
+            return None
+
+        def enqueue_task(self, **kwargs):
+            self.enqueued.append(kwargs)
+
+    class Report:
+        enqueued: list[str] = []
+        program: dict = {}
+
+    settings = FactorySettings(program=ProgramSettings(auto_handoff=True, auto_release=True))
+    monkeypatch.setattr(program_autonomy, "_ledger", lambda *_: Ledger())
+    monkeypatch.setattr(program_autonomy, "delivery_chain_state", lambda *_: {
+        "state": "needs_human", "stage": "form_fix_writer", "paper_id": "p", "action": "fix"})
+    monkeypatch.setattr(program_autonomy, "_release_campaign", lambda *_: "physics-program-release")
+    monkeypatch.setattr(program_autonomy, "_control_root", lambda *_: tmp_path)
+    monkeypatch.setattr(program_autonomy, "_writer_sources", lambda *_: {})
+    monkeypatch.setattr(program_autonomy, "record_topic_note", lambda *a, **k: None)
+    paths = type("Paths", (), {"data": tmp_path})()
+    db = DB()
+    program_autonomy._repair_delivery(db, paths, settings, Report())
+    assert len(db.enqueued) == 1
+    seat = db.enqueued[0]
+    assert seat["task_id"] == "delivery-repair:t:1" and seat["agent_role"] == "writer"
+    assert not seat.get("exclude_provider")
