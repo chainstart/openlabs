@@ -88,6 +88,12 @@ TRIGGER_REVIEW_RETARGET = "review_retarget_required"
 TRIGGER_REVIEW_STALLED = "review_stalled"
 TRIGGER_REVIEW_ROUNDS = "review_rounds_exhausted"
 TRIGGER_VENUE_GRADE = "review_venue_grade"
+# NC aim (user 2026-11-25, nc_grading.py): the journal is graded before writing and the
+# review-time grade only re-checks whether the evidence changed.
+TRIGGER_PRE_WRITING_GRADE = "pre_writing_grade"
+TRIGGER_GRADE_RECHECK = "venue_grade_recheck"
+GRADE_TRIGGERS = frozenset({TRIGGER_VENUE_GRADE, TRIGGER_PRE_WRITING_GRADE,
+                            TRIGGER_GRADE_RECHECK})
 # A research executor stopped with needs_human on a scientific/process question
 # (not an infrastructure miss): the lead decides instead of the topic waiting
 # for the 28-day calendar trigger while it holds a slot (2026-11-14: two astro
@@ -398,6 +404,11 @@ def _trigger_reason_text(trigger: str, detail: Mapping[str, Any]) -> str:
         TRIGGER_REVIEW_STALLED: "The unified review is stalled: scores no longer improve.",
         TRIGGER_REVIEW_ROUNDS: "The unified review used all rounds for this target.",
         TRIGGER_VENUE_GRADE: "Assess which journal tier the completed evidence supports.",
+        TRIGGER_PRE_WRITING_GRADE: (
+            "Before writing: assess which journal tier the completed research supports."),
+        TRIGGER_GRADE_RECHECK: (
+            "The manuscript cleared review: check whether its evidence changed since the "
+            "journal was graded before writing."),
         "owner_review_rejected": (
             "The independent recompute review rejected the manuscript: its main conclusion "
             "does not hold and the reviewer sees no revision of this topic that rescues it."
@@ -528,9 +539,15 @@ def _nc_grading_packet(settings: FactorySettings, topic: Mapping[str, Any]) -> d
     return grading_packet(settings, topic)
 
 
-def _nc_grading_instruction() -> str:
+def _nc_grading_instruction(trigger: str = TRIGGER_VENUE_GRADE) -> str:
     from .nc_funnel import GRADE_INSTRUCTION
+    from .nc_grading import PRE_WRITING_INSTRUCTION, RECHECK_INSTRUCTION
 
+    if trigger == TRIGGER_GRADE_RECHECK:
+        return RECHECK_INSTRUCTION
+    if trigger == TRIGGER_PRE_WRITING_GRADE:
+        return GRADE_INSTRUCTION.replace("this manuscript looks like", "this research looks like") \
+            + PRE_WRITING_INSTRUCTION
     return GRADE_INSTRUCTION
 
 
@@ -589,7 +606,7 @@ def schedule_direction_decision(
             _resource("settings.yaml#research_portfolio", registry / "settings.yaml"),
         ) if item is not None
     ]
-    grading = trigger == TRIGGER_VENUE_GRADE
+    grading = trigger in GRADE_TRIGGERS
     from . import target_stage as _stages
 
     nc_grading = grading and _stages.admitted_stage(topic) == _stages.NC_AIM
@@ -669,7 +686,12 @@ def schedule_direction_decision(
         **({"delivered_revision": topic["delivered_revision"]} if topic.get("delivered_revision") else {}),
         **({"verified_alternatives": candidates,
             "short_format_value": None if zone or grading else "short_format"} if cap or grading else {}),
-        **({"grading": _nc_grading_packet(settings, topic)} if nc_grading else {}),
+        **({"grading": {**_nc_grading_packet(settings, topic),
+                        "point": {TRIGGER_PRE_WRITING_GRADE: "pre_writing",
+                                  TRIGGER_GRADE_RECHECK: "recheck"}.get(trigger, "after_review"),
+                        **({"prior_grade": topic.get("venue_grade")}
+                           if trigger == TRIGGER_GRADE_RECHECK else {})}}
+           if nc_grading else {}),
         "created_at": utc_now(),
     })
     packet_path = (
@@ -710,7 +732,7 @@ def schedule_direction_decision(
                "use freeze with no_eligible_venue and a concrete reopen condition. "
                "Preserve the review, writing and figure standards." if grading and not nc_grading
                else "")
-            + (_nc_grading_instruction() if nc_grading else "")
+            + (_nc_grading_instruction(trigger) if nc_grading else "")
         ),
         input_path=str(packet_path),
         skill_path=DIRECTION_SKILL,
@@ -1096,6 +1118,19 @@ def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payl
             if decision_path.is_file():
                 journal = json.loads(decision_path.read_text()).get("target_journal") or journal
         grade = topic.get("venue_grade") or {}
+        from .nc_grading import recheck_due
+
+        if grade and recheck_due(topic, grade, task_id):
+            # Graded before writing: only whether the evidence changed is checked now.
+            schedule_direction_decision(
+                db, paths, settings, report, topic=topic, trigger=TRIGGER_GRADE_RECHECK,
+                source_task_id=task_id, evidence=evidence,
+                detail={"paper_id": paper_id, "target_journal": journal,
+                        "review_outcome": dict(outcome),
+                        "prior_grade": {key: grade.get(key) for key in (
+                            "journal", "achieved_band", "point", "confidence")}},
+            )
+            return
         if not grade or grade.get("journal") != journal:
             schedule_direction_decision(
                 db, paths, settings, report, topic=topic, trigger=TRIGGER_VENUE_GRADE,
@@ -1254,10 +1289,10 @@ def apply_direction_decision(
             decision["choice"] == "retarget_or_short_format" and
             decision["retarget"]["venue_or_format"] not in allowed
         ):
-            problems.append("choose an exact verified journal" if trigger == TRIGGER_VENUE_GRADE
+            problems.append("choose an exact verified journal" if trigger in GRADE_TRIGGERS
                             else "choose a verified alternative, short_format or freeze")
     grade = None
-    if not problems and trigger == TRIGGER_VENUE_GRADE:
+    if not problems and trigger in GRADE_TRIGGERS:
         from .target_stage import venue_grade
 
         if decision["choice"] == "freeze":
@@ -1267,9 +1302,27 @@ def apply_direction_decision(
             from .target_stage import admitted_stage
 
             stage = admitted_stage(topic)
-            grade = venue_grade(decision, packet["verified_alternatives"], stage=stage,
-                                settings=settings)
-            if grade is None:
+            if trigger == TRIGGER_GRADE_RECHECK:
+                from .nc_grading import recheck_grade
+
+                grade = recheck_grade(decision, topic.get("venue_grade") or {},
+                                      packet["verified_alternatives"], settings,
+                                      review_task_id=str(record["source_task_id"]))
+            else:
+                grade = venue_grade(decision, packet["verified_alternatives"], stage=stage,
+                                    settings=settings)
+                if grade is not None and stage == "nc_aim":
+                    from .nc_grading import POINT_AFTER_REVIEW, POINT_PRE_WRITING, venue_format
+
+                    grade = {**grade, "point": POINT_PRE_WRITING
+                             if trigger == TRIGGER_PRE_WRITING_GRADE else POINT_AFTER_REVIEW,
+                             **({"format": form} if (form := venue_format(
+                                 paths, grade["journal"])) else {})}
+            if grade is None and trigger == TRIGGER_GRADE_RECHECK:
+                problems.append("re-check: set retarget.evidence_changed; unchanged keeps the "
+                                "prior band, changed lists retarget.evidence_changes and may "
+                                "not raise the band; the journal must match the band")
+            elif grade is None:
                 problems.append("the selected journal must be verified and match retarget.achieved_band"
                                 + (" (NC band: the scorecard, calibration match and confidence "
                                    "must support it; see grading.rules)" if stage == "nc_aim"
@@ -1299,6 +1352,13 @@ def apply_direction_decision(
             decided_by=task_id, detail=grade, evidence=[*packet["evidence"], *evidence],
             updates={"venue_grade": grade}, key=f"venue_grade:{task_id}",
         )
+        if trigger == TRIGGER_PRE_WRITING_GRADE:
+            from .nc_grading import resume_writing
+
+            seat = resume_writing(db, paths, settings, report, topic=topic,
+                                  source_task_id=str(record["source_task_id"]), detail=detail,
+                                  grade=grade, reason="graded")
+            return finish("venue_graded_before_writing", {"venue_grade": grade, "seat": seat})
         if grade["journal"] == detail.get("target_journal"):
             queue_ready_topic(
                 db, paths, settings, report, topic={**topic, "venue_grade": grade},
@@ -1308,7 +1368,9 @@ def apply_direction_decision(
             )
             return finish("venue_retained", {"venue_grade": grade})
     # The first acceptance grade gets one journal choice even after exploratory retargets.
-    first_grade = grade is not None and not topic.get("venue_grade")
+    first_grade = grade is not None and (not topic.get("venue_grade") or (
+        trigger == TRIGGER_GRADE_RECHECK
+        and not (topic.get("venue_grade") or {}).get("rechecked_for")))
     rejection = _reject_choice(choice, used={} if first_grade else used,
                                limits={choice: 1} if first_grade else limits,
                                decision=decision, campaign=campaign, settings=settings)
@@ -1566,6 +1628,18 @@ def _retry_or_freeze(db, paths, settings, report, *, record, topic, task_id, rea
         )
         if retried is not None:
             return
+    if trigger == TRIGGER_PRE_WRITING_GRADE:
+        # No grade could be taken: writing goes on; the review-time grade is the fallback.
+        from .nc_grading import resume_writing
+
+        packet = _verified_packet(Path(str(record["packet_path"])))
+        _set_decision(db, task_id, {**record, "status": "resolved", "outcome": reason,
+                                    "resolved_at": utc_now()})
+        resume_writing(db, paths, settings, report, topic=topic,
+                       source_task_id=str(record["source_task_id"]),
+                       detail=dict(packet["trigger"].get("detail") or {}), grade=None,
+                       reason=reason)
+        return
     reason_class = TRIGGER_FREEZE_CLASS.get(trigger, "contribution_insufficient")
     if reason_class == "contribution_insufficient":
         # No independent judgement exists: do not record one.

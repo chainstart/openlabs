@@ -1105,7 +1105,12 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
     used |= standalone_document_files(manuscript)
     if (manuscript / "figures").is_dir():
         from paper_writing import figures
+        from dataclasses import replace as _replace
+
         audit = figures.check(figures.workspace(manuscript=manuscript), rebuild=True)
+        # Journal-family image rules need the paper's record (its target journal).
+        audit["blocking"] = audit["blocking"] + figures.generated_image_findings(
+            _replace(figures.workspace(manuscript=manuscript), metadata=metadata, root=Path(root)))
         # The figure tool can resolve archived external generators but cannot
         # run one without its invocation and inputs. A pathname is not a rebuild.
         for figure in audit["figures"]:
@@ -1113,7 +1118,8 @@ def _preflight(paper_id: str, root: Path, workdir: Path, ledger_warnings: list[s
                 blockers.append(f"FIG-REBUILD-UNVERIFIED: {figure['figure']}: external source "
                                 "was located but the registered figure tool could not rebuild it")
         for item in audit["blocking"] + audit["advisory"] + audit["repair_required"]:
-            if item["code"] in {"FIG-REBUILD-FAILED", "FIG-NO-SOURCE", "FIG-UNREADABLE", "FIG-STALE"}:
+            if item["code"] in {"FIG-REBUILD-FAILED", "FIG-NO-SOURCE", "FIG-UNREADABLE", "FIG-STALE",
+                                figures.NATURE_AI_IMAGE_CODE}:
                 blockers.append(f"{item['code']}: {item['figure']}: {item['message']}")
             else:
                 advisories.append(_preparation_advisory("figures", item["code"], item["message"],
@@ -2909,8 +2915,8 @@ def _citation_numbers(text: str) -> str:
 
 
 _DELTA_DELIVERY_SECTION = re.compile(
-    r"(\\section\*?\{(Data and code availability|Declaration of generative AI and AI-assisted "
-    r"technologies in the manuscript preparation process)\})(.*?)(?=\\(?:section|bibliography|end\{document\})|\Z)", re.S)
+    r"(\\section\*?\{(Data and code availability|AI use disclosure|Declaration of generative AI and "
+    r"AI-assisted technologies in the manuscript preparation process)\})(.*?)(?=\\(?:section|bibliography|end\{document\})|\Z)", re.S)
 _DELTA_SUPPORT_ID = re.compile(r"\b(?:version\s+\d+(?:\.\d+)+|10\.5281/zenodo\.\d+)\b", re.I)
 _DELTA_MODEL_ID = re.compile(r"\bGPT-\d+(?:\.\d+)+(?:-[A-Za-z]+)*\b", re.I)
 

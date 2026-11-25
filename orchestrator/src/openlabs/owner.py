@@ -65,7 +65,7 @@ from pathlib import Path
 from typing import Any
 
 from . import budget as budget_control
-from . import paper_figures, spin_guard
+from . import nc_grading, paper_figures, spin_guard
 from .config import (
     ANTIGRAVITY_PROVIDER,
     OWNER_TASK_TYPE,
@@ -1141,6 +1141,7 @@ def start_writing(
     campaign: Mapping[str, Any],
     trigger: str,
     result_path: Path,
+    extra_note: str | None = None,
 ) -> str | None:
     """Hand the topic to the writer: record it, then queue the writer's first seat."""
 
@@ -1153,7 +1154,8 @@ def start_writing(
     update_state(db, campaign_id, "owner_writing_handover", record, writing=record)
     reset_streak(db, campaign_id, reason="writing_handover")
     seat = enqueue_seat(db, settings, report, campaign=campaign, parent=task,
-                        note=_writer_note(solver, trigger), routing_reason=ROUTING_WRITING,
+                        note=_writer_note(solver, trigger) + (" " + extra_note if extra_note else ""),
+                        routing_reason=ROUTING_WRITING,
                         input_path=str(result_path), runner_override=writer)
     _topic_note(paths, settings, db, campaign_id, event_type="writing_handover",
                 reason=f"research done ({trigger}); {writer} writes the manuscript",
@@ -2516,6 +2518,17 @@ def after_result(
                         workspace_root=workspace_root, promoted=successful,
                         handover_max_bytes=limit, short_seat_seconds=short_limit,
                         ledger_status=_ledger_status(paths, settings, str(task["campaign_id"])))
+    topic = _topic(paths, settings, str(task["campaign_id"]))
+    if nc_grading.pre_writing_due(settings, topic, before, packet, successful=successful):
+        # NC aim (user 2026-11-25): the journal is graded before anyone writes.
+        status = str(packet.get("status") or "").strip().lower()
+        if nc_grading.hold_for_grade(
+            db, paths, settings, report, task=task, campaign=campaign, topic=topic or {},
+            packet=packet, before=before, result_path=result_path,
+            result_sha256=result_sha256,
+            seat_trigger="ready_for_review" if status == "ready_for_review" else "phase_writing",
+        ):
+            return True
     trigger = writing_switch_due(settings, before, packet, task, successful=successful)
     if trigger is not None:
         start_writing(db, paths, settings, report, task=task, campaign=campaign,
@@ -3225,9 +3238,17 @@ def render_brief(
            "The first milestone (research_state.json `milestones`) is the decisive analysis; "
            "keep each milestone's compute and token budget. If the decisive analysis fails, "
            "stop early: freeze, or record a lower `expected_band` in OWNER_LOG.md and continue "
-           "for that band - do not force the NC claim. The journal is graded from the actual "
-           "evidence after review (NC, else CAS Zone 1, 2, 3-4); write and draw to top-journal "
-           "standard in every band."] if research.get("target_stage") == "nc_aim" else []),
+           "for that band - do not force the NC claim. When the decisive analysis and the four "
+           "checks are done, end the seat with phase writing and " + nc_grading.READINESS_PACKET
+           + " The journal is then graded from that evidence before writing (cross-family, "
+           "calibration set: NC, else CAS Zone 1, 2, 3-4) and the manuscript is written for "
+           "the graded journal's length and format; at review-ready the grade is only "
+           "re-checked for changed evidence. Write and draw to top-journal standard in every "
+           "band."] if research.get("target_stage") == "nc_aim" else []),
+        *([nc_grading.grade_note(grade)] if isinstance(
+            grade := (topic or {}).get("venue_grade") or (state or {}).get("venue_grade"),
+            Mapping) and grade.get("point") in {nc_grading.POINT_PRE_WRITING,
+                                                nc_grading.POINT_RECHECK} else []),
         f"- Budget: {used}/{maximum} Agent seconds used; this seat ends by "
         f"{deadline.strftime('%Y-%m-%d %H:%M')} UTC.",
         *(["- Compute now:", *queue] if (queue := compute_brief_lines(

@@ -418,6 +418,11 @@ class FunnelSettings:
     stall_backoff_hours: float = 48.0
     # L6 (grading): journals of the NC band (the rest is graded by CAS zone).
     nc_journals: tuple[str, ...] = ("Nature Communications",)
+    # User 2026-11-25 (item 3): grade the journal before writing (owner hand-over to writing),
+    # re-check only for changed evidence at review-ready. readiness_returns: how often an
+    # owner seat without the decisive analysis and the four required checks is sent back.
+    grade_before_writing: bool = True
+    readiness_returns: int = 2
     # Target mix per 10 topics (user 2026-11-25): 2-3 NC, 2-3 Zone 1, the rest lower.
     target_mix: dict[str, tuple[int, int]] = field(default_factory=lambda: {
         "nc": (2, 3), "zone_1": (2, 3)})
@@ -1640,6 +1645,9 @@ def _funnel_settings(value: Any) -> FunnelSettings:
                                                d.stall_backoff_hours),
         nc_journals=tuple(str(item) for item in journals) if isinstance(journals, list)
         and journals else d.nc_journals,
+        grade_before_writing=value.get("grade_before_writing", d.grade_before_writing)
+        is not False,
+        readiness_returns=_nonnegative_int(value.get("readiness_returns"), d.readiness_returns),
         target_mix=target_mix,
         exempt_lines=_domain_list(value.get("exempt_lines"), "funnel.exempt_lines"),
     )

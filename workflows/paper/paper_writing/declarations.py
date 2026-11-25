@@ -91,7 +91,23 @@ def contribution_authors(metadata: Mapping[str, Any]) -> list[Mapping[str, Any]]
     return people
 
 
-def default_ai_wording(root: Path, usage: Any, *, plural: bool) -> tuple[str, str]:
+def ai_template_id(templates: Mapping[str, Any], journal: Any = None, root: Path | None = None) -> str:
+    """The default AI template, or the one registered for the journal's publisher family.
+
+    ``venue_ai_templates`` maps a family (``nature_portfolio``) to a template id; the
+    wording stays the user's default two sentences, only the heading (and so the place in
+    the end matter) follows the family's precedent.
+    """
+    from paper_writing.publisher_family import venue_family
+
+    family = venue_family(journal, root)
+    by_family = templates.get("venue_ai_templates") or {}
+    if family and isinstance(by_family, Mapping) and by_family.get(family) in (templates.get("ai_templates") or {}):
+        return str(by_family[family])
+    return str(templates["default_ai_template_id"])
+
+
+def default_ai_wording(root: Path, usage: Any, *, plural: bool, journal: Any = None) -> tuple[str, str]:
     """Return the registered template filled with the paper's actual tools and purposes."""
     import yaml
 
@@ -101,7 +117,7 @@ def default_ai_wording(root: Path, usage: Any, *, plural: bool) -> tuple[str, st
     if not all(isinstance(item, Mapping) and item.get("model") and item.get("purpose") for item in usage):
         return "", ""
     templates = yaml.safe_load(path.read_text())
-    template = templates["ai_templates"][templates["default_ai_template_id"]]
+    template = templates["ai_templates"][ai_template_id(templates, journal, root)]
     if not template.get("automatically_reusable"):
         return "", ""
     tools = ", ".join(dict.fromkeys(f"{item['model']} through {item.get('tool')}" for item in usage))
@@ -157,7 +173,8 @@ def apply_default_declarations(paper_id: str, root: Path, *, contributions_only:
     replacement = ""
     end = start
     if not contributions_only and not (metadata.get("declarations") or {}).get("ai_use", {}).get("text_sha256"):
-        default_heading, text = default_ai_wording(root, usage, plural=len(people) > 1)
+        default_heading, text = default_ai_wording(root, usage, plural=len(people) > 1,
+                                                   journal=metadata.get("target_journal"))
         if text and not model_disclosure_issues(text, usage, root=root):
             if not heading or (old and old in source and "\\" not in old):
                 if heading:

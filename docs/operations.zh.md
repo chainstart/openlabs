@@ -614,6 +614,15 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
 换刊仍需通过目标刊评审。只有 1 区可考虑付费，其余需核实免费路径，支出和投稿由人确认。
 稿件写作、图件和评审标准继续沿用统一要求。
 
+`nc_aim` 课题（用户 2026-11-25 决定，`nc_grading.py`）改为写作前定档：负责人完成决定性分析和
+四项必做验证（敏感性、不确定度、外部验证、简单基线或混杂检验）后，以 `phase: writing` 结束席位，
+并在状态包写 `nc_readiness`。缺项最多退回 `[program.funnel].readiness_returns` 次（默认 2），之后
+带缺项定档。控制面暂停该课题，派跨族方向决策 `pre_writing_grade`（校准集，规则同 `nc_grade`），
+定档结果写入台账 `venue_grade`（`point: pre_writing`，含目标刊体例上限），再交写作者（或负责人）
+按该刊篇幅和体例写。评审 ready 时只派 `venue_grade_recheck`：证据未变保持原档；证据有变须列出变化，
+档次只能持平或下降。定档决策重试用尽时不冻结，照常写作，评审后按旧流程完整定档。
+`grade_before_writing = false` 回到评审后定档。
+
 有研究线的新 campaign 写入 `workspaces/lines/<line>/<campaign>/`。已有 campaign 继续从持久化
 路径读取状态、证据和交付输入。项目配置与侦察、立项工作流仍在宿主领域工作区。
 

@@ -66,7 +66,13 @@ comparisons, with headings that state findings. Consult the readability and figu
    tools and model identifiers that runtime records show (registered under
    `declarations.ai_use.model_usage` with hash-bound evidence) and their actual purposes, such as
    code development or Lean preparation; formal verification is credited to the pinned Lean
-   toolchain, not to AI output. Never weaken a truthful disclosure. When you register or first
+   toolchain, not to AI output. Never weaken a truthful disclosure. Keep it short: name the
+   kinds of use (data-analysis code, literature search, writing support, figure code), not a
+   run-by-run account. Nature Portfolio targets (Nature Communications, Scientific Reports, npj,
+   Communications journals): the same wording under its own unnumbered `AI use disclosure`
+   section in the end matter, before the references (our Scientific Reports precedent;
+   `venue_ai_templates` in templates.yaml); `apply-default-declarations` picks it by the target
+   journal. When you register or first
    draft the paper, also record the drafting model the runtime reports as `writer_model` (exact
    identifier, e.g. `gpt-6.2-sol`) and `writer_provider` (`openai-codex` or `anthropic`) in the
    paper record: the unified review needs a referee from another model family than this one.

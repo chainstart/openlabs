@@ -120,7 +120,13 @@ or acknowledgments -- `figures check` reports missing licences, NC/ND terms and 
 (3) draw the object in code with gradients (`li-ion-cell` shows the level of finish to aim
 for); (4) a generated bitmap only as a last resort and only where the target journal's policy
 allows it, declared under the `artwork_disclosures` rules -- Nature Portfolio, Science and
-Elsevier do not accept generative-AI images in figures.
+Elsevier do not accept generative-AI images in figures. For a Nature Portfolio target (NC,
+Scientific Reports, Nature, npj, Communications journals) never generate an image or
+illustration with an image model (Codex image tool, GPT Image, DALL-E, ...): Springer Nature
+does not permit AI visual content made from text prompts. `figures check` blocks it
+(`FIG-AI-IMAGE-NATURE`: generation records `*.provenance.json`, `ai_generated` assets,
+`artwork_disclosures`). Allowed: figures drawn in code from data, renders from data in domain
+software, and licensed library assets.
 
 ## 3. Style
 

@@ -20,5 +20,8 @@ review and author policy: `registry/settings.yaml`. This file adds only what dif
   benchmark contamination before claiming generalization.
 - Its scripts `fetch_template.py` and `verify_citations.py` use the network: run them only when
   needed, never send confidential manuscript text, and record source and access date.
-- Generated images are illustrative only and cannot supply experimental evidence.
+- Generated images are illustrative only and cannot supply experimental evidence. The
+  image-generation default of `ai-research-writing-skill` does not apply: schematics follow
+  `openlabs-paper-figures` (code-drawn vector first), and a Nature Portfolio target gets no
+  generated image at all.
 - Show the held-out unit and paired model comparison, including rank changes where relevant.

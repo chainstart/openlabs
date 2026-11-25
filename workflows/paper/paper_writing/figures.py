@@ -1056,11 +1056,88 @@ def license_findings(ws: Workspace, sources: list[FigureSource], manuscript_text
             elif status == "share_alike":
                 advisory.append(_finding(name, "FIG-ASSET-SHARE-ALIKE", f"{name}: {note}"))
         if meta.get("ai_generated"):
-            advisory.append(_finding(name, "FIG-ASSET-AI-GENERATED",
-                                     f"{name}: generated artwork; follow the artwork_disclosures rule and the "
-                                     "target journal's AI-image policy"))
+            if _nature_target(ws):
+                blocking.append(_finding(name, NATURE_AI_IMAGE_CODE,
+                                         f"{name}: generated artwork in a Nature Portfolio target. "
+                                         + NATURE_AI_IMAGE_RULE))
+            else:
+                advisory.append(_finding(name, "FIG-ASSET-AI-GENERATED",
+                                         f"{name}: generated artwork; follow the artwork_disclosures rule and the "
+                                         "target journal's AI-image policy"))
         records.append(record)
     return blocking, advisory, records
+
+
+# --------------------------------------------------------------------------- generated images
+# Springer Nature (ai-manuscript-preparation, read 2026-11-25): AI-generated visual content
+# "created from text prompts or without verifiable source data or material" is not
+# permitted; photorealistic images are not permitted (editorial-policies/ai). For a Nature
+# Portfolio target every generated bitmap or illustration is refused: figures are drawn in
+# code from data, rendered by domain software, or composed from licensed library assets.
+NATURE_AI_IMAGE_CODE = "FIG-AI-IMAGE-NATURE"
+NATURE_AI_IMAGE_RULE = (
+    "Springer Nature does not accept generative-AI images made from text prompts; use a "
+    "code-drawn vector figure, a render from data (rdkit, CIF, FITS ...) or licensed library "
+    "assets, and move the generated file to revisions/unused-source-preserved/.")
+_GENERATOR_TOOL = re.compile(r"image[_ ]?gen|gpt[- ]?image|dall[- ·]?e|midjourney|stable[- ]?diffusion|"
+                             r"imagen|firefly|generative", re.I)
+
+
+def _nature_target(ws: Workspace) -> bool:
+    from paper_writing.publisher_family import nature_portfolio
+
+    return nature_portfolio((ws.metadata or {}).get("target_journal"), ws.root)
+
+
+def _generated_records(paper_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
+    """Image-generation provenance files (``*.provenance.json`` written by the image tool)."""
+    found = []
+    skip = {"support-materials", "revisions", "build"}
+    for path in sorted(paper_dir.rglob("*.provenance.json")):
+        if skip & set(path.relative_to(paper_dir).parts[:-1]):
+            continue
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(record, Mapping) and _GENERATOR_TOOL.search(
+                " ".join(str(record.get(key) or "") for key in ("tool", "c2pa_software_agent", "model"))):
+            found.append((path, dict(record)))
+    return found
+
+
+def generated_image_findings(ws: Workspace) -> list[dict[str, str]]:
+    """Blocking findings for generated images used by a Nature Portfolio manuscript."""
+    if not _nature_target(ws):
+        return []
+    paper_dir = ws.manuscript.parent
+    texts = []
+    for path in paper_dir.rglob("*"):
+        if (path.is_file() and path.suffix.lower() in {".tex", ".py", ".svg", ".html", ".json", ".sh"}
+                and not path.name.endswith(".provenance.json")
+                and not ({"support-materials", "revisions", "build"} & set(path.relative_to(paper_dir).parts))
+                and path.stat().st_size < 2_000_000):
+            texts.append(path.read_text(encoding="utf-8", errors="replace"))
+    corpus = "\n".join(texts)
+    hashes = {}
+    for graphic in ws.manuscript.rglob("*"):
+        if graphic.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"} and graphic.is_file():
+            hashes[hashlib.sha256(graphic.read_bytes()).hexdigest()] = graphic
+    findings = []
+    for path, record in _generated_records(paper_dir):
+        image = path.with_name(path.name[: -len(".provenance.json")])
+        used = (image.name in corpus or image.stem in corpus
+                or str(record.get("sha256") or "") in hashes)
+        if used:
+            findings.append(_finding(image.name, NATURE_AI_IMAGE_CODE,
+                                     f"{image.name}: generated with {record.get('tool') or 'an image model'}. "
+                                     + NATURE_AI_IMAGE_RULE))
+    for entry in (ws.metadata or {}).get("artwork_disclosures") or []:
+        if isinstance(entry, Mapping) and entry.get("figure"):
+            findings.append(_finding(Path(str(entry["figure"])).name, NATURE_AI_IMAGE_CODE,
+                                     f"{entry['figure']}: registered as generated artwork "
+                                     "(artwork_disclosures). " + NATURE_AI_IMAGE_RULE))
+    return findings
 
 
 def _finding(figure: str, code: str, message: str) -> dict[str, str]:
@@ -1338,6 +1415,7 @@ def check(ws: Workspace, *, rebuild: bool = True, text_width: str | None = None,
         advisory.append(_finding("proof", "FIG-PLACEMENT-UNMEASURED", "; ".join(placement["notes"])))
     lic_block, lic_advice, licenses = license_findings(ws, sources, manuscript_text)
     blocking += lic_block
+    blocking += generated_image_findings(ws)
     advisory += lic_advice
     required += [item for item in advisory if item["code"] in PLOT_FINDINGS]
     return {"manuscript": str(ws.manuscript), "paper_id": ws.paper_id,
