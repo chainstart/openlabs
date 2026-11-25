@@ -1791,6 +1791,9 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 预筛结论回馈出题（同日）：预筛判过的卡（pass/fail）在出题包 `ledger_snapshot` 里带 `screen_feedback`
 （独立评审认定成立的门槛、查新结论、预期档、淘汰理由、预筛摘要），出题说明要求不再交会因同样理由被淘汰的卡。
 起因：试产首晚出题者自评 4/5 门槛，独立预筛只认 1–2 项，而出题者看不到这些理由。
+预筛 `topic_prescreen` 记为评审类任务（`DEFAULT_REVIEW_TASK_TYPES`，同日）：它与 worker 档立项评审一样是对另一模型族卡片的
+独立判断，按评审类额度计，任务类别限于 review/owner 的 Gemini 也能接。起因：出题者为 Codex 时预筛只能由 Claude 跑，
+Claude 按配速每约两小时放行一个，七张卡要排十几个小时。
 
 尚无稿件的在研课题用 `program pause-topic` 暂停，不冻结：
 

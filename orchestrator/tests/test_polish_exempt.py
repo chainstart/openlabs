@@ -157,3 +157,13 @@ def test_prescreen_findings_reach_later_scouts(tmp_path) -> None:
     assert feedback["summary"].startswith("a protocol detail")
     assert "screen_feedback" not in snapshot[1]
     assert "screen_feedback" in nc_funnel.SCOUT_INSTRUCTION
+
+
+def test_prescreen_is_review_class() -> None:
+    from openlabs import budget
+
+    settings = flow._settings()
+    assert budget.task_class(settings, {"task_type": "topic_prescreen",
+                                        "agent_role": "researcher"}) == "review"
+    assert budget.task_class(settings, {"task_type": "topic_scout",
+                                        "agent_role": "researcher"}) == "ordinary"

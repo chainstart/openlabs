@@ -822,7 +822,11 @@ DEFAULT_DECISION_TASK_TYPES: tuple[str, ...] = (
     "portfolio_review",
     "portfolio_planning",
 )
-DEFAULT_REVIEW_TASK_TYPES: tuple[str, ...] = ("paper_review", "independent_review", "review")
+# topic_prescreen (2026-11-25 NC trial): the funnel's independent judgment of another family's
+# card, the cheap first half of the admission gate - a review like the worker-tier admission
+# review, so a review-class runner (Gemini) may take it when the card's other family is paced.
+DEFAULT_REVIEW_TASK_TYPES: tuple[str, ...] = ("paper_review", "independent_review", "review",
+                                              "topic_prescreen")
 # Claim order while parallelism is limited (higher first); unlisted types use
 # ``default_claim_rank`` (in-progress research).
 DEFAULT_CLAIM_RANKS: dict[str, int] = {
