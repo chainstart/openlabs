@@ -40,7 +40,6 @@ The dry run (default) only reads: the database is opened read-only by the CLI.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -48,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import FactorySettings, WorkspacePaths
+from . import delivery_facts
 from .db import FactoryDB, utc_now
 from .holds import topic_hold
 
@@ -71,10 +71,6 @@ def _iso(moment: datetime | None) -> str | None:
     if moment is None:
         return None
     return moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -109,23 +105,13 @@ def _paper_id(db: FactoryDB, topic: Mapping[str, Any],
 def delivery_receipts(paths: WorkspacePaths, paper_id: str) -> list[dict[str, Any]]:
     """Delivery receipts of a paper, oldest first: path, sha256, version, released_at."""
 
-    folder = paths.data / "papers" / paper_id / "releases"
-    if not paper_id or "/" in paper_id or not folder.is_dir():
-        return []
-    receipts = []
-    for path in sorted(folder.glob("pkg_*.json")):
-        body = _read_json(path)
-        if str(body.get("paper_id") or "") != paper_id:
-            continue
-        receipts.append({"path": str(path), "sha256": _sha256(path),
-                         "version": body.get("version"), "package_id": body.get("package_id"),
-                         "released_at": body.get("released_at")})
-    return sorted(receipts, key=lambda item: str(item.get("released_at") or ""))
+    return delivery_facts.receipts(paths.data, paper_id)
 
 
 def registered_delivery(paths: WorkspacePaths, paper_id: str) -> dict[str, Any] | None:
     """The paper's current version and its ``delivery`` block when that version is the
-    delivered one (``release-status`` ``delivered``), with the matching receipt; else None."""
+    delivered one, with the matching receipt; else None (openlabs.delivery_facts, the one
+    definition of "delivered" that ``release-status`` uses too)."""
 
     import yaml
 
@@ -136,22 +122,8 @@ def registered_delivery(paths: WorkspacePaths, paper_id: str) -> dict[str, Any] 
         record = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         return None
-    if not isinstance(record, Mapping):
-        return None
-    version = str(record.get("version") or "")
-    delivery = record.get("delivery")
-    if not isinstance(delivery, Mapping) or not version:
-        return None
-    package_id = str(delivery.get("package_id") or "")
-    if not package_id or str(delivery.get("version") or "") != version:
-        return None
-    receipt = next((item for item in delivery_receipts(paths, paper_id)
-                    if item.get("package_id") == package_id), None)
-    if receipt is None:
-        return None
-    return {"version": version, "package_id": package_id,
-            "delivered_at": delivery.get("delivered_at") or receipt.get("released_at"),
-            "receipt": receipt, "registry": str(path)}
+    found = delivery_facts.current_delivery(record, delivery_receipts(paths, paper_id))
+    return None if found is None else {**found, "registry": str(path)}
 
 
 def _operator_pause(campaign: Mapping[str, Any] | None,

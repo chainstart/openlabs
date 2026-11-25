@@ -32,6 +32,7 @@ from typing import Any, Callable
 
 import yaml
 
+from paper_writing.deliverable import second_author
 from paper_writing import venue_policy
 from paper_writing.registry import (
     load_paper_metadata,
@@ -254,9 +255,25 @@ def default_handler(root: str | Path, handler: str = DEFAULT_HANDLER,
     if not isinstance(roster, list) or not all(isinstance(item, Mapping) for item in roster):
         raise ProgramDeliveryError("registry/settings.yaml#defaults.authors is missing")
     if handler == DEFAULT_HANDLER:
-        if len(roster) < 2:
+        # The paper's second author, else the roster's (deliverable.second_author, the rule the
+        # site submitter sync uses too). A byline entry without an email takes the roster's.
+        found = second_author(paper, roster)
+        if found is None:
             raise ProgramDeliveryError("the default author roster has no second author")
-        person = roster[1]
+        person = found[0]
+        if not str(person.get("email") or "").strip():
+            names = {str(person.get(key) or "").strip().casefold() for key in ("name", "name_zh")} - {""}
+            person = next((dict(person, email=item["email"]) for item in roster
+                           if str(item.get("email") or "").strip() and names & {
+                               str(item.get(key) or "").strip().casefold()
+                               for key in ("name", "name_zh")}), None)
+            if person is None:
+                # No address for the byline's second author: the roster's, as the site sync
+                # falls back when that author has no site account.
+                fallback = second_author(None, roster)
+                if fallback is None:
+                    raise ProgramDeliveryError("the default author roster has no second author")
+                person = fallback[0]
     else:
         people = list(roster)
         authors = (paper or {}).get("authors")

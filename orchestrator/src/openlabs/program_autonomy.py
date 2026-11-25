@@ -1939,8 +1939,13 @@ def queue_registered_ready(db, paths, settings, report, topic_id, *, automatic=F
         raise DeliveryError(f"Topic {topic_id} has active work")
     status = run_release_status(paths, settings, paper_id)
     review = status["review"]
-    if (status.get("frozen") or not review.get("decision_current")
-            or (automatic and review.get("review_mode") not in AUTO_QUEUED_REVIEW_MODES)):
+    # The one deliverability verdict (paper_writing.deliverable, B5); an older paper-writing
+    # without it reports the same fields under review/frozen.
+    verdict = status.get("deliverable") or {
+        "frozen": status.get("frozen"), "decision_current": review.get("decision_current"),
+        "review_mode": review.get("review_mode")}
+    if (verdict.get("frozen") or not verdict.get("decision_current")
+            or (automatic and verdict.get("review_mode") not in AUTO_QUEUED_REVIEW_MODES)):
         raise DeliveryError(f"Paper {paper_id} has no eligible current ready decision")
     if tier2_topic(topic) and (topic.get("venue_grade") or {}).get("journal") != status.get("target_journal"):
         raise DeliveryError(f"Paper {paper_id} needs a recorded acceptance grade")

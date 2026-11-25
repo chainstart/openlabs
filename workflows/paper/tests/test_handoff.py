@@ -1006,7 +1006,7 @@ writing_release:
     monkeypatch.setattr(review_flow, "validate_unified_release", lambda *args: [])
     with pytest.raises(HandoffError, match="BYLINE-MISSING"):
         validate_release_preconditions(paper_id, root=tmp_path)
-    monkeypatch.setattr(review_flow, "delivery_blockers", lambda *args, **kwargs: [])
+    monkeypatch.setattr(review_flow, "delivery_issues", lambda *args, **kwargs: [])
     unified = validate_release_preconditions(paper_id, root=tmp_path)
     assert unified["decision_standard"] == "unified_v1" and unified["decision"] == "minor_revision"
     monkeypatch.setattr(review_flow, "validate_unified_release", lambda *args: ["decision record changed"])

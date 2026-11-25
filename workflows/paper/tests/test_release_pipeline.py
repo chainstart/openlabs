@@ -104,7 +104,13 @@ def test_published_support_problems_need_a_human_and_not_required_needs_nothing(
     metadata['support']['publication'] = {'mode': 'not_required', 'not_required_reason': 'no data'}
     assert rp.release_status('p', root=tmp_path)['support']['required'] is False
     metadata['delivery'] = {'package_id': 'pkg', 'version': '1.2.0'}
-    assert rp.release_status('p', root=tmp_path)['delivered'] is True
+    # B5 (2026-11-25): "delivered" needs the delivery receipt as well (delivery_facts).
+    assert rp.release_status('p', root=tmp_path)['delivered'] is False
+    receipt = tmp_path / 'papers' / 'p' / 'releases' / 'pkg_p_1.2.0_x.json'
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text(json.dumps({'paper_id': 'p', 'package_id': 'pkg', 'version': '1.2.0'}))
+    status = rp.release_status('p', root=tmp_path)
+    assert status['delivered'] is True and status['deliverable']['delivered'] is True
 
 
 def test_delta_only_reports_a_full_review_without_starting_a_model(tmp_path, monkeypatch):

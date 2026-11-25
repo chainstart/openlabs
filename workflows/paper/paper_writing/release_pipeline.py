@@ -359,7 +359,8 @@ def _review_status(paper_id: str, metadata: Mapping[str, Any], root: Path,
 def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
     """Everything the release pipeline decides its next step from (read-only)."""
     from paper_writing.declarations import missing_default_contributions
-    from paper_writing.review_flow import delivery_issues
+    from paper_writing.deliverable import delivered as current_version_delivered
+    from paper_writing.deliverable import exit_issues, summarize
     from paper_writing.publication_metadata import CODES
 
     repo_root = Path(root).resolve()
@@ -375,7 +376,7 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
             record = json.loads(path.read_text(encoding="utf-8"))
     notes: list[dict[str, Any]] = []
     try:
-        raw_issues = delivery_issues(paper_id, metadata, repo_root, record, notes=notes)
+        raw_issues = exit_issues(paper_id, metadata, repo_root, record, notes=notes)
     except Exception as exc:  # noqa: BLE001 - reported, never guessed around
         raw_issues = [{"source": "release_status", "code": "DELIVERY-CHECK-FAILED", "location": "",
                        "message": str(exc), "text": f"Delivery formal check could not run: {exc}"}]
@@ -424,7 +425,7 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         git = {"head": None, "dirty": [], "clean": False, "error": str(exc)}
     delivery = metadata.get("delivery") if isinstance(metadata.get("delivery"), Mapping) else {}
     version = str(metadata.get("version") or "")
-    return {
+    status = {
         "schema_version": STATUS_SCHEMA,
         "paper_id": paper_id,
         "version": version,
@@ -459,6 +460,11 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "support_sources_unadopted": [registered for registered, _copy in
                                       _unadopted_support_sources(paper_id, metadata, repo_root)],
         "git": git,
-        "delivered": bool(delivery.get("package_id")) and str(delivery.get("version") or "") == version,
+        # The current version is delivered: delivery block plus its receipt (deliverable.py).
+        "delivered": current_version_delivered(metadata, repo_root, paper_id),
         "delivery": dict(delivery) if delivery else None,
     }
+    # The one deliverability verdict (deliverable.py, B5): what queue_registered_ready and the
+    # site submitter rule read.
+    status["deliverable"] = summarize(status)
+    return status

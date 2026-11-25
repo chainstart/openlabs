@@ -1550,12 +1550,14 @@ def validate_release_preconditions(
             raise HandoffError(unified_problems[0])
         # The formal checks that are only advice at the review entry are enforced
         # here, directly, rather than relying on the review having checked them.
-        from paper_writing.review_flow import delivery_blockers
+        from paper_writing.deliverable import exit_issues
 
         decision_path = repo_root / str(release.get("decision_record") or "")
         decision_record = (json.loads(decision_path.read_text())
                            if release.get("decision_record") and decision_path.is_file() else None)
-        preparation = delivery_blockers(paper_id, metadata, repo_root, decision_record, notes=delivery_notes)
+        # The same delivery-exit problems release-status reports (deliverable.exit_issues).
+        preparation = [item["text"] for item in exit_issues(paper_id, metadata, repo_root,
+                                                           decision_record, notes=delivery_notes)]
         if preparation:
             raise HandoffError(
                 "Delivery formal check failed (" + str(len(preparation)) + " problem(s)): "

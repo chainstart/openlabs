@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 import yaml
 
 from .contracts import IDENTIFIER
-from .program import DELIVERY_RECONCILE_REASON
+from .delivery_facts import ever_delivered
 from .usage import _review_runs, attempt_figures, campaign_core_hours, normalized_attempts
 
 STAGES = {
@@ -37,9 +37,7 @@ def funnel(document, data):
                 stages[stage].add(topic_id if stage in {"started", "frozen"} else paper_id or topic_id)
         if reasons & PILOT_RESULTS:
             stages["pilot_completed"].add(topic_id)
-        handoff = topic.get("handoff") or {}
-        if paper_id and (handoff.get("delivered_at") or handoff.get("status") == "delivered"
-                         or reasons & {"record-delivery", "delivered", "auto_handoff", DELIVERY_RECONCILE_REASON}):
+        if paper_id and ever_delivered(topic):  # delivery_facts (B5): any version, ever
             stages["delivered"].add(paper_id)
         if not paper_id or not IDENTIFIER.fullmatch(paper_id):
             continue

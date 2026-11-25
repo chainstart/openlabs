@@ -34,13 +34,14 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from paper_writing.deliverable import openlabs_module, registry_ready, second_author
 
 SCHEMA = "openlabs.site_assignment_sync.v1"
 MARKER = "[openlabs-site-assignment]"
@@ -74,13 +75,6 @@ def _settings_authors(root: Path) -> list[Mapping[str, Any]]:
     return [item for item in authors or [] if isinstance(item, Mapping)]
 
 
-def _byline(registry: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
-    authors = (registry or {}).get("authors")
-    if isinstance(authors, Mapping):
-        authors = authors.get("people")
-    return [item for item in authors or [] if isinstance(item, Mapping)]
-
-
 def classify(paper: Mapping[str, Any],
              registry: Mapping[str, Any] | None) -> tuple[str, list[str]]:
     """``(untouched|ready|not_ready, reasons)`` for one site paper."""
@@ -111,14 +105,8 @@ def classify(paper: Mapping[str, Any],
         reasons.append("no current package")
     elif package.get("status") != "ready":
         reasons.append(f"current package status {package.get('status')}")
-    if registry is not None:
-        release = registry.get("writing_release") or {}
-        if release.get("status") != "ready":
-            reasons.append(f"registry writing_release {release.get('status')}")
-        version = str(registry.get("version") or "")
-        if package is not None and version and version != str(package.get("version") or ""):
-            reasons.append(f"registry version {version} is not the delivered "
-                           f"{package.get('version')} (revision in progress)")
+    # What the registry says about the delivered package (deliverable.registry_ready, B5).
+    reasons.extend(registry_ready(registry, package))
     return ("not_ready" if reasons else "ready"), reasons
 
 
@@ -140,15 +128,24 @@ def _user_for_author(author: Mapping[str, Any],
 
 def default_submitter(registry: Mapping[str, Any] | None, settings_authors: list[Mapping[str, Any]],
                       users: list[Mapping[str, Any]], placeholder: str) -> dict[str, Any] | None:
-    """The paper's second author (byline, else the registry default roster) as a site user."""
+    """The paper's second author (byline, else the registry default roster) as a site user.
 
-    for source, roster in (("byline_second_author", _byline(registry)),
-                           ("default_roster_second_author", settings_authors)):
-        if len(roster) >= 2:
-            user = _user_for_author(roster[1], users, placeholder)
-            if user is not None:
-                return {"submitter_id": user["id"], "name": user.get("display_name"),
-                        "source": source}
+    The person comes from deliverable.second_author, the one default-submitter rule; when the
+    byline's second author has no site account the roster's is tried as before.
+    """
+
+    candidates = []
+    found = second_author(registry, None)
+    if found is not None:
+        candidates.append(found)
+    found = second_author(None, settings_authors)
+    if found is not None:
+        candidates.append(found)
+    for person, source in candidates:
+        user = _user_for_author(person, users, placeholder)
+        if user is not None:
+            return {"submitter_id": user["id"], "name": user.get("display_name"),
+                    "source": source}
     return None
 
 
@@ -193,16 +190,8 @@ def recorded_submitter(paper: Mapping[str, Any], root: Path, users: list[Mapping
 
 
 def _holds():
-    """openlabs.holds -- the one reader of every hold record (2026-11-25, B3). A pure module
-    of the orchestrator package, importable from this checkout without its dependencies."""
-    try:
-        from openlabs import holds
-    except ImportError:
-        source = str(Path(__file__).resolve().parents[3] / "orchestrator" / "src")
-        if source not in sys.path:
-            sys.path.append(source)
-        from openlabs import holds
-    return holds
+    """openlabs.holds -- the one reader of every hold record (2026-11-25, B3)."""
+    return openlabs_module("holds")
 
 
 def manual_hold(paper: Mapping[str, Any],

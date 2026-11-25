@@ -3767,7 +3767,6 @@ def _run_presentation_review(paper_id, target, root, run, record, pre, config, t
     presentation is ``full_review_required`` (registry untouched; a normal review counts).
     """
     from paper_writing import presentation
-    from paper_writing.delivery_floor import check as floor_check
 
     def stop(outcome, next_action, reasons, **extra):
         record.update(stage_reached="presentation_check", review_mode="presentation",
@@ -3816,7 +3815,9 @@ def _run_presentation_review(paper_id, target, root, run, record, pre, config, t
     if deterministic["reasons"]:
         return stop("full_review_required", "full_review", deterministic["reasons"],
                     presentation_review=provenance)
-    floor = floor_check(paper_id, pre["metadata"], root, author=True)["issues"]
+    from paper_writing.deliverable import stage_issues
+
+    floor = stage_issues(paper_id, pre["metadata"], root, stage="presentation")
     if floor:
         return stop("preflight_failed", "text_revision", [item["text"] for item in floor],
                     presentation_review=provenance)

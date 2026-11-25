@@ -1089,6 +1089,17 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
 
 ### 发布流水线（评审 ready → 交付）
 
+**单一可交付判定（2026-11-25，B5）。** `paper_writing/deliverable.py` 的 `deliverable(paper)` 以
+release-status 为基础给出 `deliverable`、`ready`、`current`、`frozen`、`delivered` 和 `issues`（每条带
+remedy 与所属检查）；release-status 输出的 `deliverable` 字段就是它。交付前提
+`validate_release_preconditions` 与 release-status 共用同一份交付出口问题（`deliverable.exit_issues`），
+呈现复核预检用 `deliverable.stage_issues(stage="presentation")`，网站投稿人规则用
+`deliverable.registry_ready`，编排器 `queue_registered_ready` 读 `deliverable` 字段。“已交付”只有一个定义
+（`openlabs.delivery_facts`：登记的 delivery 块对应当前版本且有对应 `pkg_*.json` 回执，program reconcile
+同用；漏斗统计“曾经交付过”另用 `ever_delivered`）。默认投稿人只有一个规则 `deliverable.second_author`：
+本稿署名的第二作者，否则默认名单的第二作者（`program assign-handler` 与网站对账同用；署名第二作者没有邮箱或
+网站账号时退回名单第二作者）。各检查在评审、呈现预检、交付三阶段的效力见 `deliverable.STAGE_EFFECTS`。
+
 每个 tick 对每篇 ready 论文先运行 `paper-writing program release-status`（只读），再走下一步；
 任何一步失败或中断，下个 tick 从实际状态重新判断，每步写 events 和题目台账 `release` 字段
 （`stage`、各阶段 `attempts`、`writer_rounds`、`last_error`、`commits`）：
