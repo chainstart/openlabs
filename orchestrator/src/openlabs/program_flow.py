@@ -400,6 +400,19 @@ def scout_task_key(db: FactoryDB, task: Mapping[str, Any]) -> str:
     return scout_key(project) if project else _topic_key(task)
 
 
+def _scout_task_line(db: FactoryDB, task: Mapping[str, Any]) -> str:
+    """The research line a scout task works for ('' when it has none)."""
+
+    try:
+        packet = _read_object(Path(str(task.get("input_path") or "")))
+        if packet.get("schema_version") == SCOUT_PACKET_SCHEMA:
+            return str(packet.get("research_line") or "")
+    except (OSError, ValueError):
+        pass
+    project = campaign_project(db.campaign(str(task.get("campaign_id") or "")) or {})
+    return str(project.research_line or "") if project else ""
+
+
 def admission_task_keys(db: FactoryDB, task: Mapping[str, Any]) -> set[str]:
     try:
         packet = _verified_review_packet(Path(str(task.get("input_path") or "")))
@@ -433,11 +446,17 @@ LINE_SLOTS_FULL_REASON = "line_slots_full"
 POLISH_MODE_REASON = "polish_mode"
 
 
-def line_scout_room(status: Any, document: Mapping[str, Any], line: Any) -> int | None:
+def line_scout_room(status: Any, document: Mapping[str, Any], line: Any, *,
+                    funnel_pool: int | None = None) -> int | None:
     """Cards a scout of ``line`` may still usefully add (None: the line has no own limit).
 
     The line's free slots (``[program].line_max_active_topics`` minus its admitted,
     active and in-review topics) less its cards already waiting for admission.
+
+    ``funnel_pool`` (an NC-aimed line, 2026-11-25 trial): most cards are screened out before
+    admission (prescreen, kill test, admission bar), so a free slot is filled from a pool of
+    up to ``funnel_pool`` waiting cards instead of one card per slot. A line without a free
+    slot still gets no scout.
     """
 
     free = status.line_free_slots(line) if hasattr(status, "line_free_slots") else None
@@ -446,16 +465,29 @@ def line_scout_room(status: Any, document: Mapping[str, Any], line: Any) -> int 
     key = str(line or "").strip()
     waiting = sum(1 for topic in _proposed_pool(document)
                   if str(topic.get("research_line") or "").strip() == key)
+    if funnel_pool is not None:
+        return 0 if free <= 0 else max(free, funnel_pool) - waiting
     return free - waiting
 
 
-def lines_without_scout_room(status: Any, document: Mapping[str, Any]) -> frozenset[str]:
+def lines_without_scout_room(status: Any, document: Mapping[str, Any],
+                             funnel_pools: Mapping[str, int] | None = None) -> frozenset[str]:
     """Limited lines that get no scout now (no free slot left after their waiting cards)."""
 
     limits = getattr(status, "line_limits", None) or {}
+    pools = funnel_pools or {}
     return frozenset(line for line in limits
-                     if (room := line_scout_room(status, document, line)) is not None
+                     if (room := line_scout_room(status, document, line,
+                                                 funnel_pool=pools.get(line))) is not None
                      and room <= 0)
+
+
+def funnel_pool(db: FactoryDB | None, settings: FactorySettings, line: Any) -> int | None:
+    """The waiting-card pool of an NC-aimed line (None: one card per free slot)."""
+
+    if not line or target_stage.stage_for(db, line, settings) != target_stage.NC_AIM:
+        return None
+    return int(settings.program.candidate_pool_low_water)
 
 
 def admission_sequence(db: FactoryDB) -> dict[str, int]:
@@ -996,8 +1028,12 @@ def scout_supply_blocks(
         seen.add(key)
         state = _supply_state(db, key)
         count = int(state.get("count") or 0)
-        if program.supply.scout_skip_empty_queue and project.research_line:
+        if (program.supply.scout_skip_empty_queue and project.research_line
+                and target_stage.stage_for(db, project.research_line, settings)
+                != target_stage.NC_AIM):
             # Nothing drawable in the line's queues: no scout is spent on finding that out.
+            # Not under the NC aim (2026-11-25 trial): its scouts read the literature and the
+            # data catalogue broadly; the routine templates' queues are optional there.
             empty = queue_supply_empty(paths, settings, project.research_line, document)
             if empty is not None:
                 blocks[key] = {
@@ -1079,7 +1115,8 @@ def _schedule_one_scout(
             "target_stage": stage,
             "research_line_summary": line_summary(research_lines_document(paths, settings), line),
         }
-        room = line_scout_room(status, document, line)
+        room = line_scout_room(status, document, line,
+                               funnel_pool=funnel_pool(db, settings, line))
         if room is not None:
             # A line with its own slot limit asks for no more cards than it can admit.
             max_cards = max(1, min(max_cards, room))
@@ -1143,6 +1180,10 @@ def _schedule_one_scout(
                     "pipeline (one paper per card). Cite reusable assets of the template in "
                     "`reusable_assets` and lower the cost estimate accordingly"
                     + _queue_instruction(paths, settings, line, db)
+                    + (". Under the NC aim these templates and queues are optional starting "
+                       "points from the routine stage, not limits: a card that goes beyond them "
+                       "(without paper_template) is welcome when it meets the NC bar"
+                       if stage == target_stage.NC_AIM else "")
                     if line_templates(research_lines_document(paths, settings), line) else ""
                 )
                 if line else ""
@@ -1208,7 +1249,7 @@ def schedule_scouts(
     program = settings.program
     if not program.enabled:
         return [], "program_disabled"
-    if program.polish_mode:
+    if program.polish_blocks_all():
         return [], POLISH_MODE_REASON
     if not budget_control.routing_enabled(settings):
         # Without provider routing the proposer and judge families cannot be
@@ -1226,6 +1267,12 @@ def schedule_scouts(
         return [], COMPUTE_BACKLOG_REASON
     all_projects = program_projects(paths)
     rotating = _rotation_projects(settings, all_projects)
+    if program.polish_mode:
+        # Polish mode with exempt lines: only those lines scout.
+        rotating = [project for project in rotating
+                    if not program.polish_blocks(project.research_line)]
+        if not rotating:
+            return [], POLISH_MODE_REASON
     blocked_lines = lines_not_ready(
         paths, settings, [project.research_line for project in rotating], db=db,
     )
@@ -1233,7 +1280,9 @@ def schedule_scouts(
                       if project.research_line not in blocked_lines]
     if rotating and not ready_projects:
         return [], "research_line_environment_not_ready"
-    full_lines = lines_without_scout_room(status, document)
+    full_lines = lines_without_scout_room(status, document, {
+        project.research_line: pool for project in ready_projects
+        if (pool := funnel_pool(db, settings, project.research_line)) is not None})
     projects = [project for project in ready_projects if project.research_line not in full_lines]
     if ready_projects and not projects:
         return [], LINE_SLOTS_FULL_REASON
@@ -2095,7 +2144,7 @@ def schedule_card_repairs(
     still invalid is final (``card_repair.status = not_repairable``).
     """
 
-    if settings.program.polish_mode:
+    if settings.program.polish_blocks_all():
         return []
     ledger = open_topic_ledger(paths, settings.program)
     moment = now or _now_moment()
@@ -2103,6 +2152,8 @@ def schedule_card_repairs(
     for topic in topics_by_status(ledger.read(), "rejected"):
         topic_id = str(topic["topic_id"])
         if last_rejection_reason(topic) != "card_invalid" or topic.get("repair_of"):
+            continue
+        if settings.program.polish_blocks(topic.get("research_line")):
             continue
         state = topic.get("card_repair")
         if isinstance(state, Mapping):
@@ -2274,7 +2325,7 @@ def schedule_revisions(
     program = settings.program
     if not program.enabled:
         return [], "program_disabled"
-    if program.polish_mode:
+    if program.polish_blocks_all():
         return [], POLISH_MODE_REASON
     if not budget_control.routing_enabled(settings):
         return [], "provider_routing_not_configured"
@@ -2287,6 +2338,8 @@ def schedule_revisions(
             _settle_task_state(db, ledger, topic, "revision")
             continue
         if state.get("status") not in (None, "eligible") or not revision_eligible(topic):
+            continue
+        if program.polish_blocks(topic.get("research_line")):
             continue
         pending.append(topic)
     if not pending:
@@ -2478,7 +2531,7 @@ def release_ready_holds(
     back to the gate or be admitted, i.e. new research, which polish mode stops.
     """
 
-    if settings.program.polish_mode:
+    if settings.program.polish_blocks_all():
         return []
     ledger = open_topic_ledger(paths, settings.program)
     lines_document = None
@@ -2487,7 +2540,7 @@ def release_ready_holds(
         if last_rejection_reason(topic) != "admission_hold":
             continue
         line = str(topic.get("research_line") or "").strip()
-        if not line:
+        if not line or settings.program.polish_blocks(line):
             continue
         if lines_document is None:
             lines_document = research_lines_document(paths, settings) or {}
@@ -2559,7 +2612,7 @@ def schedule_topic_admission(
 
     if not settings.program.enabled:
         return ReviewSchedule(reason="program_disabled")
-    if settings.program.polish_mode:
+    if settings.program.polish_blocks_all():
         # Polish mode: proposed cards stay proposed; no admission review starts.
         return ReviewSchedule(reason=POLISH_MODE_REASON)
     if not budget_control.routing_enabled(settings):
@@ -2569,6 +2622,9 @@ def schedule_topic_admission(
         return ReviewSchedule(reason=COMPUTE_BACKLOG_REASON)
     campaign_id = str(campaign["campaign_id"])
     project = load_project(str(campaign["project_config_path"]))
+    if settings.program.polish_blocks(project.research_line):
+        # Polish mode with exempt lines: only an exempt line's cards are reviewed.
+        return ReviewSchedule(reason=POLISH_MODE_REASON)
     ledger = open_topic_ledger(paths, settings.program)
     snapshot_document = ledger.read()
     proposed = [
@@ -3365,7 +3421,7 @@ def materialize_waiting_topics(
 
     campaign_ids: list[str] = []
     task_ids: list[str] = []
-    if settings.program.polish_mode:
+    if settings.program.polish_blocks_all():
         # Polish mode: admitted topics keep their admission and wait for their campaign.
         return CandidateSpawn(campaign_ids=(), task_ids=())
     if compute_backlogged(settings):
@@ -3389,6 +3445,7 @@ def materialize_waiting_topics(
         queue = [topic for topic in waiting_admitted(document, admission_sequence(db))
                  if str(topic["topic_id"]) not in skipped
                  and str(topic.get("program_project_id") or "") not in parked
+                 and not settings.program.polish_blocks(topic.get("research_line"))
                  and status.line_can_materialize(topic.get("research_line"))]
         if not queue:
             break
@@ -3635,8 +3692,10 @@ def run_program_pipeline(
         return
     info = report.program
     if settings.program.polish_mode:
+        exempt = settings.program.polish_exempt_lines
         info["polish_mode"] = {
             "on": True,
+            "exempt_lines": list(exempt),
             "paused": ["topic_scout", "topic_card_repair", "topic_revision",
                        "topic_admission", "admission_pilot", "auto_reopen",
                        "materialize"],
@@ -3646,7 +3705,8 @@ def run_program_pipeline(
             "cancelled": list(db.cancel_queued_tasks(
                 [str(task["task_id"]) for task in _program_tasks(
                     db, statuses=("queued",), where="AND task_type=?",
-                    parameters=(SCOUT_TASK_TYPE,))],
+                    parameters=(SCOUT_TASK_TYPE,))
+                 if not exempt or _scout_task_line(db, task) not in exempt],
                 reason=POLISH_MODE_REASON)),
         }
     backlog = compute_backlog(settings)

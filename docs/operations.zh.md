@@ -1777,6 +1777,18 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 `program.polish_mode` 列出停与不停的环节，`program.scout_blocked` 为 `polish_mode`。
 关掉开关（删掉该键或设 `false`）后下一轮恢复。
 
+**只放开指定线**（2026-11-25，NC 试产；用户：“NC产线完整就绪后，你尝试性的试产一篇看看，能不能走通流程”）：
+`[program] polish_exempt_lines = ["<线>"]` 让列出的线不受梳理模式约束——出题、卡片修正与修订、hold 放行、
+预筛、立项试算、立项评审、建 campaign、冻结课题自动重开都照常；其余线（含没有研究线的旧课题）仍按梳理模式停住，
+排队中的出题任务只取消非豁免线的。tick 报告 `program.polish_mode.exempt_lines` 列出豁免线。默认空表。
+比直接关梳理模式更窄：关掉会让所有线的卡片修正、修订、hold 放行和自动重开一起恢复（它们不看 `research_lines`）。
+
+`nc_aim` 线的出题不再被常规模板的候选队列卡住（同日）：队列无可抽条目时 `candidate_queue_empty` 只对非
+`nc_aim` 线生效；出题说明注明模板与队列在 NC 立意下只是可选起点，卡片可以不设 `paper_template`。
+`nc_aim` 线有按线名额时，出题不再是“一个空位一张卡”：只要该线还有空位，候选池可蓄到
+`candidate_pool_low_water` 张（含正在预筛的卡），一次出题最多交这么多张；立项评审仍按空位一次送一张。
+原因：漏斗在立项前会淘汰大多数卡，一个空位一张卡会让整条线串行地一张张试。
+
 尚无稿件的在研课题用 `program pause-topic` 暂停，不冻结：
 
 ```sh

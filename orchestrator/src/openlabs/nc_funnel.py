@@ -671,12 +671,13 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
     from .program_flow import TERMINAL_FAILED_STATUSES
 
     funnel = settings.program.funnel
-    if not funnel.prescreen or settings.program.polish_mode:
+    if not funnel.prescreen or settings.program.polish_blocks_all():
         return []
     ledger = open_topic_ledger(paths, settings.program)
     waiting = [topic for topic in ledger.read().get("topics") or []
                if isinstance(topic, Mapping) and topic.get("status") == "proposed"
-               and prescreen_held(topic)]
+               and prescreen_held(topic)
+               and not settings.program.polish_blocks(topic.get("research_line"))]
     if not waiting:
         return []
     outcomes: list[dict[str, Any]] = []

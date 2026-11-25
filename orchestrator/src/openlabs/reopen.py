@@ -373,7 +373,7 @@ def reopen_ready_topics(
     from . import owner as owner_mode
 
     cap = int(settings.program.auto_reopen_max)
-    if cap <= 0 or settings.program.polish_mode:
+    if cap <= 0 or settings.program.polish_blocks_all():
         # Polish mode (2026-11-23): a frozen topic does not return to research.
         return []
     ledger = open_topic_ledger(paths, settings.program)
@@ -381,6 +381,8 @@ def reopen_ready_topics(
     candidates = [
         topic for topic in topics_by_status(document, "frozen")
         if isinstance(topic.get("auto_reopen"), Mapping) and topic["auto_reopen"].get("when")
+        # Polish mode with exempt lines: only an exempt line's topics reopen.
+        and not settings.program.polish_blocks(topic.get("research_line"))
     ]
     outcomes: list[dict[str, Any]] = []
     if not candidates:

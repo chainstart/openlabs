@@ -326,6 +326,23 @@ class ProgramSettings:
     # journal mail and topics already in research keep running. Off by default;
     # turning it off restores normal supply on the next tick.
     polish_mode: bool = False
+    # Lines exempt from polish mode (2026-11-25 NC trial, user: "NC产线完整就绪后，你尝试性的
+    # 试产一篇看看"): an exempt line gets its whole supply and research start back (scout,
+    # card repair and revision, hold release, prescreen, pilot, admission, materialization,
+    # auto-reopen) while polish mode keeps every other line stopped. Empty by default.
+    polish_exempt_lines: tuple[str, ...] = ()
+
+    def polish_blocks(self, line: Any = None) -> bool:
+        """Whether polish mode stops new supply/research for a topic of ``line``."""
+
+        if not self.polish_mode:
+            return False
+        return not (isinstance(line, str) and line and line in self.polish_exempt_lines)
+
+    def polish_blocks_all(self) -> bool:
+        """Polish mode is on and no line is exempt: every supply step stops."""
+
+        return self.polish_mode and not self.polish_exempt_lines
 
 
 DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_gpt")
@@ -1544,6 +1561,8 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         ),
         campaign_compute_threads=_nonnegative_int(program.get("campaign_compute_threads"), 8),
         polish_mode=program.get("polish_mode", False) is True,
+        polish_exempt_lines=_domain_list(program.get("polish_exempt_lines"),
+                                         "polish_exempt_lines"),
         line_max_active_topics=_line_limits(program.get("line_max_active_topics")),
         **_git_settings(program.get("git")),
     )
