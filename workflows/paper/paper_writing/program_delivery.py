@@ -245,6 +245,83 @@ def deliver(
     }
 
 
+CLOSED_ATTEMPTS = frozenset({"cancelled", "canceled", "abandoned", "withdrawn_before_submission"})
+
+
+def supplement_submission_package(
+    paper_id: str,
+    *,
+    root: str | Path,
+    client: Any,
+    release: Callable[..., Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Give a delivered, not yet submitted version its submission package (user 2026-11-26).
+
+    Versions delivered before 2026-11-25 carry the LaTeX source.zip. This uploads the same
+    version again with the submission package (投稿包) in the source slot -- same PDF, same
+    reviewed manuscript, same gate -- so the site lists it under 投稿包. The paper must be the
+    delivered version, still carry source.zip, have no submission attempt on the site, and have
+    ``paper-writing submission prepare`` drafts for this version. The registry keeps the
+    delivery (date, owner review, submitter) and records the new package beside the old one.
+    """
+    from paper_writing.handoff import release_handoff
+    from paper_writing import submission_bundle
+
+    repo_root = Path(root).resolve()
+    metadata = load_paper_metadata(paper_id, repo_root)
+    version = str(metadata.get("version") or "")
+    delivery = metadata.get("delivery") if isinstance(metadata.get("delivery"), Mapping) else {}
+    if not delivery.get("package_id") or str(delivery.get("version") or "") != version:
+        raise ProgramDeliveryError(f"{paper_id}: v{version} is not the delivered version")
+    if not submission_bundle.legacy_source_required(repo_root, paper_id, version):
+        raise ProgramDeliveryError(f"{paper_id}: v{version} has no source.zip delivery to supplement "
+                                   "(already a submission package, or never delivered)")
+    external = metadata.get("external_submission")
+    if isinstance(external, Mapping) and external.get("status"):
+        raise ProgramDeliveryError(f"{paper_id}: registry records an external submission "
+                                   f"({external.get('status')})")
+    drafts = submission_bundle.drafts_dir(repo_root, paper_id)
+    receipt = submission_bundle._read_json(drafts / "draft-receipt.json") or {}
+    if str(receipt.get("version")) != version or receipt.get("status") != "drafted":
+        raise ProgramDeliveryError(f"{paper_id}: run `paper-writing submission prepare` for v{version} first")
+    site = client._request("GET", f"/v1/papers/{paper_id}", allow_not_found=True)
+    if not isinstance(site, Mapping):
+        raise ProgramDeliveryError(f"{paper_id}: not on the management site")
+    current = next((item for item in site.get("packages") or []
+                    if item.get("id") == site.get("current_package_id")), {})
+    if current.get("package_id") != delivery.get("package_id"):
+        raise ProgramDeliveryError(f"{paper_id}: the site's current package {current.get('package_id')} "
+                                   f"is not the registry's delivered {delivery.get('package_id')}")
+    attempts = [item for item in site.get("submission_attempts") or []
+                if str(item.get("status") or "") not in CLOSED_ATTEMPTS]
+    if attempts:
+        raise ProgramDeliveryError(f"{paper_id}: the site has a submission attempt "
+                                   f"({attempts[0].get('status')}); its package stays as submitted")
+    result = dict((release or release_handoff)(paper_id, root=repo_root, client=client,
+                                               submission_package=True))
+    metadata = load_paper_metadata(paper_id, repo_root)
+    updated = dict(metadata.get("delivery") or {})
+    supplements = list(updated.get("submission_package_supplements") or [])
+    supplements.append({"at": _now(), "previous_package_id": updated.get("package_id"),
+                        "package_id": result.get("package_id"), "receipt": result.get("receipt"),
+                        "rule": "user 2026-11-26: 已交付、未投稿的稿件补投稿包"})
+    updated.update({"package_id": result.get("package_id"), "receipt": result.get("receipt"),
+                    "submission_package_supplements": supplements})
+    metadata["delivery"] = updated
+    write_paper_metadata(paper_id, metadata, repo_root)
+    return {
+        "schema_version": "openlabs.program_delivery.v1",
+        "status": "supplemented",
+        "paper_id": paper_id,
+        "version": result.get("version"),
+        "previous_package_id": supplements[-1]["previous_package_id"],
+        "package_id": result.get("package_id"),
+        "receipt": result.get("receipt"),
+        "manage_package_status": result.get("manage_package_status"),
+        "site_assignment": result.get("site_assignment"),
+    }
+
+
 def default_handler(root: str | Path, handler: str = DEFAULT_HANDLER,
                     paper: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Resolve ``second_author`` (registry default roster) or a named author."""

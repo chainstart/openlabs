@@ -27,7 +27,7 @@
         "statements": ["original_not_elsewhere", "all_authors_approved", "related_manuscripts", "preprint", "reviewers_in_system"],
         "avoid": "Do not repeat the abstract. Do not restate funding or declarations beyond one sentence."
       },
-      "ai_statement_location": "NC asks for LLM use to be documented in the Methods; our manuscripts carry it as a separate closing section (Scientific Reports precedent). Move it into Methods if the editor asks.",
+      "ai_statement_location": "End of the manuscript: its own unnumbered section AI use declaration in the end-matter declarations, after Author contributions / Competing interests (user 2026-11-26, as our Scientific Reports submission). NC's how-to-submit page asks for LLM use in the Methods; move it there only if the editor asks.",
       "items": [
         {"id": "manuscript_pdf", "label": "正文 PDF（初投可为单个 PDF，图嵌入正文）", "status": "required", "provided_by": "package", "portal": "Manuscript / Article file", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
         {"id": "latex_source", "label": "LaTeX 源文件（单个 .tex；修回时 NC 要求不用 .bib，把 .bbl 内容粘入 .tex）", "status": "revision_only", "provided_by": "package", "portal": "Revision: Manuscript source", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
@@ -38,7 +38,7 @@
         {"id": "code_availability", "label": "Code availability（使用自编代码时）", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Code availability (manuscript end)", "source": "https://www.nature.com/ncomms/submit/policy"},
         {"id": "author_contributions", "label": "Author contributions（逐人说明，不要求 CRediT）", "status": "required", "provided_by": "manuscript", "portal": "Author contributions (form)", "source": "https://www.nature.com/ncomms/submit/policy"},
         {"id": "funding", "label": "Funding 声明（不放在致谢里）", "status": "required", "provided_by": "manuscript", "portal": "Funding (form)", "source": "https://www.nature.com/ncomms/submit/policy"},
-        {"id": "ai_use_statement", "label": "AI/LLM 使用声明（NC 要求写在 Methods）", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Methods (manuscript)", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
+        {"id": "ai_use_statement", "label": "AI 使用声明（文末独立一节 AI use declaration，紧随 Author contributions / Competing interests；NC 官方页面写 Methods，按用户 2026-11-26 决定放文末）", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Manuscript end (AI use declaration)", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
         {"id": "reporting_summary", "label": "Reporting Summary（生命科学、行为与社会科学、生态/进化/环境研究送审前必交；纯计算/物理/工程/数学一般不适用）", "status": "required_if_applicable", "provided_by": "human", "portal": "Reporting summary (upload)", "source": "https://www.nature.com/nature-portfolio/editorial-policies/reporting-standards", "applies_to_domains": ["biology", "medicine", "health", "neuroscience", "ecology", "environment", "social", "behavioural"]},
         {"id": "editorial_policy_checklist", "label": "Editorial Policy Checklist（仅 2019 版指南提及，现行页面无；以系统界面为准）", "status": "optional", "provided_by": "human", "portal": "Editorial policy checklist (if the system asks)", "source": "https://www.nature.com/ncomms/submit/policy"},
         {"id": "suggested_reviewers", "label": "建议审稿人（姓名与联系方式）", "status": "recommended", "provided_by": "model_draft", "portal": "Suggested reviewers (form)", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
@@ -54,6 +54,7 @@
         "在投稿系统逐项填写 competing interests、data availability、author contributions、funding（文本见 04-declarations/portal-fields.md）。",
         "确认是否适用 Reporting Summary（生命科学、行为与社会科学、生态/进化/环境研究送审前必交），适用时下载 Nature 官方表格填写后上传。",
         "预印本：如已发布，在系统中填写 DOI 与许可；如愿意，可勾选 In Review。",
+        "AI 使用声明在正文文末独立一节 AI use declaration（紧随 Author contributions / Competing interests，不在 Methods；用户 2026-11-26 决定）。编辑要求移入 Methods 时再移动，措辞不变。",
         "透明同行评审：NC 自 2022-11-01 起公开审稿意见与回复信，回复信按公开文件写。",
         "APC 在录用后支付（约 GBP 5490 / USD 7350），投稿无费用；许可在 CC BY 与 CC BY-NC-ND 中选择。"
       ]
@@ -69,7 +70,7 @@
         "statements": ["original_not_elsewhere", "all_authors_approved", "related_manuscripts", "preprint", "reviewers_in_letter"],
         "avoid": "Keep the letter short; Scientific Reports judges soundness, so do not oversell significance."
       },
-      "ai_statement_location": "Scientific Reports asks for LLM use in the Methods; the precedent paper carried it as a separate closing section.",
+      "ai_statement_location": "End of the manuscript: its own unnumbered section AI use declaration in the end-matter declarations, after Author contributions / Competing interests (user 2026-11-26; our Scientific Reports submission 20260506aillm0007 carried it at the end, not in the Methods).",
       "items": [
         {"id": "manuscript_pdf", "label": "正文（初投单文件 ≤3 MB，Word/LaTeX/PDF）", "status": "required", "provided_by": "package", "portal": "Manuscript", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
         {"id": "latex_source", "label": "LaTeX 源文件（修回时不接受 PDF 正文）", "status": "revision_only", "provided_by": "package", "portal": "Revision: Manuscript source", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
@@ -80,7 +81,7 @@
         {"id": "code_availability", "label": "Code availability", "status": "recommended", "provided_by": "manuscript", "portal": "Manuscript end", "source": "https://www.nature.com/nature-portfolio/editorial-policies/reporting-standards"},
         {"id": "author_contributions", "label": "Author contributions", "status": "required", "provided_by": "manuscript", "portal": "Author contributions (form)", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
         {"id": "funding", "label": "Funding（正文与系统都要写）", "status": "required", "provided_by": "manuscript", "portal": "Funding (form)", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
-        {"id": "ai_use_statement", "label": "AI/LLM 使用声明", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Methods (manuscript)", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "ai_use_statement", "label": "AI 使用声明（文末独立一节 AI use declaration，紧随 Author contributions / Competing interests）", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Manuscript end (AI use declaration)", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
         {"id": "suggested_reviewers", "label": "建议审稿人（写入 cover letter）", "status": "recommended", "provided_by": "model_draft", "portal": "Cover letter", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
         {"id": "excluded_reviewers", "label": "排除审稿人（写入 cover letter）", "status": "optional", "provided_by": "human", "portal": "Cover letter", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
         {"id": "graphical_abstract", "label": "图文摘要（本刊不支持）", "status": "not_required", "provided_by": "human", "portal": "-", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
@@ -88,6 +89,7 @@
       ],
       "manual_steps": [
         "初投正文单文件不超过 3 MB；超过时改交压缩图件的 PDF。",
+        "AI 使用声明在正文文末独立一节 AI use declaration（紧随 Author contributions / Competing interests，不在 Methods；用户 2026-11-26 决定）。编辑要求移入 Methods 时再移动，措辞不变。",
         "在系统中填写 competing interests 与 funding（文本见 04-declarations/portal-fields.md）。",
         "APC 在录用后支付。"
       ]

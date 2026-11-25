@@ -280,3 +280,54 @@ def test_profiles_follow_journal_then_publisher(tmp_path: Path) -> None:
     assert select({"target_journal": "Y"}, tmp_path)[0] == "generic"
     nc = select({"target_journal": "Nature Communications"}, tmp_path)[1]
     assert next(i for i in nc["items"] if i["id"] == "cv")["status"] == "not_required"
+
+
+def test_a_supplemented_version_keeps_its_submission_package(tmp_path: Path) -> None:
+    """User 2026-11-26: delivered, unsubmitted versions get the package as a new upload."""
+    paper_id, _ = _repo(tmp_path)
+    releases = tmp_path / "papers" / paper_id / "releases"
+    _write(releases / "pkg_old.json", json.dumps({"paper_id": paper_id, "version": "1.0.0",
+                                                  "source": {"filename": "source.zip"}}))
+    assert submission_bundle.legacy_source_required(tmp_path, paper_id, "1.0.0")
+    forced = build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "forced",
+                                   submission_package=True)
+    assert forced["source"]["filename"] == "submission-package.zip"
+    _write(releases / "pkg_new.json", json.dumps({"paper_id": paper_id, "version": "1.0.0",
+                                                  "source": {"filename": "submission-package.zip"}}))
+    assert not submission_bundle.legacy_source_required(tmp_path, paper_id, "1.0.0")
+    again = build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "again")
+    assert again["source"]["identity_sha256"] == forced["source"]["identity_sha256"]
+
+
+def test_reviewer_verification_record_travels_with_the_package(tmp_path: Path) -> None:
+    paper_id, _ = _repo(tmp_path)
+    drafts = submission_bundle.drafts_dir(tmp_path, paper_id)
+    _write(drafts / "suggested-reviewers.json", json.dumps({"suggested": [{
+        "name": "Antonia M. Calafat", "institution": "CDC", "institution_verified": True,
+        "evidence": {"title": "PFAS", "link": "https://doi.org/10.1/x"}, "reason": "r"}]}))
+    _write(drafts / submission_bundle.VERIFICATION_FILENAME, json.dumps({
+        "schema_version": submission_bundle.VERIFICATION_SCHEMA, "version": "1.0.0",
+        "checked_on": "2026-11-26", "checked_by": "agent",
+        "reviewers": [{"name": "Antonia M. Calafat", "decision": "keep", "exists": True,
+                       "institution": "CDC", "research_area": "biomonitoring",
+                       "recent_papers": [{"title": "T", "year": 2025, "url": "https://example.org/t"}],
+                       "conflict_check": "no co-authorship", "sources": ["https://example.org/p"]},
+                      {"name": "Gone Person", "decision": "remove", "exists": False,
+                       "note": "no trace"}]}))
+    manifest = submission_bundle.assemble(paper_id, root=tmp_path, metadata={
+        **__import__("yaml").safe_load((tmp_path / "registry/papers" / f"{paper_id}.yaml").read_text())},
+        output=tmp_path / "pkg")
+    record = (tmp_path / "pkg/06-reviewers/reviewer-verification.md").read_text()
+    assert "2026-11-26" in record and "https://example.org/p" in record and "删去" in record
+    listing = (tmp_path / "pkg/06-reviewers/suggested-reviewers.md").read_text()
+    assert "已核实 2026-11-26" in listing
+    assert manifest["reviewers_verified_on"] == "2026-11-26"
+    # A record of another version is not used.
+    _write(drafts / submission_bundle.VERIFICATION_FILENAME, json.dumps({
+        "schema_version": submission_bundle.VERIFICATION_SCHEMA, "version": "0.9.0",
+        "checked_on": "2026-11-20", "reviewers": []}))
+    other = submission_bundle.assemble(paper_id, root=tmp_path, metadata={
+        **__import__("yaml").safe_load((tmp_path / "registry/papers" / f"{paper_id}.yaml").read_text())},
+        output=tmp_path / "pkg2")
+    assert other["reviewers_verified_on"] is None
+    assert any("不属于 v1.0.0" in note for note in other["notes"])

@@ -566,6 +566,15 @@ def build_parser() -> argparse.ArgumentParser:
     program_deliver.add_argument("--paper-id", required=True)
     program_deliver.add_argument("--api-url", default=os.environ.get("ARA_PAPER_MANAGE_API_URL"))
     program_deliver.add_argument("--key-env", default="ARA_PAPER_MANAGE_API_KEY")
+    program_supplement = program_commands.add_parser(
+        "supplement-package",
+        help="A delivered, not yet submitted version delivered with source.zip gets its submission "
+             "package (投稿包) as a new package of the same version (user 2026-11-26). Needs "
+             "`submission prepare` drafts for the version and no submission attempt on the site.",
+    )
+    program_supplement.add_argument("--paper-id", required=True)
+    program_supplement.add_argument("--api-url", default=os.environ.get("ARA_PAPER_MANAGE_API_URL"))
+    program_supplement.add_argument("--key-env", default="ARA_PAPER_MANAGE_API_KEY")
     program_assign = program_commands.add_parser(
         "assign-handler",
         help="After the owner's review, record the submission handler (default second author).",
@@ -654,7 +663,8 @@ def build_parser() -> argparse.ArgumentParser:
     program_revision_evidence.add_argument("--reason", required=True)
     program_revision_evidence.add_argument("--decision",
                                            help="Basis decision (default: latest full unified decision).")
-    for command in (program_escalation, program_fallback, program_confirm, program_deliver, program_site,
+    for command in (program_escalation, program_fallback, program_confirm, program_deliver, program_supplement,
+                    program_site,
                     program_assign, program_status, program_metadata, program_adopt, program_waive, program_bind,
                     program_unwaive, program_bind_payloads, program_relocate, program_declarations,
                     program_revision_evidence):
@@ -1222,6 +1232,19 @@ def _run_program(args: argparse.Namespace) -> int:
                 args.api_url, key_environment=args.key_env
             ) as client:
                 result = program_delivery.deliver(args.paper_id, root=args.root, client=client)
+        elif args.program_command == "supplement-package":
+            if os.environ.get("OPENLABS_ENABLE_EXTERNAL_WRITES") != "1":
+                raise HandoffError(
+                    "Remote handoff is disabled. Set OPENLABS_ENABLE_EXTERNAL_WRITES=1 "
+                    "for this one operation."
+                )
+            if not args.api_url:
+                raise HandoffError("Missing --api-url or ARA_PAPER_MANAGE_API_URL")
+            with ManageApiClient.from_environment(
+                args.api_url, key_environment=args.key_env
+            ) as client:
+                result = program_delivery.supplement_submission_package(
+                    args.paper_id, root=args.root, client=client)
         else:
             result = program_delivery.assign_handler(
                 args.paper_id, root=args.root, handler=args.handler

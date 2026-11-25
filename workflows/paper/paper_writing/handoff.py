@@ -867,7 +867,14 @@ def build_handoff_package(
     root: str | Path,
     output: str | Path,
     revision_request_id: str | None = None,
+    submission_package: bool = False,
 ) -> dict[str, Any]:
+    """Build source/package, PDF and handoff.json for the current version.
+
+    ``submission_package``: always build the submission package (a delivered version whose
+    package is being supplemented, ``program supplement-package``) and fail rather than fall
+    back to source.zip.
+    """
     repo_root = Path(root).resolve()
     metadata = load_paper_metadata(paper_id, repo_root)
     frozen = freeze_block_reason(metadata, paper_id)
@@ -936,7 +943,7 @@ def build_handoff_package(
 
     bundle: dict[str, Any] | None = None
     bundle_error: str | None = None
-    if not submission_bundle.legacy_source_required(repo_root, paper_id, version):
+    if submission_package or not submission_bundle.legacy_source_required(repo_root, paper_id, version):
         with tempfile.TemporaryDirectory(prefix=f"ara-{paper_id}-submission-") as work:
             try:
                 built, bundle = submission_bundle.build(paper_id, root=repo_root, metadata=metadata,
@@ -945,6 +952,8 @@ def build_handoff_package(
                 shutil.copyfile(built, source_zip)
                 file_count = len(bundle["files"])
             except (submission_bundle.SubmissionBundleError, OSError) as exc:
+                if submission_package:
+                    raise HandoffError(f"Submission package cannot be built: {exc}") from exc
                 bundle, bundle_error = None, str(exc)[:500]
     if bundle is not None:
         pass  # the package already holds the flattened LaTeX
@@ -2093,8 +2102,13 @@ def release_handoff(
     client: ManageApiClient,
     revision_request_id: str | None = None,
     receipt_dir: str | Path | None = None,
+    submission_package: bool = False,
 ) -> dict[str, Any]:
-    """Validate, build, synchronize and receipt one finalized paper version."""
+    """Validate, build, synchronize and receipt one finalized paper version.
+
+    ``submission_package``: the version is already delivered with source.zip and gets the
+    submission package as a new package of the same version (``program supplement-package``).
+    """
 
     before = validate_release_preconditions(paper_id, root=root)
     metadata = load_paper_metadata(paper_id, root)
@@ -2130,6 +2144,7 @@ def release_handoff(
             root=root,
             output=temporary,
             revision_request_id=revision_request_id,
+            submission_package=submission_package,
         )
         manifest = load_handoff_manifest(Path(temporary) / "handoff.json")
         after = validate_release_preconditions(paper_id, root=root)

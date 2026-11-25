@@ -16,7 +16,7 @@ DEFAULT = {"heading_latex": r"\section*{Declaration of generative AI and AI-assi
                             "[NAME OF TOOL/SERVICE] for [REASON]. The author(s) will review the "
                             "full manuscript before submission and take full responsibility for "
                             "the content of the published article."}
-NATURE = {**DEFAULT, "heading_latex": r"\section*{AI use disclosure}"}
+NATURE = {**DEFAULT, "heading_latex": r"\section*{AI use declaration}"}
 
 
 def test_family_by_name_and_by_register(tmp_path) -> None:
@@ -37,11 +37,20 @@ def test_family_by_name_and_by_register(tmp_path) -> None:
     assert venue_family("Nature Energy Letters Fake", tmp_path) is None
 
 
-def _paper(tmp_path, monkeypatch, journal: str) -> tuple:
+END_MATTER = ("\\section{Methods}\nWe fitted the model.\n"
+              "\\section*{Generative AI declaration}\nOld.\n\n"
+              "\\section*{Data availability}\nOn Zenodo.\n\n"
+              "\\section*{Author contributions}\nA: Software.\nB: Supervision.\n\n"
+              "\\section*{Competing interests}\nThe authors declare no competing interests.\n\n"
+              "\\bibliography{refs}\n\\appendix\n\\section{Extra}\nMore.\n")
+
+
+def _paper(tmp_path, monkeypatch, journal: str, source: str | None = None) -> tuple:
     paper = tmp_path / "papers/test"
     paper.mkdir(parents=True)
     path = paper / "main.tex"
-    path.write_text("\\section{Methods}\nWe fitted the model.\n"
+    path.write_text(source if source is not None else
+                    "\\section{Methods}\nWe fitted the model.\n"
                     "\\section*{Data availability}\nOn Zenodo.\n"
                     "\\section*{Generative AI declaration}\nOld.\n\\bibliography{refs}\n")
     registry = tmp_path / "registry/paper-declarations"
@@ -63,20 +72,47 @@ def _paper(tmp_path, monkeypatch, journal: str) -> tuple:
     return path, metadata
 
 
-def test_nature_target_gets_an_end_matter_ai_use_disclosure(tmp_path, monkeypatch) -> None:
+def test_nature_target_gets_an_end_matter_ai_use_declaration(tmp_path, monkeypatch) -> None:
     path, _ = _paper(tmp_path, monkeypatch, "Nature Communications")
     assert declarations.apply_default_declarations("test", tmp_path)["changed"]
     text = path.read_text()
     heading, body = declarations.section(text, "ai_use")
-    assert heading == r"\section*{AI use disclosure}"
+    assert heading == r"\section*{AI use declaration}"
     assert body.startswith("During the preparation of this work, the authors used gpt-6.2-sol "
                            "through Codex for data-analysis code, literature search and writing")
-    # The end matter, after Data availability and before the references; not in Methods.
-    assert text.index("Data availability") < text.index("AI use disclosure") < \
-        text.index("\\bibliography")
+    # The end matter, after the declarations and before the references; not in Methods.
+    assert text.index("Data availability") < text.index("Author contributions") < \
+        text.index("AI use declaration") < text.index("\\bibliography")
     methods = text[text.index("\\section{Methods}"):text.index("Data availability")]
     assert "Codex" not in methods
     assert "Generative AI declaration" not in text
+
+
+def test_nature_ai_declaration_moves_beside_competing_interests(tmp_path, monkeypatch) -> None:
+    """User 2026-11-26 ("放文末"): an older AI section before the declarations moves after
+    Author contributions / Competing interests, its own section, before the references."""
+    path, _ = _paper(tmp_path, monkeypatch, "Scientific Reports", END_MATTER)
+    assert declarations.apply_default_declarations("test", tmp_path)["changed"]
+    text = path.read_text()
+    assert "Generative AI declaration" not in text and "Old." not in text
+    order = [text.index(marker) for marker in (
+        "\\section*{Data availability}", "\\section*{Author contributions}",
+        "\\section*{Competing interests}", "\\section*{AI use declaration}", "\\bibliography{refs}",
+        "\\appendix", "\\section{Extra}")]
+    assert order == sorted(order)
+    assert "competing interests.\n\n\\section*{AI use declaration}\nDuring" in text
+    assert "full responsibility for the content of the published article.\n\n\\bibliography" in text
+    # Idempotent: a second run changes nothing.
+    assert not declarations.apply_default_declarations("test", tmp_path)["changed"]
+    assert declarations.section(path.read_text(), "ai_use")[0] == r"\section*{AI use declaration}"
+
+
+def test_end_matter_insertion_points() -> None:
+    text = "A\n\\section*{Competing interests}\nNone.\n\n\\bibliography{x}\n"
+    assert text[:declarations.end_matter_insertion(text)].endswith("None.")
+    bare = "A\n\\section*{Data availability}\nZ.\n\\bibliographystyle{y}\n\\bibliography{x}\n"
+    assert bare[declarations.end_matter_insertion(bare):].startswith("\\bibliographystyle")
+    assert declarations.end_matter_insertion("no end matter") is None
 
 
 def test_other_targets_keep_the_default_heading(tmp_path, monkeypatch) -> None:

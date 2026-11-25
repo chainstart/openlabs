@@ -130,6 +130,33 @@ def default_ai_wording(root: Path, usage: Any, *, plural: bool, journal: Any = N
     return template["heading_latex"], text
 
 
+# The end-matter declarations a Nature Portfolio AI declaration sits beside (user 2026-11-26:
+# "如果可以的话，放文末" -- with Author contributions / Competing interests, its own section).
+_DECLARATION_CLUSTER = re.compile(
+    r"competing\s+interests?|conflicts?\s+of\s+interests?|declaration\s+of\s+(?:competing\s+)?interests?"
+    r"|author\s+contributions?|contributions?\s+of\s+the\s+authors", re.I)
+_END_OF_BODY = re.compile(r"\\(?:bibliograph\w*|printbibliography|begin\{thebibliography\}|end\{document\}"
+                          r"|appendix\b)")
+
+
+def end_matter_insertion(source: str) -> int | None:
+    """Where an end-matter declaration goes: after the last Author contributions / Competing
+    interests section, else immediately before the references (None without either)."""
+    headings = list(HEADING.finditer(source))
+    last = None
+    for index, heading in enumerate(headings):
+        if _DECLARATION_CLUSTER.search(heading.group(1)):
+            last = index
+    if last is not None:
+        heading = headings[last]
+        end = headings[last + 1].start() if last + 1 < len(headings) else len(source)
+        stop = _END_OF_BODY.search(source, heading.end(), end)
+        end = stop.start() if stop else end
+        return heading.end() + len(source[heading.end():end].rstrip())
+    anchor = re.search(r"\\(?:bibliographystyle|bibliography|printbibliography|end\{document\})", source)
+    return anchor.start() if anchor else None
+
+
 def missing_default_contributions(metadata: Mapping[str, Any], root: Path) -> bool:
     from paper_writing.review_flow import expand_tex
 
@@ -172,16 +199,41 @@ def apply_default_declarations(paper_id: str, root: Path, *, contributions_only:
         start = anchor.start()
     replacement = ""
     end = start
+    ai_block = ""
+    journal = metadata.get("target_journal")
     if not contributions_only and not (metadata.get("declarations") or {}).get("ai_use", {}).get("text_sha256"):
-        default_heading, text = default_ai_wording(root, usage, plural=len(people) > 1,
-                                                   journal=metadata.get("target_journal"))
+        default_heading, text = default_ai_wording(root, usage, plural=len(people) > 1, journal=journal)
         if text and not model_disclosure_issues(text, usage, root=root):
             if not heading or (old and old in source and "\\" not in old):
                 if heading:
                     end = source.index(old, start + len(heading)) + len(old)
-                replacement = default_heading + "\n" + text + ("\n\n" if not heading else "")
+                ai_block = default_heading + "\n" + text
+                replacement = ai_block + ("\n\n" if not heading else "")
+    contributions = ""
     if missing_default_contributions({**metadata, "paper_id": paper_id}, root):
-        replacement = r"\section*{Author contributions}" + "\n" + contributions_latex(people) + "\n\n" + replacement
+        contributions = r"\section*{Author contributions}" + "\n" + contributions_latex(people) + "\n\n"
+    from paper_writing.publisher_family import nature_portfolio
+
+    if ai_block and nature_portfolio(journal, root):
+        # Nature Portfolio (user 2026-11-26, "放文末"): its own section in the end-matter
+        # declarations, after Author contributions / Competing interests, not in Methods and not
+        # where an older heading happened to stand.
+        if heading:
+            tail = len(source[end:]) - len(source[end:].lstrip())
+            updated = source[:start].rstrip() + "\n\n" + source[end + tail:]
+            start = len(source[:start].rstrip()) + 2
+        else:
+            updated = source
+        updated = updated[:start] + contributions + updated[start:]
+        position = end_matter_insertion(updated)
+        if position is None:
+            return {"changed": False}
+        updated = (updated[:position].rstrip() + "\n\n" + ai_block + "\n\n"
+                   + updated[position:].lstrip("\n"))
+        if updated != source:
+            path.write_text(updated)
+        return {"changed": updated != source}
+    replacement = contributions + replacement
     updated = source[:start] + replacement + source[end:]
     if updated != source:
         path.write_text(updated)

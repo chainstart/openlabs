@@ -8,10 +8,11 @@ journals, npj and Communications journals) share two rules the pipeline applies 
   2026-11-25) asks for a clear description of AI use with author accountability and
   publishes no fixed wording. Nature Communications' how-to-submit page says "Use of an LLM
   should be properly documented in the Methods section (and if a Methods section is not
-  available, in a suitable alternative part)". The pipeline follows our published Scientific
-  Reports precedent (papers/20260506aillm0007): a separate unnumbered "AI use disclosure"
-  section in the end matter, before the references (coordinator instruction 2026-11-25; the
-  user decides whether to move it into Methods).
+  available, in a suitable alternative part)". The user chose the end of the manuscript
+  (2026-11-26, "如果可以的话，放文末"), as our Scientific Reports submission
+  (papers/20260506aillm0007) carries it: a separate unnumbered "AI use declaration" section in
+  the end-matter declarations, after Author contributions / Competing interests (else just
+  before the references), not in Methods (``declarations.end_matter_insertion``).
 * Generated images. Springer Nature does not permit AI-generated visual content "created
   from text prompts or without verifiable source data or material" (ai-manuscript-preparation)
   nor photorealistic images (ai). Code-drawn figures from data and licensed vector assets

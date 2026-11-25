@@ -76,10 +76,10 @@ comparisons, with headings that state findings. Consult the readability and figu
    toolchain, not to AI output. Never weaken a truthful disclosure. Keep it short: name the
    kinds of use (data-analysis code, literature search, writing support, figure code), not a
    run-by-run account. Nature Portfolio targets (Nature Communications, Scientific Reports, npj,
-   Communications journals): the same wording under its own unnumbered `AI use disclosure`
-   section in the end matter, before the references (our Scientific Reports precedent;
-   `venue_ai_templates` in templates.yaml); `apply-default-declarations` picks it by the target
-   journal. When you register or first
+   Communications journals): the same wording under its own unnumbered `AI use declaration`
+   section at the end of the manuscript, beside Author contributions / Competing interests
+   (after them; never in Methods; user 2026-11-26); `venue_ai_templates` in templates.yaml,
+   `apply-default-declarations` picks and places it by the target journal. When you register or first
    draft the paper, also record the drafting model the runtime reports as `writer_model` (exact
    identifier, e.g. `gpt-6.2-sol`) and `writer_provider` (`openai-codex` or `anthropic`) in the
    paper record: the unified review needs a referee from another model family than this one.

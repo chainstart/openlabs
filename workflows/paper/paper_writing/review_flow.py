@@ -2915,7 +2915,7 @@ def _citation_numbers(text: str) -> str:
 
 
 _DELTA_DELIVERY_SECTION = re.compile(
-    r"(\\section\*?\{(Data and code availability|AI use disclosure|Declaration of generative AI and "
+    r"(\\section\*?\{(Data and code availability|AI use declaration|AI use disclosure|Declaration of generative AI and "
     r"AI-assisted technologies in the manuscript preparation process)\})(.*?)(?=\\(?:section|bibliography|end\{document\})|\Z)", re.S)
 _DELTA_SUPPORT_ID = re.compile(r"\b(?:version\s+\d+(?:\.\d+)+|10\.5281/zenodo\.\d+)\b", re.I)
 _DELTA_MODEL_ID = re.compile(r"\bGPT-\d+(?:\.\d+)+(?:-[A-Za-z]+)*\b", re.I)

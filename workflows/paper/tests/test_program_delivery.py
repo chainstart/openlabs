@@ -297,3 +297,75 @@ def test_legacy_fallback_loads_but_must_pass_before_it_is_used(repo: Path) -> No
     assert program_delivery.check_fallback(PAPER, root=repo)["evidence_updated"] is False
     fallen["target_escalation"] = completed
     venue_policy.validate_journal_eligibility(fallen, paper_id=PAPER, policy=POLICY)
+
+
+class _Site:
+    def __init__(self, attempts=None, current="pkg-old"):
+        self.paper = {"current_package_id": "row-1", "submission_attempts": attempts or [],
+                      "packages": [{"id": "row-1", "package_id": current, "version": "1.0.0"}]}
+
+    def _request(self, method, path, **_kwargs):
+        assert method == "GET" and path == f"/v1/papers/{PAPER}"
+        return self.paper
+
+
+def _delivered(repo: Path) -> None:
+    metadata = load_paper_metadata(PAPER, repo)
+    metadata.update(version="1.0.0", writing_release=_ready(8),
+                    delivery={"package_id": "pkg-old", "version": "1.0.0", "delivered_at": "2026-11-24",
+                              "awaiting_owner_review": True, "receipt": "old.json"})
+    write_paper_metadata(PAPER, metadata, repo)
+    releases = repo / "papers" / PAPER / "releases"
+    releases.mkdir(parents=True)
+    (releases / "pkg-old.json").write_text(json.dumps(
+        {"paper_id": PAPER, "version": "1.0.0", "source": {"filename": "source.zip"}}))
+    drafts = repo / "papers" / PAPER / "submission"
+    drafts.mkdir(parents=True)
+    (drafts / "draft-receipt.json").write_text(json.dumps({"version": "1.0.0", "status": "drafted"}))
+
+
+def test_supplement_package_reuploads_the_delivered_version(repo: Path) -> None:
+    _delivered(repo)
+    calls = []
+
+    def fake_release(paper_id, *, root, client, submission_package):
+        calls.append(submission_package)
+        return {"paper_id": paper_id, "package_id": "pkg-new", "version": "1.0.0",
+                "receipt": "new.json", "manage_package_status": "ready"}
+
+    result = program_delivery.supplement_submission_package(PAPER, root=repo, client=_Site(),
+                                                            release=fake_release)
+    assert calls == [True] and result["status"] == "supplemented"
+    assert result["previous_package_id"] == "pkg-old" and result["package_id"] == "pkg-new"
+    delivery = load_paper_metadata(PAPER, repo)["delivery"]
+    # The delivery itself (date, owner review) is kept; the package is recorded beside it.
+    assert delivery["delivered_at"] == "2026-11-24" and delivery["awaiting_owner_review"] is True
+    assert delivery["package_id"] == "pkg-new"
+    assert delivery["submission_package_supplements"][0]["previous_package_id"] == "pkg-old"
+
+
+def test_supplement_package_refuses_submitted_or_undrafted_papers(repo: Path) -> None:
+    _delivered(repo)
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("must not release")
+
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="submission attempt"):
+        program_delivery.supplement_submission_package(
+            PAPER, root=repo, client=_Site(attempts=[{"status": "submitted"}]), release=never)
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="current package"):
+        program_delivery.supplement_submission_package(
+            PAPER, root=repo, client=_Site(current="pkg-other"), release=never)
+    (repo / "papers" / PAPER / "submission/draft-receipt.json").write_text(
+        json.dumps({"version": "0.9.0", "status": "drafted"}))
+    with pytest.raises(program_delivery.ProgramDeliveryError, match="submission prepare"):
+        program_delivery.supplement_submission_package(PAPER, root=repo, client=_Site(), release=never)
+
+
+def test_supplement_package_cli_needs_the_external_write_switch(repo: Path, monkeypatch, capsys) -> None:
+    from paper_writing.__main__ import main
+
+    monkeypatch.delenv("OPENLABS_ENABLE_EXTERNAL_WRITES", raising=False)
+    assert main(["program", "supplement-package", "--paper-id", PAPER, "--root", str(repo),
+                 "--api-url", "https://example.invalid"]) == 1
+    assert "disabled" in capsys.readouterr().out

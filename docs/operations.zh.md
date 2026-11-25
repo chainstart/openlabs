@@ -1626,6 +1626,20 @@ OpenLabs 不自动投稿或创建期刊事件。论文适配器默认拒绝外�
 
 cc-sg 的邮件服务独立于调度 tick。运行 `bin/openlabs-journal-mail --account "$SDJU_ACCOUNT" --root /workspace/openlabs/openlabs-data --state /workspace/openlabs/openlabs-instances/cc-sg/state/journal-mail`。使用论文工作流的 Python 依赖；`--interval-minutes` 默认为 20。服务从指定归档加载 SDJU 密码，通过 TLS 直连企业邮，使用 EXAMINE 和 BODY.PEEK。实例可在私有 state/journal-mail/account 中保存已核实的登录名，调度循环启动后检查服务锁并在服务退出时重启。首次启动从当时的 UIDNEXT 接续；重启读取私有目录的游标。UIDVALIDITY 变化时需要核对游标。对已获准的历史信可用 `python3 -m paper_writing.journal_mail --root DIR --state PRIVATE_DIR --eml FILE`；演练使用独立目录，测试信不能导入生产。
 
+**补投稿包（2026-11-26）**：2026-11-25 之前以 source.zip 交付、尚未投稿的版本，用
+`paper-writing program supplement-package --paper-id ID`（需 `OPENLABS_ENABLE_EXTERNAL_WRITES=1`）补交投稿包：
+先对该版本运行 `submission prepare`（cover letter、建议审稿人、扁平化验证），命令再把同一版本（同一 PDF、
+同一评审结论）以投稿包作为新包上传，网站“投稿包”一栏随即显示；登记的交付日期、业主审阅和投稿人不变，
+`delivery.submission_package_supplements` 记新旧包号。网站已有投稿尝试、当前包不是登记的交付包或没有
+该版本草稿时拒绝执行。补交后该版本按投稿包重建（`legacy_source_required` 见到投稿包回执即返回 False）。
+建议审稿人逐人网上核实后写 `papers/<id>/submission/reviewer-verification.json`
+（`openlabs.reviewer_verification.v1`，版本须一致），投稿包附 `06-reviewers/reviewer-verification.md`。
+
+**Nature 系 AI 声明位置（2026-11-26，UD-20261126-nature-ai-declaration-end）**：NC、Scientific Reports 等
+Nature Portfolio 目标刊的 AI 声明是文末单独一节 `AI use declaration`，在 Author contributions、
+Competing interests 之后（没有这两节时在参考文献前），不写进 Methods；`apply-default-declarations`
+按目标刊选择并放置，投稿包 README 与表单文本注明位置。
+
 交付版本的 release_metadata.submission_checklist 包含本刊字段、文件角色与待核实项。负责人核对作者、费用证据及日期、声明和官网生成的 PDF，提交后在对应投稿尝试登记稿号及回执。交付网站的包回执只证明交付；稿件未取得期刊回执时显示“待核实”。
 
 服务按稿号或唯一标题关联论文，Message-ID 的摘要用于去重。决定、稿号和期限通过 program journal-event 记入台账；网站按投稿尝试登记事件或返修轮次。网站当前没有独立消息端点，服务只向当前有效指派对应的用户邮箱发状态与待办。无法确定投稿尝试或负责人时保留待处理事件。负责人缺少网页上传入口时，可通过现有 Agent API 的 artifacts 登记、签名上传及 complete 接口上传本轮意见，绑定 review_round_id。文本和可提取文字的 PDF 可继续处理。

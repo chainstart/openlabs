@@ -19,6 +19,7 @@ Nature, generic).  Layout of ``submission-package.zip`` (and of the unpacked dir
                                    text for the submission-system forms
     05-journal-items/              highlights, reporting checklists the manuscript carries
     06-reviewers/                  suggested reviewers (cited authors, verifiable, to be confirmed)
+                                   + reviewer-verification.md when each was checked on the web
 
 Two halves:
 
@@ -58,6 +59,8 @@ PROFILES_PATH = Path(__file__).with_name("submission-profiles.json")
 ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 MAX_PACKAGE_BYTES = 100 * 1024 * 1024
 PENDING_HUMAN = "待投稿人核实"
+VERIFICATION_SCHEMA = "openlabs.reviewer_verification.v1"
+VERIFICATION_FILENAME = "reviewer-verification.json"
 IDENTITY_PREFIXES = ("01-manuscript/", "02-supplementary/")
 
 
@@ -108,19 +111,25 @@ def legacy_source_required(root: Path, paper_id: str, version: str) -> bool:
 
     Its committed release receipt names ``source.zip``; rebuilding the package for it must give
     the same bytes, or ``handoff sync-ready`` would see a new package for a delivered version.
+    A version whose package was supplemented later (``program supplement-package``, a receipt
+    naming ``submission-package.zip`` for the same version) uses the submission package.
     """
     releases = root / "papers" / paper_id / "releases"
     if not releases.is_dir():
         return False
+    legacy = False
     for path in sorted(releases.glob("*.json")):
         try:
             receipt = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if (isinstance(receipt, Mapping) and str(receipt.get("version")) == version
-                and (receipt.get("source") or {}).get("filename") == LEGACY_SOURCE_FILENAME):
-            return True
-    return False
+        if not isinstance(receipt, Mapping) or str(receipt.get("version")) != version:
+            continue
+        filename = (receipt.get("source") or {}).get("filename")
+        if filename == PACKAGE_FILENAME:
+            return False
+        legacy = legacy or filename == LEGACY_SOURCE_FILENAME
+    return legacy
 
 
 # --------------------------------------------------------------------------- text helpers
@@ -626,13 +635,27 @@ def assemble(paper_id: str, *, root: str | Path, metadata: Mapping[str, Any], ou
     # 06 reviewers
     reviewers = _read_json(drafts / "suggested-reviewers.json") or {}
     kept = [item for item in reviewers.get("suggested", []) if isinstance(item, Mapping)]
+    checked = _read_json(drafts / VERIFICATION_FILENAME)
+    if checked is not None and (checked.get("schema_version") != VERIFICATION_SCHEMA
+                                or str(checked.get("version")) != version):
+        notes.append(f"建议审稿人核实记录不属于 v{version}，未采用；投稿前请重新核实。")
+        checked = None
+    if checked is not None:
+        (_mkparent(target / "06-reviewers/reviewer-verification.md")).write_text(
+            _verification_markdown(checked), encoding="utf-8")
+        add("06-reviewers/reviewer-verification.md",
+            f"建议审稿人逐人网上核实记录（{checked.get('checked_on')}，含来源 URL）", "—（投稿人参考，不上传）")
+    elif kept:
+        notes.append("建议审稿人尚未逐人网上核实（无 reviewer-verification.json）；投稿前请核实。")
     if kept:
         (_mkparent(target / "06-reviewers/suggested-reviewers.md")).write_text(
-            _reviewers_markdown(kept), encoding="utf-8")
+            _reviewers_markdown(kept, checked), encoding="utf-8")
         (target / "06-reviewers/suggested-reviewers.json").write_text(
             json.dumps({"suggested": kept, "status": PENDING_HUMAN}, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8")
-        add("06-reviewers/suggested-reviewers.md", f"建议审稿人 {len(kept)} 名（均为正文引用文献的作者；{PENDING_HUMAN}）",
+        add("06-reviewers/suggested-reviewers.md",
+            f"建议审稿人 {len(kept)} 名（均为正文引用文献的作者；"
+            + (f"{checked.get('checked_on')} 已逐人核实，邮箱{PENDING_HUMAN}）" if checked else f"{PENDING_HUMAN}）"),
             _portal(spec, "suggested_reviewers"))
         add("06-reviewers/suggested-reviewers.json", "同上，机器可读", _portal(spec, "suggested_reviewers"))
         if len(kept) < 3:
@@ -682,6 +705,7 @@ def assemble(paper_id: str, *, root: str | Path, metadata: Mapping[str, Any], ou
         "cover_letter": {"present": letter.is_file(), "drafted_for_version": receipt.get("version"),
                          "model": receipt.get("model"), "number_mismatches": receipt.get("number_mismatches") or []},
         "suggested_reviewers": len(kept),
+        "reviewers_verified_on": (checked or {}).get("checked_on"),
         "declarations": declaration_record,
         "items": items,
         "missing_required": [item["id"] for item in missing],
@@ -795,18 +819,56 @@ def _portal_fields(spec: Mapping[str, Any], metadata: Mapping[str, Any], front: 
     return "\n".join(lines).rstrip() + "\n", record
 
 
-def _reviewers_markdown(kept: list[Mapping[str, Any]]) -> str:
-    lines = ["# 建议审稿人", "",
-             f"以下人选均为本文引用文献的作者，按引用条目核对过作者身份并排除了与本文作者的合作关系。"
-             f"机构与邮箱{PENDING_HUMAN}：请打开文献链接或其机构主页取得机构邮箱，核实不了的不要填写。", ""]
+def _reviewers_markdown(kept: list[Mapping[str, Any]], verification: Mapping[str, Any] | None = None) -> str:
+    checked = (verification or {}).get("checked_on")
+    intro = (f"以下人选均为本文引用文献的作者，按引用条目核对过作者身份并排除了与本文作者的合作关系。"
+             f"机构与邮箱{PENDING_HUMAN}：请打开文献链接或其机构主页取得机构邮箱，核实不了的不要填写。")
+    if checked:
+        intro = (f"以下人选已于 {checked} 逐人在网上核实（是否真实存在、单位、研究方向、近期论文、利益冲突），"
+                 "来源见 reviewer-verification.md；核实不了或有利益冲突的已替换或删去。"
+                 f"邮箱{PENDING_HUMAN}：请从其机构主页或近期论文的通讯作者信息取机构邮箱。")
+    lines = ["# 建议审稿人", "", intro, ""]
     for index, item in enumerate(kept, 1):
         evidence = item.get("evidence") or {}
+        institution_note = (f"已核实 {checked}" if checked and item.get("institution_verified")
+                            else PENDING_HUMAN)
         lines += [f"## {index}. {item.get('name')}", "",
-                  f"- 机构：{item.get('institution')}（{PENDING_HUMAN}）",
+                  f"- 机构：{item.get('institution')}（{institution_note}）",
                   f"- 依据文献：{evidence.get('title')}（{evidence.get('venue') or ''} {evidence.get('year') or ''}），"
                   f"{evidence.get('link')}",
                   f"- 邮箱来源：{item.get('email_source')}",
                   f"- 推荐理由：{item.get('reason')}", ""]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _verification_markdown(record: Mapping[str, Any]) -> str:
+    """The web check of each nominee (user 2026-11-26): identity, affiliation, field, recent work."""
+    decisions = {"keep": "保留", "replace": "替换（新人选）", "added": "替换（新人选）", "remove": "删去"}
+    lines = ["# 建议审稿人核实记录", "",
+             f"- 核实日期：{record.get('checked_on')}",
+             f"- 核实人：{record.get('checked_by') or '—'}",
+             f"- 方法：{record.get('method') or '网页检索机构主页、论文页与学术档案，逐项核对'}", ""]
+    for index, item in enumerate(record.get("reviewers") or [], 1):
+        if not isinstance(item, Mapping):
+            continue
+        lines += [f"## {index}. {item.get('name')}：{decisions.get(str(item.get('decision')), item.get('decision'))}", ""]
+        for label, key in (("是否真实存在", "exists"), ("单位", "institution"), ("研究方向", "research_area"),
+                           ("利益冲突核查", "conflict_check"), ("结论说明", "note")):
+            value = item.get(key)
+            if isinstance(value, bool):
+                value = "是" if value else "否 / 未能核实"
+            if value not in (None, ""):
+                lines.append(f"- {label}：{value}")
+        papers = [paper for paper in item.get("recent_papers") or [] if isinstance(paper, Mapping)]
+        if papers:
+            lines.append("- 近期论文：")
+            lines += [f"  - {paper.get('title')}（{paper.get('venue') or ''} {paper.get('year') or ''}）"
+                      f"{' ' + str(paper['url']) if paper.get('url') else ''}" for paper in papers]
+        sources = [str(url) for url in item.get("sources") or [] if url]
+        if sources:
+            lines.append("- 来源：")
+            lines += [f"  - {url}" for url in sources]
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -855,7 +917,10 @@ def _readme(manifest: Mapping[str, Any], spec: Mapping[str, Any], files: list[Ma
         "核对作者顺序、单位、通讯作者与 04-declarations/portal-fields.md 一致后再提交。",
         "提交后在论文管理网站登记稿号与回执。",
     ]
-    if manifest["suggested_reviewers"]:
+    if manifest["suggested_reviewers"] and manifest.get("reviewers_verified_on"):
+        todo.append(f"建议审稿人：已于 {manifest['reviewers_verified_on']} 逐人核实（见 "
+                    f"06-reviewers/reviewer-verification.md）；从机构主页取机构邮箱后填写（{PENDING_HUMAN}）。")
+    elif manifest["suggested_reviewers"]:
         todo.append(f"建议审稿人：逐人核实机构与机构邮箱（{PENDING_HUMAN}），核实不了的删去。")
     cv = next((item for item in manifest["items"] if item["id"] == "cv"), None)
     if cv and cv["status"] == "not_required":
