@@ -331,9 +331,26 @@ def _ledger_snapshot(document: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "supersedes": topic.get("supersedes"),
                 "revision_of": topic.get("revision_of"),
                 "revision_open": revision_eligible(topic),
+                **({"screen_feedback": feedback}
+                   if (feedback := _screen_feedback(topic)) else {}),
             }
         )
     return snapshot
+
+
+def _screen_feedback(topic: Mapping[str, Any]) -> dict[str, Any] | None:
+    """What the independent NC prescreen found on a judged card (fed back to scouts)."""
+
+    check = topic.get("card_check") if isinstance(topic.get("card_check"), Mapping) else {}
+    state = check.get("prescreen") if isinstance(check.get("prescreen"), Mapping) else {}
+    if state.get("status") not in {"pass", "fail"}:
+        return None
+    feedback = {key: state[key] for key in ("status", "met", "novelty", "expected_band", "why",
+                                            "downgrades")
+                if state.get(key) not in (None, [], "")}
+    if state.get("summary"):
+        feedback["summary"] = str(state["summary"])[:800]
+    return feedback
 
 
 def _signed(packet: dict[str, Any]) -> dict[str, Any]:

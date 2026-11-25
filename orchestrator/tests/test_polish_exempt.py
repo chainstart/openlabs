@@ -133,3 +133,27 @@ def test_nc_aim_line_with_one_slot_scouts_a_pool_of_cards(tmp_path) -> None:
     assert program_flow.line_scout_room(
         type("S", (), {"line_free_slots": lambda self, line: 0})(), {"topics": []},
         "astro-photometry", funnel_pool=4) == 0
+
+
+def test_prescreen_findings_reach_later_scouts(tmp_path) -> None:
+    from dataclasses import replace
+
+    from openlabs import nc_funnel
+    from test_nc_funnel import _prescreen_result
+
+    settings = replace(flow._settings(), program=replace(flow._settings().program,
+                                                         funnel=FunnelSettings()))
+    few, digest = _prescreen_result(tmp_path / "k.json", met=("benchmark",))
+    few["summary"] = "a protocol detail of one benchmark; not general"
+    verdict = nc_funnel.evaluate_prescreen(few, settings, {digest})
+    assert verdict["status"] == "fail" and verdict["summary"].startswith("a protocol detail")
+    judged = {"topic_id": "t1", "status": "rejected",
+              "card_check": {"prescreen": {**verdict, "attempts": 1}}}
+    waiting = {"topic_id": "t2", "status": "proposed",
+               "card_check": {"prescreen": {"status": "scheduled"}}}
+    snapshot = program_flow._ledger_snapshot({"topics": [judged, waiting]})
+    feedback = snapshot[0]["screen_feedback"]
+    assert feedback["met"] == ["benchmark"] and "required" in feedback["why"]
+    assert feedback["summary"].startswith("a protocol detail")
+    assert "screen_feedback" not in snapshot[1]
+    assert "screen_feedback" in nc_funnel.SCOUT_INSTRUCTION

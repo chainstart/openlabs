@@ -140,7 +140,13 @@ SCOUT_INSTRUCTION = (
     "`catalog_id`; a newly found source you verified gets `catalog_candidate: true`. NC "
     "thresholds (at least two must hold): " + thresholds_text() + ". Hooks of accepted NC "
     "papers: " + hooks_text() + " A card that cannot meet two thresholds is not proposed; "
-    "do not re-propose a direction the ledger shows rejected or frozen for its substance."
+    "do not re-propose a direction the ledger shows rejected or frozen for its substance. "
+    "Entries of ledger_snapshot carry `screen_feedback` when the independent prescreen "
+    "judged an earlier card (the thresholds that held on its reading, novelty, expected band, "
+    "why it failed, its summary): your own threshold claims are checked the same way, so do "
+    "not propose a card that would fail for the same reason (for example a protocol detail "
+    "of one benchmark is not a general question, and an effect a simple null model explains "
+    "is not a finding)."
 )
 
 ADMISSION_NC_INSTRUCTION = (
@@ -502,6 +508,9 @@ def evaluate_prescreen(result: Any, settings, digests: set[str]) -> dict[str, An
     met = met_thresholds(thresholds)
     base = {"met": met, "novelty": verdict,
             "closest": list(novelty.get("closest") or [])[:5]}
+    if _text(result.get("summary")):
+        # Fed back to later scouts of the line (program_flow._ledger_snapshot).
+        base["summary"] = _text(result.get("summary"))[:1500]
     if verdict == "scooped" or len(met) < funnel.min_nc_thresholds:
         return {**base, "status": "fail", "reason": PRESCREEN_REJECTION,
                 "why": ("prior work already reports the claim" if verdict == "scooped" else
