@@ -135,7 +135,13 @@ two strong cards there rather than many.
    `reusable_assets[]`; an id that is unknown or archived makes the card invalid.
 4. Keep to work done entirely on a computer: existing public databases and datasets, applied or
    interdisciplinary questions. Nothing that needs a wet lab, field work, human subjects or
-   other real-world interaction, because the program cannot carry it out.
+   other real-world interaction, because the program cannot carry it out. When the packet has
+   `research_line_summary.data_catalog`, it lists the data the line can use: `ingested` (on
+   disk), `onboarded` (free, fetch tool and tested sample), `catalogued` (free, access
+   documented), `needs_registration` (not usable until the owner gets an account) and
+   `blocked`. Read the catalogue file it names for endpoints, licence, citation and the fetch
+   tool; build on `ingested`/`onboarded` sources first and never rest a card on a
+   `needs_registration` or `blocked` one.
 5. Confirm you can actually obtain the decisive data: download or query a sample, record what you
    got (source, version, row counts, date) in a small receipt file, and add that file as a
    hash-bound artifact of your result. "The data is public" is not a receipt. Keep the receipt

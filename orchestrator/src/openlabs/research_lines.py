@@ -18,6 +18,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from .data_catalog import catalog_summary
+
 ENVIRONMENT_READY = "ready"
 
 
@@ -93,6 +95,8 @@ def line_summary(document: Mapping[str, Any] | None, line_id: str) -> dict[str, 
         "sop": environment.get("sop"),
         "known_line": bool(entry),
         "paper_templates": template_summaries(entry),
+        **({"data_catalog": catalog} if (catalog := catalog_summary(
+            environment.get("data_catalog"))) else {}),
     }
 
 
@@ -154,7 +158,8 @@ def line_resources(entry: Mapping[str, Any] | None) -> dict[str, str]:
     ``standard_tools.path``), ``analysis_library``, ``activate``, ``analysis_package``
     (path; its ``entry`` appended), ``control_receipt`` (``environment.standard_solver.
     control_receipt``, ``environment.control_receipt``, ``control.receipt``), ``data``
-    (``environment.data``, else ``environment.data_access``), ``sop``,
+    (``environment.data``, else ``environment.data_access``), ``data_catalog`` (the line's
+    data capability catalogue, ``environment.data_catalog``; see ``data_catalog``), ``sop``,
     ``compute_placement`` and ``gpu`` (``environment.gpu``: text, or an object with
     ``usage``/``memory_mib``/``rule``). Every value is a pointer or a short rule written
     by the line, never a copy of its SOP.
@@ -189,6 +194,9 @@ def line_resources(entry: Mapping[str, Any] | None) -> dict[str, str]:
     found = _first_text(entry, ("environment", "data"), ("environment", "data_access"))
     if found:
         result["data"] = found
+    found = _first_text(entry, ("environment", "data_catalog"))
+    if found:
+        result["data_catalog"] = found
     found = _first_text(entry, ("environment", "sop"))
     if found:
         result["sop"] = found

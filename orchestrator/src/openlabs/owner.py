@@ -2970,6 +2970,8 @@ _LINE_RESOURCE_LABELS: tuple[tuple[str, str, int], ...] = (
     ("analysis_package", "analysis package (use it)", 170),
     ("control_receipt", "control receipt (cite it, never rerun)", 140),
     ("data", "data", 130),
+    ("data_catalog", "data sources the line can use (catalogue: endpoints, licence, fetch tool, "
+     "sample)", 150),
     ("sop", "sop", 140),
     ("gpu", "GPU (this line)", 170),
 )
