@@ -293,10 +293,15 @@ def delivery_read(source, images, role, workdir, timeout, previous=None, present
         packet += "\nPrevious blockers and changes:\n" + json.dumps(previous, ensure_ascii=False)
     system = ("Read the figures and captions, then the supplied text. Restate the question, "
         "comparison, answer and meaning. Identify the supporting panel and state its uncertainty. "
-        "For each repair state the actual wrong conclusion, or leave it empty for advice. Classify "
-        "wording, definition details, caption polish, compression and style as suggestions. On follow-up "
-        "check the previous blockers and changed text only. Identify any previous item exactly. "
-        "For a new blocker explain why the earlier review missed it. Do not propose experiments.")
+        "For each repair state in reader_misconclusion the actual wrong conclusion a reader of the "
+        "manuscript would draw, or leave it empty for advice. Give its kind (an error type, or advisory), "
+        "its category and what it requests. Use headline_claim for the title, abstract, highlights and "
+        "conclusions. Classify wording, definition details, caption polish, compression and style as "
+        "suggestions. You see only the manuscript: what the archive contains and how the response "
+        "letter is written are not yours to judge (category archive_or_response_format, advice). On "
+        "follow-up check the previous blockers and changed text only. Identify any previous item "
+        "exactly. For a new blocker set in_changed_region, quote at least 12 characters of the changed "
+        "text, and explain why the earlier review missed it. Do not propose experiments.")
     if presentation is not None:
         from paper_writing.presentation import REVIEW_SCHEMA
 

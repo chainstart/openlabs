@@ -307,9 +307,14 @@ def test_missing_catalogue_url_is_checked_at_delivery_not_blocking():
 
 
 def test_small_length_request_is_advice():
-    merged = {"outcome": "revision_required", "scientific_blockers": [], "unresolved_previous_items": [],
-              "dimension_repairs": {"readability": [{"repair": "Shorten §4 by about 80 words."}]},
-              "required_changes": [{"type": "narrative", "change": "Shorten §4 by about 80 words.",
-                                    "location": "readability", "advisory": False}]}
-    assert flow._length_requests_advice(merged)["outcome"] == "ready"
+    # B6: the length rule is one row of the materiality table (``length_only``).
+    finding = {"repair": "Shorten §4 by about 80 words.", "kind": "substantive", "wrong_conclusion": "Readers tire.",
+               "why_missed": "", "previous_item": ""}
+    referees = {"referee_a": {"recommendation": "major_revision", "previous_items": [],
+                              "dimension_repairs": {"science": [], "readability": [finding], "formal_accuracy": []}}}
+    editor = {"review_standard": "materiality_v1", "decision": "send_to_review",
+              "dimension_repairs": {"science": [], "readability": [], "formal_accuracy": []}}
+    merged = flow.merge(editor, referees)
+    assert merged["outcome"] == "ready"
+    assert merged["required_changes"][0]["downgrade_reason"] == "length_only"
     assert not flow.length_request("Cut the sentence; it contradicts Table 2.")

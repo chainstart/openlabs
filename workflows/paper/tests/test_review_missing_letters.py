@@ -275,9 +275,10 @@ def test_both_fresh_roles_receive_complete_available_letters_policy_and_previous
             assert 'not_assessable' in packet and 'unknown' in packet
         previous = [
             {'item': missing, 'resolved': True, 'evidence': 'Requirement superseded by scoped policy.',
-             'reader_misconclusion': ''},
+             'reader_misconclusion': '', 'kind': 'advisory', 'category': 'wording', 'requests': []},
             {'item': science, 'resolved': old_science_resolved, 'evidence': 'Independent current proof assessment.',
-             'reader_misconclusion': 'The bound would appear to hold outside the proven parameter range.'},
+             'reader_misconclusion': 'The bound would appear to hold outside the proven parameter range.',
+             'kind': 'formula_error', 'category': 'body_claim', 'requests': ['text_edit']},
         ]
         if name == 'editor':
             rows = flow.prior_decisions('p', meta, tmp_path)

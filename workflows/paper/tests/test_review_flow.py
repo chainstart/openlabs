@@ -688,7 +688,8 @@ def test_followup_accepts_provider_safe_schema_for_literal_blockers(blocker):
     for base in (flow.EDITOR_SCHEMA, flow.referee_schema_for_previous(previous)):
         schema = flow.followup_schema(base, previous)['properties']['previous_items']
         assert 'enum' not in schema['items']['properties']['item']
-        row = {'item': blocker, 'resolved': True, 'evidence': 'Revised', 'reader_misconclusion': ''}
+        row = {'item': blocker, 'resolved': True, 'evidence': 'Revised', 'reader_misconclusion': '',
+               'kind': 'advisory', 'category': 'wording', 'requests': []}
         _validate_against_schema([row], schema)
         flow._check_followup_items({'previous_items': [row]}, previous)
         with pytest.raises(ValueError, match='omitted, duplicated or introduced'):

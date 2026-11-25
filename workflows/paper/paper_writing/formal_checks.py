@@ -22,6 +22,7 @@ import xml.etree.ElementTree as ET
 
 import httpx
 
+from paper_writing import materiality
 from paper_writing.review_launcher import FORMAL_PROVIDERS, LaunchError, _validate_against_schema
 
 VERSION = "openlabs.formal_check.v2"
@@ -1135,7 +1136,7 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
 PRECISION_RULE = "gate1_precision_v1"
 # Finding kinds that concern the wording or support of a sentence rather than wrong data, numbers,
 # formulas, figures or a preregistered rule; the referees' science dimension judges conclusions.
-PRECISION_KINDS = frozenset({"advisory", "unsupported_claim", "citation_error_or_unsupported"})
+PRECISION_KINDS = materiality.FORMAL_PRECISION_KINDS
 
 
 def finding_kinds(report: Mapping[str, Any] | None) -> dict[str, str]:
@@ -1161,18 +1162,20 @@ def finding_kinds(report: Mapping[str, Any] | None) -> dict[str, str]:
     return kinds
 
 
+def _verdict(finding: Mapping[str, Any], kinds: Mapping[str, str] | None) -> materiality.Decision:
+    return materiality.decide(finding, source="formal",
+                              context=materiality.Context(formal_kinds=dict(kinds or {})))
+
+
 def precision_finding(finding: Mapping[str, Any], kinds: Mapping[str, str] | None = None) -> bool:
     """A scientific finding about precision: a ``gap`` (not fully supported as worded), or a
     sentence-level unsupported-claim/citation-support finding (not wrong data or numbers).
 
     Also a ``source_routing`` problem (a missing catalogue URL, a 403 from a publisher):
     it is about reaching a source, not about the manuscript, and is checked at delivery
-    (2026-11-23 audit item 12); a reference row found wrong or nonexistent still blocks."""
-    if finding.get("category") == "source_routing":
-        return True
-    if finding.get("category") != "scientific":
-        return False
-    return finding.get("status") == "gap" or (kinds or {}).get(str(finding.get("location"))) in PRECISION_KINDS
+    (2026-11-23 audit item 12); a reference row found wrong or nonexistent still blocks.
+    Decided by the materiality table (rules ``formal_source_routing``, ``formal_precision``)."""
+    return _verdict(finding, kinds).rule in ("formal_source_routing", "formal_precision")
 
 
 def precision_view(summary: Mapping[str, Any] | None, kinds: Mapping[str, str] | None = None) -> dict[str, Any] | None:
@@ -1190,8 +1193,9 @@ def material_blockers(blockers: list[str], summary: Mapping[str, Any] | None,
     findings = (summary or {}).get("raw_findings") if isinstance(summary, Mapping) else None
     if not findings:
         return list(blockers), []
-    downgraded = {f["message"] for f in findings if precision_finding(f, kinds)}
-    kept = {f["message"] for f in findings if f.get("category") != "advisory" and not precision_finding(f, kinds)}
+    verdicts = [(f["message"], _verdict(f, kinds)) for f in findings]
+    downgraded = {message for message, d in verdicts if d.rule in ("formal_source_routing", "formal_precision")}
+    kept = {message for message, d in verdicts if d.blocks}
     material = [b for b in blockers if b not in downgraded or b in kept]
     return material, [b for b in blockers if b not in material]
 

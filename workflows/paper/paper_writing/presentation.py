@@ -41,6 +41,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 
+from paper_writing import materiality
+
 SCHEMA = "openlabs.presentation_revision.v1"
 RULE = ("Presentation revision: no added number, no changed theorem-like statement, no newly "
         "introduced claim-strength word family; changed figures declared as schematics or as "
@@ -338,32 +340,21 @@ ADVISORY_CATEGORIES = {
     "style": "colours, line styles, general polish",
 }
 CATEGORIES = tuple(BLOCKING_CATEGORIES) + tuple(ADVISORY_CATEGORIES)
-# Records written before categories existed: only an explicit mismatch, missing/unreadable figure
-# or hard venue rule counts; collisions, italics and the like are layout.
-_LEGACY_BLOCKING = re.compile(
-    r"does not match|do not match|mismatch|contradict|inconsistent with the (?:text|data|table|caption)"
-    r"|(?:wrong|incorrect|erroneous) (?:value|number|unit|sign)|figure (?:is )?missing|missing figure"
-    r"|unreadable|illegible|cannot be read|not embedded|font embedding|exceeds the (?:page|word|size) limit",
-    re.I)
 
 
 def category(item: Mapping[str, Any]) -> str:
-    value = item.get("category")
-    if value in CATEGORIES:
-        return value
-    text = f"{item.get('location', '')} {item.get('repair', item.get('change', ''))}"
-    return "claim_or_data_mismatch" if _LEGACY_BLOCKING.search(text) else "layout"
+    """The finding's category; records written before categories existed fall back to the
+    legacy keyword test in ``paper_writing.materiality``."""
+    return materiality.presentation_category(item)
 
 
 def is_blocking(item: Mapping[str, Any], previous: list[Mapping[str, Any]] | None = None) -> bool:
     """A light-review finding blocks only if the reviewer marked it blocking, it falls in a
-    blocking category and, in a follow-up review, it is an unresolved previous blocking item."""
-    if not item.get("blocking") or category(item) not in BLOCKING_CATEGORIES:
-        return False
-    if previous is None:
-        return True
-    index = item.get("previous_item")
-    return isinstance(index, int) and not isinstance(index, bool) and 1 <= index <= len(previous)
+    blocking category, it states the wrong conclusion or the venue consequence (records since
+    B6) and, in a follow-up review, it is an unresolved previous blocking item. Decided by the
+    materiality table (rules ``presentation_material`` / ``presentation_form``)."""
+    context = materiality.Context(presentation_previous=tuple(previous) if previous is not None else None)
+    return materiality.decide(item, source="presentation", context=context).blocks
 
 
 def followup_items(rows: list[Mapping[str, Any]], basis_sha256: str) -> dict[str, Any] | None:
@@ -393,8 +384,10 @@ def _standard() -> str:
             "blocking, however visible: " + advisory + ". A label or legend touching a curve, an "
             "annotation overlapping a marker, italics, minus signs, spacing or aliasing are `layout` or "
             "`typography` unless the figure as a whole can no longer be understood. Set `blocking` true "
-            "only for a blocking category that an editor of the venue would return the paper for; "
-            "advice is delivered with the package and the paper is ready.\n")
+            "only for a blocking category that an editor of the venue would return the paper for, and then "
+            "state in `reader_misconclusion` what a reader would wrongly conclude (or, for a venue "
+            "requirement, that the editor would return the paper and why); leave it empty for advice. "
+            "Advice is delivered with the package and the paper is ready.\n")
 
 
 def reviewer_packet(old: str, new: str, metadata: Mapping[str, Any], request: Mapping[str, Any],
@@ -427,10 +420,14 @@ def reviewer_packet(old: str, new: str, metadata: Mapping[str, Any], request: Ma
 
 
 _FINDING = {"type": "object", "additionalProperties": False,
-            "required": ["location", "repair", "category", "blocking", "previous_item"],
+            "required": ["location", "repair", "category", "blocking", "reader_misconclusion", "previous_item"],
             "properties": {"location": {"type": "string"}, "repair": {"type": "string"},
                            "category": {"type": "string", "enum": list(CATEGORIES)},
-                           "blocking": {"type": "boolean"}, "previous_item": {"type": "integer"}}}
+                           "blocking": {"type": "boolean"},
+                           # B6: what a reader (or the venue's editor) would wrongly conclude or do
+                           # if the item stayed; empty for advice. Records before B6 lack it.
+                           "reader_misconclusion": {"type": "string"},
+                           "previous_item": {"type": "integer"}}}
 _CLAIM = {"type": "object", "additionalProperties": False, "required": ["before", "after", "why"],
           "properties": {"before": {"type": "string"}, "after": {"type": "string"}, "why": {"type": "string"}}}
 REVIEW_SCHEMA = {

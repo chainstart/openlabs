@@ -1,0 +1,43 @@
+{
+ "_source": "/workspace/openlabs/maintenance/20261123-polish/audit-convergence/REPORT.md (2026-11-23 convergence audit) and the B6 task (2026-11-25)",
+ "cases": [
+  {
+   "decision": "20261113-biology-genetics-campylobacter-source-forward-validation/20261123T121536Z",
+   "label": "Campylobacter R12: only an archive-JSON documentation item remains; should be ready",
+   "outcome": "ready"
+  },
+  {
+   "decision": "20261114-physics-binaries-tic421871796/20261123T134914Z",
+   "label": "TIC 421871796 R5: the delivery reader's 'confirm archived claim map C5' must not block",
+   "outcome": "ready",
+   "items": [{"role": "delivery_reader", "contains": "claim–evidence map C5", "verdict": "advice"}]
+  },
+  {
+   "decision": "20261114-physics-binaries-tic421871796/20261123T135606Z",
+   "label": "TIC 421871796 R6: the delivery reader's 'quote C5 verbatim in the response' must not block",
+   "outcome": "ready",
+   "items": [{"role": "delivery_reader", "contains": "Quote claim–evidence entry C5 verbatim", "verdict": "advice"}]
+  },
+  {
+   "decision": "20261109-biology-exposure-pfas-mixture-distribution/20261123T023345Z",
+   "label": "PFAS R8: a new sentence that changes the result ('at most 0.1 point', archived 0.152) still blocks",
+   "outcome_not": "ready",
+   "items": [{"role": "referee_a", "contains": "by at most 0.1 point", "verdict": "block"}]
+  },
+  {
+   "decision": "20261119-quant-energy-nem-settlement-storage/20261123T134918Z",
+   "label": "NEM settlement R3: author-introduced errors still block ('ratio cannot fall below one' made universal; a sufficient condition written as necessary)",
+   "outcome_not": "ready",
+   "items": [
+    {"role": "referee_b", "contains": "The block-averaged witness in the revised Methods can violate charge/discharge exclusivity", "verdict": "block"},
+    {"role": "referee_b", "contains": "turns the fixed-schedule equality condition into a false converse", "verdict": "block"}
+   ]
+  },
+  {
+   "decision": "20261119-quant-energy-nem-settlement-storage/20261123T110235Z",
+   "label": "NEM settlement R2: not ready; the open mechanism item still blocks",
+   "outcome_not": "ready",
+   "items": [{"role": "editor", "kind": "previous", "contains": "Base the mechanism on variation of dispatch", "verdict": "block"}]
+  }
+ ]
+}

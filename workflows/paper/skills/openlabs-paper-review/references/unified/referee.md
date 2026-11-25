@@ -155,21 +155,38 @@ Scores are integers from 1 to 10 relative to the journal named in the packet; wh
 integers choose the lower. Return only the JSON object required by the schema.
 
 
-Trace the figure-only result back to the Methods: identify the independent sampling unit, group sizes, pairing, comparison and interval definition. Check that the claim survives this reading of the uncertainty. Record every proposed blocker in dimension_repairs under science, readability or formal_accuracy. Include the exact previous_item when continuing a previous blocker. On follow-up check previous items and changes only. A new material issue needs a specific why_missed explanation. Explain in wrong_conclusion the concrete mistaken conclusion a reader would reach. Classify wording, definition completion, caption details, compression and style as suggestions. Recommendations and scores summarize the itemized assessment. A request unsupported by a material finding is advice.
+Trace the figure-only result back to the Methods: identify the independent sampling unit, group sizes, pairing, comparison and interval definition. Check that the claim survives this reading of the uncertainty. Record every proposed blocker in dimension_repairs under science, readability or formal_accuracy. Include the exact previous_item when continuing a previous blocker. On follow-up check previous items and changes only. A new material issue needs a specific why_missed explanation. Recommendations and scores summarize the itemized assessment. A request unsupported by a material finding is advice.
 
 Set `requires_new_artifact` on every required change. Use true when answering the
 request requires new calculation, data, analysis or a new simulation or experiment.
 Use false for explanation, claim narrowing or figure edits that reuse existing results.
 Put required new work in a typed evidence item even when the corresponding gap is also a scientific blocker.
 
+## Classifying each finding
+
+The synthesis does not reinterpret your prose: whether a finding blocks follows from the fields you fill. Judge the big picture. Data must be real and conclusions correct and supported; imprecise wording is advice.
+
+- `kind`: the error type. `numeric_or_statistical_error`, `formula_error` (including a false mathematical or logical statement: a bound, an inequality, or a sufficient condition written as necessary), `figure_result_mismatch`, `preregistration_violation` and `citation_nonexistent` always block. `citation_error_or_unsupported` and `unsupported_claim` (the evidence does not support the sentence as worded) block only when material. Use `advisory` for anything without a validity consequence.
+- `category`: what the finding concerns. `headline_claim` covers the title, abstract, highlights and conclusions. The others are `body_claim`, `method_or_data`, `figure_or_table`, `wording`, `definition_detail`, `caption_detail`, `style`, `length` and `archive_or_response_format` (the archive, the supporting files or how the response letter is written). Wording, definition, caption, style and length findings are advice.
+- `reader_misconclusion`: the concrete wrong conclusion a reader of the manuscript would draw if the item stayed. Leave it empty for advice. A finding without it cannot block.
+- `location`: section, sentence or figure, quoting the text concerned.
+- `in_changed_region`: on follow-up, true only when the finding concerns text changed in the supplied diff. Quote at least 12 characters of that changed text in the finding or its location. Use false on a first review. A new non-hard finding outside the changed text is advice.
+- `requests`: what the repair asks for. Use one or more of `text_edit`, `figure_edit`, `citation_fix`, `new_analysis`, `new_artifact`, `length` and `archive_or_response_format`. A request that concerns only length, or only the archive or the response format, is advice.
+
+With every referee at accept or minor revision, an `unsupported_claim` outside the headline claims is advice. A headline conclusion that the evidence does not support still blocks.
+
 ## Same-journal follow-up
 
 The follow-up packet narrows the job to the latest mandatory items. Return each
 item exactly once in `previous_items`. Cite the evidence for its resolution or
 remaining defect and state the specific erroneous reader conclusion for an
-unresolved blocker. Record new issues in `new_findings`. Only a numerical or
-statistical error, bad or unsupported citation, unsupported claim,
-preregistration violation, formula error or figure-result mismatch can block.
-Include the exact location, the incorrect conclusion a reader would draw if the
-issue remained, and why the prior round missed it. Cosmetic wording, caption,
-definition, length and style requests go in optional suggestions.
+unresolved blocker, with its `kind`, `category` and `requests` (for a resolved
+item: `advisory`, the category it concerned, no requests). Record new issues in
+`new_findings`. Only a numerical or statistical error, bad, unsupported or
+nonexistent citation, unsupported claim, preregistration violation, formula
+error or figure-result mismatch can block. Fill every field as described in
+"Classifying each finding": the exact location, the incorrect conclusion a
+reader would draw if the issue remained, whether it concerns changed text
+(`in_changed_region`), what the repair requests, and why the prior round missed
+it. Cosmetic wording, caption, definition, length and style requests go in
+optional suggestions.
