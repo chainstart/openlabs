@@ -422,8 +422,11 @@ class FunnelSettings:
     kill_test_core_hours: float = 2.0
     kill_test_cpus: int = 2
     kill_test_max_download_mb: int = 200
-    # A null model explaining at least this share of the claimed effect lowers the band.
-    null_explained_max: float = 0.8
+    # A null model explaining at least this share of the claimed effect lowers the band one
+    # step. Was 0.8; 0.5 after the NC trial (2026-11-25 report section 5, item 2: the ECG card
+    # passed with an effect a simple null model largely explained). A signal a known formula
+    # or algebraic relation determines counts as fully explained (nc_funnel.evaluate_prescreen).
+    null_explained_max: float = 0.5
     # L4 (admission): independent novelty search and the floor of the expected band.
     novelty_min_papers: int = 50
     novelty_window_years: int = 3

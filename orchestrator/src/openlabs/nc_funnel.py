@@ -10,15 +10,24 @@ L0 scout (``program_flow.schedule_scouts``)        pool low water, interval, emp
 L1 mechanical (:func:`screen_card`, no model)       NC case contract, self-claimed thresholds,
                                                     data catalogue, capacity, near duplicates
 L2+L3 ``topic_prescreen`` task (:func:`advance_prescreens`)
-                                                    quick novelty + independent NC thresholds,
-                                                    then a <= 2 core-hour kill test
-L4 admission (:func:`admission_problems`)           >= 50-paper novelty search, expected band
+                                                    calibration match, quick novelty +
+                                                    independent NC thresholds, then a <= 2
+                                                    core-hour kill test
+L4 admission (:func:`admission_problems`)           >= 50-paper novelty search, calibration
+                                                    match, expected band
 L5 research                                         milestones, decisive analysis first
 L6 grading (:func:`nc_grade`)                       scorecard + calibration set, hard rule
 
 Hard stops are only: data unavailable, fewer than ``min_nc_thresholds`` thresholds, a kill
 test whose signal is absent, and an expected band below ``admission_min_band``. Everything
 else is recorded for the next level (``card_check``). Parameters: ``[program.funnel]``.
+
+One ruler (NC trial 2026-11-25, maintenance/20261125-nc-trial/REPORT.md section 5): the
+prescreen, the admission gate and the grade all read the same calibration set
+(``registry/venue-calibration.yaml``) and first say which tier the topic resembles
+(``calibration_match``); a band is never better than that match (:func:`calibrated_band`).
+The trial's ECG topic was admitted as zone_1 and graded zones_3_4 before writing because only
+the grader had the calibration set.
 """
 
 from __future__ import annotations
@@ -121,6 +130,16 @@ def thresholds_text() -> str:
     return "; ".join(f"`{key}`: {text}" for key, text in THRESHOLD_TEXT.items())
 
 
+CALIBRATION_TEXT = (
+    "Read the calibration set first (read_resources venue-calibration, "
+    "registry/venue-calibration.yaml: accepted NC papers with their hooks and same-subject "
+    "papers of lower-tier journals) and say which tier this topic resembles: calibration_match "
+    "(nc|zone_1|zone_2|zones_3_4) with calibration_neighbours (the ids of the 2-3 closest "
+    "calibration papers). The control plane places the topic no higher than its calibration "
+    "match, the same rule as the acceptance grade before writing."
+)
+
+
 SCOUT_INSTRUCTION = (
     " NC aim (target_stage nc_aim, user decision 2026-11-25): every topic aims at Nature "
     "Communications and the results will decide the journal (NC, else CAS Zone 1, 2, 3-4). "
@@ -157,10 +176,12 @@ ADMISSION_NC_INSTRUCTION = (
     "papers_screened, queries[], closest[{citation, year, doi_or_url, what_it_shows, "
     "our_increment}] (the {closest} closest), increment (one sentence)}. Then score the NC "
     "thresholds yourself in `admission.nc_assessment` {thresholds {" + ", ".join(THRESHOLDS)
-    + ": {met, evidence}}, met_count, expected_band (nc|zone_1|zone_2|zones_3_4)}, reading "
-    "the card's nc_case, the prescreen and kill-test result in card_check.prescreen and the "
-    "hooks of accepted NC papers: " + hooks_text() + " Reject a 'small and low' topic: fewer "
-    "than {minimum} thresholds, or an expected band below {floor}. Admit when the claim, the "
+    + ": {met, evidence}}, met_count, calibration_match, calibration_neighbours, expected_band "
+    "(nc|zone_1|zone_2|zones_3_4)}, reading the card's nc_case, the prescreen and kill-test "
+    "result in card_check.prescreen and the hooks of accepted NC papers: " + hooks_text()
+    + " Calibration: " + CALIBRATION_TEXT + " Reject a 'small and low' topic: fewer than "
+    "{minimum} thresholds, or an expected band (after the calibration match) below {floor}. "
+    "Admit when the claim, the "
     "challenged view, the benchmark and the data plan (data_volume, download window, ailab "
     "storage) stand; the first milestone must be the decisive analysis."
 )
@@ -176,7 +197,8 @@ GRADE_INSTRUCTION = (
     "retarget.confidence (high|medium|low). Set retarget.achieved_band to nc only when at "
     "least the required number of thresholds hold on the evidence, the calibration match is "
     "nc and your confidence is high; otherwise grade down step by step: zone_1, zone_2, "
-    "zones_3_4. Choose an exact journal of that band from verified_alternatives (grading."
+    "zones_3_4. achieved_band is never higher than calibration_match. Choose an exact "
+    "journal of that band from verified_alternatives (grading."
     "nc_journals for nc, the CAS zone for the others) and explain the scope fit in "
     "retarget.why_fits. The manuscript keeps top-journal writing and figure standards in every "
     "band; a lower band only changes the journal and its length and format. If no verified "
@@ -197,6 +219,17 @@ def admission_instruction(settings) -> str:
 
 def band_rank(band: Any) -> int:
     return BANDS.index(band) if band in BANDS else len(BANDS)
+
+
+def calibrated_band(band: Any, match: Any) -> str:
+    """The worse of a claimed band and the calibration match (the grading ruler).
+
+    The same rule as :func:`nc_grade`: a topic is never placed above the tier its closest
+    calibration papers belong to. An unknown band or match counts as the lowest band.
+    """
+
+    return BANDS[min(max(band_rank(band), band_rank(match)), len(BANDS) - 1)]
+
 
 
 def lower_band(band: str) -> str:
@@ -503,10 +536,16 @@ def evaluate_prescreen(result: Any, settings, digests: set[str]) -> dict[str, An
         and isinstance(thresholds[key].get("met"), bool) for key in THRESHOLDS
     ):
         errors.append("thresholds needs " + ", ".join(THRESHOLDS) + " as {met, evidence}")
+    match = _text(result.get("calibration_match"))
+    if match not in BANDS:
+        errors.append("calibration_match must be nc, zone_1, zone_2 or zones_3_4 (the tier of "
+                      "the closest papers of the calibration set)")
     if errors:
         return {"status": "invalid", "errors": errors}
     met = met_thresholds(thresholds)
-    base = {"met": met, "novelty": verdict,
+    base = {"met": met, "novelty": verdict, "calibration_match": match,
+            "calibration_neighbours": [str(item) for item in
+                                       list(result.get("calibration_neighbours") or [])[:5]],
             "closest": list(novelty.get("closest") or [])[:5]}
     if _text(result.get("summary")):
         # Fed back to later scouts of the line (program_flow._ledger_snapshot).
@@ -527,11 +566,15 @@ def evaluate_prescreen(result: Any, settings, digests: set[str]) -> dict[str, An
         return {**base, "status": "invalid",
                 "errors": ["kill_test.result_artifact must be a hash-bound artifact of the result"]}
     used = _number(kill.get("used_core_hours"))
+    null = kill.get("null_baseline") if isinstance(kill.get("null_baseline"), Mapping) else {}
+    # A signal fixed by a known formula or algebraic relation (e.g. "98.5% is predicted by
+    # RR") is fully explained by the null model (NC trial 2026-11-25, item 2).
+    known = null.get("determined_by_known_relation") is True
     summary = {
         "signal": {key: signal.get(key) for key in ("present", "estimate", "interval", "note")
                    if signal.get(key) is not None},
-        "null_explained": _number((kill.get("null_baseline") or {}).get("explained_fraction"))
-        if isinstance(kill.get("null_baseline"), Mapping) else None,
+        "null_explained": 1.0 if known else _number(null.get("explained_fraction")),
+        **({"known_relation": _text(null.get("relation")) or True} if known else {}),
         "claim_reachable": (kill.get("ceiling") or {}).get("claim_reachable")
         if isinstance(kill.get("ceiling"), Mapping) else None,
         "used_core_hours": used, "result_artifact": dict(artifact),
@@ -540,17 +583,28 @@ def evaluate_prescreen(result: Any, settings, digests: set[str]) -> dict[str, An
     if signal["present"] is False:
         return {**base, "status": "fail", "reason": KILL_TEST_REJECTION,
                 "why": "the kill test found no key signal"}
-    band = _text(result.get("expected_band"))
-    band = band if band in BANDS else "nc"
+    claimed = _text(result.get("expected_band"))
+    claimed = claimed if claimed in BANDS else "nc"
+    # The calibration match caps the band first (the grading ruler), then the kill test's
+    # findings take one more step down from whatever band that leaves.
+    band = calibrated_band(claimed, match)
     downgrades = []
+    if band != claimed:
+        downgrades.append(f"the calibration set places it at {match}"
+                          + (f" (closest: {', '.join(base['calibration_neighbours'])})"
+                             if base["calibration_neighbours"] else ""))
+    kill_downgrades = []
     if summary["null_explained"] is not None and summary["null_explained"] >= \
             funnel.null_explained_max:
-        downgrades.append(f"a null model explains {summary['null_explained']:.2f} of the effect")
+        kill_downgrades.append(
+            "the signal is fixed by a known relation (null model explains all of it)" if known
+            else f"a null model explains {summary['null_explained']:.2f} of the effect")
     if summary["claim_reachable"] is False:
-        downgrades.append("the theoretical ceiling is below the claimed effect")
-    if downgrades and band == "nc":
+        kill_downgrades.append("the theoretical ceiling is below the claimed effect")
+    if kill_downgrades:
         band = lower_band(band)
-    base.update(expected_band=band, downgrades=downgrades)
+    downgrades.extend(kill_downgrades)
+    base.update(expected_band=band, claimed_band=claimed, downgrades=downgrades)
     if band_rank(band) > band_rank(funnel.admission_min_band):
         return {**base, "status": "fail", "reason": BAND_REJECTION,
                 "why": f"expected band {band} is below the admission floor "
@@ -602,7 +656,10 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
                    "kill_test_cpus": funnel.kill_test_cpus,
                    "kill_test_max_download_mb": funnel.kill_test_max_download_mb,
                    "null_explained_max": funnel.null_explained_max,
-                   "admission_min_band": funnel.admission_min_band},
+                   "admission_min_band": funnel.admission_min_band,
+                   "calibration": CALIBRATION_PATH,
+                   "calibration_rule": "expected band = the worse of your expected_band and "
+                                       "calibration_match, as in the acceptance grade"},
         "hooks": [{"id": key, "hook": text} for key, text in HOOKS],
         "read_resources": [*flow.program_read_resources(paths, settings, ledger),
                            *[item for item in [calibration_resource(paths)] if item]],
@@ -622,21 +679,28 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
         objective=(
             f"Prescreen one NC-aimed topic card of the {project.domain} research program "
             "(funnel levels 2 and 3; follow the 'Prescreen' section of the skill). The packet at "
-            "the input path has the card. You did not write it. Phase A (cheap): a quick novelty "
-            "search of the last three years (list the 3-5 closest papers) and your own scoring "
-            "of the five NC thresholds; if fewer than "
-            f"{funnel.min_nc_thresholds} hold or the claim is already reported, stop and return "
-            "without running anything. Phase B, only when phase A passes: the kill test of the "
+            "the input path has the card. You did not write it. " + CALIBRATION_TEXT + " A "
+            f"match below {funnel.admission_min_band} rejects the card. Phase A (cheap): a quick "
+            "novelty search of the last three years (list the 3-5 closest papers) and your own "
+            "scoring of the five NC thresholds; if fewer than "
+            f"{funnel.min_nc_thresholds} hold, the claim is already reported or the calibration "
+            "match is below the floor, stop and return without running anything. Phase B, only "
+            "when phase A passes: the kill test of the "
             f"card within {funnel.kill_test_core_hours:g} core-hours on at most "
             f"{funnel.kill_test_cpus} CPU threads here (no ailab job), using data already on "
             "disk or catalogued small samples (files over "
             f"{funnel.kill_test_max_download_mb} MB are out of scope; any download goes "
             "through the download bridge): does the key signal exist, how much does the null "
-            "model or simple baseline explain, what is the theoretical ceiling. Return the "
-            "result field `topic_prescreen` {novelty_quick {verdict clear|incremental|scooped, "
+            "model or simple baseline explain, what is the theoretical ceiling. A signal that a "
+            "known formula or algebraic relation already determines (for example \"98.5% of it "
+            "is predicted by RR\") is fully explained by the null model: set null_baseline."
+            "determined_by_known_relation true and name the relation. Return the "
+            "result field `topic_prescreen` {calibration_match, calibration_neighbours, "
+            "novelty_quick {verdict clear|incremental|scooped, "
             "papers_screened, closest[{citation, year, overlap}]}, thresholds {"
             + ", ".join(THRESHOLDS) + ": {met, evidence}}, kill_test {ran, signal {present, "
-            "estimate, interval, note}, null_baseline {explained_fraction}, ceiling {value, "
+            "estimate, interval, note}, null_baseline {explained_fraction, "
+            "determined_by_known_relation, relation}, ceiling {value, "
             "claim_reachable}, used_core_hours, result_artifact {path, sha256}}, "
             "expected_band nc|zone_1|zone_2|zones_3_4, summary}; the kill-test result file is a "
             "hash-bound result artifact. Do not start the research itself."
@@ -699,8 +763,8 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
             ledger, str(topic["topic_id"]), db=db, event_type="card_prescreen_recorded",
             reason=event, decided_by=PRESCREEN_DECIDER,
             detail={key: state.get(key) for key in (
-                "status", "task_id", "attempts", "expected_band", "met", "reason", "why",
-                "errors")},
+                "status", "task_id", "attempts", "expected_band", "calibration_match", "met",
+                "reason", "why", "errors")},
             updates={"card_check": check},
             key=f"card_prescreen:{topic['topic_id']}:{event}:{state.get('attempts')}")
 
@@ -796,11 +860,16 @@ def admission_problems(admission: Mapping[str, Any], settings) -> list[str]:
             gaps.append(f"{len(met)} NC threshold(s) hold ({', '.join(met) or 'none'}); "
                         f"{funnel.min_nc_thresholds} required")
         band = _text(assessment.get("expected_band"))
+        match = _text(assessment.get("calibration_match"))
         if band not in BANDS:
             gaps.append("nc_assessment.expected_band must be nc, zone_1, zone_2 or zones_3_4")
-        elif band_rank(band) > band_rank(funnel.admission_min_band):
-            gaps.append(f"expected band {band} is below the admission floor "
-                        f"{funnel.admission_min_band}")
+        elif match not in BANDS:
+            gaps.append("nc_assessment.calibration_match must be nc, zone_1, zone_2 or "
+                        "zones_3_4 (the tier of the closest calibration papers)")
+        elif band_rank(calibrated_band(band, match)) > band_rank(funnel.admission_min_band):
+            gaps.append(f"expected band {calibrated_band(band, match)} is below the admission "
+                        f"floor {funnel.admission_min_band}"
+                        + (f" (calibration match {match})" if match != band else ""))
     return gaps
 
 
@@ -817,7 +886,10 @@ def research_fields(record: Mapping[str, Any]) -> dict[str, Any]:
         fields["novelty_search"] = admission["novelty_search"]
     if assessment:
         fields["nc_assessment"] = dict(assessment)
-        fields["expected_band"] = assessment.get("expected_band")
+        fields["expected_band"] = (calibrated_band(assessment.get("expected_band"),
+                                                   assessment["calibration_match"])
+                                   if assessment.get("calibration_match") in BANDS
+                                   else assessment.get("expected_band"))
     return fields
 
 
@@ -845,7 +917,7 @@ def grading_packet(settings, topic: Mapping[str, Any]) -> dict[str, Any]:
         "rules": (f"achieved_band nc needs >= {funnel.min_nc_thresholds} thresholds met in "
                   "nc_scorecard, calibration_match nc and confidence high, and a journal of "
                   "nc_journals; zone_1 / zone_2 / zones_3_4 need a verified journal of that CAS "
-                  "zone"),
+                  "zone; achieved_band is never higher than calibration_match"),
         "calibration": CALIBRATION_PATH,
     }
 
@@ -869,9 +941,10 @@ def nc_grade(decision: Mapping[str, Any], venues: list[dict], settings) -> dict 
     if match not in BANDS or confidence not in CONFIDENCE or not isinstance(scorecard, Mapping):
         return None
     zone = next((v.get("cas_2025_zone") for v in venues if v.get("journal") == journal), None)
+    if calibrated_band(band, match) != band:
+        return None  # placed above its calibration match (the ruler of every funnel level)
     if band == "nc":
-        if journal.casefold() not in nc_journals or len(met) < minimum or match != "nc" \
-                or confidence != "high":
+        if journal.casefold() not in nc_journals or len(met) < minimum or confidence != "high":
             return None
     elif zone not in BAND_ZONES[band] or journal.casefold() in nc_journals:
         return None
@@ -1107,6 +1180,6 @@ def spin_hours(db, settings, document: Mapping[str, Any], scout_campaigns: Mappi
 
 __all__ = [
     "BANDS", "HOOKS", "THRESHOLDS", "admission_problems", "advance_prescreens",
-    "card_contract_errors", "evaluate_prescreen", "metrics", "nc_grade", "prescreen_held",
-    "research_fields", "scout_blocks", "screen_card",
+    "calibrated_band", "card_contract_errors", "evaluate_prescreen", "metrics", "nc_grade",
+    "prescreen_held", "research_fields", "scout_blocks", "screen_card",
 ]

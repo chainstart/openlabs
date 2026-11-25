@@ -2812,7 +2812,12 @@ def schedule_topic_admission(
                 if line_ids else {}
             ),
             "ledger_snapshot": _ledger_snapshot(ledger.read()),
-            "read_resources": program_read_resources(paths, settings, ledger),
+            "read_resources": [
+                *program_read_resources(paths, settings, ledger),
+                # NC-aim cards are placed against the grading calibration set (one ruler).
+                *[item for item in [nc_funnel.calibration_resource(paths)] if item and any(
+                    entry["target_stage"] == target_stage.NC_AIM for entry in entries)],
+            ],
             **asset_library.packet_fields(
                 paths, settings, domains=[project.domain],
                 data_sources=[

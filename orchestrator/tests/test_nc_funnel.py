@@ -57,19 +57,25 @@ def _setup(tmp_path, **funnel):
 
 
 def _prescreen_result(path: Path, *, present=True, met=("generality", "counterintuitive"),
-                      verdict="clear", band="nc", null=0.2, reachable=True) -> dict:
+                      verdict="clear", band="nc", null=0.2, reachable=True, match="nc",
+                      known=None) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"effect": 0.31}\n', encoding="utf-8")
     import hashlib
 
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    null_baseline = {"explained_fraction": null}
+    if known is not None:
+        null_baseline.update(determined_by_known_relation=True, relation=known)
     return {
+        **({"calibration_match": match, "calibration_neighbours": ["N2", "S2"]}
+           if match is not None else {}),
         "novelty_quick": {"verdict": verdict, "papers_screened": 30,
                           "closest": [{"citation": "A 2025", "year": 2025, "overlap": "one market"}]},
         "thresholds": {key: {"met": key in met, "evidence": "checked" if key in met else ""}
                        for key in nc_funnel.THRESHOLDS},
         "kill_test": {"ran": True, "signal": {"present": present, "estimate": 0.31},
-                      "null_baseline": {"explained_fraction": null},
+                      "null_baseline": null_baseline,
                       "ceiling": {"value": 0.9, "claim_reachable": reachable},
                       "used_core_hours": 0.5,
                       "result_artifact": {"path": str(path), "sha256": digest}},
@@ -85,10 +91,13 @@ def _novelty(n=50, closest=5) -> dict:
             "increment": "First multi-market staggered-entry estimate."}
 
 
-def _assessment(band="nc", met=("generality", "counterintuitive", "benchmark")) -> dict:
+def _assessment(band="nc", met=("generality", "counterintuitive", "benchmark"),
+                match="same") -> dict:
     return {"thresholds": {key: {"met": key in met, "evidence": "seen" if key in met else ""}
                            for key in nc_funnel.THRESHOLDS},
-            "met_count": len(met), "expected_band": band}
+            "met_count": len(met), "expected_band": band,
+            **({"calibration_match": band if match == "same" else match,
+                "calibration_neighbours": ["N2"]} if match is not None else {})}
 
 
 # --------------------------------------------------------------------------- settings / stage
@@ -249,6 +258,9 @@ def test_prescreened_card_goes_to_nc_admission(tmp_path, monkeypatch, complete):
         flow._tick(paths, settings, monkeypatch)
         review = db.task(review["task_id"])
     assert "Nature Communications bar" in review["objective"]
+    assert "calibration_match" in review["objective"]  # one ruler with the grade
+    assert "calibration_match" in task["objective"]  # the prescreen asks for it too
+    assert "determined_by_known_relation" in task["objective"]
     entry = flow._packet(review)["topic_cards"][0]
     assert entry["target_stage"] == "nc_aim"
     assert entry["card_check"]["prescreen"]["status"] == "pass"
@@ -292,6 +304,57 @@ def test_evaluate_prescreen_rules(tmp_path):
         nc_funnel.BAND_REJECTION
 
 
+def test_prescreen_uses_the_calibration_ruler(tmp_path):
+    """NC trial 2026-11-25: placed no higher than its calibration match, as in the grade."""
+
+    settings = replace(flow._settings(), program=replace(flow._settings().program,
+                                                         funnel=FunnelSettings()))
+    assert FunnelSettings().null_explained_max == 0.5
+    missing, digest = _prescreen_result(tmp_path / "k.json", match=None)
+    verdict = nc_funnel.evaluate_prescreen(missing, settings, {digest})
+    assert verdict["status"] == "invalid" and "calibration_match" in verdict["errors"][0]
+    capped, digest = _prescreen_result(tmp_path / "k.json", match="zone_1")
+    verdict = nc_funnel.evaluate_prescreen(capped, settings, {digest})
+    assert verdict["status"] == "pass" and verdict["expected_band"] == "zone_1"
+    assert verdict["claimed_band"] == "nc" and verdict["calibration_match"] == "zone_1"
+    # The trial's ECG card: claimed zone_1, calibration says zones 3-4 -> rejected.
+    low, digest = _prescreen_result(tmp_path / "k.json", band="zone_1", match="zones_3_4")
+    verdict = nc_funnel.evaluate_prescreen(low, settings, {digest})
+    assert verdict["reason"] == nc_funnel.BAND_REJECTION and "zones_3_4" in verdict["why"]
+    # The kill test's downgrade applies below nc too, at the stricter 0.5 threshold.
+    null, digest = _prescreen_result(tmp_path / "k.json", band="zone_1", match="zone_1", null=0.6)
+    assert nc_funnel.evaluate_prescreen(null, settings, {digest})["reason"] == \
+        nc_funnel.BAND_REJECTION
+    under, digest = _prescreen_result(tmp_path / "k.json", null=0.4)
+    assert nc_funnel.evaluate_prescreen(under, settings, {digest})["expected_band"] == "nc"
+    # A signal fixed by a known relation is explained by the null model.
+    known, digest = _prescreen_result(tmp_path / "k.json", null=0.1,
+                                      known="98.5% is predicted by RR (QTc formula)")
+    verdict = nc_funnel.evaluate_prescreen(known, settings, {digest})
+    assert verdict["kill_test"]["null_explained"] == 1.0 and verdict["expected_band"] == "zone_1"
+    assert "known relation" in verdict["downgrades"][0]
+
+
+def test_admission_uses_the_calibration_ruler():
+    settings = replace(flow._settings(), program=replace(flow._settings().program,
+                                                         funnel=FunnelSettings()))
+    ok = {"novelty_search": _novelty(), "nc_assessment": _assessment(band="zone_1")}
+    assert nc_funnel.admission_problems(ok, settings) == []
+    missing = {"novelty_search": _novelty(), "nc_assessment": _assessment(match=None)}
+    assert any("calibration_match" in gap for gap in nc_funnel.admission_problems(
+        missing, settings))
+    low = {"novelty_search": _novelty(),
+           "nc_assessment": _assessment(band="zone_1", match="zones_3_4")}
+    gaps = nc_funnel.admission_problems(low, settings)
+    assert gaps and "zones_3_4" in gaps[0] and "calibration match" in gaps[0]
+    capped = nc_funnel.research_fields(
+        {"card": {}, "admission": {"nc_assessment": _assessment(band="nc", match="zone_1")}})
+    assert capped["expected_band"] == "zone_1"
+    assert nc_funnel.calibrated_band("nc", "zone_2") == "zone_2"
+    assert nc_funnel.calibrated_band("zone_2", "nc") == "zone_2"
+    assert nc_funnel.calibrated_band("nc", "bogus") == "zones_3_4"
+
+
 # --------------------------------------------------------------------------- L6
 
 
@@ -327,6 +390,9 @@ def test_nc_grade_is_a_hard_rule():
     assert nc_funnel.nc_grade(_decision("zone_2", "Energy"), venues, settings)
     assert nc_funnel.nc_grade(_decision("zones_3_4", "Energies"), venues, settings)
     assert nc_funnel.nc_grade(_decision("zones_3_4", "Energy"), venues, settings) is None
+    # The same ruler as the funnel: never above the calibration match.
+    assert nc_funnel.nc_grade(_decision("zone_1", "Applied Energy", match="zone_2"),
+                              venues, settings) is None
     assert target_stage.venue_grade(_decision("zone_2", "Energy"), venues, stage="nc_aim",
                                     settings=settings)["achieved_band"] == "zone_2"
 

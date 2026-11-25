@@ -29,15 +29,24 @@ whose claim cannot be tested, not to demand a finished study.
    `admission.novelty_search` {window_years, papers_screened, queries[], closest[{citation, year,
    doi_or_url, what_it_shows, our_increment}] (the five closest), increment (one sentence)}. The
    control plane rejects an admit without it.
-2. **NC thresholds on your own reading.** `admission.nc_assessment` {thresholds {generality,
-   counterintuitive, scale, benchmark, resource: {met, evidence}}, met_count, expected_band
-   (nc|zone_1|zone_2|zones_3_4)}. Fewer than two thresholds, or an expected band below the floor
-   in the packet's instruction (default zone_1), is a reject.
-3. **The case holds together**: the one-sentence claim, the view it challenges and the benchmark
+2. **Calibration match first.** Read the calibration set (`read_resources` venue-calibration,
+   `registry/venue-calibration.yaml`: accepted NC papers and same-subject papers of lower-tier
+   journals) and say which tier the card resembles: `calibration_match`
+   (nc|zone_1|zone_2|zones_3_4) with `calibration_neighbours` (the ids of the 2-3 closest
+   papers). It is the same set and the same rule as the acceptance grade before writing: the
+   topic is placed no higher than its match. (NC trial 2026-11-25: an ECG card admitted as zone_1
+   was graded zones_3_4 before writing, because only the grader had read this set.)
+3. **NC thresholds on your own reading.** `admission.nc_assessment` {thresholds {generality,
+   counterintuitive, scale, benchmark, resource: {met, evidence}}, met_count, calibration_match,
+   calibration_neighbours, expected_band (nc|zone_1|zone_2|zones_3_4)}. Fewer than two
+   thresholds, or an expected band (the worse of expected_band and calibration_match) below the
+   floor in the packet's instruction (default zone_1), is a reject; the control plane rejects an
+   admit without a calibration match.
+4. **The case holds together**: the one-sentence claim, the view it challenges and the benchmark
    are concrete; the kill test in `card_check.prescreen` found the signal (a failed kill test never
    reaches you); the data plan (`data_volume`, download windows, ailab storage) is feasible; the
    first milestone is the decisive analysis.
-4. The data, licence, compute and fee rules below still apply.
+5. The data, licence, compute and fee rules below still apply.
 
 Compare with the hooks of accepted NC papers in `registry/venue-calibration.yaml` (also listed in
 the scout skill): generality, a sentence that overturns a view, an order of magnitude of scale,
@@ -47,21 +56,33 @@ an authoritative benchmark, a reusable resource.
 
 A cheaper check before admission, on one card whose author is another model family.
 
+- **Calibration match first.** Read the calibration set (`read_resources` venue-calibration) and
+  return `calibration_match` (nc|zone_1|zone_2|zones_3_4) and `calibration_neighbours` (2-3 ids).
+  The control plane places the card no higher than its match (the acceptance grade's rule); a
+  match below the admission floor rejects it. A result without a match is invalid.
 - **Phase A (minutes, no compute).** A quick novelty search of the last three years (list the
   3-5 closest papers; `papers_screened` as counted) and your own scoring of the five NC
-  thresholds. When fewer than the required number hold, or the claim is already reported
-  (`verdict: scooped`), stop and return; do not run phase B.
+  thresholds. When fewer than the required number hold, the claim is already reported
+  (`verdict: scooped`) or the calibration match is below the floor, stop and return; do not run
+  phase B.
 - **Phase B (the kill test, within the packet's core-hour budget, here, no ailab job).** Write a
   small script from the card's `kill_test` and run it on data already on disk or on catalogued
   small samples (any download through the download bridge; nothing above the packet's size
   limit). Report: `signal.present` (true/false, with estimate and interval), the share of the
   effect a null model or simple baseline explains (`null_baseline.explained_fraction`), and the
-  theoretical ceiling (`ceiling.value`, `claim_reachable`). Save the numbers as a JSON file and
+  theoretical ceiling (`ceiling.value`, `claim_reachable`). A signal that a known formula or
+  algebraic relation already determines (for example "98.5% of it is predicted by RR") is
+  explained by the null model: set `null_baseline.determined_by_known_relation: true` and name
+  the relation in `null_baseline.relation`; it counts as an explained fraction of 1. Save the
+  numbers as a JSON file and
   declare it as a hash-bound result artifact (`kill_test.result_artifact` {path, sha256}).
-- The control plane decides: signal absent -> the card is rejected (hard stop); a null model
-  explaining most of the effect or a ceiling below the claim -> the expected band drops; a band
-  below the admission floor -> rejected; otherwise the card goes to admission with your result.
-- Return `topic_prescreen` {novelty_quick, thresholds, kill_test, expected_band, summary}. Be
+- The control plane decides: signal absent -> the card is rejected (hard stop); the band is
+  capped at the calibration match; a null model explaining at least the packet's
+  `null_explained_max` (default 0.5) of the effect, or a ceiling below the claim -> one band
+  lower; a band below the admission floor -> rejected; otherwise the card goes to admission with
+  your result.
+- Return `topic_prescreen` {calibration_match, calibration_neighbours, novelty_quick, thresholds,
+  kill_test, expected_band, summary}. Be
   honest about a missing signal: a killed card now saves weeks of compute later.
 
 ## The routine admission standard
