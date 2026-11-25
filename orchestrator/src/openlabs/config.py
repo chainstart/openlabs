@@ -217,6 +217,12 @@ class ProgramSettings:
     # Deliver ready papers to the paper-management site automatically (without
     # a submission handler). False: ready papers are only queued.
     auto_handoff: bool = False
+    # Site submitter reconciliation (2026-11-25, B1): every tick, a pre-submission paper on the
+    # management site that is not submittable loses its active submitter, a submittable one gets
+    # its recorded submitter (else the second author), and a paper under a manual-assignment
+    # hold is left alone (paper_writing.site_assignments). Independent of ``auto_handoff``:
+    # holding deliveries back must not hold back taking a submitter off a not-ready paper.
+    site_assignment_sync: bool = True
     # argv prefix of the paper-writing CLI used for delivery and handler
     # assignment (it owns the YAML/HTTP dependencies the orchestrator avoids).
     paper_writing_command: tuple[str, ...] = ("paper-writing",)
@@ -1439,6 +1445,7 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         topic_max_agent_seconds=_positive_int(program.get("topic_max_agent_seconds"), 259_200),
         direction_limits=_direction_limits(program.get("direction_limits")),
         auto_handoff=program.get("auto_handoff", False) is True,
+        site_assignment_sync=program.get("site_assignment_sync", True) is not False,
         paper_writing_command=_command(program.get("paper_writing_command"), ("paper-writing",)),
         handoff_max_attempts=_positive_int(program.get("handoff_max_attempts"), 3),
         credentials_file=_optional_path_text(program.get("credentials_file"),

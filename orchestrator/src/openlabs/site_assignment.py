@@ -9,7 +9,8 @@ corrects that through the regular assignment endpoint: no active submitter while
 ready to submit (the admin service account holds a placeholder that records the default
 submitter), the recorded original submitter -- else the second author -- once it is. The
 release pipeline's delivery calls it for the delivered paper; every tick calls it for all
-pre-submission papers (:func:`sync_tick`); ``program sync-site-assignments`` runs it by hand.
+pre-submission papers (:func:`sync_tick`, under ``[program] site_assignment_sync``);
+``program sync-site-assignments`` runs it by hand.
 
 ``program mark-submitted`` records that a delivered paper was submitted to a journal: the topic
 moves ``ready_queue -> submitted`` (:func:`openlabs.program.mark_topic_submitted`) with a
@@ -94,11 +95,16 @@ def _note_changes(db: FactoryDB, paths: WorkspacePaths, settings: FactorySetting
 
 def sync_tick(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings,
               report: Any) -> None:
-    """Per-tick reconciliation; under ``[program] auto_handoff`` (its external-write grant)."""
+    """Per-tick reconciliation under ``[program] site_assignment_sync`` (its external-write grant).
+
+    Decoupled from ``auto_handoff`` on 2026-11-25 (B1): the sync only parks a not-submittable
+    paper's submitter, assigns a submittable paper's, and never touches a held one, so it runs
+    while deliveries are held back.
+    """
 
     info = report.program.setdefault("site_assignments", {})
-    if not settings.program.auto_handoff:
-        info["outcome"] = "skipped_auto_handoff_off"
+    if not getattr(settings.program, "site_assignment_sync", True):
+        info["outcome"] = "skipped_site_assignment_sync_off"
         return
     try:
         result = run_sync(paths, settings, apply=True)

@@ -52,12 +52,26 @@ def test_tick_applies_the_sync_and_notes_changes(tmp_path, monkeypatch) -> None:
                if h.get("kind") == "site_assignment_parked") == 1
 
 
-def test_tick_is_off_without_auto_handoff_and_failures_stay_out_of_errors(
+def test_tick_follows_its_own_switch_not_auto_handoff_and_failures_stay_out_of_errors(
         tmp_path, monkeypatch) -> None:
+    # B1 (2026-11-25): auto_handoff = false holds deliveries, not the submitter reconciliation.
     paths, db, settings, _ = _ready_topic(tmp_path, auto_handoff=False)
+    assert settings.program.site_assignment_sync is True
+    calls = []
+    monkeypatch.setenv("ARA_PAPER_MANAGE_API_URL", "https://manage.invalid")
+    monkeypatch.setenv("ARA_PAPER_MANAGE_API_KEY", "k")
+    monkeypatch.setattr(program_autonomy, "_run_paper_command",
+                        lambda *a, **k: calls.append(a) or {"ok": True, "papers": [],
+                                                             "changed": [], "held": ["p"]})
     report = TickReport()
     sync_tick(db, paths, settings, report)
-    assert report.program["site_assignments"]["outcome"] == "skipped_auto_handoff_off"
+    assert calls and report.program["site_assignments"]["outcome"] == "ok"
+    assert report.program["site_assignments"]["held"] == ["p"]
+    paths, db, settings, _ = _ready_topic(tmp_path / "off", auto_handoff=True,
+                                          site_assignment_sync=False)
+    report = TickReport()
+    sync_tick(db, paths, settings, report)
+    assert report.program["site_assignments"]["outcome"] == "skipped_site_assignment_sync_off"
     paths, db, settings, _ = _ready_topic(tmp_path / "b", auto_handoff=True)
     monkeypatch.delenv("ARA_PAPER_MANAGE_API_URL", raising=False)
     monkeypatch.delenv("ARA_PAPER_MANAGE_API_KEY", raising=False)
