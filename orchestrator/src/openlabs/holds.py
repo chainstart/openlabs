@@ -179,8 +179,9 @@ def topic_hold(state: Mapping[str, Any] | None, *, scope: str = "",
 
 
 ASSIGNMENT_NOTE = "manual_assignment=hold"
-ASSIGNMENT_RESTORE = ("a person assigns the submitter on the site, then removes "
-                      "manual_assignment from the paper record (or sets hold to false)")
+ASSIGNMENT_RESTORE = ("a person assigns the submitter on the site, or sets hold to false in the "
+                      "paper record's manual_assignment (optionally naming the submitter); "
+                      "removing the block leaves the site placeholder's hold note in force")
 
 
 def assignment_hold(registry: Mapping[str, Any] | None,
@@ -190,9 +191,14 @@ def assignment_hold(registry: Mapping[str, Any] | None,
 
     The registry field ``manual_assignment: {hold: true, ...}``; should the shared data
     checkout lag, an active site assignment whose notes carry ``manual_assignment=hold``.
+    A registry record with an explicit ``hold: false`` is the later decision that lifts the
+    hold (2026-11-25: the owner named the submitters of the two NEM papers), so the notes of
+    the placeholder it releases no longer count.
     """
 
     record = (registry or {}).get("manual_assignment")
+    if isinstance(record, Mapping) and record.get("hold") is False:
+        return None
     if isinstance(record, Mapping) and record.get("hold") is True:
         return _finish({
             "kind": "submitter_hold", "scope": scope or str((registry or {}).get("paper_id") or ""),

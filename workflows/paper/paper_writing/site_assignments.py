@@ -202,6 +202,33 @@ def manual_hold(paper: Mapping[str, Any],
                                     scope=str(paper.get("paper_id") or ""))
 
 
+def released_hold(registry: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """The registry's ``manual_assignment`` when it explicitly lifts a hold (``hold: false``)."""
+
+    record = (registry or {}).get("manual_assignment")
+    return record if isinstance(record, Mapping) and record.get("hold") is False else None
+
+
+def named_submitter(released: Mapping[str, Any], registry: Mapping[str, Any] | None,
+                    users: list[Mapping[str, Any]], placeholder: str) -> dict[str, Any] | None:
+    """The site user for ``manual_assignment.submitter`` (a byline author's name), if any."""
+
+    wanted = {str(released.get(key) or "").strip().casefold()
+              for key in ("submitter", "submitter_zh")} - {""}
+    if not wanted:
+        return None
+    people = [a for a in (registry or {}).get("authors") or [] if isinstance(a, Mapping)]
+    person = next((a for a in people
+                   if {str(a.get(k) or "").strip().casefold() for k in ("name", "name_zh")} & wanted),
+                  None)
+    user = _user_for_author(person or {"name": released.get("submitter"),
+                                       "name_zh": released.get("submitter_zh")}, users, placeholder)
+    if user is None:
+        return None
+    return {"submitter_id": user["id"], "name": user.get("display_name"),
+            "source": "manual_assignment"}
+
+
 def _version_key(value: Any) -> tuple[int, ...] | None:
     numbers = re.findall(r"\d+", str(value or ""))
     return tuple(int(n) for n in numbers) if numbers else None
@@ -263,7 +290,13 @@ def plan_paper(paper: Mapping[str, Any], *, root: Path, users: list[Mapping[str,
         return entry
     if real:
         return entry
-    target = recorded_submitter(paper, root, users, placeholder) or fallback
+    released = released_hold(registry)
+    if released is not None:
+        # The owner lifted the hold and chose the submitter (2026-11-25): the person named in
+        # the record, else this paper's second author -- never the submitter the hold withdrew.
+        target = named_submitter(released, registry, users, placeholder) or fallback
+    else:
+        target = recorded_submitter(paper, root, users, placeholder) or fallback
     if target is None:
         entry.update(action="blocked", why="no recorded submitter and no second author on the site")
     else:

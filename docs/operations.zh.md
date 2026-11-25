@@ -1733,7 +1733,12 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 登记里写 `manual_assignment: {hold: true, by, date, quote, reason}` 的论文，同步代码不分配、不占位、
 不恢复，计划里记 `action: hold`（结果的 `held` 列表与 tick 的 `program.site_assignments.held`）。共享数据
 工作区落后时，网站上当前有效分配的 notes 含 `manual_assignment=hold` 也算。人工在网站上指定投稿人后，
-删掉登记里的 `manual_assignment`（或改 `hold: false`）才恢复自动规则。网站接口只有
+删掉登记里的 `manual_assignment`（或改 `hold: false`）才恢复自动规则。
+**由登记撤销暂停（2026-11-25）**：用户为两篇 NEM 稿件指定投稿人（“1篇詹静怡，1篇成志东……将他们调整为二作”）。
+登记写明 `hold: false`（可加 `submitter`/`submitter_zh` 指定署名作者）时，占位 notes 里的
+`manual_assignment=hold` 不再算暂停；可投稿时分配给登记指定的人，没有指定时用本稿署名第二作者，
+不再按占位 notes 或分配历史恢复被撤回的原投稿人（`site_assignments.released_hold`/`named_submitter`）。
+只删掉 `manual_assignment` 而网站仍是带 hold 标记的占位时，仍按暂停处理。网站接口只有
 `POST /v1/papers/<id>/assignments`（必须给 `submitter_id`），没有停用或置空分配的接口，撤回只能挪到
 “ARA 管理员”占位。网站前端（ara-paper-manage `paperView.ts` 的 `resolveResponsibleSubmitter`）把有效
 分配的账号显示名当负责人，所以占位显示为“ARA 管理员”；没有有效分配时又退回显示二作（王琪盛，“二作

@@ -260,3 +260,35 @@ def test_manual_hold_note_on_the_site_also_counts(repo: Path) -> None:
     site.papers[PAPER]["assignments"][0]["notes"] = "[openlabs-site-assignment] parked"
     result = sync_site_assignments(site, root=repo, apply=True)
     assert result["changed"] and _active(site) == [SECOND]
+
+
+def test_released_hold_assigns_the_named_submitter_not_the_withdrawn_one(repo: Path) -> None:
+    """2026-11-25: the owner named the submitter (now second author) after the 11-24 hold."""
+    second = {"name": "Zhidong Cheng", "name_zh": "成志东", "email": "other@example.test"}
+    _registry(repo, status="ready", version="0.1.12", authors=[AUTHORS[0], second, AUTHORS[1]])
+    path = repo / "registry" / "papers" / f"{PAPER}.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["manual_assignment"] = {"hold": False, "by": "owner", "date": "2026-11-25",
+                                 "submitter": "Zhidong Cheng", "submitter_zh": "成志东"}
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    # The placeholder still carries the hold note and records the withdrawn submitter.
+    parked = [{"id": "11111111-1111-4111-8111-111111111111", "submitter_id": ADMIN, "active": True,
+               "notes": f"[openlabs-site-assignment] 撤回 manual_assignment=hold "
+                        f"default_submitter_id={SECOND}",
+               "assigned_at": "2026-11-24T01:00:00+08:00"},
+              {"id": "acb74f5d-b7ff-40c7-9155-2d2030196c62", "submitter_id": SECOND, "active": False,
+               "notes": "Automatically assigned", "assigned_at": "2026-11-15T23:29:35+08:00"}]
+    site = FakeSite({PAPER: _paper(lifecycle="ready_to_submit", assignments=copy.deepcopy(parked))})
+    plan = sync_site_assignments(site, root=repo)
+    entry = plan["papers"][0]
+    assert entry["action"] == "assign" and entry["target"]["submitter_id"] == OTHER
+    assert entry["target"]["source"] == "manual_assignment" and not site.posts
+    result = sync_site_assignments(site, root=repo, apply=True)
+    assert result["changed"] and _active(site) == [OTHER]
+    # Without a named submitter the byline's second author is used.
+    data["manual_assignment"].pop("submitter")
+    data["manual_assignment"].pop("submitter_zh")
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    site = FakeSite({PAPER: _paper(lifecycle="ready_to_submit", assignments=copy.deepcopy(parked))})
+    entry = sync_site_assignments(site, root=repo)["papers"][0]
+    assert entry["action"] == "assign" and entry["target"]["submitter_id"] == OTHER
