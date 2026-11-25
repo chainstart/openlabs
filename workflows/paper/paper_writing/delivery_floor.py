@@ -70,11 +70,11 @@ def registry_byline_issues(metadata, byline_text=None):
     return issues
 
 
-def _main_figures(source, manuscript, plan):
+def _main_figure_entries(source, manuscript, plan):
+    """Main-text figures in order: the panel files each introduces and their classified kind."""
     kinds = {item.stem: item.kind for item in discover(workspace(manuscript=manuscript))}
     kinds.update({row["figure"]: row["kind"] for row in plan.get("figures", [])})
-    counts = {"schematic": 0, "result": 0, "main_figures": 0}
-    files = set()
+    entries = []
     seen = set()
     for figure in ENV.finditer(source):
         panels = set()
@@ -85,14 +85,68 @@ def _main_figures(source, manuscript, plan):
             resolved = {p.resolve() for p in candidates if p.is_file() and p.resolve().is_relative_to(manuscript)}
             if len(resolved) == 1:
                 panels.update(resolved)
-        files.update(panels)
         new_panels = panels - seen
         seen.update(panels)
-        if new_panels:
+        entries.append({"panels": panels, "new_panels": new_panels,
+                        "kinds": {path.stem: kinds.get(path.stem) for path in new_panels}})
+    return entries
+
+
+def _main_figures(source, manuscript, plan):
+    counts = {"schematic": 0, "result": 0, "main_figures": 0}
+    files = set()
+    for entry in _main_figure_entries(source, manuscript, plan):
+        files.update(entry["panels"])
+        if entry["new_panels"]:
             counts["main_figures"] += 1
-        for kind in {kinds.get(path.stem) for path in new_panels} & {"schematic", "result"}:
+        for kind in set(entry["kinds"].values()) & {"schematic", "result"}:
             counts[kind] += 1
     return counts, files
+
+
+VECTOR_ROUTES = {".svg": "svg_html", ".html": "svg_html", ".htm": "svg_html", ".tex": "tikz"}
+_LOCAL_IMPORT = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_]\w*)", re.M)
+
+
+def schematic_route(manuscript, stem, plan):
+    """How a schematic is drawn, from its registered source (2026-11-25, B2; static, no build).
+
+    ``svg_html`` (an .svg/.html source, or a script that composes an SVG through ``$FIG_SVG``,
+    itself or through a helper module in figure-src), ``tikz`` (.tex), ``plot`` (a script that
+    only writes a matplotlib PDF) or ``unregistered`` (no source in figure-src). ``library``:
+    the source draws on the figure asset library (``find_asset``/``svg_fragment``/``assets/``).
+    """
+    src_dir = manuscript / "figure-src"
+    row = next((r for r in plan.get("figures", []) if r.get("figure") == stem), None)
+    path = manuscript / row["source"] if row and isinstance(row.get("source"), str) else None
+    if path is None or not path.is_file():
+        path = next((src_dir / f"{stem}{suffix}" for suffix in (".svg", ".html", ".tex", ".py")
+                     if (src_dir / f"{stem}{suffix}").is_file()), None)
+    if path is None or not path.resolve().is_relative_to(manuscript):
+        return {"figure": stem, "route": "unregistered", "source": None, "library": False}
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    texts = [text]
+    if path.suffix.lower() == ".py":
+        for name in set(_LOCAL_IMPORT.findall(text)):
+            helper = path.parent / f"{name}.py"
+            if helper.is_file() and helper.resolve().is_relative_to(manuscript):
+                texts.append(helper.read_text(encoding="utf-8", errors="ignore"))
+        route = "svg_html" if any("FIG_SVG" in item for item in texts) else "plot"
+    else:
+        route = VECTOR_ROUTES.get(path.suffix.lower(), "plot")
+    library = any(re.search(r"find_asset|svg_fragment|asset:|assets/", item) for item in texts)
+    return {"figure": stem, "route": route, "library": library,
+            "source": path.relative_to(manuscript).as_posix()}
+
+
+def _schematics_reviewed(record, manuscript, files):
+    """The ready decision's delivery reader saw exactly these (current) schematic files."""
+    if (record.get("merged") or {}).get("outcome") != "ready":
+        return False
+    bindings = (record.get("delivery_reader") or {}).get("image_inputs") or {}
+    return bool(files) and all(
+        bindings.get(path.relative_to(manuscript).as_posix()) == hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in files)
 
 
 def _reviewed_images(record, manuscript, files):
@@ -170,9 +224,30 @@ def check(paper_id, metadata, root, record=None, *, author=False):
         profile_id = "single_target"
     profile = profiles.get(profile_id) if isinstance(profile_id, str) else None
     min_results = profile["main_figures"][0] - 1 if profile else 1
+    entries = _main_figure_entries(source[body_start:body_end], manuscript, plan)
     counts, paths = _main_figures(source[body_start:body_end], manuscript, plan)
     if not counts["schematic"]:
         issue("SCHEMATIC-MISSING", "Include and classify at least one main-text design schematic.")
+    # SCHEMATIC-ROUTE (2026-11-25, B2; user 2026-11-23 "既然图都没有画好，怎么能交付呢", criterion
+    # approved 2026-11-25): every main-text schematic is drawn from a registered vector source
+    # (SVG/HTML with the asset library, or TikZ), and at delivery the ready decision's delivery
+    # reader has seen the current schematic files (the presentation/delta review after a redraw).
+    schematic_files = {path for entry in entries for path in entry["new_panels"]
+                       if entry["kinds"].get(path.stem) == "schematic"}
+    routes = [schematic_route(manuscript, stem, plan)
+              for stem in sorted({path.stem for path in schematic_files})]
+    off_route = [item for item in routes if item["route"] not in {"svg_html", "tikz"}]
+    if off_route:
+        issue("SCHEMATIC-ROUTE-NOT-VECTOR",
+              "Draw these main-text schematics from a registered vector source (SVG/HTML with the "
+              "figure asset library, or TikZ) in figure-src: "
+              + ", ".join(f"{item['figure']} ({item['route']}: {item['source'] or 'no source'})"
+                          for item in off_route) + ".")
+    if not author and schematic_files and not _schematics_reviewed(record or {}, manuscript,
+                                                                    schematic_files):
+        issue("SCHEMATIC-ROUTE-UNREVIEWED",
+              "The ready review's delivery reader has not seen the current schematic figures; run "
+              "the presentation review (review unified-run --presentation) on the redrawn figures.")
     if counts["result"] < min_results:
         issue("RESULT-FIGURES-BELOW-MINIMUM",
               f"Main text has {counts['result']} classified result figures; minimum is {min_results}.")
@@ -195,6 +270,7 @@ def check(paper_id, metadata, root, record=None, *, author=False):
         issue("AI-USE-UNVERIFIED", "Generate the AI-use declaration from verified runtime model records.")
     return {"metrics": {"main_text_words": words, "min_body_words": minimum, "length_sources": sources,
                         "figure_profile": profile_id, "min_result_figures": min_results, **counts,
+                        "schematic_routes": routes,
                         "float_placement": placement["status"]}, "issues": issues}
 
 

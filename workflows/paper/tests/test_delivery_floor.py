@@ -8,6 +8,8 @@ def test_floor_counts_body_and_distinct_main_figures_and_binds_reader(tmp_path, 
     manuscript.mkdir(parents=True)
     for name in ("design", "result", "appendix"):
         (manuscript / f"{name}.pdf").write_bytes(name.encode())
+    (manuscript / "figure-src").mkdir()
+    (manuscript / "figure-src" / "design.svg").write_text("<svg/>")
     main = manuscript / "main.tex"
     main.write_text(r"""
 \author[1]{A. Person}
@@ -38,7 +40,7 @@ The author used gpt-6.2-sol through Codex.
         "model": "gpt-6.2-sol", "provider": "openai-codex", "tool": "Codex", "purpose": "editing",
         "evidence": {"path": "runtime.json", "sha256": digest, "json_pointer": "/actual_runtime_model"},
     }]}}}
-    record = {"delivery_reader": {"supporting_panel": "Figure 2", "image_sha256": ["attached"],
+    record = {"merged": {"outcome": "ready"}, "delivery_reader": {"supporting_panel": "Figure 2", "image_sha256": ["attached"],
                                    "image_inputs": {f"{name}.pdf": hashlib.sha256(name.encode()).hexdigest()
                                                     for name in ("design", "result")}},
               "receipts": {"delivery_reader": {"independent_context": True, "images": [{"sha256": "attached"}]}}}
@@ -109,3 +111,47 @@ def test_registry_byline_tolerates_tex_accents():
         {"authors": [{"name": "Jörg Müller", "affiliation_ids": ["u"]}],
          "affiliations": [{"id": "u", "name": "U"}]}, r"\fnm{J\"org} \sur{M\"{u}ller}")
     assert issues == []
+
+
+def test_schematic_route_gate(tmp_path, monkeypatch):
+    """B2 (2026-11-25): schematics from a registered vector source, seen by the ready review's reader."""
+    manuscript = tmp_path / "papers/p/manuscript"
+    (manuscript / "figure-src").mkdir(parents=True)
+    (manuscript / "design.pdf").write_bytes(b"design")
+    (manuscript / "main.tex").write_text(r"""\author[1]{A. Person}\affil[1]{Test University}
+\begin{document}\section{Methods}Text.
+\begin{figure}\includegraphics{design}\end{figure}
+\end{document}""")
+    plan = {"figures": [{"figure": "design", "kind": "schematic", "source": "figure-src/design.py"}]}
+    monkeypatch.setattr(delivery_floor, "read_plan", lambda path: (plan, None))
+    metadata = {"narrative_limits": {"min_body_words": 1}}
+
+    def codes(record=None, author=False):
+        return {i["code"] for i in delivery_floor.check("p", metadata, tmp_path, record, author=author)["issues"]}
+
+    script = manuscript / "figure-src" / "design.py"
+    script.write_text("import matplotlib.pyplot as plt\nimport openlabs_fig as olf\nolf.save(plt.figure())\n")
+    assert "SCHEMATIC-ROUTE-NOT-VECTOR" in codes(author=True)
+    route = delivery_floor.schematic_route(manuscript, "design", plan)
+    assert route["route"] == "plot" and route["source"] == "figure-src/design.py"
+    # A script that composes an SVG (itself or through a figure-src helper) with library assets.
+    (manuscript / "figure-src" / "_kit.py").write_text("import os\nOUT = os.environ['FIG_SVG']\n")
+    script.write_text("import _kit\nicon = olf.find_asset('energy/battery.svg')\n")
+    route = delivery_floor.schematic_route(manuscript, "design", plan)
+    assert route == {"figure": "design", "route": "svg_html", "library": True,
+                     "source": "figure-src/design.py"}
+    assert "SCHEMATIC-ROUTE-NOT-VECTOR" not in codes(author=True)
+    plan["figures"][0]["source"] = "figure-src/design.tex"
+    (manuscript / "figure-src" / "design.tex").write_text(r"\begin{tikzpicture}\end{tikzpicture}")
+    assert delivery_floor.schematic_route(manuscript, "design", plan)["route"] == "tikz"
+    (manuscript / "figure-src" / "design.tex").rename(manuscript / "design-tikz.txt")
+    plan["figures"][0]["source"] = "figure-src/design.py"
+    # At delivery: the ready decision's reader must have seen the current schematic file.
+    digest = hashlib.sha256(b"design").hexdigest()
+    seen = {"merged": {"outcome": "ready"},
+            "delivery_reader": {"image_inputs": {"design.pdf": digest}}}
+    assert "SCHEMATIC-ROUTE-UNREVIEWED" not in codes(seen)
+    assert "SCHEMATIC-ROUTE-UNREVIEWED" in codes({**seen, "merged": {"outcome": "revision_required"}})
+    (manuscript / "design.pdf").write_bytes(b"redrawn")
+    assert "SCHEMATIC-ROUTE-UNREVIEWED" in codes(seen)
+    assert "SCHEMATIC-ROUTE-UNREVIEWED" not in codes(author=True)

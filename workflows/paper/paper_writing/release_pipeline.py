@@ -397,7 +397,7 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
             remedy = "zenodo_prepare"
         elif code in CODES and support["release_needed"] and review.get("decision_current"):
             remedy = "publication_metadata"
-        elif code == "FIGURES-NOT-REVIEWED":
+        elif code in {"FIGURES-NOT-REVIEWED", "SCHEMATIC-ROUTE-UNREVIEWED"}:
             remedy = "delta_review"
             if review.get("ready"):
                 review["current"] = False
