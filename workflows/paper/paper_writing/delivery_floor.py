@@ -49,7 +49,8 @@ def registry_byline_issues(metadata, byline_text=None):
     if not named:
         return [("REGISTRY-AUTHORS-MISSING",
                  "Register the approved byline (authors with affiliation_ids, default roster "
-                 "registry/settings.yaml#defaults.authors unless the paper has its own) in the paper "
+                 "registry/settings.yaml#defaults.authors with the rotating second author that "
+                 "`paper create` registers, unless the paper has its own) in the paper "
                  "record: the management site, Zenodo and the declarations read the registry, not main.tex.")]
     issues = []
     known = {str(item.get("id")) for item in metadata.get("affiliations") or []

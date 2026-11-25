@@ -276,7 +276,12 @@ def create_paper(
     }
     if target_journal and target_journal.strip():
         payload["target_journal"] = target_journal.strip()
-    return write_paper_metadata(paper_id, payload, repo_root)
+    path = write_paper_metadata(paper_id, payload, repo_root)
+    # The default byline, second author by rotation (UD-20261125-second-author-rotation).
+    from paper_writing.author_rotation import assign as assign_default_byline
+
+    assign_default_byline(paper_id, repo_root)
+    return path
 
 
 def canonical_public_manuscript_filename(

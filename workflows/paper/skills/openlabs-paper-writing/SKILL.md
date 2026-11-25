@@ -23,7 +23,9 @@ prose. Use only the canonical artifacts, never a parallel state file:
 - internal reviews: `reviews/`; release status: the record's `writing_release`.
 
 Create a new paper with `paper-writing paper create` (also inside a campaign workspace or a
-private review root). The record keeps `workspace: papers/<paper_id>` and every manuscript,
+private review root). It also registers the byline: the default roster with the second
+author rotating (`defaults.second_author_rotation`, record field `author_assignment`); keep it
+unless the user gives this paper its own authors. The record keeps `workspace: papers/<paper_id>` and every manuscript,
 PDF and evidence path under `papers/<paper_id>/`; never `workspace: .` or a root-level
 `manuscript/`. New records in other layouts are refused (existing ones only warn until
 `program adopt` relocates them), and only this layout is delivered
