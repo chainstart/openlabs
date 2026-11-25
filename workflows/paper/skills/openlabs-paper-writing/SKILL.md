@@ -47,6 +47,13 @@ assigned reviewer role. Repository rules override vendored instructions; in part
 
 Select the article type and class from the [journal proof catalog](../../templates/journal-proofs/README.md). Compile the matching short sample, carry its measured column widths into the figure plan, and use the publisher’s current submission options for the actual manuscript. The Nature layout is a preview. Floats follow the figure skill: in a single-column layout use `figure[!htbp]` after the first citing paragraph, never `figure*` or `[t]` alone.
 
+One manuscript is one `main.tex` and one `references.bib` (user 2026-11-25): no section or
+chapter files, no `\input`/`\include` of text, tables or macros; keep the paper's own macros in
+the preamble; ship only the journal's official class and style files (`.cls`/`.bst`) beside it
+and only the figures the text includes. Generated numbers or tables go into `main.tex` itself.
+Older multi-file manuscripts are flattened at delivery by `paper-writing flatten` (the
+submission package checks that the flattened PDF matches page by page).
+
 Use the owner's two to four takeaways and the claim–evidence map to draft one page in
 `writing/storyline.md`: intended reader, question, decisive comparison, quantitative answer,
 meaning, the limitation that changes interpretation and what belongs outside the main text.
@@ -151,8 +158,11 @@ Handling a rejection: `docs/JOURNAL_HISTORY.md#handling-a-rejection`.
    `review resynthesize --response` with the saved draft; `review resynthesize --dry-run` checks a
    reply without recording anything.
 6. After a passing gate, run `paper-writing zenodo release` under the standing authorization,
-   commit the DOI/receipt, then `paper-writing handoff release` (research-program papers are
-   delivered by the orchestrator when `[program] auto_handoff` is on). None of this submits the
+   commit the DOI/receipt, then `paper-writing submission prepare --paper-id <id>` (cover letter,
+   suggested reviewers, single-file LaTeX check; the pipeline runs it once per version) and
+   `paper-writing handoff release`, which uploads the submission package (投稿包) built by
+   `paper-writing submission build` (research-program papers are delivered by the orchestrator
+   when `[program] auto_handoff` is on). None of this submits the
    paper, creates a journal event, or authorizes spending; those stay with a human.
 
 ## Finish

@@ -2998,9 +2998,38 @@ class _ReleasePipeline:
             self.entry("support_published", version_doi=result.get("version_doi"))
             # The DOI/receipt registry update is committed by the next step.
             return True
+        if self.prepare_submission_materials(status):
+            return True
         self.commit(status, "release-ready")
         self.deliver(status)
         return False
+
+    def prepare_submission_materials(self, status: Mapping[str, Any]) -> bool:
+        """Draft the cover letter and reviewers, verify the single-file LaTeX (投稿包, 2026-11-25).
+
+        Once per manuscript version, before delivery. Advisory: a failure is recorded and the
+        package then carries a template and a note; delivery goes on. True: re-check this tick.
+        """
+        materials = status.get("submission_materials")
+        if not isinstance(materials, Mapping) or not materials.get("pending") or materials.get("legacy"):
+            return False
+        version = str(status.get("version") or self.version)
+        if self.state.get("submission_materials_attempted") == version:
+            return False  # tried for this version; the package says what is missing
+        self.stage = "submission_materials"
+        try:
+            result = _run_paper_command(self.paths, self.settings,
+                                        ["submission", "prepare", "--paper-id", self.paper_id],
+                                        timeout=3_600)
+            detail = {"flatten": (result.get("flatten") or {}).get("status"),
+                      "draft": (result.get("draft") or {}).get("status"),
+                      "reviewers": (result.get("draft") or {}).get("reviewers_kept")}
+        except DeliveryError as exc:
+            detail = {"error": str(exc)[:400]}
+        self.save("release_submission_materials", "submission_package_materials", stage=self.stage,
+                  status="running", submission_materials_attempted=version, detail=detail)
+        self.entry("submission_materials", **detail)
+        return True
 
     # ------------------------------------------------------------------ steps
 

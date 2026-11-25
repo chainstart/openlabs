@@ -1178,3 +1178,23 @@ def test_registered_ready_decision_queues_only_after_binding_validation(tmp_path
     assert result["handoff"]["status"] == "queued"
     assert result["paper_id"] == PAPER_ID
     assert not program_autonomy.queue_registered_ready(db, paths, settings, report, topic_id)["changed"]
+
+
+@pytest.mark.parametrize("stuck", [False, True])
+def test_submission_materials_are_prepared_once_per_version_before_delivery(
+    tmp_path, monkeypatch, stuck
+):
+    """投稿包 (2026-11-25): cover letter, reviewers and the single-file LaTeX check run once
+    before delivery; a run that leaves them pending is not repeated and delivery goes on."""
+    paths, db, settings, topic, log = _setup(
+        tmp_path, monkeypatch, support="not_required",
+        paper_extra={"submission_materials": {"pending": True, "stuck": stuck}})
+    report = _ready(paths, db, settings, monkeypatch, topic)
+    assert report.errors == [], report.errors
+    commands = _commands(log)
+    assert commands.count("submission prepare") == 1
+    assert commands.index("submission prepare") < commands.index("program deliver")
+    final = _topic(paths, settings, topic["topic_id"])
+    assert final["handoff"]["status"] == "delivered"
+    assert final["release"]["submission_materials_attempted"] == "1.0.0"
+    assert "release_submission_materials" in set(_events(db, topic["topic_id"]))

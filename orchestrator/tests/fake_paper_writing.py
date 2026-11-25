@@ -166,7 +166,19 @@ def main(argv: list[str]) -> int:
             "delivered": bool((paper.get("delivery") or {}).get("package_id"))
                          and paper["delivery"].get("version") == paper["version"],
             "delivery": paper.get("delivery"),
+            "submission_materials": paper.get("submission_materials"),
         }))
+        return 0
+    if command == "submission prepare":
+        # Drafts the cover letter and checks the LaTeX; "stuck" simulates a run that writes
+        # no receipt (the pipeline must not call it again for the same version).
+        materials = paper.get("submission_materials") or {}
+        if not materials.get("stuck"):
+            materials["pending"] = False
+        paper["submission_materials"] = materials
+        save()
+        print(json.dumps({"ok": True, "flatten": {"status": "verified"},
+                          "draft": {"status": "drafted", "reviewers_kept": 3}}))
         return 0
     if command == "program bind-release-artifacts":
         assert not external

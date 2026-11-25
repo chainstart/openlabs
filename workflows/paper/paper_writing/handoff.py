@@ -927,7 +927,28 @@ def build_handoff_package(
         metadata, repo_root, manuscript, files, supplement_source,
     )
     file_count = len(files)
-    if verified_archive is not None:
+    version = str(metadata.get("version") or "1.0.0")
+    # The submission package (投稿包, 2026-11-25) replaces the LaTeX source ZIP: one archive with
+    # the PDF, the single-file LaTeX, the supplement, the cover letter, the declarations as form
+    # text, journal items and suggested reviewers (submission_bundle). A version already
+    # delivered with the old source ZIP keeps it, so its package identity does not change.
+    from paper_writing import submission_bundle
+
+    bundle: dict[str, Any] | None = None
+    bundle_error: str | None = None
+    if not submission_bundle.legacy_source_required(repo_root, paper_id, version):
+        with tempfile.TemporaryDirectory(prefix=f"ara-{paper_id}-submission-") as work:
+            try:
+                built, bundle = submission_bundle.build(paper_id, root=repo_root, metadata=metadata,
+                                                        output=work)
+                source_zip = target / submission_bundle.PACKAGE_FILENAME
+                shutil.copyfile(built, source_zip)
+                file_count = len(bundle["files"])
+            except (submission_bundle.SubmissionBundleError, OSError) as exc:
+                bundle, bundle_error = None, str(exc)[:500]
+    if bundle is not None:
+        pass  # the package already holds the flattened LaTeX
+    elif verified_archive is not None:
         archive_path, file_count = verified_archive
         shutil.copyfile(archive_path, source_zip)
     else:
@@ -959,9 +980,19 @@ def build_handoff_package(
             "size": supplement_pdf.stat().st_size,
             "sha256": sha256_file(supplement_pdf),
         }
-    version = str(metadata.get("version") or "1.0.0")
     origin_commit = _git_head(repo_root)
     release = _release_snapshot(metadata)
+    if bundle is not None:
+        release["source_artifact"] = {
+            "kind": "submission_package", "filename": submission_bundle.PACKAGE_FILENAME,
+            "label": "投稿包", "profile": bundle["profile"],
+            "missing_required": bundle["missing_required"],
+            "latex_assembly": bundle["latex"]["assembly"],
+            "latex_verified": bool((bundle["latex"].get("verification") or {}).get("equivalent")),
+        }
+    elif bundle_error is not None:
+        release["source_artifact"] = {"kind": "latex_source", "filename": "source.zip",
+                                      "submission_package_error": bundle_error}
     projection = _paper_projection(paper_id, metadata, origin_commit=origin_commit)
     byline = projection["writing_metadata"]["authors"]
     missing = "待负责人核实"
@@ -972,7 +1003,11 @@ def build_handoff_package(
     portal = metadata.get("submission_url")
     if preparation.get("target_journal") == metadata.get("target_journal"):
         portal = portal or preparation.get("submission_portal")
-    roles = {"paper.pdf": "审稿正文", "source.zip": "稿源，上传前核对匿名要求"}
+    roles = ({"paper.pdf": "审稿正文",
+              submission_bundle.PACKAGE_FILENAME: "投稿包：PDF、单文件 LaTeX、补充材料、cover letter、"
+                                                  "声明表单文本、期刊材料与建议审稿人；先读其中 README.md"}
+             if bundle is not None else
+             {"paper.pdf": "审稿正文", "source.zip": "稿源，上传前核对匿名要求"})
     if supplement:
         roles["supplement.pdf"] = "补充材料"
     release["submission_checklist"] = {
@@ -988,9 +1023,13 @@ def build_handoff_package(
         "funding": byline["funding"] or missing,
         "data_url": metadata.get("data_url") or support.get("record_url") or missing,
         "code_url": metadata.get("code_url") or (support.get("github") or {}).get("repository_url") or missing,
-        "cover_letter_draft": f'Dear Editors, please consider "{projection["title"]}" for publication. [Add contribution and journal fit.]',
-        "ai_declaration_draft": "The authors used [tools and purposes]. [Describe author verification.]",
-        "interest_declaration_draft": "The authors declare [verified competing interests].",
+        "cover_letter_draft": (
+            "见投稿包 03-cover-letter/" if bundle is not None else
+            f'Dear Editors, please consider "{projection["title"]}" for publication. [Add contribution and journal fit.]'),
+        "ai_declaration_draft": ("见投稿包 04-declarations/portal-fields.md" if bundle is not None else
+                                 "The authors used [tools and purposes]. [Describe author verification.]"),
+        "interest_declaration_draft": ("见投稿包 04-declarations/portal-fields.md" if bundle is not None else
+                                       "The authors declare [verified competing interests]."),
         "fees": json.loads(json.dumps(metadata.get("target_journal_fee_evidence") or missing, default=str)),
         "files": roles,
         "receipt_status_at_packaging": "待核实",
@@ -1022,12 +1061,15 @@ def build_handoff_package(
         "release": release,
         "source": {
             "path": source_zip.name,
-            "filename": "source.zip",
+            "filename": source_zip.name,
             "size": source_zip.stat().st_size,
             "sha256": source_hash,
             "file_count": file_count,
+            "kind": "submission_package" if bundle is not None else "latex_source",
+            **({"identity_sha256": bundle["identity_sha256"]} if bundle is not None else {}),
             "assembly": (
-                "verified_journal_source_archive" if verified_archive is not None
+                "submission_package" if bundle is not None
+                else "verified_journal_source_archive" if verified_archive is not None
                 else "canonical_source_allowlist"
             ),
         },
@@ -1980,6 +2022,8 @@ def save_release_receipt(
             "filename": manifest["source"]["filename"],
             "size": manifest["source"]["size"],
             "sha256": manifest["source"]["sha256"],
+            **({"identity_sha256": manifest["source"]["identity_sha256"]}
+               if manifest["source"].get("identity_sha256") else {}),
         },
         "pdf": {
             "filename": manifest["pdf"]["filename"],
@@ -2285,7 +2329,13 @@ def _receipt_matches_artifacts(
             manifest_artifact, Mapping
         ):
             return False
-        for field in ("filename", "size", "sha256"):
+        fields: tuple[str, ...] = ("filename", "size", "sha256")
+        if section == "source" and receipt_artifact.get("identity_sha256") and \
+                manifest_artifact.get("identity_sha256"):
+            # A submission package: the manuscript-bound members identify it; its README,
+            # cover letter and form text follow mutable registry metadata.
+            fields = ("filename", "identity_sha256")
+        for field in fields:
             if receipt_artifact.get(field) != manifest_artifact.get(field):
                 return False
     return True

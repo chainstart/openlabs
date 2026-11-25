@@ -26,6 +26,14 @@ from paper_writing.handoff import (
 )
 
 
+@pytest.fixture
+def legacy_source_zip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build the pre-2026-11-25 LaTeX source ZIP (a version already delivered with it)."""
+    from paper_writing import submission_bundle
+
+    monkeypatch.setattr(submission_bundle, "legacy_source_required", lambda *_args: True)
+
+
 def test_review_content_fingerprint_ignores_only_preamble_author_metadata(
     tmp_path: Path,
 ) -> None:
@@ -251,7 +259,7 @@ def test_writing_projection_exposes_simulated_reviews_and_quality_gate() -> None
     assert gate["unresolved_review_blockers"] == ["Resolve evidence mismatch."]
 
 
-def test_build_handoff_contains_sources_images_and_pdf(tmp_path: Path) -> None:
+def test_build_handoff_contains_sources_images_and_pdf(tmp_path: Path, legacy_source_zip: None) -> None:
     paper_id = "20260721aillm0001"
     manuscript = tmp_path / "papers" / paper_id / "manuscript"
     figures = manuscript / "figures"
@@ -387,7 +395,7 @@ def _supplement_repo(tmp_path: Path) -> tuple[str, Path, Path]:
     return paper_id, manuscript, registry
 
 
-def test_supplement_package_has_clean_sources_and_snapshot_bound_pdf(tmp_path: Path) -> None:
+def test_supplement_package_has_clean_sources_and_snapshot_bound_pdf(tmp_path: Path, legacy_source_zip: None) -> None:
     paper_id, manuscript, _ = _supplement_repo(tmp_path)
     original_snapshot = manuscript_snapshot_sha256(manuscript, manuscript / "main.pdf")
     result = build_handoff_package(paper_id, root=tmp_path, output=tmp_path / "dist")
@@ -403,7 +411,7 @@ def test_supplement_package_has_clean_sources_and_snapshot_bound_pdf(tmp_path: P
     assert manuscript_snapshot_sha256(manuscript, manuscript / "main.pdf") != original_snapshot
 
 
-def test_journal_source_archive_is_reused_only_when_clean_current_and_exact(tmp_path: Path) -> None:
+def test_journal_source_archive_is_reused_only_when_clean_current_and_exact(tmp_path: Path, legacy_source_zip: None) -> None:
     paper_id, manuscript, registry = _supplement_repo(tmp_path)
     archive_path = tmp_path / "journal-source.zip"
     with zipfile.ZipFile(archive_path, "w") as archive:
@@ -1514,7 +1522,7 @@ def _register_word(manuscript: Path, registry: Path, asset: str | None = None) -
     return word
 
 
-def test_registered_word_is_retained_but_unregistered_word_is_excluded(tmp_path: Path) -> None:
+def test_registered_word_is_retained_but_unregistered_word_is_excluded(tmp_path: Path, legacy_source_zip: None) -> None:
     paper_id, manuscript, registry = _supplement_repo(tmp_path)
     word = _register_word(manuscript, registry)
     (manuscript / "unregistered.docx").write_bytes(word.read_bytes())
@@ -1555,7 +1563,7 @@ def test_registered_word_fails_closed(tmp_path: Path, failure: str) -> None:
 
 
 @pytest.mark.parametrize("include_word", [False, True])
-def test_verified_archive_requires_registered_word_and_tex_mirrors(tmp_path: Path, include_word: bool) -> None:
+def test_verified_archive_requires_registered_word_and_tex_mirrors(tmp_path: Path, legacy_source_zip: None, include_word: bool) -> None:
     paper_id, manuscript, registry = _supplement_repo(tmp_path)
     _register_word(manuscript, registry)
     archive_path = tmp_path / "journal-source.zip"

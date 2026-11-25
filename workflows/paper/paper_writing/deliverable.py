@@ -67,6 +67,11 @@ STAGE_EFFECTS: tuple[dict[str, str], ...] = (
     {"check": "support citations: process narrative, first/availability citation",
      "review": "-", "presentation": "-", "delivery": "advisory (preparation notes)",
      "why": "GATE1 2026-11-22"},
+    {"check": "submission package (投稿包): cover letter, suggested reviewers, declarations as "
+              "form text, single-file LaTeX equivalence (submission_bundle)",
+     "review": "-", "presentation": "-",
+     "delivery": "advisory (README items and release_metadata.source_artifact.missing_required)",
+     "why": "user 2026-11-25; the human pre-submission gate decides; new checks default to advice"},
     {"check": "review ready and current, support bound, snapshot unchanged, Git committed",
      "review": "-", "presentation": "-", "delivery": "blocking", "why": "E06"},
 )

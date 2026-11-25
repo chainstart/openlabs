@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 from paper_writing.bundles import validate_result_bundle
@@ -697,6 +698,16 @@ def _zenodo_release_arguments(
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # The submission package (投稿包) and the single-file LaTeX flattener have their own parsers.
+    if argv[:1] == ["submission"]:
+        from paper_writing.submission_bundle import main as submission_main
+
+        return submission_main(argv[1:])
+    if argv[:1] == ["flatten"]:
+        from paper_writing.flatten_tex import main as flatten_main
+
+        return flatten_main(argv[1:])
     args = build_parser().parse_args(argv)
     if hasattr(args, "config") and args.config is None:
         args.config = str(Path(args.root) / "registry" / "settings.yaml")

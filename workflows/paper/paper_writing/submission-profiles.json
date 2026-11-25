@@ -1,0 +1,192 @@
+{
+  "schema_version": "openlabs.submission_profiles.v1",
+  "updated_at": "2026-11-25",
+  "basis": "Official author pages saved 2026-11-25 (maintenance/20261125-submission-package/venue-requirements.json and refs/). JEST and IJHEH guides were not obtainable (HTTP 403); their items follow the Elsevier-wide rules and are marked for the submitter to re-check.",
+  "statuses": {
+    "required": "必需",
+    "required_if_applicable": "适用时必需",
+    "recommended": "建议",
+    "optional": "可选",
+    "revision_only": "修回时提交",
+    "not_required": "不需要"
+  },
+  "profiles": {
+    "nature_communications": {
+      "label": "Nature Communications (Nature Portfolio)",
+      "article_type": "Article",
+      "match": {"journals": ["Nature Communications"]},
+      "sources": [
+        "https://www.nature.com/ncomms/submit/how-to-submit",
+        "https://www.nature.com/ncomms/submit/policy",
+        "https://www.nature.com/ncomms/submit/article",
+        "https://www.nature.com/nature-portfolio/editorial-policies/reporting-standards"
+      ],
+      "cover_letter": {
+        "audience": "the editors of Nature Communications, who judge importance and interest for a broad, multidisciplinary readership before sending a paper to review",
+        "paragraphs": ["significance", "novelty", "fit"],
+        "statements": ["original_not_elsewhere", "all_authors_approved", "related_manuscripts", "preprint", "reviewers_in_system"],
+        "avoid": "Do not repeat the abstract. Do not restate funding or declarations beyond one sentence."
+      },
+      "ai_statement_location": "NC asks for LLM use to be documented in the Methods; our manuscripts carry it as a separate closing section (Scientific Reports precedent). Move it into Methods if the editor asks.",
+      "items": [
+        {"id": "manuscript_pdf", "label": "正文 PDF（初投可为单个 PDF，图嵌入正文）", "status": "required", "provided_by": "package", "portal": "Manuscript / Article file", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
+        {"id": "latex_source", "label": "LaTeX 源文件（单个 .tex；修回时 NC 要求不用 .bib，把 .bbl 内容粘入 .tex）", "status": "revision_only", "provided_by": "package", "portal": "Revision: Manuscript source", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
+        {"id": "supplementary_information", "label": "补充材料（合并为单个 PDF）", "status": "optional", "provided_by": "package", "portal": "Supplementary Information", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
+        {"id": "cover_letter", "label": "Cover letter（重要性、新颖性、适合本刊读者；相关稿件与预印本说明）", "status": "required", "provided_by": "model_draft", "portal": "Cover letter", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
+        {"id": "competing_interests", "label": "Competing interests（文末一节 + 系统表单）", "status": "required", "provided_by": "manuscript", "portal": "Competing interests (form) / manuscript end", "source": "https://www.nature.com/ncomms/submit/policy"},
+        {"id": "data_availability", "label": "Data availability（文末一节 + 系统表单）", "status": "required", "provided_by": "manuscript", "portal": "Data availability (form)", "source": "https://www.nature.com/ncomms/submit/policy"},
+        {"id": "code_availability", "label": "Code availability（使用自编代码时）", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Code availability (manuscript end)", "source": "https://www.nature.com/ncomms/submit/policy"},
+        {"id": "author_contributions", "label": "Author contributions（逐人说明，不要求 CRediT）", "status": "required", "provided_by": "manuscript", "portal": "Author contributions (form)", "source": "https://www.nature.com/ncomms/submit/policy"},
+        {"id": "funding", "label": "Funding 声明（不放在致谢里）", "status": "required", "provided_by": "manuscript", "portal": "Funding (form)", "source": "https://www.nature.com/ncomms/submit/policy"},
+        {"id": "ai_use_statement", "label": "AI/LLM 使用声明（NC 要求写在 Methods）", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Methods (manuscript)", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
+        {"id": "reporting_summary", "label": "Reporting Summary（生命科学、行为与社会科学、生态/进化/环境研究送审前必交；纯计算/物理/工程/数学一般不适用）", "status": "required_if_applicable", "provided_by": "human", "portal": "Reporting summary (upload)", "source": "https://www.nature.com/nature-portfolio/editorial-policies/reporting-standards", "applies_to_domains": ["biology", "medicine", "health", "neuroscience", "ecology", "environment", "social", "behavioural"]},
+        {"id": "editorial_policy_checklist", "label": "Editorial Policy Checklist（仅 2019 版指南提及，现行页面无；以系统界面为准）", "status": "optional", "provided_by": "human", "portal": "Editorial policy checklist (if the system asks)", "source": "https://www.nature.com/ncomms/submit/policy"},
+        {"id": "suggested_reviewers", "label": "建议审稿人（姓名与联系方式）", "status": "recommended", "provided_by": "model_draft", "portal": "Suggested reviewers (form)", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
+        {"id": "excluded_reviewers", "label": "排除审稿人（少数，须点名）", "status": "optional", "provided_by": "human", "portal": "Opposed reviewers (form)", "source": "https://www.nature.com/nature-portfolio/editorial-policies/peer-review"},
+        {"id": "related_manuscripts", "label": "相关在审稿件（存在时上传并在 cover letter 说明）", "status": "required_if_applicable", "provided_by": "human", "portal": "Related manuscripts (upload)", "source": "https://www.nature.com/ncomms/submit/policy"},
+        {"id": "preprint", "label": "预印本（允许；投稿时披露 DOI 与许可）", "status": "optional", "provided_by": "human", "portal": "Preprint (form)", "source": "https://www.nature.com/nature-portfolio/editorial-policies/preprints-and-conference-proceedings"},
+        {"id": "source_data", "label": "Source data（编辑索取时，修回阶段）", "status": "revision_only", "provided_by": "human", "portal": "Source data", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
+        {"id": "figures_separate", "label": "单独图件文件（修回阶段）", "status": "revision_only", "provided_by": "package", "portal": "Figures", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
+        {"id": "orcid", "label": "通讯作者 ORCID（终稿前关联）", "status": "revision_only", "provided_by": "human", "portal": "Author details", "source": "https://www.nature.com/ncomms/submit/how-to-submit"},
+        {"id": "cv", "label": "CV（官方页面未要求）", "status": "not_required", "provided_by": "human", "portal": "-", "source": "https://www.nature.com/ncomms/submit/how-to-submit"}
+      ],
+      "manual_steps": [
+        "在投稿系统逐项填写 competing interests、data availability、author contributions、funding（文本见 04-declarations/portal-fields.md）。",
+        "确认是否适用 Reporting Summary（生命科学、行为与社会科学、生态/进化/环境研究送审前必交），适用时下载 Nature 官方表格填写后上传。",
+        "预印本：如已发布，在系统中填写 DOI 与许可；如愿意，可勾选 In Review。",
+        "透明同行评审：NC 自 2022-11-01 起公开审稿意见与回复信，回复信按公开文件写。",
+        "APC 在录用后支付（约 GBP 5490 / USD 7350），投稿无费用；许可在 CC BY 与 CC BY-NC-ND 中选择。"
+      ]
+    },
+    "scientific_reports": {
+      "label": "Scientific Reports (Nature Portfolio)",
+      "article_type": "Article",
+      "match": {"journals": ["Scientific Reports"]},
+      "sources": ["https://www.nature.com/srep/author-instructions/submission-guidelines"],
+      "cover_letter": {
+        "audience": "the editors of Scientific Reports, who assess technical soundness rather than perceived significance",
+        "paragraphs": ["significance", "novelty", "fit"],
+        "statements": ["original_not_elsewhere", "all_authors_approved", "related_manuscripts", "preprint", "reviewers_in_letter"],
+        "avoid": "Keep the letter short; Scientific Reports judges soundness, so do not oversell significance."
+      },
+      "ai_statement_location": "Scientific Reports asks for LLM use in the Methods; the precedent paper carried it as a separate closing section.",
+      "items": [
+        {"id": "manuscript_pdf", "label": "正文（初投单文件 ≤3 MB，Word/LaTeX/PDF）", "status": "required", "provided_by": "package", "portal": "Manuscript", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "latex_source", "label": "LaTeX 源文件（修回时不接受 PDF 正文）", "status": "revision_only", "provided_by": "package", "portal": "Revision: Manuscript source", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "supplementary_information", "label": "补充材料（单个文件，偏好 PDF）", "status": "optional", "provided_by": "package", "portal": "Supplementary Information", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "cover_letter", "label": "Cover letter（含建议/排除审稿人）", "status": "required", "provided_by": "model_draft", "portal": "Cover letter", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "competing_interests", "label": "Competing interests（Additional Information 小节，逐个作者）", "status": "required", "provided_by": "manuscript", "portal": "Competing interests (form)", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "data_availability", "label": "Data availability", "status": "required", "provided_by": "manuscript", "portal": "Data availability", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "code_availability", "label": "Code availability", "status": "recommended", "provided_by": "manuscript", "portal": "Manuscript end", "source": "https://www.nature.com/nature-portfolio/editorial-policies/reporting-standards"},
+        {"id": "author_contributions", "label": "Author contributions", "status": "required", "provided_by": "manuscript", "portal": "Author contributions (form)", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "funding", "label": "Funding（正文与系统都要写）", "status": "required", "provided_by": "manuscript", "portal": "Funding (form)", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "ai_use_statement", "label": "AI/LLM 使用声明", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Methods (manuscript)", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "suggested_reviewers", "label": "建议审稿人（写入 cover letter）", "status": "recommended", "provided_by": "model_draft", "portal": "Cover letter", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "excluded_reviewers", "label": "排除审稿人（写入 cover letter）", "status": "optional", "provided_by": "human", "portal": "Cover letter", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "graphical_abstract", "label": "图文摘要（本刊不支持）", "status": "not_required", "provided_by": "human", "portal": "-", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"},
+        {"id": "cv", "label": "CV（官方页面未要求）", "status": "not_required", "provided_by": "human", "portal": "-", "source": "https://www.nature.com/srep/author-instructions/submission-guidelines"}
+      ],
+      "manual_steps": [
+        "初投正文单文件不超过 3 MB；超过时改交压缩图件的 PDF。",
+        "在系统中填写 competing interests 与 funding（文本见 04-declarations/portal-fields.md）。",
+        "APC 在录用后支付。"
+      ]
+    },
+    "elsevier": {
+      "label": "Elsevier journal",
+      "match": {"publisher_contains": ["Elsevier", "Cell Press", "Urban & Fischer"]},
+      "sources": [
+        "https://www.elsevier.com/researcher/author/policies-and-guidelines",
+        "https://www.elsevier.com/about/policies-and-standards/generative-ai-policies-for-journals"
+      ],
+      "cover_letter": {
+        "audience": "the handling editor of the journal",
+        "paragraphs": ["significance", "novelty", "fit"],
+        "statements": ["original_not_elsewhere", "all_authors_approved", "preprint"],
+        "avoid": "Elsevier's 2026 guides ask that the cover letter not carry funding, declarations or suggested reviewers: these are entered in the submission system. Keep it under one page."
+      },
+      "ai_statement_location": "Separate section at the end of the manuscript, immediately above the references (Elsevier generative-AI policy).",
+      "items": [
+        {"id": "latex_source", "label": "可编辑源文件（2026 版指南：PDF 不能作为源文件；单个 main.tex + references.bib + 图件）", "status": "required", "provided_by": "package", "portal": "Manuscript (LaTeX source files)", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "manuscript_pdf", "label": "正文 PDF（供核对；部分期刊 Your Paper Your Way 允许初投单 PDF）", "status": "optional", "provided_by": "package", "portal": "Manuscript (PDF, if accepted)", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "figures_separate", "label": "单独图件文件", "status": "required", "provided_by": "package", "portal": "Figure", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "supplementary_information", "label": "补充材料", "status": "optional", "provided_by": "package", "portal": "Supplementary material", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "highlights", "label": "Highlights（3–5 条，每条 ≤85 字符，单独可编辑文件）", "status": "recommended", "provided_by": "manuscript", "portal": "Highlights", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "graphical_abstract", "label": "图文摘要（随期刊；多数可选）", "status": "optional", "provided_by": "human", "portal": "Graphical abstract", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "cover_letter", "label": "Cover letter（不写资助、声明与审稿人）", "status": "recommended", "provided_by": "model_draft", "portal": "Cover letter", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "competing_interests", "label": "Declaration of interest（正文声明）", "status": "required", "provided_by": "manuscript", "portal": "Manuscript end", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "declaration_of_interest_form", "label": "Declaration of interest 表格（declarations.elsevier.com 生成的 .docx，须与正文一致）", "status": "required", "provided_by": "human", "portal": "Declaration of interest", "source": "https://declarations.elsevier.com/"},
+        {"id": "author_contributions", "label": "CRediT 作者贡献", "status": "required", "provided_by": "manuscript", "portal": "CRediT (form) / manuscript end", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "data_availability", "label": "Data availability（系统选项 + 正文）", "status": "required", "provided_by": "manuscript", "portal": "Research data (form)", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "code_availability", "label": "Code availability（Elsevier 视代码为研究数据）", "status": "optional", "provided_by": "manuscript", "portal": "Manuscript end", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "funding", "label": "Funding", "status": "required", "provided_by": "manuscript", "portal": "Funding (form)", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "ai_use_statement", "label": "生成式 AI 使用声明（文末独立一节，参考文献之前）", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Manuscript end", "source": "https://www.elsevier.com/about/policies-and-standards/generative-ai-policies-for-journals"},
+        {"id": "suggested_reviewers", "label": "建议审稿人（机构邮箱；非近 3 年合作者）", "status": "recommended", "provided_by": "model_draft", "portal": "Suggest reviewers (form)", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "excluded_reviewers", "label": "回避审稿人", "status": "optional", "provided_by": "human", "portal": "Oppose reviewers (form)", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"},
+        {"id": "cv", "label": "CV（指南未要求）", "status": "not_required", "provided_by": "human", "portal": "-", "source": "https://www.elsevier.com/researcher/author/policies-and-guidelines"}
+      ],
+      "manual_steps": [
+        "在 declarations.elsevier.com 用通讯作者邮箱登录，生成 Declaration of interest .docx 并上传；内容须与正文的 Declaration of interest 一致（文本见 04-declarations/portal-fields.md）。",
+        "上传 LaTeX 源文件：01-manuscript/latex/ 下的 main.tex、references.bib、文档类与 .bst、figures/（Editorial Manager 由源文件生成审稿 PDF，核对生成的 PDF 与 01-manuscript/manuscript.pdf 一致）。",
+        "在系统中填写 CRediT、资助、数据可用性选项与建议审稿人（建议审稿人见 06-reviewers/，逐人核实机构邮箱）。",
+        "本刊官方作者指南（期刊页）在自动访问时返回 403，投稿前在浏览器中复核 highlights、图文摘要与字数要求。"
+      ]
+    },
+    "springer_nature": {
+      "label": "Springer Nature journal",
+      "match": {"publisher_contains": ["Springer", "Nature", "BioMed Central", "BMC"]},
+      "sources": ["https://www.springernature.com/gp/authors/campaigns/latex-author-support"],
+      "cover_letter": {
+        "audience": "the editor of the journal",
+        "paragraphs": ["significance", "novelty", "fit"],
+        "statements": ["original_not_elsewhere", "all_authors_approved", "related_manuscripts", "preprint"],
+        "avoid": "Keep it under one page."
+      },
+      "ai_statement_location": "Springer Nature asks for the model and purpose to be declared; journals place it in Methods or the Declarations section.",
+      "items": [
+        {"id": "manuscript_pdf", "label": "正文 PDF（是否接受初投单 PDF 随期刊而定）", "status": "required", "provided_by": "package", "portal": "Manuscript", "source": "https://www.springernature.com/gp/authors"},
+        {"id": "latex_source", "label": "LaTeX 源文件（Springer Nature 模板，须能用 pdflatex 编译）", "status": "recommended", "provided_by": "package", "portal": "Manuscript source", "source": "https://www.springernature.com/gp/authors/campaigns/latex-author-support"},
+        {"id": "supplementary_information", "label": "补充材料", "status": "optional", "provided_by": "package", "portal": "Supplementary material", "source": "https://www.springernature.com/gp/authors"},
+        {"id": "cover_letter", "label": "Cover letter", "status": "recommended", "provided_by": "model_draft", "portal": "Cover letter", "source": "https://www.springernature.com/gp/authors"},
+        {"id": "competing_interests", "label": "Declarations 节：Competing interests", "status": "required", "provided_by": "manuscript", "portal": "Declarations (form)", "source": "https://www.springernature.com/gp/policies/editorial-policies"},
+        {"id": "funding", "label": "Declarations 节：Funding（系统中另填）", "status": "required", "provided_by": "manuscript", "portal": "Funding (form)", "source": "https://www.springernature.com/gp/policies/editorial-policies"},
+        {"id": "data_availability", "label": "Declarations 节：Data availability", "status": "required", "provided_by": "manuscript", "portal": "Manuscript end", "source": "https://www.springernature.com/gp/authors/research-data-policy"},
+        {"id": "code_availability", "label": "Declarations 节：Code availability", "status": "optional", "provided_by": "manuscript", "portal": "Manuscript end", "source": "https://www.springernature.com/gp/policies/editorial-policies"},
+        {"id": "author_contributions", "label": "Declarations 节：Author contributions", "status": "required", "provided_by": "manuscript", "portal": "Manuscript end", "source": "https://www.springernature.com/gp/policies/editorial-policies"},
+        {"id": "ai_use_statement", "label": "AI 使用声明（写明模型与用途）", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Manuscript", "source": "https://www.springernature.com/gp/policies/editorial-policies"},
+        {"id": "suggested_reviewers", "label": "建议审稿人（须机构邮箱）", "status": "recommended", "provided_by": "model_draft", "portal": "Suggested reviewers (form)", "source": "https://www.springernature.com/gp/authors"},
+        {"id": "excluded_reviewers", "label": "排除审稿人", "status": "optional", "provided_by": "human", "portal": "Opposed reviewers (form)", "source": "https://www.springernature.com/gp/authors"},
+        {"id": "cv", "label": "CV（未要求）", "status": "not_required", "provided_by": "human", "portal": "-", "source": "https://www.springernature.com/gp/authors"}
+      ],
+      "manual_steps": [
+        "在系统中填写 Declarations 各项与资助（文本见 04-declarations/portal-fields.md）。",
+        "投稿前在期刊的 Submission guidelines 页复核是否接受初投单 PDF。"
+      ]
+    },
+    "generic": {
+      "label": "Journal (generic profile)",
+      "match": {},
+      "sources": [],
+      "cover_letter": {
+        "audience": "the editor of the journal",
+        "paragraphs": ["significance", "novelty", "fit"],
+        "statements": ["original_not_elsewhere", "all_authors_approved", "preprint"],
+        "avoid": "Keep it under one page."
+      },
+      "ai_statement_location": "Separate closing section (our default).",
+      "items": [
+        {"id": "manuscript_pdf", "label": "正文 PDF", "status": "required", "provided_by": "package", "portal": "Manuscript", "source": null},
+        {"id": "latex_source", "label": "LaTeX 源文件（单个 main.tex + references.bib）", "status": "recommended", "provided_by": "package", "portal": "Manuscript source", "source": null},
+        {"id": "supplementary_information", "label": "补充材料", "status": "optional", "provided_by": "package", "portal": "Supplementary material", "source": null},
+        {"id": "cover_letter", "label": "Cover letter", "status": "recommended", "provided_by": "model_draft", "portal": "Cover letter", "source": null},
+        {"id": "competing_interests", "label": "Competing interests", "status": "required", "provided_by": "manuscript", "portal": "Form / manuscript end", "source": null},
+        {"id": "author_contributions", "label": "Author contributions", "status": "recommended", "provided_by": "manuscript", "portal": "Form / manuscript end", "source": null},
+        {"id": "data_availability", "label": "Data availability", "status": "recommended", "provided_by": "manuscript", "portal": "Manuscript end", "source": null},
+        {"id": "funding", "label": "Funding", "status": "required", "provided_by": "manuscript", "portal": "Form", "source": null},
+        {"id": "ai_use_statement", "label": "AI 使用声明", "status": "required_if_applicable", "provided_by": "manuscript", "portal": "Manuscript end", "source": null},
+        {"id": "suggested_reviewers", "label": "建议审稿人", "status": "optional", "provided_by": "model_draft", "portal": "Form", "source": null}
+      ],
+      "manual_steps": ["按期刊投稿系统逐项填写；先在期刊官方 Guide for Authors 页面核对材料要求。"]
+    }
+  }
+}

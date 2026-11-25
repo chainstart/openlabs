@@ -464,6 +464,15 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "delivered": current_version_delivered(metadata, repo_root, paper_id),
         "delivery": dict(delivery) if delivery else None,
     }
+    # The submission package's model/TeX inputs for this version (submission_bundle.prepare):
+    # the release pipeline runs `paper-writing submission prepare` once before delivery.
+    try:
+        from paper_writing.submission_bundle import materials_status
+
+        status["submission_materials"] = (None if manuscript_missing
+                                          else materials_status(paper_id, root=repo_root, metadata=metadata))
+    except Exception as exc:  # noqa: BLE001 - advisory; never blocks delivery
+        status["submission_materials"] = {"pending": False, "error": str(exc)[:300]}
     # The one deliverability verdict (deliverable.py, B5): what queue_registered_ready and the
     # site submitter rule read.
     status["deliverable"] = summarize(status)
