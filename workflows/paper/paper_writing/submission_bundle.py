@@ -176,7 +176,8 @@ DECLARATION_PATTERNS: tuple[tuple[str, str], ...] = (
     ("ethics", r"ethic"),
     ("acknowledgements", r"acknowledg"),
 )
-_HEADING = re.compile(r"\\(section|subsection|subsubsection|paragraph)\*?\s*\{([^{}\n]*)\}")
+# \\bmhead: the run-in heading of the Springer Nature sn-jnl class (Funding, Competing interests).
+_HEADING = re.compile(r"\\(section|subsection|subsubsection|paragraph|bmhead)\*?\s*\{([^{}\n]*)\}")
 
 
 def manuscript_declarations(source: str, bib: Mapping[str, Mapping[str, Any]] | None = None
@@ -313,6 +314,8 @@ def _name_parts(name: str) -> tuple[str, str]:
     import unicodedata
 
     def fold(value: str) -> str:
+        # TeX accents ({\'c}, \v{s}, {\"o}) name the base letter: Latkovi{\'c} is Latković.
+        value = re.sub(r"\\[`'^\"~=.uvHtcdbk]\s*\{?\s*([A-Za-z])\s*\}?", r"\1", value)
         value = latex_to_text(value)
         value = unicodedata.normalize("NFKD", value)
         return "".join(c for c in value if not unicodedata.combining(c)).casefold().strip(" .")
@@ -1070,7 +1073,8 @@ def compose_letter(metadata: Mapping[str, Any], spec: Mapping[str, Any], paragra
     lines += ["Sincerely,", ""]
     if corresponding:
         units = "; ".join(affiliations.get(str(i), "") for i in corresponding.get("affiliation_ids") or [])
-        lines += [str(corresponding.get("name")), units, "[e-mail]"]
+        lines += [str(corresponding.get("name")), units,
+                  str(corresponding.get("email") or "").strip() or "[e-mail]"]
     else:
         lines += ["[Corresponding author]"]
     return "\n".join(lines).rstrip() + "\n"

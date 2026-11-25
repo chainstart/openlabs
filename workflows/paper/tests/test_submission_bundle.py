@@ -331,3 +331,16 @@ def test_reviewer_verification_record_travels_with_the_package(tmp_path: Path) -
         output=tmp_path / "pkg2")
     assert other["reviewers_verified_on"] is None
     assert any("不属于 v1.0.0" in note for note in other["notes"])
+
+
+def test_springer_run_in_declarations_and_tex_accented_names() -> None:
+    source = ("\\section*{Declarations}\n\\bmhead{Funding} No specific grant.\n\n"
+              "\\bmhead{Competing interests} The authors declare no competing interests.\n\n"
+              "\\bmhead{Data availability} On Zenodo.\n\\bibliography{refs}\n")
+    found = submission_bundle.manuscript_declarations(source)
+    assert found["funding"]["text"].startswith("No specific grant")
+    assert "no competing interests" in found["competing_interests"]["text"]
+    assert found["data_availability"]["text"] == "On Zenodo."
+    assert submission_bundle.same_person("Latković, O.", "Latkovi{\\'c}, O.")
+    assert submission_bundle.same_person("Andrej Prša", "Pr{\\v{s}}a, Andrej")
+    assert not submission_bundle.same_person("Latković, O.", "Lazarevi{\\'c}, S.")
