@@ -594,11 +594,19 @@ class ReadOnlyFactoryDB(FactoryDB):
         return _connection()
 
 
-def argv_model(runner: str, environment: Mapping[str, str] | None = None) -> str | None:
-    """Model named by ``-m``/``--model`` in ``OPENLABS_AGENT_COMMAND_<RUNNER>_JSON``, if any."""
+def argv_model(runner: str, environment: Mapping[str, str] | None = None, *,
+               resume: bool = False) -> str | None:
+    """Model named by ``-m``/``--model`` in ``OPENLABS_AGENT_COMMAND_<RUNNER>_JSON``, if any.
+
+    ``resume``: the same for ``OPENLABS_AGENT_RESUME_COMMAND_<RUNNER>_JSON``.
+    """
 
     env = os.environ if environment is None else environment
-    raw = env.get(f"OPENLABS_AGENT_COMMAND_{runner.upper()}_JSON")
+    kind = "RESUME_COMMAND" if resume else "COMMAND"
+    return _command_model(env.get(f"OPENLABS_AGENT_{kind}_{runner.upper()}_JSON"))
+
+
+def _command_model(raw: str | None) -> str | None:
     if not raw:
         return None
     try:
@@ -614,6 +622,52 @@ def argv_model(runner: str, environment: Mapping[str, str] | None = None) -> str
         if text.startswith("--model="):
             return text.split("=", 1)[1]
     return None
+
+
+# Models the user has stopped using; any runner command naming one is reported every tick.
+# User 2026-11-23: "最好不用fable了，太贵了" (the NC trial found a Fable runner left in a command).
+FORBIDDEN_MODEL_PREFIXES = ("claude-fable-",)
+
+
+def runner_model_warnings(settings: FactorySettings,
+                          environment: Mapping[str, str] | None = None) -> list[str]:
+    """Tick warnings: runner commands that do not run the model ``[runners]`` declares.
+
+    ``[runners.<name>].model`` is what routing, family independence and cost accounting
+    assume; the ``-m``/``--model`` of the agent command (and its resume command) is what
+    runs. A mismatch, and any forbidden model (Fable) in a runner model, an agent command or
+    a probe command, is reported; scheduling is not changed. Variable names are named,
+    never their whole values.
+    """
+
+    env = os.environ if environment is None else environment
+    warnings: list[str] = []
+
+    def forbidden(text: str) -> str | None:
+        return next((prefix for prefix in FORBIDDEN_MODEL_PREFIXES if prefix in text), None)
+
+    for spec in sorted(settings.runners.values(), key=lambda item: item.name):
+        if spec.model and forbidden(spec.model):
+            warnings.append(f"runner {spec.name}: [runners.{spec.name}].model {spec.model} is a "
+                            "model the user has stopped using (Fable)")
+        for resume in (False, True):
+            launched = argv_model(spec.name, env, resume=resume)
+            variable = (f"OPENLABS_AGENT_{'RESUME_COMMAND' if resume else 'COMMAND'}_"
+                        f"{spec.name.upper()}_JSON")
+            if launched is not None and spec.model and launched != spec.model:
+                warnings.append(f"runner {spec.name}: {variable} runs --model {launched} but "
+                                f"[runners.{spec.name}].model is {spec.model}")
+    for name in sorted(env):
+        if name.startswith("OPENLABS_AGENT_") and name.endswith("_JSON"):
+            hit = forbidden(str(env.get(name) or ""))
+            if hit:
+                warnings.append(f"{name} names a {hit}* model; the user has stopped using Fable")
+    for key, argv in sorted((getattr(settings.routing, "probe_commands", None) or {}).items()):
+        hit = forbidden(" ".join(str(item) for item in argv))
+        if hit:
+            warnings.append(f"[routing.probe_commands].{key} names a {hit}* model; the user has "
+                            "stopped using Fable")
+    return warnings
 
 
 def division_of_labour(

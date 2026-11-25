@@ -22,7 +22,7 @@ from openlabs.config import (
     load_routing_settings,
     lookup_task_tier,
 )
-from openlabs.utilization import argv_model, division_of_labour
+from openlabs.utilization import argv_model, division_of_labour, runner_model_warnings
 from test_quota_routing import CLAUDE, GPT, NOW, _claim, _enqueue, _routed_events, _setup
 from test_quota_routing import _settings as _base_settings
 from test_quota_routing import _snapshot
@@ -392,6 +392,32 @@ def test_division_of_labour_table() -> None:
     assert table["argv_model_mismatch"] == {
         "worker_gpt": {"configured": "gpt-6.2-sol", "argv": "gpt-6.1-sol"}}
     assert argv_model("light_gpt", env) is None
+
+
+def test_runner_model_warnings_flag_mismatch_and_fable() -> None:
+    """NC trial 2026-11-25: a toml/env model mismatch (and Fable) is reported every tick."""
+
+    settings = _settings()
+    env = {"OPENLABS_AGENT_COMMAND_WORKER_GPT_JSON":
+           json.dumps(["codex", "exec", "-m", "gpt-6.1-sol", "-"]),
+           "OPENLABS_AGENT_RESUME_COMMAND_WORKER_CLAUDE_JSON":
+           json.dumps(["claude", "-p", "--resume", "{session_id}", "--model", "claude-fable-5-2"]),
+           "OPENLABS_AGENT_COMMAND_LIGHT_CLAUDE_JSON":
+           json.dumps(["claude", "-p", "--model", "claude-haiku-5-5"])}
+    warnings = runner_model_warnings(settings, env)
+    text = "\n".join(warnings)
+    assert "OPENLABS_AGENT_COMMAND_WORKER_GPT_JSON runs --model gpt-6.1-sol" in text
+    assert "[runners.worker_gpt].model is gpt-6.2-sol" in text
+    assert "OPENLABS_AGENT_RESUME_COMMAND_WORKER_CLAUDE_JSON runs --model claude-fable-5-2" in text
+    assert "OPENLABS_AGENT_RESUME_COMMAND_WORKER_CLAUDE_JSON names a claude-fable-* model" in text
+    assert "[runners.lead_claude].model claude-fable-5-2" in text  # the toml runner itself
+    assert not any("light_claude" in item or "LIGHT_CLAUDE" in item for item in warnings)
+    clean = replace(settings, runners={
+        name: replace(spec, model="claude-opus-5-5") if spec.model == "claude-fable-5-2" else spec
+        for name, spec in settings.runners.items()})
+    assert runner_model_warnings(clean, {
+        "OPENLABS_AGENT_COMMAND_WORKER_GPT_JSON":
+        json.dumps(["codex", "exec", "-m", "gpt-6.2-sol", "-"])}) == []
 
 
 def test_newest_gpt_versions_are_priced() -> None:

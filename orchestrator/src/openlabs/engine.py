@@ -790,6 +790,8 @@ class TickReport:
     attempts_quarantined: list[dict[str, str]] = field(default_factory=list)
     attempts_recovered: list[dict[str, str]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Configuration problems that do not stop the tick (runner model consistency, ...).
+    warnings: list[str] = field(default_factory=list)
     status_counts: dict[str, int] = field(default_factory=dict)
     resource_capacity: dict[str, int] = field(default_factory=dict)
     resource_reserved: dict[str, int] = field(default_factory=dict)
@@ -853,6 +855,7 @@ class TickReport:
         for name in (
             "parallel_limit", "host_usage", "ailab", "local_compute", "balance", "remote_waits",
             "idle_metrics", "token_cost", "topic_economics", "no_progress_guard", "data_sync",
+            "warnings",
         ):
             value = getattr(self, name)
             if value:
@@ -4166,6 +4169,12 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
         report.data_sync = synced
 
     _recover_attempt_workspaces(db, paths, report)
+    # Runner model consistency ([runners] vs the agent commands; Fable anywhere): a warning
+    # only, never a reason to stop scheduling (NC trial 2026-11-25, item 5).
+    try:
+        report.warnings.extend(utilization.runner_model_warnings(settings))
+    except Exception as exc:  # noqa: BLE001 - advisory
+        report.warnings.append(f"runner model check failed: {exc}")
 
     # Active project configs are desired state: bind their workstreams before
     # processing completions so a safety-window boundary can roll over instead of idle.
