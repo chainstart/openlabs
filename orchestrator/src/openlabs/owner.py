@@ -2999,6 +2999,19 @@ def _line_gpu(paths: WorkspacePaths, settings: FactorySettings, line: str | None
         read_lines_or_none(paths.data / settings.program.research_lines_path), line))
 
 
+def campaign_data_dir(paths: WorkspacePaths, campaign_id: str) -> Path:
+    """Durable per-campaign directory for downloads and job inputs that outlive a seat.
+
+    A seat's artifact staging root is removed when the seat ends, so a bridge download still
+    running at an ``awaiting_remote`` yield (or a queued job reading from staging) loses its
+    target (NC trial 2026-11-25: both MIMIC-IV-ECG downloads failed with ENOENT on the
+    ``.download.part`` file after the first seat yielded).
+    """
+
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(campaign_id)).strip("-") or "campaign"
+    return paths.instance_artifacts / "campaign-data" / token
+
+
 def brief_paths(task: Mapping[str, Any]) -> dict[str, str]:
     transaction = task.get("transaction") if isinstance(task.get("transaction"), Mapping) else {}
     staged = Path(str(transaction.get("staged_campaign_workspace") or task.get(
@@ -3185,7 +3198,10 @@ def render_brief(
         *[f"  - {item}" for item in tools],
         f"- Reusable assets: DATA/{settings.program.asset_index_path}. Downloads: "
         "`/workspace/.download-bridge/download-submit --url URL --output /workspace/... "
-        "--route auto --wait`.",
+        "--route auto --wait`. A download still running when this seat ends, and data that "
+        "later seats or queued jobs read, go under the durable campaign data directory named "
+        "at the end of this brief (kept across seats; the large-outputs staging root is "
+        "removed when the seat ends, so a download or job input there is lost).",
         "- Manuscripts: `paper-writing` CLI (CODE/workflows/paper/skills/openlabs-paper-writing/"
         "SKILL.md). Use the writing policies below when preparing a manuscript.",
         *([f"- Paper field: read `$openlabs-{profile['field']}-paper` before writing. "
@@ -3351,8 +3367,14 @@ def handover_text(
     return "\n".join(lines)
 
 
-def render_seat_footer(task: Mapping[str, Any], *, deadline: datetime) -> str:
+def render_seat_footer(task: Mapping[str, Any], *, deadline: datetime,
+                       durable: Path | None = None) -> str:
     where = brief_paths(task)
+    if durable is not None:
+        try:
+            durable.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
     return (
         "\n---\n"
         f"Seat {task.get('task_id')} (attempt {task.get('attempt_id')}), ends by "
@@ -3361,7 +3383,9 @@ def render_seat_footer(task: Mapping[str, Any], *, deadline: datetime) -> str:
         f"- writable campaign workspace: `{where['staged']}` (promoted when the result passes)\n"
         f"- large outputs (datasets, chains, archives, logs, downloaded PDFs; declared for "
         f"you): `{where['staging']}`\n"
-        f"- canonical campaign, read-only: `{where['canonical']}`\n"
+        + (f"- durable campaign data (downloads and job inputs that outlive this seat): "
+           f"`{durable}`\n" if durable is not None else "")
+        + f"- canonical campaign, read-only: `{where['canonical']}`\n"
         f"- input of this seat: `{task.get('input_path')}`\n"
     )
 
@@ -3411,7 +3435,9 @@ def spec_block(
         brief_file = Path(where["brief"])
         if brief_file.parent.is_dir():
             brief_file.write_text(request, encoding="utf-8")
-    request += render_seat_footer(spec_view, deadline=deadline)
+    request += render_seat_footer(
+        spec_view, deadline=deadline,
+        durable=campaign_data_dir(paths, str(campaign.get("campaign_id") or "")))
     sha = str((topic or {}).get("preregistration_sha256") or "")
     return {
         "schema_version": PACKET_SCHEMA,

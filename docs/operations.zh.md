@@ -1796,6 +1796,10 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 Claude 按配速每约两小时放行一个，七张卡要排十几个小时。
 同线的预筛任务都挂在该线的出题 campaign 下，而一个 campaign 默认一次只跑一个任务；预筛因此加入可与同类并行的
 路由原因（`parallel_routing_reasons`，与立项评审同一机制），`prescreen_max_concurrent` 才真正生效。
+负责人坐席的持久数据目录（同日）：坐席结束时它的大文件暂存区（artifact-stage）会被删除，坐席以 awaiting_remote
+结束时仍在下载的桥任务因此写不进 `.download.part`（试产首个课题的两个 MIMIC-IV-ECG 下载都这样失败，等它们的本机作业
+随之失败）。简报末尾现在给出 `<instance_artifacts>/campaign-data/<campaign>/`（`owner.campaign_data_dir`，渲染时创建），
+跨坐席保留；Tools 段说明跨坐席的下载和作业输入放那里。
 
 尚无稿件的在研课题用 `program pause-topic` 暂停，不冻结：
 

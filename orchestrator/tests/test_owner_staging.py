@@ -244,3 +244,20 @@ def test_owner_seat_with_a_grown_staged_log_is_committed_not_refused(tmp_path, m
     events = [e for e in db.events(entity_type="task", entity_id=seat["task_id"])
               if e["event_type"] == "staged_artifact_hash_corrected"]
     assert len(events) == 1
+
+
+def test_brief_names_a_durable_campaign_data_dir(tmp_path, monkeypatch) -> None:
+    # NC trial 2026-11-25: bridge downloads into the staging root failed (ENOENT on the
+    # .download.part file) once the seat yielded and its staging root was removed.
+    from test_owner_mode import _latest, _owner_program, _spec
+
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    seat = _latest(db, topic["campaign_id"])
+    campaign = db.campaign(topic["campaign_id"])
+    block = owner.spec_block(paths, settings, task=seat, spec=_spec(tmp_path, seat["task_id"]),
+                             campaign=campaign, wall_seconds=14_400, db=db)
+    body, footer = block["request"].split("\n---\n", 1)
+    durable = owner.campaign_data_dir(paths, topic["campaign_id"])
+    assert "kept across seats" in body and str(durable) not in body  # static part stays static
+    assert str(durable) in footer and durable.is_dir()
+    assert durable.parent == paths.instance_artifacts / "campaign-data"
