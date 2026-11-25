@@ -30,6 +30,7 @@ import os
 import re
 import stat as stat_module
 import subprocess
+import time
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -3565,6 +3566,61 @@ def _sync_site_assignments(db, paths, settings, report) -> None:
     sync_tick(db, paths, settings, report)
 
 
+ROUND_USAGE_STATUSES = frozenset({"active", "in_review", "ready_queue"})
+# The round report reads every decision record of the papers it lists: refresh it at most this
+# often and show the last result in between.
+ROUND_USAGE_REFRESH_SECONDS = 1_800
+
+
+def _report_round_usage(db, paths, settings, report) -> None:
+    """Rounds per paper (B4, 2026-11-25): used at the target journal, the limit in force (a
+    round grant and whether it expired), and the cross-journal total -- reported only, there
+    is no cross-journal budget (user 2026-11-25: "不要设跨刊总轮次"). Never a tick error."""
+
+    info = report.program.setdefault("round_usage", {})
+    cache = paths.database / "round-usage.json"
+    try:
+        cached = json.loads(cache.read_text(encoding="utf-8"))
+        age = time.time() - float(cached.get("checked_epoch") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        cached, age = None, None
+    if cached is not None and age is not None and 0 <= age < ROUND_USAGE_REFRESH_SECONDS:
+        info.update({key: cached.get(key) for key in ("outcome", "papers", "checked_at")},
+                    cross_journal_budget=None, cached=True)
+        return
+    topics = _ledger(paths, settings).read().get("topics") or []
+    paper_ids = sorted({str(item.get("paper_id") or (item.get("handoff") or {}).get("paper_id"))
+                        for item in topics if item.get("status") in ROUND_USAGE_STATUSES
+                        and (item.get("paper_id") or (item.get("handoff") or {}).get("paper_id"))})
+    arguments = ["review", "round-usage", "--with-grants"]
+    for paper_id in paper_ids:
+        arguments += ["--paper-id", paper_id]
+    try:
+        result = _run_paper_command(paths, settings, arguments, timeout=300)
+    except DeliveryError as exc:
+        info.update(outcome="failed", error=str(exc)[:300])
+        return
+    rows: dict[str, dict[str, Any]] = {}
+    for entry in result.get("papers") or []:
+        if not isinstance(entry, dict) or not entry.get("paper_id"):
+            continue
+        row = {key: entry.get(key) for key in (
+            "target_journal", "used_at_target", "limit", "limit_source", "granted",
+            "grant_status", "grant_expired_because", "all_targets_total", "error", "grant_error")
+            if entry.get(key) is not None}
+        condition = entry.get("grant_condition") or {}
+        if condition.get("cycle") and not settings.program.polish_mode:
+            row["grant_cycle_ended"] = condition["cycle"]
+        if entry.get("extension_refused"):
+            row["extension_refused"] = entry["extension_refused"]
+        rows[str(entry["paper_id"])] = row
+    info.update(outcome="ok", papers=rows, checked_at=utc_now(), cross_journal_budget=None)
+    try:
+        atomic_write_json(cache, {**info, "checked_epoch": time.time()})
+    except OSError:
+        pass
+
+
 def run_program_autonomy(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -3578,7 +3634,8 @@ def run_program_autonomy(
     for name, step in (("limits", _check_limits), ("decisions", _check_decision_tasks),
                        ("registered_reviews", _queue_resynthesized), ("delivery", _deliver_ready),
                        ("delivery_repairs", _repair_delivery), ("site_assignments", _sync_site_assignments),
-                       ("delivery_chain", report_delivery_chain)):
+                       ("delivery_chain", report_delivery_chain),
+                       ("round_usage", _report_round_usage)):
         try:
             step(db, paths, settings, report)
         except (OSError, TopicLedgerError, KeyError, TypeError, ValueError,

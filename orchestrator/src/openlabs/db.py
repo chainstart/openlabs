@@ -12,6 +12,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .holds import production_pause_kind
+
 SCHEMA_VERSION = 9
 ACTIVE_STATUSES = ("leased", "running")
 AGENT_ROLES = ("researcher", "experimenter", "writer", "reviewer")
@@ -869,6 +871,8 @@ class FactoryDB:
                     "continuous_production_paused",
                     {
                         "reason": reason,
+                        # The enum of openlabs.holds.PRODUCTION_PAUSE_REASONS (2026-11-25, B3).
+                        "reason_kind": production_pause_kind(reason),
                         "prior_status": prior_status,
                         "cancelled_tasks": cancelled,
                     },

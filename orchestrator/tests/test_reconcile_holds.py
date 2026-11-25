@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -53,15 +52,21 @@ def test_operator_paused_and_held_topics_are_reported_not_archived(tmp_path,
     assert _topic(paths, settings, paused["topic_id"])["status"] == "active"
     assert _topic(paths, settings, held["topic_id"])["status"] == "active"
 
-    # A configured longer limit archives a hold once the pause itself is that old.
-    longer = replace(settings, program=replace(settings.program,
-                                               reconcile_operator_pause_days=30.0))
-    rows = _topic_rows(program_reconcile.plan(db, paths, longer, now=later))
+    # 2026-11-25 (B3, P01 retired): a hold is never archived, however old; once its
+    # ``until`` has passed it is reported as expired for a person to decide.
+    rows = _topic_rows(program_reconcile.plan(db, paths, settings,
+                                              now=datetime.now(UTC) + timedelta(days=365)))
     assert rows[paused["topic_id"]]["action"] == "report"
-    rows = _topic_rows(program_reconcile.plan(db, paths, longer,
-                                              now=datetime.now(UTC) + timedelta(days=31)))
-    assert rows[paused["topic_id"]]["action"] == "archive"
-    assert rows[held["topic_id"]]["action"] == "archive"
+    assert rows[held["topic_id"]]["action"] == "report"
+    state_path = Path(str(db.campaign(paused["campaign_id"])["workstream_state_path"]))
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    pause = state["operator_pause"]
+    assert pause["kind"] == "topic_pause" and pause["scope"] == paused["topic_id"]
+    assert pause["condition"] and pause["restore"].startswith("program pause-topic")
+    atomic_write_json(state_path, {**state, "operator_pause": {**pause, "until": "2026-01-01"}})
+    row = _topic_rows(program_reconcile.plan(db, paths, settings, now=later))[paused["topic_id"]]
+    assert row["action"] == "report" and "hold expired" in row["basis"]
+    assert row["hold"]["expired"] is True
 
 
 def _registry(paths, paper_id: str, version: str, delivered: str | None) -> None:

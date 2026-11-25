@@ -369,6 +369,17 @@ def build_parser() -> argparse.ArgumentParser:
                                    help="Review role whose model runs the preflight (default: first Codex referee).")
     runtime_preflight.add_argument("--out", help="Output directory (default: reviews/runtime-preflight/...).")
     runtime_preflight.add_argument("--root", default=str(default_repo_root()))
+    round_usage = review_commands.add_parser(
+        "round-usage",
+        help="Rounds used per paper: at the target journal, its limit (round grants and their "
+             "expiry), and the cross-journal total (reported only; read-only).",
+    )
+    round_usage.add_argument("--paper-id", action="append", default=[],
+                             help="Paper to report (repeatable); default: every paper with a round grant.")
+    round_usage.add_argument("--with-grants", action="store_true",
+                             help="Also report every paper with a round grant.")
+    round_usage.add_argument("--json", action="store_true", help="Accepted for the orchestrator; output is JSON.")
+    round_usage.add_argument("--root", default=str(default_repo_root()))
     calibration = review_commands.add_parser(
         "calibration",
         help="Compare unified editor decisions with real journal outcomes (read-only).",
@@ -1074,6 +1085,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({k: v for k, v in record.items() if k not in {"receipt", "report"}} | {"out": str(out)},
                          ensure_ascii=False, indent=2))
         return 0 if record["ok"] else 1
+    if args.command == "review" and args.review_command == "round-usage":
+        from paper_writing.review_flow import round_usage_report
+
+        print(json.dumps(round_usage_report(args.root, args.paper_id, with_grants=args.with_grants),
+                         ensure_ascii=False, indent=2))
+        return 0
     if args.command == "review" and args.review_command == "calibration":
         from paper_writing.review_flow import calibration as review_calibration
 

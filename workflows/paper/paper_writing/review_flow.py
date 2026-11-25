@@ -25,6 +25,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
+import yaml
+
 from paper_writing.registry import (load_paper_metadata, load_registry, load_review_settings,
                                     paper_metadata_path, require_not_frozen, review_settings_path,
                                     write_paper_metadata)
@@ -553,7 +555,179 @@ def review_round_limit_override(metadata: Mapping[str, Any], root: Path,
         extra = _lead_round_extension(extension, root, paper_id=paper_id, target=target, owner_auth=auth)
         result["owner_max_rounds_per_target"] = policy["max_rounds_per_target"]
         result["max_rounds_per_target"] = policy["max_rounds_per_target"] + extra
+    return _apply_grant_expiry(result, root, paper_id, target)
+
+
+# B4 (2026-11-25): a round grant ends. Default condition (user 2026-11-25 "停滞后，不再追加"):
+# the grant expires once this target's latest scientific decision is ready or stalled, or once
+# its ``expires.until`` date (the end of the polish cycle it was given for) has passed. An
+# expired grant keeps the rounds already used -- the standing per-target rule applies from
+# there -- and no grant may raise the limit above what was in force when the review stalled.
+GRANT_EXPIRY_DECISIONS = frozenset({"ready", "stalled"})
+
+
+def _grant_expiry_condition(policy: Mapping[str, Any]) -> dict[str, Any]:
+    expires = policy.get("expires")
+    if expires is None:
+        return {"on_decision": sorted(GRANT_EXPIRY_DECISIONS), "until": None, "cycle": None,
+                "source": "default"}
+    if not isinstance(expires, Mapping):
+        raise ValueError("review_round_limit_override.expires must be a mapping")
+    on = expires.get("on_decision", sorted(GRANT_EXPIRY_DECISIONS))
+    if (not isinstance(on, list) or not on
+            or any(item not in GRANT_EXPIRY_DECISIONS for item in on)):
+        raise ValueError("review_round_limit_override.expires.on_decision must list ready/stalled")
+    until = expires.get("until")
+    if until is not None and _parse_time(until) is None:
+        raise ValueError("review_round_limit_override.expires.until must be an ISO date")
+    return {"on_decision": sorted(set(on)), "until": str(until) if until is not None else None,
+            "cycle": expires.get("cycle"), "source": "registry"}
+
+
+def target_review_state(root: Path, paper_id: str, target: str) -> dict[str, Any]:
+    """Rounds used at ``target`` and how its latest scientific decision stands.
+
+    ``state``: ``ready``; ``stalled`` when the review stopped converging (D11: a final ruling
+    left must-fix items, ``final_check_pending``, or the one final check after it still found
+    them); otherwise the latest outcome (``revision_required`` ...) or None before any round.
+    ``limit_then`` is the round limit recorded with that decision (None: the standing rule).
+    """
+    rounds = scientific_rounds(root, paper_id, target)
+    if not rounds:
+        return {"used": 0, "state": None, "final_check_pending": False, "limit_then": None,
+                "decision_record": None}
+    last = rounds[-1]
+    merged = last.get("merged") or {}
+    outcome = merged.get("outcome")
+    ruling = bool(merged.get("final_ruling")) or bool(last.get("final_ruling_basis"))
+    failed_final = bool(last.get("final_check")) and merged.get("stalled") is True
+    if outcome == "ready":
+        state = "ready"
+    elif ruling or failed_final:
+        state = "stalled"
+    else:
+        state = outcome
+    grant = last.get("review_round_limit_override")
+    limit = grant.get("max_rounds_per_target") if isinstance(grant, Mapping) else None
+    return {"used": len(rounds), "state": state,
+            "final_check_pending": state == "stalled" and ruling and not failed_final,
+            "limit_then": limit if type(limit) is int else None,
+            "decision_record": str(last["_path"].relative_to(root))}
+
+
+def _standing_round_limit(root: Path) -> int:
+    """The per-target rule from settings (``review_config``); 4 without a settings file."""
+    try:
+        return int(review_config(root)["max_rounds_per_target"])
+    except FileNotFoundError:
+        return 4
+
+
+def _apply_grant_expiry(result: dict[str, Any], root: Path, paper_id: str,
+                        target: str) -> dict[str, Any]:
+    condition = _grant_expiry_condition(result)
+    standing = _standing_round_limit(root)
+    state = target_review_state(root.resolve(), paper_id, target)
+    granted = result["max_rounds_per_target"]
+    reasons = []
+    if state["state"] in condition["on_decision"]:
+        reasons.append(f"latest decision at {target} is {state['state']}")
+    until = _parse_time(condition["until"]) if condition["until"] else None
+    if until is not None and datetime.now(UTC) >= until:
+        reasons.append(f"grant period ended {condition['until']}")
+    expiry: dict[str, Any] = {"condition": condition, "granted": granted, "used": state["used"],
+                              "latest_state": state["state"], "standing_limit": standing}
+    if state["state"] == "stalled":
+        limit_then = state["limit_then"] if state["limit_then"] is not None else standing
+        if granted > limit_then:
+            # 2026-11-25 user decision 2: after a stall no further rounds are added.
+            expiry["extension_refused"] = {
+                "requested": granted, "limit_at_stall": limit_then,
+                "decision_record": state["decision_record"],
+                "reason": ("the review at this journal was judged stalled (final ruling); no "
+                           "additional rounds are granted after a stall (user 2026-11-25: "
+                           "停滞后，不再追加)")}
+    if reasons:
+        # Expired: the rounds already used stay valid; the one final check after a final
+        # ruling may still run; nothing beyond that.
+        cap = state["used"] + (1 if state["final_check_pending"] else 0)
+        effective = min(granted, max(cap, standing))
+        expiry.update(status="expired", reasons=reasons, effective=effective)
+        result["granted_max_rounds_per_target"] = granted
+        result["max_rounds_per_target"] = effective
+    else:
+        expiry.update(status="active", effective=granted)
+    result["expiry"] = expiry
     return result
+
+
+def round_usage(root: str | Path, paper_id: str) -> dict[str, Any]:
+    """Per-paper round usage for the tick report: this target, its limit, all targets (B4).
+
+    The cross-journal total is reported only; there is no cross-journal budget (user
+    2026-11-25: "不要设跨刊总轮次").
+    """
+    base = Path(root).resolve()
+    metadata = load_paper_metadata(paper_id, base)
+    target = metadata.get("target_conference" if metadata.get("venue_type") == "conference"
+                          else "target_journal")
+    per_target: dict[str, int] = {}
+    directory = runs_dir(base, paper_id)
+    for path in sorted(directory.glob("*/decision.json")) if directory.is_dir() else []:
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if (record.get("stage_reached") == "decision"
+                and record.get("consumes_scientific_round", True)):
+            name = str(record.get("target_journal") or "")
+            per_target[name] = per_target.get(name, 0) + 1
+    standing = _standing_round_limit(base)
+    entry: dict[str, Any] = {"paper_id": paper_id, "target_journal": target,
+                             "used_at_target": per_target.get(str(target or ""), 0),
+                             "limit": standing, "limit_source": "standing_rule",
+                             "all_targets_total": sum(per_target.values()),
+                             "per_target": per_target}
+    try:
+        grant = review_round_limit_override(metadata, base, paper_id, target)
+    except ValueError as exc:
+        entry.update(grant_error=str(exc)[:300])
+        return entry
+    if grant is not None:
+        expiry = grant.get("expiry") or {}
+        entry.update(limit=grant["max_rounds_per_target"], limit_source="round_grant",
+                     granted=expiry.get("granted"), grant_status=expiry.get("status"),
+                     grant_condition=expiry.get("condition"),
+                     grant_expired_because=expiry.get("reasons"),
+                     latest_state=expiry.get("latest_state"))
+        if expiry.get("extension_refused"):
+            entry["extension_refused"] = expiry["extension_refused"]
+    return entry
+
+
+def round_usage_report(root: str | Path, paper_ids: list[str] | tuple[str, ...] = (), *,
+                       with_grants: bool = False) -> dict[str, Any]:
+    """``review round-usage``: :func:`round_usage` for the given papers (and, with
+    ``with_grants`` or no paper given, every paper with a round grant). A paper that cannot be
+    read is listed with its error, never dropped."""
+    base = Path(root).resolve()
+    wanted = [str(p) for p in paper_ids if str(p).strip()]
+    if with_grants or not wanted:
+        for path in sorted((base / "registry" / "papers").glob("*.yaml")):
+            try:
+                data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError):
+                continue
+            if isinstance(data, Mapping) and data.get("review_round_limit_override") is not None:
+                wanted.append(path.stem)
+    papers = []
+    for paper_id in dict.fromkeys(wanted):
+        try:
+            papers.append(round_usage(base, paper_id))
+        except Exception as exc:  # noqa: BLE001 - one unreadable paper must not hide the rest
+            papers.append({"paper_id": paper_id, "error": f"{type(exc).__name__}: {exc}"[:300]})
+    return {"schema_version": "openlabs.review_round_usage.v1", "papers": papers,
+            "cross_journal_budget": None}
 
 
 LEAD_EXTENSION_SCHEMA = "openlabs.lead_round_extension.v1"
@@ -4377,7 +4551,10 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
                 problems.append("The merged gate contradicts the actual referee or formal-check assessment")
         except (KeyError, TypeError, ValueError):
             problems.append("The actual referee reports are incomplete or malformed")
-    if round_limit is not None and release.get("max_rounds_per_target") != round_limit["max_rounds_per_target"]:
+    # An expired grant (B4) reports the rounds it still allows; a release written while the
+    # grant was active reports the granted limit. Both are the authorized limit.
+    if round_limit is not None and release.get("max_rounds_per_target") not in {
+            round_limit["max_rounds_per_target"], round_limit.get("granted_max_rounds_per_target")}:
         problems.append("The release does not report the authorized paper/target round limit")
     # The round limit is no longer part of the policy hash; check the cap itself.
     cap = round_limit["max_rounds_per_target"] if round_limit is not None else config.get("max_rounds_per_target")

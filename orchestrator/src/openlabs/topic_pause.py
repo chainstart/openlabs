@@ -16,6 +16,10 @@ Older holds (2026-11-24): the hand-written ``operator_hold`` of 2026-11-19 and a
 topic records them as a regular ``operator_pause`` (status and campaign stay paused; the
 original hold is kept inside the record), after which ``--resume`` works like for any
 other pause. ``dry_run`` reports what a pause or resume would do and writes nothing.
+
+Hold record (2026-11-25, B3): a new ``operator_pause`` carries the unified fields of
+:mod:`openlabs.holds` (kind, scope, by, date, quote, reason, until or condition, restore);
+every reader goes through :func:`openlabs.holds.topic_hold`, which also reads the older forms.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from typing import Any
 from .config import FactorySettings, WorkspacePaths
 from .contracts import atomic_write_json
 from .db import FactoryDB, utc_now
+from .holds import TOPIC_RESTORE, topic_hold
 from .program import open_topic_ledger, record_topic_note
 
 IN_FLIGHT = ("leased", "running")
@@ -64,24 +69,45 @@ def _running_tasks(db: FactoryDB, campaign_id: str) -> list[str]:
 
 
 def _legacy_hold(path: Path, state: Mapping[str, Any]) -> dict[str, Any] | None:
-    """A paused state without an ``operator_pause``: the hold's form, start and prior status."""
+    """A paused state without an ``operator_pause``: the hold's form, start and prior status
+    (read through :func:`openlabs.holds.topic_hold`)."""
 
     if state.get("status") != "paused" or isinstance(state.get("operator_pause"), Mapping):
         return None
-    hold = state.get("operator_hold")
-    if isinstance(hold, Mapping):
-        return {"form": "operator_hold", "since": hold.get("set_at"),
-                "since_source": "operator_hold.set_at", "by": hold.get("set_by"),
-                "prior_status": str(state.get("previous_status") or "active"),
-                "hold": dict(hold)}
     try:
-        since = datetime.fromtimestamp(path.stat().st_mtime, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     except OSError:
-        since = None
-    return {"form": "unrecorded", "since": since,
+        mtime = None
+    hold = topic_hold(state, since=mtime)
+    if hold is None:
+        return None
+    if hold["source"] == "operator_hold":
+        return {"form": "operator_hold", "since": hold["date"],
+                "since_source": "operator_hold.set_at", "by": hold["by"],
+                "prior_status": hold["prior_status"], "hold": hold["detail"]}
+    return {"form": "unrecorded", "since": hold["date"],
             "since_source": "research_state.json modification time (paused at or before)",
-            "by": None, "prior_status": str(state.get("previous_status") or "active"),
-            "hold": None}
+            "by": None, "prior_status": hold["prior_status"], "hold": None}
+
+
+def _hold_fields(settings: FactorySettings, topic_id: str, *, quote: str | None,
+                 until: str | None, condition: str | None) -> dict[str, Any]:
+    """The unified hold fields of a new pause record (openlabs.holds, 2026-11-25)."""
+
+    if until is not None and not str(until).strip():
+        until = None
+    if until is not None:
+        try:
+            datetime.fromisoformat(str(until).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise TopicPauseError(f"--until is not an ISO date: {until}") from exc
+    if not until and not str(condition or "").strip():
+        condition = ("polish mode ends and the user agrees to resume new research"
+                     if settings.program.polish_mode
+                     else "a person resumes it (program pause-topic --resume)")
+    return {"kind": "topic_pause", "scope": topic_id, "quote": quote or None,
+            "until": until or None, "condition": condition or None,
+            "restore": TOPIC_RESTORE.format(scope=topic_id)}
 
 
 def _queued_tasks(db: FactoryDB, campaign_id: str) -> list[str]:
@@ -102,6 +128,9 @@ def pause_topic(
     by: str,
     resume: bool = False,
     dry_run: bool = False,
+    quote: str | None = None,
+    until: str | None = None,
+    condition: str | None = None,
 ) -> dict[str, Any]:
     """Pause (or, with ``resume``, resume) one active topic's research campaign.
 
@@ -141,7 +170,10 @@ def pause_topic(
                 raise TopicPauseError(
                     f"research_state is paused ({legacy['form']}) but the campaign is "
                     f"{campaign.get('status')!r}; resolve that by hand first")
-            record = {"by": by, "reason": reason, "at": legacy["since"] or now,
+            record = {**_hold_fields(settings, topic_id, quote=quote, until=until,
+                                     condition=condition),
+                      "by": by, "reason": reason, "at": legacy["since"] or now,
+                      "date": legacy["since"] or now,
                       "at_source": legacy["since_source"] if legacy["since"] else "recorded_at",
                       "prior_status": legacy["prior_status"], "recorded_at": now,
                       "recorded_from": legacy["form"]}
@@ -167,7 +199,9 @@ def pause_topic(
             raise TopicPauseError(
                 "tasks of this campaign are running (" + ", ".join(running)
                 + "); pause after they finish")
-        record = {"by": by, "reason": reason, "at": now, "prior_status": "active"}
+        record = {**_hold_fields(settings, topic_id, quote=quote, until=until,
+                                 condition=condition),
+                  "by": by, "reason": reason, "at": now, "date": now, "prior_status": "active"}
         if dry_run:
             return {**result, "status": "would_pause", "operator_pause": record,
                     "would_cancel": _queued_tasks(db, campaign_id)}

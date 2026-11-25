@@ -56,6 +56,7 @@ from .contracts import FREEZE_REASON_CLASSES as CONTRACT_FREEZE_REASON_CLASSES
 from .contracts import REOPEN_BASIS_TYPES as CONTRACT_REOPEN_BASIS_TYPES
 from .contracts import atomic_write_json, canonical_json_bytes
 from .db import FactoryDB, utc_now
+from .holds import topic_hold
 
 LEDGER_SCHEMA = "openlabs.topic_ledger.v2"
 # v1 ledgers (no revision, repair or hold-release fields) are read unchanged and
@@ -684,7 +685,7 @@ def paused_topic_campaigns(db: Any) -> frozenset[str]:
             state = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if isinstance(state, Mapping) and str(state.get("status") or "") == "paused":
+        if topic_hold(state if isinstance(state, Mapping) else None) is not None:
             paused.add(str(row["campaign_id"]))
     return frozenset(paused)
 

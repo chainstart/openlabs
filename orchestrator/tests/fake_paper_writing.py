@@ -75,6 +75,11 @@ def _loopback(url: str | None) -> bool:
 def main(argv: list[str]) -> int:
     if os.environ.get("FAKE_LOOPBACK_ONLY") == "1":
         _no_remote_network()
+    if argv[:2] == ["review", "round-usage"]:
+        # The tick's read-only round report (B4): not part of the release pipeline, not logged.
+        print(json.dumps({"schema_version": "openlabs.review_round_usage.v1", "papers": [],
+                          "cross_journal_budget": None}))
+        return 0
     parser = argparse.ArgumentParser()
     parser.add_argument("words", nargs="+")
     parser.add_argument("--paper-id", required=True)

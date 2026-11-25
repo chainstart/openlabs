@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -191,18 +192,25 @@ def recorded_submitter(paper: Mapping[str, Any], root: Path, users: list[Mapping
     return None
 
 
+def _holds():
+    """openlabs.holds -- the one reader of every hold record (2026-11-25, B3). A pure module
+    of the orchestrator package, importable from this checkout without its dependencies."""
+    try:
+        from openlabs import holds
+    except ImportError:
+        source = str(Path(__file__).resolve().parents[3] / "orchestrator" / "src")
+        if source not in sys.path:
+            sys.path.append(source)
+        from openlabs import holds
+    return holds
+
+
 def manual_hold(paper: Mapping[str, Any],
                 registry: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """The manual-assignment hold on this paper, if any: a person picks the submitter."""
 
-    record = (registry or {}).get("manual_assignment")
-    if isinstance(record, Mapping) and record.get("hold") is True:
-        return {"source": "registry",
-                **{key: record.get(key) for key in ("by", "date", "reason") if record.get(key)}}
-    for row in paper.get("assignments") or []:
-        if row.get("active") and HOLD_NOTE in str(row.get("notes") or ""):
-            return {"source": "site_assignment_notes", "assignment_id": row.get("id")}
-    return None
+    return _holds().assignment_hold(registry, list(paper.get("assignments") or []),
+                                    scope=str(paper.get("paper_id") or ""))
 
 
 def _version_key(value: Any) -> tuple[int, ...] | None:

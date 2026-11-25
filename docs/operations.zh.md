@@ -100,6 +100,13 @@ GATE1 原有的“写不出读者会得出的错误结论就降为建议”规�
 5. **policy 哈希不含 round_limit_override。** 追加轮次不再让已有 ready 基准失去 delta/presentation 资格，也不会让
    运行中的评审在 apply 时报 policy changed。旧记录（哈希里含追加授权）按其记录的授权或当前授权仍可匹配；release
    校验另加一条“本轮次数不超过授权上限”的直接检查。
+   **追加授权到期（2026-11-25，B4）。** 每份 `review_round_limit_override` 都有到期条件：登记里的
+   `expires`（`on_decision` 取 ready/stalled，可加 `until` 日期和 `cycle` 标签），不写则按默认条件
+   “该刊最近一次科学决定为 ready 或 stalled”。到期后只保留已用轮次（定稿裁定后还剩一次定稿核查时多留
+   这一轮），不低于常设的每刊轮次。用户 2026-11-25 决定“停滞后，不再追加”：该刊最近一次决定已进入
+   定稿裁定或定稿核查后仍停滞时，授权上限超过停滞时上限的部分被拒绝，原因记在
+   `expiry.extension_refused`。不设跨刊总轮次（用户原话“不要设跨刊总轮次”）。`paper-writing review
+   round-usage` 列出每篇本刊已用、授权上限、跨刊合计（只报告）；tick 报告 `program.round_usage` 每 30 分钟刷新。
 6. **调用模型前先校验（`preflight_review_schemas`）。** 上轮必改项去重；各角色 schema 的 previous_items 条数
    （及 enum）必须与之一致，否则在付费调用前报错。抄写不精确的长条目按第一批规则对应回原条目。
 7. **交付读者只管可读性。** 读者看不到的归档类、回复格式类要求不阻断；审稿人都是 accept/minor 时读者项一律为
@@ -691,8 +698,13 @@ routine 档读过最近已有工作后仍有可陈述的增量差别、决定性
 - **台账对账**（2026-11-20）：`python3 -m openlabs program reconcile` 默认只读，列出每个课题或任务记录的现状态、建议状态和依据。加 `--apply` 才通过 `transition_topic`、`freeze_topic`、`mark_topic_delivered`、`close_needs_human` 写入，规则见 `program_reconcile.py`。停滞判据为 `[program].reconcile_stale_days`（默认 5 天）。
   - 有人暂停的课题不算搁置（2026-11-24）：campaign 的 `research_state.json` 为 `status: paused`
     （`program pause-topic` 写的 `operator_pause`、2026-11-19 天文线收缩手写的 `operator_hold`，或没有记录）时，
-    对账只列 `report`（依据里写明谁、何时、为何暂停），不提议 `archive` 冻结。要让长期暂停的课题也进入归档，
-    在实例 TOML 设 `[program] reconcile_operator_pause_days = N`（默认 0 = 永不），暂停满 N 天后才提议。
+    对账只列 `report`（依据里写明谁、何时、为何暂停、何时结束），不提议 `archive` 冻结。2026-11-25 起
+    所有暂停都经 `openlabs.holds` 读成同一种记录（kind、scope、by、date、quote、reason、until 或
+    condition、restore）；`until` 已过的暂停报告为“hold expired”，由人决定恢复或冻结。原来的
+    `[program] reconcile_operator_pause_days` 已撤除（实例里残留的键被忽略）。
+    `program pause-topic` 新增 `--quote`、`--until`、`--condition`，不给时 condition 取默认值
+    （梳理模式下为“梳理模式结束且用户同意恢复”）。`production_paused` 的暂停事件另记 `reason_kind`
+    （枚举见 `holds.PRODUCTION_PAUSE_REASONS`）。梳理模式下 `release_ready_holds` 不放行等待线环境的 hold。
   - 手工交付后的台账补记（2026-11-24，`record_delivery`）：`ready_queue` 课题的 handoff 不是 `delivered`，
     但论文登记 `registry/papers/<paper_id>.yaml` 的 `delivery.version` 等于当前 `version`（与
     `paper-writing program release-status` 的 `delivered` 同一判据），且 `papers/<paper_id>/releases/` 有对应
@@ -1685,7 +1697,8 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 **调用位置**：
 - `release_handoff` 推包完成后对该论文执行一次（`program deliver` 与 `handoff release` 都经过
   它）；失败不影响交付，结果在返回的 `site_assignment` 里。
-- 每轮调度的 `program autonomy` 步骤 `site_assignments`（受 `[program] auto_handoff` 授权）对全部
+- 每轮调度的 `program autonomy` 步骤 `site_assignments`（受 `[program] site_assignment_sync` 授权，
+  默认开；2026-11-25 起与 `auto_handoff` 解耦，暂停交付不再连带停掉对账）对全部
   投稿前论文对账，报告在 tick 的 `program.site_assignments`；失败记在那里，不进 `errors`。实际
   改动追加到实例数据库目录的 `site-assignments.jsonl`，并在对应课题的台账里记
   `site_assignment_parked|assigned`。

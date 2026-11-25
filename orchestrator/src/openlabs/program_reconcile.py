@@ -15,9 +15,9 @@ drift and, only with ``--apply``, corrects it through the ordinary transition fu
   ``frozen`` with reason class ``legacy_archived`` (:func:`program.freeze_topic`; the
   history stays, no automatic reopen). A topic a person holds (its ``research_state.json``
   status ``paused``: ``program pause-topic``'s ``operator_pause``, an ``operator_hold``, or
-  no record) is not parked: it is only reported, unless ``[program]
-  reconcile_operator_pause_days`` is above 0 and the pause is that old (2026-11-24;
-  default 0 = never archived here);
+  no record; read through :func:`openlabs.holds.topic_hold`) is not parked: it is only
+  reported, never archived here (2026-11-25: the ``reconcile_operator_pause_days`` knob is
+  gone; a hold whose ``until`` passed is reported as expired for a person to decide);
 * ``record_delivery``: a ``ready_queue`` topic whose handoff is not ``delivered`` although
   the paper's registry record shows its current version delivered (``delivery.version``
   equals ``version``, the same test as ``paper-writing program release-status``) and the
@@ -49,6 +49,7 @@ from typing import Any
 
 from .config import FactorySettings, WorkspacePaths
 from .db import FactoryDB, utc_now
+from .holds import topic_hold
 
 SCHEMA = "openlabs.program_reconcile.v1"
 DECIDER = "manual:program-reconcile"
@@ -153,28 +154,20 @@ def registered_delivery(paths: WorkspacePaths, paper_id: str) -> dict[str, Any] 
             "receipt": receipt, "registry": str(path)}
 
 
-def _operator_pause(campaign: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    """How a person holds a topic's research: ``{"record", "by", "at", "reason"}`` or None.
+def _operator_pause(campaign: Mapping[str, Any] | None,
+                    scope: str = "") -> dict[str, Any] | None:
+    """How a person holds a topic's research (the unified hold record, holds.topic_hold).
 
     The campaign's ``research_state.json`` has ``status`` ``paused``: by ``program
     pause-topic`` (``operator_pause``), by the hand-written ``operator_hold`` of
-    2026-11-19 (``set_by``/``set_at``), or without a record. Only a person or an owner
-    agent writes that status, so each form is a hold, not a parked legacy topic.
+    2026-11-19, or without a record. Only a person or an owner agent writes that status,
+    so each form is a hold, not a parked legacy topic.
     """
 
     state_path = str((campaign or {}).get("workstream_state_path") or "")
     if not state_path:
         return None
-    state = _read_json(Path(state_path))
-    if state.get("status") != "paused":
-        return None
-    for record in ("operator_pause", "operator_hold"):
-        value = state.get(record)
-        if isinstance(value, Mapping):
-            return {"record": record, "by": value.get("by") or value.get("set_by"),
-                    "at": value.get("at") or value.get("set_at"),
-                    "reason": value.get("reason")}
-    return {"record": None, "by": None, "at": None, "reason": None}
+    return topic_hold(_read_json(Path(state_path)), scope=scope)
 
 
 def _campaign_rows(db: FactoryDB) -> tuple[dict[str, dict[str, Any]], dict[str, int],
@@ -280,29 +273,27 @@ def plan(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings, *,
         if status in {"admitted", "active"} and not running and campaign_status != "active":
             idle = activity is None or moment - activity >= stale
             where = ("no campaign" if campaign is None else f"campaign {campaign_status}")
-            pause = _operator_pause(campaign) if status == "active" else None
+            pause = (_operator_pause(campaign, str(topic.get("topic_id") or ""))
+                     if status == "active" else None)
             if pause is not None:
-                limit = settings.program.reconcile_operator_pause_days
-                since = _parse(pause.get("at")) or activity
-                if pause["record"]:
-                    held = (f"{where}, {pause['record']} by {pause.get('by')} since "
-                            f"{pause.get('at')} ({str(pause.get('reason') or '')[:120]})")
+                # A held topic is never archived here (2026-11-25, B3: P01 retired). A hold
+                # whose ``until`` has passed is reported for a person to resume or close.
+                if pause["source"] != "unrecorded":
+                    held = (f"{where}, {pause['source']} by {pause.get('by')} since "
+                            f"{pause.get('date')} ({str(pause.get('reason') or '')[:120]})")
                 else:
                     held = (f"{where}, research_state paused without a pause record (last "
                             f"activity {_iso(activity) or 'unknown'})")
-                if limit > 0 and idle and since is not None \
-                        and moment - since >= timedelta(days=limit):
-                    rows.append({**base, "action": "archive", "proposed": "frozen",
-                                 "reason_class": "legacy_archived",
-                                 "operator_pause": pause["record"] or "paused",
-                                 "basis": f"{held}, paused for more than {limit:g} d "
-                                          "([program] reconcile_operator_pause_days)"})
-                else:
-                    rows.append({**base, "action": "report", "proposed": status,
-                                 "operator_pause": pause["record"] or "paused",
-                                 "basis": f"{held}: held, not archived "
-                                          "([program] reconcile_operator_pause_days = "
-                                          f"{limit:g})"})
+                ends = (f"until {pause['until']}" if pause.get("until")
+                        else f"until: {pause['condition']}" if pause.get("condition")
+                        else "no end recorded")
+                basis = (f"{held}: hold expired ({ends}); resume it or decide by hand"
+                         if pause.get("expired") else f"{held}: held, not archived ({ends})")
+                rows.append({**base, "action": "report", "proposed": status,
+                             "operator_pause": pause["source"] if pause["source"] != "unrecorded"
+                             else "paused", "hold": {key: pause.get(key) for key in (
+                                 "kind", "by", "date", "until", "condition", "expired")},
+                             "basis": basis})
                 continue
             if idle:
                 rows.append({**base, "action": "archive", "proposed": "frozen",

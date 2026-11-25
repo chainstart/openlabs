@@ -2458,8 +2458,13 @@ def release_ready_holds(
     environment is admitted with the gate's recorded decision; a gate hold whose
     only reopen condition is the line's environment goes back to the gate. Holds
     with other open conditions wait for their revision card.
+
+    Not under ``[program] polish_mode`` (2026-11-25, B3: P02): a released hold would go
+    back to the gate or be admitted, i.e. new research, which polish mode stops.
     """
 
+    if settings.program.polish_mode:
+        return []
     ledger = open_topic_ledger(paths, settings.program)
     lines_document = None
     outcomes: list[dict[str, Any]] = []
