@@ -74,6 +74,21 @@ comparisons, with headings that state findings. Consult the readability and figu
    review or code verification. Submission-facing files contain no pending-confirmation text;
    an unavoidable later portal action goes only in `production/human_action_checklist.md`.
 
+## NC-aimed topics (research state `target_stage: nc_aim`)
+
+The topic was admitted for Nature Communications; the journal is graded from the evidence after
+review. Write and draw to the top-journal standard in every case: title states the finding, the
+first result in the abstract is the one-sentence claim, the ending lands on the practical or
+policy implication, 4-6 main figures with Figure 1 as the principle or definition schematic
+(world maps for global topics). Results must carry four checks, each in the main text or a
+referenced supplement: a sensitivity analysis, uncertainty (intervals for every headline number),
+external validation, and a simple baseline or confounder check. Before handing over, run
+`python -m paper_writing.number_consistency manuscript/main.tex` (also part of
+`delivery-floor --author`): the same quantity must carry the same value in abstract, body,
+captions and tables; a definite conflict blocks the author check, other findings are advice.
+NC format (when the grade keeps NC): main text <= 5,000 words, abstract <= 200 words, title <= 15
+words, up to 10 display items, Methods < 3,000 words, <= 70 references.
+
 ## Choose the venue
 
 Eligibility, routine versus escalation tiers, the ranking system and fees are defined in

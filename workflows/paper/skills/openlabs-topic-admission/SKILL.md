@@ -17,6 +17,53 @@ and freezes the topic when it misses its numeric criterion, and every topic has 
 days to ready, 72 agent hours). That precheck is the stop-loss. Your job is to keep out topics
 that cannot work, not to demand a finished study design.
 
+## NC aim (entries stamped `target_stage: nc_aim`, user decision 2026-11-25)
+
+For these entries this section replaces the routine standard, the templated-series rules and the
+tier section below. Every topic aims at Nature Communications; the results decide the journal
+later (NC, else CAS Zone 1, 2, 3-4). Your job is to keep out "small and low" topics and topics
+whose claim cannot be tested, not to demand a finished study.
+
+1. **Independent novelty search.** You did not choose the topic. Search the last three years
+   yourself, at least 50 papers (preprints, dataset papers, code), and return
+   `admission.novelty_search` {window_years, papers_screened, queries[], closest[{citation, year,
+   doi_or_url, what_it_shows, our_increment}] (the five closest), increment (one sentence)}. The
+   control plane rejects an admit without it.
+2. **NC thresholds on your own reading.** `admission.nc_assessment` {thresholds {generality,
+   counterintuitive, scale, benchmark, resource: {met, evidence}}, met_count, expected_band
+   (nc|zone_1|zone_2|zones_3_4)}. Fewer than two thresholds, or an expected band below the floor
+   in the packet's instruction (default zone_1), is a reject.
+3. **The case holds together**: the one-sentence claim, the view it challenges and the benchmark
+   are concrete; the kill test in `card_check.prescreen` found the signal (a failed kill test never
+   reaches you); the data plan (`data_volume`, download windows, ailab storage) is feasible; the
+   first milestone is the decisive analysis.
+4. The data, licence, compute and fee rules below still apply.
+
+Compare with the hooks of accepted NC papers in `registry/venue-calibration.yaml` (also listed in
+the scout skill): generality, a sentence that overturns a view, an order of magnitude of scale,
+an authoritative benchmark, a reusable resource.
+
+## Prescreen (task type `topic_prescreen`, NC funnel levels 2-3)
+
+A cheaper check before admission, on one card whose author is another model family.
+
+- **Phase A (minutes, no compute).** A quick novelty search of the last three years (list the
+  3-5 closest papers; `papers_screened` as counted) and your own scoring of the five NC
+  thresholds. When fewer than the required number hold, or the claim is already reported
+  (`verdict: scooped`), stop and return; do not run phase B.
+- **Phase B (the kill test, within the packet's core-hour budget, here, no ailab job).** Write a
+  small script from the card's `kill_test` and run it on data already on disk or on catalogued
+  small samples (any download through the download bridge; nothing above the packet's size
+  limit). Report: `signal.present` (true/false, with estimate and interval), the share of the
+  effect a null model or simple baseline explains (`null_baseline.explained_fraction`), and the
+  theoretical ceiling (`ceiling.value`, `claim_reachable`). Save the numbers as a JSON file and
+  declare it as a hash-bound result artifact (`kill_test.result_artifact` {path, sha256}).
+- The control plane decides: signal absent -> the card is rejected (hard stop); a null model
+  explaining most of the effect or a ceiling below the claim -> the expected band drops; a band
+  below the admission floor -> rejected; otherwise the card goes to admission with your result.
+- Return `topic_prescreen` {novelty_quick, thresholds, kill_test, expected_band, summary}. Be
+  honest about a missing signal: a killed card now saves weeks of compute later.
+
 ## The routine admission standard
 
 Admit a routine card when all four hold:

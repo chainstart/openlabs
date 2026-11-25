@@ -522,6 +522,18 @@ def _resource(label: str, path: Path) -> dict[str, str] | None:
     ) else None
 
 
+def _nc_grading_packet(settings: FactorySettings, topic: Mapping[str, Any]) -> dict[str, Any]:
+    from .nc_funnel import grading_packet
+
+    return grading_packet(settings, topic)
+
+
+def _nc_grading_instruction() -> str:
+    from .nc_funnel import GRADE_INSTRUCTION
+
+    return GRADE_INSTRUCTION
+
+
 def schedule_direction_decision(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -578,6 +590,13 @@ def schedule_direction_decision(
         ) if item is not None
     ]
     grading = trigger == TRIGGER_VENUE_GRADE
+    from . import target_stage as _stages
+
+    nc_grading = grading and _stages.admitted_stage(topic) == _stages.NC_AIM
+    if nc_grading:
+        from .nc_funnel import calibration_resource
+
+        resources.extend(item for item in [calibration_resource(paths)] if item is not None)
     cap = trigger in {TRIGGER_REVIEW_ROUNDS, "owner_review_rounds_exhausted"}
     options = ["retarget_or_short_format", "freeze"]
     candidates = []
@@ -650,6 +669,7 @@ def schedule_direction_decision(
         **({"delivered_revision": topic["delivered_revision"]} if topic.get("delivered_revision") else {}),
         **({"verified_alternatives": candidates,
             "short_format_value": None if zone or grading else "short_format"} if cap or grading else {}),
+        **({"grading": _nc_grading_packet(settings, topic)} if nc_grading else {}),
         "created_at": utc_now(),
     })
     packet_path = (
@@ -688,7 +708,9 @@ def schedule_direction_decision(
                "retarget.why_fits. Zones 3–4 are successful delivery when the evidence supports "
                "that band. If no suitable verified journal exists in the supported band, "
                "use freeze with no_eligible_venue and a concrete reopen condition. "
-               "Preserve the review, writing and figure standards." if grading else "")
+               "Preserve the review, writing and figure standards." if grading and not nc_grading
+               else "")
+            + (_nc_grading_instruction() if nc_grading else "")
         ),
         input_path=str(packet_path),
         skill_path=DIRECTION_SKILL,
@@ -1242,9 +1264,16 @@ def apply_direction_decision(
             if decision["freeze"]["reason_class"] != "no_eligible_venue":
                 problems.append("acceptance grading may freeze only when no verified journal fits")
         else:
-            grade = venue_grade(decision, packet["verified_alternatives"])
+            from .target_stage import admitted_stage
+
+            stage = admitted_stage(topic)
+            grade = venue_grade(decision, packet["verified_alternatives"], stage=stage,
+                                settings=settings)
             if grade is None:
-                problems.append("the selected journal must be verified and match retarget.achieved_band")
+                problems.append("the selected journal must be verified and match retarget.achieved_band"
+                                + (" (NC band: the scorecard, calibration match and confidence "
+                                   "must support it; see grading.rules)" if stage == "nc_aim"
+                                   else ""))
     if problems:
         db.record_event_once("topic", topic_id, "direction_decision_invalid",
                              {"task_id": task_id, "errors": problems}, event_key=task_id)

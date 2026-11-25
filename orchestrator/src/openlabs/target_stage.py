@@ -1,4 +1,13 @@
-"""Research-line target stages and replay of the unattended delivery criterion."""
+"""Research target stages and replay of the unattended delivery criterion.
+
+Stages: ``run_in`` and ``tier2_aim`` (2026-11-22, recorded per line by events, promoted after
+an unattended delivery) and ``nc_aim`` (user decision 2026-11-25, UD-20261125-nc-aim: every
+topic aims at Nature Communications and the results decide the journal). The current stage
+comes from ``[program.funnel].target_stage``: ``nc_aim`` is the single stage of every line;
+``line_events`` restores the per-line event mechanism. Topics admitted under an older stage
+keep it (their admission record's ``target_stage``), so their grading and delivery replay
+as they were admitted.
+"""
 
 from __future__ import annotations
 
@@ -8,11 +17,16 @@ from collections.abc import Mapping
 
 from .db import utc_now
 
+# Start of the run_in observation window (line_events mode only; historical replay).
 # The last production fast-forward of P1/P2/S6/G1: S6 a6a3d4f.
 CUTOFF = "2026-11-22T01:35:00Z"
 RUN_IN = "run_in"
 TIER2_AIM = "tier2_aim"
-STAGES = (RUN_IN, TIER2_AIM)
+NC_AIM = "nc_aim"
+LINE_EVENTS = "line_events"
+STAGES = (RUN_IN, TIER2_AIM, NC_AIM)
+# Stages whose topics get an acceptance grade before delivery.
+GRADED_STAGES = (TIER2_AIM, NC_AIM)
 CHANGE = "research_line_target_stage_changed"
 LIFECYCLE = ("topic_proposed", "topic_admitted", "topic_activated",
              "topic_in_review", "topic_ready")
@@ -38,7 +52,39 @@ def card_errors(card: Mapping, stage: str) -> list[str]:
         not isinstance(rationale, str) or not rationale.strip()
     ):
         return ["tier2_aim requires tier_rationale covering contribution, data and validation"]
+    if stage == NC_AIM:
+        from .nc_funnel import card_contract_errors
+
+        return card_contract_errors(card)
     return []
+
+
+def configured_stage(settings) -> str | None:
+    """The one stage every line has under ``[program.funnel]``, or None (line events)."""
+
+    funnel = getattr(getattr(settings, "program", None), "funnel", None)
+    stage = getattr(funnel, "target_stage", LINE_EVENTS) if funnel is not None else LINE_EVENTS
+    return stage if stage in STAGES else None
+
+
+def scout_instruction(stage: str) -> str:
+    if stage == TIER2_AIM:
+        return TIER2_INSTRUCTION
+    if stage == NC_AIM:
+        from .nc_funnel import SCOUT_INSTRUCTION
+
+        return SCOUT_INSTRUCTION
+    return ""
+
+
+def admission_instruction(stages) -> str:
+    stages = set(stages)
+    text = TIER2_INSTRUCTION + ADMISSION_INSTRUCTION if TIER2_AIM in stages else ""
+    if NC_AIM in stages:
+        from .nc_funnel import ADMISSION_NC_INSTRUCTION
+
+        text += ADMISSION_NC_INSTRUCTION
+    return text
 
 
 def _state(connection, line: str) -> dict:
@@ -49,8 +95,15 @@ def _state(connection, line: str) -> dict:
     return json.loads(row[0]) if row else {"stage": RUN_IN}
 
 
-def stage_for(db, line: str | None) -> str:
-    if not isinstance(line, str) or not line:
+def stage_for(db, line: str | None, settings=None) -> str:
+    """The stage new cards of ``line`` are judged by (configured stage first)."""
+
+    fixed = configured_stage(settings) if settings is not None else None
+    if fixed is not None:
+        exempt = getattr(settings.program.funnel, "exempt_lines", ())
+        if not (isinstance(line, str) and line in exempt):
+            return fixed
+    if not isinstance(line, str) or not line or db is None:
         return RUN_IN
     with db.connect() as connection:
         return _state(connection, line)["stage"]
@@ -239,8 +292,15 @@ def _manual(event: Mapping) -> bool:
     )
 
 
-def refresh(db, document: Mapping, lines) -> dict[str, dict]:
+def refresh(db, document: Mapping, lines, settings=None) -> dict[str, dict]:
     entries = replay(db, document, lines)
+    fixed = configured_stage(settings) if settings is not None else None
+    if fixed is not None:
+        # One configured stage: the run_in replay is history only, nothing is promoted.
+        for line, entry in entries.items():
+            entry["target_stage"] = stage_for(db, line, settings)
+            entry["target_stage_source"] = "[program.funnel].target_stage"
+        return entries
     for line, entry in entries.items():
         if entry["target_stage"] != RUN_IN:
             continue
@@ -253,12 +313,28 @@ def refresh(db, document: Mapping, lines) -> dict[str, dict]:
     return entries
 
 
-def tier2_topic(topic: Mapping) -> bool:
+def admitted_stage(topic: Mapping) -> str:
     admission = topic.get("admission")
-    return isinstance(admission, Mapping) and admission.get("target_stage") == TIER2_AIM
+    stage = admission.get("target_stage") if isinstance(admission, Mapping) else None
+    return stage if stage in STAGES else RUN_IN
 
-def venue_grade(decision: Mapping, venues: list[dict]) -> dict | None:
+
+def graded_topic(topic: Mapping) -> bool:
+    """A topic admitted under a stage whose delivery waits for an acceptance grade."""
+
+    return admitted_stage(topic) in GRADED_STAGES
+
+
+# Former name (tier2 only); every graded stage now.
+tier2_topic = graded_topic
+
+def venue_grade(decision: Mapping, venues: list[dict], *, stage: str = TIER2_AIM,
+                settings=None) -> dict | None:
     """Check that the chosen verified journal belongs to the judged evidence band."""
+    if stage == NC_AIM:
+        from .nc_funnel import nc_grade
+
+        return nc_grade(decision, venues, settings)
     retarget = decision["retarget"]
     journal = retarget["venue_or_format"]
     zone = next((v["cas_2025_zone"] for v in venues if v["journal"] == journal), None)

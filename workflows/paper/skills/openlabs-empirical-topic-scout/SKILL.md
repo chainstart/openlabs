@@ -20,6 +20,58 @@ token and compute cost, not breakthroughs, and idle slots and quota are a cost t
 nothing only when nothing in the line clears the routine bar; a sound routine card is worth
 more than a clever one that is fragile.
 
+## NC aim (target_stage `nc_aim`, user decision 2026-11-25)
+
+This section replaces the routine standard below whenever the packet says `target_stage:
+nc_aim`. User: "后续的投稿目标都设为NC，然后选题也按照这个标准来选 ... 立意要高，但是论文到底投啥，要由做出的实验数据来说话". Every topic aims at Nature Communications; the results decide whether it goes to NC or down to CAS Zone 1, 2, 3-4. Small and low topics are not proposed.
+
+- **Cast a wide net cheaply.** Read recent literature and the line's data catalogue
+  (`research_line_summary.data_catalog`, full file in the packet) and return several distinct
+  cards rather than one polished one. The pool has a cap (the candidate-pool low water) and a
+  weekly model budget per line; a line whose recent cards all failed downstream is backed off.
+- **Each card states its NC case** in `nc_case`: `claim` (the one-sentence expected conclusion,
+  falsifiable, ideally counter-intuitive), `alternative_claim` (the sentence that still has
+  value if the result goes the other way), `challenges` (the view, practice or widely quoted
+  number it overturns), `benchmark` (the authoritative reference, policy parameter or largest
+  prior study it is measured against), `thresholds` (the five NC thresholds below, each `{met,
+  evidence}`), `exemplars` (ids of the hooks it resembles).
+- **NC thresholds** (at least two must hold, with evidence): generality (global, whole
+  population, or a law across systems); a one-sentence counter-intuitive conclusion; scale an
+  order of magnitude (at least 4x) beyond the largest prior study; benchmarked against an
+  authoritative reference or policy parameter; a reusable resource (dataset, catalogue,
+  benchmark, tool). Method complexity is not a threshold: most accepted computational NC papers
+  use public data and simple methods.
+- **Plan the scale now**: `data_volume` {total_gb, largest_file_gb, proxy_expected,
+  offpeak_days, ailab_storage_gb}. Large proxy downloads (>= 200 MB per file or >= 1 GB per
+  batch) only run 02:00-14:00 Beijing time, so count the download windows; ailab has six SSDs.
+- **Design the kill test**: `kill_test` {signal, null_model, ceiling, pass_rule, core_hours <= 2}
+  - does the key signal exist, how much does a null model or simple baseline explain, what is
+  the theoretical ceiling. Lesson of 2026-11-12 (four papers frozen after many review rounds): a
+  40-second copula benchmark, a full-sample null model, or the ceiling of the effect would each
+  have shown at once that the claim could not stand.
+- **Milestones with budgets**: `milestones` [{name, kind, agent_hours, core_hours, model_usd}];
+  the first has `kind: decisive` (the test that decides whether the main claim holds).
+- **Data**: give each data source its catalogue `catalog_id`; a source you found and verified
+  yourself (access receipt) gets `catalog_candidate: true`. A source that needs a registration
+  we do not hold, or is blocked, cannot carry a card.
+- **Do not re-propose** a direction the ledger shows rejected or frozen for its substance; a
+  card close to one is rejected mechanically.
+
+Hooks of accepted NC papers (survey 2026-11-25, 63 papers; full list in
+`registry/venue-calibration.yaml`):
+
+- E1 flash droughts cut global vegetation 9.0% vs 5.3% for ordinary droughts (41 years, global).
+- E3 warming makes 71% of basins' snowmelt floods earlier but ~30% later (243k floods, 70 years).
+- E4 multi-thread channels are 51% of the world's alluvial river length, against the textbook view.
+- N1 simple models beat deep learning for PV forecasting in 17 of 20 settings.
+- N2 open probabilistic forecasts beat the system operator's own forecast by ~25%.
+- N6 the worst Dunkelflaute winter needs 351 TWh of long-duration storage (~7% of demand).
+- A1 a drug-mean baseline explains ~67.5% of drug-response variance; deep models lose to trees.
+- A2 untrained models explain >80% of LLM-brain "alignment"; >98% comes from confounds.
+- S1 doubling a city's population raises intra-urban inequality ~8-9% (accepted with R^2 ~0.04).
+- S2 rich countries' 7-day forecasts are as good as poor countries' 1-day forecasts.
+- P4 across 48 clusters, blue stragglers track the binary fraction (r = 0.81), not collisions.
+
 ## What to propose
 
 Prefer routine production topics inside the line's positioning: a screening of a new set of

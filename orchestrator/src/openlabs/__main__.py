@@ -171,7 +171,7 @@ def _parser() -> argparse.ArgumentParser:
         "target-stage", help="Replay unattended delivery progress or set a research line target stage"
     )
     stage.add_argument("--line")
-    stage.add_argument("--stage", choices=("run_in", "tier2_aim"))
+    stage.add_argument("--stage", choices=("run_in", "tier2_aim", "nc_aim"))
     stage.add_argument("--by")
     stage.add_argument("--reason")
     backfill = program_commands.add_parser(
@@ -698,6 +698,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     open_topic_ledger(paths, settings.program).read(),
                     [args.line] if args.line else lines,
                 )
+                configured = target_stage.configured_stage(settings)
+                if configured is not None:
+                    # [program.funnel].target_stage decides; the replay is history only.
+                    for line, entry in payload.items():
+                        entry["recorded_stage"] = entry["target_stage"]
+                        entry["target_stage"] = target_stage.stage_for(None, line, settings)
+                        entry["target_stage_source"] = "[program.funnel].target_stage"
         except (ValueError, sqlite3.Error) as exc:
             print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
                   file=sys.stderr)

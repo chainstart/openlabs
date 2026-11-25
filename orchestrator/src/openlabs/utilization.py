@@ -658,6 +658,22 @@ def division_of_labour(
     }
 
 
+def _nc_funnel_report(db, paths, settings, document, moment) -> dict[str, Any]:
+    """NC funnel per line (weekly view): levels, bands vs target mix, cost per paper, spin."""
+
+    from . import nc_funnel
+    from .program_flow import program_projects, scout_workstream_id
+
+    report = nc_funnel.metrics(document, settings, scout_counts=nc_funnel.scout_counts(db))
+    campaigns = {project.research_line: scout_workstream_id(project)
+                 for project in program_projects(paths)
+                 if project.research_line and scout_workstream_id(project)}
+    spin = nc_funnel.spin_hours(db, settings, document, campaigns, moment=moment)
+    for line, hours in spin.items():
+        report["lines"].setdefault(line, {})["spin_agent_hours_7d"] = hours
+    return report
+
+
 def utilization_report(
     db: FactoryDB,
     paths: WorkspacePaths,
@@ -724,6 +740,10 @@ def utilization_report(
                 program["funnel"] = with_costs(document, db, paths, settings)
             except (OSError, ValueError, TypeError):
                 program["funnel"] = {"status": "unavailable"}
+            try:
+                program["nc_funnel"] = _nc_funnel_report(db, paths, settings, document, moment)
+            except (OSError, ValueError, TypeError, KeyError):
+                program["nc_funnel"] = {"status": "unavailable"}
     from .paper_figures import latest_metrics
     figures = list(latest_metrics(db).values())
     program["figure_metrics"] = {

@@ -41,6 +41,7 @@ from . import assets as asset_library
 from . import budget as budget_control
 from . import card_precheck as card_checks
 from . import line_facts
+from . import nc_funnel
 from . import supply_screen
 from . import target_stage
 from .config import FactorySettings, WorkspacePaths, dispatch_runner
@@ -354,7 +355,7 @@ def packet_read_resources(input_path: Any) -> list[dict[str, str]]:
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return []
     schema = packet.get("schema_version")
-    if schema not in CARD_PACKET_SCHEMAS and not (
+    if schema not in (*CARD_PACKET_SCHEMAS, nc_funnel.PRESCREEN_PACKET_SCHEMA) and not (
         schema == REVIEW_PACKET_SCHEMA and packet.get("program") is True
     ):
         return []
@@ -1071,7 +1072,7 @@ def _schedule_one_scout(
     rotation = scout_key(project)
     line = project.research_line
     line_fields: dict[str, Any] = {}
-    stage = target_stage.stage_for(db, line)
+    stage = target_stage.stage_for(db, line, settings)
     if line:
         line_fields = {
             "research_line": line,
@@ -1158,7 +1159,7 @@ def _schedule_one_scout(
             "with its file:// URI and SHA-256 (a PDF in the workspace fails promotion). An "
             "empty `topic_cards` array is a "
             "valid outcome when nothing clears the bar. Do not start the research itself."
-            + (target_stage.TIER2_INSTRUCTION if stage == target_stage.TIER2_AIM else "")
+            + target_stage.scout_instruction(stage)
         ),
         input_path=str(packet_path),
         skill_path=SCOUT_SKILL,
@@ -1274,6 +1275,9 @@ def schedule_scouts(
         if last is not None and moment - last < timedelta(hours=interval):
             recent.add(key)
     supply_blocks = scout_supply_blocks(db, paths, settings, projects, document, moment=moment)
+    for key, block in nc_funnel.scout_blocks(db, paths, settings, projects, document,
+                                             moment=moment).items():
+        supply_blocks.setdefault(key, block)
     blocked_keys = frozenset(supply_blocks)
     expected = expected_cards_per_scout(db, settings, document) if legacy_keys else 1.0
     legacy_missing = low_water - legacy_pool - legacy_in_flight * expected
@@ -1330,6 +1334,9 @@ def _supply_block_reason(blocks: Mapping[str, Mapping[str, Any]]) -> str:
         if all(item.get("reason") == "candidate_queue_empty" for item in blocks.values()):
             return "candidate_queue_empty"
         return "candidates_exhausted"
+    reasons = {str(item.get("reason")) for item in blocks.values()}
+    if len(reasons) == 1 and reasons & {"funnel_stall_backoff", "scout_weekly_budget"}:
+        return reasons.pop()
     return "scout_empty_backoff"
 
 
@@ -1593,8 +1600,8 @@ def intake_card(
         card, raised = card_checks.apply_compute_floor(
             card, card_checks.compute_floor(line_entry, template_entry))
         normalized = [*normalized, *raised]
-    stage = target_stage.stage_for(db, card.get("research_line"))
-    if stage == target_stage.TIER2_AIM:
+    stage = target_stage.stage_for(db, card.get("research_line"), settings)
+    if stage in target_stage.GRADED_STAGES:
         card["target_stage"] = stage
     warnings: list[str] = []
     errors = card_problems(paths, settings, card, receipt_digests=receipt_digests,
@@ -1618,6 +1625,14 @@ def intake_card(
         metadata["card_check"] = {**metadata.get("card_check", {"normalized": [],
                                                                "warnings": []}),
                                   **screen_fields}
+    if rejection is None:
+        # NC funnel level 1 (2026-11-25): thresholds, data catalogue, capacity, near duplicates.
+        rejection, screen_errors, nc_fields = nc_funnel.screen_card(
+            settings, card, line_entry, ledger.read(), stage)
+        if nc_fields:
+            metadata["card_check"] = {**metadata.get("card_check", {"normalized": [],
+                                                                   "warnings": []}),
+                                      **nc_fields}
     if rejection is not None:
         outcome = _record_invalid(
             db, paths, ledger, project, card, errors=screen_errors, decided_by=decided_by,
@@ -2117,7 +2132,7 @@ def schedule_card_repairs(
         errors = card_problems(
             paths, settings, normalize_topic_card(card)[0],
             receipt_digests=digests, ledger_document=ledger.read(),
-            stage=target_stage.stage_for(db, project.research_line),
+            stage=target_stage.stage_for(db, project.research_line, settings),
         )
         if not errors:
             # The card passes the current checks as it stands: register it again.
@@ -2223,8 +2238,8 @@ def _enqueue_card_repair(
             "one must be a hash-bound artifact of your result. If the card cannot be fixed "
             "without changing the topic, return `topic_cards: []` and say why. This is the "
             "card's only repair. Do not start the research."
-            + (target_stage.TIER2_INSTRUCTION if target_stage.stage_for(
-                db, project.research_line) == target_stage.TIER2_AIM else "")
+            + target_stage.scout_instruction(target_stage.stage_for(
+                db, project.research_line, settings))
         ),
         input_path=str(packet_path),
         skill_path=SCOUT_SKILL,
@@ -2398,8 +2413,8 @@ def _enqueue_revision(
             "one concretely. When a condition cannot be met now (data not yet released, an "
             "external result pending), return `topic_cards: []` and say which and why. This is "
             "the topic's only revision. Do not start the research."
-            + (target_stage.TIER2_INSTRUCTION if target_stage.stage_for(
-                db, project.research_line) == target_stage.TIER2_AIM else "")
+            + target_stage.scout_instruction(target_stage.stage_for(
+                db, project.research_line, settings))
         ),
         input_path=str(packet_path),
         skill_path=SCOUT_SKILL,
@@ -2575,6 +2590,9 @@ def schedule_topic_admission(
     # A card whose ailab pilot is pending or running waits for its verdict (advance_pilots).
     waiting_for_pilot = [topic for topic in proposed if supply_screen.pilot_held(topic)]
     proposed = [topic for topic in proposed if topic not in waiting_for_pilot]
+    # An NC-aimed card waits for its prescreen (novelty + thresholds + kill test).
+    waiting_for_prescreen = [topic for topic in proposed if nc_funnel.prescreen_held(topic)]
+    proposed = [topic for topic in proposed if topic not in waiting_for_prescreen]
     in_flight = {
         str(task["task_id"]): task
         for task in _program_tasks(db, statuses=IN_FLIGHT_STATUSES,
@@ -2601,6 +2619,7 @@ def schedule_topic_admission(
             else "research_line_environment_not_ready" if waiting_for_line
             else "admission_precheck_error" if waiting_for_precheck
             else "admission_pilot_pending" if waiting_for_pilot
+            else "admission_prescreen_pending" if waiting_for_prescreen
             else "awaiting_topic_cards"
         )
     cap = settings.program.max_concurrent_admissions
@@ -2655,7 +2674,7 @@ def schedule_topic_admission(
             "card_sha256": topic["card_sha256"],
             "proposer_provider": provider,
             "card": card,
-            "target_stage": target_stage.stage_for(db, card.get("research_line")),
+            "target_stage": target_stage.stage_for(db, card.get("research_line"), settings),
         }
         if isinstance(topic.get("card_check"), Mapping):
             # Non-blocking gaps found at intake (audience evidence, licence notes, ...).
@@ -2804,9 +2823,10 @@ def schedule_topic_admission(
                 "(target_tier routine) and its fallback venues stay the stated fallback."
                 if line_ids else ""
             )
-            + (target_stage.TIER2_INSTRUCTION + target_stage.ADMISSION_INSTRUCTION if any(
-                entry["target_stage"] == target_stage.TIER2_AIM for entry in entries
-            ) else "")
+            + target_stage.admission_instruction(
+                {entry["target_stage"] for entry in entries} - {target_stage.NC_AIM})
+            + (nc_funnel.admission_instruction(settings) if any(
+                entry["target_stage"] == target_stage.NC_AIM for entry in entries) else "")
         ),
         input_path=str(packet_path),
         skill_path=ADMISSION_SKILL,
@@ -3040,6 +3060,12 @@ def _summary(admission: Mapping[str, Any], review_task_id: str) -> dict[str, Any
         ),
         "review_task_id": review_task_id,
         "policy": ADMISSION_POLICY_VERSION,
+        **({"nc_assessment": dict(admission["nc_assessment"])}
+           if isinstance(admission.get("nc_assessment"), Mapping) else {}),
+        **({"novelty_search": {
+            key: admission["novelty_search"].get(key)
+            for key in ("window_years", "papers_screened", "increment", "closest")}}
+           if isinstance(admission.get("novelty_search"), Mapping) else {}),
     }
 
 
@@ -3131,10 +3157,20 @@ def materialize_admission_decisions(
             note("unchanged", f"topic_already_{status}")
             continue
         if verdict == "admit" and status == "proposed":
-            current = target_stage.stage_for(db, card.get("research_line"))
-            if stage != current and current == target_stage.TIER2_AIM:
+            current = target_stage.stage_for(db, card.get("research_line"), settings)
+            if stage != current and current in target_stage.GRADED_STAGES:
                 note("undecided", "line_stage_changed_during_review")
                 continue
+            if stage == target_stage.NC_AIM:
+                gaps = [*target_stage.card_errors(card, stage),
+                        *nc_funnel.admission_problems(admission, settings)]
+                if gaps:
+                    reject_topic(ledger, topic_id, db=db, reason=nc_funnel.ADMISSION_REJECTION,
+                                 decided_by=review_task_id, evidence=evidence,
+                                 admission={**summary, "strongest_rejection_reason":
+                                            "NC aim: " + "; ".join(gaps)})
+                    note("rejected", nc_funnel.ADMISSION_REJECTION)
+                    continue
             if stage == target_stage.TIER2_AIM:
                 gaps = target_stage.card_errors(card, stage)
                 if admission.get("tier2_contribution_supported") is not True:
@@ -3270,6 +3306,8 @@ def _research_state(
         },
         **({"precheck_clock": PRECHECK_CLOCK}
            if isinstance(card.get("feasibility_precheck"), Mapping) else {}),
+        **(nc_funnel.research_fields(record)
+           if record.get("target_stage") == target_stage.NC_AIM else {}),
     }
 
 
@@ -3627,7 +3665,7 @@ def run_program_pipeline(
                      if project.research_line)
         lines.update(topic["research_line"] for topic in stage_document.get("topics", [])
                      if topic.get("research_line"))
-        info["by_line"] = target_stage.refresh(db, stage_document, sorted(lines))
+        info["by_line"] = target_stage.refresh(db, stage_document, sorted(lines), settings)
         outcomes = register_scout_results(db, paths, settings)
         info["cards_registered"] = [item for item in outcomes if item["status"] == "proposed"]
         info["rejected_cards"] = [item for item in outcomes if item["status"] == "rejected"]
@@ -3641,6 +3679,7 @@ def run_program_pipeline(
                           for item in outcomes if item.get("precheck")],
             "retried": retry_held_prechecks(db, paths, settings, report),
             "pilots": supply_screen.advance_pilots(db, paths, settings, report),
+            "prescreens": nc_funnel.advance_prescreens(db, paths, settings, report),
             "by_line": precheck_statistics(open_topic_ledger(paths, settings.program).read()),
         }
         if not any(info["card_prechecks"].values()):
@@ -3724,6 +3763,10 @@ def run_program_pipeline(
             paused_topic_campaigns(db)).to_dict())
         info.setdefault("admissions_scheduled", [])
         info.setdefault("admission_decisions", [])
+        info["nc_funnel"] = nc_funnel.metrics(document, settings)
+        info["nc_funnel"]["scout_gates"] = list(nc_funnel.scout_blocks(
+            db, paths, settings, program_projects(paths), document,
+            moment=_now_moment()).values())
     except (OSError, TopicLedgerError, KeyError, TypeError, ValueError,
             json.JSONDecodeError) as exc:
         report.errors.append(f"program pipeline: {exc}")

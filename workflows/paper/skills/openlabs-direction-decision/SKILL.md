@@ -38,6 +38,25 @@ When there is no suitable verified journal in the supported band, use `freeze` w
 new journal. Apply this section to the grading trigger and use the following choices for
 other triggers.
 
+### NC-aim grading (packet `grading.stage: nc_aim`)
+
+User decision 2026-11-25: "如果最后得到的结果迈过了上述的真正门槛，有把握的话，那就投NC，没达到标准的话，就降级投1区，2区，依次降级 ... 要由做出的实验数据来说话，这是硬指标".
+
+1. Read the calibration set (`read_resources` label `venue-calibration`): accepted NC papers with
+   their hooks, and same-subject papers from lower-tier journals. First decide which tier the
+   manuscript resembles: `retarget.calibration_match` (nc, zone_1, zone_2, zones_3_4) and
+   `retarget.calibration_neighbours` (2-3 calibration ids).
+2. Score the five NC thresholds on the actual evidence, not on the plan:
+   `retarget.nc_scorecard` {generality, counterintuitive, scale, benchmark, resource: {met,
+   evidence}}; set `retarget.confidence` (high, medium, low).
+3. `retarget.achieved_band`: `nc` only with at least two thresholds met, calibration match nc and
+   high confidence; otherwise `zone_1`, then `zone_2`, then `zones_3_4`. The control plane
+   refuses a decision that breaks this rule.
+4. Choose an exact verified journal of that band (`grading.nc_journals` for nc; the CAS zone
+   for the others) from `verified_alternatives`. Every band keeps top-journal writing and figure
+   standards; only the journal, its length and its format change.
+5. After a rejection, retarget one band lower at a time (NC -> Zone 1 -> Zone 2 -> Zones 3-4).
+
 ## Choose
 
 Use the choices listed in the packet's `options`. When it includes

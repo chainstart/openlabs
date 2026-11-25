@@ -5,6 +5,8 @@ description: Writing and reviewing astronomy papers on survey photometry and ecl
 
 # Astronomy papers
 
+NC angle (NC aim, 2026-11-25): a uniform large sample that settles a long debate (P4) or a population statistic tied to a big physical question; single-target solutions are not NC topics.
+
 Use the shared paper-writing workflow. Start with the observable result: which systems and sectors support the inference, and how large are the statistical and product-dependent uncertainties?
 
 - Identify targets by catalogue ID. Give TESS sectors, cadence, product (SAP, PDCSAP or extracted light curve), quality masks, detrending and crowding treatment. Report time system (e.g. BJD_TDB), period, epoch and cycle counting. Show representative phase-folded flux and residuals by sector or product.

@@ -5,6 +5,8 @@ description: Writing and reviewing energy systems and electricity-market economi
 
 # Energy systems and economics papers
 
+NC angle (NC aim, 2026-11-25): benchmark against the operator's own forecast or plan (N2, N6), multi-market scale and a policy parameter (N7); one sentence that overturns a planning assumption.
+
 Use the shared paper-writing workflow. State the market rule or operational constraint, who is affected, the counterfactual and the size and uncertainty of the effect.
 
 - Document operator data, settlement interval, local time conventions, currency/year and energy and power units. Link prices, dispatch and metering by interval. Distinguish measured generation, reconstructed curtailment and modeled availability, with coverage and a measured-only sensitivity.

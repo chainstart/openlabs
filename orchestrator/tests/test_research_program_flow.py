@@ -14,6 +14,7 @@ from openlabs import engine
 from openlabs.config import (
     BudgetSettings,
     FactorySettings,
+    FunnelSettings,
     ProgramSettings,
     RunnerSpec,
     WorkspacePaths,
@@ -96,7 +97,10 @@ def _settings(runners=RUNNERS, **program) -> FactorySettings:
         default_task_scratch_mib=16,
         budget=BudgetSettings(max_parallel_agents=4),
         runners=dict(runners),
-        program=ProgramSettings(enabled=True, **program),
+        # Legacy flow tests keep the per-line stage mechanism (run_in -> tier2_aim); the NC-aim
+        # funnel (the configured default since 2026-11-25) is tested in test_nc_funnel.py.
+        program=ProgramSettings(enabled=True, **{
+            "funnel": FunnelSettings(target_stage="line_events"), **program}),
     )
 
 

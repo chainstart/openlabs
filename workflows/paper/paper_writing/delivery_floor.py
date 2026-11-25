@@ -268,10 +268,25 @@ def check(paper_id, metadata, root, record=None, *, author=False):
         statement, usage, root=root, configured_attempts=configured_attempts_for_record(metadata)
     ):
         issue("AI-USE-UNVERIFIED", "Generate the AI-use declaration from verified runtime model records.")
+    # NUMBER-CONFLICT (2026-11-25, NC aim): the same quantity stated with different values in
+    # abstract, body and captions. An author self-check: advice goes to metrics; only a
+    # definite conflict blocks, and only the author's check (--author), not the delivery exit.
+    from .number_consistency import check as number_check
+    numbers = number_check(source)
+    for finding in numbers["findings"]:
+        if author and finding["severity"] == "error":
+            issue("NUMBER-CONFLICT",
+                  f"'{finding['label']}' is stated as "
+                  + " vs ".join(f"{item['value']:g} ({item['part']})" for item in finding["values"])
+                  + "; state one value (or qualify the difference).")
     return {"metrics": {"main_text_words": words, "min_body_words": minimum, "length_sources": sources,
                         "figure_profile": profile_id, "min_result_figures": min_results, **counts,
                         "schematic_routes": routes,
-                        "float_placement": placement["status"]}, "issues": issues}
+                        "float_placement": placement["status"],
+                        "number_consistency": {"errors": numbers["errors"],
+                                               "advice": [f for f in numbers["findings"]
+                                                          if f["severity"] == "advice"][:10]}},
+            "issues": issues}
 
 
 def audit(paper_id, root, *, author=False):

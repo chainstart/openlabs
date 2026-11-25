@@ -283,6 +283,8 @@ class ProgramSettings:
     owner: OwnerSettings = field(default_factory=lambda: OwnerSettings())
     # [program.supply] (2026-11-20, W1): topic supply and early screening.
     supply: SupplySettings = field(default_factory=lambda: SupplySettings())
+    # [program.funnel] (2026-11-25, NC aim): target stage and the topic funnel's parameters.
+    funnel: FunnelSettings = field(default_factory=lambda: FunnelSettings())
     # Automatic reopens per frozen topic whose recorded line-level conditions
     # (``auto_reopen``: shared control receipt, line capability) came true; a
     # topic may ask for fewer. 0 turns automatic reopening off.
@@ -366,6 +368,61 @@ class SupplySettings:
     # the empty-draw backoff keeps doubling past scout_empty_backoff_hours up to this.
     scout_skip_empty_queue: bool = True
     scout_backoff_max_hours: float = 48.0
+
+
+# Research target stages (target_stage.py). "line_events" keeps the per-line recorded stage
+# (run_in -> tier2_aim, 2026-11-22); any other value is the one stage of every line.
+FUNNEL_TARGET_STAGES = ("nc_aim", "line_events")
+EXPECTED_BANDS = ("nc", "zone_1", "zone_2", "zones_3_4")
+
+
+@dataclass(frozen=True)
+class FunnelSettings:
+    """``[program.funnel]`` (2026-11-25): NC-aimed topic selection as a graded funnel.
+
+    User decision UD-20261125-nc-aim (registry/user-decisions.yaml): every topic aims at
+    Nature Communications; the journal is decided by the results (NC, then CAS Zone 1, 2, 3-4).
+    Each funnel level is dearer and stricter than the one before (design:
+    maintenance/20261125-nc-aim/DESIGN.md). Hard stops are only: data unavailable, fewer than
+    ``min_nc_thresholds`` NC thresholds, a kill test whose signal is absent, and an expected
+    band below ``admission_min_band``; everything else is recorded for the admission gate.
+    """
+
+    target_stage: str = "nc_aim"
+    # NC thresholds (generality, counterintuitive, scale, benchmark, resource) a topic must meet.
+    min_nc_thresholds: int = 2
+    # L1 (mechanical): data source catalogue, capacity and near-duplicate screens.
+    uncatalogued_data: str = "reject"  # reject | warn
+    max_topic_data_gb: float = 2000.0
+    max_topic_storage_gb: float = 2000.0
+    dedup_reject_similarity: float = 0.8
+    dedup_warn_similarity: float = 0.5
+    # L2+L3 (topic_prescreen task): quick novelty + NC pre-assessment, then the kill test.
+    prescreen: bool = True
+    prescreen_max_concurrent: int = 2
+    prescreen_max_attempts: int = 2
+    prescreen_wall_seconds: int = 5_400
+    kill_test_core_hours: float = 2.0
+    kill_test_cpus: int = 2
+    kill_test_max_download_mb: int = 200
+    # A null model explaining at least this share of the claimed effect lowers the band.
+    null_explained_max: float = 0.8
+    # L4 (admission): independent novelty search and the floor of the expected band.
+    novelty_min_papers: int = 50
+    novelty_window_years: int = 3
+    novelty_closest: int = 5
+    admission_min_band: str = "zone_1"
+    # L0 (scouts): weekly model budget per line (USD equivalent, 0 = off) and stall backoff.
+    scout_weekly_usd_per_line: float = 60.0
+    stall_zero_pass_after: int = 5
+    stall_backoff_hours: float = 48.0
+    # L6 (grading): journals of the NC band (the rest is graded by CAS zone).
+    nc_journals: tuple[str, ...] = ("Nature Communications",)
+    # Target mix per 10 topics (user 2026-11-25): 2-3 NC, 2-3 Zone 1, the rest lower.
+    target_mix: dict[str, tuple[int, int]] = field(default_factory=lambda: {
+        "nc": (2, 3), "zone_1": (2, 3)})
+    # Lines that keep their own (templated) standard instead of the NC aim; empty by default.
+    exempt_lines: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -598,6 +655,9 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
     # a card's format errors is light.
     "topic_revision": "worker",
     "topic_card_repair": "light",
+    # NC funnel prescreen (2026-11-25): quick novelty + NC thresholds, then a <= 2 core-hour
+    # kill test it writes and runs itself; worker tier because it writes a little code.
+    "topic_prescreen": "worker",
     # Distilling a finished topic into reusable assets is bookkeeping-sized work.
     "topic_retrospective": "light",
     "paper_revision": "worker",
@@ -620,6 +680,7 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
 KNOWN_ROUTING_REASONS: frozenset[str] = frozenset({
     # program_flow
     "topic_admission", "program_slot_open", "topic_card_repair", "topic_revision",
+    "topic_prescreen",
     # portfolio
     "new_project_results_review", "reviewer_selected_candidate_maturation",
     # owner
@@ -755,6 +816,7 @@ DEFAULT_CLAIM_RANKS: dict[str, int] = {
     "paper_figure_repair": 3,
     "topic_admission": 1,
     "topic_card_repair": 1,
+    "topic_prescreen": 1,
     "topic_revision": 0,
     "topic_scout": 0,
     "literature_scan": 0,
@@ -767,6 +829,7 @@ DEFAULT_LEAD_SHORTAGE_PAUSED: tuple[str, ...] = (
     "topic_scout",
     "topic_revision",
     "topic_card_repair",
+    "topic_prescreen",
     "literature_scan",
     "literature_search",
     "literature_screening",
@@ -1463,6 +1526,7 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         owner_mode=_owner_mode(program.get("owner_mode")),
         owner=_owner_settings(program.get("owner")),
         supply=_supply_settings(program.get("supply")),
+        funnel=_funnel_settings(program.get("funnel")),
         auto_reopen_max=_nonnegative_int(program.get("auto_reopen_max"), 1),
         operator_reopen_max=_nonnegative_int(program.get("operator_reopen_max"), 1),
         card_precheck=program.get("card_precheck", True) is not False,
@@ -1510,6 +1574,75 @@ def _owner_mode(value: Any) -> str | tuple[str, ...]:
     if isinstance(value, list):
         return _domain_list(value, "owner_mode")
     raise ValueError('[program].owner_mode must be "off", "all" or an array of line ids')
+
+
+def _funnel_settings(value: Any) -> FunnelSettings:
+    """``[program.funnel]``; absent keys keep their defaults."""
+
+    if value is None:
+        return FunnelSettings()
+    if not isinstance(value, dict):
+        raise ValueError("[program.funnel] must be a table")
+    d = FunnelSettings()
+    stage = str(value.get("target_stage", d.target_stage)).strip()
+    if stage not in FUNNEL_TARGET_STAGES:
+        raise ValueError(f"[program.funnel].target_stage must be one of {FUNNEL_TARGET_STAGES}")
+    band = str(value.get("admission_min_band", d.admission_min_band)).strip()
+    if band not in EXPECTED_BANDS:
+        raise ValueError(f"[program.funnel].admission_min_band must be one of {EXPECTED_BANDS}")
+    data = str(value.get("uncatalogued_data", d.uncatalogued_data)).strip()
+    if data not in {"reject", "warn"}:
+        raise ValueError('[program.funnel].uncatalogued_data must be "reject" or "warn"')
+    mix = value.get("target_mix")
+    target_mix = dict(d.target_mix)
+    if isinstance(mix, dict):
+        for key, pair in mix.items():
+            if key not in EXPECTED_BANDS or not isinstance(pair, list) or len(pair) != 2:
+                raise ValueError("[program.funnel].target_mix maps a band to [low, high]")
+            target_mix[key] = (int(pair[0]), int(pair[1]))
+    journals = value.get("nc_journals")
+    return FunnelSettings(
+        target_stage=stage,
+        min_nc_thresholds=min(5, _positive_int(value.get("min_nc_thresholds"),
+                                               d.min_nc_thresholds)),
+        uncatalogued_data=data,
+        max_topic_data_gb=_positive_float(value.get("max_topic_data_gb"), d.max_topic_data_gb),
+        max_topic_storage_gb=_positive_float(value.get("max_topic_storage_gb"),
+                                             d.max_topic_storage_gb),
+        dedup_reject_similarity=min(1.0, _positive_float(value.get("dedup_reject_similarity"),
+                                                         d.dedup_reject_similarity)),
+        dedup_warn_similarity=min(1.0, _positive_float(value.get("dedup_warn_similarity"),
+                                                       d.dedup_warn_similarity)),
+        prescreen=value.get("prescreen", d.prescreen) is not False,
+        prescreen_max_concurrent=_positive_int(value.get("prescreen_max_concurrent"),
+                                               d.prescreen_max_concurrent),
+        prescreen_max_attempts=_positive_int(value.get("prescreen_max_attempts"),
+                                             d.prescreen_max_attempts),
+        prescreen_wall_seconds=_positive_int(value.get("prescreen_wall_seconds"),
+                                             d.prescreen_wall_seconds),
+        kill_test_core_hours=_positive_float(value.get("kill_test_core_hours"),
+                                             d.kill_test_core_hours),
+        kill_test_cpus=_positive_int(value.get("kill_test_cpus"), d.kill_test_cpus),
+        kill_test_max_download_mb=_positive_int(value.get("kill_test_max_download_mb"),
+                                                d.kill_test_max_download_mb),
+        null_explained_max=min(1.0, _positive_float(value.get("null_explained_max"),
+                                                    d.null_explained_max)),
+        novelty_min_papers=_positive_int(value.get("novelty_min_papers"), d.novelty_min_papers),
+        novelty_window_years=_positive_int(value.get("novelty_window_years"),
+                                           d.novelty_window_years),
+        novelty_closest=_positive_int(value.get("novelty_closest"), d.novelty_closest),
+        admission_min_band=band,
+        scout_weekly_usd_per_line=_nonnegative_float(value.get("scout_weekly_usd_per_line"),
+                                                     d.scout_weekly_usd_per_line),
+        stall_zero_pass_after=_nonnegative_int(value.get("stall_zero_pass_after"),
+                                               d.stall_zero_pass_after),
+        stall_backoff_hours=_nonnegative_float(value.get("stall_backoff_hours"),
+                                               d.stall_backoff_hours),
+        nc_journals=tuple(str(item) for item in journals) if isinstance(journals, list)
+        and journals else d.nc_journals,
+        target_mix=target_mix,
+        exempt_lines=_domain_list(value.get("exempt_lines"), "funnel.exempt_lines"),
+    )
 
 
 def _supply_settings(value: Any) -> SupplySettings:

@@ -3218,6 +3218,16 @@ def render_brief(
            "strong controls and uncertainty checks against the closest recent precedent. "
            "Preserve the preregistered endpoint and document what the actual results support "
            "for journal selection."] if research.get("target_stage") == "tier2_aim" else []),
+        *(["- NC aim (user 2026-11-25): the claim is "
+           + _short(str((research.get("nc_case") or {}).get("claim") or "see nc_case"), 200)
+           + ". Validate to the NC standard: sensitivity analysis, uncertainty, external "
+           "validation, and a simple baseline or confounder check are required in Results. "
+           "The first milestone (research_state.json `milestones`) is the decisive analysis; "
+           "keep each milestone's compute and token budget. If the decisive analysis fails, "
+           "stop early: freeze, or record a lower `expected_band` in OWNER_LOG.md and continue "
+           "for that band - do not force the NC claim. The journal is graded from the actual "
+           "evidence after review (NC, else CAS Zone 1, 2, 3-4); write and draw to top-journal "
+           "standard in every band."] if research.get("target_stage") == "nc_aim" else []),
         f"- Budget: {used}/{maximum} Agent seconds used; this seat ends by "
         f"{deadline.strftime('%Y-%m-%d %H:%M')} UTC.",
         *(["- Compute now:", *queue] if (queue := compute_brief_lines(

@@ -5,6 +5,8 @@ description: Write and review ECG protocol audits and physiological measurement 
 
 # ECG and physiological measurement
 
+NC angle (NC aim, 2026-11-25): multi-database external validation against a clinical gold standard or commercial algorithm (M2), or a general failure diagnosed and fixed across models and sites (M5).
+
 State the measurement question, reference annotation, sampling frequency, leads, units and acquisition setting. Give record and unique patient denominators at every exclusion. Identify shared patients and derivative databases before claiming external validation. Keep waveforms local and send only aggregate evidence to external models. Use open, application-free data. Limit conclusions to measurement agreement or evaluation error.
 
 Show the patient split and per-site label support, then paired effects with patient-cluster intervals and the prespecified practical difference band. For interval measurements show signed bias, limits of agreement and unmeasurable fractions by database and lead. Show missed beats separately from timing error among matched beats. Mark filters and resampling before comparing annotated boundaries.

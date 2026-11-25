@@ -88,6 +88,7 @@ from .program_autonomy import (
     DIRECTION_TASK_TYPE,
     EVIDENCE_REMEDIATION_ROUTINGS,
 )
+from .nc_funnel import PRESCREEN_TASK_TYPE
 from .program_flow import (
     ADMISSION_ROUTING_REASON,
     ADMISSION_SKILL,
@@ -1476,6 +1477,9 @@ def program_control_skill(task: Mapping[str, Any]) -> str | None:
     task_type = str(task.get("task_type") or "")
     if task_type in CARD_TASK_TYPES:
         return SCOUT_SKILL
+    if task_type == PRESCREEN_TASK_TYPE:
+        # The NC-funnel prescreen is a light admission check (the skill's Prescreen section).
+        return ADMISSION_SKILL
     if str(task.get("routing_reason") or "") == ADMISSION_ROUTING_REASON:
         return ADMISSION_SKILL
     if task_type == DIRECTION_TASK_TYPE:
@@ -2909,7 +2913,8 @@ def ingest_results(
             if result_status == "awaiting_remote" and (
                 current_role not in remote_wait.RESEARCH_ROLES
                 or str(task.get("task_type") or "") in {
-                    *CARD_TASK_TYPES, DIRECTION_TASK_TYPE, asset_library.RETROSPECTIVE_TASK_TYPE
+                    *CARD_TASK_TYPES, DIRECTION_TASK_TYPE, asset_library.RETROSPECTIVE_TASK_TYPE,
+                    PRESCREEN_TASK_TYPE,
                 }
             ):
                 result_status = "needs_replan"
@@ -3155,7 +3160,8 @@ def ingest_results(
             # what happens next (registration, admission), never the result.
             # A direction decision is applied by the program controller below.
             automatic_successors_allowed = task_type not in {
-                *CARD_TASK_TYPES, DIRECTION_TASK_TYPE, asset_library.RETROSPECTIVE_TASK_TYPE
+                *CARD_TASK_TYPES, DIRECTION_TASK_TYPE, asset_library.RETROSPECTIVE_TASK_TYPE,
+                PRESCREEN_TASK_TYPE,
             }
             if task_type == "portfolio_review" and payload.get("paper_candidate") is True:
                 report.errors.append(

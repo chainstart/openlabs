@@ -5,6 +5,8 @@ description: Writing and reviewing reliability engineering and prognostics and h
 
 # Reliability engineering and PHM papers
 
+NC angle (NC aim, 2026-11-25): a field-wide audit that quantifies how much reported accuracy is inflated (leakage, shortcuts) across 10+ datasets, with a reusable benchmark (A1, A3).
+
 Use the shared paper-writing workflow. Specify the equipment, sensing, failure modes, operating conditions and maintenance or monitoring decision the result can inform.
 
 - Define runs, machines and acquisition groups before windowing vibration traces. Report sampling, channel, windowing and normalization. Split by the physical unit relevant to generalization and keep evaluation units out of feature selection, tuning and calibration.

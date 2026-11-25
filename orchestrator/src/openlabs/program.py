@@ -194,6 +194,13 @@ JUDGED_REJECTION_REASONS = frozenset(
         "data_access_not_confirmed",
         "not_computational_only",
         "cost_not_proportionate",
+        # NC funnel (2026-11-25, nc_funnel.JUDGED): the topic fell short of the NC aim.
+        "card_nc_thresholds_insufficient",
+        "card_near_duplicate",
+        "card_prescreen_failed",
+        "card_kill_test_failed",
+        "card_expected_band_below_floor",
+        "nc_aim_admission_requirements",
     }
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
