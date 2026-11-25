@@ -1794,6 +1794,8 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 预筛 `topic_prescreen` 记为评审类任务（`DEFAULT_REVIEW_TASK_TYPES`，同日）：它与 worker 档立项评审一样是对另一模型族卡片的
 独立判断，按评审类额度计，任务类别限于 review/owner 的 Gemini 也能接。起因：出题者为 Codex 时预筛只能由 Claude 跑，
 Claude 按配速每约两小时放行一个，七张卡要排十几个小时。
+同线的预筛任务都挂在该线的出题 campaign 下，而一个 campaign 默认一次只跑一个任务；预筛因此加入可与同类并行的
+路由原因（`parallel_routing_reasons`，与立项评审同一机制），`prescreen_max_concurrent` 才真正生效。
 
 尚无稿件的在研课题用 `program pause-topic` 暂停，不冻结：
 

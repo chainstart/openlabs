@@ -3015,7 +3015,10 @@ def parallel_routing_reasons(settings: FactorySettings) -> tuple[str, ...]:
     """Routing reasons whose tasks may run beside a sibling of the same campaign."""
 
     if settings.program.enabled:
-        return (ADMISSION_ROUTING_REASON,)
+        # Prescreens (NC funnel) of one line share its scout campaign; their own cap is
+        # [program.funnel].prescreen_max_concurrent (2026-11-25 trial: without this they ran
+        # one at a time).
+        return (ADMISSION_ROUTING_REASON, nc_funnel.PRESCREEN_ROUTING_REASON)
     return ()
 
 
