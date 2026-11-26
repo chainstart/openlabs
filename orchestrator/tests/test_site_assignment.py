@@ -52,6 +52,28 @@ def test_tick_applies_the_sync_and_notes_changes(tmp_path, monkeypatch) -> None:
                if h.get("kind") == "site_assignment_parked") == 1
 
 
+def test_tick_lists_manual_decisions_and_passes_the_journal_mail_state(tmp_path, monkeypatch) -> None:
+    # 2026-11-26: an abandoned or frozen paper is not parked; the tick report lists it.
+    paths, db, settings, _ = _ready_topic(tmp_path, auto_handoff=True)
+    state = site_assignment.journal_mail_state(paths)
+    state.mkdir(parents=True)
+    monkeypatch.setenv("ARA_PAPER_MANAGE_API_URL", "https://manage.invalid")
+    monkeypatch.setenv("ARA_PAPER_MANAGE_API_KEY", "k")
+    calls = []
+    why = "site submission_screening.disposition abandon: a person decides"
+    monkeypatch.setattr(program_autonomy, "_run_paper_command",
+                        lambda _p, _s, arguments, **k: calls.append(arguments) or {
+                            "ok": True, "papers": [{}], "changed": [], "manual_decision": [
+                                {"paper_id": "20260525mathgraph0004", "proposed_action": "park",
+                                 "why": why, "active": ["王琪盛"]}]})
+    report = TickReport()
+    sync_tick(db, paths, settings, report)
+    arguments = calls[0]
+    assert arguments[arguments.index("--journal-mail-state") + 1] == str(state)
+    assert report.program["site_assignments"]["manual_decision"] == [
+        {"paper_id": "20260525mathgraph0004", "why": why}]
+
+
 def test_tick_follows_its_own_switch_not_auto_handoff_and_failures_stay_out_of_errors(
         tmp_path, monkeypatch) -> None:
     # B1 (2026-11-25): auto_handoff = false holds deliveries, not the submitter reconciliation.
