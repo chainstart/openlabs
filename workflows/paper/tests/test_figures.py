@@ -438,3 +438,46 @@ def test_object_library_and_templates(tmp_path, monkeypatch):
         svg = ET.parse(output).getroot()
         assert len(svg.findall(".//{*}path")) >= 3
         assert "ns0:" not in output.read_text()  # Chromium embeds SVG in HTML
+
+
+def _fake_chromium(tmp_path: Path, body: str) -> Path:
+    tool = tmp_path / "fake-chromium-pdf"
+    tool.write_text("#!/usr/bin/env python3\nimport os, sys\n" + body, encoding="utf-8")
+    tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
+    return tool
+
+
+def test_chromium_gets_a_short_private_tmpdir(tmp_path, monkeypatch):
+    # 2026-11-26: under a deep attempt-workspace TMPDIR Chromium's SingletonSocket path passed
+    # the 108-byte sun_path limit and the first render aborted (FIG-REBUILD-FAILED).
+    seen = tmp_path / "seen.txt"
+    tool = _fake_chromium(tmp_path, (
+        f"open({str(seen)!r}, 'w').write(os.environ['TMPDIR'])\n"
+        "open(sys.argv[2], 'wb').write(b'%PDF-1.4\\n')\n"))
+    monkeypatch.setenv("OPENLABS_FIG_CHROMIUM_PDF", str(tool))
+    deep = tmp_path / ("d" * 60) / ("e" * 60) / "scratch"
+    deep.mkdir(parents=True)
+    monkeypatch.setenv("TMPDIR", str(deep))
+    svg = tmp_path / "fig.svg"
+    svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>')
+    work = tmp_path / "work"
+    work.mkdir()
+    assert fig._render_svg(svg, work, label="fig").is_file()
+    used = seen.read_text()
+    assert len(used) <= 60 and not used.startswith(str(deep))
+    assert not Path(used).exists()                  # removed after the render
+
+
+def test_a_chromium_crash_reports_its_fatal_line(tmp_path, monkeypatch):
+    tool = _fake_chromium(tmp_path, (
+        "print('[1:1:FATAL:process_singleton_posix.cc(307)] Check failed: Socket path too long',"
+        " file=sys.stderr)\n"
+        "[print(f'#{n} 0x55d1 (dump)', file=sys.stderr) for n in range(20)]\n"
+        "sys.exit(1)\n"))
+    monkeypatch.setenv("OPENLABS_FIG_CHROMIUM_PDF", str(tool))
+    svg = tmp_path / "fig.svg"
+    svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>')
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(fig.FigureToolError, match="Socket path too long"):
+        fig._render_svg(svg, work, label="fig")
