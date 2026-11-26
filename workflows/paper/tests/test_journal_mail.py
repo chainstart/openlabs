@@ -450,8 +450,8 @@ def test_letters_misread_on_2026_11_26(subject, body, decision):
 ])
 def test_letters_without_an_event_are_logged(subject, body, reason):
     logged = []
-    assert parse(_letter(subject, body), [_paper()], log=lambda *item: logged.append(item)) is None
-    assert logged == [(reason, ["test"])]
+    assert parse(_letter(subject, body), [_paper()], log=logged.append) is None
+    assert [(item.reason, list(item.paper_ids)) for item in logged] == [(reason, ["test"])]
 
 
 @pytest.mark.parametrize("phrase", ["Our help desk is open to talk 24/7.", "Submitted on 24 Nov 2026."])
@@ -470,12 +470,21 @@ def test_short_conference_numbers_do_not_claim_letters(phrase):
 
 
 def test_ambiguous_letter_is_logged_with_both_papers():
-    other = _paper(paper_id="other", numbers=["SYNT-D-26-00692"])
+    other = _paper(paper_id="other")
     logged = []
+    raw = _letter("Submission Confirmation", "Your submission " + TITLE + " has been received.")
+    assert parse(raw, [_paper(), other], log=logged.append) is None
+    assert [(item.kind, item.reason, item.paper_ids, item.decisions, item.review) for item in logged] == [
+        ("ambiguous", "ambiguous: matches 2 papers", ("test", "other"), ("submitted",), True)]
+
+
+def test_quoted_number_wins_over_a_title_shared_by_two_papers():
+    """Audit C9: two site papers with one title; the letter's number belongs to one of them."""
+    other = _paper(paper_id="other", numbers=["SYNT-D-26-00692"])
     raw = _letter("Submission Confirmation", "Manuscript Number: SYNT-D-26-00692\nYour submission " + TITLE
                   + " has been received.")
-    assert parse(raw, [_paper(), other], log=lambda *item: logged.append(item)) is None
-    assert logged == [("ambiguous: matches 2 papers", ["test", "other"])]
+    event = parse(raw, [_paper(), other])
+    assert (event["paper_id"], event["manuscript_id"]) == ("other", "SYNT-D-26-00692")
 
 
 def test_confirmation_without_an_attempt_tells_the_submitter(tmp_path, monkeypatch):

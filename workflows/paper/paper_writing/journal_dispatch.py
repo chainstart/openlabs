@@ -13,6 +13,7 @@ from email.policy import SMTP
 from email.utils import parseaddr
 
 from paper_writing.handoff import HandoffError
+from paper_writing.journal_mail import REVIEW_TABLE, journal_key as _key
 
 
 def ledger(args, event, extra=()):
@@ -129,10 +130,25 @@ def uploaded_reviews(api, paper, round_id, directory):
 
 
 def notify_once(args, api, db, paper, event, note=""):
+    """Tell the handler once. ``notified``: 0 not yet, -1 sending, 1 sent, 2 nothing to tell,
+    3 delivery unknown and reported for review.
+
+    A send that fails returns to 0 and is retried on the next round (audit C5: a failed send
+    used to leave -1 for ever, so the handler never heard of the letter). Only a process that
+    died while sending leaves -1: it is not sent again (it may have been delivered), but it goes
+    into the review digest once so a person checks it."""
     key = event["message_key"]
     notified = db.execute("SELECT notified FROM progress WHERE message_key=?", (key,)).fetchone()[0]
     if notified == -1:
-        return False
+        print("Handler notification may not have been delivered", key[:12], flush=True)
+        db.execute(REVIEW_TABLE)
+        db.execute("INSERT OR IGNORE INTO review(key, kind, reason, paper_ids, decisions) VALUES (?,?,?,?,?)",
+                   ("event:" + key, "notification_unknown",
+                    "the service stopped while sending the handler notification; it may not have arrived",
+                    json.dumps([event.get("paper_id")]), json.dumps([event.get("decision")])))
+        db.execute("UPDATE progress SET notified=3 WHERE message_key=?", (key,))
+        db.commit()
+        return True
     if not notified:
         def before_send():
             db.execute("UPDATE progress SET notified=-1 WHERE message_key=?", (key,))
@@ -140,6 +156,8 @@ def notify_once(args, api, db, paper, event, note=""):
         try:
             notify(api, paper, event, args.account, before_send, raw=event.get("raw"), note=note)
         except (OSError, HandoffError, ValueError) as exc:
+            db.execute("UPDATE progress SET notified=0 WHERE message_key=? AND notified=-1", (key,))
+            db.commit()
             print("Handler notification pending", key[:12], type(exc).__name__, flush=True)
             return False
         db.execute("UPDATE progress SET notified=1 WHERE message_key=?", (key,))
@@ -148,6 +166,8 @@ def notify_once(args, api, db, paper, event, note=""):
 
 
 CLOSED_ATTEMPTS = frozenset({"accepted", "rejected", "withdrawn", "published", "closed"})
+# Site statuses that already hold a decision's outcome: a published paper was accepted.
+REGISTERED_AS = {"published": {"published", "accepted"}, "closed": {"closed", "rejected", "withdrawn"}}
 # The attempt status a decision leaves behind (proofs keep the current one).
 DECISION_STATUS = {"submitted": "submitted", "rejected": "rejected", "accepted": "accepted",
                    "revision_requested": "revision_preparing"}
@@ -173,10 +193,6 @@ def _instant(value):
     except ValueError:
         return None
     return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
-
-
-def _key(name):
-    return re.sub(r"[^a-z0-9]", "", str(name or "").casefold()).removeprefix("the")
 
 
 def _latest_round(paper, attempt):
@@ -212,11 +228,20 @@ def select_attempt(api, paper, event, context):
     if number:
         exact = [a for a in attempts if str(a.get("manuscript_number") or "").casefold() == number.casefold()]
         if len(exact) == 1:
+            status = str(exact[0].get("status") or "")
+            target = DECISION_STATUS.get(event["decision"])
+            if status in CLOSED_ATTEMPTS and target and target not in REGISTERED_AS.get(status, {status}) \
+                    and event["decision"] != "submitted":
+                # A closed attempt is never moved to another outcome by a letter (a rejected
+                # attempt "accepted", an accepted one "rejected"): a person checks it.
+                raise AttemptHold(f"closed: attempt {str(exact[0].get('id'))[:8]} is already {status}; "
+                                  f"the letter reads as {event['decision']}")
             return exact[0], ["manuscript_number"]
         if exact:
             raise AttemptHold(f"ambiguous: {len(exact)} attempts carry manuscript number {number}")
     content = (context or {}).get("content") or ""
-    content_key = _key(content)
+    # Journal names are read up to any list of other journals the letter recommends (audit C9).
+    content_key = _key((context or {}).get("journal_content", content))
     journal_key = _key(event.get("journal"))
     title = " ".join(str(paper.get("title") or "").casefold().split())
     title_seen = bool(title) and len(title) >= 12 and title in content
@@ -311,7 +336,8 @@ def already_registered(paper, attempt, event):
         if revision_round(paper, attempt) is not None:
             return False
         return attempt.get("status") != "preparing" and (not number or own.casefold() == number.casefold())
-    return bool(target) and attempt.get("status") == target and (not number or own.casefold() == number.casefold())
+    return bool(target) and target in REGISTERED_AS.get(str(attempt.get("status") or ""), {attempt.get("status")}) \
+        and (not number or own.casefold() == number.casefold())
 
 
 def rejection_letter(args, event):
@@ -336,10 +362,59 @@ def hold_note(event, hold):
     """What the handler is asked to do about a letter held without a unique attempt."""
     reason = str(hold)
     if event["decision"] == "submitted" and reason.startswith("no attempt matches"):
+        # An attempt of this journal exists but was refused (already closed, outside the time
+        # window, another number): check it instead of creating a duplicate (audit C10).
+        existing = [part.strip() for part in reason.removeprefix("no attempt matches:").split(";")
+                    if ": " in part and not part.strip().endswith("not named")]
+        if existing:
+            return ("网站上已有本刊的投稿记录，但与这封投稿确认信对不上（" + "；".join(existing)[:300] + "）。"
+                    "请先核对这些记录（补稿号、更正状态或提交时间）；确认这是一次新的投稿后才新建记录："
+                    f"期刊 {event.get('journal') or '待核实'}，提交时间 {event.get('received_at') or '待核实'}"
+                    f"，稿号 {event.get('manuscript_id') or '信中未给出'}。")
         return ("网站上没有与这封投稿确认信对应的投稿记录（原因：" + reason[:300] + "）。请在管理网站为本文新建投稿记录："
                 f"期刊 {event.get('journal') or '待核实'}，提交时间 {event.get('received_at') or '待核实'}"
                 f"，稿号 {event.get('manuscript_id') or '信中未给出'}。")
     return "这封信未能对应到网站上唯一的投稿记录（原因：" + reason[:300] + "），请在管理网站核对后手工登记。"
+
+
+# A copy of a revision decision (forward, reply, co-author copy) arrives within weeks of it.
+COPY_WINDOW = timedelta(days=45)
+
+
+def open_round_letter(args, api, db, paper, attempt, event):
+    """Handle a revision letter for an attempt whose last round is open or answered on the
+    site; True when the letter needs nothing more.
+
+    A letter written before the round's revision was sent back (or, without that time, within
+    weeks of the round's decision) is a copy of that decision: nothing to do. A later letter
+    for an attempt still waiting for its revision means the site and the journal disagree: the
+    handler is told once. Either way the event is finished instead of being retried for ever
+    (audit C10). A later letter after the revision was sent back is the next round (False)."""
+    key = event["message_key"]
+    latest = _latest_round(paper, attempt)
+    received = _instant(event.get("received_at"))
+    opened = _instant((latest or {}).get("received_at") or (latest or {}).get("created_at"))
+    answered = _instant((latest or {}).get("response_submitted_at"))
+    if latest and received and (answered and received <= answered
+                                or not answered and opened and abs(received - opened) <= COPY_WINDOW):
+        _hold(db, key, f"copy of round {latest.get('round_no')}")
+        print("Journal revision copy", key[:12], f"round={latest.get('round_no')}", flush=True)
+        db.execute("UPDATE progress SET notified=2 WHERE message_key=? AND notified=0", (key,))
+        db.execute("UPDATE progress SET complete=1 WHERE message_key=?", (key,))
+        db.commit()
+        return True
+    if attempt.get("status") != "revision_preparing":
+        return False
+    reason = ("revision letter while the site already waits for the revision of round "
+              f"{(latest or {}).get('round_no') or '?'}")
+    _hold(db, key, reason)
+    print("Journal event held", key[:12], reason, flush=True)
+    if notify_once(args, api, db, paper, event, note=(
+            "网站上本次投稿已处于返修中（第 " + str((latest or {}).get("round_no") or "?") + " 轮），"
+            "这封返修信与之对不上。请核对是否为新一轮返修，并在管理网站手工登记。")):
+        db.execute("UPDATE progress SET complete=1 WHERE message_key=?", (key,))
+    db.commit()
+    return True
 
 
 def dispatch_one(args, api, db, event):
@@ -365,11 +440,21 @@ def dispatch_one(args, api, db, event):
         ledger(args, event)
         raise
     _hold(db, key, "")
-    if event["decision"] == "submitted" and already_registered(paper, attempt, event):
-        # A further confirmation of a submission the site already lists with this number
-        # (co-author copies): nothing for the handler to do.
+    posted_here = any(item.get("idempotency_key") == "mail:" + key for item in paper.get("submission_events") or [])
+    if event["decision"] != "revision_requested" and not posted_here and already_registered(paper, attempt, event):
+        # A further letter on an outcome the site already lists with this number (co-author
+        # copies, forwards, replies, an accepted paper's follow-up letters): nothing for the
+        # handler to do (audit C10). The site event this letter posted itself does not count:
+        # its notification may still be owed after a failed send.
         db.execute("UPDATE progress SET notified=2 WHERE message_key=? AND notified=0", (key,))
         db.commit()
+    if event["decision"] == "revision_requested" and not event.get("round") \
+            and attempt.get("status") in {"revision_preparing", "resubmitted"} \
+            and not db.execute("SELECT round_no FROM progress WHERE message_key=?", (key,)).fetchone()[0] \
+            and open_round_letter(args, api, db, paper, attempt, event):
+        # A copy of the open round's decision, or a letter the site disagrees with: handled
+        # (and, for a copy, not notified again) before the handler hears of it.
+        return
     notified = notify_once(args, api, db, paper, event)
     did = event["decision"]
     comments = event["reviewer_comments"]
@@ -383,8 +468,6 @@ def dispatch_one(args, api, db, event):
     if did == "revision_requested":
         row = db.execute("SELECT round_no FROM progress WHERE message_key=?", (key,)).fetchone()
         rnd = row[0] or event.get("round") or int(attempt.get("current_round") or 0) + 1
-        if not row[0] and attempt["status"] == "revision_preparing" and not event.get("round"):
-            raise ValueError("Existing open round needs reconciliation")
         db.execute("UPDATE progress SET round_no=? WHERE message_key=?", (rnd, key))
         db.commit()
         grade = event.get("revision_grade") or "revision_requested"
@@ -433,6 +516,55 @@ def dispatch_one(args, api, db, event):
     db.commit()
 
 
+REVIEW_KINDS = {"parse_failed": "解析失败", "no_message_id": "缺少有效 Message-ID", "unmatched": "未匹配到网站论文",
+                "ambiguous": "匹配到多篇论文", "many_numbers": "信中有同一论文的多个稿号",
+                "conflict": "决定冲突，已挂起", "no_decision": "认不出决定",
+                "notification_unknown": "给投稿人的通知可能未送达"}
+
+
+def review_digest(rows):
+    """The text of one digest of letters waiting for a person (see journal_mail.Unused)."""
+    lines = [f"期刊邮件服务有 {len(rows)} 封信需要人工确认（服务未据此改动网站或台账）：", ""]
+    for number, (key, kind, reason, paper_ids, decisions, subject, sender, received) in enumerate(rows, 1):
+        papers = ", ".join(p for p in json.loads(paper_ids or "[]") if p) or "无"
+        found = ", ".join(d for d in json.loads(decisions or "[]") if d) or "无"
+        lines += [f"{number}. {REVIEW_KINDS.get(kind, kind)}（{reason}）",
+                  f"   邮箱位置 {key}；收信 {received or '未知'}",
+                  f"   发件人 {sender or '未知'}",
+                  f"   主题 {subject or '未知'}",
+                  f"   候选论文 {papers}；候选决定 {found}", ""]
+    lines.append("请在 SDJU 邮箱按主题找到原信，核对后在管理网站手工登记。")
+    return "\n".join(lines)
+
+
+def notify_review(args, db):
+    """Send the letters queued for review (journal_mail.record_review) to the service's own
+    mailbox in one digest per round; marked only after the send succeeded (audit C3/C8)."""
+    db.execute(REVIEW_TABLE)
+    rows = db.execute("SELECT key, kind, reason, paper_ids, decisions, subject, sender, received_at FROM review "
+                      "WHERE notified=0 ORDER BY rowid").fetchall()
+    if not rows:
+        return False
+    message = EmailMessage()
+    message["From"] = message["To"] = args.account
+    digest = hashlib.sha256("\n".join(r[0] for r in rows).encode()).hexdigest()
+    # journal_mail skips the service's own <openlabs-...> letters when it reads the mailbox.
+    message["Message-ID"] = "<openlabs-review-" + digest + "@sdju.edu.cn>"
+    message["Subject"] = f"期刊邮件待人工确认 · {len(rows)} 封"
+    message.set_content(review_digest(rows))
+    try:
+        with smtplib.SMTP_SSL("smtp.qiye.163.com", timeout=15, context=ssl.create_default_context()) as smtp:
+            smtp.login(args.account, os.environ["SDJU_MAIL_PASSWORD"])
+            smtp.sendmail(args.account, [args.account], message.as_bytes(policy=SMTP))
+    except (OSError, KeyError) as exc:
+        print("Journal review digest pending", len(rows), type(exc).__name__, flush=True)
+        return False
+    db.executemany("UPDATE review SET notified=1 WHERE key=?", [(r[0],) for r in rows])
+    db.commit()
+    print("Journal review digest sent", len(rows), flush=True)
+    return True
+
+
 def drain(args, api):
     if not (args.state / "events.sqlite").exists():
         return
@@ -449,5 +581,6 @@ def drain(args, api):
                 original = db.execute("SELECT raw FROM originals WHERE message_key=?", (key,)).fetchone()
                 event["raw"] = original[0] if original else None
                 dispatch_one(args, api, db, event)
-            except (HandoffError, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+            except (HandoffError, OSError, ValueError, KeyError, LookupError, subprocess.SubprocessError) as exc:
                 print("Journal event pending", key[:12], type(exc).__name__, flush=True)
+        notify_review(args, db)
