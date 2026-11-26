@@ -33,14 +33,17 @@ A brief holds:
 |---|---|
 | `submitted` | the journal received a new submission (receipt, acknowledgement, number assigned) |
 | `resubmitted` | the journal received a revised version |
-| `rejected` | the journal declines the paper after review or without saying |
+| `rejected` | the journal declines the paper after review or without saying, also when the same letter offers a transfer to another journal, and "not recommended for publication in its current form … you may resubmit" (IEEE Access reviews are binary: that is a rejection) |
 | `desk_reject` | declined by the editor without external review (out of scope, not sent to referees) |
-| `major_revision` / `minor_revision` | a revision is requested (use `major_revision` when the grade is not stated) |
-| `accepted` | this paper is accepted (not an author declaration, a condition, an abstract-only slot or another paper) |
+| `major_revision` / `minor_revision` | a revision is requested (use `major_revision` when the grade is not stated); "will be accepted on condition that you address the referees' remarks" is `minor_revision` unless the letter says major |
+| `accepted` | this paper is accepted, provisional acceptance included ("provisionally accepting your paper", "almost ready to be accepted"); not an author declaration, a condition still to be met, an abstract-only slot or another paper |
 | `proof` | proofs of the accepted paper are ready or due |
-| `transfer_offer` | an offer or reminder to transfer the paper to another journal |
+| `transfer_offer` | a transfer offer or reminder that is not itself the rejection, or a confirmation that the transfer was made |
 | `not_a_decision` | anything else about the paper or no paper at all: reminders, invitations, copyright, APC, newsletters, calls, a colleague's note |
 | `other` | an editorial message that fits none of the above (withdrawal, under review, editor assigned) |
+
+A co-author's copy ("the corresponding author has been asked to revise") or a colleague's forward
+reports the journal's decision: classify the decision it reports, the same way as the original letter.
 
 `paper_id`: a `paper_id` from that letter's `candidates` only when the title or manuscript
 number in the letter identifies it; otherwise `null`. Do not guess from the journal alone.
