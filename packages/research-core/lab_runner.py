@@ -377,6 +377,9 @@ those bytes to content-addressed objects and promotes only a small reference int
 The control plane promotes the staged tree after a completed result or a valid `needs_replan`
 checkpoint passes all gates. A failed, cancelled, interrupted, or invalid attempt is quarantined
 automatically. Never copy staged changes to the canonical campaign yourself.
+The OpenLabs code checkouts are read-only for you. To propose a code fix, edit a copy in the staged
+campaign, write a unified diff to `code-fixes/<name>.patch` there and name it in the result; the
+operator reviews and applies it.
 """
     runtime_policy = (
         task.get("runtime_policy") if isinstance(task.get("runtime_policy"), Mapping) else {}
@@ -2315,6 +2318,66 @@ def _verified_container() -> str | None:
     return completed.stderr.strip() or f"exit code {completed.returncode}"
 
 
+# 2026-11-26 (user: "收回负责人坐席对主工作区的写权限"): an owner seat edited the live code
+# checkout. Every production agent that runs without bubblewrap (Codex, Antigravity, Claude
+# in the verified container) is exec'd through code_write_guard.py, a Landlock layer that
+# leaves the code checkouts readable but not writable for the agent and all its children.
+CODE_WRITE_GUARD = Path(__file__).resolve().with_name("code_write_guard.py")
+CODE_WRITE_GUARD_SUFFIX = "+landlock-code-readonly"
+_CODE_WRITE_GUARD_MODULE: Any = None
+
+
+def _code_write_guard_module() -> Any:
+    global _CODE_WRITE_GUARD_MODULE
+    if _CODE_WRITE_GUARD_MODULE is None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "openlabs_code_write_guard", CODE_WRITE_GUARD
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _CODE_WRITE_GUARD_MODULE = module
+    return _CODE_WRITE_GUARD_MODULE
+
+
+def protected_code_roots(workspace: Path) -> list[Path]:
+    """Code checkouts an agent may read but not write: this runner's checkout,
+    ``<workspace>/openlabs``, ``<workspace>/build/worktrees`` and registered worktrees."""
+
+    return _code_write_guard_module().code_roots(
+        Path(__file__).resolve().parents[2], workspace
+    )
+
+
+def _code_write_guard(
+    command: list[str], task: Mapping[str, Any], workspace: Path
+) -> list[str]:
+    """Wrap an agent argv so the agent cannot write the code checkouts (fails closed)."""
+
+    guard = _code_write_guard_module()
+    if guard.landlock_abi() < 1:
+        raise RuntimeError(
+            "Landlock is unavailable, so the agent could write the OpenLabs code "
+            "checkouts; refusing to start it"
+        )
+    protected = protected_code_roots(workspace)
+    transaction = task.get("transaction")
+    attempt_root = (
+        transaction.get("attempt_root") if isinstance(transaction, Mapping) else None
+    )
+    for value in (attempt_root, task.get("agent_workspace")):
+        if value:
+            path = Path(str(value)).expanduser().resolve()
+            if any(path == root or path.is_relative_to(root) for root in protected):
+                raise ValueError(f"Agent workspace {path} lies inside a code checkout")
+    wrapped = [sys.executable, str(CODE_WRITE_GUARD)]
+    for root in protected:
+        wrapped.extend(["--protect", str(root)])
+    return [*wrapped, "--", *command]
+
+
 def _transaction_sandbox(
     command: list[str],
     task: Mapping[str, Any],
@@ -2323,11 +2386,15 @@ def _transaction_sandbox(
     """Apply the configured filesystem policy for a transactional research agent."""
 
     if Path(command[0]).name == "codex":
-        return command, "codex-native-danger-full-access"
+        return _code_write_guard(command, task, workspace), (
+            "codex-native-danger-full-access" + CODE_WRITE_GUARD_SUFFIX
+        )
     if Path(command[0]).name == "agy":
         # The Codex trust model: the private attempt workspace, result-gate hooks and
         # validated promotion are the state boundary (no bubblewrap layer).
-        return command, "agy-skip-permissions-full-access"
+        return _code_write_guard(command, task, workspace), (
+            "agy-skip-permissions-full-access" + CODE_WRITE_GUARD_SUFFIX
+        )
     transaction = task.get("transaction")
     if not isinstance(transaction, Mapping) or transaction.get("mode") != (
         "isolated_attempt_workspace"
@@ -2348,9 +2415,11 @@ def _transaction_sandbox(
             if container_error is None:
                 # The container's kernel limits are the resource boundary; the
                 # attempt workspace, result-bundle promotion and Git remain the
-                # state boundary. Nothing below the container stops writes to the
-                # canonical repositories, so this mode is opt-in per machine.
-                return command, "none-verified-container"
+                # state boundary. Landlock keeps the code checkouts read-only; the
+                # data repositories stay writable, so this mode is opt-in per machine.
+                return _code_write_guard(command, task, workspace), (
+                    "none-verified-container" + CODE_WRITE_GUARD_SUFFIX
+                )
             raise RuntimeError(
                 f"{CLAUDE_CONTAINER_FALLBACK_ENV} is set but the container guard refused: "
                 f"{container_error}"
@@ -2371,6 +2440,8 @@ def _transaction_sandbox(
         for relative in ("openlabs", "openlabs-data", "openlabs-artifacts", "openlabs-database")
     ]
     read_only.extend(_instance_read_only_roots())
+    # Development worktrees outside ``openlabs`` (build/worktrees, registered worktrees).
+    read_only.extend(protected_code_roots(workspace))
     for root in dict.fromkeys(read_only):
         if root.exists():
             sandbox.extend(["--ro-bind", str(root), str(root)])

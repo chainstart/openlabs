@@ -3234,7 +3234,8 @@ def render_brief(
         "For a direction decision record direction_reason (major_freeze, change_topic or budget_dispute).",
         "",
         "## Resources",
-        f"CODE={code}, DATA={paths.data}.",
+        f"CODE={code} (read-only: propose fixes as diffs in code-fixes/, named in reason), "
+        f"DATA={paths.data}.",
         "- Compute: `CODE/bin/openlabs-remote submit --source DIR --cpus N --memory-mib M "
         "--timeout-seconds S -- CMD` (ailab first; CODE/docs/REMOTE_COMPUTE.md). GPU, no "
         "approval: `CODE/bin/openlabs-resource-guard "

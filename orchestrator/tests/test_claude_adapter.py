@@ -399,11 +399,11 @@ def test_claude_uses_the_bubblewrap_transaction_sandbox(tmp_path, monkeypatch) -
     assert masked[masked.index("--") - 3 : masked.index("--")] == [
         "--dev-bind", "/dev/null", str(memory),
     ]
-    # Codex keeps its native full-access runtime.
-    assert lab_runner._transaction_sandbox(["codex", "exec"], layout["task"], tmp_path) == (
-        ["codex", "exec"],
-        "codex-native-danger-full-access",
-    )
+    # Codex keeps its native full-access runtime, under the code write guard.
+    wrapped, sandbox = lab_runner._transaction_sandbox(["codex", "exec"], layout["task"], tmp_path)
+    assert sandbox == "codex-native-danger-full-access+landlock-code-readonly"
+    assert wrapped[1] == str(lab_runner.CODE_WRITE_GUARD)
+    assert wrapped[wrapped.index("--") + 1:] == ["codex", "exec"]
 
 
 def test_claude_is_refused_when_bubblewrap_cannot_create_a_namespace(
@@ -442,10 +442,10 @@ def test_claude_container_fallback_needs_the_switch_and_a_verified_container(
         lab_runner._transaction_sandbox(["claude", "-p"], layout["task"], workspace)
 
     monkeypatch.setattr(lab_runner, "_verified_container", lambda: None)
-    assert lab_runner._transaction_sandbox(["claude", "-p"], layout["task"], workspace) == (
-        ["claude", "-p"],
-        "none-verified-container",
-    )
+    wrapped, sandbox = lab_runner._transaction_sandbox(["claude", "-p"], layout["task"], workspace)
+    assert sandbox == "none-verified-container+landlock-code-readonly"
+    assert wrapped[1] == str(lab_runner.CODE_WRITE_GUARD)
+    assert wrapped[wrapped.index("--") + 1:] == ["claude", "-p"]
     # Only Claude Code: other (test-double) commands keep failing closed.
     with pytest.raises(RuntimeError, match="refusing to start the agent"):
         lab_runner._transaction_sandbox(["python3", "-c", "1"], layout["task"], workspace)
