@@ -148,3 +148,26 @@ def test_rejection_letter_is_kept_and_read_by_the_next_review(tmp_path, monkeypa
     (tmp_path / result["letter_path"]).write_text("edited")
     decision, = review_flow.prior_decisions("p", metadata, tmp_path)
     assert decision["letter_available"] is False
+
+
+def test_backfilled_letter_is_marked_manual(tmp_path, capsys):
+    # 2026-11-26 reconciliation: letters journal_mail missed are backfilled by hand; the entry
+    # says so instead of claiming the journal-mail store holds the original.
+    import json
+
+    from paper_writing.__main__ import main
+
+    path = _registry(tmp_path, "p", {})
+    letter = tmp_path / "letter.txt"
+    letter.write_text("Subject: Decision\n\nRejected.\n")
+    main(["program", "journal-correspondence", "--root", str(tmp_path), "--paper-id", "p",
+          "--message-key", "e" * 64, "--status", "rejected", "--letter-file", str(letter),
+          "--recorded-by", "manual", "--json"])
+    assert json.loads(capsys.readouterr().out)["status"] == "recorded"
+    entry, = yaml.safe_load(path.read_text())["journal_correspondence"]
+    assert entry["recorded_by"] == "manual" and "not in the journal-mail store" in entry["original"]
+    submission_status.record_correspondence(tmp_path, "p", message_key="a" * 64, status="submitted")
+    assert yaml.safe_load(path.read_text())["journal_correspondence"][1]["recorded_by"] == "journal-mail"
+    with pytest.raises(ValueError):
+        submission_status.record_correspondence(tmp_path, "p", message_key="b" * 64, status="submitted",
+                                                recorded_by="someone")
