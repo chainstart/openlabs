@@ -1105,9 +1105,18 @@ def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payl
         journal = outcome.get("target_journal")
         decision_record = outcome.get("decision_record")
         if isinstance(decision_record, str) and decision_record:
-            decision_path = paths.data / decision_record
-            if decision_path.is_file():
-                journal = json.loads(decision_path.read_text()).get("target_journal") or journal
+            # The record path is relative to the root the review ran in: the shared data
+            # repository, or the campaign's draft root for a paper written in the campaign
+            # (NC trial 2026-11-26: read only under the data root, the ECG paper's journal
+            # was None and the venue re-check sent an unchanged grade to a retarget seat).
+            from .paper_figures import _draft_roots
+
+            campaign = db.campaign(str(topic.get("campaign_id") or "")) or {}
+            for base in (paths.data, *_draft_roots(paths, campaign)):
+                decision_path = Path(base) / decision_record
+                if decision_path.is_file():
+                    journal = json.loads(decision_path.read_text()).get("target_journal") or journal
+                    break
         grade = topic.get("venue_grade") or {}
         from .nc_grading import GRADED_BEFORE_WRITING
 

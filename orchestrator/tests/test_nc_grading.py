@@ -228,3 +228,33 @@ def test_a_grade_rechecked_before_the_slimming_also_goes_straight_to_the_queue(t
         outcome={"paper_id": "p1", "target_journal": "Some Other Journal"})
     assert _direction_tasks(db) == []
     assert _topic(paths, settings, topic["topic_id"])["status"] == "ready_queue"
+
+
+def test_the_reviewed_journal_is_read_from_a_decision_record_in_the_campaign_draft(
+        tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+
+    # NC trial 2026-11-26: the unified review of a paper written in the campaign wrote its
+    # decision under the campaign draft root; read only under DATA, the journal was None and
+    # a grade of the reviewed journal looked like a different one.
+    paths, db, settings, topic = _nc_program(tmp_path, monkeypatch)
+    from openlabs.engine import TickReport
+    from openlabs.program import record_topic_note
+    from test_program_autonomy import _direction_tasks
+
+    graded = {**PRIOR, "point": "after_review"}
+    record_topic_note(program_autonomy._ledger(paths, settings), topic["topic_id"], db=db,
+                      event_type="venue_grade_decided", reason="nc", decided_by="test",
+                      updates={"venue_grade": graded})
+    current = _topic(paths, settings, topic["topic_id"])
+    draft = Path(db.campaign(current["campaign_id"])["state_path"])
+    record = draft / "reviews" / "unified" / "p1" / "run" / "decision.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps({"target_journal": PRIOR["journal"]}))
+    program_autonomy.queue_ready_topic(
+        db, paths, settings, TickReport(), topic=current, task={"task_id": "review-1"},
+        outcome={"paper_id": "p1", "decision_record": "reviews/unified/p1/run/decision.json"},
+        payload={}, evidence=[])
+    assert _direction_tasks(db) == []
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "ready_queue"
