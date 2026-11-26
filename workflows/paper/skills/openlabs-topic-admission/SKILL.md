@@ -84,13 +84,18 @@ A cheaper check before admission, on one card whose author is another model fami
   result comes out as the claim says, it would overturn a view that is explicitly held (name
   who holds it). Do not mark a threshold unmet because the result is not in hand; mark it unmet
   when the plan cannot deliver it or when someone already delivered it for the same claim.
+  Reading a plan does not lower the bar. Generality means the field's population (the world's
+  rivers, a whole country's population, every model of a field), not the whole of one audited
+  catalogue, product, database, pipeline or benchmark: an audit or re-check of one such source
+  matches the lower-tier comparators, not nc, unless its conclusion changes practice across a
+  field the way A1 and A2 did (several datasets, every model class of the field).
 - **Same claim versus adjacent work.** `scooped` means the same claim is already reported: the
   same question on the same population with the same endpoint, so the card's sentence would
   repeat a published one (journal paper or preprint). Adjacent work - the same data, method or
-  region with a different claim, a sub-sample of the same question, an earlier result the card
-  explicitly extends to a full population - is closest prior work: name it in `closest` with
-  its `overlap` and judge the increment (`incremental` when what is left is a refinement of the
-  same number, `clear` when the claim is new). Adjacent work does not make the claim scooped;
+  region with a different claim - is closest prior work: name it in `closest` with its
+  `overlap` and judge the increment. `incremental` when prior work already reports the direction
+  of the claim (the same effect on a subset, a region or one worked example) and what is left is
+  its quantification, extension or refinement; `clear` only when the claim itself is new. Adjacent work does not make the claim scooped;
   whether it removes a threshold depends on what it already showed (an earlier regional study
   that already states the conclusion leaves `counterintuitive` unmet, but not `scale` when the
   card goes an order of magnitude beyond it).
