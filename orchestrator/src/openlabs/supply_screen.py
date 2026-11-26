@@ -792,7 +792,7 @@ def advance_pilots(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettin
     waiting = [topic for topic in topics
                if isinstance(topic, Mapping) and topic.get("status") == "proposed"
                and pilot_held(topic)
-               and not settings.program.polish_blocks(topic.get("research_line"))]
+               and not settings.program.polish_blocks_supply(topic.get("research_line"))]
     if not waiting:
         return []
     root = queue_root or remote_wait.default_queue_root()

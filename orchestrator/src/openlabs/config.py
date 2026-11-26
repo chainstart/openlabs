@@ -167,8 +167,18 @@ class ProgramSettings:
     # Default interval per research line (domain fallback for projects without a line).
     scout_min_interval_hours: float = 12.0
     line_scout_min_interval_hours: dict[str, float] = field(default_factory=dict)
-    # Program-wide worker ceiling. At most one scout per research line.
+    # Program-wide worker ceiling; ``max_scouts_per_line`` scouts of one line at once.
     max_concurrent_scouts: int = 1
+    # Scouts of one research line in flight at once (2026-11-26, user: "并行agent数量，扩大搜索
+    # 范围，更多的集思广益"). With ``scout_runners`` the scouts of a line in flight use different
+    # model families. 1 (the default) keeps one scout per line.
+    max_scouts_per_line: int = 1
+    # Runners the scouts rotate over (2026-11-26, same decision): each new scout of a line asks
+    # for the configured runner whose model family is least used by the scouts in flight and least
+    # recently used on that line, so every family proposes its own cards. A preference only: the
+    # router takes the preferred runner when its quota and parallelism allow, otherwise routes the
+    # scout as usual. Empty (the default) leaves scouts to the router alone.
+    scout_runners: tuple[str, ...] = ()
     # Expected cards per legacy scout for the shared pool, until enough finish
     # to use this instance's measured average.
     scout_expected_cards: float = 2.0
@@ -331,18 +341,31 @@ class ProgramSettings:
     # card repair and revision, hold release, prescreen, pilot, admission, materialization,
     # auto-reopen) while polish mode keeps every other line stopped. Empty by default.
     polish_exempt_lines: tuple[str, ...] = ()
+    # Lines exempt from polish mode for topic supply only (2026-11-26, user: "扩大搜索范围"):
+    # scout, card repair and revision, prescreen, pilot and admission run; research starts
+    # (materialization, hold release, auto-reopen) stay stopped, so an admitted topic waits for
+    # its campaign until the line moves to ``polish_exempt_lines`` or polish mode ends.
+    polish_supply_only_lines: tuple[str, ...] = ()
 
     def polish_blocks(self, line: Any = None) -> bool:
-        """Whether polish mode stops new supply/research for a topic of ``line``."""
+        """Whether polish mode stops research starts (and supply) for a topic of ``line``."""
 
         if not self.polish_mode:
             return False
         return not (isinstance(line, str) and line and line in self.polish_exempt_lines)
 
+    def polish_blocks_supply(self, line: Any = None) -> bool:
+        """Whether polish mode stops new topic supply (scout ... admission) for ``line``."""
+
+        if not self.polish_blocks(line):
+            return False
+        return not (isinstance(line, str) and line and line in self.polish_supply_only_lines)
+
     def polish_blocks_all(self) -> bool:
         """Polish mode is on and no line is exempt: every supply step stops."""
 
-        return self.polish_mode and not self.polish_exempt_lines
+        return self.polish_mode and not self.polish_exempt_lines \
+            and not self.polish_supply_only_lines
 
 
 DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_gpt")
@@ -1510,6 +1533,8 @@ def load_program_settings(payload: Any) -> ProgramSettings:
             program.get("line_scout_min_interval_hours")
         ),
         max_concurrent_scouts=_positive_int(program.get("max_concurrent_scouts"), 1),
+        max_scouts_per_line=_positive_int(program.get("max_scouts_per_line"), 1),
+        scout_runners=_domain_list(program.get("scout_runners"), "scout_runners"),
         scout_expected_cards=_positive_float(program.get("scout_expected_cards"), 2.0),
         scout_empty_backoff_hours=_hours_sequence(
             program.get("scout_empty_backoff_hours"), (1.0, 6.0, 24.0)
@@ -1570,6 +1595,8 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         polish_mode=program.get("polish_mode", False) is True,
         polish_exempt_lines=_domain_list(program.get("polish_exempt_lines"),
                                          "polish_exempt_lines"),
+        polish_supply_only_lines=_domain_list(program.get("polish_supply_only_lines"),
+                                              "polish_supply_only_lines"),
         line_max_active_topics=_line_limits(program.get("line_max_active_topics")),
         **_git_settings(program.get("git")),
     )

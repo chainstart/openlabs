@@ -207,6 +207,20 @@ GRADE_INSTRUCTION = (
 )
 
 
+def scout_floor_instruction(settings) -> str:
+    """The admission floor a scout's cards face (``[program.funnel].admission_min_band``)."""
+
+    floor = settings.program.funnel.admission_min_band
+    if floor == "nc":
+        return (" Admission floor: nc (user 2026-11-26, \"接下来的出题希望选题至少是够nc档次的\"). "
+                "The prescreen and the admission gate reject a card whose calibration match or "
+                "expected band is below Nature Communications, so propose only questions that an "
+                "accepted NC paper of the calibration set would resemble; after the research the "
+                "evidence still grades the journal (NC, else Zone 1, 2, 3-4).")
+    return (f" Admission floor: {floor}. The prescreen and the admission gate reject a card whose "
+            f"calibration match or expected band is below {floor}.")
+
+
 def admission_instruction(settings) -> str:
     funnel = settings.program.funnel
     return (ADMISSION_NC_INSTRUCTION
@@ -759,7 +773,7 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
     waiting = [topic for topic in ledger.read().get("topics") or []
                if isinstance(topic, Mapping) and topic.get("status") == "proposed"
                and prescreen_held(topic)
-               and not settings.program.polish_blocks(topic.get("research_line"))]
+               and not settings.program.polish_blocks_supply(topic.get("research_line"))]
     if not waiting:
         return []
     outcomes: list[dict[str, Any]] = []

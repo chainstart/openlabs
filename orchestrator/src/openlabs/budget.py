@@ -1584,6 +1584,12 @@ def lead_availability(
 # -------------------------------------------------------------------- routing
 
 
+# Packet field naming the runner a task would like (``[program].scout_runners``, 2026-11-26):
+# the router takes it when its quota and parallelism allow it, else routes as usual.
+PREFERRED_RUNNER_FIELD = "preferred_runner"
+PREFERRED_RUNNER_TASK_TYPES = frozenset({"topic_scout"})
+
+
 @dataclass
 class QuotaRouter:
     """Chooses a concrete runner per claimed task from the current readings.
@@ -1717,6 +1723,29 @@ class QuotaRouter:
         if key not in self._task_cache:
             self._task_cache[key] = self.db.task(key)
         return self._task_cache[key]
+
+    def _preferred(self, task: Mapping[str, Any]) -> RunnerSpec | None:
+        """The runner a scout packet asks for (``preferred_runner``), when configured.
+
+        Not for an escalated task (``runner_request`` holding a tier): the escalation wins.
+        A preference may name a runner whose ``task_classes`` exclude the task (the Gemini
+        worker scouts this way): the control plane chose it on purpose.
+        """
+
+        if str(task.get("task_type") or "") not in PREFERRED_RUNNER_TASK_TYPES:
+            return None
+        if str(task.get("runner_request") or "") in TIERS:
+            return None
+        path = str(task.get("input_path") or "").strip()
+        if not path.endswith(".json"):
+            return None
+        try:
+            packet = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(packet, Mapping):
+            return None
+        return self.settings.runners.get(str(packet.get(PREFERRED_RUNNER_FIELD) or "").strip())
 
     def _pinned(self, task: Mapping[str, Any]) -> RunnerSpec | None:
         if task.get("runner_request") is not None:
@@ -2044,8 +2073,11 @@ class QuotaRouter:
         task: Mapping[str, Any],
         active_by_runner: Mapping[str, int],
     ) -> dict[str, Any] | None:
-        decision = self._route(task, active_by_runner)
+        preferred = self._preferred(task)
+        decision = self._route(task, active_by_runner, preferred=preferred)
         if decision is not None:
+            if preferred is not None and decision.get("runner") != preferred.name:
+                decision = {**decision, "preferred_runner_unavailable": preferred.name}
             if self._session_model_changed(task, str(decision.get("runner") or "")):
                 # Prompt caches are per model (2026-11-20): a session continued on
                 # another model of the same family re-reads its whole context uncached.
@@ -2071,6 +2103,8 @@ class QuotaRouter:
         self,
         task: Mapping[str, Any],
         active_by_runner: Mapping[str, int],
+        *,
+        preferred: RunnerSpec | None = None,
     ) -> dict[str, Any] | None:
         klass = task_class(self.settings, task)
         task_type = str(task.get("task_type") or "")
@@ -2096,6 +2130,16 @@ class QuotaRouter:
         tier = self.required_tier(task)
         excluded = self._excluded_provider(task, tier, klass)
         sticky = self._sticky_provider(task)
+        if preferred is not None and preferred.family != excluded and (
+            sticky is None or preferred.provider == sticky
+        ):
+            chosen = self._choose([preferred], klass, active_by_runner, manual=manual)
+            if chosen is not None:
+                spec, state = chosen
+                decision = self._decision(spec, state, klass, requested_tier=tier,
+                                          excluded=excluded, sticky=sticky, manual=manual)
+                decision["preferred_runner"] = spec.name
+                return decision
         single = None if sticky is not None else self._single_family(task, klass, excluded)
         if single is not None:
             return self._route_same_family(task, single, tier, klass, active_by_runner,

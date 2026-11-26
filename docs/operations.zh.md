@@ -1458,7 +1458,9 @@ TeX Live 是免 root 安装、不在默认 PATH 上：`run` 和 `cli` 都先 sou
 
 | 键 | 默认 | 推荐 | 含义 |
 | --- | --- | --- | --- |
-| `[program] max_concurrent_scouts` | 1 | 启用线数 | 全局侦察任务上限，每条线同时至多一个 |
+| `[program] max_concurrent_scouts` | 1 | 启用线数 | 全局侦察任务上限，每条线同时至多 `max_scouts_per_line` 个 |
+| `[program] max_scouts_per_line` | 1 | 1–2 | 同一条线同时在跑的侦察数（2026-11-26）；线上已有侦察在跑时，下一个不等间隔，换模型族并行 |
+| `[program] scout_runners` | 空表 | `["worker_gpt", "worker_gemini", "worker_claude"]` | 侦察轮换的 runner（2026-11-26，用户“更多的集思广益”）：每个新侦察在包里写 `preferred_runner`，选同线在跑侦察没用的族、全局在跑最少的族、该线最久没用的族；路由器额度与并发允许时就用它（可以是只接评审的 overflow runner，如 Gemini），否则照常路由并记 `preferred_runner_unavailable` |
 | `[program] scout_min_interval_hours` | 12 | 按实例设定 | 同一研究线两次侦察的默认间隔，单侦察并发时也按线计算 |
 | `[program] line_scout_min_interval_hours` | 空表 | 按需设置 | 按线 ID 覆盖侦察间隔，单位为小时 |
 | `[program] scout_expected_cards` | 2.0 | 2.0 | 旧领域项目共用候选池时的侦察产量估计，跑完三个后使用实测均值 |
@@ -1796,6 +1798,8 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 预筛、立项试算、立项评审、建 campaign、冻结课题自动重开都照常；其余线（含没有研究线的旧课题）仍按梳理模式停住，
 排队中的出题任务只取消非豁免线的。tick 报告 `program.polish_mode.exempt_lines` 列出豁免线。默认空表。
 比直接关梳理模式更窄：关掉会让所有线的卡片修正、修订、hold 放行和自动重开一起恢复（它们不看 `research_lines`）。
+
+**只供题的线**（2026-11-26，用户：“扩大搜索范围，更多的集思广益”）：`[program] polish_supply_only_lines = ["<线>"]`让列出的线在梳理模式下只恢复供题——出题、卡片修正与修订、预筛、立项试算、立项评审；建 campaign、hold 放行和冻结课题自动重开仍停，立项后的课题停在 admitted 等研究开工。tick 报告 `program.polish_mode.supply_only_lines` 列出这些线，排队中的出题任务不取消它们的。把线移到 `polish_exempt_lines` 或关掉梳理模式后，下一轮就建 campaign。
 
 `nc_aim` 线的出题不再被常规模板的候选队列卡住（同日）：队列无可抽条目时 `candidate_queue_empty` 只对非
 `nc_aim` 线生效；出题说明注明模板与队列在 NC 立意下只是可选起点，卡片可以不设 `paper_template`。

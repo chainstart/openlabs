@@ -86,8 +86,14 @@ candidate_pool_low_water = 3
 # Default minimum interval per line, even with one scout globally.
 # Optional line_scout_min_interval_hours = { "line-id" = 0.5 } overrides by line.
 scout_min_interval_hours = 12
-# Global ceiling on scouts in flight, with at most one per line.
+# Global ceiling on scouts in flight, with at most max_scouts_per_line per line.
 max_concurrent_scouts = 1
+# Scouts of one line in flight at once (default 1). With scout_runners (runner names, e.g.
+# ["worker_gpt", "worker_gemini", "worker_claude"]) each new scout asks for the runner whose
+# model family the line's in-flight scouts do not use and the line used least recently; the
+# router takes it when quota allows, else routes the scout as usual.
+# max_scouts_per_line = 1
+# scout_runners = []
 # Cards one scout is expected to register (replaced by this instance's own mean
 # once three scouts have finished).
 scout_expected_cards = 2.0

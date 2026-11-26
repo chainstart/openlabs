@@ -40,7 +40,8 @@ whose claim cannot be tested, not to demand a finished study.
    counterintuitive, scale, benchmark, resource: {met, evidence}}, met_count, calibration_match,
    calibration_neighbours, expected_band (nc|zone_1|zone_2|zones_3_4)}. Fewer than two
    thresholds, or an expected band (the worse of expected_band and calibration_match) below the
-   floor in the packet's instruction (default zone_1), is a reject; the control plane rejects an
+   floor in the packet's instruction (code default zone_1; nc on cc-sg since 2026-11-26, user:
+   "接下来的出题希望选题至少是够nc档次的"), is a reject; the control plane rejects an
    admit without a calibration match.
 4. **The case holds together**: the one-sentence claim, the view it challenges and the benchmark
    are concrete; the kill test in `card_check.prescreen` found the signal (a failed kill test never

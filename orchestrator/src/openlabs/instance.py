@@ -66,6 +66,10 @@ RESEARCH_LINES: tuple[tuple[str, str], ...] = (
     # ml-evaluation-protocols). Both lines bring their own environments.
     ("power-market-backtest", "quant"),
     ("phm-evaluation-audit", "ai"),
+    # 2026-11-26 (user: "扩大搜索范围"): an open, field-free scouting line for the top five new
+    # directions of the NC survey (maintenance/20261125-nc-survey/REPORT.md section 3), hosted
+    # by the ai lab (general data-science environment).
+    ("open-nc-directions", "ai"),
 )
 
 RUNNERS: dict[str, dict[str, str]] = {

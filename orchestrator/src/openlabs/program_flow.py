@@ -133,6 +133,9 @@ TERMINAL_FAILED_STATUSES = ("failed", "needs_human", "needs_replan", "quarantine
 SCOUT_SKILL = "openlabs-empirical-topic-scout"
 ADMISSION_SKILL = "openlabs-topic-admission"
 LAST_SCOUT_KEY = "program_last_scout_at"
+# ``{SCOUT_FAMILY_KEY}:{line}@{family}``: when a scout of the line last asked for that model
+# family (``[program].scout_runners``).
+SCOUT_FAMILY_KEY = "program_scout_family_at"
 SCOUT_REGISTERED_PREFIX = "program_scout_registered:"
 # Per rotation key (line, else domain): the empty-draw streak of its scouts, JSON
 # {fingerprint, count, last_at, last_task_id, last_created_at, last_summary, reason}.
@@ -1119,6 +1122,7 @@ def _schedule_one_scout(
     campaign_id: str,
     max_cards: int,
     moment: datetime,
+    preferred: Any = None,
 ) -> ScoutDecision:
     campaign = db.campaign(campaign_id) or {}
     stamp = _iso(moment)
@@ -1162,6 +1166,8 @@ def _schedule_one_scout(
             "ledger_snapshot": _ledger_snapshot(document),
             "read_resources": program_read_resources(paths, settings, ledger),
             **asset_library.packet_fields(paths, settings, domains=[project.domain]),
+            **({budget_control.PREFERRED_RUNNER_FIELD: preferred.name,
+                "preferred_family": preferred.family} if preferred is not None else {}),
             "created_at": stamp,
         }
     )
@@ -1218,6 +1224,8 @@ def _schedule_one_scout(
             "empty `topic_cards` array is a "
             "valid outcome when nothing clears the bar. Do not start the research itself."
             + target_stage.scout_instruction(stage)
+            + (nc_funnel.scout_floor_instruction(settings)
+               if stage == target_stage.NC_AIM else "")
         ),
         input_path=str(packet_path),
         skill_path=SCOUT_SKILL,
@@ -1234,19 +1242,93 @@ def _schedule_one_scout(
         ),
         **resources.to_dict(),
     )
+    meta = {LAST_SCOUT_KEY: stamp, f"{LAST_SCOUT_KEY}:{rotation}": stamp}
+    if preferred is not None:
+        meta[f"{SCOUT_FAMILY_KEY}:{rotation}@{preferred.family}"] = stamp
     db.update_meta(
-        {LAST_SCOUT_KEY: stamp, f"{LAST_SCOUT_KEY}:{rotation}": stamp},
+        meta,
         events=[
             (
                 "program",
                 project.project_id,
                 "topic_scout_scheduled",
                 {"task_id": task_id, "domain": project.domain, "research_line": line,
-                 "max_cards": max_cards, "free_slots": status.free_slots},
+                 "max_cards": max_cards, "free_slots": status.free_slots,
+                 **({"preferred_runner": preferred.name, "preferred_family": preferred.family}
+                    if preferred is not None else {})},
             )
         ],
     )
     return ScoutDecision(task_id=task_id, domain=project.domain, research_line=line)
+
+
+@dataclass
+class ScoutFamilies:
+    """Model-family rotation of the scouts (``[program].scout_runners``, 2026-11-26).
+
+    Each new scout asks for the configured runner whose family (1) no scout of the same line
+    in flight uses, (2) the fewest scouts in flight use, (3) the line used least recently,
+    (4) comes first in the list. Runners the router could not take now (quota, backoff) are
+    passed over while another is usable. Without ``scout_runners`` nothing is preferred.
+    """
+
+    specs: list[Any]
+    line_families: dict[str, Counter]
+    flying: Counter
+    stamps: dict[str, str]
+
+    @classmethod
+    def build(cls, db: FactoryDB, settings: FactorySettings, in_flight: list[dict[str, Any]],
+              flight_keys: list[str], *, moment: datetime) -> "ScoutFamilies":
+        names = [name for name in settings.program.scout_runners if name in settings.runners]
+        specs = [settings.runners[name] for name in names]
+        families = cls(specs=[], line_families={}, flying=Counter(), stamps={})
+        if not specs:
+            return families
+        try:
+            router = budget_control.QuotaRouter.build(db, settings, now=moment)
+            usable = [spec for spec in specs if router.usable(spec, "ordinary")]
+        except Exception:  # noqa: BLE001 - quota readings are advisory here
+            usable = []
+        families.specs = usable or specs
+        families.stamps = db.meta_items(SCOUT_FAMILY_KEY + ":")
+        for task, key in zip(in_flight, flight_keys):
+            family = _scout_task_family(settings, task)
+            if family:
+                families.line_families.setdefault(key, Counter())[family] += 1
+                families.flying[family] += 1
+        return families
+
+    def choose(self, key: str) -> Any:
+        if not self.specs:
+            return None
+        line = self.line_families.get(key, Counter())
+        order = {spec.name: index for index, spec in enumerate(self.specs)}
+        return min(self.specs, key=lambda spec: (
+            line[spec.family], self.flying[spec.family],
+            self.stamps.get(f"{key}@{spec.family}", ""), order[spec.name]))
+
+    def add(self, key: str, spec: Any) -> None:
+        if spec is None:
+            return
+        self.line_families.setdefault(key, Counter())[spec.family] += 1
+        self.flying[spec.family] += 1
+        self.stamps[f"{key}@{spec.family}"] = _iso(_now_moment())
+
+
+def _scout_task_family(settings: FactorySettings, task: Mapping[str, Any]) -> str | None:
+    """Model family of an in-flight scout: its routed runner, else the one it asked for."""
+
+    runner = str(task.get("runner") or "")
+    if runner in settings.runners and task.get("runner_request") is not None:
+        return settings.runners[runner].family
+    try:
+        packet = _read_object(Path(str(task.get("input_path") or "")))
+    except (OSError, ValueError):
+        return None
+    preferred = str(packet.get(budget_control.PREFERRED_RUNNER_FIELD) or "")
+    spec = settings.runners.get(preferred)
+    return spec.family if spec is not None else None
 
 
 def schedule_scouts(
@@ -1285,9 +1367,9 @@ def schedule_scouts(
     all_projects = program_projects(paths)
     rotating = _rotation_projects(settings, all_projects)
     if program.polish_mode:
-        # Polish mode with exempt lines: only those lines scout.
+        # Polish mode with exempt (or supply-only) lines: only those lines scout.
         rotating = [project for project in rotating
-                    if not program.polish_blocks(project.research_line)]
+                    if not program.polish_blocks_supply(project.research_line)]
         if not rotating:
             return [], POLISH_MODE_REASON
     blocked_lines = lines_not_ready(
@@ -1324,13 +1406,20 @@ def schedule_scouts(
     in_flight = _program_tasks(db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?",
                                parameters=(SCOUT_TASK_TYPE,))
     flight_keys = [scout_task_key(db, task) for task in in_flight]
-    busy = set(flight_keys)
+    per_line = max(1, int(program.max_scouts_per_line))
+    flight_count = Counter(flight_keys)
+    # A line takes up to ``max_scouts_per_line`` scouts at once (one by default).
+    busy = {key for key, count in flight_count.items() if count >= per_line}
     legacy_in_flight = sum(key in legacy_keys for key in flight_keys)
     moment = now or _now_moment()
     stamps = db.meta_items(LAST_SCOUT_KEY + ":")
     recent = set()
     for project in projects:
         key = scout_key(project)
+        if flight_count.get(key):
+            # A line with a scout in flight and room for another (max_scouts_per_line > 1):
+            # the next one runs beside it on another model family, not after the interval.
+            continue
         last_stamp = _scout_stamp(stamps, key)
         if not stamps and not project.research_line and program.max_concurrent_scouts == 1:
             last_stamp = db.meta_get(LAST_SCOUT_KEY)
@@ -1357,6 +1446,7 @@ def schedule_scouts(
     legacy_scheduled = 0
     scheduled: list[ScoutDecision] = []
     reason: str | None = None
+    families = ScoutFamilies.build(db, settings, in_flight, flight_keys, moment=moment)
     while len(scheduled) < room:
         if legacy_scheduled >= legacy_wanted:
             projects = [project for project in projects if project.research_line]
@@ -1378,14 +1468,19 @@ def schedule_scouts(
                 reason = "scout_min_interval"
             break
         project, campaign_id = chosen
+        key = scout_key(project)
+        preferred = families.choose(key)
         decision = _schedule_one_scout(
             db, paths, settings, document=document, ledger=ledger, status=status,
             project=project, campaign_id=campaign_id,
-            max_cards=needs[scout_key(project)] if project.research_line else legacy_max_cards,
-            moment=moment,
+            max_cards=needs[key] if project.research_line else legacy_max_cards,
+            moment=moment, preferred=preferred,
         )
         scheduled.append(decision)
-        busy.add(scout_key(project))
+        flight_count[key] += 1
+        families.add(key, preferred)
+        if flight_count[key] >= per_line or not project.research_line:
+            busy.add(key)
         if not project.research_line:
             legacy_scheduled += 1
     if len(scheduled) == room and program.max_concurrent_scouts > 1:
@@ -2170,7 +2265,7 @@ def schedule_card_repairs(
         topic_id = str(topic["topic_id"])
         if last_rejection_reason(topic) != "card_invalid" or topic.get("repair_of"):
             continue
-        if settings.program.polish_blocks(topic.get("research_line")):
+        if settings.program.polish_blocks_supply(topic.get("research_line")):
             continue
         state = topic.get("card_repair")
         if isinstance(state, Mapping):
@@ -2356,7 +2451,7 @@ def schedule_revisions(
             continue
         if state.get("status") not in (None, "eligible") or not revision_eligible(topic):
             continue
-        if program.polish_blocks(topic.get("research_line")):
+        if program.polish_blocks_supply(topic.get("research_line")):
             continue
         pending.append(topic)
     if not pending:
@@ -2639,8 +2734,8 @@ def schedule_topic_admission(
         return ReviewSchedule(reason=COMPUTE_BACKLOG_REASON)
     campaign_id = str(campaign["campaign_id"])
     project = load_project(str(campaign["project_config_path"]))
-    if settings.program.polish_blocks(project.research_line):
-        # Polish mode with exempt lines: only an exempt line's cards are reviewed.
+    if settings.program.polish_blocks_supply(project.research_line):
+        # Polish mode with exempt (or supply-only) lines: only their cards are reviewed.
         return ReviewSchedule(reason=POLISH_MODE_REASON)
     ledger = open_topic_ledger(paths, settings.program)
     snapshot_document = ledger.read()
@@ -3718,9 +3813,13 @@ def run_program_pipeline(
     info = report.program
     if settings.program.polish_mode:
         exempt = settings.program.polish_exempt_lines
+        supply_only = settings.program.polish_supply_only_lines
+        scouting = (*exempt, *supply_only)
         info["polish_mode"] = {
             "on": True,
             "exempt_lines": list(exempt),
+            # Scout, prescreen and admission only; no research start (2026-11-26).
+            "supply_only_lines": list(supply_only),
             "paused": ["topic_scout", "topic_card_repair", "topic_revision",
                        "topic_admission", "admission_pilot", "auto_reopen",
                        "materialize"],
@@ -3731,7 +3830,7 @@ def run_program_pipeline(
                 [str(task["task_id"]) for task in _program_tasks(
                     db, statuses=("queued",), where="AND task_type=?",
                     parameters=(SCOUT_TASK_TYPE,))
-                 if not exempt or _scout_task_line(db, task) not in exempt],
+                 if not scouting or _scout_task_line(db, task) not in scouting],
                 reason=POLISH_MODE_REASON)),
         }
     backlog = compute_backlog(settings)
