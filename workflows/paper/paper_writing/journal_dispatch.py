@@ -155,6 +155,9 @@ DECISION_STATUS = {"submitted": "submitted", "rejected": "rejected", "accepted":
 CONFIRMATION_WINDOW = (timedelta(days=-7), timedelta(days=30))
 # A decision follows the submission; three years covers slow journals.
 DECISION_WINDOW = (timedelta(days=-1), timedelta(days=3 * 365))
+# The confirmation of a revised manuscript follows the revision decision (2026-11-26): the
+# journal's deadline plus any extension is well inside a year.
+RESUBMISSION_WINDOW = (timedelta(days=-1), timedelta(days=365))
 
 
 class AttemptHold(ValueError):
@@ -173,6 +176,26 @@ def _instant(value):
 
 def _key(name):
     return re.sub(r"[^a-z0-9]", "", str(name or "").casefold()).removeprefix("the")
+
+
+def _latest_round(paper, attempt):
+    rounds = [r for r in paper.get("review_rounds") or []
+              if isinstance(r, dict) and r.get("attempt_id") == attempt.get("id")]
+    if not rounds:
+        return None
+    return max(rounds, key=lambda r: (int(r.get("round_no") or 0), str(r.get("received_at") or "")))
+
+
+def revision_round(paper, attempt):
+    """The attempt's latest review round, when the attempt is waiting for a revised manuscript.
+
+    A submission confirmation for such an attempt is the journal acknowledging the revision
+    (20260506airesearch0005, IJDSA, 2026-11-15): it is a resubmission, not a repeat of the
+    original submission the site already lists.
+    """
+    if str(attempt.get("status") or "") != "revision_preparing":
+        return None
+    return _latest_round(paper, attempt)
 
 
 def select_attempt(api, paper, event, context):
@@ -215,8 +238,16 @@ def select_attempt(api, paper, event, context):
             if status in CLOSED_ATTEMPTS:
                 refused.append(f"{label}: already {status}")
                 continue
-            reference = _instant(attempt.get("submitted_at") or attempt.get("created_at") or attempt.get("started_at"))
-            window = CONFIRMATION_WINDOW
+            awaited = (_latest_round(paper, attempt)
+                       if status in {"revision_preparing", "resubmitted"} else None)
+            if awaited is not None:
+                # A revised manuscript is confirmed after the revision decision, not around the
+                # attempt's first submission (a replay after registration finds it the same way).
+                reference = _instant(awaited.get("received_at") or awaited.get("created_at"))
+                window = RESUBMISSION_WINDOW
+            else:
+                reference = _instant(attempt.get("submitted_at") or attempt.get("created_at") or attempt.get("started_at"))
+                window = CONFIRMATION_WINDOW
         else:
             if status == "preparing":
                 refused.append(f"{label}: not submitted yet")
@@ -265,7 +296,10 @@ def _hold(db, key, reason):
 
 def already_registered(paper, attempt, event):
     """The site already holds this letter's outcome: the event it posted (same idempotency
-    key, e.g. a hand registration of the letter), or the decision's status with the number."""
+    key, e.g. a hand registration of the letter), or the decision's status with the number.
+
+    A confirmation reaching an attempt that waits for a revised manuscript is not registered
+    yet: the site still shows the revision as pending (2026-11-26, IJDSA c2f005cb)."""
     key = "mail:" + event["message_key"]
     if any(item.get("idempotency_key") == key for item in paper.get("submission_events") or []):
         return True
@@ -273,6 +307,8 @@ def already_registered(paper, attempt, event):
     own = str(attempt.get("manuscript_number") or "")
     target = DECISION_STATUS.get(event["decision"])
     if event["decision"] == "submitted":
+        if revision_round(paper, attempt) is not None:
+            return False
         return attempt.get("status") != "preparing" and (not number or own.casefold() == number.casefold())
     return bool(target) and attempt.get("status") == target and (not number or own.casefold() == number.casefold())
 
@@ -341,7 +377,14 @@ def dispatch_one(args, api, db, event):
         rid = result["review_round"]["id"]
     elif not already_registered(paper, attempt, event):
         status = attempt.get("status")
-        if did == "proofs" or (did == "submitted" and status != "preparing"):
+        awaited = revision_round(paper, attempt) if did == "submitted" else None
+        extra = {}
+        if awaited is not None:
+            # The journal confirms the revised manuscript: the attempt is resubmitted, which
+            # also closes the round's revision request on the site (migration 017).
+            kind, to_status = "resubmitted", "resubmitted"
+            extra = {"round_no": awaited.get("round_no"), "review_round_id": awaited.get("id")}
+        elif did == "proofs" or (did == "submitted" and status != "preparing"):
             # Proofs, or the journal's acknowledgement of an attempt the site already lists as
             # submitted: a note that keeps the status and records the manuscript number.
             kind, to_status = "note", status
@@ -350,7 +393,7 @@ def dispatch_one(args, api, db, event):
         api._request("POST", uri + "/events", idempotency_key="mail:" + key,
                      json={"event_type": kind, "to_status": to_status, **({"occurred_at": event["received_at"]} if event.get("received_at") else {}),
                            "payload": {"manuscript_number": number, "decision": did, "source": "journal_mail",
-                                       "match_basis": basis}})
+                                       "match_basis": basis, **extra}})
     letter = rejection_letter(args, event)
     if letter:
         ledger(args, event, letter)

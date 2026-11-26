@@ -335,3 +335,63 @@ def test_ambiguous_letter_is_held_with_its_reason(tmp_path, monkeypatch):
     commands, row = _drain(tmp_path, monkeypatch, site, _event(), _letter(*CONFIRMATION, to="nobody@example.test"))
     assert site.posts == [] and row[0] == 0 and row[1].startswith("ambiguous: 2 attempts")
     assert len(commands) == 1
+
+
+# A revised manuscript confirmed by the journal (20260506airesearch0005, IJDSA, 2026-11-15):
+# the attempt waits for the revision, the journal's "has been submitted" letter names only the
+# title, and the attempt was first submitted months before.
+REVISION_ATTEMPT = dict(ATTEMPT, status="revision_preparing", manuscript_number=None,
+                        submitted_at=None, created_at="2026-05-06T00:00:00+08:00",
+                        started_at="2026-05-06T00:00:00+08:00")
+ROUND = {"id": "round-1", "attempt_id": "attempt-1", "round_no": 1, "decision": "major_revision",
+         "received_at": "2026-11-09T22:02:35+08:00"}
+RESUBMISSION = ("Track the status of your manuscript",
+                "Your manuscript Synthetic contact binary photometry over eight years has been submitted")
+
+
+def _resubmission_event():
+    return _event(number="", received="2026-11-15T12:17:16+00:00")
+
+
+def test_confirmation_after_a_revision_decision_selects_the_waiting_attempt():
+    from paper_writing.journal_mail import mail_context
+    from paper_writing.journal_dispatch import select_attempt
+    context = mail_context(_letter(*RESUBMISSION, date="Sun, 15 Nov 2026 12:17:16 +0000"))
+    paper = dict(PAPER, submission_attempts=[REVISION_ATTEMPT], review_rounds=[ROUND])
+    attempt, basis = select_attempt(_Users(), paper, _resubmission_event(), context)
+    assert attempt["id"] == "attempt-1" and "title" in basis
+
+
+def test_confirmation_before_the_revision_decision_is_held():
+    from paper_writing.journal_mail import mail_context
+    from paper_writing.journal_dispatch import AttemptHold, select_attempt
+    context = mail_context(_letter(*RESUBMISSION, date="Sun, 01 Nov 2026 12:17:16 +0000"))
+    paper = dict(PAPER, submission_attempts=[REVISION_ATTEMPT], review_rounds=[ROUND])
+    with pytest.raises(AttemptHold, match="outside the time window"):
+        select_attempt(_Users(), paper, _event(number="", received="2026-11-01T12:17:16+00:00"), context)
+
+
+def test_confirmation_of_a_revision_is_registered_as_resubmitted(tmp_path, monkeypatch):
+    """Before 2026-11-26 the letter counted as already registered (the attempt had left
+    ``preparing``) and the site kept showing the revision as pending."""
+    site = _Site(dict(PAPER, submission_attempts=[REVISION_ATTEMPT], review_rounds=[ROUND]))
+    commands, row = _drain(tmp_path, monkeypatch, site, _resubmission_event(),
+                           _letter(*RESUBMISSION, date="Sun, 15 Nov 2026 12:17:16 +0000"))
+    ((path, kw),) = site.posts
+    assert path == "/v1/submission-attempts/attempt-1/events"
+    assert kw["idempotency_key"] == "mail:" + "c" * 64
+    body = kw["json"]
+    assert (body["event_type"], body["to_status"]) == ("resubmitted", "resubmitted")
+    assert body["occurred_at"] == "2026-11-15T12:17:16+00:00"
+    assert body["payload"]["round_no"] == 1 and body["payload"]["review_round_id"] == "round-1"
+    assert row == (1, "") and len(commands) == 1
+
+
+def test_registered_resubmission_is_not_posted_again(tmp_path, monkeypatch):
+    attempt = dict(REVISION_ATTEMPT, status="resubmitted")
+    site = _Site(dict(PAPER, submission_attempts=[attempt], review_rounds=[ROUND],
+                      submission_events=[{"idempotency_key": "mail:" + "c" * 64,
+                                          "event_type": "resubmitted"}]))
+    commands, row = _drain(tmp_path, monkeypatch, site, _resubmission_event(),
+                           _letter(*RESUBMISSION, date="Sun, 15 Nov 2026 12:17:16 +0000"))
+    assert site.posts == [] and row == (1, "")
