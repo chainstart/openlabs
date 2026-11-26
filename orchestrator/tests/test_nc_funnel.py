@@ -91,15 +91,6 @@ def _novelty(n=50, closest=5) -> dict:
             "increment": "First multi-market staggered-entry estimate."}
 
 
-def _assessment(band="nc", met=("generality", "counterintuitive", "benchmark"),
-                match="same") -> dict:
-    return {"thresholds": {key: {"met": key in met, "evidence": "seen" if key in met else ""}
-                           for key in nc_funnel.THRESHOLDS},
-            "met_count": len(met), "expected_band": band,
-            **({"calibration_match": band if match == "same" else match,
-                "calibration_neighbours": ["N2"]} if match is not None else {})}
-
-
 # --------------------------------------------------------------------------- settings / stage
 
 
@@ -160,6 +151,23 @@ def test_mechanical_screen_records_self_claimed_thresholds_without_rejecting():
     assert reason is None and errors == []
     assert "counterintuitive" not in extra["nc_screen"]["claimed_thresholds"]
     assert extra["prescreen"]["status"] == "pending"
+
+
+def test_nc_card_needs_no_feasibility_precheck_and_runs_no_line_precheck(tmp_path, monkeypatch):
+    # Pipeline slimming 2026-11-26: the prescreen's kill test replaces both for nc_aim cards.
+    paths, db, settings = _setup(tmp_path)
+    card = _nc_card()
+    card.pop("feasibility_precheck", None)
+    from openlabs import program_flow
+
+    monkeypatch.setattr(program_flow, "_run_card_precheck",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("precheck ran")))
+    _, report = flow._scout_round(paths, db, settings, monkeypatch, [card])
+    assert report.errors == [], report.errors
+    registered, = report.program["cards_registered"]
+    topic = open_topic_ledger(paths, settings.program).topic(registered["topic_id"])
+    assert "precheck" not in topic["card_check"] and "pilot" not in topic["card_check"]
+    assert topic["card_check"]["prescreen"]["status"] in {"pending", "scheduled"}
 
 
 def test_capacity_and_near_duplicate_screens():
@@ -266,8 +274,10 @@ def test_prescreened_card_goes_to_nc_admission(tmp_path, monkeypatch, complete):
     entry = flow._packet(review)["topic_cards"][0]
     assert entry["target_stage"] == "nc_aim"
     assert entry["card_check"]["prescreen"]["status"] == "pass"
-    extra = {"novelty_search": _novelty(), "nc_assessment": _assessment()} if complete else {
-        "novelty_search": _novelty(n=12, closest=2), "nc_assessment": _assessment(band="zone_2")}
+    # The gate checks the prescreen and adds the novelty search; it does not score again.
+    assert "Do not score the NC thresholds again" in review["objective"]
+    extra = {"novelty_search": _novelty()} if complete else {
+        "novelty_search": _novelty(n=12, closest=2)}
     branch = flow._branch(entry, **extra)
     flow._complete(db, paths, review["task_id"], extra={"candidate_branches": [branch]})
     report = flow._tick(paths, settings, monkeypatch)
@@ -279,12 +289,20 @@ def test_prescreened_card_goes_to_nc_admission(tmp_path, monkeypatch, complete):
         assert "papers_screened" in topic["admission"]["strongest_rejection_reason"]
         return
     assert topic["status"] == "active"
-    assert topic["admission"]["nc_assessment"]["expected_band"] == "nc"
+    assert "nc_assessment" not in topic["admission"]
     state = json.loads(Path(db.campaign(topic["campaign_id"])["workstream_state_path"]).read_text())
     assert state["target_stage"] == "nc_aim"
     assert state["milestones"][0]["kind"] == "decisive"
     assert state["nc_case"]["claim"].startswith("Battery fleets")
-    assert state["expected_band"] == "nc"
+    assert state["expected_band"] == "nc"  # the prescreen's band
+    assert state["prescreen"]["calibration_match"] == "nc"
+    # The kill test is the first stage: no separate feasibility precheck (2026-11-26).
+    assert state["prescreen"]["kill_test"]["signal"]["present"] is True
+    assert "feasibility_precheck" not in state and "precheck_clock" not in state
+    with db.connect() as connection:
+        objectives = [row[0] for row in connection.execute(
+            "SELECT objective FROM tasks WHERE campaign_id=?", (topic["campaign_id"],))]
+    assert objectives and not any("feasibility_precheck" in text for text in objectives)
 
 
 def test_evaluate_prescreen_rules(tmp_path):
@@ -337,21 +355,20 @@ def test_prescreen_uses_the_calibration_ruler(tmp_path):
     assert "known relation" in verdict["downgrades"][0]
 
 
-def test_admission_uses_the_calibration_ruler():
+def test_admission_checks_the_prescreen_instead_of_scoring_again():
+    # Pipeline slimming 2026-11-26: the gate does not score the thresholds again.
     settings = replace(flow._settings(), program=replace(flow._settings().program,
                                                          funnel=FunnelSettings()))
-    ok = {"novelty_search": _novelty(), "nc_assessment": _assessment(band="zone_1")}
-    assert nc_funnel.admission_problems(ok, settings) == []
-    missing = {"novelty_search": _novelty(), "nc_assessment": _assessment(match=None)}
-    assert any("calibration_match" in gap for gap in nc_funnel.admission_problems(
-        missing, settings))
-    low = {"novelty_search": _novelty(),
-           "nc_assessment": _assessment(band="zone_1", match="zones_3_4")}
-    gaps = nc_funnel.admission_problems(low, settings)
-    assert gaps and "zones_3_4" in gaps[0] and "calibration match" in gaps[0]
-    capped = nc_funnel.research_fields(
-        {"card": {}, "admission": {"nc_assessment": _assessment(band="nc", match="zone_1")}})
-    assert capped["expected_band"] == "zone_1"
+    passed = {"status": "pass", "expected_band": "zone_1", "calibration_match": "zone_1",
+              "met": ["generality", "benchmark"]}
+    assert nc_funnel.admission_problems({"novelty_search": _novelty()}, settings, passed) == []
+    gaps = nc_funnel.admission_problems({"novelty_search": _novelty()}, settings, None)
+    assert gaps == ["the prescreen (card_check.prescreen) has not passed"]
+    assert "papers_screened" in nc_funnel.admission_problems(
+        {"novelty_search": _novelty(n=12)}, settings, passed)[0]
+    fields = nc_funnel.research_fields({"card": {}, "admission": {}}, passed)
+    assert fields["expected_band"] == "zone_1"
+    assert fields["prescreen"]["calibration_match"] == "zone_1"
     assert nc_funnel.calibrated_band("nc", "zone_2") == "zone_2"
     assert nc_funnel.calibrated_band("zone_2", "nc") == "zone_2"
     assert nc_funnel.calibrated_band("nc", "bogus") == "zones_3_4"

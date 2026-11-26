@@ -234,8 +234,7 @@ def grade_note(grade: Mapping[str, Any]) -> str:
         f"Journal graded before writing (user decision 2026-11-25): {grade.get('journal')} "
         f"(band {grade.get('achieved_band')}, confidence {grade.get('confidence')}). Write the "
         f"manuscript for this journal and set it as target_journal. {format_text(grade)} "
-        "Writing and figures keep the top-journal standard. At review-ready the grade is only "
-        "re-checked for changed evidence."
+        "Writing and figures keep the top-journal standard."
     )
 
 

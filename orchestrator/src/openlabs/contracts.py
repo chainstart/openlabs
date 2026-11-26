@@ -721,7 +721,8 @@ def data_source_identifiers(data_sources: Any) -> list[str]:
     return identifiers
 
 
-def validate_topic_card(card: Any, *, current_year: int | None = None) -> ValidationResult:
+def validate_topic_card(card: Any, *, current_year: int | None = None,
+                        feasibility_precheck: bool = True) -> ValidationResult:
     """Machine check of a topic card's structure (``openlabs.topic_card.v1``).
 
     The check only establishes that every field the admission gate needs is
@@ -875,7 +876,8 @@ def validate_topic_card(card: Any, *, current_year: int | None = None) -> Valida
         warnings.append("ledger_check.compared_topic_ids must be an array")
 
     if card.get("research_line") is not None:
-        errors.extend(research_line_card_errors(card, venues))
+        errors.extend(research_line_card_errors(card, venues,
+                                                feasibility_precheck=feasibility_precheck))
 
     tier = card.get("target_tier")
     if tier is not None and tier not in TOPIC_TIERS:
@@ -1080,26 +1082,28 @@ def paper_template_errors(card: Mapping[str, Any]) -> list[str]:
     return errors
 
 
-def research_line_card_errors(card: Mapping[str, Any], venues: Mapping[str, Any]) -> list[str]:
+def research_line_card_errors(card: Mapping[str, Any], venues: Mapping[str, Any], *,
+                              feasibility_precheck: bool = True) -> list[str]:
     """Fields a research-line card adds: the decisive precheck, licences and fees.
 
     ``feasibility_precheck`` is the cheap decisive analysis run first after
     admission (failure freezes the topic); ``license_check`` covers every
     software package, model weight and dataset; ``fee_check`` covers page,
     colour and submission charges of every routine venue, and at least one
-    routine venue must have a verified fee-free route.
+    routine venue must have a verified fee-free route. ``feasibility_precheck=False``
+    (nc_aim cards): the prescreen's kill test takes the precheck's place.
     """
 
     errors: list[str] = []
     if not _text(card.get("research_line")):
         errors.append("research_line must name a line of registry/research-lines.yaml")
     precheck = card.get("feasibility_precheck")
-    if not isinstance(precheck, Mapping):
+    if feasibility_precheck and not isinstance(precheck, Mapping):
         errors.append(
             "feasibility_precheck is missing (description, pass_criterion, budget, "
             "on_failure: freeze)"
         )
-    else:
+    elif feasibility_precheck:
         for name in PRECHECK_FIELDS:
             if not _text(precheck.get(name)):
                 errors.append(f"feasibility_precheck.{name} is missing")

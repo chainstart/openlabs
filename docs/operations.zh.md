@@ -623,6 +623,14 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
 评审中发现意义不足仍走 REVIEW_DIRECTION / retarget。定档决策重试用尽时不冻结，照常写作，评审后按旧流程完整定档。
 `grade_before_writing = false` 回到评审后定档。
 
+产线精简第一批（2026-11-26，用户：“同意，精简产线”，`maintenance/20261126-pipeline-slimming/REPORT.md`）：
+L1 机械筛不再按出题者自报的 NC 门槛淘汰（自报门槛只记录在 `card_check.nc_screen`，`nc_case` 仍必填；
+数据清单、容量、近似重复三项照旧）。立项不再重打五项门槛分，只核对预筛结果（门槛、`calibration_match`、
+小试算）并补做 ≥50 篇、最接近 5 篇的查新；控制面检查预筛已通过和查新齐全（`nc_funnel.admission_problems`），
+研究状态的 `expected_band` 取预筛的档。`nc_aim` 卡不再要求 `feasibility_precheck`，也不跑线的
+`admission_precheck` 与 ailab 试算：预筛的小试算就是研究第一阶段的可行性证据（`research_state.json`
+`prescreen.kill_test`），负责人不再另跑可行性预检。其它 target_stage 的线照旧保留这两步。
+
 有研究线的新 campaign 写入 `workspaces/lines/<line>/<campaign>/`。已有 campaign 继续从持久化
 路径读取状态、证据和交付输入。项目配置与侦察、立项工作流仍在宿主领域工作区。
 

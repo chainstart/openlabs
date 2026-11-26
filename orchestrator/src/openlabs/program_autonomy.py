@@ -88,8 +88,8 @@ TRIGGER_REVIEW_RETARGET = "review_retarget_required"
 TRIGGER_REVIEW_STALLED = "review_stalled"
 TRIGGER_REVIEW_ROUNDS = "review_rounds_exhausted"
 TRIGGER_VENUE_GRADE = "review_venue_grade"
-# NC aim (user 2026-11-25, nc_grading.py): the journal is graded before writing and the
-# review-time grade only re-checks whether the evidence changed.
+# NC aim (user 2026-11-25, nc_grading.py): the journal is graded before writing; review ready
+# then goes straight to the queue (no re-check since 2026-11-26).
 TRIGGER_PRE_WRITING_GRADE = "pre_writing_grade"
 GRADE_TRIGGERS = frozenset({TRIGGER_VENUE_GRADE, TRIGGER_PRE_WRITING_GRADE})
 # A research executor stopped with needs_human on a scientific/process question

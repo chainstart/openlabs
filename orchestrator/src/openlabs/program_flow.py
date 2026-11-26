@@ -1195,7 +1195,9 @@ def _schedule_one_scout(
                 f" within the research line `{line}` of registry/research-lines.yaml (read it "
                 "first: positioning, minimum validation, venues with fee evidence, licence "
                 "lists, avoided directions; each card needs research-line fields: "
-                "feasibility_precheck, license_check, fee_check)"
+                + ("license_check, fee_check; the kill_test replaces feasibility_precheck)"
+                   if stage == target_stage.NC_AIM else
+                   "feasibility_precheck, license_check, fee_check)")
                 + (
                     ". Start from the line's paper_templates (packet research_line_summary."
                     "paper_templates; full entries in the direction file): pick a template, run "
@@ -1668,7 +1670,8 @@ def card_problems(
     the topic it revises (a fixable format problem, so it goes to repair).
     """
 
-    validation = validate_topic_card(card)
+    # nc_aim: the prescreen's kill test is the feasibility check (pipeline slimming 2026-11-26).
+    validation = validate_topic_card(card, feasibility_precheck=stage != target_stage.NC_AIM)
     errors = [*validation.errors, *target_stage.card_errors(card, stage)]
     notes = warnings if warnings is not None else []
     notes.extend(validation.warnings)
@@ -1809,8 +1812,12 @@ def intake_card(
             not_repairable_reason=rejection,
         )
         return {**outcome, "screen": rejection}
-    precheck = _run_card_precheck(paths, settings, project.project_id, card, line_entry,
-                                  card_path=Path(metadata["card_path"]))
+    # A line's admission_precheck and ailab pilot are kept for the templated stages; an nc_aim
+    # card has the prescreen's kill test instead (pipeline slimming 2026-11-26).
+    graded_by_kill_test = stage == target_stage.NC_AIM
+    precheck = None if graded_by_kill_test else _run_card_precheck(
+        paths, settings, project.project_id, card, line_entry,
+        card_path=Path(metadata["card_path"]))
     if precheck is not None:
         precheck["attempts"] = 1
         metadata["card_check"] = {**metadata.get("card_check", {"normalized": [],
@@ -1828,7 +1835,7 @@ def intake_card(
         # admission review; schedule_topic_admission retries it and reports it each tick.
     pilot = supply_screen.pilot_spec(line_entry, template_entry,
                                      str(card.get("paper_template") or "")) if (
-        settings.program.supply.pilot) else None
+        settings.program.supply.pilot and not graded_by_kill_test) else None
     if pilot is not None:
         # The card waits for its ailab pilot (advance_pilots) before the admission review.
         metadata["card_check"] = {**metadata.get("card_check", {"normalized": [],
@@ -3249,8 +3256,6 @@ def _summary(admission: Mapping[str, Any], review_task_id: str) -> dict[str, Any
         ),
         "review_task_id": review_task_id,
         "policy": ADMISSION_POLICY_VERSION,
-        **({"nc_assessment": dict(admission["nc_assessment"])}
-           if isinstance(admission.get("nc_assessment"), Mapping) else {}),
         **({"novelty_search": {
             key: admission["novelty_search"].get(key)
             for key in ("window_years", "papers_screened", "increment", "closest")}}
@@ -3352,7 +3357,9 @@ def materialize_admission_decisions(
                 continue
             if stage == target_stage.NC_AIM:
                 gaps = [*target_stage.card_errors(card, stage),
-                        *nc_funnel.admission_problems(admission, settings)]
+                        *nc_funnel.admission_problems(
+                            admission, settings,
+                            (topic.get("card_check") or {}).get("prescreen"))]
                 if gaps:
                     reject_topic(ledger, topic_id, db=db, reason=nc_funnel.ADMISSION_REJECTION,
                                  decided_by=review_task_id, evidence=evidence,
@@ -3463,6 +3470,8 @@ def _research_state(
     card = record.get("card") if isinstance(record.get("card"), Mapping) else {}
     venues = card.get("venues") if isinstance(card.get("venues"), Mapping) else {}
     admission = record.get("admission") if isinstance(record.get("admission"), Mapping) else {}
+    # nc_aim: the prescreen's kill test is the first stage; no separate feasibility precheck.
+    nc = record.get("target_stage") == target_stage.NC_AIM
     extra: dict[str, Any] = {}
     if record_path is not None and record_path.is_file():
         # Writers record an escalation target as provisional with this record as
@@ -3491,12 +3500,12 @@ def _research_state(
         **{
             key: card.get(key)
             for key in ("research_line", "feasibility_precheck", "license_check", "fee_check")
-            if card.get(key) is not None
+            if card.get(key) is not None and not (nc and key == "feasibility_precheck")
         },
         **({"precheck_clock": PRECHECK_CLOCK}
-           if isinstance(card.get("feasibility_precheck"), Mapping) else {}),
-        **(nc_funnel.research_fields(record)
-           if record.get("target_stage") == target_stage.NC_AIM else {}),
+           if isinstance(card.get("feasibility_precheck"), Mapping) and not nc else {}),
+        **(nc_funnel.research_fields(record, (topic.get("card_check") or {}).get("prescreen"))
+           if nc else {}),
     }
 
 
@@ -3616,7 +3625,8 @@ def materialize_waiting_topics(
                 "while those are pending, end with awaiting_remote instead of declaring the "
                 "precheck inconclusive. Follow the research line's SOP and environment "
                 "in registry/research-lines.yaml."
-                if isinstance(card.get("feasibility_precheck"), Mapping) else ""
+                if isinstance(card.get("feasibility_precheck"), Mapping)
+                and record.get("target_stage") != target_stage.NC_AIM else ""
             )
             + conditions_instruction(record_conditions(record))
         ).strip()

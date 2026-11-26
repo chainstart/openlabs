@@ -56,9 +56,8 @@ nc_aim`. User: "后续的投稿目标都设为NC，然后选题也按照这个�
   batch) only run 02:00-14:00 Beijing time, so count the download windows; ailab has six SSDs.
 - **Design the kill test**: `kill_test` {signal, null_model, ceiling, pass_rule, core_hours <= 2}
   - does the key signal exist, how much does a null model or simple baseline explain, what is
-  the theoretical ceiling. Lesson of 2026-11-12 (four papers frozen after many review rounds): a
-  40-second copula benchmark, a full-sample null model, or the ceiling of the effect would each
-  have shown at once that the claim could not stand.
+  the theoretical ceiling. The prescreen runs it; it replaces `feasibility_precheck`, which an
+  nc_aim card does not carry.
 - **Milestones with budgets**: `milestones` [{name, kind, agent_hours, core_hours, model_usd}];
   the first has `kind: decisive` (the test that decides whether the main claim holds).
 - **Data**: give each data source its catalogue `catalog_id`; a source you found and verified
@@ -265,8 +264,8 @@ Each field is there because the gate needs it to decide:
   token cost and compute cost apart: heavy computation that parallelises across ailab jobs
   costs calendar hours on an otherwise idle host, not model budget, so do not drop a strong
   question only because its CPU time is long; plan the split and state it here.
-- Research-line cards (the packet names a `research_line`) add three fields; the control plane
-  rejects a line card without them. `packages/contracts/examples/research-program/topic-card.research-line.example.json` shows
+- Research-line cards (the packet names a `research_line`) add three fields (nc_aim cards: the
+  last two; their kill test replaces the precheck); the control plane rejects a line card without them. `packages/contracts/examples/research-program/topic-card.research-line.example.json` shows
   the shape.
   - `feasibility_precheck` — `description` (the cheap decisive check), `pass_criterion` (numeric),
     `budget` (one text string with the active agent time and compute, e.g. `"5400 active agent

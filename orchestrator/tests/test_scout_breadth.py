@@ -245,17 +245,12 @@ def test_nc_floor_in_the_prescreen(tmp_path) -> None:
         nc_funnel.BAND_REJECTION
 
 
-def test_nc_floor_at_admission_and_in_the_instructions() -> None:
+def test_nc_floor_at_the_prescreen_and_in_the_instructions() -> None:
     settings = _nc_floor_settings()
-    ok = {"novelty_search": nc._novelty(), "nc_assessment": nc._assessment(band="nc")}
-    assert nc_funnel.admission_problems(ok, settings) == []
-    zone1 = {"novelty_search": nc._novelty(), "nc_assessment": nc._assessment(band="zone_1")}
-    gaps = nc_funnel.admission_problems(zone1, settings)
-    assert gaps and "below the admission floor nc" in gaps[0]
-    capped = {"novelty_search": nc._novelty(),
-              "nc_assessment": nc._assessment(band="nc", match="zone_1")}
-    assert "calibration match zone_1" in nc_funnel.admission_problems(capped, settings)[0]
-    assert "below nc" in nc_funnel.admission_instruction(settings)
+    # The floor is applied by the prescreen; the admission gate checks that it passed.
+    passed = {"status": "pass", "expected_band": "nc", "calibration_match": "nc"}
+    assert nc_funnel.admission_problems({"novelty_search": nc._novelty()}, settings, passed) == []
+    assert "{floor}" not in nc_funnel.admission_instruction(settings)
     assert "Admission floor: nc" in nc_funnel.scout_floor_instruction(settings)
     # After research the data still grade the journal: the grade knows nothing of the floor.
     grade = nc_funnel.nc_grade(
@@ -289,10 +284,8 @@ def test_nc_floor_end_to_end_and_supply_only_admits_without_research(tmp_path,
     if review["status"] != "leased":
         flow._tick(paths, settings, monkeypatch)
         review = db.task(review["task_id"])
-    assert "below nc" in review["objective"]
     entry = flow._packet(review)["topic_cards"][0]
-    branch = flow._branch(entry, novelty_search=nc._novelty(),
-                          nc_assessment=nc._assessment(band="nc"))
+    branch = flow._branch(entry, novelty_search=nc._novelty())
     flow._complete(db, paths, review["task_id"], extra={"candidate_branches": [branch]})
     report = flow._tick(paths, settings, monkeypatch)
     assert report.errors == [], report.errors

@@ -3252,15 +3252,16 @@ def render_brief(
            + _short(str((research.get("nc_case") or {}).get("claim") or "see nc_case"), 200)
            + ". Validate to the NC standard: sensitivity analysis, uncertainty, external "
            "validation, and a simple baseline or confounder check are required in Results. "
-           "The first milestone (research_state.json `milestones`) is the decisive analysis; "
+           "The prescreen's kill test (research_state.json `prescreen.kill_test`) already "
+           "showed the key signal; there is no separate feasibility precheck. The first "
+           "milestone (research_state.json `milestones`) is the decisive analysis; "
            "keep each milestone's compute and token budget. If the decisive analysis fails, "
            "stop early: freeze, or record a lower `expected_band` in OWNER_LOG.md and continue "
            "for that band - do not force the NC claim. When the decisive analysis and the four "
            "checks are done, end the seat with phase writing and " + nc_grading.READINESS_PACKET
            + " The journal is then graded from that evidence before writing (cross-family, "
            "calibration set: NC, else CAS Zone 1, 2, 3-4) and the manuscript is written for "
-           "the graded journal's length and format; at review-ready the grade is only "
-           "re-checked for changed evidence. Write and draw to top-journal standard in every "
+           "the graded journal's length and format. Write and draw to top-journal standard in every "
            "band."] if research.get("target_stage") == "nc_aim" else []),
         *([nc_grading.grade_note(grade)] if isinstance(
             grade := (topic or {}).get("venue_grade") or (state or {}).get("venue_grade"),

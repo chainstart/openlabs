@@ -29,25 +29,16 @@ whose claim cannot be tested, not to demand a finished study.
    `admission.novelty_search` {window_years, papers_screened, queries[], closest[{citation, year,
    doi_or_url, what_it_shows, our_increment}] (the five closest), increment (one sentence)}. The
    control plane rejects an admit without it.
-2. **Calibration match first.** Read the calibration set (`read_resources` venue-calibration,
-   `registry/venue-calibration.yaml`: accepted NC papers and same-subject papers of lower-tier
-   journals) and say which tier the card resembles: `calibration_match`
-   (nc|zone_1|zone_2|zones_3_4) with `calibration_neighbours` (the ids of the 2-3 closest
-   papers). It is the same set and the same rule as the acceptance grade before writing: the
-   topic is placed no higher than its match. (NC trial 2026-11-25: an ECG card admitted as zone_1
-   was graded zones_3_4 before writing, because only the grader had read this set.)
-3. **NC thresholds on your own reading.** `admission.nc_assessment` {thresholds {generality,
-   counterintuitive, scale, benchmark, resource: {met, evidence}}, met_count, calibration_match,
-   calibration_neighbours, expected_band (nc|zone_1|zone_2|zones_3_4)}. Fewer than two
-   thresholds, or an expected band (the worse of expected_band and calibration_match) below the
-   floor in the packet's instruction (code default zone_1; nc on cc-sg since 2026-11-26, user:
-   "接下来的出题希望选题至少是够nc档次的"), is a reject; the control plane rejects an
-   admit without a calibration match.
-4. **The case holds together**: the one-sentence claim, the view it challenges and the benchmark
-   are concrete; the kill test in `card_check.prescreen` found the signal (a failed kill test never
-   reaches you); the data plan (`data_volume`, download windows, ailab storage) is feasible; the
+2. **Check the prescreen; do not score again.** The prescreen (`card_check.prescreen`, another
+   model family) already scored the five NC thresholds, read the calibration set and ran the kill
+   test; a card that failed any of them never reaches you. Read its result against the card and
+   your search: do the thresholds it counted hold, does `calibration_match` (and the expected band
+   it caps) stand, and did the kill test show the signal? If one of them does not stand, reject
+   and quote it in `strongest_rejection_reason`.
+3. **The case holds together**: the one-sentence claim, the view it challenges and the benchmark
+   are concrete; the data plan (`data_volume`, download windows, ailab storage) is feasible; the
    first milestone is the decisive analysis.
-5. The data, licence, compute and fee rules below still apply.
+4. The data, licence, compute and fee rules below still apply.
 
 Compare with the hooks of accepted NC papers in `registry/venue-calibration.yaml` (also listed in
 the scout skill): generality, a sentence that overturns a view, an order of magnitude of scale,

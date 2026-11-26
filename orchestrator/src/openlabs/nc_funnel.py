@@ -188,16 +188,13 @@ ADMISSION_NC_INSTRUCTION = (
     "part in choosing the topic: run your own novelty search over the last {years} years "
     "covering at least {papers} papers and return `admission.novelty_search` {window_years, "
     "papers_screened, queries[], closest[{citation, year, doi_or_url, what_it_shows, "
-    "our_increment}] (the {closest} closest), increment (one sentence)}. Then score the NC "
-    "thresholds yourself in `admission.nc_assessment` {thresholds {" + ", ".join(THRESHOLDS)
-    + ": {met, evidence}}, met_count, calibration_match, calibration_neighbours, expected_band "
-    "(nc|zone_1|zone_2|zones_3_4)}, reading the card's nc_case, the prescreen and kill-test "
-    "result in card_check.prescreen and the hooks of accepted NC papers: " + hooks_text()
-    + " Calibration: " + CALIBRATION_TEXT + " Reject a 'small and low' topic: fewer than "
-    "{minimum} thresholds, or an expected band (after the calibration match) below {floor}. "
-    "Admit when the claim, the "
-    "challenged view, the benchmark and the data plan (data_volume, download window, ailab "
-    "storage) stand; the first milestone must be the decisive analysis."
+    "our_increment}] (the {closest} closest), increment (one sentence)}. Do not score the NC "
+    "thresholds again: the prescreen (card_check.prescreen) did, with the calibration set and "
+    "the kill test. Check that its result stands - the thresholds it counted, its "
+    "calibration_match and the kill-test signal - and reject, quoting which one, when it does "
+    "not. Admit when the claim, the challenged view, the benchmark and the data plan "
+    "(data_volume, download window, ailab storage) stand; the first milestone must be the "
+    "decisive analysis."
 )
 
 GRADE_INSTRUCTION = (
@@ -240,9 +237,7 @@ def admission_instruction(settings) -> str:
     return (ADMISSION_NC_INSTRUCTION
             .replace("{years}", str(funnel.novelty_window_years))
             .replace("{papers}", str(funnel.novelty_min_papers))
-            .replace("{closest}", str(funnel.novelty_closest))
-            .replace("{minimum}", str(funnel.min_nc_thresholds))
-            .replace("{floor}", funnel.admission_min_band))
+            .replace("{closest}", str(funnel.novelty_closest)))
 
 
 def band_rank(band: Any) -> int:
@@ -866,11 +861,19 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------- L4: admission
 
 
-def admission_problems(admission: Mapping[str, Any], settings) -> list[str]:
-    """Why an nc_aim admit does not meet the NC admission requirements ([] when it does)."""
+def admission_problems(admission: Mapping[str, Any], settings,
+                       prescreen: Mapping[str, Any] | None = None) -> list[str]:
+    """Why an nc_aim admit does not meet the NC admission requirements ([] when it does).
+
+    Pipeline slimming 2026-11-26: the gate no longer scores the NC thresholds again; it checks
+    that the prescreen passed (thresholds, calibration match, kill test) and adds the
+    independent novelty search.
+    """
 
     funnel = settings.program.funnel
     gaps: list[str] = []
+    if funnel.prescreen and str((prescreen or {}).get("status") or "") != "pass":
+        gaps.append("the prescreen (card_check.prescreen) has not passed")
     search = admission.get("novelty_search")
     if not isinstance(search, Mapping):
         gaps.append("admission.novelty_search is missing (independent novelty search)")
@@ -886,45 +889,26 @@ def admission_problems(admission: Mapping[str, Any], settings) -> list[str]:
                         "closest papers with our_increment")
         if not _text(search.get("increment")):
             gaps.append("novelty_search.increment is missing")
-    assessment = admission.get("nc_assessment")
-    if not isinstance(assessment, Mapping):
-        gaps.append("admission.nc_assessment is missing")
-    else:
-        met = met_thresholds(assessment.get("thresholds"))
-        if len(met) < funnel.min_nc_thresholds:
-            gaps.append(f"{len(met)} NC threshold(s) hold ({', '.join(met) or 'none'}); "
-                        f"{funnel.min_nc_thresholds} required")
-        band = _text(assessment.get("expected_band"))
-        match = _text(assessment.get("calibration_match"))
-        if band not in BANDS:
-            gaps.append("nc_assessment.expected_band must be nc, zone_1, zone_2 or zones_3_4")
-        elif match not in BANDS:
-            gaps.append("nc_assessment.calibration_match must be nc, zone_1, zone_2 or "
-                        "zones_3_4 (the tier of the closest calibration papers)")
-        elif band_rank(calibrated_band(band, match)) > band_rank(funnel.admission_min_band):
-            gaps.append(f"expected band {calibrated_band(band, match)} is below the admission "
-                        f"floor {funnel.admission_min_band}"
-                        + (f" (calibration match {match})" if match != band else ""))
     return gaps
 
 
-def research_fields(record: Mapping[str, Any]) -> dict[str, Any]:
+def research_fields(record: Mapping[str, Any],
+                    prescreen: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """NC-aim fields an admitted topic carries into its research state."""
 
     card = record.get("card") if isinstance(record.get("card"), Mapping) else {}
     admission = record.get("admission") if isinstance(record.get("admission"), Mapping) else {}
-    assessment = admission.get("nc_assessment") if isinstance(admission.get("nc_assessment"),
-                                                              Mapping) else {}
+    prescreen = prescreen if isinstance(prescreen, Mapping) else {}
     fields = {key: card.get(key) for key in ("nc_case", "kill_test", "milestones",
                                              "data_volume") if card.get(key) is not None}
     if admission.get("novelty_search") is not None:
         fields["novelty_search"] = admission["novelty_search"]
-    if assessment:
-        fields["nc_assessment"] = dict(assessment)
-        fields["expected_band"] = (calibrated_band(assessment.get("expected_band"),
-                                                   assessment["calibration_match"])
-                                   if assessment.get("calibration_match") in BANDS
-                                   else assessment.get("expected_band"))
+    if prescreen.get("expected_band") in BANDS:
+        fields["expected_band"] = prescreen["expected_band"]  # already capped by the match
+        # The kill test is the first research stage's feasibility evidence (2026-11-26).
+        fields["prescreen"] = {key: prescreen.get(key) for key in (
+            "expected_band", "calibration_match", "met", "summary", "kill_test")
+            if key in prescreen}
     return fields
 
 
@@ -939,16 +923,26 @@ def calibration_resource(paths) -> dict[str, str] | None:
     return {"label": "venue-calibration", "path": str(path.resolve()), "sha256": digest}
 
 
+def _admitted_band(topic: Mapping[str, Any]) -> Any:
+    """The band a topic was admitted with: the prescreen's (topics admitted before
+    2026-11-26 carry the admission gate's own ``nc_assessment``)."""
+
+    admission = topic.get("admission") if isinstance(topic.get("admission"), Mapping) else {}
+    if isinstance(admission.get("nc_assessment"), Mapping):
+        return admission["nc_assessment"].get("expected_band")
+    check = topic.get("card_check") if isinstance(topic.get("card_check"), Mapping) else {}
+    prescreen = check.get("prescreen") if isinstance(check.get("prescreen"), Mapping) else {}
+    return prescreen.get("expected_band")
+
+
 def grading_packet(settings, topic: Mapping[str, Any]) -> dict[str, Any]:
     funnel = settings.program.funnel
-    admission = topic.get("admission") if isinstance(topic.get("admission"), Mapping) else {}
     return {
         "stage": "nc_aim",
         "bands": list(BANDS),
         "nc_journals": list(funnel.nc_journals),
         "thresholds": THRESHOLD_TEXT,
-        "expected_band_at_admission": (admission.get("nc_assessment") or {}).get(
-            "expected_band") if isinstance(admission.get("nc_assessment"), Mapping) else None,
+        "expected_band_at_admission": _admitted_band(topic),
         "rules": (f"achieved_band nc needs >= {funnel.min_nc_thresholds} thresholds met in "
                   "nc_scorecard, calibration_match nc and confidence high, and a journal of "
                   "nc_journals; zone_1 / zone_2 / zones_3_4 need a verified journal of that CAS "
@@ -1139,11 +1133,8 @@ def metrics(document: Mapping[str, Any], settings, *, scout_counts: Mapping[str,
             row["all"][level] += 1
             if nc:
                 row["nc"][level] += 1
-        admission = topic.get("admission") if isinstance(topic.get("admission"), Mapping) else {}
-        expected = (admission.get("nc_assessment") or {}).get("expected_band") if isinstance(
-            admission.get("nc_assessment"), Mapping) else None
         if nc and "admitted" in states:
-            row["expected"][str(expected or prescreen.get("expected_band") or "unknown")] += 1
+            row["expected"][str(_admitted_band(topic) or "unknown")] += 1
     target = settings.program.funnel.target_mix
     result: dict[str, Any] = {}
     for line, row in sorted(lines.items()):
