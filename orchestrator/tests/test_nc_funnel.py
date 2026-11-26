@@ -594,3 +594,44 @@ def test_ready_nc_manuscript_is_graded_against_the_calibration_set(tmp_path, mon
     else:
         assert "invalid" in outcomes  # the NC band without high confidence is refused
         assert not topic.get("venue_grade")
+
+
+def test_prescreen_retry_clears_stale_errors_after_valid_verdict(tmp_path, monkeypatch):
+    """A technical failure on attempt 1 (e.g. needs_replan) must not leave stale errors on
+    card_check.prescreen once attempt 2 returns a valid pass/fail verdict."""
+
+    paths, db, settings, topic_id, first_task = _to_prescreen(tmp_path, monkeypatch)
+    with db.connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET status='needs_replan', last_error='claims must be an array' "
+            "WHERE task_id=?", (first_task["task_id"],))
+    report = flow._tick(paths, settings, monkeypatch)
+    assert report.errors == [], report.errors
+    ledger = open_topic_ledger(paths, settings.program)
+    mid = ledger.topic(topic_id)["card_check"]["prescreen"]
+    assert mid["status"] == "scheduled" and mid["attempts"] == 2
+    assert mid["errors"] == ["task needs_replan"]
+    second_task = db.task(mid["task_id"])
+    assert second_task is not None and second_task["task_id"] != first_task["task_id"]
+    assert "claims: []" in second_task["objective"]
+    report = _finish_prescreen(paths, db, settings, monkeypatch, second_task, match="zone_1",
+                               band="zone_1")
+    assert report.errors == [], report.errors
+    final_ps = ledger.topic(topic_id)["card_check"]["prescreen"]
+    assert final_ps["status"] == "pass"
+    assert "errors" not in final_ps
+
+
+def test_scout_guidance_steers_away_from_audits_and_requires_nc_framing():
+    skill = (Path(__file__).resolve().parents[2]
+             / "workflows/paper/skills/openlabs-empirical-topic-scout/SKILL.md").read_text(
+                 encoding="utf-8")
+    for text in (nc_funnel.SCOUT_INSTRUCTION, skill):
+        low = " ".join(text.lower().split())
+        assert "overturns a widely used" in low
+        assert "headline finding" in low
+        assert "across fields" in low or "across multiple fields" in low
+        assert "nature communications" in low and "science" in low
+        assert "diverse fields" in low or "distinct fields" in low
+        assert "needs_registration" in text
+
