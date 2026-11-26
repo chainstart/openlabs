@@ -97,8 +97,8 @@ def site_block(site: Mapping[str, Any], attempt: Mapping[str, Any]) -> dict[str,
 
 def _same(current: Mapping[str, Any], wanted: Mapping[str, Any]) -> bool:
     for key in COMPARED:
-        if key == "manuscript_number" and not wanted.get(key):
-            continue  # the site has none yet: keep the registry's
+        if key == "manuscript_number" and not (wanted.get(key) and current.get(key)):
+            continue  # one side has none yet: keep the registry's, or fill it in below
         if key == "journal":
             if _journal_key(current.get(key)) != _journal_key(wanted.get(key)):
                 return False

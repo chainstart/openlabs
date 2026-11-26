@@ -43,6 +43,11 @@ def test_submitted_paper_gets_its_external_status_and_stale_fields_corrected(tmp
     assert record["notes"] == ["kept"]
     # Current now: a second run changes nothing.
     assert submission_status.reconcile(tmp_path, [_site("p", SUBMITTED)], apply=True)["changed"] == []
+    # The journal's number arrives later (journal_mail): filled in, no history entry.
+    numbered = dict(SUBMITTED, manuscript_number="SA-D-26-00471")
+    assert submission_status.reconcile(tmp_path, [_site("p", numbered)], apply=True)["changed"]
+    external = yaml.safe_load(path.read_text())["external_submission"]
+    assert external["manuscript_number"] == "SA-D-26-00471" and "history" not in external
 
 
 def test_rejection_moves_the_block_to_history_and_closed_keeps_the_decision(tmp_path):
