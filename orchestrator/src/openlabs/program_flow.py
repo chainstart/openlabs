@@ -1450,7 +1450,12 @@ def schedule_scouts(
     while len(scheduled) < room:
         if legacy_scheduled >= legacy_wanted:
             projects = [project for project in projects if project.research_line]
+        # Breadth first: every line without a scout gets one before a line gets its second.
+        doubled = frozenset(key for key, count in flight_count.items() if count > 0)
         chosen = _choose_scout_project(
+            db, settings, projects, document,
+            exclude=frozenset(busy | recent) | blocked_keys | doubled,
+        ) or _choose_scout_project(
             db, settings, projects, document, exclude=frozenset(busy | recent) | blocked_keys
         )
         if chosen is None:

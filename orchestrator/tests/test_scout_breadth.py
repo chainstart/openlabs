@@ -88,6 +88,19 @@ def test_two_scouts_per_line_on_different_families(tmp_path) -> None:
     assert schedule_scouts(db, paths, settings, lead_short=False, now=NOW)[0] == []
 
 
+def test_every_line_gets_a_scout_before_a_line_gets_its_second(tmp_path) -> None:
+    paths, db, settings = lines_tests._line_program(
+        tmp_path, LINES, max_concurrent_scouts=3, candidate_pool_low_water=8,
+        scout_min_interval_hours=1, max_scouts_per_line=2, scout_runners=ROTATION)
+    settings = replace(settings, runners=dict(RUNNERS))
+    # The first line already has a scout in flight (scheduled with a single slot).
+    first, _ = schedule_scouts(db, paths, _with(settings, max_concurrent_scouts=1),
+                               lead_short=False, now=NOW)
+    scheduled, _ = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
+    assert scheduled[0].research_line != first[0].research_line
+    assert len(scheduled) == 2
+
+
 def test_a_line_rotates_its_family_scout_after_scout(tmp_path) -> None:
     paths, db, settings = lines_tests._line_program(
         tmp_path, LINES[:1], max_concurrent_scouts=1, candidate_pool_low_water=8,
