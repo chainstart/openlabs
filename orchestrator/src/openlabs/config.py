@@ -489,6 +489,11 @@ class FunnelSettings:
     prescreen_max_concurrent: int = 2
     prescreen_max_attempts: int = 2
     prescreen_wall_seconds: int = 5_400
+    # Runners the prescreen asks for first, in order (2026-11-26, user: "派给gemini"): the first
+    # one whose model family is not the card's proposer's goes into the packet as
+    # ``preferred_runner``; the router takes it when its quota and parallelism allow, else routes
+    # the prescreen as usual (same mechanism as ``[program].scout_runners``). Empty: router alone.
+    prescreen_runners: tuple[str, ...] = ()
     kill_test_core_hours: float = 2.0
     kill_test_cpus: int = 2
     kill_test_max_download_mb: int = 200
@@ -1922,6 +1927,7 @@ def _funnel_settings(value: Any) -> FunnelSettings:
                                              d.prescreen_max_attempts),
         prescreen_wall_seconds=_positive_int(value.get("prescreen_wall_seconds"),
                                              d.prescreen_wall_seconds),
+        prescreen_runners=_domain_list(value.get("prescreen_runners"), "funnel.prescreen_runners"),
         kill_test_core_hours=_positive_float(value.get("kill_test_core_hours"),
                                              d.kill_test_core_hours),
         kill_test_cpus=_positive_int(value.get("kill_test_cpus"), d.kill_test_cpus),

@@ -665,6 +665,16 @@ def _prescreen_task_id(topic_id: str, attempt: int) -> str:
     return f"topic-prescreen:{digest[:32]}"
 
 
+def preferred_prescreen_runner(settings, exclude: str | None) -> str | None:
+    """First ``[program.funnel].prescreen_runners`` entry outside the proposer's family."""
+
+    for name in settings.program.funnel.prescreen_runners:
+        spec = settings.runners.get(name)
+        if spec is not None and spec.family != exclude:
+            return name
+    return None
+
+
 def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt: int
                        ) -> str | None:
     from . import program_flow as flow
@@ -687,8 +697,12 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
     ledger = flow.open_topic_ledger(paths, settings.program)
     packet_path = (flow._control_root(paths) / flow._token(project.project_id)
                    / "prescreen-packets" / f"{flow._token(topic_id)}-{attempt}.json")
+    provider = str(topic.get("proposer_provider") or flow.HUMAN_PROVIDER)
+    exclude = None if provider == flow.HUMAN_PROVIDER else provider
+    preferred = preferred_prescreen_runner(settings, exclude)
     packet = flow._signed({
         "schema_version": PRESCREEN_PACKET_SCHEMA,
+        **({"preferred_runner": preferred} if preferred else {}),
         "project_id": project.project_id,
         "domain": project.domain,
         "topic_id": topic_id,
@@ -713,8 +727,6 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
         "created_at": utc_now(),
     })
     flow.atomic_write_json(packet_path, packet)
-    provider = str(topic.get("proposer_provider") or flow.HUMAN_PROVIDER)
-    exclude = None if provider == flow.HUMAN_PROVIDER else provider
     base = default_task_resources(settings)
     resources = ResourceVector(max(base.cpu_threads, funnel.kill_test_cpus),
                                max(base.memory_mib, 4096), base.scratch_mib)
