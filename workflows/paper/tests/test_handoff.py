@@ -1030,6 +1030,11 @@ writing_release:
             self.push_calls = 0
             self.synced_targets = []
 
+        def _request(self, method, path, *, allow_not_found=False, **kwargs):
+            # The site-ahead check before a delivery: the paper is not on the site yet.
+            assert method == "GET" and path == f"/v1/papers/{paper_id}" and allow_not_found
+            return None
+
         def sync_paper(self, manifest):
             self.sync_calls += 1
             self.synced_targets.append(manifest["paper"].get("target_journal"))
@@ -1610,3 +1615,87 @@ def test_removed_legacy_review_commands_are_not_offered() -> None:
                     "prepare-minor-closeout", "validate-minor-closeout", "closeout-minor"):
         with pytest.raises(SystemExit):
             parser.parse_args(["review", command, "--paper-id", "p"])
+
+
+class _SiteOnly:
+    """A site with one paper (or none) for the check before a delivery."""
+
+    def __init__(self, paper=None, account="pipeline-account"):
+        self.paper, self.account = paper, account
+
+    def _request(self, method, path, *, allow_not_found=False, **kwargs):
+        assert method == "GET"
+        if path == "/v1/me":
+            return {"id": self.account, "role": "admin"}
+        assert allow_not_found
+        return self.paper
+
+
+def _site_paper(package):
+    return {"paper_id": "p", "current_package_id": "u1", "packages": [{"id": "u1", **package}]}
+
+
+PIPELINE_PACKAGE = {"package_id": "pkg_p_0.1.0_a", "version": "0.1.0", "created_by": "pipeline-account",
+                    "origin_repository": "chainstart/ara-paper-writing"}
+SUBMITTER_PACKAGE = {"package_id": "pkg_p_0.1.1_b", "version": "0.1.1", "created_by": "submitter",
+                     "origin_repository": None}
+
+
+def test_delivery_stops_over_a_submitter_upload_the_registry_does_not_record() -> None:
+    # 2026-11-26: the submitter uploaded v0.1.1 on the site; the pipeline still holds v0.1.0.
+    from paper_writing.handoff import _require_site_not_ahead
+
+    metadata = {"version": "0.1.0", "delivery": {"version": "0.1.0", "package_id": "pkg_p_0.1.0_a",
+                                                 "delivered_by": "research_program_auto_handoff"}}
+    with pytest.raises(HandoffError, match="uploaded outside the pipeline"):
+        _require_site_not_ahead("p", metadata, _SiteOnly(_site_paper(SUBMITTER_PACKAGE)),
+                                revision_request_id=None)
+    # Same, when the upload kept the pipeline's version number but not its account.
+    same_number = {**SUBMITTER_PACKAGE, "version": "0.1.0"}
+    with pytest.raises(HandoffError, match="created by submitter, not the pipeline account"):
+        _require_site_not_ahead("p", metadata, _SiteOnly(_site_paper(same_number)),
+                                revision_request_id=None)
+
+
+def test_delivery_stops_when_the_site_package_is_newer_than_the_registry() -> None:
+    from paper_writing.handoff import _require_site_not_ahead
+
+    newer = {**PIPELINE_PACKAGE, "package_id": "pkg_p_0.1.2_c", "version": "0.1.2"}
+    with pytest.raises(HandoffError, match="newer than the registry's v0.1.1"):
+        _require_site_not_ahead("p", {"version": "0.1.1"}, _SiteOnly(_site_paper(newer)),
+                                revision_request_id=None)
+
+
+def test_delivery_proceeds_over_the_pipelines_own_older_package_or_a_new_paper() -> None:
+    from paper_writing.handoff import _require_site_not_ahead
+
+    metadata = {"version": "0.1.1", "delivery": {"version": "0.1.0", "package_id": "pkg_p_0.1.0_a",
+                                                 "delivered_by": "research_program_auto_handoff"}}
+    _require_site_not_ahead("p", metadata, _SiteOnly(_site_paper(PIPELINE_PACKAGE)),
+                            revision_request_id=None)
+    _require_site_not_ahead("p", {"version": "0.1.0"}, _SiteOnly(None), revision_request_id=None)
+
+
+def test_a_registered_submitter_revision_is_not_revised_by_the_pipeline() -> None:
+    # Registered in the data repository (delivery = the submitter's package): re-sending that
+    # version is allowed; a pipeline successor is refused unless a journal revision asks for it.
+    from paper_writing.handoff import _require_site_not_ahead
+
+    site = _SiteOnly(_site_paper(SUBMITTER_PACKAGE))
+    delivery = {"version": "0.1.1", "package_id": "pkg_p_0.1.1_b", "delivered_by": "submitter_revision"}
+    _require_site_not_ahead("p", {"version": "0.1.1", "delivery": delivery}, site,
+                            revision_request_id=None)
+    with pytest.raises(HandoffError, match="came from outside the pipeline"):
+        _require_site_not_ahead("p", {"version": "0.1.2", "delivery": delivery}, site,
+                                revision_request_id=None)
+    _require_site_not_ahead("p", {"version": "0.1.2", "delivery": delivery}, site,
+                            revision_request_id="journal-request")
+
+
+def test_a_legacy_package_label_is_not_read_as_a_newer_version() -> None:
+    # Site labels such as "git:f76e0b63" (ARA imports) carry digits but are not release numbers.
+    from paper_writing.handoff import _require_site_not_ahead
+
+    legacy = {**PIPELINE_PACKAGE, "package_id": "legacy_p_git-f76e0b63", "version": "git:f76e0b63"}
+    _require_site_not_ahead("p", {"version": "1.0.0"}, _SiteOnly(_site_paper(legacy)),
+                            revision_request_id=None)

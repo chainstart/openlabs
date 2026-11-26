@@ -2095,6 +2095,39 @@ def _journal_response_files(root, paper_id, request_id):
     return files
 
 
+PIPELINE_DELIVERY = "research_program_auto_handoff"
+
+
+def _require_site_not_ahead(paper_id: str, metadata: Mapping[str, Any], client: Any, *,
+                            revision_request_id: str | None) -> None:
+    """Stop before a delivery that would build on an older base or replace an outside upload.
+
+    2026-11-26: a submitter uploaded revised packages on the site outside the pipeline. The
+    pipeline then holds an older local base; delivering from it would replace the submitter's
+    package. Refused: the site's current package is unregistered and not the pipeline's, or
+    newer than the registry (``site_assignments.site_ahead``); or the registry's delivered
+    version was revised outside the pipeline (``delivery.delivered_by``) and this is a successor
+    that no journal revision request asks for.
+    """
+    from paper_writing.site_assignments import site_ahead
+
+    delivery = metadata.get("delivery") if isinstance(metadata.get("delivery"), Mapping) else {}
+    by = str(delivery.get("delivered_by") or "")
+    if (by and by != PIPELINE_DELIVERY and not revision_request_id
+            and str(metadata.get("version") or "") != str(delivery.get("version") or "")):
+        raise HandoffError(
+            f"{paper_id}: the delivered v{delivery.get('version')} came from outside the pipeline "
+            f"({by}); a person decides before the pipeline delivers v{metadata.get('version')}")
+    site = client._request("GET", f"/v1/papers/{paper_id}", allow_not_found=True)
+    if not isinstance(site, Mapping):
+        return
+    me = client._request("GET", "/v1/me")
+    account = str(me.get("id") or "") if isinstance(me, Mapping) else ""
+    reason = site_ahead(site, metadata, account or None)
+    if reason:
+        raise HandoffError(f"{paper_id}: {reason}")
+
+
 def release_handoff(
     paper_id: str,
     *,
@@ -2138,6 +2171,7 @@ def release_handoff(
                     or not decision_path.is_file()
                     or json.loads(decision_path.read_text()).get("journal_response_hashes") != hashes):
                 raise HandoffError("Journal response files require a matching unified review")
+    _require_site_not_ahead(paper_id, metadata, client, revision_request_id=revision_request_id)
     with tempfile.TemporaryDirectory(prefix=f"ara-{paper_id}-release-") as temporary:
         build_handoff_package(
             paper_id,

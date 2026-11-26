@@ -537,3 +537,42 @@ def test_park_and_restore_returns_the_original_user_chosen_submitter(repo: Path)
     assert restored["changed"][0]["target"] == {"submitter_id": SECOND, "name": "詹静怡",
                                                 "source": "placeholder_notes"}
     assert _active(site) == [SECOND]
+
+
+def _uploaded(paper: dict, *, created_by: str, origin, package_id: str = "pkg_x_0.1.13_s") -> dict:
+    paper["packages"][0].update(created_by=created_by, origin_repository=origin, package_id=package_id)
+    return paper
+
+
+def test_submitter_upload_not_in_the_registry_goes_to_a_person(repo: Path) -> None:
+    # 2026-11-26: the submitter uploaded 0.1.13 on the site (origin_repository null); the
+    # registry still records 0.1.12. Neither park nor the "checkout is behind" skip: a person
+    # registers the upload before the pipeline goes on.
+    site = FakeSite({PAPER: _uploaded(_paper(lifecycle="ready_to_submit", version="0.1.13", assignments=[
+        {"id": "a1", "submitter_id": OTHER, "active": True, "notes": "",
+         "assigned_at": "2026-11-23T20:00:00+08:00"}]), created_by=OTHER, origin=None)})
+    result = sync_site_assignments(site, root=repo, apply=True)
+    entry = result["papers"][0]
+    assert entry["action"] == "manual_decision" and entry["state"] == "outside_upload"
+    assert "uploaded outside the pipeline" in entry["why"] and "no origin repository" in entry["why"]
+    assert result["manual_decision"][0]["paper_id"] == PAPER
+    assert not site.posts and _active(site) == [OTHER]
+
+
+def test_registered_submitter_upload_is_an_ordinary_ready_paper(repo: Path) -> None:
+    path = repo / "registry" / "papers" / f"{PAPER}.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data.update(version="0.1.13", delivery={"version": "0.1.13", "package_id": "pkg_x_0.1.13_s",
+                                            "delivered_by": "submitter_revision"})
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    site = FakeSite({PAPER: _uploaded(_paper(lifecycle="ready_to_submit", version="0.1.13"),
+                                      created_by=OTHER, origin=None)})
+    result = sync_site_assignments(site, root=repo, apply=True)
+    assert result["papers"][0]["action"] == "none" and result["manual_decision"] == []
+
+
+def test_pipeline_package_from_the_api_account_is_not_an_outside_upload(repo: Path) -> None:
+    site = FakeSite({PAPER: _uploaded(_paper(lifecycle="ready_to_submit", version="0.1.12"),
+                                      created_by=ADMIN, origin="chainstart/ara-paper-writing")})
+    result = sync_site_assignments(site, root=repo, apply=True)
+    assert result["papers"][0]["action"] == "none"
