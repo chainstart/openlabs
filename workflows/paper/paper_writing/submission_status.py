@@ -227,19 +227,28 @@ def reconcile(root: str | Path, site_papers: Iterable[Mapping[str, Any]], *,
 
 LETTER_DIR = "journal-letters"
 LETTER_MAX_BYTES = 200_000
+# Who kept the letter -> where its original message is.
+RECORDERS = {"journal-mail": "private journal-mail store (events.sqlite originals)",
+             "manual": "private maintenance copy of the mailbox (read-only IMAP), not in the journal-mail store"}
 
 
 def record_correspondence(root: str | Path, paper_id: str, *, message_key: str, status: str,
                           manuscript_id: str = "", due: str | None = None,
                           round_no: int | None = None,
-                          letter_file: str | Path | None = None) -> dict[str, Any]:
+                          letter_file: str | Path | None = None,
+                          recorded_by: str = "journal-mail") -> dict[str, Any]:
     """Keep one matched journal letter in the paper's registry record (idempotent by key).
 
     A rejection's verbatim letter (``letter_file``, written by the journal-mail dispatcher)
     is kept at ``papers/<id>/journal-letters/<key>.txt`` and named in the entry, so the next
     review of the paper reads the editor's own words as a prior decision (``letter_text``,
     ``review_flow.prior_decisions``) instead of an unverifiable paraphrase (C8, 2026-11-26).
+
+    ``recorded_by="manual"`` marks a letter a person backfilled from the mailbox (a letter
+    journal_mail missed); its original is then not in the journal-mail store.
     """
+    if recorded_by not in RECORDERS:
+        raise ValueError(f"unknown recorder {recorded_by}")
     if not re.fullmatch("[a-f0-9]{64}", message_key):
         raise ValueError("invalid message digest")
     if status not in DECISIONS:
@@ -255,8 +264,7 @@ def record_correspondence(root: str | Path, paper_id: str, *, message_key: str, 
         return {"status": "already_recorded", "paper_id": paper_id, "path": relative}
     entry = {"event_key": key, "recorded_at": _now(), "decision": status,
              "manuscript_id": manuscript_id or None, "due": due, "round": round_no,
-             "recorded_by": "journal-mail",
-             "original": "private journal-mail store (events.sqlite originals)"}
+             "recorded_by": recorded_by, "original": RECORDERS[recorded_by]}
     letter_path = None
     if status == "rejected" and letter_file is not None:
         raw = Path(letter_file).read_bytes()[:LETTER_MAX_BYTES]

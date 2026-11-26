@@ -140,3 +140,97 @@ def test_cli_check_returns_exclusion_and_caution_statuses(root, capsys):
     assert json.loads(capsys.readouterr().out)["status"] == "excluded"
     assert main(["journal-history", "check", "--root", str(root), "--journal", "DM"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "caution"
+
+
+def _event(eid, aid, kind, frm, to, at, created=None, **payload):
+    return {"id": eid, "attempt_id": aid, "event_type": kind, "from_status": frm, "to_status": to,
+            "occurred_at": at, "created_at": created or at, "payload": payload}
+
+
+def _row(root, attempt_id):
+    ledger = json.loads((root / "registry/journal-rejections.json").read_text())
+    return next(r for r in ledger["rejections"] if r["attempt_id"] == attempt_id)
+
+
+def test_freeze_display_corrections_do_not_move_the_rejection(root):
+    # 20260907 hypercube JCTA (2026-11-26): the freeze archived the rejected attempt, took it back
+    # (closed -> rejected) and wrote a display correction (rejected -> rejected, abandoned).
+    # The refresh dated the rejection 15:27:32 from the display event; the decision was 12:05:37.
+    p = paper("hypercube", "JCTA")
+    a = "attempt-hypercube"
+    p["submission_attempts"][0]["closed_at"] = "2026-11-26T15:27:32+08:00"
+    p["submission_events"] = [
+        _event("e1", a, "accepted", "submitted", "accepted", "2026-11-26T12:05:37+08:00"),
+        _event("e2", a, "status_corrected", "accepted", "rejected", "2026-11-26T12:05:37+08:00",
+               "2026-11-26T14:00:00+08:00", source_submission_status="rejected"),
+        _event("e3", a, "status_corrected", "rejected", "closed", "2026-11-26T15:21:01+08:00",
+               source_submission_status="abandoned"),
+        _event("e4", a, "status_corrected", "closed", "rejected", "2026-11-26T15:24:54+08:00"),
+        _event("e5", a, "status_corrected", "rejected", "rejected", "2026-11-26T15:27:32+08:00",
+               source_submission_status="abandoned", decision_at="2026-11-26T12:05:37+08:00"),
+    ]
+    refresh_history(root, [p], source="test")
+    row = _row(root, a)
+    assert (row["rejected_at"], row["source_event_id"]) == ("2026-11-26T12:05:37+08:00", "e2")
+    from paper_writing.journal_history import is_rejection_event
+    assert not is_rejection_event(p["submission_events"][3])
+    assert not is_rejection_event(p["submission_events"][4])
+
+
+def test_rejection_archived_by_a_freeze_still_counts(root):
+    # DM_37722 (2026-11-26): registered rejected, then archived (rejected -> closed). The
+    # refresh read only attempts still rejected, so the row had to be written by hand.
+    p = paper("dm", "Discrete Mathematics", status="closed")
+    a = "attempt-dm"
+    p["submission_attempts"][0]["closed_at"] = "2026-11-26T16:08:39+08:00"
+    p["submission_events"] = [
+        _event("s", a, "submitted", "preparing", "submitted", "2026-06-11T13:36:54+08:00"),
+        _event("r", a, "rejected", "submitted", "rejected", "2026-06-16T04:36:29+08:00", reason_summary="Desk"),
+        _event("c", a, "status_corrected", "rejected", "closed", "2026-11-26T16:08:39+08:00",
+               source_submission_status="abandoned", decision="rejected"),
+    ]
+    withdrawn = paper("withdrawn", "Discrete Mathematics", status="closed")
+    withdrawn["submission_events"] = [
+        _event("w", "attempt-withdrawn", "status_corrected", "submitted", "closed", "2026-10-01T00:00:00+00:00")]
+    refresh_history(root, [p, withdrawn], source="test")
+    row = _row(root, a)
+    assert (row["rejected_at"], row["source_event_id"], row["reason_summary"]) == (
+        "2026-06-16T04:36:29+08:00", "r", "Desk")
+    assert check_journal(root, "Discrete Mathematics")["distinct_rejected_papers"] == 1
+
+
+def test_archived_import_keeps_the_decision_date_of_the_archive_event(root):
+    # 20260525mathgraph0004 EJC: the only rejection is an import (2026-07-25); the freeze's
+    # archive event kept the attempt's earlier closed_at (06-05) as decision_at.
+    p = paper("ejc", "EJC", status="closed")
+    a = "attempt-ejc"
+    p["submission_attempts"][0]["closed_at"] = "2026-11-26T15:21:01+08:00"
+    p["submission_events"] = [
+        _event("i", a, "status_corrected", None, "rejected", "2026-07-25T22:45:06+08:00"),
+        _event("c", a, "status_corrected", "rejected", "closed", "2026-11-26T15:21:01+08:00",
+               decision_at="2026-06-05T00:00:00+08:00"),
+    ]
+    refresh_history(root, [p], source="test")
+    assert _row(root, a)["rejected_at"] == "2026-06-05T00:00:00+08:00"
+
+
+def test_import_time_does_not_replace_the_recorded_decision_date(root):
+    # JSS 01203: registered by an import on 2026-07-20 (status_corrected) with the attempt's
+    # closed_at 06-04; the refresh moved the rejection to 07-20.
+    p = paper("jss", "Journal of Systems and Software")
+    a = "attempt-jss"
+    p["submission_attempts"][0]["closed_at"] = "2026-06-04T00:00:00+08:00"
+    p["submission_events"] = [_event("i", a, "status_corrected", None, "rejected", "2026-07-20T19:30:00+08:00")]
+    refresh_history(root, [p], source="test")
+    assert _row(root, a)["rejected_at"] == "2026-06-04T00:00:00+08:00"
+    # The journal's own rejected event keeps its time; a reconciliation restating it at the
+    # same time does not replace it as the source.
+    q = paper("aam", "AAM")
+    b = "attempt-aam"
+    q["submission_events"] = [
+        _event("letter", b, "rejected", "submitted", "rejected", "2026-09-02T20:30:32+08:00", "2026-09-03T08:42:02+08:00"),
+        _event("restate", b, "status_corrected", "submitted", "rejected", "2026-09-02T20:30:32+08:00",
+               "2026-09-11T16:19:13+08:00"),
+    ]
+    refresh_history(root, [p, q], source="test")
+    assert (_row(root, b)["rejected_at"], _row(root, b)["source_event_id"]) == ("2026-09-02T20:30:32+08:00", "letter")

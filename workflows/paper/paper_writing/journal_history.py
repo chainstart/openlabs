@@ -57,11 +57,48 @@ CONFERENCE_PATTERN = re.compile(
     r"conference|symposium|workshop|congress)\b|\b(?:19|20)\d{2}\b", re.IGNORECASE)
 
 
+# A ``status_corrected`` that sets ``rejected`` on an attempt that already was rejected or
+# archived re-labels a decision the site already holds (the 2026-11-26 freeze writes
+# ``rejected -> rejected`` with ``source_submission_status: abandoned`` for the display, and
+# ``closed -> rejected`` to take an archive back); it is not a new rejection.
+RELABEL_FROM = frozenset({"rejected", "closed"})
+
+
 def is_rejection_event(event: Mapping[str, Any]) -> bool:
     """A site event that records a rejection: the ``rejected`` event, or a ``status_corrected``
-    event that sets the attempt to ``rejected`` (a corrected misclassification, 2026-11-26)."""
+    event that sets the attempt to ``rejected`` (a corrected misclassification, 2026-11-26) from
+    a status other than ``rejected``/``closed`` (a freeze or display correction is not one)."""
     kind = event.get("event_type")
-    return kind == "rejected" or (kind == "status_corrected" and event.get("to_status") == "rejected")
+    return kind == "rejected" or (kind == "status_corrected" and event.get("to_status") == "rejected"
+                                  and event.get("from_status") not in RELABEL_FROM)
+
+
+def _instant(value: Any) -> datetime | None:
+    try:
+        moment = datetime.fromisoformat(str(value or "").strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def rejected_at(event: Mapping[str, Any], attempt: Mapping[str, Any], *, archived_decision_at: Any = None) -> str:
+    """When the journal rejected: the ``rejected`` event's own time (the letter's date). A
+    ``status_corrected`` is written when a person registers or corrects the status, often long
+    after the letter (JSS 01203: imported 2026-07-20, decided 06-04), so its ``decision_at``
+    names the decision, then the ``decision_at`` the archive event of a closed attempt kept
+    (``archived_decision_at``, the freeze of 2026-11-26), else the attempt's ``closed_at`` when
+    that is earlier than the import."""
+    occurred = str(event.get("occurred_at") or "")
+    if event.get("event_type") != "status_corrected":
+        return occurred or str(attempt.get("closed_at") or "")
+    payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+    for value in (payload.get("decision_at"), archived_decision_at):
+        if _instant(value):
+            return str(value)
+    closed = str(attempt.get("closed_at") or "")
+    if _instant(closed) and (not _instant(occurred) or _instant(closed) < _instant(occurred)):
+        return closed
+    return occurred or closed
 
 
 def venue_type_for(name: str) -> str:
@@ -242,18 +279,37 @@ def refresh_history(root: Path, papers: list[dict[str, Any]], *, source: str,
                                "venue_type": venue_type_for(name),
                                "submitted_at": attempt.get("submitted_at") or "",
                                "updated_at": attempt.get("updated_at") or ""})
-            if attempt["status"] != "rejected":
-                continue
             events = [e for e in paper.get("submission_events", [])
                       if e.get("attempt_id") == aid and is_rejection_event(e)]
-            event = max(events, key=lambda e: str(e.get("occurred_at") or ""), default={})
+            archived_decision_at = None
+            if attempt["status"] == "closed":
+                # Archived after the decision (freeze, 2026-11-26): a rejection before the archive
+                # still counts -- the last decision that held, as submission_status reads it.
+                from paper_writing.submission_status import _closing_decision
+                decision = _closing_decision(paper, attempt)
+                if not decision or decision.get("to_status") != "rejected":
+                    continue
+                if not events and is_rejection_event(decision):
+                    events = [decision]
+                archives = [e for e in paper.get("submission_events", [])
+                            if e.get("attempt_id") == aid and e.get("to_status") == "closed"
+                            and e.get("from_status") == "rejected"]
+                if archives:
+                    last = max(archives, key=lambda e: (str(e.get("occurred_at") or ""), str(e.get("created_at") or "")))
+                    archived_decision_at = (last.get("payload") or {}).get("decision_at")
+            elif attempt["status"] != "rejected":
+                continue
+            # The latest rejection; at the same time the journal's own ``rejected`` event over a
+            # later reconciliation that restates it.
+            event = max(events, key=lambda e: (str(e.get("occurred_at") or ""), e.get("event_type") == "rejected",
+                                               str(e.get("created_at") or "")), default={})
             payload = event.get("payload") or {}
             reason = next((payload[k] for k in ("reason_summary", "comment_to_author", "reason", "editor_comments")
                            if isinstance(payload.get(k), str) and payload[k].strip()), "")
             row = {"attempt_id": aid, "paper_id": pid, "title": paper.get("title", ""),
                    "journal": name, "venue_type": venue_type_for(name),
                    "manuscript_number": attempt.get("manuscript_number") or "",
-                   "rejected_at": event.get("occurred_at") or attempt.get("closed_at") or "",
+                   "rejected_at": rejected_at(event, attempt, archived_decision_at=archived_decision_at) if event else str(attempt.get("closed_at") or ""),
                    "submitted_at": attempt.get("submitted_at") or "",
                    "reason_summary": reason, "source_event_id": event.get("id") or "",
                    "evidence_level": "decision_event" if event else "management_status_only",
