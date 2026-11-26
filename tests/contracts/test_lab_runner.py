@@ -413,7 +413,8 @@ def test_codex_uses_full_access_and_generated_hooks(tmp_path) -> None:
 
     wrapped, sandbox = runner._transaction_sandbox(command, task, tmp_path)
 
-    assert wrapped == command
+    assert wrapped[1] == str(runner.CODE_WRITE_GUARD)
+    assert wrapped[wrapped.index("--") + 1:] == command
     assert command[:2] == ["codex", "exec"]
     assert 'approval_policy="never"' in command
     assert command.count('web_search="live"') == 1
@@ -424,7 +425,7 @@ def test_codex_uses_full_access_and_generated_hooks(tmp_path) -> None:
     assert "--dangerously-bypass-hook-trust" in command
     assert command[command.index("--enable") + 1] == "hooks"
     assert command.index('approval_policy="never"') < command.index("resume")
-    assert sandbox == "codex-native-danger-full-access"
+    assert sandbox == "codex-native-danger-full-access+landlock-code-readonly"
 
 
 def test_codex_factory_forces_live_web_search(tmp_path) -> None:

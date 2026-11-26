@@ -153,7 +153,9 @@ def _agy_layout(tmp_path: Path, monkeypatch, *, mode: str, extra: list[str] | No
     fake = tmp_path / "bin" / "agy"
     fake.write_text(FAKE_AGY.replace("/usr/bin/env python3", sys.executable, 1))
     fake.chmod(0o755)
-    record = tmp_path / "agy-argv.json"
+    # Not directly in tmp_path: the code write guard forbids new entries in the
+    # ancestors of a protected checkout (tmp_path/factory/openlabs).
+    record = tmp_path / "bin" / "agy-argv.json"
     monkeypatch.setenv("OPENLABS_WORKSPACE", str(layout["workspace"]))
     monkeypatch.setenv("FAKE_AGY_MODE", mode)
     monkeypatch.setenv("FAKE_AGY_ARGV", str(record))
@@ -257,7 +259,8 @@ def test_fake_agy_is_gated_released_and_reports_usage_and_quota(tmp_path, monkey
     assert "failure_class" not in runtime
     assert runtime["adapter"] == "agy" and runtime["session_id"] == "conv-1"
     assert runtime["model"] == "gemini-4-hydrogen-high"
-    assert runtime["filesystem_sandbox"] == "agy-skip-permissions-full-access"
+    assert runtime["filesystem_sandbox"] == (
+        "agy-skip-permissions-full-access+landlock-code-readonly")
     assert runtime["input_tokens"] == 11 and runtime["cached_input_tokens"] == 3
     assert runtime["output_tokens"] == 7 and runtime["reasoning_output_tokens"] == 4
     assert runtime["provider_family"] == ANTIGRAVITY_PROVIDER

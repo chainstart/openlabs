@@ -436,6 +436,25 @@ Stop hook 与 `dontAsk` 在本机都可用。之后再用一个有界任务检�
 `runtime.adapter == "claude"`、`runtime.hooks.stop_passed == true`、`runtime.session_id`、
 `runtime.quota_snapshot` 与 `runtime.filesystem_sandbox == "bubblewrap"`。
 
+### 代码仓库对生产坐席只读（2026-11-26）
+
+用户 2026-11-26：“收回负责人坐席对主工作区的写权限”。起因是一个负责人坐席在 cc-sg 容器里
+直接改了主工作区的 `formal_checks.py`（循环每 tick 从主工作区加载代码，改动未经审阅即生效）。
+容器里 bubblewrap 建不了命名空间，Claude 走 `none-verified-container`，Codex 是原生
+`danger-full-access`，agy 是 `--dangerously-skip-permissions`，三者此前都没有文件边界。
+
+现在凡是不经 bubblewrap 启动的生产 agent（Codex、agy、容器回退下的 Claude）都由 lab runner
+经 `packages/research-core/code_write_guard.py` 启动：它用 Landlock（不需要命名空间，只需
+`no_new_privs`）禁止该进程及其全部子进程（shell、子 agent、`codex exec` 帮手、评审面板）写入
+代码检出：lab runner 所在检出、`<workspace>/openlabs`、`<workspace>/build/worktrees`，以及
+`.git/worktrees/*/gitdir` 登记的所有 worktree。读与执行不受限；attempt 工作区、campaign-data、
+artifact 存储、数据仓库、`/tmp` 与 home 照常可写。代价：这些检出的祖先目录（`/`、`/workspace`、
+`/workspace/openlabs`、`/workspace/openlabs/build`）里不能直接新建条目，已有条目不受影响。
+内核没有 Landlock 时 runner 拒绝启动 agent（fail closed）。`run-metadata.json` 的
+`runtime.filesystem_sandbox` 带 `+landlock-code-readonly` 后缀；bubblewrap 路径同时把这些
+worktree 只读挂载。坐席需要改代码时，在自己的工作区写 `code-fixes/<name>.patch`（unified diff）
+并在结果里写明，由主会话审阅后提交。复现检查：`tests/contracts/test_code_write_guard.py`。
+
 ### 经代理的大体量下载只在闲时（2026-11-18）
 
 用户 2026-11-18：“通过代理节点下载较大的数据时候，在闲时进行，是2：00-14：00这个时段，这个规则既落到
