@@ -59,8 +59,9 @@ def build_report(papers: Iterable[Mapping[str, Any]], *, now: datetime | None = 
                     stale.append({"paper_id": pid, "venue": journal, "status": status, "days": days,
                                   "action": f"check the portal; send a polite status inquiry (> {limit} days)"})
             if status == "rejected":
+                from paper_writing.journal_history import is_rejection_event
                 letters = [e for e in events if e.get("attempt_id") == attempt.get("id")
-                           and e.get("event_type") == "rejected"]
+                           and is_rejection_event(e)]
                 if not letters:
                     missing_letters.append({"paper_id": pid, "venue": journal,
                                             "action": "retrieve the decision letter and reviewer reports"})

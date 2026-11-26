@@ -57,6 +57,13 @@ CONFERENCE_PATTERN = re.compile(
     r"conference|symposium|workshop|congress)\b|\b(?:19|20)\d{2}\b", re.IGNORECASE)
 
 
+def is_rejection_event(event: Mapping[str, Any]) -> bool:
+    """A site event that records a rejection: the ``rejected`` event, or a ``status_corrected``
+    event that sets the attempt to ``rejected`` (a corrected misclassification, 2026-11-26)."""
+    kind = event.get("event_type")
+    return kind == "rejected" or (kind == "status_corrected" and event.get("to_status") == "rejected")
+
+
 def venue_type_for(name: str) -> str:
     """Classify a management-site venue name; conference refusals never count as journals."""
     return "conference" if CONFERENCE_PATTERN.search(name or "") else "journal"
@@ -238,7 +245,7 @@ def refresh_history(root: Path, papers: list[dict[str, Any]], *, source: str,
             if attempt["status"] != "rejected":
                 continue
             events = [e for e in paper.get("submission_events", [])
-                      if e.get("attempt_id") == aid and e.get("event_type") == "rejected"]
+                      if e.get("attempt_id") == aid and is_rejection_event(e)]
             event = max(events, key=lambda e: str(e.get("occurred_at") or ""), default={})
             payload = event.get("payload") or {}
             reason = next((payload[k] for k in ("reason_summary", "comment_to_author", "reason", "editor_comments")
