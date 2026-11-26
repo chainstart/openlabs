@@ -593,6 +593,9 @@ def build_parser() -> argparse.ArgumentParser:
     program_site.add_argument("--log", help="Append applied changes (JSON lines) to this file")
     program_site.add_argument("--api-url", default=os.environ.get("ARA_PAPER_MANAGE_API_URL"))
     program_site.add_argument("--key-env", default="ARA_PAPER_MANAGE_API_KEY")
+    program_site.add_argument("--journal-mail-state", type=Path,
+                              help="journal_mail state directory: a paper with a letter not yet "
+                                   "on the site keeps its submitter")
     program_submission = program_commands.add_parser(
         "sync-submission-status",
         help="The registry follows the site's submission status (2026-11-26): external_submission "
@@ -1241,7 +1244,8 @@ def _run_program(args: argparse.Namespace) -> int:
                 args.api_url, key_environment=args.key_env
             ) as client:
                 result = sync_site_assignments(client, root=args.root, paper_ids=args.paper_id,
-                                               apply=args.apply, log_path=args.log)
+                                               apply=args.apply, log_path=args.log,
+                                               journal_mail_state=args.journal_mail_state)
         elif args.program_command == "sync-submission-status":
             from paper_writing import submission_status
             from paper_writing.journal_history import fetch_site_papers

@@ -14,14 +14,33 @@ endpoint ``POST /v1/papers/<id>/assignments`` (the previous row is kept, ``activ
 * a ``可投稿`` paper without a real assignee gets one: the recorded original submitter first
   (placeholder notes, the 2026-11-23 park receipts, the site's assignment history), else the
   paper's second author;
-* papers with submission attempts, or past the pre-submission lifecycle (submitted, under
-  review, accepted, published, closed), are never touched;
+* papers with a submission attempt still in progress, or past the pre-submission lifecycle
+  (submitted, under review, accepted, published, closed), are never touched; a paper whose
+  latest attempt has ended (rejected, withdrawn, closed) and that is back before submission --
+  retargeted after a rejection -- follows the same rule as one never submitted (2026-11-26:
+  20260414aiuncertainty0002 and 20260415aiuncertainty0004, rejected by PRICAI in August, kept
+  their submitters while "考虑中");
+* nor is a paper whose journal business may still be open although its latest attempt reads as
+  ended (2026-11-26; an attempt status can be wrong -- the hypercube JCTA letter was once read
+  as an acceptance): lifecycle ``revision_requested`` or ``active``; a revision request neither
+  fulfilled nor cancelled; a review round with a major/minor revision or revise-and-resubmit
+  decision, no response yet, its request (if any) still open and its deadline not passed (no
+  deadline: :data:`ROUND_WITHOUT_DEADLINE_DAYS` after receipt); a transfer offer whose
+  ``transfer_response_due_date`` has not passed; a registry ``external_submission`` that has not
+  ended (the registry ahead of the site); or a journal_mail event for the paper not yet carried
+  to the site;
+* a paper the site marks abandoned (``submission_screening.disposition: abandon`` or
+  ``submission.status: abandoned``) or the registry freezes is not parked "until it is ready
+  again" nor given a submitter: the entry is ``manual_decision`` and the tick report lists it
+  for a person (2026-11-26: 20260525mathgraph0004, abandoned on the site, kept on in the
+  registry);
 * papers under a manual-assignment hold are never touched either (2026-11-24, user: "撤回3篇论文
   中的投稿负责人（将负责人从王琪盛改为未分配）"): the submitter is chosen by a person. The hold is
   the registry field ``manual_assignment: {hold: true, ...}`` or, should the shared data checkout
   lag, an active site assignment whose notes carry ``manual_assignment=hold``.
 
-``可投稿`` means: lifecycle ``backlog|assigned|ready_to_submit``, no submission attempt, the
+``可投稿`` means: lifecycle ``backlog|assigned|ready_to_submit``, no submission attempt in
+progress, the
 site's ``readiness.ready_for_submission`` true, no held/recalled marker, a current package in
 status ``ready`` -- and, when the registry has the paper, its ``writing_release`` is ready
 and its version is the delivered package's version (a revision in progress rolls it back
@@ -34,20 +53,32 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Mapping
-from datetime import datetime, timezone
+import sqlite3
+from collections.abc import Collection, Iterable, Mapping
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from paper_writing.deliverable import openlabs_module, registry_ready, second_author
+from paper_writing.registry import freeze_block_reason
 
 SCHEMA = "openlabs.site_assignment_sync.v1"
 MARKER = "[openlabs-site-assignment]"
 PRE_SUBMISSION_LIFECYCLES = frozenset({"backlog", "assigned", "ready_to_submit"})
+# The journal holds the paper: a revision is due, or it is under consideration.
+JOURNAL_LIFECYCLES = frozenset({"revision_requested", "active"})
+# A latest attempt in one of these has ended: the paper may be prepared for another venue.
+ENDED_ATTEMPTS = frozenset({"rejected", "withdrawn", "closed"})
+# Registry external_submission statuses after which nothing is pending at a journal.
+ENDED_REGISTRY_SUBMISSIONS = frozenset({"", "rejected", "withdrawn", "closed", "abandoned"})
+REVISION_DECISIONS = frozenset({"major_revision", "minor_revision", "revise_resubmit"})
+CLOSED_REVISION_REQUESTS = frozenset({"fulfilled", "cancelled"})
+# A revision round recorded without a deadline counts as open this long after it arrived.
+ROUND_WITHOUT_DEADLINE_DAYS = 180
 NOT_READY_REVISION = frozenset({"draft", "blocked", "revision_required"})
-HELD_SUBMISSION = frozenset({"on_hold", "abandoned", "withdrawn"})
+HELD_SUBMISSION = frozenset({"on_hold", "withdrawn"})
 PARK_RECEIPT_GLOB = "SUBMITTER-HIDE-site-receipt-*.json"
 HOLD_NOTE = "manual_assignment=hold"
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
@@ -75,15 +106,145 @@ def _settings_authors(root: Path) -> list[Mapping[str, Any]]:
     return [item for item in authors or [] if isinstance(item, Mapping)]
 
 
+def latest_attempt(paper: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The paper's latest submission attempt (by attempt number, not by clock)."""
+
+    def number(attempt: Mapping[str, Any]) -> int:
+        try:
+            return int(attempt.get("attempt_no") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    attempts = [a for a in paper.get("submission_attempts") or [] if isinstance(a, Mapping)]
+    return max(attempts, key=number) if attempts else None
+
+
+def _instant(value: Any) -> datetime | None:
+    """An aware datetime for an ISO date or timestamp (a bare date ends that day, UTC)."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            return datetime.combine(date.fromisoformat(text), datetime.max.time(), timezone.utc)
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def open_journal_business(paper: Mapping[str, Any], now: datetime) -> list[str]:
+    """Why the journal may still expect something from this paper's submitter.
+
+    Read from the site's revision requests, review rounds and decision payloads rather than
+    from the attempt status, which a mis-read letter can set wrongly.
+    """
+    reasons: list[str] = []
+    requests = [r for r in paper.get("revision_requests") or [] if isinstance(r, Mapping)]
+    for request in requests:
+        if str(request.get("status") or "") not in CLOSED_REVISION_REQUESTS:
+            reasons.append(f"revision request {request.get('request_id') or request.get('id')} "
+                           f"is {request.get('status')}")
+    for rnd in paper.get("review_rounds") or []:
+        if not isinstance(rnd, Mapping) or rnd.get("decision") not in REVISION_DECISIONS:
+            continue
+        if rnd.get("response_submitted_at"):
+            continue
+        own = [r for r in requests if r.get("review_round_id") == rnd.get("id")]
+        if own and all(str(r.get("status") or "") in CLOSED_REVISION_REQUESTS for r in own):
+            continue  # the round's revision was delivered or cancelled
+        due = _instant(rnd.get("due_at"))
+        received = _instant(rnd.get("received_at"))
+        if due is None and received is not None:
+            due = received + timedelta(days=ROUND_WITHOUT_DEADLINE_DAYS)
+        if due is None or due >= now:
+            reasons.append(f"review round {rnd.get('round_no')} ({rnd.get('decision')}) awaits a "
+                           f"response, due {rnd.get('due_at') or 'not recorded'}")
+    for event in paper.get("submission_events") or []:
+        payload = event.get("payload") if isinstance(event, Mapping) else None
+        if not isinstance(payload, Mapping):
+            continue
+        due = _instant(payload.get("transfer_response_due_date"))
+        if due is not None and due >= now:
+            journal = payload.get("journal_name") or "the journal"
+            reasons.append(f"transfer offer from {journal} open until "
+                           f"{payload.get('transfer_response_due_date')}")
+    return reasons
+
+
+def registry_ahead(registry: Mapping[str, Any] | None) -> list[str]:
+    """The registry records a submission the site does not show as ended."""
+    block = (registry or {}).get("external_submission")
+    status = str((block or {}).get("status") or "") if isinstance(block, Mapping) else ""
+    if status in ENDED_REGISTRY_SUBMISSIONS:
+        return []
+    return [f"registry external_submission is {status} ({block.get('journal') or 'journal not named'})"]
+
+
+def abandoned_or_frozen(paper: Mapping[str, Any], registry: Mapping[str, Any] | None) -> list[str]:
+    """The site marks the paper abandoned, or the registry freezes it: a person decides."""
+    reasons: list[str] = []
+    # The site's own reading: writing_metadata over legacy_metadata, key by key (paperView.ts).
+    merged = {**(paper.get("legacy_metadata") or {}), **(paper.get("writing_metadata") or {})}
+    screening = merged.get("submission_screening")
+    if isinstance(screening, Mapping) and screening.get("disposition") == "abandon":
+        reasons.append("site submission_screening.disposition abandon"
+                       + (f" ({screening.get('campaign_id')})" if screening.get("campaign_id") else ""))
+    submission = merged.get("submission")
+    if isinstance(submission, Mapping) and submission.get("status") == "abandoned":
+        reasons.append("site submission status abandoned")
+    if registry is not None and (frozen := freeze_block_reason(registry, str(paper.get("paper_id")))):
+        reasons.append(frozen.split(";")[0])
+    return reasons
+
+
+def pending_journal_mail(state: str | Path | None) -> tuple[dict[str, list[str]], list[str]]:
+    """journal_mail events not yet carried to the site, by paper: ``({paper_id: [keys]}, warnings)``.
+
+    Read-only (``mode=ro``) from the service's private ``events.sqlite``; an event counts as
+    pending until its ``progress`` row is complete.
+    """
+    if not state:
+        return {}, []
+    database = Path(state) / "events.sqlite"
+    if not database.is_file():
+        return {}, []
+    try:
+        with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            query = ("SELECT e.message_key, e.paper_id FROM events e LEFT JOIN progress p "
+                     "USING(message_key) WHERE COALESCE(p.complete, 0) = 0"
+                     if "progress" in tables else "SELECT message_key, paper_id FROM events")
+            rows = db.execute(query).fetchall()
+    except sqlite3.Error as exc:
+        return {}, [f"journal_mail state unreadable ({exc}); pending letters not checked"]
+    pending: dict[str, list[str]] = {}
+    for key, paper_id in rows:
+        pending.setdefault(str(paper_id), []).append(str(key))
+    return pending, []
+
+
 def classify(paper: Mapping[str, Any],
-             registry: Mapping[str, Any] | None) -> tuple[str, list[str]]:
+             registry: Mapping[str, Any] | None, *,
+             pending_mail: Collection[str] = (),
+             now: datetime | None = None) -> tuple[str, list[str]]:
     """``(untouched|ready|not_ready, reasons)`` for one site paper."""
 
+    now = now or datetime.now(timezone.utc)
     lifecycle = str(paper.get("lifecycle_status") or "")
-    if paper.get("submission_attempts"):
-        return "untouched", [f"has submission attempts (lifecycle {lifecycle})"]
+    attempt = latest_attempt(paper)
+    if attempt is not None and str(attempt.get("status") or "") not in ENDED_ATTEMPTS:
+        return "untouched", [f"submission attempt {attempt.get('status')} (lifecycle {lifecycle})"]
+    if lifecycle in JOURNAL_LIFECYCLES:
+        return "untouched", [f"lifecycle {lifecycle}: the journal holds the paper"]
     if lifecycle not in PRE_SUBMISSION_LIFECYCLES:
         return "untouched", [f"lifecycle {lifecycle} is past pre-submission"]
+    held = open_journal_business(paper, now) + registry_ahead(registry)
+    if pending_mail:
+        held.append(f"{len(pending_mail)} journal_mail event(s) not yet on the site "
+                    f"({', '.join(sorted(k[:12] for k in pending_mail))})")
+    if held:
+        return "untouched", held
     reasons: list[str] = []
     writing = paper.get("writing_metadata") or {}
     if (writing.get("readiness") or {}).get("ready_for_submission") is not True:
@@ -256,10 +417,27 @@ def stale_registry(paper: Mapping[str, Any], registry: Mapping[str, Any] | None)
 
 
 def plan_paper(paper: Mapping[str, Any], *, root: Path, users: list[Mapping[str, Any]],
-               placeholder: str, settings_authors: list[Mapping[str, Any]]) -> dict[str, Any]:
+               placeholder: str, settings_authors: list[Mapping[str, Any]],
+               pending_mail: Collection[str] = ()) -> dict[str, Any]:
+    entry = _plan_paper(paper, root=root, users=users, placeholder=placeholder,
+                        settings_authors=settings_authors, pending_mail=pending_mail)
+    if entry["action"] in {"park", "assign"}:
+        stop = abandoned_or_frozen(paper, _registry(root, entry["paper_id"]))
+        if stop:
+            # Parking promises an automatic return once ready; for an abandoned or frozen paper
+            # that is a person's call (close it, or lift the mark), not this sync's.
+            entry.update(action="manual_decision", proposed_action=entry["action"],
+                         why="; ".join(stop) + ": a person decides whether the paper is closed "
+                             "or kept before its submitter changes")
+    return entry
+
+
+def _plan_paper(paper: Mapping[str, Any], *, root: Path, users: list[Mapping[str, Any]],
+                placeholder: str, settings_authors: list[Mapping[str, Any]],
+                pending_mail: Collection[str] = ()) -> dict[str, Any]:
     paper_id = str(paper["paper_id"])
     registry = _registry(root, paper_id)
-    state, reasons = classify(paper, registry)
+    state, reasons = classify(paper, registry, pending_mail=pending_mail)
     names = {u["id"]: u.get("display_name") for u in users}
     active = [row for row in paper.get("assignments") or [] if row.get("active")]
     real = [row for row in active if row.get("submitter_id") != placeholder]
@@ -347,10 +525,16 @@ def _apply(client: Any, entry: dict[str, Any], placeholder: str) -> None:
 
 def sync_site_assignments(client: Any, *, root: str | Path,
                           paper_ids: Iterable[str] | None = None, apply: bool = False,
-                          log_path: str | Path | None = None) -> dict[str, Any]:
-    """Plan (and with ``apply`` carry out) the assignment changes; idempotent."""
+                          log_path: str | Path | None = None,
+                          journal_mail_state: str | Path | None = None) -> dict[str, Any]:
+    """Plan (and with ``apply`` carry out) the assignment changes; idempotent.
+
+    ``journal_mail_state`` is the journal_mail service's state directory; a paper with a letter
+    there not yet carried to the site keeps its submitter.
+    """
 
     repo_root = Path(root).resolve()
+    pending, mail_warnings = pending_journal_mail(journal_mail_state)
     me = client._request("GET", "/v1/me")
     if not isinstance(me, Mapping) or me.get("role") != "admin" or not me.get("id"):
         raise RuntimeError("the Agent API account is not an admin; cannot hold the placeholder")
@@ -358,7 +542,7 @@ def sync_site_assignments(client: Any, *, root: str | Path,
     users = [dict(u) for u in client._request("GET", "/v1/users") or [] if isinstance(u, Mapping)]
     settings_authors = _settings_authors(repo_root)
     wanted = sorted({str(p).strip() for p in paper_ids or [] if str(p).strip()})
-    warnings: list[str] = []
+    warnings: list[str] = list(mail_warnings)
     papers: list[Mapping[str, Any]] = []
     untouched = 0
     if wanted:
@@ -385,7 +569,8 @@ def sync_site_assignments(client: Any, *, root: str | Path,
     for paper in papers:
         try:
             entry = plan_paper(paper, root=repo_root, users=users, placeholder=placeholder,
-                               settings_authors=settings_authors)
+                               settings_authors=settings_authors,
+                               pending_mail=pending.get(str(paper.get("paper_id")), ()))
         except (OSError, ValueError, KeyError, yaml.YAMLError) as exc:
             errors.append({"paper_id": paper.get("paper_id"), "error": str(exc)[:400]})
             continue
@@ -404,10 +589,13 @@ def sync_site_assignments(client: Any, *, root: str | Path,
                 handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
     blocked = [entry for entry in entries if entry["action"] in {"blocked", "skip"}]
     held = [entry["paper_id"] for entry in entries if entry["action"] == "hold"]
+    manual = [{key: entry.get(key) for key in ("paper_id", "proposed_action", "why", "active")}
+              for entry in entries if entry["action"] == "manual_decision"]
     return {
         "schema_version": SCHEMA, "apply": apply, "placeholder_id": placeholder,
         "checked_at": _now(), "papers": entries, "changed": changed,
         "pending": [e for e in entries if e["action"] in {"park", "assign"} and not e.get("applied")],
-        "blocked": blocked, "held": held, "untouched_by_lifecycle_or_scope": untouched,
+        "blocked": blocked, "held": held, "manual_decision": manual,
+        "untouched_by_lifecycle_or_scope": untouched,
         "warnings": warnings, "errors": errors, "ok": not errors,
     }

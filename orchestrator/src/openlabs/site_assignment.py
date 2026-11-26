@@ -39,6 +39,11 @@ def _log_path(paths: WorkspacePaths) -> Path:
     return paths.database / "site-assignments.jsonl"
 
 
+def journal_mail_state(paths: WorkspacePaths) -> Path:
+    """The journal_mail service's state directory (letters not yet carried to the site)."""
+    return paths.settings_file.parent / "state" / "journal-mail"
+
+
 def run_sync(paths: WorkspacePaths, settings: FactorySettings, *,
              paper_ids: Iterable[str] = (), apply: bool = False) -> dict[str, Any]:
     """Run ``paper-writing program sync-site-assignments`` (dry run unless ``apply``)."""
@@ -52,6 +57,9 @@ def run_sync(paths: WorkspacePaths, settings: FactorySettings, *,
         raise SiteAssignmentError(f"credentials missing: {missing}"
                                   + (f" ({refused})" if refused else ""))
     arguments = ["program", "sync-site-assignments", "--log", str(_log_path(paths))]
+    journal_state = journal_mail_state(paths)
+    if journal_state.is_dir():
+        arguments += ["--journal-mail-state", str(journal_state)]
     for paper_id in paper_ids:
         arguments += ["--paper-id", str(paper_id)]
     environment = dict(credentials)
@@ -121,6 +129,9 @@ def sync_tick(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings,
         blocked=[{"paper_id": e.get("paper_id"), "why": e.get("why")}
                  for e in result.get("blocked") or []],
         held=list(result.get("held") or []),
+        # Abandoned on the site or frozen in the registry: not parked, a person decides.
+        manual_decision=[{"paper_id": e.get("paper_id"), "why": e.get("why")}
+                         for e in result.get("manual_decision") or []],
         errors=list(result.get("errors") or [])[:10],
         warnings=list(result.get("warnings") or [])[:5],
     )
