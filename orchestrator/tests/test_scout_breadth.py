@@ -148,23 +148,37 @@ def test_supply_only_line_scouts_under_polish_mode_and_is_not_cancelled(tmp_path
 # --------------------------------------------------------------------------- routing
 
 
-def test_scouts_and_prescreens_of_one_line_run_side_by_side(tmp_path) -> None:
+def test_supply_tasks_of_one_line_run_side_by_side(tmp_path) -> None:
+    """Scouts, prescreens and card repairs share a scout campaign by task type (2026-11-26)."""
+
     _, db = routing._setup(tmp_path)
-    single = program_flow.parallel_routing_reasons(flow._settings())
-    assert "program_slot_open" not in single
-    reasons = program_flow.parallel_routing_reasons(flow._settings(max_scouts_per_line=2))
-    assert "program_slot_open" in reasons
     for n in range(2):
         routing._enqueue(db, f"s{n}", "line-scout", task_type="topic_scout",
                          routing_reason="program_slot_open")
     routing._enqueue(db, "p0", "line-scout", task_type="topic_prescreen",
                      routing_reason="topic_prescreen")
-    claimed = [db.claim_next_task(owner="t", lease_seconds=60, parallel_routing_reasons=reasons)
-               for _ in range(3)]
-    assert sorted(task["task_id"] for task in claimed) == ["p0", "s0", "s1"]
+    routing._enqueue(db, "c0", "line-scout", task_type="topic_card_repair",
+                     routing_reason="any-reason")
+    claimed = [db.claim_next_task(owner="t", lease_seconds=60) for _ in range(4)]
+    assert sorted(task["task_id"] for task in claimed) == ["c0", "p0", "s0", "s1"]
     routing._enqueue(db, "r", "line-scout", task_type="research")
-    assert db.claim_next_task(owner="t", lease_seconds=60,
-                              parallel_routing_reasons=reasons) is None
+    assert db.claim_next_task(owner="t", lease_seconds=60) is None
+    # An ordinary portfolio review is no supply task: it waits for its campaign.
+    routing._enqueue(db, "o0", "ordinary", task_type="research")
+    routing._enqueue(db, "o1", "ordinary", task_type="portfolio_review",
+                     routing_reason="new_project_results_review")
+    assert db.claim_next_task(owner="t", lease_seconds=60)["task_id"] == "o0"
+    assert db.claim_next_task(owner="t", lease_seconds=60) is None
+
+
+def test_supply_task_types_match_the_program_constants() -> None:
+    from openlabs import db as db_module
+
+    assert set(db_module.SUPPLY_TASK_TYPES) == {
+        program_flow.SCOUT_TASK_TYPE, program_flow.REPAIR_TASK_TYPE,
+        program_flow.REVISION_TASK_TYPE, nc_funnel.PRESCREEN_TASK_TYPE}
+    assert "'topic_admission'" in db_module.supply_task_sql("tasks")
+    assert program_flow.ADMISSION_ROUTING_REASON == "topic_admission"
 
 
 def _scout(db, paths, task_id: str, preferred: str | None, **kwargs) -> None:

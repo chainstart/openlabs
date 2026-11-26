@@ -174,15 +174,12 @@ def test_prescreen_is_review_class() -> None:
 def test_prescreens_of_one_scout_campaign_run_side_by_side(tmp_path) -> None:
     import test_quota_routing as qr
 
-    reasons = program_flow.parallel_routing_reasons(flow._settings())
-    assert "topic_prescreen" in reasons and "topic_admission" in reasons
     _, db = qr._setup(tmp_path)
     for n in range(2):
         qr._enqueue(db, f"p{n}", "gate", runner="balanced", task_type="topic_prescreen",
                     routing_reason="topic_prescreen")
-    assert db.claim_next_task(owner="t", lease_seconds=60,
-                              parallel_routing_reasons=reasons)["task_id"] == "p0"
-    second = db.claim_next_task(owner="t", lease_seconds=60, parallel_routing_reasons=reasons)
+    assert db.claim_next_task(owner="t", lease_seconds=60)["task_id"] == "p0"
+    second = db.claim_next_task(owner="t", lease_seconds=60)
     assert second is not None and second["task_id"] == "p1"
 
 

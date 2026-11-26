@@ -1823,8 +1823,11 @@ tick 报告 `warnings` 提示；表和旧键同时存在时以表为准，旧键
 预筛 `topic_prescreen` 记为评审类任务（`DEFAULT_REVIEW_TASK_TYPES`，同日）：它与 worker 档立项评审一样是对另一模型族卡片的
 独立判断，按评审类额度计，任务类别限于 review/owner 的 Gemini 也能接。起因：出题者为 Codex 时预筛只能由 Claude 跑，
 Claude 按配速每约两小时放行一个，七张卡要排十几个小时。
-同线的预筛任务都挂在该线的出题 campaign 下，而一个 campaign 默认一次只跑一个任务；预筛因此加入可与同类并行的
-路由原因（`parallel_routing_reasons`，与立项评审同一机制），`prescreen_max_concurrent` 才真正生效。
+同线的预筛任务都挂在该线的出题 campaign 下，而一个 campaign 默认一次只跑一个任务。2026-11-26 起（精简第二批，用户“1-开始”）
+供题类任务按任务类型豁免这条规则（`db.SUPPLY_TASK_TYPES`：topic_scout、topic_prescreen、topic_card_repair、topic_revision，
+加上 routing_reason 为 topic_admission 的立项评审）：它们之间可在同一 campaign 并行，数量由各自的排程上限约束
+（`max_scouts_per_line`、`prescreen_max_concurrent`、`max_admissions_per_line`）；其他任务仍等 campaign 空闲。
+原来按 routing_reason 列白名单的 `parallel_routing_reasons` 已删除，新增供题任务类型不必再补白名单。
 负责人坐席的持久数据目录（同日）：坐席结束时它的大文件暂存区（artifact-stage）会被删除，坐席以 awaiting_remote
 结束时仍在下载的桥任务因此写不进 `.download.part`（试产首个课题的两个 MIMIC-IV-ECG 下载都这样失败，等它们的本机作业
 随之失败）。简报末尾现在给出 `<instance_artifacts>/campaign-data/<campaign>/`（`owner.campaign_data_dir`，渲染时创建），

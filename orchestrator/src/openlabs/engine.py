@@ -96,7 +96,6 @@ from .program_flow import (
     SCOUT_SKILL,
     packet_read_resources,
     parallel_admission_room,
-    parallel_routing_reasons,
     record_admission_deferral,
     report_scheduling_counts,
     run_program_pipeline,
@@ -4309,7 +4308,6 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
                     resource_capacity=resource_capacity.to_dict(),
                     route=router.route,
                     rank=rank,
-                    parallel_routing_reasons=parallel_routing_reasons(settings),
                 )
             else:
                 task = db.claim_next_task(
