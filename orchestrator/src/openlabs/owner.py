@@ -2794,8 +2794,9 @@ def supervise_writing(
     A queued writer seat starts when the writer is usable (quota, pacing) and fewer than
     ``max_writing_topics`` writer seats run; otherwise it waits (over the slot limit it is
     held with ``not_before``). It never moves to another runner before the wait is over:
-    then it goes back to the topic's original owner, fresh session, and the fallback is
-    recorded in the owner state and on the topic.
+    then it goes, fresh session, to the first usable ``writing_fallback_runners`` entry, else
+    back to the topic's original owner, and the fallback is recorded in the owner state and on
+    the topic.
     """
 
     owner = settings.program.owner
@@ -2830,7 +2831,15 @@ def supervise_writing(
                             "max_writing_topics": owner.max_writing_topics})
             continue
         writing = writing_state(db, campaign_id)
-        target = str(writing.get("solver_runner") or "")
+        # A configured fallback writer first (UD-20261126-gemini-ultra), else the solver. It
+        # becomes the topic's owner, so it must be an owner runner under its topic cap.
+        owners = current_owners(db, exclude_campaign=campaign_id)
+        target = next((name for name in owner.writing_fallback_runners
+                       if name != writer and name in settings.runners and name in owner.runners
+                       and _under_cap(settings, owners, name)
+                       and runner_usable(settings, router, name)), "")
+        if not target:
+            target = str(writing.get("solver_runner") or "")
         if target not in settings.runners:
             target = choose_runner(db, settings, campaign_id=campaign_id, exclude=[writer],
                                    router=router) or ""
@@ -3375,8 +3384,14 @@ def writing_brief_lines(settings: FactorySettings, *, task: Mapping[str, Any],
                 "Do not split the writing among models. Plan the figures in the story line and "
                 "draw them with `paper-writing figures`."]
     if plan == PLAN_FALLBACK:
-        return [f"The writer {writing.get('runner')} could not start for "
-                f"{owner.writing_wait_hours:g} h; you write the manuscript and its revisions."]
+        line = (f"The writer {writing.get('runner')} could not start for "
+                f"{owner.writing_wait_hours:g} h; you write the manuscript and its revisions.")
+        solver = str(writing.get("solver_runner") or "")
+        if solver and runner and runner != solver:
+            # A configured fallback writer did not do the research: it starts from the handover.
+            line += (f" The research was done by {solver}: start from {HANDOVER_NAME} and the "
+                     "files it names.")
+        return [line]
     if plan == PLAN_OWNER:
         # A writer runner equal to this seat's, or unknown: the owner writes as before.
         return [] if why in _SILENT_OWNER_REASONS else [owner_writes_note(why)]

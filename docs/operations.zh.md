@@ -571,7 +571,16 @@ cc-sg 实例：`lead_gemini`（gemini-4-neon-xhigh，评审）、`worker_gemini`
 GPT 的稿在 Claude 额度不够时由 Gemini 审，仍是跨族评审，而不是退到“同族不同模型”；
 Gemini 不接普通研究任务和方向决策。`[program.owner].runners` 把 `worker_gemini` 排在最后
 （每个 runner 最多 1 个课题），只在前面的 runner 都接不了时补位。写作与绘图仍由 Opus 负责
-（`writing_runner`、figure 坐席不变）。
+（`writing_runner`、figure 坐席不变）。以上是 2026-11-23 的起步配置。
+
+**全面接入（2026-11-26，UD-20261126-gemini-ultra）**：用户把 Gemini 升到最高档（约 20 倍额度）：“我已经升级
+gemini到最高20倍了，你可以尽情的使用它做各种工作，现在Claude和gpt的额度不够的话，可以多用gemini”。cc-sg 三个
+Gemini runner 改为 `overflow = false`、去掉 `task_classes`（接所有类别：普通研究与杂活、负责人坐席、评审、侦察、
+预筛，`lead_gemini` 也接方向决策），与 GPT/Claude 按相对充裕度（utilization spread）正常竞争；评审/决策仍避开
+产出方模型族。`[program.owner].runners` 改为 `["worker_gpt", "worker_gemini", "worker_claude"]`，
+`worker_gemini` 最多 4 个课题；`[routing.provider_ceilings.google-antigravity].ordinary_ceiling = 0.85`。
+写稿仍首选 Claude Opus（`writing_runner`），等满 `writing_wait_hours` 后先交 `writing_fallback_runners`
+（cc-sg 为 `["worker_gemini"]`），见下文“写稿者交接”。
 
 **交付前评审面板**（数据仓库 `registry/settings.yaml` 的 `review.roles`）现在可以写
 `{provider: google-antigravity, tool: Antigravity, model: gemini-...}`：审稿角色总在只读副本里运行
@@ -941,6 +950,9 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
   - **额度等待与回退**：写稿者额度不可用（达到上限或被配速，坐席被路由器按 pinned runner 推迟）或名额满时坐席等待，
     不回退给 sol；连续等待满 `writing_wait_hours`（缺省 12 小时）才改派回原负责人（新会话），owner 状态改为
     `fallback`，课题台账记 `writing_fallback`。此后由原负责人写；回退后评审按交回稿件的坐席避开其模型族（既有规则）。
+    `[program.owner].writing_fallback_runners`（2026-11-26，可选，缺省空）：回退时先按顺序取第一个可用的 runner
+    （不是写稿者本身、在 `[program.owner].runners` 里且未到 `max_topics_per_runner`；它随后成为课题负责人），
+    都不可用才回原负责人。它没做研究时，角色说明会让它从 `OWNER_HANDOVER.md` 及其列出的文件起步。
   - 名额与回退检查在 `owner.supervise_writing`，随路由开启时的 tick 运行（`[routing]` 关闭时不做名额限制，也不会有额度等待）。
 - **图件坐席跟随写稿者（2026-11-23）**：用户决定论文的写作和绘图都交 Claude Opus。`paper_figure_repair`（交
   `ready_for_review` 时请求图件助手而排的修图坐席，`paper_figures.queue`）不再固定在提出请求的坐席的 runner 上，而是
@@ -1487,7 +1499,7 @@ TeX Live 是免 root 安装、不在默认 PATH 上：`run` 和 `cli` 都先 sou
 | --- | --- | --- | --- |
 | `[program] max_concurrent_scouts` | 1 | 启用线数 | 全局侦察任务上限，每条线同时至多 `max_scouts_per_line` 个 |
 | `[program] max_scouts_per_line` | 1 | 1–2 | 同一条线同时在跑的侦察数（2026-11-26）；线上已有侦察在跑时，下一个不等间隔，换模型族并行 |
-| `[program] scout_runners` | 空表 | `["worker_gpt", "worker_gemini", "worker_claude"]` | 侦察轮换的 runner（2026-11-26，用户“更多的集思广益”）：每个新侦察在包里写 `preferred_runner`，选同线在跑侦察没用的族、全局在跑最少的族、该线最久没用的族；路由器额度与并发允许时就用它（可以是只接评审的 overflow runner，如 Gemini），否则照常路由并记 `preferred_runner_unavailable` |
+| `[program] scout_runners` | 空表 | `["worker_gpt", "worker_gemini", "worker_claude"]` | 侦察轮换的 runner（2026-11-26，用户“更多的集思广益”）：每个新侦察在包里写 `preferred_runner`，选同线在跑侦察没用的族、全局在跑最少的族、该线最久没用的族；路由器额度与并发允许时就用它（可以是 Gemini runner；2026-11-26 起它们不再是 overflow），否则照常路由并记 `preferred_runner_unavailable` |
 | `[program] scout_min_interval_hours` | 12 | 按实例设定 | 同一研究线两次侦察的默认间隔，单侦察并发时也按线计算 |
 | `[program] line_scout_min_interval_hours` | 空表 | 按需设置 | 按线 ID 覆盖侦察间隔，单位为小时 |
 | `[program] scout_expected_cards` | 2.0 | 2.0 | 旧领域项目共用候选池时的侦察产量估计，跑完三个后使用实测均值 |
