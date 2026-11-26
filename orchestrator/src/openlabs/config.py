@@ -425,8 +425,8 @@ class FunnelSettings:
     Nature Communications; the journal is decided by the results (NC, then CAS Zone 1, 2, 3-4).
     Each funnel level is dearer and stricter than the one before (design:
     maintenance/20261125-nc-aim/DESIGN.md). Hard stops are only: data unavailable, fewer than
-    ``min_nc_thresholds`` NC thresholds, a kill test whose signal is absent, and an expected
-    band below ``admission_min_band``; everything else is recorded for the admission gate.
+    ``min_nc_thresholds`` NC thresholds in the prescreen, a kill test whose signal is absent,
+    and an expected band below ``admission_min_band``; everything else is recorded.
     """
 
     target_stage: str = "nc_aim"
@@ -463,7 +463,7 @@ class FunnelSettings:
     # L6 (grading): journals of the NC band (the rest is graded by CAS zone).
     nc_journals: tuple[str, ...] = ("Nature Communications",)
     # User 2026-11-25 (item 3): grade the journal before writing (owner hand-over to writing),
-    # re-check only for changed evidence at review-ready. readiness_returns: how often an
+    # no re-check at review-ready (2026-11-26 slimming). readiness_returns: how often an
     # owner seat without the decisive analysis and the four required checks is sent back.
     grade_before_writing: bool = True
     readiness_returns: int = 2

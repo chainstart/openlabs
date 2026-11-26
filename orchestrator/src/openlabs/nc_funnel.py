@@ -7,19 +7,22 @@ the one before (design: maintenance/20261125-nc-aim/DESIGN.md):
 L0 scout (``program_flow.schedule_scouts``)        pool low water, interval, empty-draw backoff,
                                                     plus :func:`scout_blocks` (weekly model
                                                     budget per line, funnel-stall backoff)
-L1 mechanical (:func:`screen_card`, no model)       NC case contract, self-claimed thresholds,
-                                                    data catalogue, capacity, near duplicates
+L1 mechanical (:func:`screen_card`, no model)       data catalogue, capacity, near duplicates
+                                                    (the NC case is a card contract field)
 L2+L3 ``topic_prescreen`` task (:func:`advance_prescreens`)
                                                     calibration match, quick novelty +
                                                     independent NC thresholds, then a <= 2
                                                     core-hour kill test
-L4 admission (:func:`admission_problems`)           >= 50-paper novelty search, calibration
-                                                    match, expected band
+L4 admission (:func:`admission_problems`)           checks the prescreen (thresholds,
+                                                    calibration match, kill test), adds the
+                                                    >= 50-paper novelty search
 L5 research                                         milestones, decisive analysis first
 L6 grading (:func:`nc_grade`)                       scorecard + calibration set, hard rule
 
-Hard stops are only: data unavailable, fewer than ``min_nc_thresholds`` thresholds, a kill
-test whose signal is absent, and an expected band below ``admission_min_band``. Everything
+Hard stops are only: data unavailable, fewer than ``min_nc_thresholds`` thresholds in the
+prescreen, a kill test whose signal is absent, and an expected band below
+``admission_min_band``. The scout's own threshold claims are recorded, not screened
+(pipeline slimming 2026-11-26: L1 rejected 0 of 23 cards on them). Everything
 else is recorded for the next level (``card_check``). Parameters: ``[program.funnel]``.
 
 One ruler (NC trial 2026-11-25, maintenance/20261125-nc-trial/REPORT.md section 5): the
@@ -62,7 +65,6 @@ PRESCREEN_PACKET_SCHEMA = "openlabs.topic_prescreen_packet.v1"
 PRESCREEN_DECIDER = "orchestrator:nc_prescreen"
 PRESCREEN_WAITING = frozenset({"pending", "scheduled"})
 
-THRESHOLD_REJECTION = "card_nc_thresholds_insufficient"
 DATA_REJECTION = "card_data_unavailable"
 CAPACITY_REJECTION = "card_beyond_capacity"
 DUPLICATE_REJECTION = "card_near_duplicate"
@@ -71,12 +73,11 @@ KILL_TEST_REJECTION = "card_kill_test_failed"
 BAND_REJECTION = "card_expected_band_below_floor"
 PRESCREEN_UNAVAILABLE = "card_prescreen_unavailable"
 ADMISSION_REJECTION = "nc_aim_admission_requirements"
-L1_REJECTIONS = frozenset({THRESHOLD_REJECTION, DATA_REJECTION, CAPACITY_REJECTION,
-                           DUPLICATE_REJECTION})
+L1_REJECTIONS = frozenset({DATA_REJECTION, CAPACITY_REJECTION, DUPLICATE_REJECTION})
 L23_REJECTIONS = frozenset({PRESCREEN_REJECTION, KILL_TEST_REJECTION, BAND_REJECTION,
                             PRESCREEN_UNAVAILABLE})
 # Reasons that judged a topic on its merits (a same-fingerprint card is a duplicate).
-JUDGED = frozenset({THRESHOLD_REJECTION, PRESCREEN_REJECTION, KILL_TEST_REJECTION,
+JUDGED = frozenset({PRESCREEN_REJECTION, KILL_TEST_REJECTION,
                     BAND_REJECTION, ADMISSION_REJECTION, DUPLICATE_REJECTION})
 CALIBRATION_PATH = "registry/venue-calibration.yaml"
 # Read resources of scouts, prescreens and the admission gate (copies of the maintenance reports).
@@ -507,11 +508,6 @@ def screen_card(settings, card: Mapping[str, Any], line_entry: Mapping[str, Any]
     claimed = met_thresholds(case.get("thresholds"))
     extra: dict[str, Any] = {"target_stage": stage,
                              "nc_screen": {"claimed_thresholds": claimed}}
-    if len(claimed) < funnel.min_nc_thresholds:
-        return THRESHOLD_REJECTION, [
-            f"{THRESHOLD_REJECTION}: the card claims {len(claimed)} NC threshold(s) with "
-            f"evidence ({', '.join(claimed) or 'none'}); at least {funnel.min_nc_thresholds} "
-            "are required"], extra
     problems, notes = data_problems(card, line_entry, settings)
     if notes:
         extra["nc_screen"]["data_catalog"] = notes

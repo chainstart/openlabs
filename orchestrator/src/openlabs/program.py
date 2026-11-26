@@ -195,7 +195,6 @@ JUDGED_REJECTION_REASONS = frozenset(
         "not_computational_only",
         "cost_not_proportionate",
         # NC funnel (2026-11-25, nc_funnel.JUDGED): the topic fell short of the NC aim.
-        "card_nc_thresholds_insufficient",
         "card_near_duplicate",
         "card_prescreen_failed",
         "card_kill_test_failed",

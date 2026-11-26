@@ -619,8 +619,8 @@ lead 档、`exclude_provider` 为出题者模型族）；没有其他模型族�
 并在状态包写 `nc_readiness`。缺项最多退回 `[program.funnel].readiness_returns` 次（默认 2），之后
 带缺项定档。控制面暂停该课题，派跨族方向决策 `pre_writing_grade`（校准集，规则同 `nc_grade`），
 定档结果写入台账 `venue_grade`（`point: pre_writing`，含目标刊体例上限），再交写作者（或负责人）
-按该刊篇幅和体例写。评审 ready 时只派 `venue_grade_recheck`：证据未变保持原档；证据有变须列出变化，
-档次只能持平或下降。定档决策重试用尽时不冻结，照常写作，评审后按旧流程完整定档。
+按该刊篇幅和体例写。评审 ready 后直接进 ready_queue，不再复核档次（2026-11-26 精简产线）；
+评审中发现意义不足仍走 REVIEW_DIRECTION / retarget。定档决策重试用尽时不冻结，照常写作，评审后按旧流程完整定档。
 `grade_before_writing = false` 回到评审后定档。
 
 有研究线的新 campaign 写入 `workspaces/lines/<line>/<campaign>/`。已有 campaign 继续从持久化

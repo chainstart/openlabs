@@ -1,10 +1,8 @@
-"""NC-aim journal grade before writing, re-check at review-ready (user 2026-11-25, item 3)."""
+"""NC-aim journal grade before writing (user 2026-11-25, item 3); no re-check at review-ready."""
 
 from __future__ import annotations
 
 from dataclasses import replace
-
-import pytest
 
 from openlabs import nc_funnel, nc_grading, owner, program_autonomy, target_stage
 from openlabs.config import FunnelSettings, OwnerSettings, load_program_settings
@@ -193,59 +191,7 @@ PRIOR = {"journal": "Nature Communications", "achieved_band": "nc", "point": "pr
          "met_thresholds": ["generality", "counterintuitive"], "calibration_match": "nc"}
 
 
-@pytest.fixture
-def settings():
-    return load_program_settings({})
-
-
-def _recheck(retarget) -> dict:
-    return {"rationale": "compared", "retarget": {"why_fits": "scope", **retarget}}
-
-
-def test_recheck_is_due_once_per_review_and_only_after_a_pre_writing_grade() -> None:
-    assert nc_grading.recheck_due({}, PRIOR, "review-1")
-    assert not nc_grading.recheck_due({}, {**PRIOR, "point": "recheck",
-                                           "rechecked_for": "review-1"}, "review-1")
-    assert nc_grading.recheck_due({}, {**PRIOR, "point": "recheck",
-                                       "rechecked_for": "review-1"}, "review-2")
-    assert not nc_grading.recheck_due({}, {**PRIOR, "point": "after_review"}, "review-1")
-
-
-def test_recheck_does_not_score_again(settings) -> None:
-    class S:  # the funnel settings only
-        program = type("P", (), {"funnel": FunnelSettings()})()
-
-    keep = nc_grading.recheck_grade(
-        _recheck({"venue_or_format": "Nature Communications", "achieved_band": "nc",
-                  "evidence_changed": False}), PRIOR, VENUES, S, review_task_id="r1")
-    assert keep["point"] == "recheck" and keep["rechecked_for"] == "r1"
-    assert keep["nc_scorecard"] == PRIOR["nc_scorecard"]  # carried, not re-scored
-    # Unchanged evidence may not move the band.
-    assert nc_grading.recheck_grade(
-        _recheck({"venue_or_format": "Applied Energy", "achieved_band": "zone_1",
-                  "evidence_changed": False}), PRIOR, VENUES, S, review_task_id="r1") is None
-    # Changed evidence: the changes are listed and the band goes down, never up.
-    down = nc_grading.recheck_grade(
-        _recheck({"venue_or_format": "Applied Energy", "achieved_band": "zone_1",
-                  "evidence_changed": True,
-                  "evidence_changes": ["external validation dropped in review"]}),
-        PRIOR, VENUES, S, review_task_id="r1")
-    assert down["achieved_band"] == "zone_1" and down["prior"]["achieved_band"] == "nc"
-    assert nc_grading.recheck_grade(
-        _recheck({"venue_or_format": "Applied Energy", "achieved_band": "zone_1",
-                  "evidence_changed": True}), PRIOR, VENUES, S, review_task_id="r1") is None
-    lower = {**PRIOR, "journal": "Energy", "achieved_band": "zone_2"}
-    assert nc_grading.recheck_grade(
-        _recheck({"venue_or_format": "Applied Energy", "achieved_band": "zone_1",
-                  "evidence_changed": True, "evidence_changes": ["more data"]}),
-        lower, VENUES, S, review_task_id="r1") is None
-    # The journal still has to belong to the band.
-    assert nc_grading.recheck_grade(
-        _recheck({"venue_or_format": "Energy", "achieved_band": "nc",
-                  "evidence_changed": False}), PRIOR, VENUES, S, review_task_id="r1") is None
-
-
-def test_review_ready_after_a_pre_writing_grade_schedules_the_recheck(tmp_path, monkeypatch):
+def test_review_ready_after_a_pre_writing_grade_goes_straight_to_the_queue(tmp_path, monkeypatch):
     paths, db, settings, topic = _nc_program(tmp_path, monkeypatch)
     from openlabs.program import record_topic_note
 
@@ -254,15 +200,12 @@ def test_review_ready_after_a_pre_writing_grade_schedules_the_recheck(tmp_path, 
                       updates={"venue_grade": dict(PRIOR)})
     current = _topic(paths, settings, topic["topic_id"])
     from openlabs.engine import TickReport
+    from test_program_autonomy import _direction_tasks
 
     report = TickReport()
     program_autonomy.queue_ready_topic(
         db, paths, settings, report, topic=current, task={"task_id": "review-1"},
         outcome={"paper_id": "p1", "target_journal": "Nature Communications"},
         payload={}, evidence=[])
-    task = _direction_task(db)
-    packet = _packet(task)
-    assert packet["trigger"]["reason"] == nc_grading.TRIGGER_RECHECK
-    assert packet["grading"]["prior_grade"]["achieved_band"] == "nc"
-    assert "Do not score again" in task["objective"]
-    assert _topic(paths, settings, topic["topic_id"])["status"] != "ready_queue"
+    assert _direction_tasks(db) == []  # no grade re-check (pipeline slimming 2026-11-26)
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "ready_queue"

@@ -148,16 +148,18 @@ def test_card_without_nc_case_gets_one_repair(tmp_path, monkeypatch):
     assert any("milestones" in item for item in errors)
 
 
-def test_mechanical_screen_rejects_small_and_low_cards(tmp_path, monkeypatch):
-    paths, db, settings = _setup(tmp_path)
+def test_mechanical_screen_records_self_claimed_thresholds_without_rejecting():
+    # Pipeline slimming 2026-11-26: the scout's own claims are not a hard stop (L1 rejected
+    # 0 of 23 cards on them); the prescreen scores the thresholds independently.
+    settings = flow._settings()
+    settings = replace(settings, program=replace(settings.program, funnel=FunnelSettings()))
     weak = _nc_card(1)
     weak["nc_case"] = {**weak["nc_case"], "thresholds": {
         **THRESHOLDS, "counterintuitive": {"met": False, "evidence": ""}}}
-    _, report = flow._scout_round(paths, db, settings, monkeypatch, [weak])
-    rejected, = report.program["rejected_cards"]
-    assert rejected["reason"] == nc_funnel.THRESHOLD_REJECTION
-    topic = open_topic_ledger(paths, settings.program).topic(rejected["topic_id"])
-    assert topic["card_repair"]["status"] == "not_repairable"
+    reason, errors, extra = nc_funnel.screen_card(settings, weak, {}, {"topics": []}, "nc_aim")
+    assert reason is None and errors == []
+    assert "counterintuitive" not in extra["nc_screen"]["claimed_thresholds"]
+    assert extra["prescreen"]["status"] == "pending"
 
 
 def test_capacity_and_near_duplicate_screens():

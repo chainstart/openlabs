@@ -2,8 +2,7 @@
 
 User, 2026-11-25 ("以上都同意", UD-20261125-nc-aim-decisions): the journal tier of an NC-aim
 topic is graded before the manuscript is written, so the writer writes for the graded
-journal (length, abstract, title, display items). The grade at review-ready only checks
-whether the evidence changed; it does not score again.
+journal (length, abstract, title, display items). It is not graded again at review-ready.
 
 Flow (owner mode):
 
@@ -19,9 +18,9 @@ Flow (owner mode):
 3. The grade is recorded on the topic (``venue_grade`` with ``point: pre_writing`` and the
    journal's format limits) and in the owner state; writing resumes: the writer seat
    (hand-over plan) or the owner's next seat, both told the journal and its format.
-4. Review ready: :func:`recheck_due` schedules ``venue_grade_recheck``; the decision says
-   whether the evidence changed (:func:`recheck_grade`). Unchanged: same band (journal of
-   that band). Changed: the listed changes and a band no higher than before.
+4. Review ready: the topic goes straight to the ready queue; the grade is not re-checked
+   (pipeline slimming 2026-11-26, "同意，精简产线"). A significance shortfall found in
+   review still goes through REVIEW_DIRECTION / retarget.
 
 A decision that cannot be taken (retries used up) lets writing continue ungraded; the
 review-time full grade of before stays the fallback for such topics.
@@ -33,9 +32,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 TRIGGER_PRE_WRITING = "pre_writing_grade"
-TRIGGER_RECHECK = "venue_grade_recheck"
 POINT_PRE_WRITING = "pre_writing"
-POINT_RECHECK = "recheck"
 POINT_AFTER_REVIEW = "after_review"
 ROUTING_READINESS = "owner_nc_readiness"
 ROUTING_GRADED = "owner_venue_graded"
@@ -62,20 +59,6 @@ PRE_WRITING_INSTRUCTION = (
     "result files they name. Missing or failed checks count against the band. The writer "
     "then writes for the journal you choose, in its length and format."
 )
-
-RECHECK_INSTRUCTION = (
-    " Re-check of the journal grade at review-ready (user decision 2026-11-25). The tier was "
-    "graded before writing (grading.prior_grade). Do not score again: compare the evidence in "
-    "the reviewed manuscript with the evidence that grade relied on (its rationale and "
-    "nc_scorecard). Set retarget.evidence_changed (true or false). Unchanged: keep "
-    "retarget.achieved_band equal to the prior band and choose a verified journal of that band "
-    "(normally the prior journal). Changed (an analysis failed, a validation was dropped, the "
-    "effect shrank in review, or new evidence): list each change in retarget.evidence_changes "
-    "and set achieved_band no higher than the prior band (writing cannot add evidence). Use "
-    "retarget_or_short_format with venue_or_format, why_fits and achieved_band; freeze only "
-    "with no_eligible_venue."
-)
-
 
 def _funnel(settings) -> Any:
     return getattr(getattr(settings, "program", None), "funnel", None)
@@ -295,51 +278,3 @@ def resume_writing(db, paths, settings, report, *, topic: Mapping[str, Any],
         {"campaign_id": campaign_id, "action": "writing_resumed", "seat": seat,
          "graded": grade is not None, "journal": (grade or {}).get("journal")})
     return seat
-
-
-def recheck_due(topic: Mapping[str, Any], grade: Mapping[str, Any], review_task_id: str) -> bool:
-    """A grade taken before writing (or rechecked for another review) is re-checked now."""
-
-    point = grade.get("point")
-    if point not in {POINT_PRE_WRITING, POINT_RECHECK}:
-        return False
-    return str(grade.get("rechecked_for") or "") != review_task_id
-
-
-def recheck_grade(decision: Mapping[str, Any], prior: Mapping[str, Any], venues: list[dict],
-                  settings, *, review_task_id: str) -> dict | None:
-    """The re-checked grade, or None when the decision breaks the rule (no new scoring)."""
-
-    from .nc_funnel import BAND_ZONES, BANDS, band_rank
-
-    funnel = _funnel(settings)
-    nc_journals = {name.casefold() for name in (getattr(funnel, "nc_journals", None)
-                                                or ("Nature Communications",))}
-    retarget = decision["retarget"]
-    journal = str(retarget.get("venue_or_format") or "")
-    band = str(retarget.get("achieved_band") or "").strip()
-    changed = retarget.get("evidence_changed")
-    prior_band = str(prior.get("achieved_band") or "")
-    if band not in BANDS or prior_band not in BANDS or not isinstance(changed, bool):
-        return None
-    changes = [str(item).strip() for item in retarget.get("evidence_changes") or []
-               if str(item).strip()] if isinstance(retarget.get("evidence_changes"), list) else []
-    if changed:
-        if not changes or band_rank(band) < band_rank(prior_band):
-            return None
-    elif band != prior_band:
-        return None
-    zone = next((v.get("cas_2025_zone") for v in venues if v.get("journal") == journal), None)
-    if band == "nc":
-        if journal.casefold() not in nc_journals:
-            return None
-    elif zone not in BAND_ZONES[band] or journal.casefold() in nc_journals:
-        return None
-    keep = {key: prior[key] for key in ("nc_scorecard", "met_thresholds", "calibration_match",
-                                        "calibration_neighbours", "confidence", "stage")
-            if key in prior}
-    return {**keep, "journal": journal, "cas_2025_zone": zone, "achieved_band": band,
-            "point": POINT_RECHECK, "rechecked_for": review_task_id,
-            "evidence_changed": changed, "evidence_changes": changes,
-            "prior": {key: prior.get(key) for key in ("journal", "achieved_band", "point")},
-            "rationale": decision["rationale"], "why_fits": retarget["why_fits"]}
