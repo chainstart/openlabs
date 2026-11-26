@@ -5,6 +5,14 @@ description: Decide, as an independent lead-model editor, whether each topic car
 
 # OpenLabs topic admission gate
 
+**First check the entry's `target_stage` (task type `topic_prescreen`: always `nc_aim`).** For
+`nc_aim` entries and every prescreen, the routine purpose in the next two paragraphs ("routine
+papers, not breakthroughs", Zones 3-4), the routine admission standard, the templated-series
+rules and the tier section do **not** apply: follow "NC aim" and "Prescreen" below. The data,
+licence, compute, venue and ledger rules still apply where those sections say so.
+
+## Routine stage
+
 Policy `openlabs.topic_admission_policy.v2` (owner direction 2026-11-12): the program exists to
 produce a steady flow of routine papers (CAS 2025 major-category Zones 3-4) at a sensible token
 and compute cost, not breakthroughs. You come from a different model family than the scout on
@@ -38,10 +46,19 @@ whose claim cannot be tested, not to demand a finished study.
 3. **The case holds together**: the one-sentence claim, the view it challenges and the benchmark
    are concrete; the data plan (`data_volume`, download windows, ailab storage) is feasible; the
    first milestone is the decisive analysis.
-4. The data, licence, compute and fee rules below still apply.
+4. The data, licence, compute and fee rules below still apply, but at the scout stage an nc_aim
+   card's `fee_check`, `license_check` and audience citations are only warnings
+   (`card_check.warnings`): complete them here as admission conditions (licences
+   `before_decisive_analysis`, fees and audience `before_submission`), not as reasons to reject.
+   A data source the card marks `needs_registration` (free, the owner registers; noted in
+   `card_check.nc_screen.data_catalog`) is no reason to reject either: admit with a
+   `before_decisive_analysis` condition naming the registration, provided the kill test ran on
+   data obtainable now.
 
-Compare with the hooks of accepted NC papers in `registry/venue-calibration.yaml` (also listed in
-the scout skill): generality, a sentence that overturns a view, an order of magnitude of scale,
+Compare with the `at_admission` descriptions of the accepted NC papers in
+`registry/venue-calibration.yaml` (what each looked like before the work: question, data,
+design), not with their published hooks: a card is a plan and is matched against plans. The
+NC properties are generality, a sentence that overturns a view, an order of magnitude of scale,
 an authoritative benchmark, a reusable resource.
 
 ## Prescreen (task type `topic_prescreen`, NC funnel levels 2-3)
@@ -50,13 +67,38 @@ A cheaper check before admission, on one card whose author is another model fami
 
 - **Calibration match first.** Read the calibration set (`read_resources` venue-calibration) and
   return `calibration_match` (nc|zone_1|zone_2|zones_3_4) and `calibration_neighbours` (2-3 ids).
-  The control plane places the card no higher than its match (the acceptance grade's rule); a
-  match below the admission floor rejects it. A result without a match is invalid.
+  Match the card's question, data and design against each paper's `at_admission` (what was
+  knowable before the work), not against its `hook` (the published result): every card is a
+  plan, so a plan that reads like an NC paper's plan matches nc even though it has no result
+  yet. The control plane places the card no higher than its match (the acceptance grade's
+  rule); a match below the admission floor rejects it. A result without a match is invalid.
 - **Phase A (minutes, no compute).** A quick novelty search of the last three years (list the
-  3-5 closest papers; `papers_screened` as counted) and your own scoring of the five NC
-  thresholds. When fewer than the required number hold, the claim is already reported
-  (`verdict: scooped`) or the calibration match is below the floor, stop and return; do not run
-  phase B.
+  3-5 closest papers; `papers_screened` as counted), including preprints: Research Square,
+  arXiv, bioRxiv, medRxiv, SSRN, EarthArXiv. Then your own scoring of the five NC thresholds.
+  When fewer than the required number hold, the claim is already reported (`verdict:
+  scooped`) or the calibration match is below the floor, stop and return; do not run phase B.
+- **Score the thresholds on the design's potential, as knowable at admission.** generality:
+  the planned population is global, a whole population or a law across systems; scale: the
+  planned data volume against the largest prior study; benchmark: the named authoritative
+  reference the plan compares with; resource: the planned release; counterintuitive: if the
+  result comes out as the claim says, it would overturn a view that is explicitly held (name
+  who holds it). Do not mark a threshold unmet because the result is not in hand; mark it unmet
+  when the plan cannot deliver it or when someone already delivered it for the same claim.
+  Reading a plan does not lower the bar. Generality means the field's population (the world's
+  rivers, a whole country's population, every model of a field), not the whole of one audited
+  catalogue, product, database, pipeline or benchmark: an audit or re-check of one such source
+  matches the lower-tier comparators, not nc, unless its conclusion changes practice across a
+  field the way A1 and A2 did (several datasets, every model class of the field).
+- **Same claim versus adjacent work.** `scooped` means the same claim is already reported: the
+  same question on the same population with the same endpoint, so the card's sentence would
+  repeat a published one (journal paper or preprint). Adjacent work - the same data, method or
+  region with a different claim - is closest prior work: name it in `closest` with its
+  `overlap` and judge the increment. `incremental` when prior work already reports the direction
+  of the claim (the same effect on a subset, a region or one worked example) and what is left is
+  its quantification, extension or refinement; `clear` only when the claim itself is new. Adjacent work does not make the claim scooped;
+  whether it removes a threshold depends on what it already showed (an earlier regional study
+  that already states the conclusion leaves `counterintuitive` unmet, but not `scale` when the
+  card goes an order of magnitude beyond it).
 - **Phase B (the kill test, within the packet's core-hour budget, here, no ailab job).** Write a
   small script from the card's `kill_test` and run it on data already on disk or on catalogued
   small samples (any download through the download bridge; nothing above the packet's size

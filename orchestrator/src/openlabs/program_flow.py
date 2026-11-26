@@ -1195,7 +1195,8 @@ def _schedule_one_scout(
                 f" within the research line `{line}` of registry/research-lines.yaml (read it "
                 "first: positioning, minimum validation, venues with fee evidence, licence "
                 "lists, avoided directions; each card needs research-line fields: "
-                + ("license_check, fee_check; the kill_test replaces feasibility_precheck)"
+                + ("license_check, fee_check, checked as warnings and completed at admission; "
+                   "the kill_test replaces feasibility_precheck)"
                    if stage == target_stage.NC_AIM else
                    "feasibility_precheck, license_check, fee_check)")
                 + (
