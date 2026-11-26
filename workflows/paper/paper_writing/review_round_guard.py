@@ -8,6 +8,7 @@ import re
 from datetime import timedelta
 from pathlib import Path
 
+from paper_writing.materiality import author_approval_request
 from paper_writing.support import (
     resolve_support_sources, sha256_file, support_sources_digest, support_sources_logical_paths,
 )
@@ -237,7 +238,9 @@ def response_blockers(root, raw, digest, items, needs_work, hashes, jobs, new_ha
             not isinstance(row, dict) or not isinstance(row.get("item"), str) for row in entries):
         return ["Response items must be an array of objects with item strings"]
     indexed = {row["item"]: row for row in entries}
-    if len(indexed) != len(entries) or set(indexed) - set(items):
+    # A response may still answer an author-approval item an earlier decision tracked; that item
+    # is out of scope (UD-20261126-no-author-approval-audit), so it is neither required nor unknown.
+    if len(indexed) != len(entries) or {i for i in set(indexed) - set(items) if not author_approval_request(i)}:
         return ["Response items contain duplicate or unknown previous requirements"]
     blockers = []
     for item in items:
@@ -362,6 +365,9 @@ def revision_scope_blockers(old: str, new: str, raw, items, changed_words: int) 
 
 
 def check(root, paper_id, target, last, pre, current, jobs, raw, items, explicit, digest, finished, now, policy):
+    # Author approval and consent are not pending must-fix items (UD-20261126): they neither need
+    # an answer nor make the minimum-change limit apply, whatever an earlier decision recorded.
+    items = [item for item in items if not author_approval_request(item)]
     problems = []
     cooldown_blocker = None
     hours = policy["cooldown_hours"]

@@ -62,6 +62,30 @@ PRESENTATION_BLOCKING = frozenset({"claim_or_data_mismatch", "figure_missing_or_
                                    "venue_hard_requirement"})
 
 _FORM_REQUESTS = frozenset({"length", "archive_or_response_format"})
+# Author approval is out of scope (UD-20261126-no-author-approval-audit, user 2026-11-26 "1":
+# 作者签字确认不再列为必改项，最多作为提醒；作者同意由投稿前的人工审核和期刊投稿系统负责).
+# A request whose substance is that the authors approved the manuscript, consented to
+# submission, signed, confirmed authorship or delegated that authority is at most advice.
+# Narrow on purpose: ethics approval and participants' informed consent do not match, and
+# AI-disclosure or contribution-statement accuracy requests (no approval wording) still block.
+_AUTHOR_APPROVAL = re.compile(
+    r"\b(?:approv\w*|consent\w*|sign(?:ed|atures?|[- ]?off)|endorse\w*)\s+"
+    r"(?:\w+\s+){0,3}?(?:by|from|of)\s+(?:all|each|every|the)\s+(?:\w+\s+){0,2}?(?:co-?)?authors?\b"
+    r"|\b(?:confirm\w*|authori[sz]\w*)\s+(?:\w+\s+){0,3}?(?:by|from)\s+(?:all|each|every)\s+"
+    r"(?:\w+\s+){0,2}?(?:co-?)?authors?\b"
+    r"|\b(?:traceable|attributable)\s+to\s+(?:all|each|every)\s+(?:\w+\s+){0,2}?(?:co-?)?authors?\b"
+    r"|\b(?:co-?)?authors?'?s?\s+(?:collective\s+|written\s+|individual\s+)?(?:approv\w*|consent\w*|signatures?|"
+    r"sign-?off|endorsement)\b"
+    r"|\b(?:approval|approved)\s+(?:of|for)\s+(?:the\s+)?(?:\w+\s+){0,3}?(?:manuscript|submission|version|"
+    r"article|paper)\b"
+    r"|\bconsent\s+(?:to|for)\s+(?:the\s+)?(?:submission|submit\w*|publication|publish\w*)\b"
+    r"|\b(?:delegat\w*\s+(?:\w+\s+){0,3}?(?:authority|by\s+(?:each|every|all)\s+(?:co-?)?authors?)"
+    r"|authority\s+delegated)\b"
+    r"|\bauthorship\s+(?:confirmation|approval|consent|sign-?off)\b"
+    r"|作者(?:签字|签名|同意|授权)|投稿同意|同意投稿", re.I)
+_NOT_AUTHOR_APPROVAL = re.compile(r"\b(?:ethic\w*|IRB|institutional\s+review|committee|participants?|patients?|"
+                                  r"human\s+subjects?|informed\s+consent|licen[cs]\w*|permission\s+to\s+reproduce)\b"
+                                  r"|伦理|知情同意", re.I)
 SOURCES = ("dimension", "new_finding", "previous", "reader", "formal", "presentation")
 BLOCK, ADVICE = "block", "advice"
 
@@ -116,6 +140,8 @@ class Finding:
     # presentation
     blocking_flag: bool = False
     previous_index: Any = None
+    # The request is about author approval or consent (out of scope; UD-20261126).
+    author_approval: bool = False
 
     @property
     def new(self) -> bool:
@@ -180,6 +206,10 @@ def _presentation_blocks(f: Finding, c: Context) -> bool:
 # ``hard_kind`` sits above every downgrade that must not touch a hard error. A finding that
 # no rule downgrades blocks (``material``).
 RULES: tuple[Rule, ...] = (
+    # Out of scope for every role (UD-20261126-no-author-approval-audit): above every blocking rule.
+    Rule("author_approval_out_of_scope", ADVICE, lambda f, c: f.author_approval,
+         "author approval, consent to submit, signatures and delegated authority are handled by the "
+         "pre-submission human review and the journal's submission system"),
     # Formal verifier (gate1_precision_v1, 2026-11-23; source routing 2026-11-23 audit item 12).
     Rule("formal_advisory", ADVICE, lambda f, c: f.source == "formal" and f.formal_category == "advisory",
          "the verifier itself classified the item as advice"),
@@ -302,8 +332,12 @@ def normalize(raw: Mapping[str, Any], *, source: str, context: Context, role: st
                        previous_index=raw.get("previous_item"), misconclusion=_text(raw.get("reader_misconclusion")),
                        structured="reader_misconclusion" in raw)
     if source == "previous":
-        return _previous(raw, role, context)
-    return _review_finding(raw, source, role, dimension, context)
+        finding = _previous(raw, role, context)
+        text = _text(raw.get("item"))
+    else:
+        finding = _review_finding(raw, source, role, dimension, context)
+        text = _text(raw.get("repair")) or _text(raw.get("finding")) or _text(raw.get("change"))
+    return dataclasses.replace(finding, author_approval=author_approval_request(text)) if text else finding
 
 
 def _previous(raw: Mapping[str, Any], role: str, context: Context) -> Finding:
@@ -439,6 +473,14 @@ def documentation_request(*texts: Any) -> bool:
     data, conclusion or citation error stated as present."""
     sentences = _sentences(*texts)
     return any(_DOCUMENT_REQUEST.search(s) for s in sentences) and not _states_present_error(sentences)
+
+
+def author_approval_request(text: Any) -> bool:
+    """Whether a request's substance is author approval, consent to submit, signatures or
+    delegated authority (out of scope since UD-20261126; ethics approval and participant consent
+    are not). Only the request itself is read, not its rationale or quoted evidence."""
+    body = str(text or "")
+    return bool(_AUTHOR_APPROVAL.search(body)) and not _NOT_AUTHOR_APPROVAL.search(body)
 
 
 def length_request(*texts: Any) -> bool:

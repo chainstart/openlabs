@@ -56,6 +56,13 @@ Check, in this order:
    The AI-use declaration is governed by the authors' disclosure policy: it must name every
    tool and model actually used. Do not ask to remove or shorten that list; judge only that the
    declaration is factual and free of preparation chronology.
+   Author approval is out of scope (user decision UD-20261126-no-author-approval-audit): do
+   not ask for, and do not track, confirmation that each author approved the manuscript or
+   consented to submission, signatures, authorship confirmation or authority delegated by
+   coauthors. The pre-submission human review and the journal's submission system handle
+   them. At most one advisory note; never a required change, blocker or unresolved item.
+   Still check that the AI disclosure is complete and that the contribution statement does
+   not claim human verification or computation that did not happen.
 5. Evidence. Do the stated computations and supporting materials match what the text claims?
    When the manuscript or its supporting materials state a pre-registered primary endpoint or
    decision rule, quote that rule and the reported outcome and check that the verdict follows
