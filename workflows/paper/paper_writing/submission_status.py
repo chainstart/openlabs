@@ -62,11 +62,35 @@ def latest_attempt(site: Mapping[str, Any]) -> Mapping[str, Any] | None:
     return max(attempts, key=_attempt_no) if attempts else None
 
 
+def _event_order(event: Mapping[str, Any]) -> tuple:
+    """Later events last: by occurrence, a correction after the event it corrects (a
+    ``status_corrected`` keeps the corrected letter's ``occurred_at``), then by creation."""
+    return (str(event.get("occurred_at") or ""), event.get("event_type") == "status_corrected",
+            str(event.get("created_at") or ""))
+
+
 def _closing_decision(site: Mapping[str, Any], attempt: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    """The decision event an attempt the site later set to ``closed`` carried (site order)."""
-    return next((event for event in site.get("submission_events") or []
-                 if event.get("attempt_id") == attempt.get("id")
-                 and event.get("to_status") in CLOSED - {"closed"}), None)
+    """The decision an attempt the site later set to ``closed`` carried: the last decision that
+    still holds. A ``status_corrected`` overrides the decision it corrected (20260907 hypercube,
+    2026-11-26: a misread ``accepted`` corrected to ``rejected`` was the attempt's first decision
+    event, and the registry was written back as accepted).
+
+    The status the closing event moved the attempt from names the decision when the site
+    records it; otherwise a decision a later correction moved away from no longer counts."""
+    events = sorted((event for event in site.get("submission_events") or []
+                     if event.get("attempt_id") == attempt.get("id")), key=_event_order)
+    decided = CLOSED - {"closed"}
+    decisions = [event for event in events if event.get("to_status") in decided]
+    closing = [event for event in events if event.get("to_status") == "closed" and event.get("from_status") in decided]
+    if closing:
+        carried = closing[-1]["from_status"]
+        decisions = [event for event in decisions if event.get("to_status") == carried]
+    else:
+        decisions = [event for index, event in enumerate(events) if event.get("to_status") in decided
+                     and not any(later.get("event_type") == "status_corrected"
+                                 and later.get("from_status") == event.get("to_status")
+                                 for later in events[index + 1:])]
+    return decisions[-1] if decisions else None
 
 
 def site_block(site: Mapping[str, Any], attempt: Mapping[str, Any]) -> dict[str, Any]:
