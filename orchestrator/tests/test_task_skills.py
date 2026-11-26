@@ -19,6 +19,7 @@ def test_program_control_tasks_get_their_own_skill_only() -> None:
         "openlabs-topic-admission",)
     assert _skills(task_type="direction_decision") == ("openlabs-direction-decision",)
     assert _skills(task_type="topic_retrospective") == ("openlabs-asset-retrospective",)
+    assert _skills(task_type="journal_mail_triage") == ("openlabs-journal-mail-triage",)
 
 
 def test_research_and_other_tasks_drop_the_program_control_skills() -> None:

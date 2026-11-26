@@ -22,6 +22,8 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from paper_writing import journal_triage
+
 
 FORWARD_PREFIX = re.compile(r"^\s*(?:(?:re|fw|fwd|aw|wg|sv|tr)\s*:|(?:转发|回复|答复)\s*[:：])\s*", re.I)
 PAPER = r"(?:manuscript|paper|submission|article|contribution)"
@@ -486,6 +488,21 @@ def record(directory, event, raw):
 
 REVIEW_TABLE = ("CREATE TABLE IF NOT EXISTS review (key TEXT PRIMARY KEY, kind TEXT, reason TEXT, paper_ids TEXT, "
                 "decisions TEXT, subject TEXT, sender TEXT, received_at TEXT, notified INTEGER DEFAULT 0)")
+# Columns of the model reading (journal_triage; 2026-11-26), added to an older table in place:
+# the redacted brief, the state (NULL none, pending, dispatched, done, failed, expired), the
+# model's raw answer, the orchestrator task that carries it, when the letter was queued, and
+# whether the paper's submitter was told (0 no, 1 yes, -1 the send failed).
+REVIEW_MODEL_COLUMNS = (("brief", "TEXT"), ("model_state", "TEXT"), ("model", "TEXT"), ("model_task", "TEXT"),
+                        ("queued_at", "TEXT"), ("handler_notified", "INTEGER DEFAULT 0"))
+
+
+def review_table(db):
+    """Create the review table, or add the model-reading columns to an older one."""
+    db.execute(REVIEW_TABLE)
+    present = {row[1] for row in db.execute("PRAGMA table_info(review)")}
+    for name, kind in REVIEW_MODEL_COLUMNS:
+        if name not in present:
+            db.execute(f"ALTER TABLE review ADD COLUMN {name} {kind}")
 
 
 def headers(raw):
@@ -499,18 +516,40 @@ def headers(raw):
         return ("", "", None)
 
 
-def record_review(directory, key, unused, raw=b""):
-    """Queue one letter for the person's review digest (once per key); see :class:`Unused`."""
+def record_review(directory, key, unused, raw=b"", papers=(), triage=False):
+    """Queue one letter for the person's review digest (once per key); see :class:`Unused`.
+
+    With ``triage`` (``[program] journal_mail_model_review``) a letter of a kind the model reads
+    also keeps its redacted brief and waits for the model (journal_triage); a letter whose brief
+    cannot be built goes to the digest as before."""
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     if directory.stat().st_mode & 0o077:
         raise ValueError("Private journal directory requires mode 0700")
     subject, sender, received = headers(raw)
+    letter = None
+    if triage and unused.kind in journal_triage.TRIAGE_KINDS:
+        try:
+            letter = journal_triage.brief(raw, unused, papers)
+        except Exception as exc:  # an unreadable letter is still reported, without a model reading
+            print("Journal letter brief failed", key, type(exc).__name__, flush=True)
     with sqlite3.connect(directory / "events.sqlite") as db:
-        db.execute(REVIEW_TABLE)
+        review_table(db)
         return bool(db.execute("INSERT OR IGNORE INTO review(key, kind, reason, paper_ids, decisions, subject, sender, "
-                               "received_at) VALUES (?,?,?,?,?,?,?,?)",
+                               "received_at, brief, model_state, queued_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                                (key, unused.kind, unused.reason[:500], json.dumps(list(unused.paper_ids)),
-                                json.dumps(list(unused.decisions)), subject, sender, received)).rowcount)
+                                json.dumps(list(unused.decisions)), subject, sender, received,
+                                json.dumps(letter, ensure_ascii=False) if letter else None,
+                                "pending" if letter else None,
+                                datetime.now(timezone.utc).isoformat())).rowcount)
+
+
+def triage_enabled(settings_file):
+    """``[program] journal_mail_model_review`` of the instance (read every round; off on error)."""
+    try:
+        program = tomllib.loads(Path(settings_file).read_text()).get("program") or {}
+    except (OSError, ValueError):
+        return False
+    return program.get("journal_mail_model_review") is True
 
 
 def read_letter(args, uid, raw, entries):
@@ -522,7 +561,7 @@ def read_letter(args, uid, raw, entries):
         print("Journal letter not used", f"uid={uid}", item.kind, ",".join(map(str, item.paper_ids)),
               "+".join(item.decisions), item.reason, flush=True)
         if item.review:
-            record_review(args.state, f"uid:{uid}", item, raw)
+            record_review(args.state, f"uid:{uid}", item, raw, entries, getattr(args, "triage", False))
     try:
         return parse(raw, entries, log=unused)
     except sqlite3.Error:
@@ -565,7 +604,9 @@ def poll(args, api):
             detail = api._request("GET", "/v1/papers/" + paper["paper_id"], allow_not_found=True)
             attempts = (detail or {}).get("submission_attempts", [])
             journals = {str(a["manuscript_number"]): a["journal_name"] for a in attempts if a.get("manuscript_number")}
-            entries.append({**paper, "numbers": list(journals), "attempt_journals": journals})
+            entries.append({**paper, "numbers": list(journals), "attempt_journals": journals,
+                            "attempts": [{"journal": a.get("journal_name"), "manuscript_number": a.get("manuscript_number"),
+                                          "status": a.get("status")} for a in attempts]})
         for uid in sorted(map(int, rows[0].split())):
             status, data = mailbox.uid("fetch", str(uid), "(BODY.PEEK[])")
             if status != "OK":
@@ -604,7 +645,8 @@ def main():
     lock = (args.state / "service.lock").open("a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     (args.state / "service.pid").write_text(str(os.getpid()) + "\n")
-    config = tomllib.loads((args.state.parent.parent / "openlabs.toml").read_text())
+    settings_file = args.state.parent.parent / "openlabs.toml"
+    config = tomllib.loads(settings_file.read_text())
     credentials, error = _credentials_file_values(Path(config["program"]["credentials_file"]))
     if error:
         parser.error(error)
@@ -613,6 +655,7 @@ def main():
     stop = Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     while not stop.is_set():
+        args.triage = triage_enabled(settings_file)
         try:
             try:
                 poll(args, api)

@@ -271,6 +271,11 @@ class ProgramSettings:
     # hold is left alone (paper_writing.site_assignments). Independent of ``auto_handoff``:
     # holding deliveries back must not hold back taking a submitter off a not-ready paper.
     site_assignment_sync: bool = True
+    # Model triage of journal letters (2026-11-26, user-approved design): letters the
+    # journal_mail rules leave to a person get a light-tier ``journal_mail_triage`` reading that
+    # the review digest shows ("系统判断为 X，请核对登记"); it never writes the site or the
+    # ledger. The journal_mail service reads the same key to queue briefs (openlabs.journal_triage).
+    journal_mail_model_review: bool = False
     # argv prefix of the paper-writing CLI used for delivery and handler
     # assignment (it owns the YAML/HTTP dependencies the orchestrator avoids).
     paper_writing_command: tuple[str, ...] = ("paper-writing",)
@@ -762,6 +767,8 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
     "data_curation": "light",
     "format_fix": "light",
     "figure_redraw": "light",
+    # Reading the journal letters the journal_mail rules leave to a person (2026-11-26).
+    "journal_mail_triage": "light",
 }
 # Routing reasons the orchestrator dispatches; a ``task_type:routing_reason``
 # key of ``[routing.task_tiers]`` must name one of them (typos would otherwise be
@@ -788,6 +795,8 @@ KNOWN_ROUTING_REASONS: frozenset[str] = frozenset({
     "review_text_revision", "review_evidence_remediation",
     # assets
     "topic_retrospective",
+    # journal_triage
+    "journal_mail_triage",
 })
 _TASK_TIER_PART = re.compile(r"[a-z][a-z0-9_]*")
 
@@ -1705,6 +1714,7 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         direction_limits=_direction_limits(program.get("direction_limits")),
         auto_handoff=program.get("auto_handoff", False) is True,
         site_assignment_sync=program.get("site_assignment_sync", True) is not False,
+        journal_mail_model_review=program.get("journal_mail_model_review", False) is True,
         paper_writing_command=_command(program.get("paper_writing_command"), ("paper-writing",)),
         handoff_max_attempts=_positive_int(program.get("handoff_max_attempts"), 3),
         credentials_file=_optional_path_text(program.get("credentials_file"),

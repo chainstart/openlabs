@@ -391,7 +391,7 @@ def test_interrupted_send_is_not_repeated_but_reported(tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(dispatch, "notify", lambda *a, **kw: sent.append(a))
     monkeypatch.setattr(dispatch, "ledger", lambda *a, **kw: None)
-    monkeypatch.setattr(dispatch, "notify_review", lambda args, db: False)
+    monkeypatch.setattr(dispatch, "notify_review", lambda *a, **kw: False)
     record(tmp_path, _event("rejected"), b"fixture")
     with sqlite3.connect(tmp_path / "events.sqlite") as db:
         db.execute("CREATE TABLE progress (message_key TEXT PRIMARY KEY, round_no INTEGER, notified INTEGER DEFAULT 0, "
