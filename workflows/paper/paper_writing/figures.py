@@ -238,7 +238,10 @@ def _run(command: list[str], *, cwd: Path, env: Mapping[str, str], timeout: int,
         raise FigureToolError(f"{Path(command[0]).name} timed out after {timeout}s") from exc
     log.write_text(proc.stdout[-30000:] + "\n" + proc.stderr[-10000:], encoding="utf-8")
     if proc.returncode != 0:
-        tail = "\n".join((proc.stdout + proc.stderr).strip().splitlines()[-12:])
+        lines = (proc.stdout + proc.stderr).strip().splitlines()
+        # A crash ends in a register dump; keep the line that says why (chromium FATAL/CHECK).
+        cause = [line for line in lines[:-12] if "FATAL" in line or "Check failed" in line][-2:]
+        tail = "\n".join([*cause, *lines[-12:]])
         raise FigureToolError(f"{Path(command[0]).name} failed (exit {proc.returncode}):\n{tail}")
 
 
@@ -412,14 +415,30 @@ def _font_config(tmp: Path) -> Path:
     return conf
 
 
+def _short_tmp_root() -> str:
+    """A writable directory with a short path for Chromium's socket directory."""
+    for candidate in ("/tmp", "/var/tmp", tempfile.gettempdir()):
+        if len(candidate) <= 40 and os.path.isdir(candidate) and os.access(candidate, os.W_OK | os.X_OK):
+            return candidate
+    return tempfile.gettempdir()
+
+
 def _render_svg(path: Path, tmp: Path, *, label: str, base: Path | None = None) -> Path:
     out = tmp / "figure-svg.pdf"
     chromium = resolve_tool("OPENLABS_FIG_CHROMIUM_PDF", "chromium-pdf")
     if chromium:
         env = dict(os.environ)
         env["FONTCONFIG_FILE"] = str(_font_config(tmp))
-        _run([chromium, str(path.resolve()), str(out)], cwd=base or path.parent, env=env, timeout=300,
-             log=tmp / "chromium.log")
+        # Chromium puts its SingletonSocket under $TMPDIR; a deep attempt-workspace TMPDIR made
+        # the socket path exceed the 108-byte sun_path limit and Chromium aborted (SIGABRT,
+        # "Socket path too long"; 7 of 16 ECG review runs on 2026-11-26 failed FIG-REBUILD).
+        short_tmp = Path(tempfile.mkdtemp(prefix="olchr-", dir=_short_tmp_root()))
+        env["TMPDIR"] = str(short_tmp)
+        try:
+            _run([chromium, str(path.resolve()), str(out)], cwd=base or path.parent, env=env,
+                 timeout=300, log=tmp / "chromium.log")
+        finally:
+            shutil.rmtree(short_tmp, ignore_errors=True)
         if not out.is_file():
             raise FigureToolError(f"{label}: chromium-pdf produced no PDF")
         return out

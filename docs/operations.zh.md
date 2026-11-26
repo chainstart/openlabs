@@ -1062,7 +1062,7 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
 起因：用户 2026-11-19 要求天文、电力市场（`power-market-backtest`，quant 实验室承载）、故障诊断评测审计
 （`phm-evaluation-audit`，ai 实验室承载）三条线同时试做，比较哪条线更容易出成果；合计在研不超过 5 个。
 
-- **按线在研上限** `[program].line_max_active_topics = { "<线>" = N, ... }`（默认空表，不按线限）。每条列出的线单独数
+- **按线在研上限** `[program.lines.<线>] slots = N`（不写则不按线限；2026-11-26 前为 `line_max_active_topics`）。每条设了 slots 的线单独数
   自己的 admitted + active + in_review 课题：满额（或空位已被等待立项的卡片填满）的线不出题、不送立项评审，立项评审一批
   最多送该线剩余空位张卡；该线已立项的课题在研数达到上限时不建 campaign（保持 admitted 排队，不丢弃）。全局
   `max_active_topics` 照旧生效；**只因本线满额而等待的 admitted 课题不占全局名额**，否则它会把别的线也堵住。
@@ -1801,13 +1801,16 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 `program.polish_mode` 列出停与不停的环节，`program.scout_blocked` 为 `polish_mode`。
 关掉开关（删掉该键或设 `false`）后下一轮恢复。
 
-**只放开指定线**（2026-11-25，NC 试产；用户：“NC产线完整就绪后，你尝试性的试产一篇看看，能不能走通流程”）：
-`[program] polish_exempt_lines = ["<线>"]` 让列出的线不受梳理模式约束——出题、卡片修正与修订、hold 放行、
-预筛、立项试算、立项评审、建 campaign、冻结课题自动重开都照常；其余线（含没有研究线的旧课题）仍按梳理模式停住，
-排队中的出题任务只取消非豁免线的。tick 报告 `program.polish_mode.exempt_lines` 列出豁免线。默认空表。
-比直接关梳理模式更窄：关掉会让所有线的卡片修正、修订、hold 放行和自动重开一起恢复（它们不看 `research_lines`）。
-
-**只供题的线**（2026-11-26，用户：“扩大搜索范围，更多的集思广益”）：`[program] polish_supply_only_lines = ["<线>"]`让列出的线在梳理模式下只恢复供题——出题、卡片修正与修订、预筛、立项试算、立项评审；建 campaign、hold 放行和冻结课题自动重开仍停，立项后的课题停在 admitted 等研究开工。tick 报告 `program.polish_mode.supply_only_lines` 列出这些线，排队中的出题任务不取消它们的。把线移到 `polish_exempt_lines` 或关掉梳理模式后，下一轮就建 campaign。
+**线状态表**（2026-11-26，精简第二批；用户批准“1-开始”）：每条线一张 `[program.lines.<线>]`，
+`mode` 取 `full`（出题到建 campaign 全部照常）、`supply_only`（只供题：出题、卡片修正与修订、预筛、立项试算、立项评审；
+建 campaign、hold 放行和冻结课题自动重开仍停，立项后的课题停在 admitted）、`polish`（两者都停）、`off`（两者都停，且退出出题轮转）；
+`slots` 是本线名额，`nc_aim = false` 让本线保留自己的模板标准。表的顺序就是出题轮转顺序。`polish_mode` 只作全局默认：
+没列在表里的线（含没有研究线的旧课题）在梳理模式下按 `polish`，否则按 `full`。判定只有一个函数
+`ProgramSettings.stops(stage, line)`（`supply` / `research`）。排队中的出题任务，凡所在线的模式停供题的，下一轮取消。
+tick 报告 `program.polish_mode` 给 `line_modes`、`exempt_lines`（full 线）和 `supply_only_lines`。
+它取代 `research_lines`、`polish_exempt_lines`（NC 试产 2026-11-25）、`polish_supply_only_lines`（2026-11-26，“扩大搜索范围”）、
+`line_max_active_topics` 和 `[program.funnel].exempt_lines`。旧键再兼容一个版本：没有表时按旧规则换算成表（判定不变），
+tick 报告 `warnings` 提示；表和旧键同时存在时以表为准，旧键被忽略并提示。`owner_mode` 仍是单独的流程开关（建议 `"all"`）。
 
 `nc_aim` 线的出题不再被常规模板的候选队列卡住（同日）：队列无可抽条目时 `candidate_queue_empty` 只对非
 `nc_aim` 线生效；出题说明注明模板与队列在 NC 立意下只是可选起点，卡片可以不设 `paper_template`。
@@ -1820,12 +1823,20 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 预筛 `topic_prescreen` 记为评审类任务（`DEFAULT_REVIEW_TASK_TYPES`，同日）：它与 worker 档立项评审一样是对另一模型族卡片的
 独立判断，按评审类额度计，任务类别限于 review/owner 的 Gemini 也能接。起因：出题者为 Codex 时预筛只能由 Claude 跑，
 Claude 按配速每约两小时放行一个，七张卡要排十几个小时。
-同线的预筛任务都挂在该线的出题 campaign 下，而一个 campaign 默认一次只跑一个任务；预筛因此加入可与同类并行的
-路由原因（`parallel_routing_reasons`，与立项评审同一机制），`prescreen_max_concurrent` 才真正生效。
+同线的预筛任务都挂在该线的出题 campaign 下，而一个 campaign 默认一次只跑一个任务。2026-11-26 起（精简第二批，用户“1-开始”）
+供题类任务按任务类型豁免这条规则（`db.SUPPLY_TASK_TYPES`：topic_scout、topic_prescreen、topic_card_repair、topic_revision，
+加上 routing_reason 为 topic_admission 的立项评审）：它们之间可在同一 campaign 并行，数量由各自的排程上限约束
+（`max_scouts_per_line`、`prescreen_max_concurrent`、`max_admissions_per_line`）；其他任务仍等 campaign 空闲。
+原来按 routing_reason 列白名单的 `parallel_routing_reasons` 已删除，新增供题任务类型不必再补白名单。
 负责人坐席的持久数据目录（同日）：坐席结束时它的大文件暂存区（artifact-stage）会被删除，坐席以 awaiting_remote
 结束时仍在下载的桥任务因此写不进 `.download.part`（试产首个课题的两个 MIMIC-IV-ECG 下载都这样失败，等它们的本机作业
 随之失败）。简报末尾现在给出 `<instance_artifacts>/campaign-data/<campaign>/`（`owner.campaign_data_dir`，渲染时创建），
 跨坐席保留；Tools 段说明跨坐席的下载和作业输入放那里。
+2026-11-26 起（精简第二批，用户“1-开始”）坐席只有这一个放大文件的根：简报末尾不再给出暂存区路径，下载、作业输入输出、
+日志、数据集都写到 campaign-data；`result.artifacts` 里声明的、本次 attempt 新写的文件（在 artifact store 内、不在工作区和
+objects 里），由控制面在收件时复制进暂存区冻结并按冻结副本记哈希（`owner.settle_staged_artifacts` 的 `live_root`），原件留给后续坐席。
+暂存区只用于冻结声明的产物（和收走工作区里的大文件），不再是坐席要自己选的第二个位置；此前提交会以
+“new artifact must use attempt staging, not a live artifact path”拒收这类文件（11-14 至 11-25 共 14 次）。
 
 尚无稿件的在研课题用 `program pause-topic` 暂停，不冻结：
 

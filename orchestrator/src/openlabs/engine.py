@@ -96,7 +96,6 @@ from .program_flow import (
     SCOUT_SKILL,
     packet_read_resources,
     parallel_admission_room,
-    parallel_routing_reasons,
     record_admission_deferral,
     report_scheduling_counts,
     run_program_pipeline,
@@ -2830,6 +2829,12 @@ def ingest_results(
                     attempt_workspace.artifact_staging_root
                     if attempt_workspace is not None
                     else None,
+                    live_root=paths.artifacts,
+                    started=(attempt_started(attempt_workspace)
+                             if attempt_workspace is not None else None),
+                    keep=(paths.artifacts / "objects", paths.artifacts / "result-bundles",
+                          *((attempt_workspace.campaign_root,)
+                            if attempt_workspace is not None else ())),
                 )
                 if corrected:
                     runtime["staged_hash_corrections"] = corrected
@@ -4175,6 +4180,8 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
         report.warnings.extend(utilization.runner_model_warnings(settings))
     except Exception as exc:  # noqa: BLE001 - advisory
         report.warnings.append(f"runner model check failed: {exc}")
+    # Legacy [program] line keys converted to (or ignored beside) [program.lines], 2026-11-26.
+    report.warnings.extend(settings.program.config_warnings)
 
     # Active project configs are desired state: bind their workstreams before
     # processing completions so a safety-window boundary can roll over instead of idle.
@@ -4307,7 +4314,6 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
                     resource_capacity=resource_capacity.to_dict(),
                     route=router.route,
                     rank=rank,
-                    parallel_routing_reasons=parallel_routing_reasons(settings),
                 )
             else:
                 task = db.claim_next_task(

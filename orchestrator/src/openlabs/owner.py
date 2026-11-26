@@ -307,9 +307,58 @@ def _with_staged(
     return result
 
 
+# Where :func:`settle_staged_artifacts` puts the frozen copy of a declared live output.
+STAGED_OUTPUTS_DIR = "declared"
+
+
+def _stage_live_outputs(artifacts: list[Any], staging: Path, *, live_root: Path | None,
+                        started: float | None, keep: tuple[Path, ...]) -> list[Any]:
+    """Declared new files under ``live_root`` (the artifact store) repointed to a staged copy.
+
+    The seat writes downloads, job inputs and large outputs to one root, the durable campaign
+    data directory (2026-11-26, slimming batch 2). A declared file there (or anywhere else in
+    the artifact store) that this attempt wrote (mtime at or after ``started``) is copied into
+    staging, which only the control plane uses to freeze declared outputs; the original stays
+    for later seats. The commit used to refuse such a file as a live artifact path (14 attempts,
+    2026-11-14..25). Files in ``keep`` (the campaign workspace, the content store) and older
+    files (cited, not produced) are left alone.
+    """
+
+    import shutil
+
+    if live_root is None:
+        return artifacts
+    live = live_root.resolve()
+    target_root = staging / STAGED_OUTPUTS_DIR
+    copied: dict[Path, Path] = {}
+    result: list[Any] = []
+    for item in artifacts:
+        path = (_uri_path(str(item["uri"])) if isinstance(item, Mapping)
+                and str(item.get("uri") or "").startswith("file:") else None)
+        if (path is None or not path.is_relative_to(live) or path.is_relative_to(staging)
+                or any(path.is_relative_to(root) for root in keep)
+                or path.is_symlink() or not path.is_file()
+                or (started is not None and path.stat().st_mtime < started)):
+            result.append(item)
+            continue
+        if path not in copied:
+            target = target_root / path.relative_to(live)
+            if target.exists():
+                target = target.with_name(f"{target.name}.{sha256_file(path)[:8]}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target)
+            copied[path] = target
+        result.append({**item, "uri": copied[path].as_uri()})
+    return result
+
+
 def settle_staged_artifacts(
     payload: Mapping[str, Any],
     staging_root: Path | None,
+    *,
+    live_root: Path | None = None,
+    started: float | None = None,
+    keep: tuple[Path, ...] = (),
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     """Freeze each declared file in attempt staging and bind it to its frozen hash.
 
@@ -319,6 +368,9 @@ def settle_staged_artifacts(
     recorded. A declared hash that differs is corrected, never refused; the pair is
     returned so the caller can record it. Artifacts outside staging (existing,
     committed objects) are left alone and stay strictly hash-checked by the gate.
+    A new declared file under ``live_root`` (the campaign data the seat writes to) is
+    first copied into staging (:func:`_stage_live_outputs`), so the commit never refuses
+    it as a live artifact path.
     """
 
     import os
@@ -329,6 +381,9 @@ def settle_staged_artifacts(
     if staging_root is None or not staging_root.is_dir() or not isinstance(artifacts, list):
         return result, []
     staging = staging_root.resolve()
+    artifacts = _stage_live_outputs(
+        artifacts, staging, live_root=live_root, started=started,
+        keep=tuple(root.resolve() for root in keep))
     frozen: dict[Path, str] = {}
     corrections: list[dict[str, str]] = []
     settled: list[Any] = []
@@ -3199,10 +3254,10 @@ def render_brief(
         *[f"  - {item}" for item in tools],
         f"- Reusable assets: DATA/{settings.program.asset_index_path}. Downloads: "
         "`/workspace/.download-bridge/download-submit --url URL --output /workspace/... "
-        "--route auto --wait`. A download still running when this seat ends, and data that "
-        "later seats or queued jobs read, go under the durable campaign data directory named "
-        "at the end of this brief (kept across seats; the large-outputs staging root is "
-        "removed when the seat ends, so a download or job input there is lost).",
+        "--route auto --wait`. Everything too large for the workspace (downloads, job "
+        "inputs and outputs, logs) goes under the campaign data directory named at the end "
+        "of this brief: one root, kept across seats; files you declare in `artifacts` are "
+        "archived from there.",
         "- Manuscripts: `paper-writing` CLI (CODE/workflows/paper/skills/openlabs-paper-writing/"
         "SKILL.md). Use the writing policies below when preparing a manuscript.",
         *([f"- Paper field: read `$openlabs-{profile['field']}-paper` before writing. "
@@ -3230,8 +3285,9 @@ def render_brief(
         "\"reason\"}`. Only status is required (job_ids, reason where they apply); the control "
         "plane fills the rest.",
         "- Files: workspace = small text (<= 5 MB: notes, JSON, CSV, scripts, figures); logs, "
-        "chains, archives, PDFs, big files -> large-outputs dir (footer, declared for you; "
-        "strays are moved there).",
+        "chains, archives, PDFs, downloads, job inputs, big files -> campaign data dir "
+        "(footer; one root, kept across seats; declare the files you cite; strays left in the "
+        "workspace are archived and taken out of it).",
         "- Frozen for a line-level fact? Add `reopen_when` (CODE/orchestrator/src/openlabs/"
         "reopen.py): all true -> reopened once, same pre-registration.",
         "",
@@ -3382,10 +3438,11 @@ def render_seat_footer(task: Mapping[str, Any], *, deadline: datetime,
         f"{deadline.strftime('%Y-%m-%d %H:%M')} UTC.\n"
         f"- result path (the status JSON): `{where['result']}`\n"
         f"- writable campaign workspace: `{where['staged']}` (promoted when the result passes)\n"
-        f"- large outputs (datasets, chains, archives, logs, downloaded PDFs; declared for "
-        f"you): `{where['staging']}`\n"
-        + (f"- durable campaign data (downloads and job inputs that outlive this seat): "
-           f"`{durable}`\n" if durable is not None else "")
+        + (f"- campaign data (downloads, job inputs, datasets, chains, archives, logs, "
+           f"downloaded PDFs; kept across seats; declare result files in `artifacts` and "
+           f"the control plane archives a copy): `{durable}`\n" if durable is not None else
+           f"- large outputs (datasets, chains, archives, logs, downloaded PDFs; declared for "
+           f"you): `{where['staging']}`\n")
         + f"- canonical campaign, read-only: `{where['canonical']}`\n"
         f"- input of this seat: `{task.get('input_path')}`\n"
     )
@@ -3447,6 +3504,7 @@ def spec_block(
         "work_log": where["work_log"],
         "preregistration_sha256": sha if SHA256.fullmatch(sha) else None,
         "artifact_staging_root": where["staging"] or None,
+        "campaign_data_root": str(campaign_data_dir(paths, str(campaign.get("campaign_id") or ""))),
         "claude_subagent_model": settings.program.owner.claude_subagent_model,
         "campaign_compute_threads": settings.program.campaign_compute_threads,
         "deadline": deadline.isoformat().replace("+00:00", "Z"),

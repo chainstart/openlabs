@@ -112,7 +112,8 @@ def test_brief_says_where_files_go(tmp_path, monkeypatch) -> None:
     text = owner.render_brief(
         paths, settings, task=seat, campaign=db.campaign(topic["campaign_id"]), topic=topic,
         adapter_family=None, deadline=__import__("datetime").datetime(2026, 11, 14))
-    assert "small text" in text and "large-outputs dir" in text and "moved there" in text
+    assert "small text" in text and "campaign data dir" in text and "one root" in text
+    assert "large-outputs" not in text
 
 
 def test_brief_and_review_notes_carry_the_writing_rules(tmp_path, monkeypatch) -> None:
@@ -261,3 +262,79 @@ def test_brief_names_a_durable_campaign_data_dir(tmp_path, monkeypatch) -> None:
     assert "kept across seats" in body and str(durable) not in body  # static part stays static
     assert str(durable) in footer and durable.is_dir()
     assert durable.parent == paths.instance_artifacts / "campaign-data"
+    # One root for the seat's large files (2026-11-26): the footer no longer offers staging.
+    assert "large outputs" not in footer and "artifact-stage" not in footer
+    assert block["campaign_data_root"] == str(durable)
+
+
+def test_new_declared_campaign_data_files_are_frozen_into_staging(tmp_path) -> None:
+    import os
+
+    from openlabs.contracts import sha256_file
+
+    store = tmp_path / "artifacts"
+    stage = store / "attempt" / "artifact-stage"
+    stage.mkdir(parents=True)
+    data = store / "instances" / "x" / "campaign-data" / "topic-1"
+    data.mkdir(parents=True)
+    new = data / "chains" / "run.npz"
+    new.parent.mkdir()
+    new.write_bytes(b"chain")
+    old = data / "download.csv"
+    old.write_text("a,b\n")
+    os.utime(old, (1_000, 1_000))                    # written before this attempt began
+    workspace = store / "attempt" / "campaign"
+    workspace.mkdir()
+    note = workspace / "note.json"
+    note.write_text("{}\n")
+    payload = {"artifacts": [
+        {"artifact_id": "chain", "uri": new.as_uri(), "sha256": sha256_file(new)},
+        {"artifact_id": "data", "uri": old.as_uri(), "sha256": sha256_file(old)},
+        {"artifact_id": "note", "uri": note.as_uri(), "sha256": sha256_file(note)},
+    ]}
+    settled, corrections = owner.settle_staged_artifacts(
+        payload, stage, live_root=store, started=2_000, keep=(workspace,))
+    chain, data_entry, note_entry = settled["artifacts"]
+    staged = Path(chain["uri"].removeprefix("file://"))
+    assert staged.is_relative_to(stage.resolve()) and staged.read_bytes() == b"chain"
+    assert new.is_file()                             # the original stays for later seats
+    assert data_entry["uri"] == old.as_uri()         # cited, not produced: left alone
+    assert note_entry["uri"] == note.as_uri()        # campaign workspace: left alone
+    assert corrections == []
+    # Without a live root nothing outside staging moves (the old behaviour).
+    assert owner.settle_staged_artifacts(payload, stage)[0]["artifacts"][0]["uri"] == new.as_uri()
+
+
+def test_owner_seat_citing_a_new_campaign_data_file_is_committed(tmp_path, monkeypatch):
+    # Before 2026-11-26 the commit refused it: "new artifact must use attempt staging, not a
+    # live artifact path" (14 attempts 2026-11-14..25).
+    from openlabs.attempts import prepare_attempt_workspace
+    from openlabs.contracts import RECEIPT_SCHEMA, sha256_file
+    from test_owner_mode import _first_seat, _owner_program
+    from test_research_program_flow import _tick
+
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    seat = _first_seat(paths, db, settings, monkeypatch, topic)
+    attempt_id = str(seat["current_attempt_id"])
+    workspace = prepare_attempt_workspace(paths, seat, db.campaign(seat["campaign_id"]))
+    chain = owner.campaign_data_dir(paths, topic["campaign_id"]) / "chains" / "run.npz"
+    chain.parent.mkdir(parents=True)
+    chain.write_bytes(b"posterior draws")
+    output = workspace.campaign_root / "results" / "seat" / "result.json"
+    db.bind_attempt_spec(seat["task_id"], attempt_id=attempt_id, lab_id="ai",
+                         output_path=str(output))
+    db.mark_running(seat["task_id"], attempt_id=attempt_id, owner="test", pid=1,
+                    lease_seconds=600)
+    atomic_write_json(output, {"status": "continuing", "summary": "chain advanced",
+                               "artifacts": [{"uri": str(chain),
+                                              "sha256": sha256_file(chain)}]})
+    atomic_write_json(paths.result_inbox / f"{attempt_id}.json", {
+        "schema_version": RECEIPT_SCHEMA, "task_id": seat["task_id"],
+        "attempt_id": attempt_id, "campaign_id": seat["campaign_id"], "lab_id": "ai",
+        "domain": seat["domain"], "agent_role": seat["agent_role"],
+        "result_path": str(output), "sha256": sha256_file(output),
+        "runtime": {"duration_seconds": 10.0, "exit_code": 0, "runner": seat["runner"],
+                    "session_id": "s1"}})
+    _tick(paths, settings, monkeypatch)
+    assert db.task(seat["task_id"])["status"] == "succeeded", db.task(seat["task_id"])
+    assert chain.read_bytes() == b"posterior draws"   # still there for the next seat

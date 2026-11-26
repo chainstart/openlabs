@@ -220,11 +220,15 @@ def _data_boundary_problems(context: Mapping[str, Any]) -> list[str]:
         return [f"campaign data boundary could not be checked: {exc}"]
     if not violations:
         return []
-    staging = str(context.get("artifact_staging_root") or metadata.get(
-        "artifact_staging_root") or "the artifact staging root")
+    owner = context.get("owner") if isinstance(context.get("owner"), Mapping) else {}
+    # An owner seat has one root for large files, its campaign data (2026-11-26).
+    staging = str(owner.get("campaign_data_root") or context.get("artifact_staging_root")
+                  or metadata.get("artifact_staging_root") or "the artifact staging root")
+    where = "campaign data directory" if owner.get("campaign_data_root") else (
+        "artifact staging root")
     return [
         "campaign data boundary: the workspace takes only small text files (<= 5 MB; notes, "
-        "JSON, CSV, scripts, receipts); move these to the artifact staging root "
+        f"JSON, CSV, scripts, receipts); move these to the {where} "
         f"{staging} (same relative path), declare each in result.artifacts with its "
         "file:// URI and SHA-256, and update any path that cites them (an access_receipt "
         "stays a small text file in the workspace): " + "; ".join(violations[:8])

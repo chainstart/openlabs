@@ -44,7 +44,7 @@ from . import line_facts
 from . import nc_funnel
 from . import supply_screen
 from . import target_stage
-from .config import FactorySettings, WorkspacePaths, dispatch_runner
+from .config import RESEARCH_STAGE, SUPPLY_STAGE, FactorySettings, WorkspacePaths, dispatch_runner
 from .utilization import compute_backlog
 from .contracts import (
     ADMISSION_POLICY_VERSION,
@@ -1353,7 +1353,7 @@ def schedule_scouts(
     program = settings.program
     if not program.enabled:
         return [], "program_disabled"
-    if program.polish_blocks_all():
+    if program.stops(SUPPLY_STAGE):
         return [], POLISH_MODE_REASON
     if not budget_control.routing_enabled(settings):
         # Without provider routing the proposer and judge families cannot be
@@ -1371,12 +1371,12 @@ def schedule_scouts(
         return [], COMPUTE_BACKLOG_REASON
     all_projects = program_projects(paths)
     rotating = _rotation_projects(settings, all_projects)
-    if program.polish_mode:
-        # Polish mode with exempt (or supply-only) lines: only those lines scout.
-        rotating = [project for project in rotating
-                    if not program.polish_blocks_supply(project.research_line)]
-        if not rotating:
-            return [], POLISH_MODE_REASON
+    # Only lines whose mode lets supply run (full, supply_only) scout ([program.lines]).
+    scouting = [project for project in rotating
+                if not program.stops(SUPPLY_STAGE, project.research_line)]
+    if rotating and not scouting:
+        return [], POLISH_MODE_REASON
+    rotating = scouting
     blocked_lines = lines_not_ready(
         paths, settings, [project.research_line for project in rotating], db=db,
     )
@@ -2271,7 +2271,7 @@ def schedule_card_repairs(
     still invalid is final (``card_repair.status = not_repairable``).
     """
 
-    if settings.program.polish_blocks_all():
+    if settings.program.stops(SUPPLY_STAGE):
         return []
     ledger = open_topic_ledger(paths, settings.program)
     moment = now or _now_moment()
@@ -2280,7 +2280,7 @@ def schedule_card_repairs(
         topic_id = str(topic["topic_id"])
         if last_rejection_reason(topic) != "card_invalid" or topic.get("repair_of"):
             continue
-        if settings.program.polish_blocks_supply(topic.get("research_line")):
+        if settings.program.stops(SUPPLY_STAGE, topic.get("research_line")):
             continue
         state = topic.get("card_repair")
         if isinstance(state, Mapping):
@@ -2452,7 +2452,7 @@ def schedule_revisions(
     program = settings.program
     if not program.enabled:
         return [], "program_disabled"
-    if program.polish_blocks_all():
+    if program.stops(SUPPLY_STAGE):
         return [], POLISH_MODE_REASON
     if not budget_control.routing_enabled(settings):
         return [], "provider_routing_not_configured"
@@ -2466,7 +2466,7 @@ def schedule_revisions(
             continue
         if state.get("status") not in (None, "eligible") or not revision_eligible(topic):
             continue
-        if program.polish_blocks_supply(topic.get("research_line")):
+        if program.stops(SUPPLY_STAGE, topic.get("research_line")):
             continue
         pending.append(topic)
     if not pending:
@@ -2658,7 +2658,7 @@ def release_ready_holds(
     back to the gate or be admitted, i.e. new research, which polish mode stops.
     """
 
-    if settings.program.polish_blocks_all():
+    if settings.program.stops(RESEARCH_STAGE):
         return []
     ledger = open_topic_ledger(paths, settings.program)
     lines_document = None
@@ -2667,7 +2667,7 @@ def release_ready_holds(
         if last_rejection_reason(topic) != "admission_hold":
             continue
         line = str(topic.get("research_line") or "").strip()
-        if not line or settings.program.polish_blocks(line):
+        if not line or settings.program.stops(RESEARCH_STAGE, line):
             continue
         if lines_document is None:
             lines_document = research_lines_document(paths, settings) or {}
@@ -2739,7 +2739,7 @@ def schedule_topic_admission(
 
     if not settings.program.enabled:
         return ReviewSchedule(reason="program_disabled")
-    if settings.program.polish_blocks_all():
+    if settings.program.stops(SUPPLY_STAGE):
         # Polish mode: proposed cards stay proposed; no admission review starts.
         return ReviewSchedule(reason=POLISH_MODE_REASON)
     if not budget_control.routing_enabled(settings):
@@ -2749,7 +2749,7 @@ def schedule_topic_admission(
         return ReviewSchedule(reason=COMPUTE_BACKLOG_REASON)
     campaign_id = str(campaign["campaign_id"])
     project = load_project(str(campaign["project_config_path"]))
-    if settings.program.polish_blocks_supply(project.research_line):
+    if settings.program.stops(SUPPLY_STAGE, project.research_line):
         # Polish mode with exempt (or supply-only) lines: only their cards are reviewed.
         return ReviewSchedule(reason=POLISH_MODE_REASON)
     ledger = open_topic_ledger(paths, settings.program)
@@ -3124,22 +3124,6 @@ def parallel_admission_room(
     return bool(flights) and all(
         task.get("routing_reason") == ADMISSION_ROUTING_REASON for task in flights
     )
-
-
-def parallel_routing_reasons(settings: FactorySettings) -> tuple[str, ...]:
-    """Routing reasons whose tasks may run beside a sibling of the same campaign."""
-
-    if settings.program.enabled:
-        # Prescreens (NC funnel) of one line share its scout campaign; their own cap is
-        # [program.funnel].prescreen_max_concurrent (2026-11-25 trial: without this they ran
-        # one at a time).
-        reasons = (ADMISSION_ROUTING_REASON, nc_funnel.PRESCREEN_ROUTING_REASON)
-        if settings.program.max_scouts_per_line > 1:
-            # Several scouts of one line (2026-11-26) share its scout campaign;
-            # schedule_scouts bounds them (max_scouts_per_line, max_concurrent_scouts).
-            reasons += (SCOUT_ROUTING_REASON,)
-        return reasons
-    return ()
 
 
 def record_admission_deferral(
@@ -3563,7 +3547,7 @@ def materialize_waiting_topics(
 
     campaign_ids: list[str] = []
     task_ids: list[str] = []
-    if settings.program.polish_blocks_all():
+    if settings.program.stops(RESEARCH_STAGE):
         # Polish mode: admitted topics keep their admission and wait for their campaign.
         return CandidateSpawn(campaign_ids=(), task_ids=())
     if compute_backlogged(settings):
@@ -3587,7 +3571,7 @@ def materialize_waiting_topics(
         queue = [topic for topic in waiting_admitted(document, admission_sequence(db))
                  if str(topic["topic_id"]) not in skipped
                  and str(topic.get("program_project_id") or "") not in parked
-                 and not settings.program.polish_blocks(topic.get("research_line"))
+                 and not settings.program.stops(RESEARCH_STAGE, topic.get("research_line"))
                  and status.line_can_materialize(topic.get("research_line"))]
         if not queue:
             break
@@ -3834,26 +3818,30 @@ def run_program_pipeline(
     if not settings.program.enabled:
         return
     info = report.program
-    if settings.program.polish_mode:
-        exempt = settings.program.polish_exempt_lines
-        supply_only = settings.program.polish_supply_only_lines
-        scouting = (*exempt, *supply_only)
+    program = settings.program
+    stopped = {line: entry.mode for line, entry in program.lines.items()
+               if program.stops(SUPPLY_STAGE, line) or program.stops(RESEARCH_STAGE, line)}
+    if program.polish_mode or stopped:
         info["polish_mode"] = {
-            "on": True,
-            "exempt_lines": list(exempt),
+            "on": program.polish_mode,
+            "line_modes": {line: entry.mode for line, entry in program.lines.items()},
+            "exempt_lines": [line for line, entry in program.lines.items()
+                             if entry.mode == "full"],
             # Scout, prescreen and admission only; no research start (2026-11-26).
-            "supply_only_lines": list(supply_only),
+            "supply_only_lines": [line for line, entry in program.lines.items()
+                                  if entry.mode == "supply_only"],
             "paused": ["topic_scout", "topic_card_repair", "topic_revision",
                        "topic_admission", "admission_pilot", "auto_reopen",
                        "materialize"],
             "running": ["topics_in_research", "writing", "reviews", "delivery",
                         "delivered_revisions", "operator_reopen_grants", "journal_mail"],
-            # Scouts queued before the switch never start (a leased one finishes).
+            # Scouts queued for a line whose mode stops supply never start (a leased one
+            # finishes).
             "cancelled": list(db.cancel_queued_tasks(
                 [str(task["task_id"]) for task in _program_tasks(
                     db, statuses=("queued",), where="AND task_type=?",
                     parameters=(SCOUT_TASK_TYPE,))
-                 if not scouting or _scout_task_line(db, task) not in scouting],
+                 if program.stops(SUPPLY_STAGE, _scout_task_line(db, task))],
                 reason=POLISH_MODE_REASON)),
         }
     backlog = compute_backlog(settings)

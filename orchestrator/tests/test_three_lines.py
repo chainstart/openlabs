@@ -12,7 +12,7 @@ import test_parallel_program as parallel
 import test_research_lines as lines_tests
 import test_research_program_flow as flow
 from openlabs import card_precheck, local_compute, utilization
-from openlabs.config import load_program_settings
+from openlabs.config import LineSettings, load_program_settings
 from openlabs.contracts import atomic_write_json
 from openlabs.program import (
     activate_topic,
@@ -132,7 +132,7 @@ def _seed(ledger, db, settings, project_id: str, line: str, n: int, status: str,
 def _full_astro(tmp_path, **program):
     paths, db, settings = lines_tests._line_program(
         tmp_path, (ASTRO, ENGINEERING), max_concurrent_scouts=1, candidate_pool_low_water=4,
-        scout_min_interval_hours=0, line_max_active_topics={ASTRO: 2, ENGINEERING: 1},
+        scout_min_interval_hours=0, lines={ASTRO: LineSettings(slots=2), ENGINEERING: LineSettings(slots=1)},
         max_active_topics=5, **program)
     projects = {load_project(path).research_line: load_project(path).project_id
                 for path in paths.project_config_paths() if load_project(path).research_line}
@@ -184,13 +184,13 @@ def test_admission_of_a_full_line_waits_for_its_slot(tmp_path, monkeypatch):
     lines_tests._make_line_project(paths)
     lines_tests._lines_file(paths, "ready")
     db = flow._db(paths)
-    settings = flow._settings(line_max_active_topics={lines_tests.LINE: 0})
+    settings = flow._settings(lines={lines_tests.LINE: LineSettings(slots=0)})
     card = lines_tests._line_card(0)
     first = flow._tick(paths, settings, monkeypatch)
     assert first.program["scouts_scheduled"] == []
     assert first.program["scout_blocked"] == LINE_SLOTS_FULL_REASON
     # With a slot the same line scouts and reviews as before.
-    settings = flow._settings(line_max_active_topics={lines_tests.LINE: 1})
+    settings = flow._settings(lines={lines_tests.LINE: LineSettings(slots=1)})
     _, admission, _ = flow._to_admission(paths, db, settings, monkeypatch, [card])
     assert len(flow._packet(admission)["topic_cards"]) == 1
 

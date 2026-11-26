@@ -21,7 +21,7 @@ import test_research_program_flow as flow
 
 from openlabs import budget as budget_control
 from openlabs import nc_funnel, program_flow
-from openlabs.config import FunnelSettings, RunnerSpec, load_program_settings
+from openlabs.config import FunnelSettings, LineSettings, RunnerSpec, load_program_settings
 from openlabs.program import open_topic_ledger
 from openlabs.program_flow import schedule_scouts
 from test_parallel_program import NOW
@@ -48,7 +48,7 @@ def _with(settings, **program):
 def test_config_keys_and_polish_predicates() -> None:
     default = load_program_settings({})
     assert default.max_scouts_per_line == 1 and default.scout_runners == ()
-    assert default.polish_supply_only_lines == ()
+    assert default.lines == {}
     program = load_program_settings({
         "polish_mode": True, "polish_exempt_lines": ["ecg"],
         "polish_supply_only_lines": ["astro", "open"], "max_scouts_per_line": 2,
@@ -56,12 +56,12 @@ def test_config_keys_and_polish_predicates() -> None:
     assert program.max_scouts_per_line == 2
     assert program.scout_runners == ("worker_gpt", "worker_gemini")
     # A supply-only line scouts and is admitted, but starts no research.
-    assert program.polish_blocks_supply("astro") is False
-    assert program.polish_blocks("astro") is True
-    assert program.polish_blocks_supply("ecg") is False and program.polish_blocks("ecg") is False
-    assert program.polish_blocks_supply("power") is True
+    assert program.stops("supply", "astro") is False
+    assert program.stops("research", "astro") is True
+    assert program.stops("supply", "ecg") is False and program.stops("research", "ecg") is False
+    assert program.stops("supply", "power") is True
     only = load_program_settings({"polish_mode": True, "polish_supply_only_lines": ["astro"]})
-    assert only.polish_blocks_all() is False
+    assert only.stops("supply") is False
     assert load_program_settings({"funnel": {"admission_min_band": "nc"}}).funnel \
         .admission_min_band == "nc"
 
@@ -134,7 +134,7 @@ def test_supply_only_line_scouts_under_polish_mode_and_is_not_cancelled(tmp_path
     paths, db, settings = lines_tests._line_program(
         tmp_path, LINES, max_concurrent_scouts=5, candidate_pool_low_water=8,
         scout_min_interval_hours=0)
-    polish = _with(settings, polish_mode=True, polish_supply_only_lines=("astro-photometry",))
+    polish = _with(settings, polish_mode=True, lines={"astro-photometry": LineSettings(mode="supply_only")})
     scheduled, _ = schedule_scouts(db, paths, polish, lead_short=False, now=NOW)
     assert [item.research_line for item in scheduled] == ["astro-photometry"]
     with db.connect() as connection:
@@ -148,23 +148,37 @@ def test_supply_only_line_scouts_under_polish_mode_and_is_not_cancelled(tmp_path
 # --------------------------------------------------------------------------- routing
 
 
-def test_scouts_and_prescreens_of_one_line_run_side_by_side(tmp_path) -> None:
+def test_supply_tasks_of_one_line_run_side_by_side(tmp_path) -> None:
+    """Scouts, prescreens and card repairs share a scout campaign by task type (2026-11-26)."""
+
     _, db = routing._setup(tmp_path)
-    single = program_flow.parallel_routing_reasons(flow._settings())
-    assert "program_slot_open" not in single
-    reasons = program_flow.parallel_routing_reasons(flow._settings(max_scouts_per_line=2))
-    assert "program_slot_open" in reasons
     for n in range(2):
         routing._enqueue(db, f"s{n}", "line-scout", task_type="topic_scout",
                          routing_reason="program_slot_open")
     routing._enqueue(db, "p0", "line-scout", task_type="topic_prescreen",
                      routing_reason="topic_prescreen")
-    claimed = [db.claim_next_task(owner="t", lease_seconds=60, parallel_routing_reasons=reasons)
-               for _ in range(3)]
-    assert sorted(task["task_id"] for task in claimed) == ["p0", "s0", "s1"]
+    routing._enqueue(db, "c0", "line-scout", task_type="topic_card_repair",
+                     routing_reason="any-reason")
+    claimed = [db.claim_next_task(owner="t", lease_seconds=60) for _ in range(4)]
+    assert sorted(task["task_id"] for task in claimed) == ["c0", "p0", "s0", "s1"]
     routing._enqueue(db, "r", "line-scout", task_type="research")
-    assert db.claim_next_task(owner="t", lease_seconds=60,
-                              parallel_routing_reasons=reasons) is None
+    assert db.claim_next_task(owner="t", lease_seconds=60) is None
+    # An ordinary portfolio review is no supply task: it waits for its campaign.
+    routing._enqueue(db, "o0", "ordinary", task_type="research")
+    routing._enqueue(db, "o1", "ordinary", task_type="portfolio_review",
+                     routing_reason="new_project_results_review")
+    assert db.claim_next_task(owner="t", lease_seconds=60)["task_id"] == "o0"
+    assert db.claim_next_task(owner="t", lease_seconds=60) is None
+
+
+def test_supply_task_types_match_the_program_constants() -> None:
+    from openlabs import db as db_module
+
+    assert set(db_module.SUPPLY_TASK_TYPES) == {
+        program_flow.SCOUT_TASK_TYPE, program_flow.REPAIR_TASK_TYPE,
+        program_flow.REVISION_TASK_TYPE, nc_funnel.PRESCREEN_TASK_TYPE}
+    assert "'topic_admission'" in db_module.supply_task_sql("tasks")
+    assert program_flow.ADMISSION_ROUTING_REASON == "topic_admission"
 
 
 def _scout(db, paths, task_id: str, preferred: str | None, **kwargs) -> None:
@@ -297,7 +311,7 @@ def test_nc_floor_end_to_end_and_supply_only_admits_without_research(tmp_path,
                                                                       monkeypatch) -> None:
     paths, db, settings = nc._setup(tmp_path, admission_min_band="nc")
     settings = _with(settings, polish_mode=True,
-                     polish_supply_only_lines=(lines_tests.LINE,))
+                     lines={lines_tests.LINE: LineSettings(mode="supply_only")})
     _, report = flow._scout_round(paths, db, settings, monkeypatch, [nc._nc_card()])
     assert report.errors == [], report.errors
     registered, = report.program["cards_registered"]
@@ -322,7 +336,7 @@ def test_nc_floor_end_to_end_and_supply_only_admits_without_research(tmp_path,
     topic = open_topic_ledger(paths, settings.program).topic(topic_id)
     # Admitted, but a supply-only line starts no research under polish mode.
     assert topic["status"] == "admitted" and not topic.get("campaign_id")
-    exempt = _with(settings, polish_exempt_lines=(lines_tests.LINE,))
+    exempt = _with(settings, lines={lines_tests.LINE: LineSettings(mode="full")})
     report = flow._tick(paths, exempt, monkeypatch)
     assert open_topic_ledger(paths, settings.program).topic(topic_id)["status"] == "active"
 
@@ -333,7 +347,7 @@ def test_supply_only_admission_review_is_scheduled(tmp_path) -> None:
                     if str(item["campaign_id"]).startswith("engineering-vvuq-")
                     and "admission" in str(item["campaign_id"]))
     polish = dataclasses.replace(settings, program=dataclasses.replace(
-        settings.program, polish_mode=True, polish_supply_only_lines=("engineering-vvuq",)))
+        settings.program, polish_mode=True, lines={"engineering-vvuq": LineSettings(mode="supply_only")}))
     assert program_flow.schedule_topic_admission(
         db, paths, polish, campaign, epoch=1).reason != "polish_mode"
 

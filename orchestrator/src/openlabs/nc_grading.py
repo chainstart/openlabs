@@ -75,7 +75,7 @@ def enabled(settings, topic: Mapping[str, Any] | None) -> bool:
     funnel = _funnel(settings)
     if topic is None or funnel is None or not getattr(funnel, "grade_before_writing", True):
         return False
-    if str(topic.get("research_line") or "") in set(getattr(funnel, "exempt_lines", ()) or ()):
+    if not settings.program.line(topic.get("research_line")).nc_aim:
         return False
     return target_stage.admitted_stage(topic) == target_stage.NC_AIM
 

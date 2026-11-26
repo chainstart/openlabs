@@ -49,6 +49,21 @@ def retry_not_before(attempt: int, base_seconds: int) -> str | None:
 
 
 DEFAULT_RUNNER = "balanced"
+# Topic-supply tasks (2026-11-26, slimming batch 2; user "1-开始"): scout, prescreen, card repair
+# and revision by task type, and the admission gate (a portfolio_review with routing reason
+# topic_admission; that task type is shared with ordinary campaigns). Supply tasks of one
+# campaign run beside each other; their schedulers bound how many are queued
+# (max_scouts_per_line, prescreen_max_concurrent, max_admissions_per_line). Every other task
+# waits until its campaign runs nothing.
+SUPPLY_TASK_TYPES = ("topic_scout", "topic_prescreen", "topic_card_repair", "topic_revision")
+
+
+def supply_task_sql(table: str) -> str:
+    """SQL predicate: the row of ``table`` (``tasks`` or an alias) is a topic-supply task."""
+
+    types = ", ".join(f"'{item}'" for item in SUPPLY_TASK_TYPES)
+    return (f"({table}.task_type IN ({types}) OR ({table}.task_type = 'portfolio_review' "
+            f"AND {table}.routing_reason = 'topic_admission'))")
 # SQL twin of ``normalize_runner`` (the lab runner treats a missing tier as balanced).
 RUNNER_SQL = f"COALESCE(NULLIF(TRIM(runner), ''), '{DEFAULT_RUNNER}')"
 QUOTA_FAILURE_CLASS = "agent_quota"
@@ -2256,14 +2271,13 @@ class FactoryDB:
         route: Callable[[Mapping[str, Any], Mapping[str, int]], Mapping[str, Any] | None]
         | None = None,
         rank: Callable[[Mapping[str, Any]], int] | None = None,
-        parallel_routing_reasons: Collection[str] = (),
     ) -> dict[str, Any] | None:
         """Lease the highest-priority ready task.
 
-        A campaign normally runs one task at a time. A task whose
-        ``routing_reason`` is in ``parallel_routing_reasons`` may also start
-        while siblings with such routing reasons (and only those) run in its
-        campaign: the scheduler bounds how many it queues.
+        A campaign normally runs one task at a time. A topic-supply task
+        (:data:`SUPPLY_TASK_TYPES`, the admission gate) may also start while
+        supply siblings (and only those) run in its campaign: the scheduler bounds
+        how many it queues.
 
         ``excluded_runners`` (runner tiers in provider backoff) are skipped;
         ``runner_active_limits`` caps leased/running tasks per runner tier (used
@@ -2279,16 +2293,10 @@ class FactoryDB:
 
         now = utc_now()
         expires = utc_after(lease_seconds)
-        parallel_reasons = tuple(sorted({str(item) for item in parallel_routing_reasons}))
-        sibling_exemption = ""
-        if parallel_reasons:
-            marks = ",".join("?" for _ in parallel_reasons)
-            # Any two parallel reasons may share a campaign (2026-11-26: a line's scouts and
-            # prescreens share its scout campaign and run beside each other).
-            sibling_exemption = (
-                f"AND NOT (tasks.routing_reason IN ({marks}) "
-                f"AND active.routing_reason IN ({marks}))"
-            )
+        # Supply tasks share their campaign (a line's scouts, prescreens and card repairs run
+        # beside each other in its scout campaign, admission batches in its admission one).
+        sibling_exemption = (f"AND NOT ({supply_task_sql('tasks')} "
+                             f"AND {supply_task_sql('active')})")
         excluded = {str(runner) for runner in excluded_runners}
         runner_limits = dict(runner_active_limits or {})
         with self.connect() as connection:
@@ -2322,8 +2330,8 @@ class FactoryDB:
                         {sibling_exemption}
                 )
                 ORDER BY tasks.priority DESC, tasks.created_at, tasks.task_id
-                """.format(sibling_exemption=sibling_exemption),  # noqa: S608 - placeholders only
-                (now, *parallel_reasons, *parallel_reasons),
+                """.format(sibling_exemption=sibling_exemption),  # noqa: S608 - constants only
+                (now,),
             ).fetchall()
             if rank is not None:
                 rows = sorted(

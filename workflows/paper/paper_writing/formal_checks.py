@@ -1694,7 +1694,16 @@ def run_checks(pre: Mapping[str, Any], root: Path, run: Path, role: Mapping[str,
     materiality = bool(inv.get("followup") or inv.get("materiality"))
     receipts = []
     splits: dict[str, list[dict[str, Any]]] = {}
-    if not errors:
+    # A lookup problem of single references (no catalog URL; an identifier no service knows or
+    # that names another record) stays a blocker of that reference but no longer stops the
+    # verifier for the rest of the manuscript (2026-11-26, slimming batch 2: one such reference
+    # left every batch unrun, a coverage failure blocked the round and the next round audited
+    # everything again; 9 of 25 formal_check_blocked rounds since 2026-11-22). Its items are
+    # judged as before (no evidence: not verified). Declared-route problems and an outage of
+    # every service still stop the run.
+    reference_keys = {r["key"] for r in inv["references"]}
+    scoped = [] if routes else [e for e in errors if e.split(":", 1)[0] in reference_keys]
+    if len(scoped) == len(errors):
         # Small output batches, full manuscript context, no truncated source.
         for group in ("references", "passages"):
             batches = packet_batches(group, documents, inv, sources, root=root, artifacts=artifacts)

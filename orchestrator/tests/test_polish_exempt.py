@@ -1,7 +1,8 @@
 """Polish mode with exempt lines and NC-aim scouting past an empty routine queue (2026-11-25).
 
 User 2026-11-25: "NC产线完整就绪后，你尝试性的试产一篇看看，能不能走通流程". The trial opens one
-line while polish mode keeps every other line stopped: ``[program] polish_exempt_lines``.
+line while polish mode keeps every other line stopped: ``[program] polish_exempt_lines``, since
+2026-11-26 a ``[program.lines.<id>] mode = "full"`` entry.
 Under the NC aim a line's routine candidate queues no longer gate its scouts (they read the
 literature and the data catalogue broadly).
 """
@@ -15,7 +16,7 @@ import test_idle_spin as idle
 import test_research_lines as lines_tests
 import test_research_program_flow as flow
 from openlabs import program_flow
-from openlabs.config import FunnelSettings, load_program_settings
+from openlabs.config import FunnelSettings, LineSettings, load_program_settings
 from openlabs.program_flow import schedule_scouts
 from test_parallel_program import NOW
 from test_research_program_flow import _tick
@@ -25,20 +26,21 @@ LINES = ("engineering-vvuq", "astro-photometry")
 
 def _polish(settings, exempt=()):
     return dataclasses.replace(settings, program=dataclasses.replace(
-        settings.program, polish_mode=True, polish_exempt_lines=tuple(exempt)))
+        settings.program, polish_mode=True,
+        lines={line: LineSettings(mode="full") for line in exempt}))
 
 
 def test_config_and_predicates() -> None:
-    assert load_program_settings({}).polish_exempt_lines == ()
+    assert load_program_settings({}).lines == {}
     program = load_program_settings({"polish_mode": True, "polish_exempt_lines": ["ecg"]})
-    assert program.polish_exempt_lines == ("ecg",)
-    assert program.polish_blocks("ecg") is False
-    assert program.polish_blocks("astro") is True
-    assert program.polish_blocks(None) is True  # a legacy topic without a line stays stopped
-    assert program.polish_blocks_all() is False
+    assert program.line("ecg").mode == "full"
+    assert program.stops("research", "ecg") is False
+    assert program.stops("research", "astro") is True
+    assert program.stops("research", None) is True  # a legacy topic without a line stays stopped
+    assert program.stops("supply") is False
     off = load_program_settings({"polish_exempt_lines": ["ecg"]})
-    assert off.polish_blocks("astro") is False and off.polish_blocks_all() is False
-    assert load_program_settings({"polish_mode": True}).polish_blocks_all() is True
+    assert off.stops("research", "astro") is False and off.stops("supply") is False
+    assert load_program_settings({"polish_mode": True}).stops("supply") is True
 
 
 def test_only_the_exempt_line_scouts_under_polish_mode(tmp_path) -> None:
@@ -115,7 +117,7 @@ def test_nc_aim_scouts_past_an_empty_routine_queue(tmp_path, monkeypatch) -> Non
 
 def test_nc_aim_line_with_one_slot_scouts_a_pool_of_cards(tmp_path) -> None:
     common = dict(max_concurrent_scouts=1, candidate_pool_low_water=4, scout_min_interval_hours=0,
-                  line_max_active_topics={"astro-photometry": 1})
+                  lines={"astro-photometry": LineSettings(slots=1)})
     paths, db, settings = lines_tests._line_program(tmp_path, ("astro-photometry",), **common)
     (routine,), _ = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
     packet = json.loads(open(db.task(routine.task_id)["input_path"], encoding="utf-8").read())
@@ -172,15 +174,12 @@ def test_prescreen_is_review_class() -> None:
 def test_prescreens_of_one_scout_campaign_run_side_by_side(tmp_path) -> None:
     import test_quota_routing as qr
 
-    reasons = program_flow.parallel_routing_reasons(flow._settings())
-    assert "topic_prescreen" in reasons and "topic_admission" in reasons
     _, db = qr._setup(tmp_path)
     for n in range(2):
         qr._enqueue(db, f"p{n}", "gate", runner="balanced", task_type="topic_prescreen",
                     routing_reason="topic_prescreen")
-    assert db.claim_next_task(owner="t", lease_seconds=60,
-                              parallel_routing_reasons=reasons)["task_id"] == "p0"
-    second = db.claim_next_task(owner="t", lease_seconds=60, parallel_routing_reasons=reasons)
+    assert db.claim_next_task(owner="t", lease_seconds=60)["task_id"] == "p0"
+    second = db.claim_next_task(owner="t", lease_seconds=60)
     assert second is not None and second["task_id"] == "p1"
 
 

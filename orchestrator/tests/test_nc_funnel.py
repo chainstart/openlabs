@@ -10,7 +10,7 @@ import test_research_lines as lines
 import test_research_program_flow as flow
 
 from openlabs import nc_funnel, target_stage
-from openlabs.config import FunnelSettings, load_program_settings
+from openlabs.config import FunnelSettings, LineSettings, load_program_settings
 from openlabs.program import open_topic_ledger
 
 THRESHOLDS = {
@@ -104,9 +104,10 @@ def test_default_stage_is_nc_aim_and_config_is_validated():
         load_program_settings({"funnel": {"target_stage": "tier2_aim"}})
     with pytest.raises(ValueError):
         load_program_settings({"funnel": {"admission_min_band": "zone_9"}})
-    parsed = load_program_settings({"funnel": {"target_mix": {"nc": [3, 4]},
-                                               "exempt_lines": ["astro"]}}).funnel
-    assert parsed.target_mix["nc"] == (3, 4) and parsed.exempt_lines == ("astro",)
+    program = load_program_settings({"funnel": {"target_mix": {"nc": [3, 4]},
+                                                "exempt_lines": ["astro"]}})
+    assert program.funnel.target_mix["nc"] == (3, 4)
+    assert program.line("astro").nc_aim is False  # legacy funnel.exempt_lines, converted
 
 
 def test_configured_stage_overrides_line_events_and_keeps_history(tmp_path):
@@ -114,8 +115,8 @@ def test_configured_stage_overrides_line_events_and_keeps_history(tmp_path):
     target_stage.set_stage(db, lines.LINE, target_stage.TIER2_AIM, by="owner", reason="old")
     assert target_stage.stage_for(db, lines.LINE) == target_stage.TIER2_AIM
     assert target_stage.stage_for(db, lines.LINE, settings) == target_stage.NC_AIM
-    exempt = replace(settings, program=replace(settings.program, funnel=FunnelSettings(
-        exempt_lines=(lines.LINE,))))
+    exempt = replace(settings, program=replace(settings.program, funnel=FunnelSettings(),
+                                               lines={lines.LINE: LineSettings(nc_aim=False)}))
     assert target_stage.stage_for(db, lines.LINE, exempt) == target_stage.TIER2_AIM
     entries = target_stage.refresh(db, {"topics": []}, [lines.LINE], settings)
     assert entries[lines.LINE]["target_stage"] == target_stage.NC_AIM

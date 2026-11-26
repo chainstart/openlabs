@@ -190,8 +190,8 @@ def configure_codex_runtime(
         # Owner-mode seat: the Stop gate completes the owner's small status packet.
         context["owner"] = {
             key: owner.get(key)
-            for key in ("schema_version", "artifact_staging_root", "preregistration_sha256",
-                        "work_log", "deadline")
+            for key in ("schema_version", "artifact_staging_root", "campaign_data_root",
+                        "preregistration_sha256", "work_log", "deadline")
         }
     context_path = atomic_write_json(codex_root / "openlabs-context.json", context)
     # Codex deliberately sanitizes hook subprocess environments.  In particular,

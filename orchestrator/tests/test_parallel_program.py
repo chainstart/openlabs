@@ -214,20 +214,17 @@ def test_one_admission_per_domain_by_default(tmp_path, monkeypatch):
     assert len(rows) == 1
 
 
-def test_claim_keeps_one_task_per_campaign_without_parallel_reasons(tmp_path) -> None:
+def test_admission_batches_share_their_campaign_and_others_wait(tmp_path) -> None:
     _, db = qr._setup(tmp_path)
     for n in range(2):
         qr._enqueue(db, f"a{n}", "gate", runner="balanced", task_type="portfolio_review",
                     routing_reason="topic_admission")
     assert db.claim_next_task(owner="t", lease_seconds=60)["task_id"] == "a0"
-    assert db.claim_next_task(owner="t", lease_seconds=60) is None
-    second = db.claim_next_task(owner="t", lease_seconds=60,
-                                parallel_routing_reasons=("topic_admission",))
+    second = db.claim_next_task(owner="t", lease_seconds=60)
     assert second is not None and second["task_id"] == "a1"
     # A sibling of another kind still waits for the campaign to be free.
     qr._enqueue(db, "other", "gate", runner="balanced", task_type="research")
-    assert db.claim_next_task(owner="t", lease_seconds=60,
-                              parallel_routing_reasons=("topic_admission",)) is None
+    assert db.claim_next_task(owner="t", lease_seconds=60) is None
 
 
 def test_new_keys_load_and_default_to_the_old_behaviour(tmp_path) -> None:
