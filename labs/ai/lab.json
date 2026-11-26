@@ -38,6 +38,10 @@
     {
       "skill_id": "openlabs-asset-retrospective",
       "path": "../../workflows/paper/skills/openlabs-asset-retrospective/SKILL.md"
+    },
+    {
+      "skill_id": "openlabs-journal-mail-triage",
+      "path": "../../workflows/paper/skills/openlabs-journal-mail-triage/SKILL.md"
     }
   ],
   "protocols": [

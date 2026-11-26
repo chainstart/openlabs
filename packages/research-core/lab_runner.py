@@ -324,7 +324,8 @@ General rules for this program task:
   defined in `{contract}`.
 """
 # Task kinds that only read and judge a packet: they run no experiments.
-JUDGEMENT_TASK_TYPES = frozenset({"direction_decision", "topic_retrospective"})
+# journal_mail_triage (2026-11-26): reads a packet of redacted journal letters and classifies them.
+JUDGEMENT_TASK_TYPES = frozenset({"direction_decision", "topic_retrospective", "journal_mail_triage"})
 # Mirrors ``openlabs.engine.program_control_skill``.
 PROGRAM_CONTROL_TASK_TYPES = frozenset(
     {"topic_scout", "topic_card_repair", "topic_revision", *JUDGEMENT_TASK_TYPES}
@@ -524,7 +525,7 @@ mechanically start each branch in a separate researcher campaign without alterin
 # Task types that run no lab code: a direction decision reads evidence and decides; a
 # release format_fix edits manuscript text only (2026-11-20: a physics format_fix became
 # needs_human on "core environment is incomplete" before it started).
-DECISION_ONLY_TASK_TYPES = frozenset({"direction_decision", "format_fix"})
+DECISION_ONLY_TASK_TYPES = frozenset({"direction_decision", "format_fix", "journal_mail_triage"})
 
 
 def _lab_runtime_setup(

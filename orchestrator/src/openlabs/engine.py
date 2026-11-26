@@ -75,6 +75,7 @@ from .program import (
     topic_for_campaign,
 )
 from . import assets as asset_library
+from . import journal_triage
 from . import program_autonomy
 from . import local_compute
 from . import owner as owner_mode
@@ -1469,7 +1470,8 @@ def _campaign_runtime_skill_ids(
 # asset retrospective). A research protocol lists them all, but a task only needs
 # its own: before 2026-11-14 every task was told to invoke all of them (~58 KB).
 PROGRAM_CONTROL_SKILLS = frozenset(
-    {SCOUT_SKILL, ADMISSION_SKILL, DIRECTION_SKILL, asset_library.RETROSPECTIVE_SKILL}
+    {SCOUT_SKILL, ADMISSION_SKILL, DIRECTION_SKILL, asset_library.RETROSPECTIVE_SKILL,
+     journal_triage.SKILL}
 )
 
 
@@ -1488,6 +1490,8 @@ def program_control_skill(task: Mapping[str, Any]) -> str | None:
         return DIRECTION_SKILL
     if task_type == asset_library.RETROSPECTIVE_TASK_TYPE:
         return asset_library.RETROSPECTIVE_SKILL
+    if task_type == journal_triage.TASK_TYPE:
+        return journal_triage.SKILL
     return None
 
 
@@ -2922,7 +2926,7 @@ def ingest_results(
                 current_role not in remote_wait.RESEARCH_ROLES
                 or str(task.get("task_type") or "") in {
                     *CARD_TASK_TYPES, DIRECTION_TASK_TYPE, asset_library.RETROSPECTIVE_TASK_TYPE,
-                    PRESCREEN_TASK_TYPE,
+                    PRESCREEN_TASK_TYPE, journal_triage.TASK_TYPE,
                 }
             ):
                 result_status = "needs_replan"
@@ -3169,7 +3173,7 @@ def ingest_results(
             # A direction decision is applied by the program controller below.
             automatic_successors_allowed = task_type not in {
                 *CARD_TASK_TYPES, DIRECTION_TASK_TYPE, asset_library.RETROSPECTIVE_TASK_TYPE,
-                PRESCREEN_TASK_TYPE,
+                PRESCREEN_TASK_TYPE, journal_triage.TASK_TYPE,
             }
             if task_type == "portfolio_review" and payload.get("paper_candidate") is True:
                 report.errors.append(

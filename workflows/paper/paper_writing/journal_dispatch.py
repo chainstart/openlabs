@@ -13,7 +13,8 @@ from email.policy import SMTP
 from email.utils import parseaddr
 
 from paper_writing.handoff import HandoffError
-from paper_writing.journal_mail import REVIEW_TABLE, journal_key as _key
+from paper_writing import journal_triage
+from paper_writing.journal_mail import journal_key as _key, review_table
 
 
 def ledger(args, event, extra=()):
@@ -31,7 +32,8 @@ def ledger(args, event, extra=()):
 SMTP_SIZE_LIMIT = 20_000_000
 
 
-def notify(api, paper, event, account, before_send=lambda: None, *, raw=None, note=""):
+def handler_address(api, paper):
+    """The mailbox of the paper's one active submitter (ValueError when there is none)."""
     assigned = {a["submitter_id"] for a in paper.get("assignments", []) if a.get("active")}
     if len(assigned) != 1:
         raise ValueError("Missing unique active assignment")
@@ -41,6 +43,11 @@ def notify(api, paper, event, account, before_send=lambda: None, *, raw=None, no
         raise ValueError("Missing handler address")
     if parseaddr(emails[0])[1] != emails[0]:
         raise ValueError("Invalid handler mailbox")
+    return emails[0]
+
+
+def notify(api, paper, event, account, before_send=lambda: None, *, raw=None, note=""):
+    emails = [handler_address(api, paper)]
     message = EmailMessage()
     message["From"], message["To"] = account, emails[0]
     message["Message-ID"] = "<openlabs-" + event["message_key"] + "@sdju.edu.cn>"
@@ -141,7 +148,7 @@ def notify_once(args, api, db, paper, event, note=""):
     notified = db.execute("SELECT notified FROM progress WHERE message_key=?", (key,)).fetchone()[0]
     if notified == -1:
         print("Handler notification may not have been delivered", key[:12], flush=True)
-        db.execute(REVIEW_TABLE)
+        review_table(db)
         db.execute("INSERT OR IGNORE INTO review(key, kind, reason, paper_ids, decisions) VALUES (?,?,?,?,?)",
                    ("event:" + key, "notification_unknown",
                     "the service stopped while sending the handler notification; it may not have arrived",
@@ -522,36 +529,88 @@ REVIEW_KINDS = {"parse_failed": "解析失败", "no_message_id": "缺少有效 M
                 "notification_unknown": "给投稿人的通知可能未送达"}
 
 
-def review_digest(rows):
-    """The text of one digest of letters waiting for a person (see journal_mail.Unused)."""
+def review_digest(rows, readings=None):
+    """The text of one digest of letters waiting for a person (see journal_mail.Unused);
+    ``readings`` maps a row's key to the model's line about it (journal_triage.reading)."""
+    readings = readings or {}
     lines = [f"期刊邮件服务有 {len(rows)} 封信需要人工确认（服务未据此改动网站或台账）：", ""]
-    for number, (key, kind, reason, paper_ids, decisions, subject, sender, received) in enumerate(rows, 1):
+    for number, row in enumerate(rows, 1):
+        key, kind, reason, paper_ids, decisions, subject, sender, received = row[:8]
         papers = ", ".join(p for p in json.loads(paper_ids or "[]") if p) or "无"
         found = ", ".join(d for d in json.loads(decisions or "[]") if d) or "无"
         lines += [f"{number}. {REVIEW_KINDS.get(kind, kind)}（{reason}）",
                   f"   邮箱位置 {key}；收信 {received or '未知'}",
                   f"   发件人 {sender or '未知'}",
                   f"   主题 {subject or '未知'}",
-                  f"   候选论文 {papers}；候选决定 {found}", ""]
+                  f"   候选论文 {papers}；候选决定 {found}"]
+        if readings.get(key):
+            lines.append(f"   模型复核 {readings[key]}")
+        lines.append("")
     lines.append("请在 SDJU 邮箱按主题找到原信，核对后在管理网站手工登记。")
     return "\n".join(lines)
 
 
-def notify_review(args, db):
+def notify_handler_reading(args, api, db, row, verdict):
+    """Tell the paper's submitter what the model read in a letter the rules left to a person
+    (once; journal_triage.handler_worthy). The text of the digest line says how it went."""
+    key, subject, received = row[0], row[5], row[7]
+    state = db.execute("SELECT handler_notified FROM review WHERE key=?", (key,)).fetchone()
+    if state and state[0] == 1:
+        return "已通知该论文投稿人"
+    try:
+        paper = api._request("GET", "/v1/papers/" + verdict["paper_id"])
+        address = handler_address(api, paper)
+        message = EmailMessage()
+        message["From"], message["To"] = args.account, address
+        message["Message-ID"] = ("<openlabs-triage-" + hashlib.sha256(key.encode()).hexdigest() + "@sdju.edu.cn>")
+        message["Subject"] = "期刊来信待核对 · " + verdict["paper_id"]
+        quotes = "；".join("「" + q + "」" for q in verdict["evidence_quotes"])
+        message.set_content(
+            f"系统收到一封可能与论文《{paper.get('title') or verdict['paper_id']}》相关的期刊来信，规则未能自动登记。\n"
+            f"主题 {subject or '未知'}；收信 {received or '未知'}\n"
+            f"系统判断为 {journal_triage.CATEGORIES[verdict['category']]}（依据原句：{quotes}）"
+            f"\n稿号 {verdict['manuscript_id'] or '待核实'}；期限 {verdict['due'] or '待核实'}\n"
+            "这是模型的判断，网站和台账均未改动。请在 SDJU 邮箱找到原信，在管理网站核对登记。")
+        with smtplib.SMTP_SSL("smtp.qiye.163.com", timeout=15, context=ssl.create_default_context()) as smtp:
+            smtp.login(args.account, os.environ["SDJU_MAIL_PASSWORD"])
+            smtp.sendmail(args.account, [address], message.as_bytes(policy=SMTP))
+    except (OSError, KeyError, ValueError, HandoffError) as exc:
+        db.execute("UPDATE review SET handler_notified=-1 WHERE key=?", (key,))
+        db.commit()
+        print("Journal triage handler notice failed", key, type(exc).__name__, flush=True)
+        return f"投稿人通知未发出（{type(exc).__name__}）"
+    db.execute("UPDATE review SET handler_notified=1 WHERE key=?", (key,))
+    db.commit()
+    return "已通知该论文投稿人"
+
+
+def notify_review(args, db, api=None):
     """Send the letters queued for review (journal_mail.record_review) to the service's own
-    mailbox in one digest per round; marked only after the send succeeded (audit C3/C8)."""
-    db.execute(REVIEW_TABLE)
-    rows = db.execute("SELECT key, kind, reason, paper_ids, decisions, subject, sender, received_at FROM review "
-                      "WHERE notified=0 ORDER BY rowid").fetchall()
+    mailbox in one digest per round; marked only after the send succeeded (audit C3/C8).
+
+    A letter waiting for the model's reading (journal_triage.waiting) is held back up to
+    journal_triage.WAIT; then it goes out with the reading, or with "模型无结论". Where the
+    reading names a paper with confidence, its submitter is told as well (``api`` given)."""
+    review_table(db)
+    rows = db.execute("SELECT key, kind, reason, paper_ids, decisions, subject, sender, received_at, brief, model_state, "
+                      "model, queued_at FROM review WHERE notified=0 ORDER BY rowid").fetchall()
+    now = datetime.now(timezone.utc)
+    rows = [r for r in rows if not journal_triage.waiting(r[9], r[11], now)]
     if not rows:
         return False
+    readings = {}
+    for row in rows:
+        verdict, line = journal_triage.reading(row[8], row[9], row[10])
+        if line and api is not None and journal_triage.handler_worthy(verdict):
+            line += "；" + notify_handler_reading(args, api, db, row, verdict)
+        readings[row[0]] = line
     message = EmailMessage()
     message["From"] = message["To"] = args.account
     digest = hashlib.sha256("\n".join(r[0] for r in rows).encode()).hexdigest()
     # journal_mail skips the service's own <openlabs-...> letters when it reads the mailbox.
     message["Message-ID"] = "<openlabs-review-" + digest + "@sdju.edu.cn>"
     message["Subject"] = f"期刊邮件待人工确认 · {len(rows)} 封"
-    message.set_content(review_digest(rows))
+    message.set_content(review_digest(rows, readings))
     try:
         with smtplib.SMTP_SSL("smtp.qiye.163.com", timeout=15, context=ssl.create_default_context()) as smtp:
             smtp.login(args.account, os.environ["SDJU_MAIL_PASSWORD"])
@@ -560,6 +619,9 @@ def notify_review(args, db):
         print("Journal review digest pending", len(rows), type(exc).__name__, flush=True)
         return False
     db.executemany("UPDATE review SET notified=1 WHERE key=?", [(r[0],) for r in rows])
+    # A reading that arrives after the digest is not sent again.
+    db.executemany("UPDATE review SET model_state='expired' WHERE key=? AND model_state IN ('pending','dispatched')",
+                   [(r[0],) for r in rows])
     db.commit()
     print("Journal review digest sent", len(rows), flush=True)
     return True
@@ -583,4 +645,4 @@ def drain(args, api):
                 dispatch_one(args, api, db, event)
             except (HandoffError, OSError, ValueError, KeyError, LookupError, subprocess.SubprocessError) as exc:
                 print("Journal event pending", key[:12], type(exc).__name__, flush=True)
-        notify_review(args, db)
+        notify_review(args, db, api=api)
