@@ -44,10 +44,12 @@ from typing import Any
 
 from .config import (
     ANTIGRAVITY_PROVIDER,
+    GOOGLE_FAMILY,
     LEGACY_RUNNER_TIERS,
     OWNER_TASK_TYPE,
     TIERS,
     lookup_task_tier,
+    model_identity,
     BudgetSettings,
     FactorySettings,
     ProviderPreference,
@@ -142,9 +144,27 @@ def shared_probe_spec(specs: Iterable[RunnerSpec], provider: str) -> RunnerSpec:
     candidates = [s for s in specs if s.provider == provider and not s.protected]
     shared = next((s for s in candidates if not s.windows), None)
     if shared is None and provider == ANTIGRAVITY_PROVIDER and candidates:
+        # The Gemini pool stands for the provider (2026-11-26: worker_agy_opus, Claude
+        # through agy, sorts before worker_gemini but draws on the separate 3p pool).
         order = {"worker": 0, "lead": 1, "light": 2}
-        shared = min(candidates, key=lambda s: (order.get(s.tier, 3), s.name))
+        shared = min(candidates, key=lambda s: (s.family != GOOGLE_FAMILY,
+                                                order.get(s.tier, 3), s.name))
     return shared or RunnerSpec(name=f"{provider}:shared", provider=provider, tier="worker")
+
+
+def quota_key_of(settings: FactorySettings | None, runner: Any) -> str:
+    """The quota account a runner's backoff applies to (``RunnerSpec.quota_key``).
+
+    The provider (or the name itself without ``[runners]``), except an Antigravity runner
+    outside the Gemini pool, whose quota pool is separate (``google-antigravity:3p``).
+    """
+
+    name = normalize_runner(runner)
+    if settings is not None and settings.runners:
+        spec = settings.runners.get(name)
+        if spec is not None:
+            return spec.quota_key
+    return provider_of(settings, runner)
 
 
 def family_of(settings: FactorySettings | None, runner: Any) -> str:
@@ -177,7 +197,7 @@ def _provider_meta(
     return {
         prefix + suffix: value
         for suffix, value in db.meta_items(prefix).items()
-        if provider_of(settings, suffix) == provider
+        if quota_key_of(settings, suffix) == provider
     }
 
 
@@ -226,7 +246,7 @@ def runner_backoffs(
         until = parse_time(value)
         if until is None or until <= moment:
             continue
-        provider = provider_of(settings, suffix)
+        provider = quota_key_of(settings, suffix)
         if provider not in active or until > active[provider]:
             active[provider] = until
     return {provider: _iso(until) for provider, until in sorted(active.items())}
@@ -246,7 +266,7 @@ def blocked_runner_names(
     blocked = runner_backoffs(db, now=now, settings=settings)
     if not settings.runners:
         return tuple(blocked)
-    names = {name for name, spec in settings.runners.items() if spec.provider in blocked}
+    names = {name for name, spec in settings.runners.items() if spec.quota_key in blocked}
     names.update(name for name in LEGACY_RUNNER_TIERS if provider_of(settings, name) in blocked)
     names.update(blocked)
     return tuple(sorted(names))
@@ -261,7 +281,7 @@ def probe_limits(
     """Providers recovering from a backoff: at most one task in flight each."""
 
     blocked = runner_backoffs(db, now=now, settings=settings)
-    providers = {provider_of(settings, suffix) for suffix in db.meta_items(PROBE_PREFIX)}
+    providers = {quota_key_of(settings, suffix) for suffix in db.meta_items(PROBE_PREFIX)}
     return {provider: 1 for provider in sorted(providers) if provider not in blocked}
 
 
@@ -324,7 +344,7 @@ def record_quota_failure(
 
     moment = _now(now)
     runner_name = normalize_runner(runner)
-    provider = provider_of(settings, runner_name)
+    provider = quota_key_of(settings, runner_name)
     budget = settings.budget
     reset_time = parse_time(reset_at)
     untils = [
@@ -429,7 +449,7 @@ def record_healthy_completion(
     """
 
     runner_name = normalize_runner(runner)
-    provider = provider_of(settings, runner_name)
+    provider = quota_key_of(settings, runner_name)
     if provider in runner_backoffs(db, now=now, settings=settings):
         return None
     updates: dict[str, str | None] = {}
@@ -1572,11 +1592,11 @@ def lead_availability(
             )
             for klass in ("decision", "review")
         }
-        blocked = spec.provider in backoffs
+        blocked = spec.quota_key in backoffs
         result[name] = {
             "decision": states["decision"].usable and not blocked,
             "review": states["review"].usable and not blocked,
-            "backoff_until": backoffs.get(spec.provider),
+            "backoff_until": backoffs.get(spec.quota_key),
             "state": {klass: item.to_dict() for klass, item in states.items()},
         }
     return result
@@ -1661,7 +1681,7 @@ class QuotaRouter:
         return self._cache[key]
 
     def usable(self, spec: RunnerSpec, klass: str) -> bool:
-        return spec.provider not in self.backoffs and self.availability(spec, klass).usable
+        return spec.quota_key not in self.backoffs and self.availability(spec, klass).usable
 
     def is_manual(self, task: Mapping[str, Any]) -> bool:
         return str(task.get("task_id") or "") in self.task_overrides
@@ -1783,6 +1803,19 @@ class QuotaRouter:
         runner = source.get("runner") if source else task.get("runner")
         return provider_of(self.settings, runner)
 
+    def _sticky_family(self, task: Mapping[str, Any]) -> str | None:
+        """The model family a resumed session must keep (2026-11-26).
+
+        One tool may serve several families (agy: Gemini and Claude): a Gemini
+        conversation is not continued by Opus through agy, nor the other way round.
+        """
+
+        if self._sticky_provider(task) is None:
+            return None
+        source = self._task(task.get("session_source_task_id"))
+        runner = source.get("runner") if source else task.get("runner")
+        return family_of(self.settings, runner)
+
     def _excluded_provider(self, task: Mapping[str, Any], tier: str, klass: str) -> str | None:
         explicit = str(task.get("exclude_provider") or "").strip()
         if explicit:
@@ -1900,11 +1933,14 @@ class QuotaRouter:
         stronger = sorted((t for t in TIERS if strength[t] > strength[tier]), key=strength.get)
         weaker = sorted((t for t in TIERS if strength[t] < strength[tier]),
                         key=strength.get, reverse=True)
+        # One model whatever its effort suffix or tool (2026-11-26): Opus through agy
+        # (``claude-opus-5-5-high``) is the author's model when Claude Code Opus wrote it.
+        authors = {model_identity(model) for model in producer_models}
         pools = {
             level: [
                 spec for spec in self.settings.runners.values()
                 if spec.family == provider and spec.tier == level
-                and spec.model not in producer_models and spec.accepts(klass)
+                and model_identity(spec.model) not in authors and spec.accepts(klass)
             ]
             for level in TIERS
         }
@@ -1973,7 +2009,7 @@ class QuotaRouter:
         ):
             return None
         for spec in others:
-            if spec.provider not in self.backoffs and self.availability(
+            if spec.quota_key not in self.backoffs and self.availability(
                 spec, klass, manual=manual
             ).usable:
                 return None  # busy, not out of quota: it frees up soon
@@ -1999,9 +2035,9 @@ class QuotaRouter:
         provider_active = sum(
             count
             for name, count in active_by_runner.items()
-            if provider_of(self.settings, name) == spec.provider
+            if quota_key_of(self.settings, name) == spec.quota_key
         )
-        if spec.provider in self.probes and provider_active >= self.probes[spec.provider]:
+        if spec.quota_key in self.probes and provider_active >= self.probes[spec.quota_key]:
             return False
         if state.state == "unknown":
             if state.unknown_scope == "provider":
@@ -2022,7 +2058,7 @@ class QuotaRouter:
     ) -> tuple[RunnerSpec, Availability] | None:
         usable: list[tuple[RunnerSpec, Availability]] = []
         for spec in candidates:
-            if spec.provider in self.backoffs:
+            if spec.quota_key in self.backoffs:
                 continue
             state = self.availability(spec, klass, manual=manual)
             if not state.usable or not self._limit_ok(spec, state, active_by_runner):
@@ -2152,8 +2188,10 @@ class QuotaRouter:
         tier = self.required_tier(task)
         excluded = self._excluded_provider(task, tier, klass)
         sticky = self._sticky_provider(task)
+        sticky_family = self._sticky_family(task)
         if preferred is not None and preferred.family != excluded and (
-            sticky is None or preferred.provider == sticky
+            sticky is None or (preferred.provider == sticky
+                               and preferred.family == sticky_family)
         ) and preferred.accepts(klass, task_type):
             chosen = self._choose([preferred], klass, active_by_runner, manual=manual)
             if chosen is not None:
@@ -2174,7 +2212,8 @@ class QuotaRouter:
                 if spec.tier == level
                 and spec.family != excluded
                 and spec.accepts(klass, task_type)
-                and (sticky is None or spec.provider == sticky)
+                and (sticky is None or (spec.provider == sticky
+                                        and spec.family == sticky_family))
             ]
 
         # A tier nobody configured falls back light -> worker -> lead.
@@ -2267,9 +2306,9 @@ class QuotaRouter:
         reasons: set[str] = set()
         times: list[datetime] = []
         for spec in specs:
-            if spec.provider in self.backoffs:
+            if spec.quota_key in self.backoffs:
                 reasons.add("backoff")
-                until = parse_time(self.backoffs[spec.provider])
+                until = parse_time(self.backoffs[spec.quota_key])
                 if until is not None:
                     times.append(until)
                 continue

@@ -230,6 +230,35 @@ def test_unusable_fallback_writers_leave_the_seat_to_the_solver(tmp_path, monkey
     assert owner.HANDOVER_NAME not in lines[0]
 
 
+def test_seat_of_a_previous_writer_waits_then_goes_to_the_configured_writer(
+    tmp_path, monkeypatch
+) -> None:
+    # 2026-11-26 (worker_agy_opus): writing_runner changes while a topic is handed to the old
+    # writer. Its seat keeps the old writer while that is usable; after writing_wait_hours it
+    # goes to the configured writer first (before writing_fallback_runners and the solver).
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch,
+        owner_settings=_settings(runners=("worker_gpt", "lead_gpt"),
+                                 writing_fallback_runners=("worker_gpt",)))
+    _tick_settings = replace(settings, launch_jobs=False)
+    _, nxt = _hand_over(paths, db, _tick_settings, monkeypatch, topic)
+    assert nxt["runner"] == WRITER
+    changed = _with_writer(settings, "lead_gpt")
+    monkeypatch.setattr(owner, "runner_usable", lambda _s, _r, name: True)
+    now = datetime.now(UTC)
+    assert owner.supervise(db, changed, engine_report(), object(), now=now, paths=paths) == []
+    assert db.task(nxt["task_id"])["runner"] == WRITER
+    monkeypatch.setattr(owner, "runner_usable", lambda _s, _r, name: name != WRITER)
+    report = engine_report()
+    assert owner.supervise(db, changed, report, object(), now=now + timedelta(hours=1),
+                           paths=paths) == []
+    moves = owner.supervise(db, changed, report, object(), now=now + timedelta(hours=13.2),
+                            paths=paths)
+    assert moves and moves[0]["from_runner"] == WRITER and moves[0]["to_runner"] == "lead_gpt"
+    assert db.task(nxt["task_id"])["runner"] == "lead_gpt"
+    assert report.program["owner_writing"][0]["kind"] == "fallback"
+
+
 def test_config_parses_writing_fallback_runners() -> None:
     parsed = load_program_settings(
         {"owner": {"writing_fallback_runners": [" worker_gemini ", "", "worker_gemini", "x"]}})
