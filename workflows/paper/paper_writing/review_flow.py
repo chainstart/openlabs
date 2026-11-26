@@ -2018,8 +2018,12 @@ def change_blocks(change: Mapping[str, Any]) -> bool:
 
 
 def item_is_advisory(item: Any) -> bool:
-    """A tracked previous item carrying the ``[text]`` prefix (older records tracked these)."""
-    return str(item or "").lstrip().startswith("[text]")
+    """A tracked previous item carrying the ``[text]`` prefix (older records tracked these), or
+    one whose substance is author approval or consent: out of scope since
+    UD-20261126-no-author-approval-audit, so an earlier decision that still tracks one does
+    not hold the paper or count as a pending must-fix (round guard included)."""
+    text = str(item or "")
+    return text.lstrip().startswith("[text]") or materiality.author_approval_request(text)
 
 
 def tracked_item(change: Mapping[str, Any]) -> str:
@@ -2714,9 +2718,9 @@ def previous_tracked_items(last: Mapping[str, Any],
     longer tracked as mandatory items that can keep the paper in revision.
     """
     merged = last.get("merged") or {}
-    items = list(merged.get("scientific_blockers", []))
+    items = [b for b in merged.get("scientific_blockers", []) if not item_is_advisory(b)]
     items += [tracked_item(c) for c in merged.get("required_changes", []) if not c.get("advisory")
-              and c.get("change") not in items
+              and c.get("change") not in items and not item_is_advisory(c.get("change"))
               and (change_blocks(c) or c["type"] in {"figure", "narrative"})]
     # The opted-in four-paper continuation must not silently forget scientific
     # requests that the last referee explicitly left unresolved.
@@ -2814,9 +2818,13 @@ def stalled_signal(rounds: list[Mapping[str, Any]], referees: Mapping[str, Mappi
 
 def blocking_count(merged: Mapping[str, Any]) -> int:
     """Items that keep a decision from ready (scientific blockers, blocking changes, open items)."""
-    return (len(merged.get("scientific_blockers") or [])
-            + sum(1 for c in merged.get("required_changes") or [] if not c.get("advisory"))
-            + sum(1 for i in merged.get("unresolved_previous_items") or [] if not i.get("advisory")))
+    # Items that item_is_advisory now treats as advice (author approval, UD-20261126) do not
+    # count, so an older decision that still records one as blocking is compared fairly.
+    return (sum(1 for b in merged.get("scientific_blockers") or [] if not item_is_advisory(b))
+            + sum(1 for c in merged.get("required_changes") or []
+                  if not c.get("advisory") and not item_is_advisory(c.get("change")))
+            + sum(1 for i in merged.get("unresolved_previous_items") or []
+                  if not i.get("advisory") and not item_is_advisory(i.get("item"))))
 
 
 def stall_basis(rounds: list[Mapping[str, Any]], referees: Mapping[str, Mapping[str, Any]],

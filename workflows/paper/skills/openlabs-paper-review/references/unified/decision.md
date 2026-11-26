@@ -28,3 +28,8 @@ mandatory work and its `advisory_items` as suggestions for final preparation.
 These are the editorial synthesis after materiality screening. Raw referee
 recommendations and dimension notes cannot add requirements. Do not ask for
 revision or re-verification for suggestions.
+
+Author approval, consent to submit, signatures and delegated authority are not review
+requirements (UD-20261126-no-author-approval-audit): the pre-submission human review and the
+journal's submission system handle them. Never list them among what must be done; mention
+them at most once among the suggestions.
