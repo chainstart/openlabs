@@ -477,11 +477,71 @@ def _json_string_values(text: str) -> list[str]:
     return out
 
 
+_XML_TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9:_-]*(?:\s+[^<>]*)?/?>")
+_INLINE_MATH = re.compile(r"(?<!\\)\$([^$\n]+?)(?<!\\)\$")
+_LINEBREAK_HYPHEN = re.compile(r"([A-Za-z])-\r?\n[ \t]*([a-z])")
+_LIGATURES = str.maketrans({
+    "\ufb00": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi", "\ufb04": "ffl",
+    "\u2010": "-", "\u2011": "-", "\u00ad": "",
+})
+
+
+def _xml_element_texts(text: str) -> list[str]:
+    """Decoded text of leaf XML elements (e.g. arXiv Atom ``<summary>`` or ``<title>``),
+    never joining across sibling fields."""
+    stripped = text.lstrip()
+    if not stripped.startswith("<"):
+        return []
+    try:
+        root = ET.fromstring(stripped)
+    except ET.ParseError:
+        return []
+    return [elem.text for elem in root.iter() if not len(elem) and elem.text and elem.text.strip()]
+
+
+def _plain_markup(text: str) -> str:
+    """Decode HTML/XML entities and strip XML/JATS inline tags (e.g. Crossref ``<jats:italic>``),
+    collapsing pretty-print whitespace introduced around tags next to punctuation."""
+    decoded = html.unescape(html.unescape(text))
+    if _XML_TAG.search(decoded):
+        decoded = re.sub(r"([(\[])\s+<[A-Za-z][A-Za-z0-9:_-]*(?:\s+[^<>]*)?>", r"\1", decoded)
+        decoded = re.sub(r"</[A-Za-z][A-Za-z0-9:_-]*>\s+([,.;:?!)\]])", r"\1", decoded)
+        decoded = _XML_TAG.sub(" ", decoded)
+    return decoded
+
+
+def _quote_norm(text: str, *, strip_math: bool = False) -> str:
+    """Normalize PDF line-break hyphens, ligatures, Unicode hyphens and whitespace.
+
+    Retains case, intra-line hyphenation and wording. With ``strip_math`` also unwraps
+    inline single-dollar TeX delimiters (e.g. arXiv ``$n$-site`` -> ``n-site``).
+    """
+    text = _LINEBREAK_HYPHEN.sub(r"\1\2", text).translate(_LIGATURES)
+    if strip_math:
+        text = _INLINE_MATH.sub(r"\1", text)
+    return _whitespace(text)
+
+
 def _quote_present(quote: str, text: str) -> bool:
     needle = _whitespace(quote)
     if needle in _whitespace(text):
         return True
-    return any(needle in _whitespace(v) for v in _json_string_values(text))
+    # Check each JSON string value or XML leaf element on its own (no cross-field joining).
+    # Inline markup stripping (e.g. Crossref JATS tags) runs only inside individual field values
+    # when the source is a structured JSON/XML envelope, never across the whole envelope.
+    field_vals = _json_string_values(text) or _xml_element_texts(text)
+    norm_candidates = [text, *field_vals]
+    markup_candidates = field_vals if field_vals else [text]
+    for strip_math in (False, True):
+        q_norm = _quote_norm(quote, strip_math=strip_math)
+        q_plain = _quote_norm(_plain_markup(quote), strip_math=strip_math)
+        for cand in norm_candidates:
+            if q_norm in _quote_norm(cand, strip_math=strip_math):
+                return True
+        for cand in markup_candidates:
+            if ("<" in cand or "&" in cand) and q_plain in _quote_norm(_plain_markup(cand), strip_math=strip_math):
+                return True
+    return False
 
 
 # Route findings that no verification or delivery path consumes any more. Since the
@@ -1192,39 +1252,70 @@ def finding_kinds(report: Mapping[str, Any] | None) -> dict[str, str]:
     return kinds
 
 
-def _verdict(finding: Mapping[str, Any], kinds: Mapping[str, str] | None) -> materiality.Decision:
+_DOWNGRADED_FORMAL_RULES = frozenset({"formal_source_routing", "formal_precision", "formal_accepting_technical"})
+
+
+def _verdict(finding: Mapping[str, Any], kinds: Mapping[str, str] | None, *,
+             accepting: bool = False) -> materiality.Decision:
     return materiality.decide(finding, source="formal",
-                              context=materiality.Context(formal_kinds=dict(kinds or {})))
+                              context=materiality.Context(formal_kinds=dict(kinds or {}), accepting=accepting))
 
 
-def precision_finding(finding: Mapping[str, Any], kinds: Mapping[str, str] | None = None) -> bool:
-    """A scientific finding about precision: a ``gap`` (not fully supported as worded), or a
-    sentence-level unsupported-claim/citation-support finding (not wrong data or numbers).
+def precision_finding(finding: Mapping[str, Any], kinds: Mapping[str, str] | None = None, *,
+                      accepting: bool = False) -> bool:
+    """A formal finding that does not block: a scientific precision ``gap`` or sentence-level
+    unsupported-claim/citation-support finding, a ``source_routing`` problem (checked at
+    delivery), or — when every referee recommends minor revision or accept — a verifier
+    ``technical`` failure (reported as advice / needs-rerun).
 
-    Also a ``source_routing`` problem (a missing catalogue URL, a 403 from a publisher):
-    it is about reaching a source, not about the manuscript, and is checked at delivery
-    (2026-11-23 audit item 12); a reference row found wrong or nonexistent still blocks.
-    Decided by the materiality table (rules ``formal_source_routing``, ``formal_precision``)."""
-    return _verdict(finding, kinds).rule in ("formal_source_routing", "formal_precision")
+    Decided by the materiality table (``formal_source_routing``, ``formal_precision``,
+    ``formal_accepting_technical``)."""
+    return _verdict(finding, kinds, accepting=accepting).rule in _DOWNGRADED_FORMAL_RULES
 
 
-def precision_view(summary: Mapping[str, Any] | None, kinds: Mapping[str, str] | None = None) -> dict[str, Any] | None:
-    """``summary`` with precision findings recategorized as advice (``precision_downgraded``)."""
-    if not isinstance(summary, Mapping) or "raw_findings" not in summary:
-        return dict(summary) if isinstance(summary, Mapping) else summary
-    raw = [dict(f, category="advisory", precision_downgraded=True) if precision_finding(f, kinds) else dict(f)
-           for f in summary["raw_findings"]]
+def precision_view(summary: Mapping[str, Any] | None, kinds: Mapping[str, str] | None = None, *,
+                   accepting: bool = False) -> dict[str, Any] | None:
+    """``summary`` with downgraded findings recategorized as advice (``precision_downgraded``)."""
+    if not isinstance(summary, Mapping):
+        return summary
+    if "raw_findings" not in summary:
+        if not accepting or not isinstance(summary.get("by_category"), Mapping):
+            return dict(summary)
+        cats = {k: list(v) for k, v in summary["by_category"].items()}
+        tech = cats.get("technical") or []
+        if not tech:
+            return dict(summary)
+        cats["technical"] = []
+        cats["advisory"] = [*cats.get("advisory", []), *tech]
+        return {**summary, "by_category": cats}
+    raw = []
+    for f in summary["raw_findings"]:
+        decision = _verdict(f, kinds, accepting=accepting)
+        if decision.rule in _DOWNGRADED_FORMAL_RULES:
+            row = dict(f, category="advisory", precision_downgraded=True, downgrade_reason=decision.rule)
+            if decision.rule == "formal_accepting_technical":
+                row["needs_rerun"] = True
+            raw.append(row)
+        else:
+            raw.append(dict(f))
     return issue_summary(raw)
 
 
 def material_blockers(blockers: list[str], summary: Mapping[str, Any] | None,
-                      kinds: Mapping[str, str] | None = None) -> tuple[list[str], list[str]]:
+                      kinds: Mapping[str, str] | None = None, *,
+                      accepting: bool = False) -> tuple[list[str], list[str]]:
     """Split formal blockers into (still blocking, downgraded to advice) under ``PRECISION_RULE``."""
     findings = (summary or {}).get("raw_findings") if isinstance(summary, Mapping) else None
     if not findings:
+        cats = (summary or {}).get("by_category") if isinstance(summary, Mapping) else None
+        if accepting and isinstance(cats, Mapping) and cats.get("technical"):
+            non_tech = set(cats.get("scientific") or []) | set(cats.get("preparation") or [])
+            tech = {m for m in cats.get("technical") or [] if m not in non_tech}
+            material = [b for b in blockers if b not in tech]
+            return material, [b for b in blockers if b not in material]
         return list(blockers), []
-    verdicts = [(f["message"], _verdict(f, kinds)) for f in findings]
-    downgraded = {message for message, d in verdicts if d.rule in ("formal_source_routing", "formal_precision")}
+    verdicts = [(f["message"], _verdict(f, kinds, accepting=accepting)) for f in findings]
+    downgraded = {message for message, d in verdicts if d.rule in _DOWNGRADED_FORMAL_RULES}
     kept = {message for message, d in verdicts if d.blocks}
     material = [b for b in blockers if b not in downgraded or b in kept]
     return material, [b for b in blockers if b not in material]
@@ -1806,17 +1897,28 @@ def archived_inputs(result: Mapping[str, Any], root: Path) -> tuple[list[dict[st
 
 def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
                      expected_role: Mapping[str, Any] | None = None, *,
-                     archived_version: str | None = None, precision: bool = False) -> list[str]:
+                     archived_version: str | None = None, precision: bool = False,
+                     accepting: bool = False) -> list[str]:
     """Revalidate evidence bytes, exact coverage and policy at apply/handoff.
 
     With ``precision`` (a decision synthesized under ``PRECISION_RULE``) an invalid report is
-    accepted when every blocker it records is a downgraded scientific gap; the remaining
-    (material) blockers are returned.
+    accepted when every blocker it records is a downgraded scientific gap or source-routing
+    note; the remaining (material) blockers are returned. With ``accepting`` (both referees
+    at minor revision or accept, UD-20261126-review-pass-two-minor) a verifier technical
+    failure (as opposed to a verified manuscript error) also does not block.
     """
-    strict = archived_version is None and not precision
+    strict = archived_version is None and not precision and not accepting
     try:
         if not isinstance(binding, Mapping) or binding.get("schema") != VERSION or (strict and binding.get("valid") is not True):
             raise ValueError("Missing passing mandatory formal check; rerun unified review")
+        if accepting and "path" not in binding:
+            # Stage exception before a report file was written (e.g. verifier outage): allow
+            # only when the recorded summary carries technical failure(s) and no scientific or
+            # preparation blocker.
+            cats = (binding.get("issue_summary") or {}).get("by_category") or {}
+            if cats.get("scientific") or cats.get("preparation") or not cats.get("technical"):
+                raise ValueError("Missing passing mandatory formal check; rerun unified review")
+            return []
         path = _safe_file(root, binding["path"])
         if sha(path.read_bytes()) != binding["sha256"]:
             raise ValueError("Formal-check report changed")
@@ -1862,6 +1964,27 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
             # bytes whose SHA was just checked; read_text translates newlines.
             if _safe_file(root, source["text_path"]).read_bytes().decode("utf-8") != source["text"]:
                 raise ValueError("Reported source text differs from the actual evidence file")
+        recorded_cats = (result.get("issue_summary") or {}).get("by_category") or {}
+        if accepting and recorded_cats.get("technical") and (
+                not result["receipts"] or len(result["receipts"]) != len(
+                    [(g, b) for g in ("references", "passages")
+                     for b in packet_batches(g, documents, result["inventory"],
+                                             result["sources"], root=root, artifacts=result['artifact_inventory'])])):
+            # A batch/coverage technical failure left the formal run incomplete; still verify
+            # every recorded receipt's integrity and block on any retained scientific/preparation error.
+            for item in result["receipts"]:
+                receipt, workdir = item["receipt"], item["workdir"]
+                for filename, expected in (("output.json", receipt["output_sha256"]),
+                                           ("prompt.txt", receipt["prompt_sha256"]),
+                                           ("system.txt", receipt["system_prompt_sha256"])):
+                    if sha(_safe_file(root, workdir + "/" + filename).read_bytes()) != expected:
+                        raise ValueError("Formal role inputs or actual output changed")
+                if json.loads(_safe_file(root, workdir + "/receipt.json").read_text()) != receipt:
+                    raise ValueError("Formal role receipt changed")
+            if binding.get("issue_summary", result["issue_summary"]) != result["issue_summary"]:
+                raise ValueError("Formal verdict differs from the independently verified outputs")
+            return material_blockers(result["blockers"], result["issue_summary"],
+                                     finding_kinds(result["report"]), accepting=True)[0]
         if not result["receipts"] and not prior:
             raise ValueError("Formal verification lacks independent actual-model receipts")
         materiality = bool(prior or result["inventory"].get("materiality"))
@@ -1936,11 +2059,12 @@ def validate_binding(binding: Any, metadata: Mapping[str, Any], root: Path,
                     or binding.get("issue_summary") != result["issue_summary"]):
                 raise ValueError("Archived formal verdict differs from the independently verified outputs")
             return []
-        if precision:
+        if precision or accepting:
             if (blockers != result["blockers"] or binding.get("blockers", blockers) != blockers
                     or binding.get("issue_summary", result["issue_summary"]) != result["issue_summary"]):
                 raise ValueError("Formal verdict differs from the independently verified outputs")
-            return material_blockers(blockers, result["issue_summary"], finding_kinds(result["report"]))[0]
+            return material_blockers(blockers, result["issue_summary"], finding_kinds(result["report"]),
+                                     accepting=accepting)[0]
         return blockers
     except (ValueError, KeyError, IndexError, TypeError, OSError, LaunchError) as exc:
         return [f"Mandatory formal check: {exc}"]

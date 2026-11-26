@@ -1,10 +1,10 @@
 {
  "20261109-biology-exposure-pfas-mixture-distribution/20261122T121729Z": {
-  "advice": 23,
+  "advice": 24,
   "blocking": 0,
   "blocking_sha256": "e3b0c44298fc1c14",
-  "next_action": "evidence_remediation",
-  "outcome": "formal_check_blocked"
+  "next_action": null,
+  "outcome": "ready"
  },
  "20261109-biology-exposure-pfas-mixture-distribution/20261123T023345Z": {
   "advice": 41,
@@ -14,7 +14,7 @@
   "outcome": "formal_check_blocked"
  },
  "20261109-biology-exposure-pfas-mixture-distribution/20261123T112839Z": {
-  "advice": 31,
+  "advice": 32,
   "blocking": 2,
   "blocking_sha256": "94bd9afc5935bac2",
   "next_action": "evidence_remediation",
@@ -91,16 +91,16 @@
   "outcome": "ready"
  },
  "20261113-biology-genetics-campylobacter-source-forward-validation/20261123T111005Z": {
-  "advice": 31,
+  "advice": 32,
   "blocking": 1,
   "blocking_sha256": "5bb2bd3638989ec7",
-  "next_action": "evidence_remediation",
-  "outcome": "formal_check_blocked"
+  "next_action": "text_revision",
+  "outcome": "revision_required"
  },
  "20261113-biology-genetics-campylobacter-source-forward-validation/20261123T114919Z": {
-  "advice": 49,
-  "blocking": 8,
-  "blocking_sha256": "648e371871ae0996",
+  "advice": 50,
+  "blocking": 7,
+  "blocking_sha256": "bb4fcbb7576bb5b4",
   "next_action": "evidence_remediation",
   "outcome": "formal_check_blocked"
  },
@@ -364,9 +364,9 @@
   "outcome": "revision_required"
  },
  "20261114-physics-photometry-v0651hya-tess-geometry/20261122T080427Z": {
-  "advice": 12,
-  "blocking": 2,
-  "blocking_sha256": "ad1d89ef770301e8",
+  "advice": 13,
+  "blocking": 1,
+  "blocking_sha256": "634f1d7985ab45be",
   "next_action": "evidence_remediation",
   "outcome": "revision_required"
  },
@@ -434,32 +434,32 @@
   "outcome": "revision_required"
  },
  "20261119-quant-energy-nem-settlement-storage/20261123T110235Z": {
-  "advice": 36,
-  "blocking": 1,
-  "blocking_sha256": "d40ea1a44813aa15",
-  "next_action": "evidence_remediation",
-  "outcome": "formal_check_blocked"
+  "advice": 38,
+  "blocking": 0,
+  "blocking_sha256": "e3b0c44298fc1c14",
+  "next_action": null,
+  "outcome": "ready"
  },
  "20261119-quant-energy-nem-settlement-storage/20261123T134918Z": {
-  "advice": 39,
-  "blocking": 7,
-  "blocking_sha256": "588e28ac650ba124",
+  "advice": 40,
+  "blocking": 6,
+  "blocking_sha256": "957e73d9e4db6d4b",
   "next_action": "evidence_remediation",
   "outcome": "formal_check_blocked"
  },
  "20261119-quant-energy-nem-settlement-storage/20261123T144433Z": {
-  "advice": 13,
+  "advice": 14,
   "blocking": 0,
   "blocking_sha256": "e3b0c44298fc1c14",
-  "next_action": "evidence_remediation",
-  "outcome": "formal_check_blocked"
+  "next_action": null,
+  "outcome": "ready"
  },
  "20261119-quant-energy-nem-settlement-storage/20261123T145349Z": {
-  "advice": 9,
+  "advice": 10,
   "blocking": 0,
   "blocking_sha256": "e3b0c44298fc1c14",
-  "next_action": "evidence_remediation",
-  "outcome": "formal_check_blocked"
+  "next_action": null,
+  "outcome": "ready"
  },
  "20261119-quant-energy-nem-settlement-storage/20261123T151439Z": {
   "advice": 18,
@@ -560,18 +560,18 @@
   "outcome": "formal_check_blocked"
  },
  "20261120-quant-power-nem-solar-battery/20261123T123440Z": {
-  "advice": 59,
-  "blocking": 10,
-  "blocking_sha256": "b37327469450a276",
+  "advice": 65,
+  "blocking": 4,
+  "blocking_sha256": "dfa7e2d00bf0225c",
   "next_action": "evidence_remediation",
   "outcome": "revision_required"
  },
  "20261120-quant-power-nem-solar-battery/20261123T124919Z": {
-  "advice": 40,
-  "blocking": 1,
-  "blocking_sha256": "d6fbd62e088a4a01",
-  "next_action": "text_revision",
-  "outcome": "revision_required"
+  "advice": 41,
+  "blocking": 0,
+  "blocking_sha256": "e3b0c44298fc1c14",
+  "next_action": null,
+  "outcome": "ready"
  },
  "20261120-quant-power-nem-solar-battery/20261123T125917Z": {
   "advice": 18,
@@ -595,18 +595,18 @@
   "outcome": "ready"
  },
  "20261120-quant-power-nem-solar-battery/20261123T163215Z": {
-  "advice": 18,
+  "advice": 19,
   "blocking": 0,
   "blocking_sha256": "e3b0c44298fc1c14",
-  "next_action": "evidence_remediation",
-  "outcome": "formal_check_blocked"
+  "next_action": null,
+  "outcome": "ready"
  },
  "20261120-quant-power-nem-solar-battery/20261123T163309Z": {
-  "advice": 18,
+  "advice": 19,
   "blocking": 0,
   "blocking_sha256": "e3b0c44298fc1c14",
-  "next_action": "evidence_remediation",
-  "outcome": "formal_check_blocked"
+  "next_action": null,
+  "outcome": "ready"
  },
  "20261121-physics-photometry-tic236779149/20261121T093448Z": {
   "advice": 4,
@@ -644,9 +644,9 @@
   "outcome": "formal_check_blocked"
  },
  "20261121-physics-photometry-tic236779149/20261123T144108Z": {
-  "advice": 68,
-  "blocking": 11,
-  "blocking_sha256": "12ee8390cbc3b694",
+  "advice": 77,
+  "blocking": 2,
+  "blocking_sha256": "9c9b33d8bda89d49",
   "next_action": "evidence_remediation",
   "outcome": "revision_required"
  },

@@ -30,7 +30,7 @@ def test_followup_keeps_only_tracked_and_justified_new_blockers():
     new = dict(kind="figure_result_mismatch", location="Fig. 2", finding="Legend swaps the groups",
                reader_misconclusion="Readers would infer the control outperformed treatment.",
                why_missed="The replacement figure first appeared in this revision.")
-    reports = {"referee": dict(recommendation="accept", previous_items=[item, dict(item, item="Invented ID")],
+    reports = {"referee": dict(recommendation="major_revision", previous_items=[item, dict(item, item="Invented ID")],
                                new_findings=[new])}
     result = flow.merge({"decision": "send_to_review"}, reports, followup_items=[item["item"]])
     assert result["outcome"] == "revision_required"

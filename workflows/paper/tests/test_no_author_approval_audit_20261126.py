@@ -100,7 +100,9 @@ def test_author_approval_item_does_not_trigger_the_rewrite_guard(tmp_path):
     assert _check(tmp_path, [P5_ITEM], raw)["blockers"] == []
 
 
-def test_a_scientific_must_fix_still_triggers_the_rewrite_guard(tmp_path):
+def test_a_scientific_must_fix_still_needs_an_answer_but_may_rewrite(tmp_path):
+    # UD-20261126-review-pass-two-minor: a revision answering a substantive scientific must-fix
+    # is not held by the 15% rewrite share; it must still be answered in the response.
     blockers = _check(tmp_path, [P5_ITEM, SCIENCE_ITEM])["blockers"]
-    assert any("separate rounds" in b for b in blockers)
+    assert not any("separate rounds" in b for b in blockers)
     assert any("Provide --response" in b for b in blockers)

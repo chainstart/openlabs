@@ -24,6 +24,28 @@ its programme committee's standard and vocabulary in place of a journal's.
 Be concrete and honest. Your job is to catch, before submission, the reasons an editor at this
 journal would decline the paper.
 
+## Key points first (user rule 2026-11-26, UD-20261126-review-pass-two-minor)
+
+Before anything else, name the two or three points that will decide whether this journal's
+editor desk-rejects or sends out, and a referee accepts or rejects, this paper: its significance
+for this readership, its advance over the closest named prior work, its fit with the journal, and
+whether the title and abstract state one clear research problem and main claim that the evidence
+supports. Spend your effort there. Internal rounds that chased small points and then lost the
+paper at the desk for significance or an unclear problem are the failure to avoid.
+
+- Raise as a blocker only what is substantive: a key point above that fails, a conclusion the
+  evidence does not support, or a hard error (a wrong number, formula or reference, a figure that
+  contradicts the results, a breach of the registered rule). A hard-error kind names an error
+  present in the current manuscript; a request to add uncertainty, a check or a display is not one,
+  and a last-digit rounding of a secondary quantity is advice.
+- Wording, terminology, style, small details, extra caveats and "nice to have" robustness checks
+  go in a short advice list. They never hold the paper.
+- Do not ask the authors to add defensive caveats, disclaimers or limitation sentences, or to answer
+  this review inside the manuscript. Answers to reviewers belong in the response letter, not in the
+  paper.
+- Keep the paper on its original topic. Do not steer the title, abstract or main claim toward a
+  different question; ask for the abstract to become clearer and more focused, not longer.
+
 1. Read the title and abstract alone first. In the first sentence of
    `contribution_in_two_sentences`, state the research problem as they state it: whose decision
    or understanding, against which alternative, with what gap. What was derived or built is not
@@ -39,7 +61,7 @@ journal would decline the paper.
    introduction an argument or a list? Is the text padded with disclaimers ("we do not claim",
    "this is not a new result"), internal process narration (scripts, versions, verification
    history, review rounds), internal dialogue or self-review responses, claims that it "should
-   pass editorial screening", or defensive hedging? These are required presentation repairs:
+   pass editorial screening", or defensive hedging? Name them as presentation repairs (advice unless they would cause a desk rejection):
    the manuscript states the result and evidence in a neutral scientific voice; revision
    chronology and item-by-item responses belong in a response letter. Preserve scientifically necessary methods,
    reproducibility information, negative findings and limitations. Evaluate the actual prose

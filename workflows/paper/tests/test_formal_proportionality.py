@@ -205,3 +205,49 @@ def test_quote_matches_decoded_json_value_but_not_across_fields():
     assert not f._quote_present("clinician-adjudicated QT/RR and +15 ms bias</jats:p> Next field", raw)
     assert not f._quote_present("clinician-adjudicated QT/HR", raw)
     assert not f._quote_present("QT/RR", "not json QT\\/RR")
+
+
+def test_quote_normalizes_jats_markup_arxiv_math_and_pdf_artifacts_narrowly():
+    # Crossref JSON with JATS inline tags, pretty-printed newlines before punctuation and HTML entities.
+    jats = json.dumps({"message": {
+        "abstract": (
+            "<jats:p>Using the theory of\n  <jats:italic>relative twisted cohomology</jats:italic>\n  and\n"
+            "  <jats:italic>intersection theory</jats:italic>\n  , we derive a closed form formula "
+            "(\n  <jats:italic toggle=\"yes\">r</jats:italic>\n  , 0.851) with &gt;4-fold and "
+            "(&amp;gt;50\u2005ms) outliers in a dofetilide\u2010loading data set.</jats:p>"
+        ),
+        "title": ["Separate title field"],
+    }})
+    assert f._quote_present(
+        "Using the theory of relative twisted cohomology and intersection theory, we derive a closed form formula",
+        jats,
+    )
+    assert f._quote_present("(r, 0.851) with >4-fold and (>50 ms) outliers in a dofetilide-loading data set.", jats)
+    assert not f._quote_present("dofetilide-loading data set. Separate title field", jats)
+
+    # arXiv Atom XML: inline single-dollar math delimiters ($n$-site, $n$-gon) and leaf isolation.
+    arxiv_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
+        '<title>Polygon Graphs</title>'
+        '<summary>We present an explicit formula for the $n$-gon graph contribution in the case of '
+        '$n$-site cycle graph momentum integrands where $x^2 \\ge 0$.</summary>'
+        '</entry></feed>'
+    )
+    assert f._quote_present("in the case of n-site cycle graph momentum integrands", arxiv_xml)
+    assert f._quote_present("the n-gon graph contribution", arxiv_xml)
+    assert not f._quote_present("Polygon Graphs We present an explicit formula", arxiv_xml)
+    assert not f._quote_present("where $x^2 \\le 0$", arxiv_xml)
+
+    # PDF line-break hyphenation and ligatures without weakening ordinary hyphens, case or wording.
+    pdf_text = "This diagram com-\nmutes up to sign at least for the \ufb01rst \ufb02ow."
+    assert f._quote_present("commutes up to sign at least for the first flow.", pdf_text)
+    assert not f._quote_present("Commutes up to sign", pdf_text)
+    assert not f._quote_present("first-flow", pdf_text)
+
+    # Genuine paraphrase / word omission must still fail verbatim matching.
+    paraphrase_src = json.dumps({"message": {
+        "abstract": "<jats:p>We therefore develop a deep learning model that infers QT intervals from ECG Lead-I.</jats:p>"
+    }})
+    assert not f._quote_present("we develop a deep learning model that infers QT intervals from ECG Lead-I",
+                                paraphrase_src)

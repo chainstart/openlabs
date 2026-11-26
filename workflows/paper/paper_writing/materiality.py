@@ -7,6 +7,12 @@ wording that is merely imprecise is advice; new checks are advice by default; an
 kinds -- numeric or statistical errors, formula errors, figure/result mismatches,
 preregistration breaches and nonexistent references -- always block.
 
+Pass rule (user 2026-11-26, UD-20261126-review-pass-two-minor: "2个评审，只要都是小修以上就过关"):
+when every referee recommends minor revision or accept (``Context.accepting``), nothing but a
+hard error (``hard_error``) blocks; the editor, the delivery reader and the referees' own items
+travel as advice. A referee at major revision or reject keeps the paper in revision only through
+its material (substantive) items; its wording, style and detail items are advice as before.
+
 Before B6 this rule lived in seven separate downgrade paths in ``review_flow``,
 ``formal_checks`` and ``presentation``, ten of them keyword patterns. Here it is one table,
 ``RULES``, read top to bottom: the first rule that applies to a finding decides it. Every
@@ -142,6 +148,8 @@ class Finding:
     previous_index: Any = None
     # The request is about author approval or consent (out of scope; UD-20261126).
     author_approval: bool = False
+    # Legacy previous item (no structured kind) whose evidence states an error still present.
+    present_error: bool = False
 
     @property
     def new(self) -> bool:
@@ -189,6 +197,38 @@ _REVIEW = _sources("dimension", "new_finding", "reader")
 _NEW_TEXT = _sources("new_finding", "reader")
 
 
+def hard_error(f: Finding) -> bool:
+    """A genuine hard error: the paper is wrong as written, whatever the panel recommends
+    (UD-20261126-review-pass-two-minor). Kept narrow on purpose:
+
+    * ``numeric_or_statistical_error``, ``formula_error``: a reported number, statistic, bound or
+      formula is wrong -- a proven-wrong result cannot be submitted;
+    * ``figure_result_mismatch``: a claim or figure contradicts the paper's own data;
+    * ``preregistration_violation``: the verdict does not follow from the registered rule, so the
+      headline result is wrong under the paper's own protocol;
+    * ``citation_nonexistent``: a fabricated reference is an integrity problem;
+    * a previous item that tracks a formal verifier ``error`` (a formula, number or citation the
+      verifier found wrong against its source), or a previous item written before the structured
+      kinds whose evidence states that an error is still present (the legacy fallback's
+      ``_states_present_error``);
+    * an ``unsupported_claim`` in a headline claim (title, abstract, highlights, conclusions)
+      raised by the editor or a referee: the main claim says what the evidence does not show,
+      which is the claim--data mismatch an editor reads first (kept from rule
+      ``accepting_unsupported``). The delivery reader's headline items stay advice.
+
+    Unverifiable references and the verifier's other blocking findings are decided by the formal
+    rules (source ``formal``); mandatory declarations, the AI-use disclosure and hard venue limits
+    are checked deterministically at delivery (``delivery_floor``). Neither depends on the panel.
+    """
+    return (f.kind in HARD_KINDS
+            or (f.source == "previous" and (": error —" in f.previous_item or f.present_error))
+            or (f.kind == "unsupported_claim" and f.category == "headline_claim" and f.source != "reader"))
+
+
+def _accepting_panel(f: Finding, c: Context) -> bool:
+    return c.accepting and not hard_error(f)
+
+
 def _presentation_blocks(f: Finding, c: Context) -> bool:
     if not f.blocking_flag or f.category not in PRESENTATION_BLOCKING:
         return False
@@ -210,7 +250,8 @@ RULES: tuple[Rule, ...] = (
     Rule("author_approval_out_of_scope", ADVICE, lambda f, c: f.author_approval,
          "author approval, consent to submit, signatures and delegated authority are handled by the "
          "pre-submission human review and the journal's submission system"),
-    # Formal verifier (gate1_precision_v1, 2026-11-23; source routing 2026-11-23 audit item 12).
+    # Formal verifier (gate1_precision_v1, 2026-11-23; source routing 2026-11-23 audit item 12;
+    # verifier technical failures on accepting panels UD-20261126-review-pass-two-minor).
     Rule("formal_advisory", ADVICE, lambda f, c: f.source == "formal" and f.formal_category == "advisory",
          "the verifier itself classified the item as advice"),
     Rule("formal_source_routing", ADVICE, lambda f, c: f.source == "formal" and f.formal_category == "source_routing",
@@ -218,6 +259,11 @@ RULES: tuple[Rule, ...] = (
     Rule("formal_precision", ADVICE, lambda f, c: f.source == "formal" and f.formal_category == "scientific" and (
         f.formal_status == "gap" or f.kind in FORMAL_PRECISION_KINDS),
          "a sentence not fully supported as worded (gap, unsupported claim, citation support) is advice"),
+    Rule("formal_accepting_technical", ADVICE,
+         lambda f, c: f.source == "formal" and f.formal_category == "technical" and c.accepting,
+         "a verifier technical failure (not a verified manuscript error) does not block when every "
+         "referee recommends minor revision or accept; reported as advice / needs-rerun "
+         "(UD-20261126-review-pass-two-minor)"),
     Rule("formal_material", BLOCK, lambda f, c: f.source == "formal",
          "errors, unchecked claims, reference rows, technical and preparation problems block"),
     # Presentation light review (2026-11-23: claim/data mismatch, missing figure, hard venue rule).
@@ -226,6 +272,13 @@ RULES: tuple[Rule, ...] = (
          "follow-up only an unresolved previous blocking item"),
     Rule("presentation_form", ADVICE, lambda f, c: f.source == "presentation",
          "layout, typography, wording and style travel with the package"),
+    # Both referees at minor or better (UD-20261126-review-pass-two-minor): an error that lives only
+    # in the archive, the supporting files or the response (a stale claim-evidence map row) does not
+    # make the paper wrong; it travels with the package. The only narrowing of D09.
+    Rule("accepting_archive_only", ADVICE, lambda f, c: c.accepting and f.source in (
+        "dimension", "new_finding", "reader", "previous") and f.structured and f.only_archive and hard_error(f),
+         "with both referees at minor revision or better, a finding about the archive, supporting files or "
+         "response alone is advice, even when typed as an error"),
     # Previous items (the item already met the materiality threshold when it was raised).
     Rule("previous_incomplete", ADVICE, lambda f, c: f.source == "previous" and c.followup_protocol and not f.complete,
          "an unresolved item needs its evidence and the wrong conclusion a reader would still draw"),
@@ -234,6 +287,9 @@ RULES: tuple[Rule, ...] = (
     Rule("previous_accepting_documentation", ADVICE, lambda f, c: f.source == "previous" and c.accepting
          and c.science_clear and f.only_archive,
          "with the science clear, how the response is written or what the archive shows is advice"),
+    Rule("previous_accepting_panel", ADVICE, lambda f, c: f.source == "previous" and _accepting_panel(f, c),
+         "both referees recommend minor revision or better: the paper passes; an open item that is not a "
+         "hard error travels as advice (UD-20261126-review-pass-two-minor)"),
     Rule("previous_open", BLOCK, lambda f, c: f.source == "previous", "an unresolved previous blocker"),
     # Review findings (editor, referees, delivery reader).
     Rule("classified_advisory", ADVICE, lambda f, c: _REVIEW(f) and (f.kind == "advisory" or not f.complete),
@@ -268,6 +324,11 @@ RULES: tuple[Rule, ...] = (
     Rule("accepting_readability", ADVICE, lambda f, c: f.source == "dimension" and f.dimension == "readability"
          and c.accepting and c.dimensions_clear,
          "with every referee at accept or minor revision and no science finding, readability repairs are advice"),
+    # User 2026-11-26: "2个评审，只要都是小修以上就过关". The editor, the delivery reader and the
+    # referees' own items add advice; only a hard error (``hard_error``) still blocks.
+    Rule("accepting_panel", ADVICE, lambda f, c: _REVIEW(f) and _accepting_panel(f, c),
+         "both referees recommend minor revision or better: the paper passes; editor, reader and referee "
+         "items that are not hard errors are advice (UD-20261126-review-pass-two-minor)"),
     Rule("material", BLOCK, lambda f, c: True, "a complete finding with a stated reader misconclusion"),
 )
 RULE_IDS = tuple(rule.id for rule in RULES)
@@ -353,9 +414,11 @@ def _previous(raw: Mapping[str, Any], role: str, context: Context) -> Finding:
             else frozenset()
     if category == "archive_or_response_format":
         requests = requests | {"archive_or_response_format"}
+    present = not structured(raw) and _states_present_error(_sentences(evidence, misconclusion))
     return Finding(source="previous", role=role, kind=kind, category=category, misconclusion=misconclusion,
                    previous_item=item, location="Previous decision", requests=requests,
-                   structured=structured(raw), complete=bool(evidence.strip() and misconclusion.strip()))
+                   structured=structured(raw), complete=bool(evidence.strip() and misconclusion.strip()),
+                   present_error=present)
 
 
 def _review_finding(raw, source, role, dimension, context) -> Finding:

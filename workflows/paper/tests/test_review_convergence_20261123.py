@@ -51,8 +51,12 @@ def test_title_change_and_polish_rewrite_are_held_in_a_revision_round():
     retitled = NEM_R2.replace("\\title{Five-minute settlement}", "\\title{Spotted settlement premium}")
     assert any("title changed" in b for b in guard.revision_scope_blockers(NEM_R2, retitled, None, [], 0))
     long_old = NEM_R2.replace("\\end{document}", "word " * 1000 + "\\end{document}")
-    blockers = guard.revision_scope_blockers(long_old, long_old, None, ["item"], 400)
+    blockers = guard.revision_scope_blockers(long_old, long_old, None, ["[text] item"], 400)
     assert any("separate rounds" in b for b in blockers)
+    # UD-20261126-review-pass-two-minor: answering a substantive must-fix may rewrite a section.
+    for item in ("[evidence] item", "main:L10:abc: error — the bound is false", "[narrative] a", "Unsupported main claim"):
+        blockers = guard.revision_scope_blockers(long_old, long_old, None, ["[text] t", item], 400)
+        assert any("separate rounds" in b for b in blockers) is item.startswith("[narrative]"), item
     assert guard.revision_scope_blockers(long_old, long_old, None, [], 400) == []
 
 

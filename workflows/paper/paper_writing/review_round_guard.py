@@ -294,6 +294,7 @@ def _strong_count(pattern: str, sentence: str) -> int:
 # mixes a polishing rewrite into a scientific revision.
 MAX_REVISION_WORD_SHARE = 0.15
 MIN_REWRITE_WORDS = 200
+_POLISH_ITEM = re.compile(r"\s*\[(?:text|narrative|figure)\]")
 
 
 def _plain_sentences(expanded: str) -> list[str]:
@@ -357,7 +358,13 @@ def revision_scope_blockers(old: str, new: str, raw, items, changed_words: int) 
         if not any(title and (title in text or text in title) for text in declared):
             blockers.append("The title changed in a revision round; declare the new title in the response new_text")
     words = max(1, len(re.findall(r"\w+", old)))
-    if items and changed_words >= MIN_REWRITE_WORDS and changed_words / words > MAX_REVISION_WORD_SHARE:
+    # A substantive scientific must-fix (evidence, a main claim, a scientific blocker, a formal
+    # error) may need a section rewritten: the share limit applies only while every item is a
+    # text, narrative or figure repair (UD-20261126-review-pass-two-minor). The title and
+    # strengthening checks above still keep the topic and the abstract where they were.
+    polish_only = all(_POLISH_ITEM.match(item) for item in items)
+    if (items and polish_only and changed_words >= MIN_REWRITE_WORDS
+            and changed_words / words > MAX_REVISION_WORD_SHARE):
         blockers.append(f"{changed_words / words:.0%} of the words changed while answering mandatory items "
                         f"(limit {MAX_REVISION_WORD_SHARE:.0%}): a polishing rewrite and a scientific revision "
                         "go in separate rounds")
