@@ -700,6 +700,23 @@ def runner_family(provider: str, model: str | None) -> str:
     if name.startswith("gpt"):
         return "openai-codex"
     return GOOGLE_FAMILY
+
+
+# Antigravity model ids carry the reasoning effort (``claude-opus-5-5-high``,
+# ``gemini-4-neon-xhigh``). For "same model or not" (the same-family fallback of a review)
+# the effort does not make another model: Opus through agy and Opus through Claude Code are
+# one model (2026-11-26, worker_agy_opus).
+_MODEL_EFFORT_SUFFIXES = ("-minimal", "-low", "-medium", "-high", "-xhigh", "-max")
+
+
+def model_identity(model: str | None) -> str:
+    """The model behind a runner's model id: lower case, without an effort suffix."""
+
+    name = str(model or "").strip().lower()
+    for suffix in _MODEL_EFFORT_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
 # One owner-agent seat of a research-program topic in owner mode ([program].owner_mode).
 OWNER_TASK_TYPE = "topic_owner"
 # Pre-provider runner names. They request a tier, never a model family: with a
@@ -1035,6 +1052,23 @@ class RunnerSpec:
         """Model family used for author/reviewer independence (not for quota)."""
 
         return self.family_override or runner_family(self.provider, self.model)
+
+    @property
+    def quota_key(self) -> str:
+        """The quota account a backoff applies to: the provider, except an Antigravity
+        runner outside the Gemini pool (2026-11-26, worker_agy_opus).
+
+        agy has one quota pool per model group; the Claude/GPT-OSS pool (windows
+        ``3p-weekly``/``3p-5h``) is separate from the Gemini one, so a quota hit there must
+        not stop the Gemini runners. Such a runner backs off under
+        ``google-antigravity:<pool>`` (the window prefix, ``3p``; its family without
+        windows); the Gemini runners keep the plain provider key as before.
+        """
+
+        if self.provider != ANTIGRAVITY_PROVIDER or self.family == GOOGLE_FAMILY:
+            return self.provider
+        pools = sorted({name.split("-", 1)[0] for name in self.windows if name})
+        return f"{self.provider}:{'+'.join(pools) or self.family}"
 
     def accepts(self, klass: str, task_type: str = "") -> bool:
         """``task_classes`` lists task classes and, narrower, task types (``topic_scout``)."""

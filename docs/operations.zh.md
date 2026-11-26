@@ -582,6 +582,26 @@ Gemini runner 改为 `overflow = false`、去掉 `task_classes`（接所有类�
 写稿仍首选 Claude Opus（`writing_runner`），等满 `writing_wait_hours` 后先交 `writing_fallback_runners`
 （cc-sg 为 `["worker_gemini"]`），见下文“写稿者交接”。
 
+**Opus 走 agy（2026-11-26，`worker_agy_opus`）**：用户：“本账号的claude额度不多了，你多用用反重力，而且可以用里面的
+gemini模型和opus 5.5模型，它们似乎是分开的两个额度池”。agy 的 `/usage` 有两组桶：Gemini 组（`gemini-weekly`、
+`gemini-5h`）与 “Claude and GPT models” 组（`3p-weekly`、`3p-5h`，Claude Opus 5.5、Sonnet 5.5、GPT-OSS 120B 共用）。
+runner 写法：`provider = "google-antigravity"`、`model = "claude-opus-5-5-high"`、`family = "anthropic"`（不写也由
+`runner_family` 按 `claude*` 推出；显式写更清楚）、`windows = ["3p-weekly", "3p-5h"]`。含义：
+
+- **独立性按模型族**：它与 `worker_claude` 同为 `anthropic` 族，Claude 写的稿不会交它审，它写的稿也不会交 Claude Code
+  的 Opus 审。同族回退（另一族都没额度时“同族不同模型”）比较模型时去掉 agy 的强度后缀（`config.model_identity`：
+  `claude-opus-5-5-high` 与 `claude-opus-5-5` 是同一模型），所以不会把 agy Opus 当成 Opus 之外的“另一个模型”。
+- **额度按 agy 的 3p 池**：只受 `3p-*` 两个窗口约束（`runner_windows`：声明了 windows 的 agy runner 只看自己的窗口），
+  与本账号 Claude 的窗口、Gemini 池都无关；`[routing.provider_ceilings.google-antigravity]` 的上限同样适用于它。
+- **退避按额度池分开**：agy 非 Gemini 族的 runner 退避键为 `google-antigravity:3p`（`RunnerSpec.quota_key`），
+  3p 池撞额度不会让 Gemini runner 一起退避，反之亦然；Gemini runner 仍用原来的 `google-antigravity` 键。
+- **汇总与配速报告**仍以 Gemini 池代表 `google-antigravity`（`shared_probe_spec` 优先 google 族）。
+- **续会话不跨族**：agy 一个工具服务两族，续接会话（`session_mode = resume`）除了同一 provider 还要求同一模型族，
+  Gemini 的会话不会被 agy Opus 续写。
+- **改 `writing_runner` 时的在写课题**：已交给旧写稿者（例如 `worker_claude`）的课题保留其写稿者；等满
+  `writing_wait_hours` 后先交当前 `writing_runner`，再按 `writing_fallback_runners`、原负责人顺序回退
+  （`owner._handed_writers`）。以前这类坐席既不归 `supervise_writing` 管、也被 `supervise` 跳过，会一直等旧写稿者。
+
 **交付前评审面板**（数据仓库 `registry/settings.yaml` 的 `review.roles`）现在可以写
 `{provider: google-antigravity, tool: Antigravity, model: gemini-...}`：审稿角色总在只读副本里运行
 （与 Codex 无 bubblewrap 时的做法相同：复制、去写权限、运行前后哈希），答案取
@@ -953,6 +973,7 @@ ailab（4 物理核 8 线程）一度排队 22 个作业、申报线程为容量
     `[program.owner].writing_fallback_runners`（2026-11-26，可选，缺省空）：回退时先按顺序取第一个可用的 runner
     （不是写稿者本身、在 `[program.owner].runners` 里且未到 `max_topics_per_runner`；它随后成为课题负责人），
     都不可用才回原负责人。它没做研究时，角色说明会让它从 `OWNER_HANDOVER.md` 及其列出的文件起步。
+    改了 `writing_runner` 后，已交给旧写稿者的课题照样等待、到时先交新的 `writing_runner`（2026-11-26）。
   - 名额与回退检查在 `owner.supervise_writing`，随路由开启时的 tick 运行（`[routing]` 关闭时不做名额限制，也不会有额度等待）。
 - **图件坐席跟随写稿者（2026-11-23）**：用户决定论文的写作和绘图都交 Claude Opus。`paper_figure_repair`（交
   `ready_for_review` 时请求图件助手而排的修图坐席，`paper_figures.queue`）不再固定在提出请求的坐席的 runner 上，而是

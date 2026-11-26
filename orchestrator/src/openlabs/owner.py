@@ -2804,6 +2804,48 @@ def supervise_writing(
     if not writer or writer not in settings.runners:
         return []
     moment = now or datetime.now(UTC)
+    moves = _supervise_writer(db, settings, router, writer=writer,
+                              fallbacks=owner.writing_fallback_runners, moment=moment,
+                              paths=paths)
+    # A topic handed to a writer that is no longer the configured one (writing_runner
+    # changed; 2026-11-26: worker_claude -> worker_agy_opus while the account's Claude is
+    # short, and back after 2026-11-30) keeps its writer, with the same wait; after
+    # writing_wait_hours the configured writer comes first among the fallbacks.
+    for earlier in _handed_writers(db, settings, exclude=writer):
+        moves += _supervise_writer(db, settings, router, writer=earlier,
+                                   fallbacks=(writer, *owner.writing_fallback_runners),
+                                   moment=moment, paths=paths)
+    if moves and report is not None:
+        report.program.setdefault("owner_writing", []).extend(
+            {"kind": "fallback", **move} for move in moves)
+    return moves
+
+
+def _handed_writers(db: FactoryDB, settings: FactorySettings, *, exclude: str) -> list[str]:
+    """Configured runners other than ``exclude`` that hold a queued writer seat."""
+
+    with db.connect() as connection:
+        rows = [dict(row) for row in connection.execute(
+            "SELECT * FROM tasks WHERE task_type=? AND status='queued' ORDER BY created_at, rowid",
+            (OWNER_TASK_TYPE,),
+        ).fetchall()]
+    names = {str(row.get("runner") or "") for row in rows if active_writer_seat(db, row)}
+    return sorted(name for name in names if name != exclude and name in settings.runners)
+
+
+def _supervise_writer(
+    db: FactoryDB,
+    settings: FactorySettings,
+    router: budget_control.QuotaRouter | None,
+    *,
+    writer: str,
+    fallbacks: tuple[str, ...],
+    moment: datetime,
+    paths: WorkspacePaths | None,
+) -> list[dict[str, Any]]:
+    """The writer seats of one writer runner (see :func:`supervise_writing`)."""
+
+    owner = settings.program.owner
     admitted = len(_writing_seats(db, writer, ("leased", "running")))
     moves: list[dict[str, Any]] = []
     for task in _writing_seats(db, writer, ("queued",)):
@@ -2834,7 +2876,7 @@ def supervise_writing(
         # A configured fallback writer first (UD-20261126-gemini-ultra), else the solver. It
         # becomes the topic's owner, so it must be an owner runner under its topic cap.
         owners = current_owners(db, exclude_campaign=campaign_id)
-        target = next((name for name in owner.writing_fallback_runners
+        target = next((name for name in fallbacks
                        if name != writer and name in settings.runners and name in owner.runners
                        and _under_cap(settings, owners, name)
                        and runner_usable(settings, router, name)), "")
@@ -2860,9 +2902,6 @@ def supervise_writing(
                             f"({reason}); the owner {target} writes"),
                     decided_by=task_id, detail=detail)
         moves.append({"task_id": task_id, **detail})
-    if moves and report is not None:
-        report.program.setdefault("owner_writing", []).extend(
-            {"kind": "fallback", **move} for move in moves)
     return moves
 
 
