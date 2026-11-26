@@ -75,6 +75,84 @@ def test_adaptive_ceiling_drops_when_every_provider_is_over_pace(tmp_path) -> No
     assert set(entry["quota_signal"].values()) <= {"over", "unavailable"}
 
 
+def _over_pace_like_2026_11_26(tmp_path):
+    """The cc-sg tick of 2026-11-26 06:11Z: every provider projected past its
+    ceiling at reset (GPT 68% used, resets in ~2 days; Claude 58% used, resets
+    in ~4.2 days), one agent running, five runnable tasks, an idle host."""
+
+    _, db = qr._setup(tmp_path)
+    settings = replace(qr._settings(utilization_target=0.9),
+                       budget=BudgetSettings(max_parallel_agents=8, adaptive_parallel=True,
+                                             adaptive_step=2))
+    _reading(db, settings, "worker_gpt", _window("seven_day", 0.68, minutes=10_080,
+                                                 resets_in=timedelta(hours=45)))
+    _reading(db, settings, "worker_claude", _window("seven_day", 0.58, minutes=10_080,
+                                                    resets_in=timedelta(hours=101)))
+    db.update_meta({utilization.ADAPTIVE_KEY: "1"})
+    return db, settings
+
+
+def _override(db, settings, provider, ceiling, *, now=NOW):
+    budget_control.set_quota_override(
+        db, settings, provider=provider, ceiling=ceiling, reason="user chose A",
+        until=budget_control._iso(now + timedelta(days=2)), now=now,
+    )
+
+
+def test_over_pace_without_override_still_holds_the_ceiling_at_one(tmp_path) -> None:
+    db, settings = _over_pace_like_2026_11_26(tmp_path)
+    entry = _limit(db, settings, active=1, runnable=5,
+                   host={"cpu_fraction": 0.03, "memory_fraction": 0.1})
+    assert entry["limit"] == 1 and entry["reasons"] == ["quota_over_pace"]
+    assert set(entry["quota_signal"].values()) == {"over"}
+
+
+def test_quota_override_lifts_over_pace_from_the_adaptive_ceiling(tmp_path) -> None:
+    # User 2026-11-26 (A): no seven-day pacing, stop only at the ceiling.
+    db, settings = _over_pace_like_2026_11_26(tmp_path)
+    _override(db, settings, GPT, 0.9)
+    _override(db, settings, qr.CLAUDE, 0.7)
+    host = {"cpu_fraction": 0.03, "memory_fraction": 0.1}
+    entry = _limit(db, settings, active=1, runnable=5, host=host)
+    assert entry["quota_signal"] == {GPT: "under", qr.CLAUDE: "under"}
+    assert entry["limit"] == 3 and entry["reasons"] == ["quota_under_pace_and_host_has_room"]
+    assert _limit(db, settings, active=3, runnable=3, host=host)["limit"] == 5
+    pace = utilization.provider_pace(budget_control.QuotaRouter.build(db, settings, now=NOW))
+    assert pace[GPT]["reason"] == "override_room_below_ceiling"
+
+
+def test_quota_override_still_stops_at_its_ceiling(tmp_path) -> None:
+    db, settings = _over_pace_like_2026_11_26(tmp_path)
+    # Claude has 2 points left below its override ceiling: hold, do not grow.
+    _override(db, settings, qr.CLAUDE, 0.6)
+    # GPT has reached its override ceiling: unavailable.
+    _override(db, settings, GPT, 0.68)
+    db.update_meta({utilization.ADAPTIVE_KEY: "4"})
+    entry = _limit(db, settings, active=4, runnable=5,
+                   host={"cpu_fraction": 0.03, "memory_fraction": 0.1})
+    assert entry["quota_signal"] == {GPT: "unavailable", qr.CLAUDE: "on_pace"}
+    assert entry["limit"] == 4 and entry["reasons"] == ["quota_on_pace_or_unknown"]
+    # Both at the ceiling: no provider usable, the ceiling steps down.
+    _override(db, settings, qr.CLAUDE, 0.58)
+    entry = _limit(db, settings, active=4, runnable=5,
+                   host={"cpu_fraction": 0.03, "memory_fraction": 0.1})
+    assert entry["limit"] == 3 and entry["reasons"] == ["no_provider_usable"]
+
+
+def test_quota_override_does_not_outrank_host_load_or_backoff(tmp_path) -> None:
+    db, settings = _over_pace_like_2026_11_26(tmp_path)
+    _override(db, settings, GPT, 0.9)
+    _override(db, settings, qr.CLAUDE, 0.7)
+    db.update_meta({utilization.ADAPTIVE_KEY: "4"})
+    high = _limit(db, settings, active=4, runnable=5,
+                  host={"cpu_fraction": 0.97, "memory_fraction": 0.1})
+    assert high["limit"] == 3 and high["limited_by"] == "host_resources"
+    router = budget_control.QuotaRouter.build(db, settings, now=NOW)
+    router.backoffs[GPT] = NOW + timedelta(hours=1)
+    pace = utilization.provider_pace(router)
+    assert pace[GPT]["signal"] == "unavailable" and pace[GPT]["reason"] == "backoff"
+
+
 def test_adaptive_ceiling_never_exceeds_a_halved_hard_ceiling(tmp_path) -> None:
     db, settings = _adaptive(tmp_path)
     db.update_meta({utilization.ADAPTIVE_KEY: "8", budget_control.EFFECTIVE_PARALLEL_KEY: "4"})
