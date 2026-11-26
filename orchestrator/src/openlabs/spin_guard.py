@@ -21,7 +21,8 @@ and summaries are never compared, so a rewritten summary is not progress.
 
 The streak is the number of consecutive most-recent no-progress tasks. From
 ``[factory].no_progress_backoff_after`` on, the campaign's queued tasks wait
-(``no_progress_backoff_minutes``, last value repeats, counted from the last finish);
+(``no_progress_backoff_minutes``, last value repeats, counted from the last non-neutral
+finish, so a finishing scout or owner seat does not push the wait further);
 at ``no_progress_escalate_after`` they stop as ``needs_human`` (``no_progress_circuit``),
 which also stops continuous replenishment of the campaign until a human acts.
 
@@ -52,6 +53,10 @@ from .db import FactoryDB
 DECISION_TASK_TYPES = frozenset({
     "direction_decision", "portfolio_review", "paper_review", "independent_review",
     "paper_readiness", "topic_admission",
+    # A prescreen's product is its verdict (nc_funnel.advance_prescreens); a card stopped
+    # at phase A is the funnel moving, not a spin. Line-level "every card fails" is the
+    # funnel stall backoff's job (nc_funnel.scout_blocks), which limits scouts only.
+    "topic_prescreen",
 })
 NEUTRAL_TASK_TYPES = frozenset({"topic_owner", "topic_scout", "smoke"})
 FINISHED_STATUSES = ("succeeded", "needs_replan", "needs_human", "failed", "quarantined",
@@ -192,7 +197,7 @@ def _campaign_history(
 
 
 def no_progress_streak(db: FactoryDB, campaign_id: str) -> tuple[int, dict[str, Any] | None]:
-    """``(consecutive no-progress tasks, the most recent finished task)``."""
+    """``(consecutive no-progress tasks, the most recent finished non-neutral task)``."""
 
     classified = classify(_campaign_history(db, campaign_id))
     streak = 0
@@ -202,7 +207,8 @@ def no_progress_streak(db: FactoryDB, campaign_id: str) -> tuple[int, dict[str, 
         if progress:
             break
         streak += 1
-    latest = classified[-1][0] if classified else None
+    latest = next((task for task, progress in reversed(classified) if progress is not None),
+                  None)
     return streak, latest
 
 

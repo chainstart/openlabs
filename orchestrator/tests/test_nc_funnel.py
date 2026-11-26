@@ -306,6 +306,54 @@ def test_prescreened_card_goes_to_nc_admission(tmp_path, monkeypatch, complete):
     assert objectives and not any("feasibility_precheck" in text for text in objectives)
 
 
+def _distinct() -> dict:
+    fields = _nc_fields(claim="Glacier melt pulses reorder alpine river carbon export "
+                              "seasonality across hemispheres.")
+    return {"question": "Do meltwater pulses shift the timing of mountain stream carbon "
+                        "fluxes?", **fields}
+
+
+def test_a_backed_off_prescreen_holds_no_slot_and_is_reported_queued(tmp_path, monkeypatch):
+    """2026-11-26: four backed-off prescreens of one line filled the global cap and
+    were reported as running; the other cards never got a slot."""
+
+    paths, db, settings = _setup(tmp_path, prescreen_max_concurrent=1)
+    _, report = flow._scout_round(paths, db, settings, monkeypatch,
+                                  [_nc_card(0), _nc_card(1, **_distinct())])
+    assert report.errors == [], report.errors
+    ledger = open_topic_ledger(paths, settings.program)
+    topics = [ledger.topic(item["topic_id"]) for item in report.program["cards_registered"]]
+    states = {topic["topic_id"]: topic["card_check"]["prescreen"] for topic in topics}
+    held = [topic_id for topic_id, state in states.items() if state["status"] == "scheduled"]
+    waiting = [topic_id for topic_id, state in states.items() if state["status"] == "pending"]
+    assert len(held) == 1 and len(waiting) == 1, states
+    first_task = states[held[0]]["task_id"]
+
+    # Running now: it holds the one slot and is reported with its own status.
+    with db.connect() as connection:  # test fixture: the prescreen is claimed
+        connection.execute("UPDATE tasks SET status='running', not_before=NULL "
+                           "WHERE task_id=?", (first_task,))
+    outcomes = {item["topic_id"]: item for item in
+                nc_funnel.advance_prescreens(db, paths, settings, flow.engine.TickReport())}
+    assert outcomes[held[0]] == {"topic_id": held[0], "status": "running",
+                                 "task_id": first_task}
+    assert outcomes[waiting[0]]["reason"] == "prescreen_max_concurrent"
+
+    # Backed off into the future (no_progress_backoff): queued, no slot.
+    later = (datetime.now(UTC) + timedelta(hours=4)).isoformat(timespec="seconds") \
+        .replace("+00:00", "Z")
+    with db.connect() as connection:  # test fixture: the backoff the guard writes
+        connection.execute("UPDATE tasks SET status='queued', not_before=? WHERE task_id=?",
+                           (later, first_task))
+    outcomes = {item["topic_id"]: item for item in
+                nc_funnel.advance_prescreens(db, paths, settings, flow.engine.TickReport())}
+    assert outcomes[held[0]] == {"topic_id": held[0], "status": "queued",
+                                 "task_id": first_task, "not_before": later}
+    assert outcomes[waiting[0]]["status"] == "scheduled"
+    assert open_topic_ledger(paths, settings.program).topic(waiting[0])[
+        "card_check"]["prescreen"]["status"] == "scheduled"
+
+
 def test_evaluate_prescreen_rules(tmp_path):
     settings = replace(flow._settings(), program=replace(flow._settings().program,
                                                          funnel=FunnelSettings()))

@@ -295,6 +295,89 @@ def test_progress_and_owner_seats_are_not_spin(tmp_path):
     assert spin_guard.no_progress_streak(db, "campaign-2")[0] == 0
 
 
+def _stamp(moment: datetime) -> str:
+    return moment.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _attempt(db, task_id: str, stamp: str, seconds: float = 120.0) -> None:
+    with db.connect() as connection:  # test fixture: one finished attempt of the task
+        connection.execute(
+            "INSERT INTO task_attempts (attempt_id, task_id, attempt_number, status, "
+            "lease_owner, started_at, finished_at, run_seconds, created_at) "
+            "VALUES (?, ?, 1, 'succeeded', 't', ?, ?, ?, ?)",
+            (f"attempt-{task_id}", task_id, stamp, stamp, seconds, stamp))
+
+
+def test_phase_a_prescreen_rejections_are_progress(tmp_path):
+    """2026-11-26 supply stall: prescreens that stopped at the calibration phase (a
+    verdict, no artifact) were counted as no progress, backed off and would have been
+    stopped for a human before the cards were ever judged."""
+
+    paths = rw._paths(tmp_path)
+    db = rw._db(paths)
+    db.register_campaign("scout-c", domain="physics", title="Scouts")
+    settings = FactorySettings()
+    now = datetime.now(UTC)
+    verdict = atomic_write_json(tmp_path / "phase-a.json", {"artifacts": [], "topic_prescreen": {
+        "calibration_match": "zone_1", "expected_band": "zone_1", "summary": "below floor"}})
+    for index in range(9):
+        stamp = _stamp(now - timedelta(minutes=60 - index))
+        _task(db, f"pre-{index}", "scout-c", "succeeded", task_type="topic_prescreen",
+              result_path=str(verdict), updated_at=stamp)
+        _attempt(db, f"pre-{index}", stamp)
+        _task(db, f"scout-{index}", "scout-c", "succeeded", task_type="topic_scout",
+              updated_at=stamp)
+    db.enqueue_task(task_id="pre-next", campaign_id="scout-c", domain="physics",
+                    task_type="topic_prescreen", objective="judge the next card")
+    assert spin_guard.no_progress_streak(db, "scout-c")[0] == 0
+    assert spin_guard.guard_queued_tasks(db, settings, TickReport()) == []
+    assert db.task("pre-next")["status"] == "queued"
+    assert db.task("pre-next")["not_before"] is None
+    # The idle metrics use the same reading: a verdict is output.
+    metrics = spin_guard.idle_metrics(db, now=now)
+    assert metrics["by_task_type"]["topic_prescreen"] == {
+        "attempts": 9, "zero_output": 0, "agent_hours": round(9 * 120 / 3600, 2),
+        "zero_output_agent_hours": 0.0}
+
+    # A prescreen that keeps breaking (needs_replan) is still no progress.
+    for index in range(4):
+        _task(db, f"broken-{index}", "scout-c", "needs_replan", task_type="topic_prescreen",
+              updated_at=_stamp(now - timedelta(minutes=5 - index)))
+    assert spin_guard.no_progress_streak(db, "scout-c")[0] == 4
+    actions = spin_guard.guard_queued_tasks(db, settings, TickReport())
+    assert [item["reason"] for item in actions] == ["no_progress_backoff"]
+
+
+def test_a_finishing_scout_does_not_push_the_backoff(tmp_path):
+    """The backoff counts from the last non-neutral finish: scouts finishing later in
+    the same campaign used to move not_before forward each time."""
+
+    paths = rw._paths(tmp_path)
+    db = rw._db(paths)
+    db.register_campaign("scout-c", domain="physics", title="Scouts")
+    settings = FactorySettings()
+    now = datetime.now(UTC)
+    failed_at = now - timedelta(minutes=20)
+    for index in range(4):
+        _task(db, f"pre-{index}", "scout-c", "needs_replan", task_type="topic_prescreen",
+              updated_at=_stamp(failed_at - timedelta(minutes=3 - index)))
+    _task(db, "scout-late", "scout-c", "succeeded", task_type="topic_scout",
+          updated_at=_stamp(now - timedelta(minutes=1)))
+    db.enqueue_task(task_id="pre-next", campaign_id="scout-c", domain="physics",
+                    task_type="topic_prescreen", objective="judge the next card")
+    streak, latest = spin_guard.no_progress_streak(db, "scout-c")
+    assert streak == 4 and latest["task_id"] == "pre-3"
+    actions = spin_guard.guard_queued_tasks(db, settings, TickReport(), now=now)
+    assert actions[0]["last_task_id"] == "pre-3"
+    expected = _stamp(failed_at + timedelta(minutes=settings.no_progress_backoff_minutes[0]))
+    assert db.task("pre-next")["not_before"] == expected
+    # Another scout finishing does not move it.
+    _task(db, "scout-later", "scout-c", "succeeded", task_type="topic_scout",
+          updated_at=_stamp(now))
+    assert spin_guard.guard_queued_tasks(db, settings, TickReport(), now=now) == []
+    assert db.task("pre-next")["not_before"] == expected
+
+
 def test_same_artifacts_again_are_not_progress(tmp_path):
     paths = rw._paths(tmp_path)
     db = rw._db(paths)

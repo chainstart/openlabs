@@ -769,7 +769,11 @@ def _result(db, task_id: str) -> tuple[Any, set[str]] | None:
 
 
 def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
-    """Schedule pending prescreens (cap ``prescreen_max_concurrent``) and judge finished ones."""
+    """Schedule pending prescreens (cap ``prescreen_max_concurrent``) and judge finished ones.
+
+    The cap counts scheduled prescreens that can run now; one queued behind a future
+    ``not_before`` holds no slot. Unfinished ones are reported with their task status
+    (``queued`` with its ``not_before``, ``leased``, ``running``, ...)."""
 
     from .program import open_topic_ledger, record_topic_note, reject_topic
     from .program_flow import TERMINAL_FAILED_STATUSES
@@ -785,8 +789,22 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
     if not waiting:
         return []
     outcomes: list[dict[str, Any]] = []
-    running = sum(1 for topic in waiting
-                  if topic["card_check"]["prescreen"].get("status") == "scheduled")
+    moment = _now_moment()
+
+    def deferred(task: Mapping[str, Any]) -> bool:
+        """Queued with a not_before still ahead (a backoff): it holds no slot of the cap,
+        so a line held back does not keep other lines' cards from their prescreen."""
+
+        not_before = _parse(task.get("not_before"))
+        return task.get("status") == "queued" and not_before is not None \
+            and not_before > moment
+
+    running = 0
+    for topic in waiting:
+        held = topic["card_check"]["prescreen"]
+        if held.get("status") == "scheduled" \
+                and not deferred(db.task(str(held.get("task_id") or "")) or {}):
+            running += 1
 
     def record(topic: Mapping[str, Any], state: dict[str, Any], event: str) -> None:
         check = {**dict(topic.get("card_check") or {}), "prescreen": state}
@@ -812,8 +830,10 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
             status = str(task.get("status") or "missing")
             if status != "succeeded" and status not in TERMINAL_FAILED_STATUSES \
                     and status != "missing":
-                outcomes.append({"topic_id": topic_id, "status": "running",
-                                 "task_id": state.get("task_id")})
+                outcomes.append({"topic_id": topic_id, "status": status,
+                                 "task_id": state.get("task_id"),
+                                 **({"not_before": task["not_before"]}
+                                    if task.get("not_before") else {})})
                 continue
             running -= 1
             found = _result(db, str(state.get("task_id"))) if status == "succeeded" else None
@@ -1027,6 +1047,12 @@ def _parse(value: Any) -> datetime | None:
     from . import budget as budget_control
 
     return budget_control.parse_time(value)
+
+
+def _now_moment() -> datetime:
+    from . import program_flow
+
+    return program_flow._now_moment()
 
 
 def weekly_scout_usd(db, settings, campaign_id: str, moment: datetime) -> float:
