@@ -1585,10 +1585,11 @@ def lead_availability(
 # -------------------------------------------------------------------- routing
 
 
-# Packet field naming the runner a task would like (``[program].scout_runners``, 2026-11-26):
-# the router takes it when its quota and parallelism allow it, else routes as usual.
+# Packet field naming the runner a task would like (``[program].scout_runners``, 2026-11-26;
+# ``[program.funnel].prescreen_runners`` for the prescreen, same day): the router takes it when
+# its quota and parallelism allow it, else routes as usual.
 PREFERRED_RUNNER_FIELD = "preferred_runner"
-PREFERRED_RUNNER_TASK_TYPES = frozenset({"topic_scout"})
+PREFERRED_RUNNER_TASK_TYPES = frozenset({"topic_scout", "topic_prescreen"})
 
 
 @dataclass
