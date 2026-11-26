@@ -696,3 +696,32 @@ def test_adopt_revision_requires_matching_delivery_and_new_bound_decision(tmp_pa
     assert adopt_revision(PAPER, **args)["status"] == "adopted"
     assert yaml.safe_load(target.read_text())["version"] == "0.1.5"
     assert adopt_revision(PAPER, **args)["copied"] == 0
+
+
+def test_adopt_restores_evidence_kept_as_plain_bundle_artifacts(tmp_path):
+    # ECG NC trial 2026-11-26: a review bundle archives staged review payloads (formal
+    # evidence bodies) as plain artifact files, not in a tar; the one body fetched only
+    # by that review was not restored and the ready decision stopped verifying.
+    workspace, data = tmp_path / "workspace", tmp_path / "data"
+    data.mkdir()
+    evidence, pdf_bytes = _workspace(workspace)
+    bundle = tmp_path / "bundle"
+    artifacts = bundle / "artifacts"
+    artifacts.mkdir(parents=True)
+    listed = []
+    for name, payload in (("000-main.pdf", pdf_bytes), (f"001-{_sha(evidence['body'])}.body",
+                                                         evidence["body"]),
+                          (f"002-{_sha(evidence['text'])}.text", evidence["text"])):
+        (artifacts / name).write_bytes(payload)
+        listed.append({"artifact_id": name, "sha256": _sha(payload),
+                       "uri": (artifacts / name).resolve().as_uri()})
+    (bundle / "manifest.json").write_text(json.dumps({"artifacts": listed}))
+    (bundle / "result.json").write_text("{}")
+    result = adopt(PAPER, root=data, source=workspace, artifact_manifests=[bundle / "result.json"])
+    assert result["evidence_missing"] == [] and result["evidence_restored"] == 2
+    assert (data / RUN / "formal-check/evidence/S1.body").read_bytes() == evidence["body"]
+    # A plain artifact changed after archiving is never used.
+    (data / RUN / "formal-check/evidence/S1.body").rename(tmp_path / "S1.body.restored")
+    (artifacts / f"001-{_sha(evidence['body'])}.body").write_bytes(b"changed")
+    again = adopt(PAPER, root=data, source=workspace, artifact_manifests=[bundle / "result.json"])
+    assert again["evidence_missing"] == [f"{RUN}/formal-check/evidence/S1.body"]

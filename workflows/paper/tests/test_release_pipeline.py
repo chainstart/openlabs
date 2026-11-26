@@ -272,3 +272,17 @@ def test_release_status_routes_ready_binding_changes_to_delta_review(tmp_path, m
     assert [(issue["code"], issue["remedy"]) for issue in status["issues"]] == [
         ("REVIEW-SNAPSHOT-MISMATCH", "delta_review"),
     ]
+
+
+def test_a_manuscript_without_any_support_mention_is_left_to_the_projection(tmp_path, monkeypatch):
+    # ECG NC trial 2026-11-26: the availability section named only "supplementary
+    # material", the audit reported SUPPORT-MANUSCRIPT-CITATION-REQUIRED and delivery
+    # waited for the control plane. Zenodo prepare and the publication-metadata
+    # projection (which writes the support sentence) resolve it.
+    _status_fixture(tmp_path, monkeypatch, publication={'status': 'planned'},
+                    support=['SUPPORT-MANUSCRIPT-CITATION-REQUIRED'])
+    monkeypatch.setattr(rp, '_review_status', lambda *args: {
+        'ready': True, 'current': True, 'decision_current': True, 'problems': []})
+    status = rp.release_status('p', root=tmp_path)
+    assert [(i['code'], i['remedy']) for i in status['issues']] == [
+        ('SUPPORT-MANUSCRIPT-CITATION-REQUIRED', 'zenodo_prepare')]

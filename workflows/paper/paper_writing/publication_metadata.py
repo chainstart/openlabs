@@ -18,9 +18,14 @@ from paper_writing.support import (
 )
 from paper_writing.support_citations import AVAILABILITY_HEADING, SUPPORT_MENTION, _expand_tex
 
+# Support-citation findings this projection resolves. A manuscript that does not name
+# its support record at all (SUPPORT-MANUSCRIPT-CITATION-REQUIRED) gets the sentence
+# below in its availability section, so it is resolved here too, not by a person (ECG NC
+# trial 2026-11-26: the finding was left to the control plane and delivery waited).
 CODES = frozenset({
     "SUPPORT-BIB-DOI", "SUPPORT-ARCHIVE-DOI", "SUPPORT-ARCHIVE-VERSION-MISSING",
     "SUPPORT-CITATION-MISSING", "SUPPORT-FIRST-CITATION", "SUPPORT-AVAILABILITY-CITATION",
+    "SUPPORT-MANUSCRIPT-CITATION-REQUIRED",
 })
 KEY = "openlabsSupportArchive"
 

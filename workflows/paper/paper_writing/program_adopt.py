@@ -154,16 +154,23 @@ def _manifest_files(manifests: Iterable[str | Path]) -> list[Path]:
 
 
 class _ArchiveIndex:
-    """Regular files inside archived tar artifacts, by SHA-256 and by archive.
+    """Regular files inside archived tar artifacts, and plain archived artifact files,
+    by SHA-256 (tar members also by archive).
 
+    A result bundle keeps a staged review payload (a formal-check evidence body) as a
+    plain artifact file, not inside a tar; such a file is indexed by its own SHA-256
+    (ECG NC trial 2026-11-26: a page body fetched only by the last review was in the
+    bundle but not restored, so the ready decision no longer verified).
     Only hashes and locations are kept; bytes are read again when a file is restored.
     """
 
     def __init__(self, files: Iterable[Path]):
-        self.by_sha: dict[str, tuple[Path, str]] = {}
+        self.by_sha: dict[str, tuple[Path, str | None]] = {}
         self.archives: list[tuple[Path, list[tuple[str, str]]]] = []
         for path in files:
             if not tarfile.is_tarfile(path):
+                if path.stat().st_size <= MAX_RESTORE_MEMBER_BYTES:
+                    self.by_sha.setdefault(_sha256(path.read_bytes()), (path, None))
                 continue
             entries: list[tuple[str, str]] = []
             with tarfile.open(path) as archive:
@@ -185,6 +192,9 @@ class _ArchiveIndex:
         location = self.by_sha.get(sha)
         if location is None:
             return None
+        if location[1] is None:
+            data = location[0].read_bytes()
+            return data if _sha256(data) == sha else None
         with tarfile.open(location[0]) as archive:
             handle = archive.extractfile(location[1])
             return handle.read() if handle is not None else None

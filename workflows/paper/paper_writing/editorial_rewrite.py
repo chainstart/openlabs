@@ -252,7 +252,8 @@ def _abstract_bounds(metadata: Mapping[str, Any]) -> tuple[int, int] | None:
     if (not isinstance(limits, list) or len(limits) != 2
             or any(not isinstance(n, int) or isinstance(n, bool) or n < 0 for n in limits)
             or limits[0] > limits[1] or limits[1] == 0):
-        raise ValueError("Verified venue abstract_word_limits must be [minimum, maximum] word counts")
+        raise ValueError("Verified venue abstract_word_limits must be [minimum, maximum] word counts "
+                         "(0 as the minimum when the venue sets only a maximum)")
     return limits[0], limits[1]
 
 

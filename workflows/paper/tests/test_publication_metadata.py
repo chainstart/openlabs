@@ -116,3 +116,24 @@ def test_build_log_with_non_utf8_bytes_is_decoded(tmp_path, monkeypatch):
     result = pm._build_pdf(tmp_path)
     assert result.returncode == 0
     assert result.stdout.startswith("M") and "ller et al." in result.stdout
+
+
+def test_projection_names_the_support_record_when_the_manuscript_never_did(tmp_path):
+    # The projection is the remedy for SUPPORT-MANUSCRIPT-CITATION-REQUIRED: its sentence
+    # must satisfy the audit's support-mention rule.
+    from paper_writing.support_citations import SUPPORT_MENTION
+
+    manuscript = tmp_path / "manuscript"
+    manuscript.mkdir()
+    tex = manuscript / "main.tex"
+    tex.write_text(r"\section{Results}" + "\nThe result is 42.\n\n"
+                   r"\section*{Data and code availability}" + "\nThe analysis scripts are provided "
+                   "in the supplementary material.\n")
+    (manuscript / "references.bib").write_text("@article{example, title={Study}}\n")
+    assert not SUPPORT_MENTION.search(tex.read_text())
+    publication = {"zenodo": {"reserved_version_doi": "10.5281/zenodo.123",
+                              "version": "1.0.1", "creators": [{"name": "A Researcher"}],
+                              "title": "Supporting material", "publication_date": "2026-11-22"}}
+    assert "SUPPORT-MANUSCRIPT-CITATION-REQUIRED" in pm.CODES
+    edited = pm._edits(manuscript, publication)[tex].decode()
+    assert SUPPORT_MENTION.search(edited) and pm.KEY in edited
