@@ -50,6 +50,7 @@ from .config import (
     lookup_task_tier,
     BudgetSettings,
     FactorySettings,
+    ProviderPreference,
     RoutingSettings,
     RunnerSpec,
 )
@@ -1747,6 +1748,26 @@ class QuotaRouter:
             return None
         return self.settings.runners.get(str(packet.get(PREFERRED_RUNNER_FIELD) or "").strip())
 
+    def _provider_preference(
+        self, task: Mapping[str, Any], tier: str, klass: str
+    ) -> ProviderPreference | None:
+        """The active ``[routing.provider_preference]`` when it covers this task.
+
+        Ordinary tasks only: reviews and decisions keep the author-family exclusion
+        and owner seats their pinning; scouts keep their multi-family rotation
+        (``preferred_runner``).
+        """
+
+        preference = self.settings.routing.provider_preference
+        if preference is None or not preference.active(self.now):
+            return None
+        task_type = str(task.get("task_type") or "")
+        if klass != "ordinary" or task_type in PREFERRED_RUNNER_TASK_TYPES:
+            return None
+        if not preference.matches(task_type, str(task.get("routing_reason") or ""), tier):
+            return None
+        return preference
+
     def _pinned(self, task: Mapping[str, Any]) -> RunnerSpec | None:
         if task.get("runner_request") is not None:
             return None
@@ -2161,6 +2182,23 @@ class QuotaRouter:
         level = next((t for t in chain[chain.index(tier):] if t in configured), tier)
         pool = candidates_for(level)
         others = list(pool)
+        # A time-boxed provider preference (user 2026-11-26): the preferred provider's
+        # runner of this tier first, when its quota and parallelism allow; else as usual.
+        preference = self._provider_preference(task, tier, klass)
+        missed: str | None = None
+        if preference is not None:
+            favoured = [spec for spec in pool if spec.provider == preference.provider]
+            chosen = self._choose(favoured, klass, active_by_runner, manual=manual)
+            if chosen is not None:
+                spec, state = chosen
+                decision = self._decision(
+                    spec, state, klass, requested_tier=tier, excluded=excluded, sticky=sticky,
+                    manual=manual,
+                )
+                decision["provider_preference"] = preference.provider
+                decision["provider_preference_until"] = _iso(preference.until)
+                return decision
+            missed = preference.provider
         if pool:
             chosen = self._choose(pool, klass, active_by_runner, manual=manual)
             if chosen is not None:
@@ -2169,6 +2207,8 @@ class QuotaRouter:
                     spec, state, klass, requested_tier=tier, excluded=excluded, sticky=sticky,
                     manual=manual,
                 )
+                if missed is not None:
+                    decision["provider_preference_unavailable"] = missed
                 protected = [item.name for item in pool if item.protected]
                 if klass == "decision" and protected and not spec.protected:
                     decision["reassigned_from"] = protected

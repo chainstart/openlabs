@@ -9,6 +9,7 @@ import stat
 import tomllib
 from collections.abc import MutableMapping
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -979,6 +980,102 @@ class RunnerSpec:
 
 
 @dataclass(frozen=True)
+class ProviderPreference:
+    """``[routing.provider_preference]``: send chosen ordinary tasks to one provider first.
+
+    Until ``until`` (an aware UTC time; past it the table is inert), a task matching
+    ``task_types`` (``task_type`` or ``task_type:routing_reason`` keys) or whose requested
+    tier is in ``tiers`` goes to ``provider``'s runner of the task's tier when that runner's
+    quota, backoff and parallelism allow it; otherwise the task is routed as usual. Only
+    ordinary tasks: reviews, decisions and owner seats keep their own routing (family
+    independence), and so do the scouts (``topic_scout``, multi-family rotation).
+    ``exclude_task_types`` removes types a tier would otherwise bring in.
+    User 2026-11-26 ("杂活可以多派gpt，2天后它就重置了，还剩37%").
+    """
+
+    provider: str
+    until: datetime
+    task_types: frozenset[str] = frozenset()
+    tiers: frozenset[str] = frozenset()
+    exclude_task_types: frozenset[str] = frozenset()
+    reason: str = ""
+
+    def active(self, now: datetime) -> bool:
+        return now < self.until
+
+    def matches(self, task_type: str, routing_reason: str, tier: str) -> bool:
+        keys = {task_type, task_tier_key(task_type, routing_reason or None)}
+        if keys & self.exclude_task_types:
+            return False
+        return bool(keys & self.task_types) or tier in self.tiers
+
+
+def parse_provider_preference(payload: Any) -> ProviderPreference | None:
+    """``[routing.provider_preference]`` (absent or empty: None), with clear errors."""
+
+    if payload is None:
+        return None
+    label = "[routing.provider_preference]"
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must be a table")
+    if not payload:
+        return None
+    provider = str(payload.get("provider") or "").strip()
+    if not provider:
+        raise ValueError(f"{label}.provider is required")
+    raw_until = str(payload.get("until") or "").strip()
+    try:
+        until = datetime.fromisoformat(raw_until.replace("Z", "+00:00"))
+    except ValueError:
+        until = None
+    if until is None or until.tzinfo is None:
+        raise ValueError(
+            f"{label}.until = {raw_until!r}: needs an ISO time with a zone "
+            "(e.g. 2026-11-28T03:03:00Z)"
+        )
+
+    def keys(name: str) -> frozenset[str]:
+        raw = payload.get(name)
+        if raw is None:
+            return frozenset()
+        if not isinstance(raw, list):
+            raise ValueError(f"{label}.{name} must be a list")
+        result = set()
+        for item in raw:
+            key = str(item).strip()
+            parts = key.split(":")
+            if len(parts) > 2 or not all(_TASK_TIER_PART.fullmatch(part) for part in parts):
+                raise ValueError(
+                    f"{label}.{name}: {key!r} must be task_type or task_type:routing_reason"
+                )
+            if len(parts) == 2 and parts[1] not in KNOWN_ROUTING_REASONS:
+                raise ValueError(f"{label}.{name}: unknown routing reason in {key!r}")
+            result.add(key)
+        return frozenset(result)
+
+    raw_tiers = payload.get("tiers") or []
+    if not isinstance(raw_tiers, list):
+        raise ValueError(f"{label}.tiers must be a list")
+    tiers = set()
+    for item in raw_tiers:
+        value = LEGACY_RUNNER_TIERS.get(str(item).strip(), str(item).strip())
+        if value not in TIERS:
+            raise ValueError(f"{label}.tiers: {item!r} must be one of {', '.join(TIERS)}")
+        tiers.add(value)
+    task_types = keys("task_types")
+    if not task_types and not tiers:
+        raise ValueError(f"{label} needs task_types or tiers")
+    return ProviderPreference(
+        provider=provider,
+        until=until.astimezone(UTC),
+        task_types=task_types,
+        tiers=frozenset(tiers),
+        exclude_task_types=keys("exclude_task_types"),
+        reason=str(payload.get("reason") or "").strip(),
+    )
+
+
+@dataclass(frozen=True)
 class RoutingSettings:
     """Quota-aware runner selection (``[routing]`` in openlabs.toml).
 
@@ -1063,6 +1160,8 @@ class RoutingSettings:
     # (0: fall back as soon as it is unavailable).
     independence_fallback_on_quota: bool = True
     independence_fallback_min_wait_minutes: float = 0.0
+    # ``[routing.provider_preference]`` (None: no preference).
+    provider_preference: ProviderPreference | None = None
 
     def ceilings_for(self, provider: str | None) -> tuple[float, float]:
         """``(ordinary, hard)`` ceilings of ``provider`` (the global pair when not overridden)."""
@@ -2152,6 +2251,7 @@ def load_routing_settings(payload: Any) -> RoutingSettings:
             routing.get("independence_fallback_min_wait_minutes"),
             defaults.independence_fallback_min_wait_minutes,
         ),
+        provider_preference=parse_provider_preference(routing.get("provider_preference")),
     )
 
 

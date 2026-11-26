@@ -178,6 +178,22 @@ def runnable_count(db: FactoryDB, *, now: datetime) -> int:
     return int(row["n"])
 
 
+def _preference_summary(settings: FactorySettings, moment: datetime) -> dict[str, Any] | None:
+    """``[routing.provider_preference]`` as configured, with whether it still applies."""
+
+    preference = settings.routing.provider_preference
+    if preference is None:
+        return None
+    return {
+        "provider": preference.provider,
+        "until": budget_control._iso(preference.until),
+        "active": preference.active(moment),
+        "tiers": sorted(preference.tiers),
+        "task_types": sorted(preference.task_types),
+        "exclude_task_types": sorted(preference.exclude_task_types),
+        "reason": preference.reason,
+    }
+
 def task_distribution(db: FactoryDB, settings: FactorySettings) -> dict[str, Any]:
     """Running and queued tasks by tier and provider (and by task type)."""
 
@@ -842,6 +858,7 @@ def utilization_report(
             "pace_min_window_hours": settings.routing.pace_min_window_hours,
         },
         "quota_pause": router.pause_summary() if router is not None else {},
+        "provider_preference": _preference_summary(settings, moment),
         "host": {
             **host,
             "target": host_target,
