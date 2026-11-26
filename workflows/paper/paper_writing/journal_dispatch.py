@@ -30,7 +30,7 @@ def ledger(args, event, extra=()):
 SMTP_SIZE_LIMIT = 20_000_000
 
 
-def notify(api, paper, event, account, before_send=lambda: None, *, raw=None):
+def notify(api, paper, event, account, before_send=lambda: None, *, raw=None, note=""):
     assigned = {a["submitter_id"] for a in paper.get("assignments", []) if a.get("active")}
     if len(assigned) != 1:
         raise ValueError("Missing unique active assignment")
@@ -48,7 +48,8 @@ def notify(api, paper, event, account, before_send=lambda: None, *, raw=None):
                "prepare_revision": "请在管理网站跟踪返修，审阅新版及逐点回复后确认提交。",
                "verify_status": "请在管理网站核对期刊状态、稿号与回执。"}
     summary = (f"{paper['title']}\n稿号 {event['manuscript_id']}\n"
-               f"状态 {event['decision']}\n期限 {event['due'] or '待核实'}\n{actions[event['action']]}")
+               f"状态 {event['decision']}\n期限 {event['due'] or '待核实'}\n{actions[event['action']]}"
+               + (f"\n{note}" if note else ""))
 
     def summary_only(*, oversized):
         if oversized:
@@ -127,7 +128,7 @@ def uploaded_reviews(api, paper, round_id, directory):
     return "\n\n".join(texts)
 
 
-def notify_once(args, api, db, paper, event):
+def notify_once(args, api, db, paper, event, note=""):
     key = event["message_key"]
     notified = db.execute("SELECT notified FROM progress WHERE message_key=?", (key,)).fetchone()[0]
     if notified == -1:
@@ -137,7 +138,7 @@ def notify_once(args, api, db, paper, event):
             db.execute("UPDATE progress SET notified=-1 WHERE message_key=?", (key,))
             db.commit()
         try:
-            notify(api, paper, event, args.account, before_send, raw=event.get("raw"))
+            notify(api, paper, event, args.account, before_send, raw=event.get("raw"), note=note)
         except (OSError, HandoffError, ValueError) as exc:
             print("Handler notification pending", key[:12], type(exc).__name__, flush=True)
             return False
@@ -331,10 +332,19 @@ def rejection_letter(args, event):
     return ["--letter-file", str(path)]
 
 
+def hold_note(event, hold):
+    """What the handler is asked to do about a letter held without a unique attempt."""
+    reason = str(hold)
+    if event["decision"] == "submitted" and reason.startswith("no attempt matches"):
+        return ("网站上没有与这封投稿确认信对应的投稿记录（原因：" + reason[:300] + "）。请在管理网站为本文新建投稿记录："
+                f"期刊 {event.get('journal') or '待核实'}，提交时间 {event.get('received_at') or '待核实'}"
+                f"，稿号 {event.get('manuscript_id') or '信中未给出'}。")
+    return "这封信未能对应到网站上唯一的投稿记录（原因：" + reason[:300] + "），请在管理网站核对后手工登记。"
+
+
 def dispatch_one(args, api, db, event):
     key = event["message_key"]
     paper = api._request("GET", "/v1/papers/" + event["paper_id"])
-    notified = notify_once(args, api, db, paper, event)
     context = None
     if event.get("raw"):
         from paper_writing.journal_mail import mail_context
@@ -349,9 +359,18 @@ def dispatch_one(args, api, db, event):
     except AttemptHold as hold:
         _hold(db, key, str(hold))
         print("Journal event held", key[:12], str(hold)[:300], flush=True)
+        # The handler hears of the letter with the reason (e.g. no attempt for a submission
+        # confirmation: create it on the site); once only, the hold itself retries.
+        notify_once(args, api, db, paper, event, note=hold_note(event, hold))
         ledger(args, event)
         raise
     _hold(db, key, "")
+    if event["decision"] == "submitted" and already_registered(paper, attempt, event):
+        # A further confirmation of a submission the site already lists with this number
+        # (co-author copies): nothing for the handler to do.
+        db.execute("UPDATE progress SET notified=2 WHERE message_key=? AND notified=0", (key,))
+        db.commit()
+    notified = notify_once(args, api, db, paper, event)
     did = event["decision"]
     comments = event["reviewer_comments"]
     uri = f"/v1/submission-attempts/{attempt['id']}"

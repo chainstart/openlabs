@@ -1427,12 +1427,16 @@ def prior_decisions(paper_id: str, metadata: Mapping[str, Any], root: Path | Non
             attempts = {a["id"]: a for a in data.get("submission_attempts", [])}
             for event in data.get("submission_events", []):
                 attempt = attempts.get(event.get("attempt_id"), {})
-                if event.get("event_type") != "rejected":
+                from paper_writing.journal_history import is_rejection_event
+                if not is_rejection_event(event) or (event.get("event_type") != "rejected"
+                                                     and attempt.get("status") not in {"rejected", "closed"}):
                     continue
                 k = (attempt.get("journal_name"), attempt.get("manuscript_number"))
                 row = rows.setdefault(k, {"journal": str(k[0]), "manuscript_number": str(k[1]),
                                           "date": str(event.get("occurred_at", ""))[:10]})
                 summary = (event.get("payload") or {}).get("reason_summary") or ""
+                if not summary and row.get("editor_letter_summary"):
+                    continue  # a later correction without a summary keeps the letter's
                 row["editor_letter_summary"] = summary
                 row["summary_kind"] = "internal paraphrase of the decision letter" if summary else "not available"
         except Exception:  # noqa: BLE001 - the site is optional context, the registry is authoritative

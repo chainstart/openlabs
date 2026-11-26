@@ -24,11 +24,57 @@ import yaml
 
 DECISIONS = (
     ("revision_requested", r"major revision|minor revision|revision requested|revise and resubmit|invite you to revise|revision invitation"),
-    ("rejected", r"decision of rejection|has been rejected|unable to accept|reject(?:ion|ed)? decision|decline to publish"),
-    ("accepted", r"(?<!not )accepted for publication|has been accepted|acceptance of your manuscript"),
+    # 2026-11-26: Elsevier "will not be considered for publication" (JCTA), "was recently
+    # rejected", "regret to inform you".
+    ("rejected", r"decision of rejection|(?:has|have|was|were) (?:now |recently )?been rejected|unable to accept"
+                 r"|reject(?:ion|ed)? decision|decline to publish|will not be considered for (?:publication|review)"
+                 r"|regret to inform you|(?:cannot|can ?not|could not) (?:be )?(?:accept|publish|consider)"),
+    # Only the journal accepting this paper: conditional and boilerplate phrases ("if it is
+    # accepted for publication", "before the paper has been accepted") are removed first
+    # (``decision_text``) and a bare "has been accepted" no longer counts (2026-11-26).
+    ("accepted", r"(?<!not )(?<!not be )(?<!cannot be )(?<!can not be )(?<!not been )accepted for publication|(?:manuscript|paper|submission|article)[^.]{0,200}?"
+                 r"\b(?:has|have) (?:now )?been (?:formally |provisionally )?accepted"
+                 r"|(?:final )?acceptance of your (?:manuscript|paper|submission|article)"),
     ("proofs", r"page proofs|author proofs"),
-    ("submitted", r"submission confirmation|submission acknowledgement|acknowledg[e]?ment of submission|submission received"),
+    # Springer Nature SNAPP ("Your manuscript <title> has been submitted", subject "Track the
+    # status of your manuscript") and co-author confirmations (Editorial Manager, 2026-11-26).
+    ("submitted", r"submission confirmation|submission acknowledgement|acknowledg[e]?ment of submission|submission received"
+                  r"|(?:manuscript|paper|submission|article)[^.]{0,200}?\bhas been (?:successfully )?submitted"
+                  r"|track the status of your manuscript|confirm co-?authorship of (?:your |the |a )?submission"
+                  r"|has listed you as a (?:contributing |co-?)author"),
 )
+# Letters about a paper that are not a decision on it: transfer offers after a rejection
+# (the rejection letter itself is the event).
+NOT_A_DECISION = re.compile(r"transfer (?:your manuscript|recommendation)|^a recommendation for\b", re.I)
+# Publisher boilerplate appended to every letter; everything from here on is not about the paper.
+BOILERPLATE = re.compile(r"at elsevier, we want to help all our authors|in compliance with data protection regulations", re.I)
+# Conditions and templates that name an acceptance which has not happened.
+CONDITIONAL = re.compile(
+    r"\b(?:if|once|when|after|before|until|unless)\s+(?:it|(?:the|your|this)\s+(?:paper|manuscript|article|submission|work))\s+"
+    r"(?:is|has been|was|gets)\s+(?:formally\s+)?accepted(?:\s+for\s+publication)?"
+    r"|\b(?:up)?on acceptance\b|\bafter acceptance\b|\bif accepted\b", re.I)
+
+
+def decision_text(text, title=""):
+    """The letter text decisions are read from: publisher boilerplate cut, conditional
+    acceptance phrases and the paper's own title removed, whitespace folded."""
+    text = " ".join(str(text or "").split())
+    cut = BOILERPLATE.search(text)
+    if cut:
+        text = text[:cut.start()]
+    title = " ".join(str(title or "").split())
+    if len(title) >= 12:
+        text = re.sub(re.escape(title), "the title", text, flags=re.I)
+    return CONDITIONAL.sub(" ", text)
+
+
+def distinctive(number):
+    """A manuscript number that can identify a paper anywhere in a letter: a UUID, or at least
+    six characters with a letter or separator besides digits. Short conference numbers
+    ("24", "25") also occur as dates and phrases ("talk 24/7", "25 Nov 2026")."""
+    number = str(number or "")
+    return bool(re.fullmatch(UUID, number, re.I)) or (
+        len(number) >= 6 and bool(re.search(r"\d", number)) and bool(re.search(r"[A-Za-z./-]", number)))
 
 
 def catalog(root):
@@ -120,34 +166,59 @@ def mail_context(raw):
             "received_at": received_at.isoformat() if received_at else None}
 
 
-def parse(raw, papers):
+def parse(raw, papers, log=None):
+    """The event of one letter about one known paper, or None.
+
+    ``log`` (optional) receives ``(reason, paper_ids)`` when a letter names a known paper but
+    yields no event (ambiguous match, no decision, conflicting decisions, a transfer offer), so
+    a letter that was read but not used shows in the service log instead of vanishing.
+    """
     message = BytesParser(policy=policy.default).parsebytes(raw)
     mid = str(message.get("Message-ID", "")).strip()
     if not re.fullmatch(r"<[^<>\s]+@[^<>\s]+>", mid):
         return
+    note = log or (lambda reason, paper_ids: None)
     subject, body = message_text(message)
     content = " ".join((subject + "\n" + body).casefold().split())
+    # A short number ("24") identifies a paper only where the letter labels it as the
+    # manuscript number ("Paper #24", "Submission ID: 24"), not anywhere in the text.
+    labelled = {found["id"].rstrip(".-").casefold() for text in (subject, body)
+                for found in LABELLED_NUMBER.finditer(text or "")}
     matches = []
     for entry in papers:
         publication = entry.get("external_publication") or {}
         numbers = set(entry.get("numbers") or [])
         if publication.get("external_manuscript_id"):
             numbers.add(str(publication["external_manuscript_id"]))
-        matched = [n for n in numbers if re.search(r"(?<![\w-])" + re.escape(n.casefold()) + r"(?![\w-])", content)]
+        matched = [n for n in numbers if n and (
+            n.casefold() in labelled if not distinctive(n)
+            else re.search(r"(?<![\w-])" + re.escape(n.casefold()) + r"(?![\w-])", content))]
         if len(matched) > 1:
+            note(f"quotes {len(matched)} manuscript numbers of one paper", [entry.get("paper_id")])
             return
         title = " ".join(str(entry.get("title") or "").casefold().split())
         if matched or (len(title) >= 12 and title in content):
             matches.append((entry, matched[0] if matched else ""))
     if len(matches) != 1:
+        if matches:
+            note(f"ambiguous: matches {len(matches)} papers", [m[0].get("paper_id") for m in matches])
         return
-    decisions = {name for name, pattern in DECISIONS if re.search(pattern, subject, re.I)}
+    entry, number = matches[0]
+    if NOT_A_DECISION.search(subject):
+        note("not a decision (transfer offer)", [entry.get("paper_id")])
+        return
+    title = entry.get("title") or ""
+    decisions = {name for name, pattern in DECISIONS if re.search(pattern, decision_text(subject, title), re.I)}
     if not decisions:
-        decisions = {name for name, pattern in DECISIONS if re.search(pattern, body, re.I)}
-    if len(decisions) != 1:
+        decisions = {name for name, pattern in DECISIONS if re.search(pattern, decision_text(body, title), re.I)}
+    if len(decisions) > 1:
+        # Never choose between an acceptance and a refusal: the letter waits for a person.
+        note("held: conflicting decisions " + "+".join(sorted(decisions)), [entry.get("paper_id")])
+        return
+    if not decisions:
+        note("no decision recognised", [entry.get("paper_id")])
         return
     decision = decisions.pop()
-    entry, number = matches[0]
     if not number:
         number = manuscript_number(subject, body)
     due = re.search(r"(?:due(?: date)?|deadline|submit by)\s*(?:is|on|by)?[ :]*(\d{4}-\d\d-\d\d|\d{1,2} [A-Za-z]+ \d{4}|[A-Za-z]+ \d{1,2},? \d{4})", body, re.I)
@@ -263,7 +334,11 @@ def poll(args, api):
                 raise ValueError("IMAP fetch failed")
             for row in data:
                 if isinstance(row, tuple):
-                    event = parse(row[1], entries)
+                    def unused(reason, paper_ids, uid=uid):
+                        # UID, paper and reason only: never the letter's text.
+                        print("Journal letter not used", f"uid={uid}", ",".join(map(str, paper_ids)),
+                              reason, flush=True)
+                    event = parse(row[1], entries, log=unused)
                     if event:
                         record(args.state, event, row[1])
             checkpoint(uid)
