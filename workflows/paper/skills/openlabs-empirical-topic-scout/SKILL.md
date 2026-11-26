@@ -5,11 +5,18 @@ description: Propose computational, real-data research topics for an OpenLabs re
 
 # OpenLabs topic scout
 
+**First check the packet's `target_stage`.** When it is `nc_aim`, the routine purpose of this
+skill (CAS Zones 3-4, "not breakthroughs", "a sound routine card is worth more than a clever
+one"), "What to propose" (prefer routine topics), "Paper templates first" and the routine
+gate policy do **not** apply: follow "NC aim" below and treat templates and queues only as
+optional pipelines. The other sections (ledger, data, receipts, compute plan, card format)
+still apply, with the NC exceptions stated there.
+
 You propose topics; you do not start them. A reviewer from a different model family reads
 your cards as an editor would and admits, holds or rejects each one. Only admitted topics
 become research campaigns, so a card is the whole case for a topic. It must stand on its own.
 
-## Why this exists
+## Why this exists (routine stage)
 
 Of 113 submissions, 4 were accepted; most rejections were editorial ("contribution
 insufficient", "limited readership"), usually within two weeks. The recent papers came from a
@@ -25,18 +32,50 @@ more than a clever one that is fragile.
 This section replaces the routine standard below whenever the packet says `target_stage:
 nc_aim`. User: "后续的投稿目标都设为NC，然后选题也按照这个标准来选 ... 立意要高，但是论文到底投啥，要由做出的实验数据来说话". Every topic aims at Nature Communications; the results decide whether it goes to NC or down to CAS Zone 1, 2, 3-4. Small and low topics are not proposed.
 
+NC publishes about 1,000 papers a month; about 13.5% of them are public data plus computation
+(nc-hotspots section 1.4), across environment, earth science, social science and economics,
+genetics, computing and more. The space is large. In the 2026-11-26 calibration the same
+prescreen graded 9 of 14 rewritten NC papers as nc and 0 of 26 production cards: the cards were
+sub-field details on data subsets (one survey's eclipse rate, one ML product's reversal, four
+gauge networks), not field-level questions on complete data. Write the card in this order:
+
+1. **The field's question, in one sentence.** Why would a whole field read it: is an
+   operational forecast trustworthy, how much of the world's X is exposed, where does a law
+   break? Not one subfield's detail, not a refinement of a published number.
+2. **The complete free data that answers it.** Scale belongs to the question, not to the test:
+   the claim is about the full population (all stations, all basins, the whole archive, every
+   country), and the kill test alone uses a subset. A first assembly of scattered public
+   archives into one analysis is itself a contribution (the CSEP archive, 48 countries' tariff
+   schedules, every archival HARPS spectrum of one young star). Free data that needs a
+   registration is allowed (see Data below).
+3. **Novelty search in the preprints of the last 18 months**, after journals: Research Square
+   (Nature portfolio "In Review" preprints, where most NC submissions appear 6-12 months before
+   publication), arXiv, bioRxiv, medRxiv, SSRN, EarthArXiv, ESSOAr, plus code repositories and
+   dataset papers. A published NC paper is evidence of the direction, not a template to
+   rewrite: its own preprint usually appeared long before, so a card that follows a hook is
+   already taken. Separate the **same claim** (same question, population and endpoint: drop the
+   card or change the claim) from **adjacent work** (same data or method, a different claim:
+   cite it in `closest_prior_work` with `our_difference`).
+4. **Only then the kill test**, on a subset, cheap enough for the prescreen (below).
+
+Worked examples: `references/nc-precard-examples.md` has four pre-admission cards (NC10
+riverfronts, NC09 PDS 70 exocomets, NC01 CSEP forecasts, NC08 tariff affordability) that the
+same prescreen graded nc. They were rewritten from published papers to show how an NC card reads
+before the work is done; their topics are taken and must never be proposed or paraphrased.
+
 - **Cast a wide net cheaply.** Read recent literature and the line's data catalogue
   (`research_line_summary.data_catalog`, full file in the packet) and return several distinct
   cards rather than one polished one. The pool has a cap (the candidate-pool low water) and a
   weekly model budget per line; a line whose recent cards all failed downstream is backed off.
 - **Admission floor nc on cc-sg** (user 2026-11-26: "接下来的出题希望选题至少是够nc档次的"): a card whose
   calibration match or expected band is below Nature Communications is rejected at the prescreen.
-- **Start from the NC surveys, not from scratch** (read_resources `nc-survey`, `nc-hotspots`): the ten
+- **The NC surveys point to fields, not claims** (read_resources `nc-survey`, `nc-hotspots`): the ten
   templates A-J of nc-hotspots section 2 (citation statistics, crowding) and the line's
-  `seed_directions` (numbers of nc-hotspots section 3.2) are optional starting points. Template the
-  method and pipeline, never the claim: the claim must be new. Down-weight crowded subjects (very high
-  template crowding, three or more NC papers in 18 months, the section 3.3 list: global flash drought
-  and vegetation, urban heat island and greening cooling) unless the card names the angle they lack.
+  `seed_directions` (numbers of nc-hotspots section 3.2) are optional starting points for step 1.
+  Template the method and pipeline, never the claim: the claim must be new. Down-weight crowded
+  subjects (very high template crowding, three or more NC papers in 18 months, the section 3.3
+  list: global flash drought and vegetation, urban heat island and greening cooling) unless the
+  card names the angle they lack.
 - Several scouts of one line run at once on different model families (GPT, Gemini, Claude); propose
   your own reading of the line, the near-duplicate screen merges overlaps.
 - **Each card states its NC case** in `nc_case`: `claim` (the one-sentence expected conclusion,
@@ -57,17 +96,31 @@ nc_aim`. User: "后续的投稿目标都设为NC，然后选题也按照这个�
 - **Design the kill test**: `kill_test` {signal, null_model, ceiling, pass_rule, core_hours <= 2}
   - does the key signal exist, how much does a null model or simple baseline explain, what is
   the theoretical ceiling. The prescreen runs it; it replaces `feasibility_precheck`, which an
-  nc_aim card does not carry.
+  nc_aim card does not carry. The test is small (a few basins, one year, a sample of the
+  archive); the question is not shrunk to fit the test.
 - **Milestones with budgets**: `milestones` [{name, kind, agent_hours, core_hours, model_usd}];
   the first has `kind: decisive` (the test that decides whether the main claim holds).
-- **Data**: give each data source its catalogue `catalog_id`; a source you found and verified
-  yourself (access receipt) gets `catalog_candidate: true`. A source that needs a registration
-  we do not hold, or is blocked, cannot carry a card.
+- **Data** (user rule: free sources only; registration-free ones are used directly, ones that
+  need a free registration are listed for the owner to register): give each data source its
+  catalogue `catalog_id`; a source you found and verified yourself (access receipt) gets
+  `catalog_candidate: true`. A free source that needs a registration (an account, API key or
+  data-use agreement we do not hold: ERA5/CDS, GRDC, GloFAS, EM-DAT, IHME GBD and the like) may
+  carry the full-scale analysis: mark it `needs_registration: "<what to register, where>"`, and
+  run the kill test and the access receipt on a registration-free source or sample. The control
+  plane passes such a card on with a note so the owner can register; admission makes the
+  registration a condition. Paid data and `blocked` sources cannot carry a card.
+- **Routine venue fields are warnings here.** The routine fallback pair in `venues.routine` is
+  still named, but `fee_check`, `license_check` and `audience.citations` of an nc_aim card are
+  checked as warnings at this stage and completed as admission conditions. Fill them when they
+  are at hand (copy research-lines.yaml evidence); do not spend the task on them. Spend it on the
+  question, the data and the preprint search.
 - **Do not re-propose** a direction the ledger shows rejected or frozen for its substance; a
   card close to one is rejected mechanically.
 
 Hooks of accepted NC papers (survey 2026-11-25, 63 papers; full list in
-`registry/venue-calibration.yaml`):
+`registry/venue-calibration.yaml`, where `at_admission` says what each looked like before the
+work). They are published results: read them for the size of question NC takes, not as topics
+to refine.
 
 - E1 flash droughts cut global vegetation 9.0% vs 5.3% for ordinary droughts (41 years, global).
 - E3 warming makes 71% of basins' snowmelt floods earlier but ~30% later (243k floods, 70 years).
@@ -81,7 +134,7 @@ Hooks of accepted NC papers (survey 2026-11-25, 63 papers; full list in
 - S2 rich countries' 7-day forecasts are as good as poor countries' 1-day forecasts.
 - P4 across 48 clusters, blue stragglers track the binary fraction (r = 0.81), not collisions.
 
-## What to propose
+## What to propose (routine stage; not for nc_aim)
 
 Prefer routine production topics inside the line's positioning: a screening of a new set of
 systems with a validated method, the line's standard analysis applied to a new or newly released
@@ -91,7 +144,7 @@ of somebody else's benchmark or published numbers (a leaderboard re-check, a "do
 value hold" study) are the exception, not the default: they fail most often on prior work that
 already did the check and on endpoints that cannot separate the claim from measurement error.
 
-## Paper templates first
+## Paper templates first (routine stage; optional pipelines for nc_aim)
 
 When the packet's `research_line_summary.paper_templates` is non-empty, start there. Each
 template in `registry/research-lines.yaml` (`lines[].paper_templates`) is a classic routine
@@ -135,7 +188,7 @@ Steps 1-2 below then reduce to checking the copied occupancy search.
 6. Meet the template's hard gates in the plan and in `feasibility_precheck` (for example the
    host's phonon stability as the precheck of an anode paper), and keep to its compute budget.
 
-## How the gate decides (policy v2)
+## How the gate decides (policy v2, routine stage)
 
 The gate admits a routine card when a stated incremental difference survives the closest prior
 work, the decisive data is confirmed, the design can identify the claimed effect, and the card
@@ -201,8 +254,9 @@ two strong cards there rather than many.
    disk), `onboarded` (free, fetch tool and tested sample), `catalogued` (free, access
    documented), `needs_registration` (not usable until the owner gets an account) and
    `blocked`. Read the catalogue file it names for endpoints, licence, citation and the fetch
-   tool; build on `ingested`/`onboarded` sources first and never rest a card on a
-   `needs_registration` or `blocked` one.
+   tool; build on `ingested`/`onboarded` sources first and never rest a routine card on a
+   `needs_registration` or `blocked` one (nc_aim cards: a `needs_registration` source may carry
+   the full-scale analysis as described under "NC aim", Data; `blocked` never).
 5. Confirm you can actually obtain the decisive data: download or query a sample, record what you
    got (source, version, row counts, date) in a small receipt file, and add that file as a
    hash-bound artifact of your result. "The data is public" is not a receipt. Keep the receipt
@@ -265,7 +319,8 @@ Each field is there because the gate needs it to decide:
   costs calendar hours on an otherwise idle host, not model budget, so do not drop a strong
   question only because its CPU time is long; plan the split and state it here.
 - Research-line cards (the packet names a `research_line`) add three fields (nc_aim cards: the
-  last two; their kill test replaces the precheck); the control plane rejects a line card without them. `packages/contracts/examples/research-program/topic-card.research-line.example.json` shows
+  last two, checked only as warnings and completed at admission; their kill test replaces the
+  precheck); the control plane rejects a routine line card without them. `packages/contracts/examples/research-program/topic-card.research-line.example.json` shows
   the shape.
   - `feasibility_precheck` — `description` (the cheap decisive check), `pass_criterion` (numeric),
     `budget` (one text string with the active agent time and compute, e.g. `"5400 active agent
@@ -317,7 +372,7 @@ budget given as an object) are fixed and noted; gaps the gate can weigh
 (audience evidence, a data source's version or licence, cost numbers, an occupancy search) travel
 to the gate as warnings. Only a gap admission cannot judge around (no question, no complete
 primary endpoint, no data source with a DOI or URL, no named routine venue, no closest prior
-work, unverified data access, the compute plan, a line card's precheck, licences or fees)
+work, unverified data access, the compute plan, a routine line card's precheck, licences or fees)
 rejects the card; it then gets one automatic repair task, and a second failure is final.
 
 ## After admission

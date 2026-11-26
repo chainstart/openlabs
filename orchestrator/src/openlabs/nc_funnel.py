@@ -140,7 +140,9 @@ def thresholds_text() -> str:
 CALIBRATION_TEXT = (
     "Read the calibration set first (read_resources venue-calibration, "
     "registry/venue-calibration.yaml: accepted NC papers with their hooks and same-subject "
-    "papers of lower-tier journals) and say which tier this topic resembles: calibration_match "
+    "papers of lower-tier journals) and say which tier this topic resembles - compare the card, "
+    "a plan, with each paper's `at_admission` (its question, data and design before the work), "
+    "not with its published hook: calibration_match "
     "(nc|zone_1|zone_2|zones_3_4) with calibration_neighbours (the ids of the 2-3 closest "
     "calibration papers). The control plane places the topic no higher than its calibration "
     "match, the same rule as the acceptance grade before writing."
@@ -172,7 +174,13 @@ SCOUT_INSTRUCTION = (
     "why it failed, its summary): your own threshold claims are checked the same way, so do "
     "not propose a card that would fail for the same reason (for example a protocol detail "
     "of one benchmark is not a general question, and an effect a simple null model explains "
-    "is not a finding). Starting points, never limits (read_resources nc-survey and nc-hotspots): "
+    "is not a finding). Work in the skill's NC order: the field's question, the complete free "
+    "data that answers it (the claim is about the full population; only the kill test uses a "
+    "subset), a novelty search of the last 18 months of preprints (Research Square, arXiv, "
+    "bioRxiv, medRxiv, SSRN, EarthArXiv) separating the same claim from adjacent work, then the "
+    "kill test. A free source that needs a registration may carry the full-scale analysis when "
+    "the card marks it needs_registration (what to register) and the kill test runs on data "
+    "obtainable now. Starting points, never limits (read_resources nc-survey and nc-hotspots): "
     "the ten templates of nc-hotspots section 2 (A-J, with their citation statistics and "
     "crowding) and the line's seed_directions (research_line_summary.seed_directions, numbers of "
     "the candidate directions in nc-hotspots section 3.2). The method and pipeline may follow a "
@@ -195,7 +203,11 @@ ADMISSION_NC_INSTRUCTION = (
     "calibration_match and the kill-test signal - and reject, quoting which one, when it does "
     "not. Admit when the claim, the challenged view, the benchmark and the data plan "
     "(data_volume, download window, ailab storage) stand; the first milestone must be the "
-    "decisive analysis."
+    "decisive analysis. At the scout stage an nc_aim card's fee_check, license_check and "
+    "audience citations are warnings (card_check.warnings) and a needs_registration data source "
+    "is a note (card_check.nc_screen.data_catalog): complete them as admission conditions "
+    "(licences and the owner's registration before_decisive_analysis, fees and audience "
+    "before_submission), not as reasons to reject."
 )
 
 GRADE_INSTRUCTION = (
@@ -466,10 +478,17 @@ def data_problems(card: Mapping[str, Any], line_entry: Mapping[str, Any],
                 notes.append({"source": label, "note": "not in the data catalogue"})
             continue
         status = str(entry.get("status") or "")
-        if status in {"needs_registration", "blocked"}:
-            problems.append(f"data source {key} is {status} in the data catalogue ("
-                            + (_text(entry.get("registration")) or _text(
-                                entry.get("blocked_reason")) or "not obtainable now") + ")")
+        if status == "blocked":
+            problems.append(f"data source {key} is blocked in the data catalogue ("
+                            + (_text(entry.get("blocked_reason")) or "not obtainable now") + ")")
+        elif status == "needs_registration":
+            # User rule (free data only): a free source behind a registration is listed for the
+            # owner to register, not excluded (NC calibration 2026-11-26). The card goes on; the
+            # admission gate makes the registration a before_decisive_analysis condition.
+            notes.append({"source": key, "status": status,
+                          "registration": _text(entry.get("registration")) or None,
+                          "note": "free, needs the owner's registration before the "
+                                  "full-scale analysis"})
         else:
             notes.append({"source": key, "status": status})
     return problems, notes
@@ -709,9 +728,12 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
             "(funnel levels 2 and 3; follow the 'Prescreen' section of the skill). The packet at "
             "the input path has the card. You did not write it. " + CALIBRATION_TEXT + " A "
             f"match below {funnel.admission_min_band} rejects the card. Phase A (cheap): a quick "
-            "novelty search of the last three years (list the 3-5 closest papers) and your own "
-            "scoring of the five NC thresholds; if fewer than "
-            f"{funnel.min_nc_thresholds} hold, the claim is already reported or the calibration "
+            "novelty search of the last three years, preprints included (Research Square, arXiv, "
+            "bioRxiv, medRxiv, SSRN, EarthArXiv; list the 3-5 closest papers), and your own "
+            "scoring of the five NC thresholds on the design's potential as knowable at "
+            "admission; if fewer than "
+            f"{funnel.min_nc_thresholds} hold, the same claim is already reported (adjacent work "
+            "with a different claim is closest prior work, not a scoop) or the calibration "
             "match is below the floor, stop and return without running anything. Judge crowding "
             "with read_resources nc-hotspots (section 2 crowding, section 3.3 crowded topics: "
             "global flash drought and vegetation, urban heat island and greening cooling): a "

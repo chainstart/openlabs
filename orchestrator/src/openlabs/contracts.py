@@ -730,7 +730,8 @@ def validate_topic_card(card: Any, *, current_year: int | None = None,
     ``errors`` are gaps that change what admission can judge or a hard limit (no
     question, no pre-registrable primary endpoint, no data source, no target venue,
     no closest prior work, unverified data access, a non-computational topic, the
-    compute plan, a line card's precheck, licences and fees, a revision's answers):
+    compute plan, a line card's precheck, licences and fees - warnings for nc_aim cards
+    - a revision's answers):
     the card is rejected and gets one repair. Everything else is a ``warning``
     recorded with the card and shown to the admission gate (audience evidence,
     data-source version or licence notes, cost numbers, occupancy search, ...).
@@ -876,8 +877,16 @@ def validate_topic_card(card: Any, *, current_year: int | None = None,
         warnings.append("ledger_check.compared_topic_ids must be an array")
 
     if card.get("research_line") is not None:
-        errors.extend(research_line_card_errors(card, venues,
-                                                feasibility_precheck=feasibility_precheck))
+        line_errors = research_line_card_errors(card, venues,
+                                                feasibility_precheck=feasibility_precheck)
+        if feasibility_precheck:
+            errors.extend(line_errors)
+        else:
+            # nc_aim cards (NC calibration 2026-11-26): the licence and fee evidence of the
+            # routine fallback venues is completed as admission conditions; at the scout stage
+            # it is a warning, so scout effort goes to the question and the novelty search.
+            for item in line_errors:
+                (errors if item.startswith("research_line ") else warnings).append(item)
 
     tier = card.get("target_tier")
     if tier is not None and tier not in TOPIC_TIERS:
@@ -1091,7 +1100,8 @@ def research_line_card_errors(card: Mapping[str, Any], venues: Mapping[str, Any]
     software package, model weight and dataset; ``fee_check`` covers page,
     colour and submission charges of every routine venue, and at least one
     routine venue must have a verified fee-free route. ``feasibility_precheck=False``
-    (nc_aim cards): the prescreen's kill test takes the precheck's place.
+    (nc_aim cards): the prescreen's kill test takes the precheck's place, and
+    :func:`validate_topic_card` reports the licence and fee gaps as warnings.
     """
 
     errors: list[str] = []

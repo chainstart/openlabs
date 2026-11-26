@@ -171,6 +171,27 @@ def test_nc_card_needs_no_feasibility_precheck_and_runs_no_line_precheck(tmp_pat
     assert topic["card_check"]["prescreen"]["status"] in {"pending", "scheduled"}
 
 
+def test_nc_card_fee_and_licence_gaps_are_warnings_not_errors():
+    # NC calibration 2026-11-26: routine-venue fee and licence evidence of an nc_aim card is
+    # completed at admission; a routine line card still needs it.
+    from openlabs.contracts import validate_topic_card
+
+    card = _nc_card()
+    card.pop("feasibility_precheck", None)
+    card.pop("fee_check", None)
+    card.pop("license_check", None)
+    nc = validate_topic_card(card, feasibility_precheck=False)
+    assert not any("fee_check" in e or "license_check" in e for e in nc.errors), nc.errors
+    assert any("fee_check" in w for w in nc.warnings)
+    assert any("license_check" in w for w in nc.warnings)
+    routine = validate_topic_card(card)
+    assert any("fee_check" in e for e in routine.errors)
+    assert any("license_check" in e for e in routine.errors)
+    card["research_line"] = ""
+    assert any(e.startswith("research_line ")
+               for e in validate_topic_card(card, feasibility_precheck=False).errors)
+
+
 def test_capacity_and_near_duplicate_screens():
     settings = flow._settings()
     settings = replace(settings, program=replace(settings.program, funnel=FunnelSettings()))
@@ -197,14 +218,28 @@ def test_data_catalogue_screen(tmp_path):
         "  - {id: open, name: Open, summary: s, licence: CC-BY, status: catalogued,"
         " access: {kind: web}}\n"
         "  - {id: closed, name: Closed, summary: s, licence: DUA, status: needs_registration,"
-        " registration: account, access: {kind: web}}\n", encoding="utf-8")
+        " registration: account, access: {kind: web}}\n"
+        "  - {id: gone, name: Gone, summary: s, licence: x, status: blocked,"
+        " blocked_reason: site refuses, access: {kind: web}}\n", encoding="utf-8")
     entry = {"environment": {"data_catalog": str(catalog)}}
     settings = replace(flow._settings(), program=replace(flow._settings().program,
                                                          funnel=FunnelSettings()))
     ok = _nc_card(data_sources=[{"doi": "10/x", "catalog_id": "open"}])
     assert nc_funnel.data_problems(ok, entry, settings)[0] == []
+    # User rule (free data only; registration-needing free sources are listed for the owner):
+    # a needs_registration source is a note for the owner, not a rejection (2026-11-26).
     closed = _nc_card(data_sources=[{"doi": "10/x", "catalog_id": "closed"}])
-    assert "needs_registration" in nc_funnel.data_problems(closed, entry, settings)[0][0]
+    problems, notes = nc_funnel.data_problems(closed, entry, settings)
+    assert problems == []
+    assert notes == [{"source": "closed", "status": "needs_registration", "registration": "account",
+                      "note": notes[0]["note"]}] and "registration" in notes[0]["note"]
+    reason, _, extra = nc_funnel.screen_card(settings, closed, entry, {"topics": []}, "nc_aim")
+    assert reason is None and extra["nc_screen"]["data_catalog"][0]["status"] == "needs_registration"
+    gone = _nc_card(data_sources=[{"doi": "10/x", "catalog_id": "gone"}])
+    problems, _ = nc_funnel.data_problems(gone, entry, settings)
+    assert problems and "blocked" in problems[0] and "site refuses" in problems[0]
+    reason, _, _ = nc_funnel.screen_card(settings, gone, entry, {"topics": []}, "nc_aim")
+    assert reason == nc_funnel.DATA_REJECTION
     unknown = _nc_card(data_sources=[{"doi": "10/x"}])
     assert nc_funnel.data_problems(unknown, entry, settings)[0]
     candidate = _nc_card(data_sources=[{"doi": "10/x", "catalog_candidate": True}])
