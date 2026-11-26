@@ -936,6 +936,27 @@ def test_unknown_identifier_is_not_unverifiable(tmp_path, monkeypatch):
     assert binding["valid"] is False and "unverifiable_source_access" not in binding
 
 
+def test_one_unresolved_reference_does_not_leave_the_rest_unverified(tmp_path, monkeypatch):
+    # 2026-11-26 (slimming batch 2): one reference without a resolvable record stopped every
+    # batch, and the round was blocked by "Coverage/evidence verification failed" alone.
+    metadata = _two_reference_workspace(tmp_path)
+    mock_http(monkeypatch, _handler(lambda request: httpx.Response(404)))
+    run = tmp_path / "review"; run.mkdir()
+    calls = []
+    base = _runner_unchecked_for("u")
+
+    def runner(**kwargs):
+        calls.append(kwargs["role_name"])
+        return base(**kwargs)
+
+    binding = formal.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, runner)
+    assert calls                                    # the verifier ran for the manuscript
+    assert binding["valid"] is False
+    assert any(b.startswith("u: authoritative identifier lookup unresolved") for b in binding["blockers"])
+    assert not any("Coverage/evidence verification failed" in b for b in binding["blockers"])
+    assert not any(b.startswith("s:") for b in binding["blockers"])   # the other one is verified
+
+
 def test_unverifiable_reference_with_error_verdict_still_blocks(tmp_path, monkeypatch):
     metadata = _two_reference_workspace(tmp_path)
     mock_http(monkeypatch, _handler(lambda request: httpx.Response(503)))
