@@ -29,6 +29,16 @@ nc_aim`. User: "后续的投稿目标都设为NC，然后选题也按照这个�
   (`research_line_summary.data_catalog`, full file in the packet) and return several distinct
   cards rather than one polished one. The pool has a cap (the candidate-pool low water) and a
   weekly model budget per line; a line whose recent cards all failed downstream is backed off.
+- **Admission floor nc on cc-sg** (user 2026-11-26: "接下来的出题希望选题至少是够nc档次的"): a card whose
+  calibration match or expected band is below Nature Communications is rejected at the prescreen.
+- **Start from the NC surveys, not from scratch** (read_resources `nc-survey`, `nc-hotspots`): the ten
+  templates A-J of nc-hotspots section 2 (citation statistics, crowding) and the line's
+  `seed_directions` (numbers of nc-hotspots section 3.2) are optional starting points. Template the
+  method and pipeline, never the claim: the claim must be new. Down-weight crowded subjects (very high
+  template crowding, three or more NC papers in 18 months, the section 3.3 list: global flash drought
+  and vegetation, urban heat island and greening cooling) unless the card names the angle they lack.
+- Several scouts of one line run at once on different model families (GPT, Gemini, Claude); propose
+  your own reading of the line, the near-duplicate screen merges overlaps.
 - **Each card states its NC case** in `nc_case`: `claim` (the one-sentence expected conclusion,
   falsifiable, ideally counter-intuitive), `alternative_claim` (the sentence that still has
   value if the result goes the other way), `challenges` (the view, practice or widely quoted

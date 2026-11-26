@@ -313,3 +313,27 @@ def test_supply_only_admission_review_is_scheduled(tmp_path) -> None:
         settings.program, polish_mode=True, polish_supply_only_lines=("engineering-vvuq",)))
     assert program_flow.schedule_topic_admission(
         db, paths, polish, campaign, epoch=1).reason != "polish_mode"
+
+
+def test_nc_references_and_seed_directions_reach_the_scout(tmp_path) -> None:
+    paths, db, settings = lines_tests._line_program(
+        tmp_path, LINES[:1], max_concurrent_scouts=1, candidate_pool_low_water=8,
+        scout_min_interval_hours=0)
+    settings = replace(settings, program=replace(settings.program,
+                                                 funnel=FunnelSettings(target_stage="nc_aim")))
+    for _label, relative in nc_funnel.NC_REFERENCES:
+        target = paths.data / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# survey\n", encoding="utf-8")
+    (paths.data / "registry" / "research-lines.yaml").write_text(
+        "schema_version: openlabs.research_lines.v1\nlines:\n  - id: engineering-vvuq\n"
+        "    seed_directions: {source: nc-hotspots 3.2, numbers: [4, 8]}\n"
+        "    environment: {status: ready}\n", encoding="utf-8")
+    scheduled, _ = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
+    task = db.task(scheduled[0].task_id)
+    packet = json.loads(Path(task["input_path"]).read_text())
+    labels = {item["label"] for item in packet["read_resources"]}
+    assert {"nc-survey", "nc-hotspots"} <= labels
+    assert packet["research_line_summary"]["seed_directions"]["numbers"] == [4, 8]
+    assert "the claim itself must be new" in task["objective"]
+    assert "urban heat island" in task["objective"]

@@ -79,6 +79,11 @@ L23_REJECTIONS = frozenset({PRESCREEN_REJECTION, KILL_TEST_REJECTION, BAND_REJEC
 JUDGED = frozenset({THRESHOLD_REJECTION, PRESCREEN_REJECTION, KILL_TEST_REJECTION,
                     BAND_REJECTION, ADMISSION_REJECTION, DUPLICATE_REJECTION})
 CALIBRATION_PATH = "registry/venue-calibration.yaml"
+# Read resources of scouts, prescreens and the admission gate (copies of the maintenance reports).
+NC_REFERENCES = (
+    ("nc-survey", "registry/research-references/nc-survey-20261125.md"),
+    ("nc-hotspots", "registry/research-references/nc-hotspots-20261126.md"),
+)
 
 # Few-shot hooks from the 2026-11-25 survey of 63 NC papers (maintenance/20261125-nc-survey,
 # papers.md; DOIs verified there). The full set is the calibration file.
@@ -165,7 +170,15 @@ SCOUT_INSTRUCTION = (
     "why it failed, its summary): your own threshold claims are checked the same way, so do "
     "not propose a card that would fail for the same reason (for example a protocol detail "
     "of one benchmark is not a general question, and an effect a simple null model explains "
-    "is not a finding)."
+    "is not a finding). Starting points, never limits (read_resources nc-survey and nc-hotspots): "
+    "the ten templates of nc-hotspots section 2 (A-J, with their citation statistics and "
+    "crowding) and the line's seed_directions (research_line_summary.seed_directions, numbers of "
+    "the candidate directions in nc-hotspots section 3.2). The method and pipeline may follow a "
+    "template; the claim itself must be new. Down-weight crowded subjects: a template marked very "
+    "high crowding, a subject with three or more NC papers in the last 18 months, and the crowded "
+    "topics of nc-hotspots section 3.3 (global flash drought and vegetation; urban heat island and "
+    "greening cooling) - propose one only with an angle the crowded papers lack, and say so in "
+    "the card."
 )
 
 ADMISSION_NC_INSTRUCTION = (
@@ -707,7 +720,10 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
             "novelty search of the last three years (list the 3-5 closest papers) and your own "
             "scoring of the five NC thresholds; if fewer than "
             f"{funnel.min_nc_thresholds} hold, the claim is already reported or the calibration "
-            "match is below the floor, stop and return without running anything. Phase B, only "
+            "match is below the floor, stop and return without running anything. Judge crowding "
+            "with read_resources nc-hotspots (section 2 crowding, section 3.3 crowded topics: "
+            "global flash drought and vegetation, urban heat island and greening cooling): a "
+            "card on a crowded subject without a new angle is incremental, not clear. Phase B, only "
             "when phase A passes: the kill test of the "
             f"card within {funnel.kill_test_core_hours:g} core-hours on at most "
             f"{funnel.kill_test_cpus} CPU threads here (no ailab job), using data already on "

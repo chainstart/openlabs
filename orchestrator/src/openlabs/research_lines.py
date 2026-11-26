@@ -95,6 +95,8 @@ def line_summary(document: Mapping[str, Any] | None, line_id: str) -> dict[str, 
         "sop": environment.get("sop"),
         "known_line": bool(entry),
         "paper_templates": template_summaries(entry),
+        **({"seed_directions": entry["seed_directions"]}
+           if isinstance(entry.get("seed_directions"), Mapping) else {}),
         **({"data_catalog": catalog} if (catalog := catalog_summary(
             environment.get("data_catalog"))) else {}),
     }

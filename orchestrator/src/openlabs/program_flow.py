@@ -309,6 +309,9 @@ def program_read_resources(
             "research-lines-summary",
             (paths.data / settings.program.research_lines_path).with_suffix(".md"),
         ),
+        # NC surveys (2026-11-25 sample of 63 papers; 2026-11-26 hotspot survey: section 2
+        # templates with citations and crowding, section 3.2 candidate directions, 3.3 crowded).
+        *(_resource(label, paths.data / relative) for label, relative in nc_funnel.NC_REFERENCES),
     ]
     return [item for item in items if item is not None]
 
