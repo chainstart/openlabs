@@ -3123,7 +3123,12 @@ def parallel_routing_reasons(settings: FactorySettings) -> tuple[str, ...]:
         # Prescreens (NC funnel) of one line share its scout campaign; their own cap is
         # [program.funnel].prescreen_max_concurrent (2026-11-25 trial: without this they ran
         # one at a time).
-        return (ADMISSION_ROUTING_REASON, nc_funnel.PRESCREEN_ROUTING_REASON)
+        reasons = (ADMISSION_ROUTING_REASON, nc_funnel.PRESCREEN_ROUTING_REASON)
+        if settings.program.max_scouts_per_line > 1:
+            # Several scouts of one line (2026-11-26) share its scout campaign;
+            # schedule_scouts bounds them (max_scouts_per_line, max_concurrent_scouts).
+            reasons += (SCOUT_ROUTING_REASON,)
+        return reasons
     return ()
 
 

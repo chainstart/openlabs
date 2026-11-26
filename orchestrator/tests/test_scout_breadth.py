@@ -145,6 +145,25 @@ def test_supply_only_line_scouts_under_polish_mode_and_is_not_cancelled(tmp_path
 # --------------------------------------------------------------------------- routing
 
 
+def test_scouts_and_prescreens_of_one_line_run_side_by_side(tmp_path) -> None:
+    _, db = routing._setup(tmp_path)
+    single = program_flow.parallel_routing_reasons(flow._settings())
+    assert "program_slot_open" not in single
+    reasons = program_flow.parallel_routing_reasons(flow._settings(max_scouts_per_line=2))
+    assert "program_slot_open" in reasons
+    for n in range(2):
+        routing._enqueue(db, f"s{n}", "line-scout", task_type="topic_scout",
+                         routing_reason="program_slot_open")
+    routing._enqueue(db, "p0", "line-scout", task_type="topic_prescreen",
+                     routing_reason="topic_prescreen")
+    claimed = [db.claim_next_task(owner="t", lease_seconds=60, parallel_routing_reasons=reasons)
+               for _ in range(3)]
+    assert sorted(task["task_id"] for task in claimed) == ["p0", "s0", "s1"]
+    routing._enqueue(db, "r", "line-scout", task_type="research")
+    assert db.claim_next_task(owner="t", lease_seconds=60,
+                              parallel_routing_reasons=reasons) is None
+
+
 def _scout(db, paths, task_id: str, preferred: str | None, **kwargs) -> None:
     packet = paths.data / f"{task_id}.json"
     packet.write_text(json.dumps({"preferred_runner": preferred} if preferred else {}))

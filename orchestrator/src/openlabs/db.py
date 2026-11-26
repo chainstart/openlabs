@@ -2262,7 +2262,7 @@ class FactoryDB:
 
         A campaign normally runs one task at a time. A task whose
         ``routing_reason`` is in ``parallel_routing_reasons`` may also start
-        while siblings with the same routing reason (and only those) run in its
+        while siblings with such routing reasons (and only those) run in its
         campaign: the scheduler bounds how many it queues.
 
         ``excluded_runners`` (runner tiers in provider backoff) are skipped;
@@ -2283,9 +2283,11 @@ class FactoryDB:
         sibling_exemption = ""
         if parallel_reasons:
             marks = ",".join("?" for _ in parallel_reasons)
+            # Any two parallel reasons may share a campaign (2026-11-26: a line's scouts and
+            # prescreens share its scout campaign and run beside each other).
             sibling_exemption = (
                 f"AND NOT (tasks.routing_reason IN ({marks}) "
-                "AND active.routing_reason = tasks.routing_reason)"
+                f"AND active.routing_reason IN ({marks}))"
             )
         excluded = {str(runner) for runner in excluded_runners}
         runner_limits = dict(runner_active_limits or {})
@@ -2321,7 +2323,7 @@ class FactoryDB:
                 )
                 ORDER BY tasks.priority DESC, tasks.created_at, tasks.task_id
                 """.format(sibling_exemption=sibling_exemption),  # noqa: S608 - placeholders only
-                (now, *parallel_reasons),
+                (now, *parallel_reasons, *parallel_reasons),
             ).fetchall()
             if rank is not None:
                 rows = sorted(
