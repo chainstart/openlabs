@@ -209,3 +209,22 @@ def test_review_ready_after_a_pre_writing_grade_goes_straight_to_the_queue(tmp_p
         payload={}, evidence=[])
     assert _direction_tasks(db) == []  # no grade re-check (pipeline slimming 2026-11-26)
     assert _topic(paths, settings, topic["topic_id"])["status"] == "ready_queue"
+
+
+def test_a_grade_rechecked_before_the_slimming_also_goes_straight_to_the_queue(tmp_path,
+                                                                                 monkeypatch):
+    paths, db, settings, topic = _nc_program(tmp_path, monkeypatch)
+    from openlabs.engine import TickReport
+    from openlabs.program import record_topic_note
+    from test_program_autonomy import _direction_tasks
+
+    rechecked = {**PRIOR, "point": "recheck", "rechecked_for": "owner-review:old"}
+    record_topic_note(program_autonomy._ledger(paths, settings), topic["topic_id"], db=db,
+                      event_type="venue_grade_decided", reason="nc", decided_by="test",
+                      updates={"venue_grade": rechecked})
+    program_autonomy.queue_ready_topic(
+        db, paths, settings, TickReport(), topic=_topic(paths, settings, topic["topic_id"]),
+        task={"task_id": "review-2"}, payload={}, evidence=[],
+        outcome={"paper_id": "p1", "target_journal": "Some Other Journal"})
+    assert _direction_tasks(db) == []
+    assert _topic(paths, settings, topic["topic_id"])["status"] == "ready_queue"

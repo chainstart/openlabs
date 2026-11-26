@@ -1109,10 +1109,10 @@ def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payl
             if decision_path.is_file():
                 journal = json.loads(decision_path.read_text()).get("target_journal") or journal
         grade = topic.get("venue_grade") or {}
-        from .nc_grading import POINT_PRE_WRITING
+        from .nc_grading import GRADED_BEFORE_WRITING
 
         # Graded before writing: review ready goes straight to the queue (no re-check).
-        if grade.get("point") != POINT_PRE_WRITING and (
+        if grade.get("point") not in GRADED_BEFORE_WRITING and (
                 not grade or grade.get("journal") != journal):
             schedule_direction_decision(
                 db, paths, settings, report, topic=topic, trigger=TRIGGER_VENUE_GRADE,

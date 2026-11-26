@@ -34,6 +34,9 @@ from typing import Any, Mapping
 TRIGGER_PRE_WRITING = "pre_writing_grade"
 POINT_PRE_WRITING = "pre_writing"
 POINT_AFTER_REVIEW = "after_review"
+# Grades taken before writing; "recheck" is a grade re-checked at review-ready before
+# 2026-11-26 (the NC-trial ECG topic carries one).
+GRADED_BEFORE_WRITING = frozenset({POINT_PRE_WRITING, "recheck"})
 ROUTING_READINESS = "owner_nc_readiness"
 ROUTING_GRADED = "owner_venue_graded"
 
