@@ -188,3 +188,33 @@ def test_structured_followup_decision():
     merged = flow.merge(editor, referees, followup_items=[item], changed_text=changed)
     assert merged["outcome"] == "ready"
     assert {a.get("downgrade_reason") for a in merged["advisory_items"]} >= {"accepting_unsupported"}
+
+
+def test_legacy_previous_item_keeps_the_first_reporting_role():
+    """TIC 260161938 (2026-11-26): a pre-B6 follow-up item the editor reported as a documentation
+    request was advice in the released decision; a referee's plain report of the same item must
+    not turn it into a blocker on replay. Structured records still block when any role blocks."""
+    item = "[evidence] old item"
+    editor_row = {"item": item, "resolved": False,
+                  "evidence": "The manuscript repair is visible. The regenerated JSON is not available here; "
+                              "the archive portion of the request remains unverified.",
+                  "reader_misconclusion": "A reader filtering on the legacy flag could miscount one sector."}
+    referee_row = {"item": item, "resolved": False, "evidence": "Partly resolved. The legacy flag is still false.",
+                   "reader_misconclusion": "Selecting by the legacy flag would include the sector."}
+    editor = {"review_standard": "materiality_v1", "decision": "send_to_review", "previous_items": [editor_row],
+              "new_findings": []}
+    referees = {"referee_a": {"recommendation": "accept", "new_findings": [],
+                              "previous_items": [dict(referee_row, resolved=True)]},
+                "referee_b": {"recommendation": "minor_revision", "new_findings": [],
+                              "previous_items": [referee_row]}}
+    merged = flow.merge(editor, referees, followup_items=[item])
+    assert merged["outcome"] == "ready"
+    [entry] = merged["unresolved_previous_items"]
+    assert entry["advisory"] and entry["referee"] == "editor" and entry["also_raised_by"] == ["referee_b"]
+    assert entry["downgrade_reason"] == "previous_accepting_documentation"
+    fields = {"kind": "unsupported_claim", "category": "body_claim", "requests": ["text_edit"]}
+    editor["previous_items"] = [dict(editor_row, **dict(fields, category="archive_or_response_format", requests=[]))]
+    referees["referee_b"]["previous_items"] = [dict(referee_row, **fields)]
+    merged = flow.merge(editor, referees, followup_items=[item])
+    assert merged["outcome"] == "revision_required"
+    assert merged["unresolved_previous_items"][0]["referee"] == "referee_b"

@@ -2284,6 +2284,12 @@ def _followup_reports(editor, referees, items, changed=None, context: materialit
     unresolved = []
     for item, rows in previous.items():
         decisions = [materiality.decide(row, source="previous", role=role, context=context) for role, row in rows]
+        if not any(materiality.structured(row) for _, row in rows):
+            # Records written before B6 (no structured fields): the first role reporting the item
+            # decides it, as the synthesis did then. Taking any role's block instead would turn
+            # an item an earlier, released decision judged advice into a blocker (TIC 260161938,
+            # 2026-11-26: a rule change must not re-judge a passed paper).
+            decisions = decisions[:1]
         blocking = next((index for index, d in enumerate(decisions) if d.blocks), None)
         role, row = rows[0 if blocking is None else blocking]
         entry = dict(row, referee=role, advisory=blocking is None)
