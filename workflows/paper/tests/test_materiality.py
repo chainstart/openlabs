@@ -2,6 +2,8 @@
 only classify records written before the fields existed."""
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from paper_writing import formal_checks
@@ -47,10 +49,15 @@ def test_table_is_ordered_and_ends_with_a_catch_all():
 def test_hard_kinds_block_under_every_panel_rule(kind):
     context = m.Context(followup=True, prior_items=frozenset(), changed_text="unrelated text",
                         accepting=True, final_check=True, science_clear=True, dimensions_clear=True)
-    raw = new_finding(kind=kind, in_changed_region=False, requests=["archive_or_response_format"])
+    raw = new_finding(kind=kind, in_changed_region=False, requests=["text_edit"])
     assert m.decide(raw, source="new_finding", context=context).blocks
-    reader = finding(kind=kind, why_missed="New.", requests=["archive_or_response_format"])
+    reader = finding(kind=kind, why_missed="New.", requests=["text_edit"])
     assert rule(reader, "reader", context) == "hard_kind"
+    # UD-20261126-review-pass-two-minor: with both referees at minor or better, an error that lives
+    # only in the archive or the response does not make the paper wrong; it is advice.
+    archive = new_finding(kind=kind, in_changed_region=False, requests=["archive_or_response_format"])
+    assert rule(archive, "new_finding", context) == "accepting_archive_only"
+    assert rule(archive, "new_finding", dataclasses.replace(context, accepting=False)) == "hard_kind"
 
 
 def test_a_blocker_needs_a_reader_misconclusion():
@@ -120,7 +127,11 @@ def test_previous_items():
     archive = dict(row, kind="unsupported_claim", category="archive_or_response_format", requests=[])
     assert rule(archive, "previous", ACCEPTING) == "previous_accepting_documentation"
     hard = dict(archive, kind="numeric_or_statistical_error")
-    assert rule(hard, "previous", ACCEPTING) == "previous_hard_kind"
+    # Archive-only error with both referees at minor or better: advice (UD-20261126); in the
+    # manuscript, or with a referee wanting more, it blocks.
+    assert rule(hard, "previous", ACCEPTING) == "accepting_archive_only"
+    assert rule(dict(hard, category="body_claim"), "previous", ACCEPTING) == "previous_hard_kind"
+    assert rule(hard, "previous", m.Context()) == "previous_hard_kind"
 
 
 def test_formal_and_presentation_rows():
@@ -167,6 +178,11 @@ def test_structured_first_round_decision():
     science = finding(kind="numeric_or_statistical_error", category="method_or_data")
     merged = flow.merge(editor, {"referee_a": report("accept", science=[science], readability=[readable])})
     assert merged["outcome"] == "revision_required" and merged["next_action"] == "evidence_remediation"
+    # Both referees at minor or better (UD-20261126-review-pass-two-minor): the hard error blocks,
+    # the readability repair is advice. With a referee at major revision it blocks too.
+    assert [c["advisory"] for c in merged["required_changes"][:2]] == [False, True]
+    assert merged["required_changes"][1]["downgrade_reason"] == "accepting_panel"
+    merged = flow.merge(editor, {"referee_a": report("major_revision", science=[science], readability=[readable])})
     assert [c["advisory"] for c in merged["required_changes"][:2]] == [False, False]
 
 
@@ -215,6 +231,11 @@ def test_legacy_previous_item_keeps_the_first_reporting_role():
     fields = {"kind": "unsupported_claim", "category": "body_claim", "requests": ["text_edit"]}
     editor["previous_items"] = [dict(editor_row, **dict(fields, category="archive_or_response_format", requests=[]))]
     referees["referee_b"]["previous_items"] = [dict(referee_row, **fields)]
+    # With both referees at minor or better the open non-hard item is advice (UD-20261126);
+    # a referee at major revision makes it block again.
+    assert flow.merge(editor, referees, followup_items=[item])["outcome"] == "ready"
+    referees["referee_b"]["recommendation"] = "major_revision"
     merged = flow.merge(editor, referees, followup_items=[item])
     assert merged["outcome"] == "revision_required"
-    assert merged["unresolved_previous_items"][0]["referee"] == "referee_b"
+    entry = merged["unresolved_previous_items"][0]
+    assert not entry["advisory"] and "referee_b" in [entry["referee"], *entry.get("also_raised_by", [])]

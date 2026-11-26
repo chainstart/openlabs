@@ -9,6 +9,14 @@ from what must be done, together with the optional suggestions. If the fixed dec
 when both referees recommended reject, state each referee's principal reason instead of the editor's. Be specific and brief; no
 praise padding. Return only the JSON object required by the schema.
 
+Open the letter with the two or three key points that decide this paper at the journal
+(significance, advance over the closest work, fit, a clear main claim in the title and abstract)
+and what the reports say about each. When both referees recommend minor revision or accept, the
+fixed decision passes the paper unless a hard error stands; say so, and give everything else as a
+short advice list. Do not ask for defensive caveats or for answers to the review inside the
+manuscript: answers go in the response letter. Keep the paper's topic and abstract focused; ask
+for a clearer abstract, not a longer one.
+
 The packet also gives `main_text_length` (the deterministic main-text word count, its limit and,
 after an earlier round, the count of the last reviewed version) and possibly
 `author_reader_check` (the authors' own one-pass reader check: advice, not a review). In the

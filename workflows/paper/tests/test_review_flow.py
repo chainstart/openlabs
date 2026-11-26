@@ -2156,7 +2156,9 @@ def test_accepted_panel_does_not_reopen_for_unsubstantiated_dimension(kind, conc
 ])
 def test_new_standard_followup_requires_materiality_and_explanation(kind, wrong, missed, expected):
     screen = editor("revise_before_submission") | dict(review_standard="materiality_v1", dimension_repairs={})
-    report = referee("accept") | dict(followup_review=True, dimension_repairs={"science": [
+    # A referee at major revision: with every referee at minor or better a non-hard science item
+    # is advice (UD-20261126-review-pass-two-minor).
+    report = referee("major_revision") | dict(followup_review=True, dimension_repairs={"science": [
         dict(kind=kind, repair="Check the printed threshold", wrong_conclusion=wrong,
              previous_item="", why_missed=missed)]})
     result = flow.merge(screen, {"a": report})

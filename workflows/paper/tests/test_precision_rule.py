@@ -74,8 +74,11 @@ def _reports(recommendations, finding_dimension):
 @pytest.mark.parametrize("recs,dimension,ready", [
     (("accept", "minor_revision"), "readability", True),    # wording only: advice
     (("minor_revision", "major_revision"), "readability", False),  # a referee wants more
-    (("accept", "minor_revision"), "science", False),       # evidence does not support a conclusion
-    (("accept", "minor_revision"), "formal_accuracy", False),  # wrong numbers or citations
+    # UD-20261126-review-pass-two-minor: both referees at minor or better pass unless hard error.
+    (("accept", "minor_revision"), "science", True),
+    (("accept", "minor_revision"), "formal_accuracy", True),
+    (("minor_revision", "major_revision"), "science", False),  # evidence does not support a conclusion
+    (("minor_revision", "major_revision"), "formal_accuracy", False),
 ])
 def test_wording_with_accept_or_minor_referees_is_ready(recs, dimension, ready):
     editor, referees = _reports(recs, dimension)
