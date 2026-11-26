@@ -2829,6 +2829,12 @@ def ingest_results(
                     attempt_workspace.artifact_staging_root
                     if attempt_workspace is not None
                     else None,
+                    live_root=paths.artifacts,
+                    started=(attempt_started(attempt_workspace)
+                             if attempt_workspace is not None else None),
+                    keep=(paths.artifacts / "objects", paths.artifacts / "result-bundles",
+                          *((attempt_workspace.campaign_root,)
+                            if attempt_workspace is not None else ())),
                 )
                 if corrected:
                     runtime["staged_hash_corrections"] = corrected

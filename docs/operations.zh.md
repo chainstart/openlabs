@@ -1832,6 +1832,11 @@ Claude 按配速每约两小时放行一个，七张卡要排十几个小时。
 结束时仍在下载的桥任务因此写不进 `.download.part`（试产首个课题的两个 MIMIC-IV-ECG 下载都这样失败，等它们的本机作业
 随之失败）。简报末尾现在给出 `<instance_artifacts>/campaign-data/<campaign>/`（`owner.campaign_data_dir`，渲染时创建），
 跨坐席保留；Tools 段说明跨坐席的下载和作业输入放那里。
+2026-11-26 起（精简第二批，用户“1-开始”）坐席只有这一个放大文件的根：简报末尾不再给出暂存区路径，下载、作业输入输出、
+日志、数据集都写到 campaign-data；`result.artifacts` 里声明的、本次 attempt 新写的文件（在 artifact store 内、不在工作区和
+objects 里），由控制面在收件时复制进暂存区冻结并按冻结副本记哈希（`owner.settle_staged_artifacts` 的 `live_root`），原件留给后续坐席。
+暂存区只用于冻结声明的产物（和收走工作区里的大文件），不再是坐席要自己选的第二个位置；此前提交会以
+“new artifact must use attempt staging, not a live artifact path”拒收这类文件（11-14 至 11-25 共 14 次）。
 
 尚无稿件的在研课题用 `program pause-topic` 暂停，不冻结：
 
