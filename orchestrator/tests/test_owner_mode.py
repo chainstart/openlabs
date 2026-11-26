@@ -859,3 +859,91 @@ def test_blocked_owner_keeps_its_session_only_on_the_same_model(tmp_path, monkey
                             now=now + timedelta(minutes=121))
     assert moves and moves[0]["to_runner"] == "spare_claude" and moves[0]["keep_session"]
     assert db.task(queued["task_id"])["agent_session_id"] == "s1"
+
+
+# --------------------------------------------------------------------------- same-journal retarget
+
+
+@pytest.mark.parametrize("bound", [True, False])
+def test_same_journal_retarget_keeps_the_ready_review(tmp_path, monkeypatch, bound) -> None:
+    # NC trial 2026-11-26: the venue re-check after a ready review could not read the
+    # review's journal, so its unchanged grade was executed as a retarget; the seat found
+    # the journal and the manuscript unchanged, returned ready_for_review, and a new review
+    # ran on the same content. The ready review stands when the registry is still bound
+    # to it for that journal; otherwise the seat result takes the normal path.
+    import hashlib
+
+    import yaml
+    from openlabs import program_autonomy, target_stage
+    from test_program_autonomy import _deliverable, _direction_task, _retarget_decision
+
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch, auto_handoff=True,
+        owner_settings=OwnerSettings(recompute_review=False, session_max_seats=0))
+    monkeypatch.setattr(target_stage, "tier2_topic", lambda _: True)
+    _deliverable(monkeypatch)
+    monkeypatch.setenv("ARA_PAPER_MANAGE_API_URL", "https://manage.invalid")
+    monkeypatch.setenv("ARA_PAPER_MANAGE_API_KEY", "test-key")
+    monkeypatch.setattr(program_autonomy, "run_paper_delivery", lambda _p, _s, paper_id: {
+        "status": "delivered", "paper_id": paper_id, "package_id": "pkg-retained",
+        "submission_handler": None, "awaiting_owner_review": True})
+    original = program_autonomy._run_paper_command
+
+    def paper_command(*args, **kwargs):
+        if args[2] == ["venue", "alternatives"]:
+            return {"venues": [{"journal": "Zone 3 Journal", "cas_2025_zone": 3}]}
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(program_autonomy, "_run_paper_command", paper_command)
+    paper_id = "20261114-ai-owner"
+    seat = _first_seat(paths, db, settings, monkeypatch, topic)
+    _seat_packet(db, paths, seat["task_id"], {
+        "status": "ready_for_review", "paper_id": paper_id,
+        "primary_endpoint_verdict": "met"}, session="s1", artifact=True)
+    _tick(paths, settings, monkeypatch)
+    review = _lease(paths, settings, monkeypatch, db, _latest(db, topic["campaign_id"])["task_id"])
+    assert review["task_type"] == "paper_review"
+    record_path = f"reviews/unified/{paper_id}/run/decision.json"
+    record = json.dumps({"paper_id": paper_id, "target_journal": "Zone 3 Journal"}).encode()
+    record_sha = hashlib.sha256(record).hexdigest()
+    # The outcome carries no journal and its record is not readable yet: the re-check
+    # cannot see that the grade keeps the journal.
+    _finish(db, paths, review["task_id"], extra={
+        "paper_candidate": True, "review_outcome": _outcome(
+            status="ready", paper_id=paper_id, decision_record=record_path,
+            decision_record_sha256=record_sha)})
+    _tick(paths, settings, monkeypatch)
+    pending = _direction_task(db)
+    packet = json.loads(Path(pending["input_path"]).read_text())
+    decision = _retarget_decision(packet["reasons_to_answer"][0], "Zone 3 Journal")
+    decision["retarget"]["achieved_band"] = "zones_3_4"
+    report = _decide(paths, settings, monkeypatch, db, decision)
+    assert report.program["direction_decisions"][0]["outcome"] == "executed"
+    retarget = db.task(pending["task_id"] + ":retarget")
+    assert retarget is not None and retarget["routing_reason"] == program_autonomy.RETARGET_ROUTING
+    # The seat changes nothing: registry and decision record as the ready review left them.
+    (paths.data / record_path).parent.mkdir(parents=True, exist_ok=True)
+    (paths.data / record_path).write_bytes(record)
+    release = {"status": "ready", "decision_record": record_path,
+               "decision_record_sha256": record_sha if bound else "e" * 64}
+    (paths.data / "registry" / "papers").mkdir(parents=True, exist_ok=True)
+    (paths.data / "registry" / "papers" / f"{paper_id}.yaml").write_text(yaml.safe_dump(
+        {"paper_id": paper_id, "target_journal": "Zone 3 Journal", "writing_release": release}))
+    retarget = _lease(paths, settings, monkeypatch, db, retarget["task_id"])
+    _seat_packet(db, paths, retarget["task_id"], {
+        "status": "ready_for_review", "paper_id": paper_id,
+        "primary_endpoint_verdict": "met",
+        "summary": "Target unchanged; review already ready for this venue."}, session="s1")
+    report = _tick(paths, settings, monkeypatch)
+    assert report.errors == [], report.errors
+    reviews = [t for t in _tasks(db, topic["campaign_id"]) if t["task_type"] == "paper_review"]
+    after = _topic(paths, settings, topic["topic_id"])
+    if bound:
+        assert len(reviews) == 1  # no second review of the unchanged manuscript
+        assert after["status"] == "ready_queue"
+        assert after["handoff"]["review_task_id"] == review["task_id"]
+        assert report.program["retarget_review_retained"][0]["review_task_id"] == review["task_id"]
+    else:
+        # The normal path (a review or another seat), never the retained ready review.
+        assert after["status"] == "in_review"
+        assert "retarget_review_retained" not in report.program

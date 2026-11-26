@@ -1091,6 +1091,65 @@ def submission_conditions(topic: Mapping[str, Any]) -> list[dict[str, str]]:
             if item.get("due") == "before_submission"]
 
 
+def retained_ready_review(db, paths, settings, *, task: Mapping[str, Any],
+                          campaign: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The ready review a retarget seat for the same journal leaves standing, or None.
+
+    A retarget to the journal the manuscript is already ready for leaves nothing to
+    review (NC trial 2026-11-26: the seat found the venue unchanged and the manuscript
+    untouched, returned ready_for_review, and a new review ran for two hours on the same
+    content). The direction decision's packet names the ready review it came from; when
+    the paper registry still names that review's journal and is still bound to the same,
+    unchanged decision record, that outcome stands and no review is started. Whether the
+    manuscript still matches the decision is checked again by the release pipeline,
+    which sends any change to the delta review.
+    """
+
+    import yaml
+
+    from .paper_figures import _draft_roots
+
+    task_id = str(task.get("task_id") or "")
+    if str(task.get("routing_reason") or "") != RETARGET_ROUTING or not task_id.endswith(":retarget"):
+        return None
+    decision_task = db.task(task_id.removesuffix(":retarget")) or {}
+    try:
+        packet = _verified_packet(Path(str(decision_task.get("input_path") or "")))
+    except (OSError, ValueError):
+        return None
+    trigger = packet.get("trigger") if isinstance(packet.get("trigger"), Mapping) else {}
+    detail = trigger.get("detail") if isinstance(trigger.get("detail"), Mapping) else {}
+    outcome = detail.get("review_outcome") if isinstance(detail.get("review_outcome"), Mapping) else {}
+    record_path = str(outcome.get("decision_record") or "")
+    record_sha = str(outcome.get("decision_record_sha256") or "")
+    paper_id = str(detail.get("paper_id") or outcome.get("paper_id") or "").strip()
+    if outcome.get("status") != "ready" or not record_path or not record_sha or not paper_id:
+        return None
+    for base in (Path(paths.data), *(Path(root) for root in _draft_roots(paths, campaign))):
+        registry = base / "registry" / "papers" / f"{paper_id}.yaml"
+        if not registry.is_file():
+            continue
+        try:
+            metadata = yaml.safe_load(registry.read_text(encoding="utf-8")) or {}
+            record_bytes = (base / record_path).read_bytes()
+            record = json.loads(record_bytes)
+        except (OSError, ValueError, yaml.YAMLError):
+            return None
+        release = metadata.get("writing_release") if isinstance(metadata, Mapping) else None
+        journal = str(metadata.get("target_journal") or "").strip()
+        if (not isinstance(release, Mapping) or release.get("status") != "ready"
+                or release.get("decision_record") != record_path
+                or release.get("decision_record_sha256") != record_sha
+                or hashlib.sha256(record_bytes).hexdigest() != record_sha
+                or not journal
+                or str(record.get("target_journal") or "").strip().casefold() != journal.casefold()):
+            return None
+        return {"outcome": {**dict(outcome), "target_journal": journal},
+                "review_task_id": str(trigger.get("source_task_id") or task_id),
+                "paper_id": paper_id}
+    return None
+
+
 def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payload, evidence):
     """Review ready: ``ready_queue``, pause the campaign (slot released), queue delivery."""
 

@@ -2597,6 +2597,24 @@ def after_result(
         state = owner_state(db, str(task["campaign_id"]))
     status = str(packet.get("status") or "")
     if successful and status == "ready_for_review":
+        from . import program_autonomy
+
+        # A same-journal retarget of a manuscript that is already ready: the existing
+        # ready review stands (no new review of unchanged content).
+        retained = program_autonomy.retained_ready_review(db, paths, settings, task=task,
+                                                          campaign=campaign)
+        if retained is not None and topic is not None:
+            program_autonomy.queue_ready_topic(
+                db, paths, settings, report, topic=topic,
+                task={"task_id": retained["review_task_id"]}, outcome=retained["outcome"],
+                payload={"paper_id": retained["paper_id"]},
+                evidence=[{"path": str(result_path), "sha256": result_sha256}],
+            )
+            report.program.setdefault("retarget_review_retained", []).append(
+                {"campaign_id": str(task["campaign_id"]), "task_id": str(task["task_id"]),
+                 "review_task_id": retained["review_task_id"],
+                 "decision_record": retained["outcome"].get("decision_record")})
+            return True
         verdict = str(packet.get("primary_endpoint_verdict") or "").strip().lower()
         if verdict not in EVALUATED_VERDICTS:
             enqueue_seat(
