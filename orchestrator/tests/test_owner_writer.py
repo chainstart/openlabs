@@ -187,6 +187,56 @@ def test_writer_seat_waits_for_quota_then_falls_back_to_the_owner(tmp_path, monk
     assert seat["runner"] == "worker_gpt"
 
 
+def test_writer_seat_falls_back_to_a_configured_fallback_writer(tmp_path, monkeypatch) -> None:
+    # UD-20261126-gemini-ultra: a listed fallback writer takes the seat before the solver;
+    # the writer itself, unknown runners, non-owner runners and runners at their cap are skipped.
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch,
+        owner_settings=_settings(runners=("worker_gpt", "lead_claude", "lead_gpt"),
+                                 max_topics_per_runner={"lead_claude": 0},
+                                 writing_fallback_runners=(WRITER, "ghost", "worker_claude",
+                                                           "lead_claude", "lead_gpt")))
+    _tick_settings = replace(settings, launch_jobs=False)
+    _, nxt = _hand_over(paths, db, _tick_settings, monkeypatch, topic)
+    monkeypatch.setattr(owner, "runner_usable", lambda _s, _r, name: name != WRITER)
+    now = datetime.now(UTC)
+    report = engine_report()
+    assert owner.supervise(db, settings, report, object(), now=now, paths=paths) == []
+    moves = owner.supervise(db, settings, report, object(), now=now + timedelta(hours=12.1),
+                            paths=paths)
+    assert moves and moves[0]["to_runner"] == "lead_gpt"
+    moved = db.task(nxt["task_id"])
+    assert moved["runner"] == "lead_gpt" and moved["session_mode"] == "fresh"
+    writing = owner.writing_state(db, topic["campaign_id"])
+    assert writing["fallback_runner"] == "lead_gpt" and writing["solver_runner"] == "worker_gpt"
+    lines = owner.writing_brief_lines(settings, task=moved, writing=writing)
+    assert "could not start" in lines[0] and owner.HANDOVER_NAME in lines[0]
+
+
+def test_unusable_fallback_writers_leave_the_seat_to_the_solver(tmp_path, monkeypatch) -> None:
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch, owner_settings=_settings(writing_fallback_runners=("lead_gpt",)))
+    _tick_settings = replace(settings, launch_jobs=False)
+    _, nxt = _hand_over(paths, db, _tick_settings, monkeypatch, topic)
+    monkeypatch.setattr(owner, "runner_usable",
+                        lambda _s, _r, name: name not in {WRITER, "lead_gpt"})
+    now = datetime.now(UTC)
+    owner.supervise(db, settings, engine_report(), object(), now=now, paths=paths)
+    moves = owner.supervise(db, settings, engine_report(), object(),
+                            now=now + timedelta(hours=12.1), paths=paths)
+    assert moves and moves[0]["to_runner"] == "worker_gpt"
+    writing = owner.writing_state(db, topic["campaign_id"])
+    lines = owner.writing_brief_lines(settings, task=db.task(nxt["task_id"]), writing=writing)
+    assert owner.HANDOVER_NAME not in lines[0]
+
+
+def test_config_parses_writing_fallback_runners() -> None:
+    parsed = load_program_settings(
+        {"owner": {"writing_fallback_runners": [" worker_gemini ", "", "worker_gemini", "x"]}})
+    assert parsed.owner.writing_fallback_runners == ("worker_gemini", "x")
+    assert load_program_settings({}).owner.writing_fallback_runners == ()
+
+
 def test_writer_slots_hold_extra_writing_seats(tmp_path, monkeypatch) -> None:
     paths, db, settings, (first_topic, second_topic) = _owner_program(
         tmp_path, monkeypatch, cards=2, owner_settings=_settings(max_writing_topics=1))

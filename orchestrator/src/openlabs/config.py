@@ -618,6 +618,12 @@ class OwnerSettings:
     # configured, the figure seat runs on that asking seat's runner (behaviour before);
     # a figure_runner that is not configured is skipped in favour of writing_runner.
     figure_runner: str | None = None
+    # Runners that take a writer seat once its writer could not start for
+    # ``writing_wait_hours`` (2026-11-26, UD-20261126-gemini-ultra: Gemini writes while Claude
+    # is short), in order; the first usable one other than the writer that is an owner runner
+    # under its topic cap wins (it becomes the topic's owner). Empty, or none usable: the
+    # topic's solver writes (behaviour before).
+    writing_fallback_runners: tuple[str, ...] = ()
 
 
 DEFAULT_DIRECTION_LIMITS: dict[str, int] = {
@@ -2056,6 +2062,8 @@ def _owner_settings(value: Any) -> OwnerSettings:
         writing_wait_hours=_nonnegative_float(value.get("writing_wait_hours"),
                                               defaults.writing_wait_hours),
         figure_runner=str(value.get("figure_runner") or "").strip() or None,
+        writing_fallback_runners=tuple(dict.fromkeys(
+            _string_tuple(value.get("writing_fallback_runners"), ()))),
     )
 
 
