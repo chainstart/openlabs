@@ -790,9 +790,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError("invalid message digest")
             ledger = open_topic_ledger(paths, settings.program)
             matches = [t for t in ledger.read()["topics"] if t.get("paper_id") == args.paper_id]
-            if len(matches) != 1:
+            if len(matches) > 1:
                 print("Journal event requires a unique registered topic", file=sys.stderr)
                 return 1
+            if not matches:
+                # A paper older than the research program (no topic, 2026-11-26): its registry
+                # record keeps the letter; a revision is then the submitter's, as before.
+                from .submission_status import record_registry_correspondence
+
+                payload = record_registry_correspondence(
+                    db, paths, settings, paper_id=args.paper_id, message_key=args.message_key,
+                    status=args.status, manuscript_id=args.manuscript_id, due=args.due,
+                    round_no=args.round)
+                if args.revision_brief:
+                    payload["revision"] = "not_requested_no_topic"
+                print(json.dumps(payload, ensure_ascii=False))
+                return 0
             topic_id = matches[0]["topic_id"]
             detail = {"decision": args.status, "manuscript_id": args.manuscript_id,
                       "due": args.due, "round": args.round}

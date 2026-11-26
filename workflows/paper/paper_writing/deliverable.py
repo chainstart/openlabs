@@ -120,6 +120,35 @@ def openlabs_module(name: str):
     return module
 
 
+def orchestrator_module(name: str):
+    """``openlabs.<name>`` of this checkout's orchestrator package, for modules that are not
+    pure (``program_autonomy``, ``config``: relative imports, the whole package).
+
+    Same cause as :func:`openlabs_module` (2026-11-26): in the paper-writing environment
+    ``orchestrator/src`` is not on the path, and from ``/workspace/openlabs`` the code checkout
+    binds ``openlabs`` (and ``openlabs.config``, the checkout's ``config/`` directory) as
+    namespace packages, so ``journal_mail`` failed on ``openlabs.program_autonomy`` and
+    ``journal-history sync`` on ``openlabs.config``. This puts the checkout's
+    ``orchestrator/src`` on the path and drops namespace bindings of ``openlabs`` (modules
+    without a file, or from outside that directory) before importing the real package.
+    """
+    import importlib
+
+    source = Path(__file__).resolve().parents[3] / "orchestrator" / "src"
+    if not (source / "openlabs" / "__init__.py").is_file():
+        raise ImportError(f"the orchestrator package is missing from this checkout: {source}")
+    package = sys.modules.get("openlabs")
+    if package is None or not getattr(package, "__file__", None):
+        for key in [k for k in sys.modules if k == "openlabs" or k.startswith("openlabs.")]:
+            origin = getattr(sys.modules[key], "__file__", None)
+            if not origin or not Path(origin).resolve().is_relative_to(source.resolve()):
+                del sys.modules[key]
+    if str(source) not in sys.path:
+        sys.path.insert(0, str(source))
+    importlib.invalidate_caches()
+    return importlib.import_module(f"openlabs.{name}")
+
+
 def delivered(metadata: Mapping[str, Any] | None, root: str | Path, paper_id: str) -> bool:
     """The current version is delivered: registry delivery block plus its receipt."""
     return openlabs_module("delivery_facts").delivered(metadata, root, paper_id)

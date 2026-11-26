@@ -3709,6 +3709,14 @@ ROUND_USAGE_STATUSES = frozenset({"active", "in_review", "ready_queue"})
 ROUND_USAGE_REFRESH_SECONDS = 1_800
 
 
+def _sync_submission_status(db, paths, settings, report) -> None:
+    """The registry follows the site's submission status (2026-11-26; submission_status.py)."""
+
+    from .submission_status import sync_tick
+
+    sync_tick(db, paths, settings, report)
+
+
 def _report_round_usage(db, paths, settings, report) -> None:
     """Rounds per paper (B4, 2026-11-25): used at the target journal, the limit in force (a
     round grant and whether it expired), and the cross-journal total -- reported only, there
@@ -3771,6 +3779,7 @@ def run_program_autonomy(
     for name, step in (("limits", _check_limits), ("decisions", _check_decision_tasks),
                        ("registered_reviews", _queue_resynthesized), ("delivery", _deliver_ready),
                        ("delivery_repairs", _repair_delivery), ("site_assignments", _sync_site_assignments),
+                       ("submission_status", _sync_submission_status),
                        ("delivery_chain", report_delivery_chain),
                        ("round_usage", _report_round_usage)):
         try:

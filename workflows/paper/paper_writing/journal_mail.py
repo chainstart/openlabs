@@ -55,18 +55,77 @@ class HtmlText(HTMLParser):
             self.parts.append(" " + dict(attrs).get("href", "") + " ")
 
 
-def parse(raw, papers):
-    message = BytesParser(policy=policy.default).parsebytes(raw)
-    mid = str(message.get("Message-ID", "")).strip()
-    if not re.fullmatch(r"<[^<>\s]+@[^<>\s]+>", mid):
-        return
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+# A labelled number: "Manuscript ID: X", "Manuscript number is X", "Ms. No. X",
+# "Submission ID <uuid>" (Springer SNAPP), "The submission ID is: JOAA-D-26-00471"
+# (Editorial Manager), "Paper #123", "Tracking number X" (Nature).
+LABELLED_NUMBER = re.compile(
+    r"(?:\b(?:manuscript|submission|paper|article)\s+(?:ID|number|no\.?|#|reference(?:\s+number)?|"
+    r"tracking\s+number)|\bms\.?\s*no\.?|\btracking\s+number|\bref(?:erence)?\s*(?:no\.?|number)?\s*[.:])"
+    r"(?:\s+is)?\s*[:#]?\s*(?P<id>" + UUID + r"|[A-Za-z0-9][\w.-]*\d[\w.-]*)", re.I)
+# Unlabelled numbers by their system's shape, most specific first.
+SHAPED_NUMBERS = (
+    re.compile(r"\b[A-Z][A-Z0-9]{1,11}-D-\d{2}-\d{3,6}(?:R\d{1,2})?\b"),  # Editorial Manager
+    # ScholarOne (TNNLS-2026-P-12345, MNRAS-26-1234.R1) and Nature (NCOMMS-26-12345-T, NATASTRON-26-01234A)
+    re.compile(r"\b[A-Z][A-Za-z]{1,11}-(?:19|20)?\d{2}-(?:[A-Z]{1,3}-)?\d{3,6}(?:\.R\d{1,2}|[A-Z]\b|-[A-Z]{1,2}\b)?"),
+)
+LEGACY_SUBJECT_NUMBER = re.compile(r"\b([A-Z]{2,12}-[A-Z0-9]{1,8}-[\w.-]*\d[\w.-]*)\b")
+
+
+def manuscript_number(subject, body):
+    """The journal's manuscript number quoted in a letter, or ``""``.
+
+    Labelled numbers win over shaped ones, and the subject over the body. Covers Springer's
+    "Submission ID <uuid>", Editorial Manager / Elsevier ``JOAA-D-26-00471``, ScholarOne
+    ``ABC-2026-0123.R1``, Nature ``NCOMMS-26-12345`` and generic "Manuscript ID/number".
+    """
+    for text in (subject, body):
+        found = LABELLED_NUMBER.search(text or "")
+        if found:
+            return found["id"].rstrip(".-")
+        for shape in SHAPED_NUMBERS:
+            found = shape.search(text or "")
+            if found:
+                return found[0].rstrip(".-")
+    found = LEGACY_SUBJECT_NUMBER.search(subject or "")
+    return found[1].rstrip(".") if found else ""
+
+
+def message_text(message):
+    """(subject, plain body) of a parsed letter; HTML bodies are flattened with their links."""
     part = message.get_body(preferencelist=("plain", "html"))
     body = part.get_content() if part else ""
     if part and part.get_content_subtype() == "html":
         reader = HtmlText()
         reader.feed(body)
         body = "".join(reader.parts)
-    subject = str(message.get("Subject", ""))
+    return str(message.get("Subject", "")), body
+
+
+def mail_context(raw):
+    """What attempt matching may read of a stored original: the folded text, the addresses
+    it names (headers and body), the quoted manuscript number and the received time."""
+    message = BytesParser(policy=policy.default).parsebytes(raw)
+    subject, body = message_text(message)
+    addresses = set()
+    for header in ("To", "Cc", "Delivered-To", "X-Original-To"):
+        for value in message.get_all(header, []):
+            addresses.update(re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", str(value)))
+    addresses.update(re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", body))
+    header_date = message.get("Date")
+    received_at = getattr(header_date, "datetime", None)
+    return {"content": " ".join((subject + "\n" + body).casefold().split()),
+            "addresses": {item.casefold() for item in addresses},
+            "manuscript_id": manuscript_number(subject, body),
+            "received_at": received_at.isoformat() if received_at else None}
+
+
+def parse(raw, papers):
+    message = BytesParser(policy=policy.default).parsebytes(raw)
+    mid = str(message.get("Message-ID", "")).strip()
+    if not re.fullmatch(r"<[^<>\s]+@[^<>\s]+>", mid):
+        return
+    subject, body = message_text(message)
     content = " ".join((subject + "\n" + body).casefold().split())
     matches = []
     for entry in papers:
@@ -90,11 +149,7 @@ def parse(raw, papers):
     decision = decisions.pop()
     entry, number = matches[0]
     if not number:
-        found = re.search(r"manuscript\s+(?:ID|number|no\.)\s*[:#]?\s*([\w.-]*\d[\w.-]*)", subject+"\n"+body, re.I)
-        number = found[1].rstrip(".") if found else ""
-    if not number:
-        found = re.search(r"\b([A-Z]{2,12}-[A-Z0-9]{1,8}-[\w.-]*\d[\w.-]*)\b", subject)
-        number = found[1] if found else ""
+        number = manuscript_number(subject, body)
     due = re.search(r"(?:due(?: date)?|deadline|submit by)\s*(?:is|on|by)?[ :]*(\d{4}-\d\d-\d\d|\d{1,2} [A-Za-z]+ \d{4}|[A-Za-z]+ \d{1,2},? \d{4})", body, re.I)
     due_date = None
     if due:
@@ -230,7 +285,8 @@ def main():
         event = parse(raw, catalog(args.root))
         print("recorded" if event and record(args.state, event, raw) else "duplicate or unmatched")
         return
-    from openlabs.program_autonomy import _credentials_file_values
+    from paper_writing.deliverable import orchestrator_module
+    _credentials_file_values = orchestrator_module("program_autonomy")._credentials_file_values
     from paper_writing.handoff import ManageApiClient, HandoffError
     from paper_writing.journal_dispatch import drain
     args.state.mkdir(mode=0o700, parents=True, exist_ok=True)

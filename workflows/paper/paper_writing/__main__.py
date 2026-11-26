@@ -593,6 +593,28 @@ def build_parser() -> argparse.ArgumentParser:
     program_site.add_argument("--log", help="Append applied changes (JSON lines) to this file")
     program_site.add_argument("--api-url", default=os.environ.get("ARA_PAPER_MANAGE_API_URL"))
     program_site.add_argument("--key-env", default="ARA_PAPER_MANAGE_API_KEY")
+    program_submission = program_commands.add_parser(
+        "sync-submission-status",
+        help="The registry follows the site's submission status (2026-11-26): external_submission "
+             "from the latest attempt, stale portal_status / not_submitted corrected. Reads the "
+             "site only (GET); writes the registry with --apply, else prints the plan.",
+    )
+    program_submission.add_argument("--paper-id", action="append", default=[])
+    program_submission.add_argument("--apply", action="store_true")
+    program_submission.add_argument("--snapshot", type=Path,
+                                    help="A captured JSON list of site paper details instead of the API")
+    program_correspondence = program_commands.add_parser(
+        "journal-correspondence",
+        help="Keep one journal letter matched by journal_mail in the paper's registry record "
+             "(papers without a topic in the topic ledger; idempotent by message key).",
+    )
+    program_correspondence.add_argument("--paper-id", required=True)
+    program_correspondence.add_argument("--message-key", required=True)
+    program_correspondence.add_argument("--status", required=True,
+                                        choices=("revision_requested", "submitted", "accepted", "rejected", "proofs"))
+    program_correspondence.add_argument("--manuscript-id", default="")
+    program_correspondence.add_argument("--due")
+    program_correspondence.add_argument("--round", type=int)
     program_status = program_commands.add_parser(
         "release-status",
         help="Read-only: what is left between review ready and delivery (release pipeline).",
@@ -664,7 +686,7 @@ def build_parser() -> argparse.ArgumentParser:
     program_revision_evidence.add_argument("--decision",
                                            help="Basis decision (default: latest full unified decision).")
     for command in (program_escalation, program_fallback, program_confirm, program_deliver, program_supplement,
-                    program_site,
+                    program_site, program_submission, program_correspondence,
                     program_assign, program_status, program_metadata, program_adopt, program_waive, program_bind,
                     program_unwaive, program_bind_payloads, program_relocate, program_declarations,
                     program_revision_evidence):
@@ -1218,6 +1240,20 @@ def _run_program(args: argparse.Namespace) -> int:
             ) as client:
                 result = sync_site_assignments(client, root=args.root, paper_ids=args.paper_id,
                                                apply=args.apply, log_path=args.log)
+        elif args.program_command == "sync-submission-status":
+            from paper_writing import submission_status
+            from paper_writing.journal_history import fetch_site_papers
+
+            papers = (json.loads(args.snapshot.read_text(encoding="utf-8")) if args.snapshot
+                      else fetch_site_papers())
+            result = submission_status.reconcile(args.root, papers, paper_ids=args.paper_id,
+                                                 apply=args.apply)
+        elif args.program_command == "journal-correspondence":
+            from paper_writing import submission_status
+
+            result = submission_status.record_correspondence(
+                args.root, args.paper_id, message_key=args.message_key, status=args.status,
+                manuscript_id=args.manuscript_id, due=args.due, round_no=args.round)
         elif args.program_command == "deliver":
             # Same explicit switch as `handoff release`; the orchestrator sets it for
             # this one call only when [program] auto_handoff is enabled.

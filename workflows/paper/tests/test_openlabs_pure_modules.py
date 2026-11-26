@@ -47,3 +47,25 @@ def test_only_pure_modules_are_loaded_this_way():
 
     with pytest.raises(ValueError):
         openlabs_module("program")
+
+
+ORCHESTRATOR_PROBE = """
+import openlabs.config  # what `import openlabs...` binds first from /workspace/openlabs
+from paper_writing.deliverable import orchestrator_module
+autonomy = orchestrator_module("program_autonomy")
+config = orchestrator_module("config")
+print(callable(autonomy._credentials_file_values), callable(config.load_local_environment))
+"""
+
+
+def test_orchestrator_modules_for_journal_mail_and_history(tmp_path):
+    """journal_mail (openlabs.program_autonomy) and `journal-history sync` (openlabs.config)
+    from the paper-writing environment, where the checkout's config/ shadows openlabs.config."""
+    cwd = tmp_path / "work"
+    (cwd / "openlabs" / "config").mkdir(parents=True)
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    env["PYTHONPATH"] = str(PAPER)
+    result = subprocess.run([sys.executable, "-c", ORCHESTRATOR_PROBE], cwd=cwd, env=env,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["True", "True"]

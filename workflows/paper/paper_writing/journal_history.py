@@ -294,9 +294,9 @@ def sync_from_site(root: Path) -> dict[str, Any]:
 
 def fetch_site_papers() -> list[dict[str, Any]]:
     """Read every paper detail from the management API with GET requests only."""
-    from openlabs.config import load_local_environment
+    from paper_writing.deliverable import orchestrator_module
     from paper_writing.handoff import ManageApiClient
-    load_local_environment()
+    orchestrator_module("config").load_local_environment()
     url = os.environ["ARA_PAPER_MANAGE_API_URL"]
     with ManageApiClient.from_environment(url) as client:
         listing = client._request("GET", "/v1/papers")
