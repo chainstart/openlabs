@@ -194,3 +194,14 @@ def test_official_pipeline_counts_mixed_but_not_pure_technical(tmp_path,monkeypa
     assert record['round_for_target']==int(scientific)
     assert calls==['editor','referee_b','decision_letter']
     assert len(flow.scientific_rounds(tmp_path,'p','J'))==int(scientific)
+
+
+def test_quote_matches_decoded_json_value_but_not_across_fields():
+    raw = json.dumps({"message": {"abstract": "<jats:p>12-lead ECGs with clinician-adjudicated QT/RR and +15 ms bias</jats:p>",
+                                  "title": ["Next field"]}}).replace("/", "\\/")
+    assert "QT/RR" not in raw and "\\u2005" in raw
+    assert f._quote_present("clinician-adjudicated QT/RR", raw)
+    assert f._quote_present("+15 ms bias", raw)
+    assert not f._quote_present("clinician-adjudicated QT/RR and +15 ms bias</jats:p> Next field", raw)
+    assert not f._quote_present("clinician-adjudicated QT/HR", raw)
+    assert not f._quote_present("QT/RR", "not json QT\\/RR")

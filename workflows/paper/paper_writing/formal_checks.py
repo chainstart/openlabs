@@ -454,6 +454,36 @@ def _whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
+def _json_string_values(text: str) -> list[str]:
+    """Decoded string values of a JSON record (e.g. Crossref ``message.abstract``).
+
+    Quotes are written from the decoded record, so ``QT\\/RR`` or ``\\u2005`` JSON
+    escapes in the raw body must not defeat an exact quote. Each value is matched
+    on its own (no cross-field joining); the raw text and its hashes are unchanged.
+    """
+    try:
+        value = json.loads(text)
+    except (ValueError, TypeError):
+        return []
+    out, stack = [], [value]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, str):
+            out.append(node)
+        elif isinstance(node, dict):
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return out
+
+
+def _quote_present(quote: str, text: str) -> bool:
+    needle = _whitespace(quote)
+    if needle in _whitespace(text):
+        return True
+    return any(needle in _whitespace(v) for v in _json_string_values(text))
+
+
 # Route findings that no verification or delivery path consumes any more. Since the
 # formal gate was narrowed to bibliography and core mathematics (2026-10-12),
 # ``verification_source_metadata`` strips ``passage_patterns`` and drops
@@ -1019,7 +1049,7 @@ def report_blockers(report: Mapping[str, Any], inv: Mapping[str, Any], sources: 
             if source is None or not item["locator"].strip():
                 add("Evidence has an unknown source or empty locator")
                 continue
-            if item['quote'] and _whitespace(item["quote"]) not in _whitespace(source["text"]):
+            if item['quote'] and not _quote_present(item["quote"], source["text"]):
                 add(f"Quoted evidence is absent from source {item['source_id']} at {item['locator']}")
             if primary and source["kind"] != "primary_text":
                 add("A prerequisite requires original primary text, not metadata or an abstract")
