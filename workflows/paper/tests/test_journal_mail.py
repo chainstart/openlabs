@@ -335,3 +335,132 @@ def test_ambiguous_letter_is_held_with_its_reason(tmp_path, monkeypatch):
     commands, row = _drain(tmp_path, monkeypatch, site, _event(), _letter(*CONFIRMATION, to="nobody@example.test"))
     assert site.posts == [] and row[0] == 0 and row[1].startswith("ambiguous: 2 attempts")
     assert len(commands) == 1
+
+
+# 2026-11-26: skeletons of the letters journal_mail misread (subjects and key sentences only;
+# titles, names and numbers are synthetic). See maintenance/20261126-followups/JOURNAL-MAIL-MISS.md.
+TITLE = "Synthetic source classification of later isolates: the accuracy loss is concentrated in C. coli"
+ELSEVIER_TAIL = ("\n\nAt Elsevier, we want to help all our authors to stay safe when publishing. If you are "
+                 "publishing open access with Elsevier, bear in mind that we will never request payment before "
+                 "the paper has been accepted. Identifying fake acceptance letters.\n")
+
+
+def _paper(**extra):
+    return {"paper_id": "test", "title": TITLE, "target_journal": "Synthetic Microbiology", "numbers": [], **extra}
+
+
+@pytest.mark.parametrize(("subject", "body", "decision"), [
+    # Springer Nature SNAPP acknowledgement (UID 1593404948 / 1593404923).
+    ("Track the status of your manuscript",
+     f"Your manuscript {TITLE} has been submitted\nTrack submission status: https://track.example/x", "submitted"),
+    # Elsevier desk rejection with the anti-fraud boilerplate (UID 1593404945): never accepted.
+    ("Your Submission for SYNT-26-00630",
+     "Ms. Ref. No.: SYNT-26-00630\nTitle: " + TITLE + "\n\nI regret to inform you that, based on the advice "
+     "from an expert in the field, your submission will not be considered for publication in Synthetic "
+     "Microbiology.\nAs a matter of general policy, a submission is rejected if the initial recommendation is "
+     "negative. We keep high standards for the papers we accept for publication." + ELSEVIER_TAIL, "rejected"),
+    # Editorial Manager co-author confirmation (UID 1593404913): "if it is accepted" is a condition.
+    ("Confirm co-authorship of submission to Synthetic Microbiology",
+     "Manuscript Number: SYNT-D-26-00692\nTitle: " + TITLE + "\nThe corresponding author has listed you as a "
+     "contributing author. Elsevier asks all authors to verify their co-authorship by confirming agreement to "
+     "publish this article if it is accepted for publication.", "submitted"),
+    # Springer rejection phrased as "cannot be accepted for publication".
+    ("Decision on your Manuscript SYNT-D-26-00432",
+     "With regret, I must inform you that your manuscript " + TITLE + " cannot be accepted for publication.", "rejected"),
+    ("Decision on your manuscript",
+     "We're delighted to let you know your manuscript " + TITLE + " has now been accepted for publication.", "accepted"),
+    ("Decision on your manuscript", "Your paper " + TITLE + " has been accepted. Please complete the licence form.",
+     "accepted"),
+])
+def test_letters_misread_on_2026_11_26(subject, body, decision):
+    event = parse(_letter(subject, body), [_paper()])
+    assert event and event["decision"] == decision
+
+
+@pytest.mark.parametrize(("subject", "body", "reason"), [
+    # Elsevier transfer offer after the rejection (UID 1593404944): the rejection is the event.
+    ("A recommendation for " + TITLE, "We're sorry your submission was recently rejected. View Suggested Journals.",
+     "not a decision (transfer offer)"),
+    # Springer preprint opt-in: about the paper, but no decision.
+    ("Preprint opt-in confirmation for Synthetic Microbiology",
+     "Thank you for choosing to post your manuscript, " + TITLE + ", as a preprint.", "no decision recognised"),
+    # An acceptance and a refusal in one letter: held, never chosen between.
+    ("Decision", "Your manuscript " + TITLE + " has been accepted. Your manuscript has been rejected.",
+     "held: conflicting decisions accepted+rejected"),
+])
+def test_letters_without_an_event_are_logged(subject, body, reason):
+    logged = []
+    assert parse(_letter(subject, body), [_paper()], log=lambda *item: logged.append(item)) is None
+    assert logged == [(reason, ["test"])]
+
+
+@pytest.mark.parametrize("phrase", ["Our help desk is open to talk 24/7.", "Submitted on 24 Nov 2026."])
+def test_short_conference_numbers_do_not_claim_letters(phrase):
+    """UID 1593404913 / 1593404931: "24" and "25" of conference papers matched dates and phrases."""
+    conference = {"paper_id": "conference", "title": "An unrelated conference paper on entropy",
+                  "numbers": ["24"], "attempt_journals": {"24": "SYNT Conference 2026"}}
+    raw = _letter("Submission Confirmation for " + TITLE, "Your submission entitled " + TITLE
+                  + " has been received by journal Synthetic Microbiology. " + phrase)
+    logged = []
+    event = parse(raw, [_paper(), conference], log=lambda *item: logged.append(item))
+    assert event["paper_id"] == "test" and event["decision"] == "submitted" and not logged
+    # Labelled as the manuscript number, a short number still identifies its paper.
+    labelled = parse(_letter("Submission received", "Paper #24 has been received."), [_paper(), conference])
+    assert labelled["paper_id"] == "conference" and labelled["manuscript_id"] == "24"
+
+
+def test_ambiguous_letter_is_logged_with_both_papers():
+    other = _paper(paper_id="other", numbers=["SYNT-D-26-00692"])
+    logged = []
+    raw = _letter("Submission Confirmation", "Manuscript Number: SYNT-D-26-00692\nYour submission " + TITLE
+                  + " has been received.")
+    assert parse(raw, [_paper(), other], log=lambda *item: logged.append(item)) is None
+    assert logged == [("ambiguous: matches 2 papers", ["test", "other"])]
+
+
+def test_confirmation_without_an_attempt_tells_the_submitter(tmp_path, monkeypatch):
+    """UID 1593404948: the site had no attempt; the handler is told to create it (once)."""
+    from types import SimpleNamespace
+    from paper_writing import journal_dispatch as dispatch
+    notes, commands = [], []
+    monkeypatch.setattr(dispatch, "notify", lambda *a, **kw: notes.append(kw.get("note")))
+    monkeypatch.setattr(dispatch, "ledger", lambda *a: commands.append(a))
+    raw = _letter("Track the status of your manuscript", f"Your manuscript {TITLE} has been submitted",
+                  date="Thu, 26 Nov 2026 05:58:16 +0000")
+    event = parse(raw, [_paper()])
+    assert event["decision"] == "submitted"
+    site = _Site(dict(PAPER, title=TITLE, submission_attempts=[]))
+    record(tmp_path, event, raw)
+    args = SimpleNamespace(state=tmp_path, account="test@example.test")
+    dispatch.drain(args, site)
+    dispatch.drain(args, site)
+    assert site.posts == [] and len(notes) == 1
+    assert "新建投稿记录" in notes[0] and "Synthetic Microbiology" in notes[0] and "2026-11-26T05:58:16" in notes[0]
+    with sqlite3.connect(tmp_path / "events.sqlite") as db:
+        complete, notified, reason = db.execute("SELECT complete, notified, hold_reason FROM progress").fetchone()
+    assert (complete, notified) == (0, 1) and reason.startswith("no attempt matches")
+    assert len(commands) == 2  # the registry keeps the letter while it waits
+
+
+def test_repeat_confirmation_of_a_registered_submission_is_not_notified(tmp_path, monkeypatch):
+    """Co-author copies (UID 1593404931/934) of a confirmation the site already holds."""
+    from types import SimpleNamespace
+    from paper_writing import journal_dispatch as dispatch
+    notes = []
+    monkeypatch.setattr(dispatch, "notify", lambda *a, **kw: notes.append(kw))
+    monkeypatch.setattr(dispatch, "ledger", lambda *a: None)
+    attempt = dict(ATTEMPT, manuscript_number="TEST-D-26-00471")
+    site = _Site(dict(PAPER, submission_attempts=[attempt]))
+    record(tmp_path, _event(), _letter(*CONFIRMATION, date="Wed, 25 Nov 2026 09:22:40 +0000"))
+    dispatch.drain(SimpleNamespace(state=tmp_path, account="test@example.test"), site)
+    assert site.posts == [] and notes == []
+    with sqlite3.connect(tmp_path / "events.sqlite") as db:
+        assert db.execute("SELECT complete, notified FROM progress").fetchone() == (1, 2)
+
+
+def test_status_corrected_rejection_counts_as_the_rejection():
+    from paper_writing.journal_history import is_rejection_event
+    assert is_rejection_event({"event_type": "rejected", "to_status": "rejected"})
+    assert is_rejection_event({"event_type": "status_corrected", "to_status": "rejected"})
+    assert not is_rejection_event({"event_type": "status_corrected", "to_status": "closed"})
+    assert not is_rejection_event({"event_type": "accepted", "to_status": "accepted"})
