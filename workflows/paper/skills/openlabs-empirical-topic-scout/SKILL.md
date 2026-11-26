@@ -33,29 +33,53 @@ This section replaces the routine standard below whenever the packet says `targe
 nc_aim`. User: "后续的投稿目标都设为NC，然后选题也按照这个标准来选 ... 立意要高，但是论文到底投啥，要由做出的实验数据来说话". Every topic aims at Nature Communications; the results decide whether it goes to NC or down to CAS Zone 1, 2, 3-4. Small and low topics are not proposed.
 
 NC publishes about 1,000 papers a month; about 13.5% of them are public data plus computation
-(nc-hotspots section 1.4), across environment, earth science, social science and economics,
-genetics, computing and more. The space is large. In the 2026-11-26 calibration the same
-prescreen graded 9 of 14 rewritten NC papers as nc and 0 of 26 production cards: the cards were
-sub-field details on data subsets (one survey's eclipse rate, one ML product's reversal, four
-gauge networks), not field-level questions on complete data. Write the card in this order:
+(nc-hotspots section 1.4), across environment, earth science, ecology, agriculture, energy,
+economics, social science, genetics, physics, materials, computing and more. The space is large.
+In the 2026-11-26 calibration the same prescreen graded 11 of 14 rewritten NC papers as nc, yet
+rejected 30 of 30 open-line production cards before admission: most were either narrow
+audit/meta-science/reporting-rule checks (which calibrate to Zone 1 comparators such as `A7-z1`,
+`L6-z1`, `S8-z1`), claims whose data only measured an unvalidated proxy, or refinements of
+already-published directions. Write the card in this order:
 
-1. **The field's question, in one sentence.** Why would a whole field read it: is an
-   operational forecast trustworthy, how much of the world's X is exposed, where does a law
-   break? Not one subfield's detail, not a refinement of a published number.
-2. **The complete free data that answers it.** Scale belongs to the question, not to the test:
-   the claim is about the full population (all stations, all basins, the whole archive, every
-   country), and the kill test alone uses a subset. A first assembly of scattered public
-   archives into one analysis is itself a contribution (the CSEP archive, 48 countries' tariff
-   schedules, every archival HARPS spectrum of one young star). Free data that needs a
-   registration is allowed (see Data below).
-3. **Novelty search in the preprints of the last 18 months**, after journals: Research Square
-   (Nature portfolio "In Review" preprints, where most NC submissions appear 6-12 months before
-   publication), arXiv, bioRxiv, medRxiv, SSRN, EarthArXiv, ESSOAr, plus code repositories and
-   dataset papers. A published NC paper is evidence of the direction, not a template to
-   rewrite: its own preprint usually appeared long before, so a card that follows a hook is
-   already taken. Separate the **same claim** (same question, population and endpoint: drop the
-   card or change the claim) from **adjacent work** (same data or method, a different claim:
-   cite it in `closest_prior_work` with `our_difference`).
+1. **A substantive, cross-field scientific question, in one sentence.** Prefer questions that
+   establish a **new natural, biological, physical or socio-technical phenomenon or mechanism**,
+   quantify a **decision-relevant global quantity** with a clear *first / largest / causal* claim,
+   or settle a **cross-field open debate** (is an operational forecast trustworthy, how much of
+   the world's X is exposed to Y, where does a widely assumed law or mechanism break?).
+   - **Avoid audit, meta-science and reporting-rule framings**: do not propose audits of a single
+     catalogue, repository lag, reporting checklist, monitoring calendar, station-count coverage,
+     or literature body (e.g. Mendelian-randomization checklists, WMO/GBON compliance rules,
+     archive metadata QC, OA citation checks). In NC calibration these match lower-tier
+     comparators, not NC. **Strict exception:** propose an audit only when it **overturns a widely
+     used result, method or benchmark across an entire field** (tested across multiple independent
+     datasets and all major model classes, with controls that isolate the exact artifact, as in
+     A1 drug-response leakage, A2 LLM-brain confounds, or CSEP 11-year prospective earthquake
+     validation) and delivers a field-wide benchmark or fix.
+2. **Complete, decisive free data that directly identifies the claim.** Scale belongs to the
+   question, not to the test: the claim covers the full population (all stations, basins,
+   countries, species, or model classes), and the kill test alone uses a subset. A first assembly
+   of scattered public archives into one analysis is itself a contribution (the CSEP archive, 48
+   countries' tariff schedules, every archival HARPS spectrum of one young star).
+   - **Direct outcome, non-trivial null, adequate power:** verify before proposing that the data
+     directly measures the claimed real-world outcome rather than an unvalidated proxy (do not
+     claim HVAC/grid failure from weather percentiles alone, real-world blackouts from an
+     uncalibrated topology graph, or ecological co-selection from cross-sectional archive
+     counts). Check mentally that the headline effect is not trivially explained by an algebraic
+     or statistical null (such as independent area fluctuations in yield vs production,
+     construction momentum, or selection-induced regression to the mean) and that the number of
+     independent events or time steps can actually power the test.
+   - Free data that needs a registration is allowed for the full-scale analysis (see Data below).
+3. **Novelty search across top journals and the last 18 months of preprints.** Explicitly search
+   and cite the **closest prior *Nature Communications*, *Nature*, *Science* (and *PNAS* / top
+   sibling) papers** plus the last 18 months of preprints: Research Square (Nature portfolio
+   "In Review" preprints, where most NC submissions appear 6-12 months before publication), arXiv,
+   bioRxiv, medRxiv, SSRN, EarthArXiv, ESSOAr, plus code repositories and dataset papers. A
+   published NC paper is evidence of the direction, not a template to rewrite: its own preprint
+   usually appeared long before, so a card that follows a hook is already taken. Separate the
+   **same claim** (same question, population and endpoint: drop the card or change the claim)
+   from **adjacent work** (same data or method, a different claim: cite it in `closest_prior_work`
+   with `our_difference`, explicitly showing what is new beyond the closest NC/Nature/Science
+   papers).
 4. **Only then the kill test**, on a subset, cheap enough for the prescreen (below).
 
 Worked examples: `references/nc-precard-examples.md` has four pre-admission cards (NC10
@@ -63,27 +87,45 @@ riverfronts, NC09 PDS 70 exocomets, NC01 CSEP forecasts, NC08 tariff affordabili
 same prescreen graded nc. They were rewritten from published papers to show how an NC card reads
 before the work is done; their topics are taken and must never be proposed or paraphrased.
 
-- **Cast a wide net cheaply.** Read recent literature and the line's data catalogue
+- **Cast a wide net across diverse fields.** Read recent literature and the line's data catalogue
   (`research_line_summary.data_catalog`, full file in the packet) and return several distinct
-  cards rather than one polished one. The pool has a cap (the candidate-pool low water) and a
-  weekly model budget per line; a line whose recent cards all failed downstream is backed off.
+  cards rather than one polished one. On open or interdisciplinary lines, **spread cards across
+  distinct fields and mechanisms** (e.g. Earth/climate/oceans/cryosphere, ecology/biodiversity/
+  agriculture/fisheries, energy/infrastructure/transport/economics, demography/urban/computational
+  social science, genomics/microbiology/evolution, materials/physics/astronomy, AI/computing):
+  never return multiple cards from the same subfield or seed direction, and check
+  `ledger_snapshot` to avoid repeating domains, datasets or angles where recent cards just failed.
+  The pool has a cap (the candidate-pool low water) and a weekly model budget per line; a line
+  whose recent cards all failed downstream is backed off.
 - **Admission floor nc on cc-sg** (user 2026-11-26: "接下来的出题希望选题至少是够nc档次的"): a card whose
   calibration match or expected band is below Nature Communications is rejected at the prescreen.
 - **The NC surveys point to fields, not claims** (read_resources `nc-survey`, `nc-hotspots`): the ten
   templates A-J of nc-hotspots section 2 (citation statistics, crowding) and the line's
-  `seed_directions` (numbers of nc-hotspots section 3.2) are optional starting points for step 1.
-  Template the method and pipeline, never the claim: the claim must be new. Down-weight crowded
-  subjects (very high template crowding, three or more NC papers in 18 months, the section 3.3
-  list: global flash drought and vegetation, urban heat island and greening cooling) unless the
-  card names the angle they lack.
+  `seed_directions` (numbers of nc-hotspots section 3.2) are optional illustrations only, never a
+  menu to converge on (parallel scouts that pick the same seed direction produce near-duplicates,
+  and audit-style seeds such as MR checklists or single-rule audits fail calibration unless they
+  meet the strict field-wide exception above). Template the method and pipeline, never the claim:
+  the claim must be new. Down-weight crowded subjects (very high template crowding, three or more
+  NC papers in 18 months, the section 3.3 list: global flash drought and vegetation, urban heat
+  island and greening cooling) unless the card names the angle they lack.
 - Several scouts of one line run at once on different model families (GPT, Gemini, Claude); propose
   your own reading of the line, the near-duplicate screen merges overlaps.
-- **Each card states its NC case** in `nc_case`: `claim` (the one-sentence expected conclusion,
-  falsifiable, ideally counter-intuitive), `alternative_claim` (the sentence that still has
-  value if the result goes the other way), `challenges` (the view, practice or widely quoted
-  number it overturns), `benchmark` (the authoritative reference, policy parameter or largest
-  prior study it is measured against), `thresholds` (the five NC thresholds below, each `{met,
-  evidence}`), `exemplars` (ids of the hooks it resembles).
+- **Each card makes a complete NC case** across `nc_case`, `audience` and `closest_prior_work`:
+  - **Headline finding if the kill test passes** (`nc_case.claim`): write the concrete,
+    declarative Nature Communications headline sentence the paper would publish (a falsifiable
+    phenomenon, mechanism, or global quantity—not a vague question or workflow description),
+    paired with `alternative_claim` (the sentence that still has value if the result goes the
+    other way), `challenges` (the widely held view, practice or policy parameter it overturns),
+    `benchmark` (the authoritative reference, policy parameter or largest prior study it is
+    measured against), `thresholds` (the five NC thresholds below, each `{met, evidence}`), and
+    `exemplars` (ids of the hooks it resembles).
+  - **Why NC readers across fields would care** (`audience.who`): explicitly explain the
+    cross-field significance beyond one narrow subfield (which disciplines, policy bodies, or
+    communities outside the immediate specialty would read and cite the result).
+  - **Closest prior NC / Nature / Science papers and what is new** (`closest_prior_work[]`):
+    include the closest prior *Nature Communications*, *Nature*, *Science* (or top-tier sibling)
+    papers and recent preprints, stating concretely what each already showed and what is genuinely
+    new in this card.
 - **NC thresholds** (at least two must hold, with evidence): generality (global, whole
   population, or a law across systems); a one-sentence counter-intuitive conclusion; scale an
   order of magnitude (at least 4x) beyond the largest prior study; benchmarked against an
@@ -280,12 +322,16 @@ Return cards in the result bundle as `topic_cards: [...]` (at most the packet's 
 Each field is there because the gate needs it to decide:
 
 - `question` — one sentence a domain reader recognizes as open or contested.
-- `audience` — `who` cares, and `citations` with at least two papers from the last three years
-  published in your candidate venues (`citation`, `year`, `venue`). Readers' papers in other
-  venues may be listed too; only those in the candidate venues count towards the two. Without
-  readers at the venue the editor desk-rejects regardless of quality.
+- `audience` — `who` cares (for `nc_aim`, explicitly state why Nature Communications readers
+  across multiple fields would care, beyond one narrow subfield), and `citations` with at least
+  two papers from the last three years published in your candidate venues (`citation`, `year`,
+  `venue`). Readers' papers in other venues may be listed too; only those in the candidate venues
+  count towards the two. Without readers at the venue the editor desk-rejects regardless of
+  quality.
 - `closest_prior_work[]` — `citation`, `what_it_shows`, `our_difference`. Be specific; the gate
-  checks these one by one and "first to apply X to Y" rarely survives.
+  checks these one by one and "first to apply X to Y" rarely survives. For `nc_aim`, include the
+  closest prior *Nature Communications*, *Nature*, or *Science* papers (plus 18-month preprints)
+  and state concretely what is new beyond them.
 - `decisive_analysis` — `description` of the one analysis or dataset the topic stands or falls
   on, `data_access_verified: true`, and `access_receipt` `{path, sha256}` matching your artifact.
 - `primary_endpoint` — `metric`, `matched_baseline` (the strongest fair baseline),
