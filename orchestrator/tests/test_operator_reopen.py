@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from openlabs import owner, reopen
-from openlabs.config import OWNER_TASK_TYPE, OwnerSettings, ProgramSettings
+from openlabs.config import OWNER_TASK_TYPE, LineSettings, OwnerSettings, ProgramSettings
 from openlabs.program import (
     OPERATOR_REOPEN_REASON,
     grant_slot_exempt,
@@ -271,7 +271,7 @@ REVIEW_PATH = [("admitted", "admission_gate_passed"), ("active", "campaign_mater
 def test_granted_topic_holds_no_slot_and_other_topics_count_as_before() -> None:
     line = "astro-survey-photometry"
     settings = ProgramSettings(enabled=True, max_active_topics=5,
-                               line_max_active_topics={line: 2})
+                               lines={line: LineSettings(slots=2)})
     granted = _ledger_topic("g", "in_review", line,
                             [*REVIEW_PATH, ("in_review", OPERATOR_REOPEN_REASON)])
     reviewing = _ledger_topic("r", "in_review", line,
