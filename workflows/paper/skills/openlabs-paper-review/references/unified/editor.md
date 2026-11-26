@@ -25,11 +25,12 @@ Be concrete and honest. Your job is to catch, before submission, the reasons an 
 journal would decline the paper.
 
 1. Read the title and abstract alone first. In the first sentence of
-   `contribution_in_two_sentences`, state the research problem they pose: whose decision or
-   understanding, against which alternative, with what gap. What was derived or built is not a
-   problem. If you cannot write that sentence, set `presentation_fails_restatement` true and
-   decide no better than `revise_before_submission`; the introduction does not repair it. The
-   second sentence states the main contribution.
+   `contribution_in_two_sentences`, state the research problem as they state it: whose decision
+   or understanding, against which alternative, with what gap. What was derived or built is not
+   a problem. If they do not name who needs the answer or what is not yet known, so that you
+   would have to infer it, set `presentation_fails_restatement` true and decide no better than
+   `revise_before_submission`; the introduction does not repair it. The second sentence states
+   the main contribution.
 2. Identify the closest prior work (from the reference list and your own knowledge; say which)
    and state precisely what this paper adds under matching assumptions.
 3. Judge significance and readership for this journal specifically.

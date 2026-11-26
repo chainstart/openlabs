@@ -300,9 +300,9 @@ def delivery_read(source, images, role, workdir, timeout, previous=None, present
         packet += "\nPrevious blockers and changes:\n" + json.dumps(previous, ensure_ascii=False)
     system = ("Read the figures and captions, then the supplied text. Restate the question, "
         "comparison, answer and meaning. In question_stated_in_title_abstract say whether the "
-        "title and abstract alone state the research problem (whose decision or understanding, "
-        "and the gap), quoting the sentence that states it; a derivation or method is not a "
-        "problem. Identify the supporting panel and state its uncertainty. "
+        "title and abstract alone name who needs the answer and what is not yet known, quoting "
+        "the sentence that states it; false when you would have to infer either, and a "
+        "derivation or method is not a problem. Identify the supporting panel and state its uncertainty. "
         "For each repair state in reader_misconclusion the actual wrong conclusion a reader of the "
         "manuscript would draw, or leave it empty for advice. Give its kind (an error type, or advisory), "
         "its category and what it requests. Use headline_claim for the title, abstract, highlights and "
