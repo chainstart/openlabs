@@ -63,7 +63,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .config import FactorySettings, WorkspacePaths
+from .config import RESEARCH_STAGE, FactorySettings, WorkspacePaths
 from .db import FactoryDB, utc_now
 from .program import (
     AUTO_REOPEN_REASON,
@@ -373,7 +373,7 @@ def reopen_ready_topics(
     from . import owner as owner_mode
 
     cap = int(settings.program.auto_reopen_max)
-    if cap <= 0 or settings.program.polish_blocks_all():
+    if cap <= 0 or settings.program.stops(RESEARCH_STAGE):
         # Polish mode (2026-11-23): a frozen topic does not return to research.
         return []
     ledger = open_topic_ledger(paths, settings.program)
@@ -382,7 +382,7 @@ def reopen_ready_topics(
         topic for topic in topics_by_status(document, "frozen")
         if isinstance(topic.get("auto_reopen"), Mapping) and topic["auto_reopen"].get("when")
         # Polish mode with exempt lines: only an exempt line's topics reopen.
-        and not settings.program.polish_blocks(topic.get("research_line"))
+        and not settings.program.stops(RESEARCH_STAGE, topic.get("research_line"))
     ]
     outcomes: list[dict[str, Any]] = []
     if not candidates:

@@ -4175,6 +4175,8 @@ def _tick_locked(paths: WorkspacePaths, settings: FactorySettings) -> TickReport
         report.warnings.extend(utilization.runner_model_warnings(settings))
     except Exception as exc:  # noqa: BLE001 - advisory
         report.warnings.append(f"runner model check failed: {exc}")
+    # Legacy [program] line keys converted to (or ignored beside) [program.lines], 2026-11-26.
+    report.warnings.extend(settings.program.config_warnings)
 
     # Active project configs are desired state: bind their workstreams before
     # processing completions so a safety-window boundary can roll over instead of idle.

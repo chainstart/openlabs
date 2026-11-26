@@ -85,7 +85,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .config import FactorySettings, WorkspacePaths
+from .config import SUPPLY_STAGE, FactorySettings, WorkspacePaths
 from .db import FactoryDB, utc_now
 
 CAPABILITY_REJECTION = "card_capability_missing"
@@ -781,7 +781,7 @@ def advance_pilots(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettin
     from .research_lines import read_lines_or_none
 
     supply = _supply(settings)
-    if not supply.pilot or settings.program.polish_blocks_all():
+    if not supply.pilot or settings.program.stops(SUPPLY_STAGE):
         # Polish mode (2026-11-23): no admission pilot is submitted to ailab.
         return []
     ledger = open_topic_ledger(paths, settings.program)
@@ -792,7 +792,7 @@ def advance_pilots(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettin
     waiting = [topic for topic in topics
                if isinstance(topic, Mapping) and topic.get("status") == "proposed"
                and pilot_held(topic)
-               and not settings.program.polish_blocks_supply(topic.get("research_line"))]
+               and not settings.program.stops(SUPPLY_STAGE, topic.get("research_line"))]
     if not waiting:
         return []
     root = queue_root or remote_wait.default_queue_root()

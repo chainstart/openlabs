@@ -100,8 +100,8 @@ def stage_for(db, line: str | None, settings=None) -> str:
 
     fixed = configured_stage(settings) if settings is not None else None
     if fixed is not None:
-        exempt = getattr(settings.program.funnel, "exempt_lines", ())
-        if not (isinstance(line, str) and line in exempt):
+        # A line with nc_aim = false keeps its recorded stage ([program.lines]).
+        if settings.program.line(line).nc_aim:
             return fixed
     if not isinstance(line, str) or not line or db is None:
         return RUN_IN

@@ -11,7 +11,7 @@ import pytest
 import test_parallel_program as parallel
 import test_research_program_flow as flow
 from openlabs import engine
-from openlabs.config import load_program_settings
+from openlabs.config import LineSettings, load_program_settings
 from openlabs.contracts import validate_topic_card
 from openlabs.program import open_topic_ledger
 from openlabs.projects import workstream_policy
@@ -141,7 +141,7 @@ def test_repository_direction_file_is_consistent_with_the_instance_lines() -> No
 # --------------------------------------------------------------------------- scouting
 
 
-def _line_program(tmp_path, lines, **program):
+def _line_program(tmp_path, line_ids, **program):
     """Projects for ai/physics/quant domains plus two physics line projects."""
 
     paths = flow._paths(tmp_path)
@@ -159,7 +159,7 @@ def _line_program(tmp_path, lines, **program):
         project["research_line"] = line
         (root / "project.json").write_text(json.dumps(project), encoding="utf-8")
     db = flow._db(paths)
-    settings = flow._settings(research_lines=tuple(lines), **program)
+    settings = flow._settings(research_lines=tuple(line_ids), **program)
     engine._sync_active_projects(db, paths, settings, engine.TickReport())
     return paths, db, settings
 
@@ -201,7 +201,7 @@ def test_single_scout_ceiling_does_not_share_line_intervals(tmp_path):
     paths, db, settings = _line_program(
         tmp_path, lines, max_concurrent_scouts=1, scout_min_interval_hours=2,
         line_scout_min_interval_hours={lines[0]: 3, lines[1]: 0},
-        line_max_active_topics=dict.fromkeys(lines, 1),
+        lines={line: LineSettings(slots=1) for line in lines},
     )
     db.update_meta({f"{LAST_SCOUT_KEY}:{lines[0]}": NOW.isoformat()})
     first, _ = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
@@ -218,7 +218,7 @@ def test_backlog_of_one_line_does_not_count_against_a_sibling(tmp_path):
     lines = ("astro-photometry", "engineering-vvuq")
     paths, db, settings = _line_program(
         tmp_path, lines, max_concurrent_scouts=2, candidate_pool_low_water=2,
-        line_max_active_topics=dict.fromkeys(lines, 4),
+        lines={line: LineSettings(slots=4) for line in lines},
     )
     ledger = open_topic_ledger(paths, settings.program)
     for n, line in enumerate((lines[0], lines[0], None, None)):
@@ -244,7 +244,7 @@ def test_admission_batch_limit_counts_line_across_campaigns_and_remote_waits(tmp
 
     lines = ("astro-photometry", "engineering-vvuq")
     paths, db, settings = _line_program(
-        tmp_path, lines, max_admissions_per_line=1, line_max_active_topics=dict.fromkeys(lines, 2),
+        tmp_path, lines, max_admissions_per_line=1, lines={line: LineSettings(slots=2) for line in lines},
     )
     projects = {project.research_line: project for project in program_projects(paths)}
     receipt = paths.data / "receipts" / "data-access.json"

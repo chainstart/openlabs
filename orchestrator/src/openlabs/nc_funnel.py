@@ -44,6 +44,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .config import SUPPLY_STAGE
 from .db import utc_now
 
 THRESHOLDS = ("generality", "counterintuitive", "scale", "benchmark", "resource")
@@ -774,13 +775,13 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
     from .program_flow import TERMINAL_FAILED_STATUSES
 
     funnel = settings.program.funnel
-    if not funnel.prescreen or settings.program.polish_blocks_all():
+    if not funnel.prescreen or settings.program.stops(SUPPLY_STAGE):
         return []
     ledger = open_topic_ledger(paths, settings.program)
     waiting = [topic for topic in ledger.read().get("topics") or []
                if isinstance(topic, Mapping) and topic.get("status") == "proposed"
                and prescreen_held(topic)
-               and not settings.program.polish_blocks_supply(topic.get("research_line"))]
+               and not settings.program.stops(SUPPLY_STAGE, topic.get("research_line"))]
     if not waiting:
         return []
     outcomes: list[dict[str, Any]] = []

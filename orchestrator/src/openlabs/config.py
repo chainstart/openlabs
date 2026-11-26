@@ -7,7 +7,7 @@ import re
 import shlex
 import stat
 import tomllib
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -147,6 +147,42 @@ def _nonempty_text(value: Any, default: str, name: str) -> str:
     return value.strip()
 
 
+LINE_MODES = ("full", "supply_only", "polish", "off")
+SUPPLY_STAGE = "supply"
+RESEARCH_STAGE = "research"
+LINE_STAGES = (SUPPLY_STAGE, RESEARCH_STAGE)
+_MODE_STOPS: dict[str, frozenset[str]] = {
+    "full": frozenset(),
+    "supply_only": frozenset({RESEARCH_STAGE}),
+    "polish": frozenset(LINE_STAGES),
+    "off": frozenset(LINE_STAGES),
+}
+
+
+class _EveryLine:
+    def __repr__(self) -> str:
+        return "EVERY_LINE"
+
+
+EVERY_LINE: Any = _EveryLine()
+
+
+@dataclass(frozen=True)
+class LineSettings:
+    """One ``[program.lines.<id>]`` entry.
+
+    ``mode``: full (supply and research starts), supply_only (scout ... admission; an
+    admitted topic waits for its campaign), polish (no new supply or research start; the
+    line's papers are polished), off (as polish, and out of the scout rotation).
+    ``slots``: the line's research slots (None: only ``max_active_topics``). ``nc_aim``:
+    false keeps the line's own templated standard instead of the NC aim.
+    """
+
+    mode: str = "full"
+    slots: int | None = None
+    nc_aim: bool = True
+
+
 @dataclass(frozen=True)
 class ProgramSettings:
     """Research-program controller switches (``[program]`` in openlabs.toml).
@@ -205,9 +241,10 @@ class ProgramSettings:
     # Domains taking part in scout rotation, in preference order; empty means
     # every domain that has an active program project.
     domains: tuple[str, ...] = ()
-    # Research lines taking part in scout rotation, in preference order. When set,
-    # only program projects whose ``research_line`` is listed are scouted (rotation,
-    # per-line interval and load are kept per line); projects without a line keep
+    # Research lines taking part in scout rotation, in preference order: the
+    # ``[program.lines]`` entries whose mode is not ``off`` (or the legacy ``research_lines``
+    # key). When set, only program projects whose ``research_line`` is listed are scouted
+    # (rotation, per-line interval and load are kept per line); projects without a line keep
     # their admissions and campaigns but get no new scouts. Empty: use the legacy
     # host-domain filter, with rotation still keyed by line when one is present.
     research_lines: tuple[str, ...] = ()
@@ -324,49 +361,53 @@ class ProgramSettings:
     # Brief limit per topic (owner seats): CPU threads its queued + running compute jobs
     # may declare at once; openlabs-remote refuses a submission beyond it (0 = off).
     campaign_compute_threads: int = 8
-    # Per-line research slots (2026-11-19, three-line comparison): {line id: limit}. A
-    # line at its limit (admitted + active + in-review topics of the line) gets no scout,
-    # no admission review and no new campaign; ``max_active_topics`` still caps the
-    # total. Lines not listed are bounded by the global limit only.
-    line_max_active_topics: dict[str, int] = field(default_factory=dict)
+    # Line states (2026-11-26, slimming batch 2): ``[program.lines.<id>]`` with ``mode``
+    # (full | supply_only | polish | off), ``slots`` and ``nc_aim``, in scout-rotation order.
+    # One table instead of research_lines, polish_exempt_lines, polish_supply_only_lines,
+    # line_max_active_topics and funnel.exempt_lines (still read for one version: converted,
+    # with a tick warning). Read through :meth:`line` and :meth:`stops`.
+    lines: dict[str, "LineSettings"] = field(default_factory=dict)
     # Polish mode (2026-11-23, owner: "stop new tasks and new experiments, polish the
-    # papers already produced"): no new topic supply and no new research starts -- no
-    # scout, card repair, card revision, admission review, admission pilot, auto-reopen
-    # of a frozen topic or materialization of an admitted topic. Writing, reviews,
-    # delivery, delivered-version revisions (revise-delivered), operator reopen grants,
-    # journal mail and topics already in research keep running. Off by default;
-    # turning it off restores normal supply on the next tick.
+    # papers already produced"): the default mode of a line the table does not list (and of a
+    # topic without a line). Writing, reviews, delivery, delivered-version revisions
+    # (revise-delivered), operator reopen grants, journal mail and topics already in research
+    # keep running in every mode.
     polish_mode: bool = False
-    # Lines exempt from polish mode (2026-11-25 NC trial, user: "NC产线完整就绪后，你尝试性的
-    # 试产一篇看看"): an exempt line gets its whole supply and research start back (scout,
-    # card repair and revision, hold release, prescreen, pilot, admission, materialization,
-    # auto-reopen) while polish mode keeps every other line stopped. Empty by default.
-    polish_exempt_lines: tuple[str, ...] = ()
-    # Lines exempt from polish mode for topic supply only (2026-11-26, user: "扩大搜索范围"):
-    # scout, card repair and revision, prescreen, pilot and admission run; research starts
-    # (materialization, hold release, auto-reopen) stay stopped, so an admitted topic waits for
-    # its campaign until the line moves to ``polish_exempt_lines`` or polish mode ends.
-    polish_supply_only_lines: tuple[str, ...] = ()
+    # Configuration notes for the tick report (legacy keys converted or ignored).
+    config_warnings: tuple[str, ...] = field(default=(), compare=False)
 
-    def polish_blocks(self, line: Any = None) -> bool:
-        """Whether polish mode stops research starts (and supply) for a topic of ``line``."""
+    def line(self, line: Any) -> "LineSettings":
+        """The settings of ``line``; an unlisted line (or None) gets the default mode."""
 
-        if not self.polish_mode:
-            return False
-        return not (isinstance(line, str) and line and line in self.polish_exempt_lines)
+        if isinstance(line, str) and line in self.lines:
+            return self.lines[line]
+        return LineSettings(mode="polish" if self.polish_mode else "full")
 
-    def polish_blocks_supply(self, line: Any = None) -> bool:
-        """Whether polish mode stops new topic supply (scout ... admission) for ``line``."""
+    def stops(self, stage: str, line: Any = EVERY_LINE) -> bool:
+        """Whether ``stage`` is stopped for a topic of ``line``.
 
-        if not self.polish_blocks(line):
-            return False
-        return not (isinstance(line, str) and line and line in self.polish_supply_only_lines)
+        ``supply`` is scout, card repair and revision, prescreen, pilot and admission;
+        ``research`` is materialization, hold release and auto-reopen. ``full`` runs both,
+        ``supply_only`` only supply, ``polish`` and ``off`` neither. Without ``line``: the
+        stage is stopped for every line, listed or not (callers skip the whole step).
+        """
 
-    def polish_blocks_all(self) -> bool:
-        """Polish mode is on and no line is exempt: every supply step stops."""
+        if stage not in LINE_STAGES:
+            raise ValueError(f"unknown line stage {stage!r}")
+        if line is EVERY_LINE:
+            return all(stage in _MODE_STOPS[entry.mode]
+                       for entry in (self.line(None), *self.lines.values()))
+        return stage in _MODE_STOPS[self.line(line).mode]
 
-        return self.polish_mode and not self.polish_exempt_lines \
-            and not self.polish_supply_only_lines
+    @property
+    def line_max_active_topics(self) -> dict[str, int]:
+        """Per-line research slots: {line id: limit} for the lines that set ``slots``. A
+        line at its limit (admitted + active + in-review topics of the line) gets no scout,
+        no admission review and no new campaign; ``max_active_topics`` still caps the total.
+        """
+
+        return {line: entry.slots for line, entry in self.lines.items()
+                if entry.slots is not None}
 
 
 DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_gpt")
@@ -470,8 +511,8 @@ class FunnelSettings:
     # Target mix per 10 topics (user 2026-11-25): 2-3 NC, 2-3 Zone 1, the rest lower.
     target_mix: dict[str, tuple[int, int]] = field(default_factory=lambda: {
         "nc": (2, 3), "zone_1": (2, 3)})
-    # Lines that keep their own (templated) standard instead of the NC aim; empty by default.
-    exempt_lines: tuple[str, ...] = ()
+    # A line that keeps its own (templated) standard instead of the NC aim: [program.lines]
+    # nc_aim = false (was funnel.exempt_lines until 2026-11-26).
 
 
 @dataclass(frozen=True)
@@ -1653,7 +1694,6 @@ def load_program_settings(payload: Any) -> ProgramSettings:
             program.get("asset_index_path"), DEFAULT_ASSET_INDEX_PATH, "asset_index_path"
         ),
         domains=_domain_list(program.get("domains")),
-        research_lines=_domain_list(program.get("research_lines"), "research_lines"),
         research_lines_path=_relative_data_path(
             program.get("research_lines_path"), DEFAULT_RESEARCH_LINES_PATH,
             "research_lines_path",
@@ -1695,13 +1735,105 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         ),
         campaign_compute_threads=_nonnegative_int(program.get("campaign_compute_threads"), 8),
         polish_mode=program.get("polish_mode", False) is True,
-        polish_exempt_lines=_domain_list(program.get("polish_exempt_lines"),
-                                         "polish_exempt_lines"),
-        polish_supply_only_lines=_domain_list(program.get("polish_supply_only_lines"),
-                                              "polish_supply_only_lines"),
-        line_max_active_topics=_line_limits(program.get("line_max_active_topics")),
+        **_line_settings(program),
         **_git_settings(program.get("git")),
     )
+
+
+# Keys the [program.lines] table replaced on 2026-11-26 (slimming batch 2); read for one more
+# version. ``funnel.exempt_lines`` lives in the [program.funnel] sub-table.
+LEGACY_LINE_KEYS = ("research_lines", "polish_exempt_lines", "polish_supply_only_lines",
+                    "line_max_active_topics", "funnel.exempt_lines")
+
+
+def _line_settings(program: Mapping[str, Any]) -> dict[str, Any]:
+    """``lines``, ``research_lines`` and ``config_warnings`` from ``[program.lines]``.
+
+    Without the table, the legacy keys are converted to it (same decision for every line)
+    and a warning names them; with it, a legacy key still present is ignored with a warning.
+    """
+
+    funnel = program.get("funnel") if isinstance(program.get("funnel"), dict) else {}
+    legacy = {
+        "research_lines": _domain_list(program.get("research_lines"), "research_lines"),
+        "polish_exempt_lines": _domain_list(program.get("polish_exempt_lines"),
+                                            "polish_exempt_lines"),
+        "polish_supply_only_lines": _domain_list(program.get("polish_supply_only_lines"),
+                                                 "polish_supply_only_lines"),
+        "line_max_active_topics": _line_limits(program.get("line_max_active_topics")),
+        "funnel.exempt_lines": _domain_list(funnel.get("exempt_lines"), "funnel.exempt_lines"),
+    }
+    present = [key for key in LEGACY_LINE_KEYS if legacy[key]]
+    table = program.get("lines")
+    if table is not None:
+        lines = _lines_table(table)
+        warnings = (f"[program] ignores the legacy line key(s) {', '.join(present)}: "
+                    "[program.lines] decides; delete them",) if present else ()
+        return {"lines": lines, "config_warnings": warnings,
+                "research_lines": tuple(line for line, entry in lines.items()
+                                        if entry.mode != "off")}
+    lines = legacy_lines(program.get("polish_mode", False) is True, **{
+        key.replace("funnel.", "nc_"): value for key, value in legacy.items()})
+    warnings = (f"[program] legacy line key(s) {', '.join(present)} converted to "
+                "[program.lines] (read for one more version; write the table instead)",
+                ) if present else ()
+    return {"lines": lines, "config_warnings": warnings,
+            "research_lines": legacy["research_lines"]}
+
+
+def legacy_lines(polish_mode: bool, *, research_lines: tuple[str, ...] = (),
+                 polish_exempt_lines: tuple[str, ...] = (),
+                 polish_supply_only_lines: tuple[str, ...] = (),
+                 line_max_active_topics: Mapping[str, int] | None = None,
+                 nc_exempt_lines: tuple[str, ...] = ()) -> dict[str, LineSettings]:
+    """The ``[program.lines]`` table equal to the legacy line keys.
+
+    Legacy rule: polish mode stops supply and research of every line except an exempt line
+    (both run) and a supply-only line (supply runs); without polish mode every line runs.
+    The rotation order (``research_lines``) is kept by the caller.
+    """
+
+    limits = dict(line_max_active_topics or {})
+    order: list[str] = []
+    for line in (*research_lines, *polish_exempt_lines, *polish_supply_only_lines,
+                 *limits, *nc_exempt_lines):
+        if line not in order:
+            order.append(line)
+
+    def mode(line: str) -> str:
+        if not polish_mode or line in polish_exempt_lines:
+            return "full"
+        return "supply_only" if line in polish_supply_only_lines else "polish"
+
+    return {line: LineSettings(mode=mode(line), slots=limits.get(line),
+                               nc_aim=line not in nc_exempt_lines) for line in order}
+
+
+def _lines_table(value: Any) -> dict[str, LineSettings]:
+    """``[program.lines]``: ``{line id: {mode, slots, nc_aim}}`` in rotation order."""
+
+    if not isinstance(value, dict):
+        raise ValueError("[program.lines] must be a table of [program.lines.<line id>]")
+    lines: dict[str, LineSettings] = {}
+    for key, raw in value.items():
+        line = str(key or "").strip()
+        if not line or not isinstance(raw, dict):
+            raise ValueError("[program.lines] entries must be [program.lines.<line id>] tables")
+        unknown = set(raw) - {"mode", "slots", "nc_aim"}
+        if unknown:
+            raise ValueError(f"[program.lines.{line}] has unknown key(s) {sorted(unknown)}")
+        mode = str(raw.get("mode", "full")).strip()
+        if mode not in LINE_MODES:
+            raise ValueError(f"[program.lines.{line}].mode must be one of {LINE_MODES}")
+        slots = raw.get("slots")
+        if slots is not None and (isinstance(slots, bool) or not isinstance(slots, int)
+                                  or slots < 0):
+            raise ValueError(f"[program.lines.{line}].slots must be a non-negative integer")
+        nc_aim = raw.get("nc_aim", True)
+        if not isinstance(nc_aim, bool):
+            raise ValueError(f"[program.lines.{line}].nc_aim must be true or false")
+        lines[line] = LineSettings(mode=mode, slots=slots, nc_aim=nc_aim)
+    return lines
 
 
 def _line_limits(value: Any) -> dict[str, int]:
@@ -1804,7 +1936,6 @@ def _funnel_settings(value: Any) -> FunnelSettings:
         is not False,
         readiness_returns=_nonnegative_int(value.get("readiness_returns"), d.readiness_returns),
         target_mix=target_mix,
-        exempt_lines=_domain_list(value.get("exempt_lines"), "funnel.exempt_lines"),
     )
 
 
