@@ -295,6 +295,7 @@ def _parser() -> argparse.ArgumentParser:
     journal.add_argument("--manuscript-id", default="")
     journal.add_argument("--due")
     journal.add_argument("--revision-brief", help="Private review file bound to the message digest")
+    journal.add_argument("--letter-file", help="A rejection's verbatim letter bound to the message digest")
     journal.add_argument("--package-id")
     journal.add_argument("--request-id")
     journal.add_argument("--round", type=int)
@@ -798,10 +799,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # record keeps the letter; a revision is then the submitter's, as before.
                 from .submission_status import record_registry_correspondence
 
+                letter = paths.settings_file.parent / "state/journal-mail" / (
+                    args.message_key + ".letter.txt")
+                if args.letter_file and (Path(args.letter_file) != letter or not letter.is_file()
+                                         or args.status != "rejected"):
+                    raise ValueError("unbound journal letter")
                 payload = record_registry_correspondence(
                     db, paths, settings, paper_id=args.paper_id, message_key=args.message_key,
                     status=args.status, manuscript_id=args.manuscript_id, due=args.due,
-                    round_no=args.round)
+                    round_no=args.round, letter_file=str(letter) if args.letter_file else None)
                 if args.revision_brief:
                     payload["revision"] = "not_requested_no_topic"
                 print(json.dumps(payload, ensure_ascii=False))

@@ -98,3 +98,29 @@ def test_letter_of_a_paper_without_topic_is_kept_once(tmp_path):
     assert (first["status"], again["status"]) == ("recorded", "already_recorded")
     items = yaml.safe_load(path.read_text())["journal_correspondence"]
     assert len(items) == 1 and items[0]["event_key"] == "mail:" + "d" * 64
+
+
+def test_rejection_letter_is_kept_and_read_by_the_next_review(tmp_path, monkeypatch):
+    # C8 (pipeline slimming 2026-11-26): a paper outside the topic ledger keeps the editor's
+    # own words, and the review's prior decisions read them as the original letter.
+    from paper_writing import review_flow
+
+    monkeypatch.delenv("ARA_PAPER_MANAGE_API_URL", raising=False)
+    path = _registry(tmp_path, "p", {"journal_rejections": [
+        {"journal": "J", "manuscript_number": "M-1", "rejected_at": "2026-11-26", "source": "site"}]})
+    letter = tmp_path / "letter.txt"
+    letter.write_text("Subject: Decision\n\nThe manuscript does not articulate the research problem.\n")
+    result = submission_status.record_correspondence(tmp_path, "p", message_key="f" * 64,
+                                                     status="rejected", manuscript_id="M-1",
+                                                     letter_file=letter)
+    assert result["letter_path"] == "papers/p/journal-letters/" + "f" * 16 + ".txt"
+    entry, = yaml.safe_load(path.read_text())["journal_correspondence"]
+    assert entry["letter"]["kind"] == "verbatim_decision_letter"
+    metadata = yaml.safe_load(path.read_text())
+    decision, = review_flow.prior_decisions("p", metadata, tmp_path)
+    assert decision["letter_available"] is True
+    assert "does not articulate the research problem" in decision["letter_text"]
+    # A kept letter that changed is not used (and does not break the review).
+    (tmp_path / result["letter_path"]).write_text("edited")
+    decision, = review_flow.prior_decisions("p", metadata, tmp_path)
+    assert decision["letter_available"] is False

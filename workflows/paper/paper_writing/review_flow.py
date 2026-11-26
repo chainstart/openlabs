@@ -1457,12 +1457,22 @@ def prior_decisions(paper_id: str, metadata: Mapping[str, Any], root: Path | Non
             raise ValueError("Bound original rejection letter is missing or unsafe")
         if _sha256(path.read_bytes()) != digest:
             raise ValueError(f"Rejection letter changed: {source}")
+    # Letters journal_mail kept with the registry record (C8, 2026-11-26): a rejection of a
+    # paper outside the topic ledger, matched by its manuscript number.
+    kept = {str(item.get("manuscript_id")): item["letter"]
+            for item in metadata.get("journal_correspondence") or []
+            if isinstance(item, Mapping) and item.get("decision") == "rejected"
+            and isinstance(item.get("letter"), Mapping) and item.get("manuscript_id")}
     for row in rows.values():
         row["decision_id"] = _sha256(json.dumps([row['journal'], row['manuscript_number']], ensure_ascii=False).encode())[:20]
         row["letter_text"] = ""
         row["letter_available"] = False
         binding = next((b for b in bindings if b.get("journal") == row["journal"]
                         and str(b.get("manuscript_number")) == row["manuscript_number"]), {})
+        letter = {} if binding else dict(kept.get(row["manuscript_number"]) or {})
+        if letter and root and (root / str(letter.get("path") or "")).is_file() and _sha256(
+                (root / str(letter["path"])).read_bytes()) == letter.get("sha256"):
+            binding = letter  # a kept letter that is missing or changed is simply not used
         source = binding.get("path") or row.get("source")
         if root and source:
             path = (root / str(source)).resolve()

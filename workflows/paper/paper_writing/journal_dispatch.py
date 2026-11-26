@@ -277,6 +277,24 @@ def already_registered(paper, attempt, event):
     return bool(target) and attempt.get("status") == target and (not number or own.casefold() == number.casefold())
 
 
+def rejection_letter(args, event):
+    """``--letter-file`` with a rejection's verbatim letter for the registry record (C8,
+    2026-11-26): the next review of a paper outside the topic ledger reads the editor's words."""
+    if event["decision"] != "rejected" or not event.get("raw"):
+        return []
+    from email import policy
+    from email.parser import BytesParser
+
+    from paper_writing.journal_mail import message_text
+
+    subject, body = message_text(BytesParser(policy=policy.default).parsebytes(event["raw"]))
+    if not body.strip():
+        return []
+    path = args.state / (event["message_key"] + ".letter.txt")
+    path.write_text(f"Subject: {subject}\n\n{body.strip()}\n")
+    return ["--letter-file", str(path)]
+
+
 def dispatch_one(args, api, db, event):
     key = event["message_key"]
     paper = api._request("GET", "/v1/papers/" + event["paper_id"])
@@ -333,7 +351,11 @@ def dispatch_one(args, api, db, event):
                      json={"event_type": kind, "to_status": to_status, **({"occurred_at": event["received_at"]} if event.get("received_at") else {}),
                            "payload": {"manuscript_number": number, "decision": did, "source": "journal_mail",
                                        "match_basis": basis}})
-    ledger(args, event)
+    letter = rejection_letter(args, event)
+    if letter:
+        ledger(args, event, letter)
+    else:
+        ledger(args, event)
     if did == "revision_requested":
         request = result.get("revision_request") or next((r for r in paper["revision_requests"] if r["review_round_id"] == rid), {})
         request_id = request["request_id"]

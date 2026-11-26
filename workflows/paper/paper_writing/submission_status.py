@@ -20,6 +20,7 @@ ledger (papers older than the research program) in ``journal_correspondence``.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping
@@ -200,10 +201,21 @@ def reconcile(root: str | Path, site_papers: Iterable[Mapping[str, Any]], *,
             "current": current, "site_only": missing}
 
 
+LETTER_DIR = "journal-letters"
+LETTER_MAX_BYTES = 200_000
+
+
 def record_correspondence(root: str | Path, paper_id: str, *, message_key: str, status: str,
                           manuscript_id: str = "", due: str | None = None,
-                          round_no: int | None = None) -> dict[str, Any]:
-    """Keep one matched journal letter in the paper's registry record (idempotent by key)."""
+                          round_no: int | None = None,
+                          letter_file: str | Path | None = None) -> dict[str, Any]:
+    """Keep one matched journal letter in the paper's registry record (idempotent by key).
+
+    A rejection's verbatim letter (``letter_file``, written by the journal-mail dispatcher)
+    is kept at ``papers/<id>/journal-letters/<key>.txt`` and named in the entry, so the next
+    review of the paper reads the editor's own words as a prior decision (``letter_text``,
+    ``review_flow.prior_decisions``) instead of an unverifiable paraphrase (C8, 2026-11-26).
+    """
     if not re.fullmatch("[a-f0-9]{64}", message_key):
         raise ValueError("invalid message digest")
     if status not in DECISIONS:
@@ -221,7 +233,18 @@ def record_correspondence(root: str | Path, paper_id: str, *, message_key: str, 
              "manuscript_id": manuscript_id or None, "due": due, "round": round_no,
              "recorded_by": "journal-mail",
              "original": "private journal-mail store (events.sqlite originals)"}
+    letter_path = None
+    if status == "rejected" and letter_file is not None:
+        raw = Path(letter_file).read_bytes()[:LETTER_MAX_BYTES]
+        if raw.strip():
+            target = Path(root) / "papers" / paper_id / LETTER_DIR / f"{message_key[:16]}.txt"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw)
+            letter_path = target.resolve().relative_to(Path(root).resolve()).as_posix()
+            entry["letter"] = {"path": letter_path, "sha256": hashlib.sha256(raw).hexdigest(),
+                               "kind": "verbatim_decision_letter"}
     items.append({k: v for k, v in entry.items() if v is not None})
     metadata["journal_correspondence"] = items
     write_paper_metadata(paper_id, metadata, root)
-    return {"status": "recorded", "paper_id": paper_id, "path": relative}
+    return {"status": "recorded", "paper_id": paper_id, "path": relative,
+            **({"letter_path": letter_path} if letter_path else {})}

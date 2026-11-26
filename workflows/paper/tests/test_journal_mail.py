@@ -65,6 +65,25 @@ def test_offline_dispatch_replay_and_handler_upload(tmp_path, monkeypatch, with_
     assert len([a for a in commands if len(a) == 3]) == 1
 
 
+def test_rejection_letter_goes_with_the_journal_event(tmp_path):
+    # C8 (2026-11-26): the dispatcher hands the verbatim letter of a rejection to journal-event.
+    from email.message import EmailMessage
+    from types import SimpleNamespace
+    from paper_writing import journal_dispatch as dispatch
+
+    msg = EmailMessage()
+    msg["Subject"] = "Decision on your submission"
+    msg.set_content("The manuscript does not clearly articulate the research problem.")
+    args = SimpleNamespace(state=tmp_path)
+    event = {"message_key": "b" * 64, "decision": "rejected", "raw": msg.as_bytes()}
+    flag, path = dispatch.rejection_letter(args, event)
+    assert flag == "--letter-file" and path == str(tmp_path / ("b" * 64 + ".letter.txt"))
+    text = (tmp_path / ("b" * 64 + ".letter.txt")).read_text()
+    assert text.startswith("Subject: Decision") and "research problem" in text
+    assert dispatch.rejection_letter(args, {**event, "decision": "accepted"}) == []
+    assert dispatch.rejection_letter(args, {**event, "raw": None}) == []
+
+
 @pytest.mark.parametrize("delivery", ["attached", "advertised_limit", "rejected", "legacy"])
 def test_notifier_only_uses_current_site_assignment(monkeypatch, capsys, delivery):
     from email import policy

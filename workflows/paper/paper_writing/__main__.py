@@ -615,6 +615,8 @@ def build_parser() -> argparse.ArgumentParser:
     program_correspondence.add_argument("--manuscript-id", default="")
     program_correspondence.add_argument("--due")
     program_correspondence.add_argument("--round", type=int)
+    program_correspondence.add_argument("--letter-file", type=Path,
+                                        help="A rejection's verbatim letter (journal-mail dispatcher)")
     program_status = program_commands.add_parser(
         "release-status",
         help="Read-only: what is left between review ready and delivery (release pipeline).",
@@ -1253,7 +1255,8 @@ def _run_program(args: argparse.Namespace) -> int:
 
             result = submission_status.record_correspondence(
                 args.root, args.paper_id, message_key=args.message_key, status=args.status,
-                manuscript_id=args.manuscript_id, due=args.due, round_no=args.round)
+                manuscript_id=args.manuscript_id, due=args.due, round_no=args.round,
+                letter_file=args.letter_file)
         elif args.program_command == "deliver":
             # Same explicit switch as `handoff release`; the orchestrator sets it for
             # this one call only when [program] auto_handoff is enabled.

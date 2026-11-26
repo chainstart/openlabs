@@ -41,8 +41,10 @@ def commit_registry_files(paths: WorkspacePaths, settings: FactorySettings,
     scope = []
     for raw in files:
         relative = str(raw).strip().strip("/")
-        if (not relative.startswith("registry/papers/") or ".." in relative
-                or not relative.endswith(".yaml")):
+        letter = (relative.startswith("papers/") and "/journal-letters/" in relative
+                  and relative.endswith(".txt"))  # a rejection's kept letter (C8)
+        if ".." in relative or not letter and (not relative.startswith("registry/papers/")
+                                               or not relative.endswith(".yaml")):
             raise ReleaseError(f"refusing to commit a path outside registry/papers: {raw}")
         if relative not in scope:
             scope.append(relative)
@@ -147,8 +149,10 @@ def record_registry_correspondence(db: FactoryDB, paths: WorkspacePaths,
                                    settings: FactorySettings, *, paper_id: str,
                                    message_key: str, status: str, manuscript_id: str = "",
                                    due: str | None = None,
-                                   round_no: int | None = None) -> dict[str, Any]:
-    """``program journal-event`` for a paper without a topic: its registry record keeps it."""
+                                   round_no: int | None = None,
+                                   letter_file: str | None = None) -> dict[str, Any]:
+    """``program journal-event`` for a paper without a topic: its registry record keeps it
+    (a rejection with its verbatim letter, which the paper's next review reads)."""
 
     from .program_autonomy import DeliveryError, _run_paper_command
 
@@ -160,12 +164,15 @@ def record_registry_correspondence(db: FactoryDB, paths: WorkspacePaths,
         arguments += ["--due", due]
     if round_no:
         arguments += ["--round", str(round_no)]
+    if letter_file:
+        arguments += ["--letter-file", letter_file]
     try:
         result = _run_paper_command(paths, settings, arguments, timeout=120)
     except DeliveryError as exc:
         raise SubmissionStatusError(str(exc)) from exc
     commit = commit_registry_files(
-        paths, settings, [str(result.get("path"))],
+        paths, settings, [str(result.get("path")), *([result["letter_path"]]
+                                                     if result.get("letter_path") else [])],
         f"registry: journal letter for {paper_id} ({status})",
         f"Matched by journal_mail; message key {message_key[:12]}. The paper has no topic in "
         "the topic ledger, so the registry record keeps the letter.")

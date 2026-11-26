@@ -24,7 +24,8 @@ argv = sys.argv
 value = lambda name: argv[argv.index(name) + 1] if name in argv else None
 print(json.dumps(record_correspondence(value("--root"), value("--paper-id"),
                                        message_key=value("--message-key"), status=value("--status"),
-                                       manuscript_id=value("--manuscript-id") or "")))
+                                       manuscript_id=value("--manuscript-id") or "",
+                                       letter_file=value("--letter-file"))))
 """
 FAKE_SYNC = """
 import json, sys, yaml
@@ -83,6 +84,21 @@ def test_letter_of_a_paper_without_topic_is_committed_to_its_record_once(tmp_pat
     assert again["status"] == "already_recorded" and again["commit"] is None
     assert len(yaml.safe_load(record.read_text())["journal_correspondence"]) == 1
     assert "unrelated.txt" in _git(paths.data, "status", "--porcelain")
+
+
+def test_rejection_letter_is_committed_with_the_record(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYTHONPATH", str(PAPER))
+    fake = tmp_path / "fake_correspondence.py"
+    fake.write_text(FAKE_CORRESPONDENCE)
+    paths, db, settings, record = _setup(tmp_path, monkeypatch, (sys.executable, str(fake)))
+    letter = tmp_path / "rejection.letter.txt"
+    letter.write_text("Subject: Decision on your manuscript\n\nWe regret ...\n")
+    result = submission_status.record_registry_correspondence(
+        db, paths, settings, paper_id="old", message_key="a" * 64, status="rejected",
+        manuscript_id="M-7", letter_file=str(letter))
+    files = _git(paths.data, "show", "--name-only", "--format=", result["commit"]).split()
+    assert sorted(files) == ["papers/old/journal-letters/" + "a" * 16 + ".txt",
+                             "registry/papers/old.yaml"]
 
 
 def test_tick_writes_site_status_back_in_one_commit_then_waits(tmp_path, monkeypatch):
