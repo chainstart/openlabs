@@ -34,6 +34,10 @@ endpoint ``POST /v1/papers/<id>/assignments`` (the previous row is kept, ``activ
   again" nor given a submitter: the entry is ``manual_decision`` and the tick report lists it
   for a person (2026-11-26: 20260525mathgraph0004, abandoned on the site, kept on in the
   registry);
+* a paper whose current site package was uploaded outside the pipeline (``origin_repository``
+  null, or not created by the API account) and is not the registry's delivery is
+  ``manual_decision`` too (2026-11-26: a submitter's revised packages of two papers): a person
+  registers it as the paper's base first; ``handoff.release_handoff`` refuses to deliver over it;
 * papers under a manual-assignment hold are never touched either (2026-11-24, user: "撤回3篇论文
   中的投稿负责人（将负责人从王琪盛改为未分配）"): the submitter is chosen by a person. The hold is
   the registry field ``manual_assignment: {hold: true, ...}`` or, should the shared data checkout
@@ -395,6 +399,58 @@ def _version_key(value: Any) -> tuple[int, ...] | None:
     return tuple(int(n) for n in numbers) if numbers else None
 
 
+def _current_package(paper: Mapping[str, Any]) -> Mapping[str, Any]:
+    return next((item for item in paper.get("packages") or []
+                 if item.get("id") == paper.get("current_package_id")), None) or {}
+
+
+def outside_upload(paper: Mapping[str, Any], registry: Mapping[str, Any] | None,
+                   pipeline_account: str | None = None) -> str | None:
+    """Why the site's current package was uploaded outside the pipeline and is not registered.
+
+    2026-11-26: the submitter uploaded revised packages of two papers on the site (``created_by``
+    the submitter, ``origin_repository`` null). Until the data repository registers such a package
+    as the paper's delivery, the pipeline must not build on its older local base or deliver over
+    it: the sync and the delivery stop and a person is told.
+    """
+    package = _current_package(paper)
+    if not package or package.get("package_id") in (None, "", ((registry or {}).get("delivery")
+                                                              or {}).get("package_id")):
+        return None
+    signs = []
+    if "origin_repository" in package and not package.get("origin_repository"):
+        signs.append("no origin repository")
+    creator = package.get("created_by")
+    if pipeline_account and creator and creator != pipeline_account:
+        signs.append(f"created by {creator}, not the pipeline account")
+    if not signs:
+        return None
+    return (f"the site's current package {package.get('package_id')} (v{package.get('version')}) "
+            f"was uploaded outside the pipeline ({'; '.join(signs)}) and the registry "
+            f"(v{(registry or {}).get('version')}) does not record it: register it as the paper's "
+            "base before the pipeline builds on or delivers over it")
+
+
+def site_ahead(paper: Mapping[str, Any], registry: Mapping[str, Any] | None,
+               pipeline_account: str | None = None) -> str | None:
+    """Why the pipeline must not deliver over the site's current package (None: it may)."""
+    if (outside := outside_upload(paper, registry, pipeline_account)) is not None:
+        return outside
+    package = _current_package(paper)
+
+    def release(value: Any) -> tuple[int, ...] | None:
+        # Dotted release numbers only: legacy labels such as "git:f76e0b63" are not versions.
+        text = str(value or "").strip()
+        return tuple(int(n) for n in text.split(".")) if re.fullmatch(r"\d+(\.\d+)*", text) else None
+
+    local, site = release((registry or {}).get("version")), release(package.get("version"))
+    if local is not None and site is not None and site > local:
+        return (f"the site's current package {package.get('package_id')} (v{package.get('version')}) "
+                f"is newer than the registry's v{(registry or {}).get('version')}: the local base is "
+                "behind; update the data checkout before delivering")
+    return None
+
+
 def stale_registry(paper: Mapping[str, Any], registry: Mapping[str, Any] | None) -> str | None:
     """Why the local registry, not the paper, makes a site-ready paper look not ready.
 
@@ -452,6 +508,10 @@ def _plan_paper(paper: Mapping[str, Any], *, root: Path, users: list[Mapping[str
     if (hold := manual_hold(paper, registry)) is not None:
         entry.update(action="hold", manual_assignment=hold,
                      why="manual assignment hold: a person assigns the submitter")
+        return entry
+    if (outside := outside_upload(paper, registry, placeholder)) is not None:
+        entry.update(state="outside_upload", action="manual_decision", proposed_action="skip",
+                     why=outside)
         return entry
     fallback = default_submitter(registry, settings_authors, users, placeholder)
     if state == "not_ready" and (stale := stale_registry(paper, registry)) is not None:
