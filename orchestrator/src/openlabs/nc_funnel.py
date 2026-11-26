@@ -555,6 +555,15 @@ def evaluate_prescreen(result: Any, settings, digests: set[str]) -> dict[str, An
                 "why": ("prior work already reports the claim" if verdict == "scooped" else
                         f"{len(met)} NC threshold(s) hold on an independent reading; "
                         f"{funnel.min_nc_thresholds} required")}
+    if band_rank(match) > band_rank(funnel.admission_min_band):
+        # Phase A stop on the calibration match (the brief and the skill tell the prescreener
+        # not to run the kill test then). Judged here, not left invalid: NC trial 2026-11-26,
+        # such a stop was read as "kill_test must run" twice and ended as prescreen_unavailable.
+        return {**base, "status": "fail", "reason": BAND_REJECTION, "expected_band": match,
+                "why": f"the calibration set places it at {match}, below the admission floor "
+                       f"{funnel.admission_min_band}"
+                       + (f" (closest: {', '.join(base['calibration_neighbours'])})"
+                          if base["calibration_neighbours"] else "")}
     kill = result.get("kill_test") if isinstance(result.get("kill_test"), Mapping) else {}
     signal = kill.get("signal") if isinstance(kill.get("signal"), Mapping) else {}
     artifact = kill.get("result_artifact") if isinstance(kill.get("result_artifact"),

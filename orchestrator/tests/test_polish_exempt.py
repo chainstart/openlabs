@@ -182,3 +182,20 @@ def test_prescreens_of_one_scout_campaign_run_side_by_side(tmp_path) -> None:
                               parallel_routing_reasons=reasons)["task_id"] == "p0"
     second = db.claim_next_task(owner="t", lease_seconds=60, parallel_routing_reasons=reasons)
     assert second is not None and second["task_id"] == "p1"
+
+
+def test_a_phase_a_stop_on_the_calibration_match_is_judged_not_invalid(tmp_path) -> None:
+    from dataclasses import replace
+
+    from openlabs import nc_funnel
+    from test_nc_funnel import _prescreen_result
+
+    settings = replace(flow._settings(), program=replace(flow._settings().program,
+                                                         funnel=FunnelSettings()))
+    result, _ = _prescreen_result(tmp_path / "k.json", met=("benchmark", "resource"))
+    result["calibration_match"] = "zone_2"
+    result["calibration_neighbours"] = ["N4-z2", "N2"]
+    result["kill_test"] = {"ran": False, "signal": {"present": None}, "result_artifact": None}
+    verdict = nc_funnel.evaluate_prescreen(result, settings, set())
+    assert verdict["status"] == "fail" and verdict["reason"] == nc_funnel.BAND_REJECTION
+    assert verdict["expected_band"] == "zone_2" and "N4-z2" in verdict["why"]
