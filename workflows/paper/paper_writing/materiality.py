@@ -250,7 +250,8 @@ RULES: tuple[Rule, ...] = (
     Rule("author_approval_out_of_scope", ADVICE, lambda f, c: f.author_approval,
          "author approval, consent to submit, signatures and delegated authority are handled by the "
          "pre-submission human review and the journal's submission system"),
-    # Formal verifier (gate1_precision_v1, 2026-11-23; source routing 2026-11-23 audit item 12).
+    # Formal verifier (gate1_precision_v1, 2026-11-23; source routing 2026-11-23 audit item 12;
+    # verifier technical failures on accepting panels UD-20261126-review-pass-two-minor).
     Rule("formal_advisory", ADVICE, lambda f, c: f.source == "formal" and f.formal_category == "advisory",
          "the verifier itself classified the item as advice"),
     Rule("formal_source_routing", ADVICE, lambda f, c: f.source == "formal" and f.formal_category == "source_routing",
@@ -258,6 +259,11 @@ RULES: tuple[Rule, ...] = (
     Rule("formal_precision", ADVICE, lambda f, c: f.source == "formal" and f.formal_category == "scientific" and (
         f.formal_status == "gap" or f.kind in FORMAL_PRECISION_KINDS),
          "a sentence not fully supported as worded (gap, unsupported claim, citation support) is advice"),
+    Rule("formal_accepting_technical", ADVICE,
+         lambda f, c: f.source == "formal" and f.formal_category == "technical" and c.accepting,
+         "a verifier technical failure (not a verified manuscript error) does not block when every "
+         "referee recommends minor revision or accept; reported as advice / needs-rerun "
+         "(UD-20261126-review-pass-two-minor)"),
     Rule("formal_material", BLOCK, lambda f, c: f.source == "formal",
          "errors, unchecked claims, reference rows, technical and preparation problems block"),
     # Presentation light review (2026-11-23: claim/data mismatch, missing figure, hard venue rule).

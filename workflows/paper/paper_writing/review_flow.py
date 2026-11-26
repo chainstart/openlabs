@@ -2044,8 +2044,9 @@ def direction_context(editor: Mapping[str, Any]) -> dict[str, Any]:
 def principal_rejection_reason(report: Mapping[str, Any]) -> tuple[str, str]:
     """A referee's leading reason for ``reject``, taken from the report itself (no model call).
 
-    Order: the first scientific blocker, the first blocking required change, then the
-    referee's significance assessment (referee.md asks for the most important reason first).
+    Order: the first scientific blocker, the first blocking required change, the first
+    non-advisory dimension repair, then the referee's significance assessment (referee.md
+    asks for the most important reason first).
     """
     blockers = [str(b) for b in report.get("scientific_blockers") or [] if str(b).strip()]
     if blockers:
@@ -2053,6 +2054,12 @@ def principal_rejection_reason(report: Mapping[str, Any]) -> tuple[str, str]:
     for change in report.get("required_changes") or []:
         if isinstance(change, Mapping) and change_blocks(change) and str(change.get("change") or "").strip():
             return f"{change['change']} ({change.get('location', '')})", "required_change"
+    repairs = report.get("dimension_repairs")
+    if isinstance(repairs, Mapping):
+        for dim in DIMENSIONS:
+            for item in repairs.get(dim) or []:
+                if isinstance(item, Mapping) and item.get("kind") != "advisory" and str(item.get("repair") or "").strip():
+                    return str(item["repair"]), "dimension_repair"
     for field in ("significance", "novelty_and_context", "summary"):
         if str(report.get(field) or "").strip():
             return str(report[field]), f"{field}_assessment"
@@ -2068,9 +2075,29 @@ def unanimous_rejection(referees: Mapping[str, Mapping[str, Any]]) -> bool:
     return len(referees) >= 2 and all(r.get("recommendation") == "reject" for r in referees.values())
 
 
+def panel_rejection_direction(referees: Mapping[str, Mapping[str, Any]], *, blocked: bool) -> str | None:
+    """When a two-referee panel routes to a direction decision instead of passing.
+
+    * ``all_referees_reject``: every referee recommends ``reject`` (with or without items),
+      matching ``_merge_reports``.
+    * ``reject_and_major_without_items``: no referee recommends accept or minor revision,
+      at least one recommends ``reject``, and no concrete blocking item was listed — a paper
+      neither referee accepts cannot pass for lack of itemized repairs, and has no concrete
+      items to send to a revision round.
+    """
+    if unanimous_rejection(referees):
+        return "all_referees_reject"
+    if (not blocked and len(referees) >= 2
+            and all(r.get("recommendation") in {"major_revision", "reject"} for r in referees.values())
+            and any(r.get("recommendation") == "reject" for r in referees.values())):
+        return "reject_and_major_without_items"
+    return None
+
+
 def rejection_direction_context(editor: Mapping[str, Any],
-                                referees: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    """Direction context after both referees reject: their reasons, scores and the editor's prior work."""
+                                referees: Mapping[str, Mapping[str, Any]], *,
+                                trigger: str = "all_referees_reject") -> dict[str, Any]:
+    """Direction context after a rejecting panel: their reasons, scores and the editor's prior work."""
     rejections = []
     for name, report in referees.items():
         reason, source = principal_rejection_reason(report)
@@ -2083,7 +2110,7 @@ def rejection_direction_context(editor: Mapping[str, Any],
                            "overall_score": scores.get("overall"),
                            "significance_assessment": str(report.get("significance") or ""),
                            "novelty_assessment": str(report.get("novelty_and_context") or "")})
-    return {"trigger": "all_referees_reject", "referee_rejections": rejections,
+    return {"trigger": trigger, "referee_rejections": rejections,
             "mean_significance_score": _mean_score(referees, "significance"),
             "mean_novelty_score": _mean_score(referees, "novelty"),
             "editor_decision": editor.get("decision"),
@@ -2381,6 +2408,49 @@ def _recorded_merge(record, history, **kwargs):
     return result
 
 
+def _accepting_formal_technical(
+    formal_blockers: list[str] | None,
+    formal_summary: Mapping[str, Any] | None,
+    accepting: bool,
+) -> tuple[list[str] | None, Mapping[str, Any] | None, list[str]]:
+    """On an accepting panel (every referee at minor revision or accept), verifier technical
+    failures (as opposed to verified manuscript errors) travel as advice / needs-rerun rather
+    than blocking (UD-20261126-review-pass-two-minor)."""
+    if not accepting or not formal_blockers or not isinstance(formal_summary, Mapping):
+        return formal_blockers, formal_summary, []
+    if "raw_findings" in formal_summary:
+        raw = formal_summary["raw_findings"]
+        tech_msgs = {f["message"] for f in raw if f.get("category") == "technical"}
+        blocking_msgs = {f["message"] for f in raw if f.get("category") in {"scientific", "preparation"}}
+        downgrade = tech_msgs - blocking_msgs
+        if not downgrade:
+            return formal_blockers, formal_summary, []
+        kept = [b for b in formal_blockers if b not in downgrade]
+        dropped = list(dict.fromkeys(b for b in formal_blockers if b in downgrade))
+        if not dropped:
+            return formal_blockers, formal_summary, []
+        updated_raw = [
+            dict(f, category="advisory", precision_downgraded=True,
+                 downgrade_reason="formal_accepting_technical", needs_rerun=True)
+            if f.get("category") == "technical" and f["message"] in downgrade else dict(f)
+            for f in raw
+        ]
+        return kept, formal_checks.issue_summary(updated_raw), dropped
+    cats = formal_summary.get("by_category")
+    if not isinstance(cats, Mapping) or not cats.get("technical"):
+        return formal_blockers, formal_summary, []
+    blocking_msgs = set(cats.get("scientific") or []) | set(cats.get("preparation") or [])
+    downgrade = {m for m in cats.get("technical") or [] if m not in blocking_msgs}
+    kept = [b for b in formal_blockers if b not in downgrade]
+    dropped = list(dict.fromkeys(b for b in formal_blockers if b in downgrade))
+    if not dropped:
+        return formal_blockers, formal_summary, []
+    new_cats = {k: list(v) for k, v in cats.items()}
+    new_cats["technical"] = [m for m in new_cats.get("technical", []) if m not in downgrade]
+    new_cats["advisory"] = [*new_cats.get("advisory", []), *dropped]
+    return kept, {**formal_summary, "by_category": new_cats}, dropped
+
+
 def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
           history_blockers: list[str] | None = None, *,
           previous_ids: set[str] | None = None, formal_blockers: list[str] | None = None,
@@ -2389,6 +2459,12 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
           changed_text: str | None = None, final_check: bool = False) -> dict[str, Any]:
     """The decision from the role reports. Under ``materiality_v1`` every itemised finding is
     decided by ``materiality.decide`` (one decision table for 抓大放小)."""
+    materiality_path = followup_items is not None or editor.get("review_standard") == "materiality_v1"
+    accepting_panel = bool(referees) and {r.get("recommendation") for r in referees.values()} <= _ACCEPTING
+    dropped_formal_technical: list[str] = []
+    if materiality_path:
+        formal_blockers, formal_summary, dropped_formal_technical = _accepting_formal_technical(
+            formal_blockers, formal_summary, accepting_panel)
     context = materiality_context(referees, formal_blockers=formal_blockers, history_blockers=history_blockers,
                                   changed_text=changed_text, final_check=final_check, followup_items=followup_items)
     if followup_items is not None:
@@ -2398,7 +2474,12 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
         # clear unless formal-verification or rejection-history blockers stand.
         context = dataclasses.replace(context, dimensions_clear=True, science_clear=not context.formal_or_history)
         changes, unresolved, advice = _followup_reports(editor, referees, followup_items, changed_text, context)
-        formal_advice = (formal_summary or {}).get("by_category", {}).get("advisory", [])
+        dropped_set = set(dropped_formal_technical)
+        advice += [dict(referee="formal", change=message, location="Verification", advisory=True,
+                        downgrade_reason="formal_accepting_technical", needs_rerun=True)
+                   for message in dropped_formal_technical]
+        formal_advice = [m for m in (formal_summary or {}).get("by_category", {}).get("advisory", [])
+                         if m not in dropped_set]
         advice += [dict(referee="formal", change=message, location="Verification") for message in formal_advice]
         if history_blockers or formal_blockers:
             result = _merge_reports(
@@ -2406,10 +2487,21 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
                 formal_blockers=formal_blockers, formal_summary=formal_summary)
         else:
             blocked = bool(changes) or any(not u.get("advisory") for u in unresolved)
-            recommendation, action = _followup_severity(changes, unresolved)
-            result = dict(outcome="revision_required" if blocked else "ready",
-                          recommendation=recommendation if blocked else "accept", scientific_blockers=[],
-                          next_action=action if blocked else None)
+            trigger = panel_rejection_direction(referees, blocked=blocked)
+            if trigger is not None:
+                result = dict(
+                    outcome="revision_required",
+                    recommendation="reject" if trigger == "all_referees_reject" else "major_revision",
+                    scientific_blockers=[], next_action="direction_decision",
+                    direction_context=rejection_direction_context(editor, referees, trigger=trigger),
+                )
+            else:
+                recommendation, action = _followup_severity(changes, unresolved)
+                result = dict(outcome="revision_required" if blocked else "ready",
+                              recommendation=recommendation if blocked else "accept", scientific_blockers=[],
+                              next_action=action if blocked else None)
+        if dropped_formal_technical:
+            result["formal_verifier_needs_rerun"] = list(dropped_formal_technical)
         result.update(required_changes=changes, unresolved_previous_items=unresolved,
                       advisory_items=advice,
                       referee_recommendations={name: r["recommendation"] for name, r in referees.items()})
@@ -2420,7 +2512,7 @@ def merge(editor: Mapping[str, Any], referees: Mapping[str, Mapping[str, Any]],
         return result
     if editor.get("review_standard") == "materiality_v1":
         result = _material_decision(editor, referees, history_blockers, formal_blockers, formal_summary,
-                                    context=context)
+                                    context=context, dropped_formal_technical=dropped_formal_technical)
         if reader_report is not None:
             _merge_reader(result, reader_report, previous, changed_text, context=context)
         return result
@@ -2466,9 +2558,14 @@ def _dimension_change(name: str, dimension: str, finding: Mapping[str, Any],
 
 
 def _material_decision(editor, referees, history_blockers, formal_blockers, formal_summary,
-                       context: materiality.Context | None = None):
+                       context: materiality.Context | None = None,
+                       dropped_formal_technical: list[str] | None = None):
     if not referees:
         raise ValueError("A unified decision requires the configured referee reports")
+    if context is None and dropped_formal_technical is None:
+        accepting_panel = bool(referees) and {r.get("recommendation") for r in referees.values()} <= _ACCEPTING
+        formal_blockers, formal_summary, dropped_formal_technical = _accepting_formal_technical(
+            formal_blockers, formal_summary, accepting_panel)
     context = context or materiality_context(referees, formal_blockers=formal_blockers,
                                              history_blockers=history_blockers)
     reports = {"editor": editor, **referees}
@@ -2523,20 +2620,39 @@ def _material_decision(editor, referees, history_blockers, formal_blockers, form
     blocked = any(verdict.values()) or any(not item["advisory"] for item in unresolved)
     outcome = "revision_required" if blocked else "ready"
     action = ("evidence_remediation" if science else "text_revision") if outcome != "ready" else None
+    recommendation = "accept" if outcome == "ready" else None
+    direction = None
     categories = (formal_summary or {}).get("by_category", {})
     if formal_blockers:
-        outcome, action = "formal_check_blocked", "evidence_remediation"
+        outcome, action, recommendation = "formal_check_blocked", "evidence_remediation", None
         science.extend(categories.get("scientific", formal_blockers))
     if history_blockers:
-        outcome, action = "rejection_history_blocked", "evidence_remediation"
+        outcome, action, recommendation = "rejection_history_blocked", "evidence_remediation", None
         science.extend(history_blockers)
-    return dict(review_standard="materiality_v1", outcome=outcome, next_action=action, scientific_blockers=list(dict.fromkeys(science)),
-                required_changes=changes, dimension_repairs=verdict, unresolved_previous_items=unresolved,
-                raw_formal_blockers=formal_blockers or [], recommendation="accept" if outcome == "ready" else None,
-                referee_recommendations={name: r["recommendation"] for name, r in referees.items()},
-                technical_blockers=categories.get("technical", []),
-                source_routing_blockers=categories.get("source_routing", []),
-                preparation_blockers=categories.get("preparation", []))
+    if not formal_blockers and not history_blockers:
+        trigger = panel_rejection_direction(referees, blocked=blocked)
+        if trigger is not None:
+            outcome, action = "revision_required", "direction_decision"
+            recommendation = "reject" if trigger == "all_referees_reject" else "major_revision"
+            direction = rejection_direction_context(editor, referees, trigger=trigger)
+    result = dict(review_standard="materiality_v1", outcome=outcome, next_action=action,
+                  scientific_blockers=list(dict.fromkeys(science)),
+                  required_changes=changes, dimension_repairs=verdict, unresolved_previous_items=unresolved,
+                  raw_formal_blockers=formal_blockers or [], recommendation=recommendation,
+                  referee_recommendations={name: r["recommendation"] for name, r in referees.items()},
+                  technical_blockers=categories.get("technical", []),
+                  source_routing_blockers=categories.get("source_routing", []),
+                  preparation_blockers=categories.get("preparation", []))
+    if direction is not None:
+        result["direction_context"] = direction
+    if dropped_formal_technical:
+        result["formal_verifier_needs_rerun"] = list(dropped_formal_technical)
+        result["advisory_items"] = [
+            dict(referee="formal", change=message, location="Verification", advisory=True,
+                 downgrade_reason="formal_accepting_technical", needs_rerun=True)
+            for message in dropped_formal_technical
+        ]
+    return result
 
 
 def _merge_reports(editor, referees, history_blockers, *, previous_ids, formal_blockers, formal_summary):
@@ -2836,7 +2952,7 @@ def stall_basis(rounds: list[Mapping[str, Any]], referees: Mapping[str, Mapping[
     resolved; or two rounds have run since every referee first reached accept or minor.
     """
     current = blocking_count(merged)
-    if merged.get("outcome") != "revision_required" or current == 0:
+    if merged.get("outcome") != "revision_required" or merged.get("next_action") == "direction_decision" or current == 0:
         return None
     history = [r for r in rounds if isinstance(r.get("merged"), Mapping)]
     counts = [blocking_count(r["merged"]) for r in history[-2:]] + [current]
@@ -3498,6 +3614,8 @@ def _run_delta_review(paper_id: str, root: Path, run: Path, record: dict[str, An
         pre, formal_blockers, formal_summary = _formal_stage(pre, root, run, roles, config, pre["metadata"], record)
     merged = apply_review_track(_recorded_merge(science, history_blockers, formal_blockers=formal_blockers,
                                       formal_summary=formal_summary), science["referee_reports"], track)
+    if merged.get("formal_verifier_needs_rerun"):
+        record["formal_verifier_needs_rerun"] = list(merged["formal_verifier_needs_rerun"])
     if base.get("review_mode") == "resynthesize":
         previous_advice = base["merged"].get("advisory_items", [])
         advice = merged.setdefault("advisory_items", [])
@@ -4142,6 +4260,10 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
     merged = merge(editor, referees, history_blockers, formal_blockers=formal_blockers,
                    formal_summary=formal_summary, followup_items=record.get("followup_items"), reader_report=record["delivery_reader"], previous=previous,
                    changed_text=record.get("followup_changed_text"))
+    if merged.get("formal_verifier_needs_rerun"):
+        record["formal_verifier_needs_rerun"] = list(merged["formal_verifier_needs_rerun"])
+    remaining_formal = [] if merged.get("outcome") == "ready" else (
+        merged.get("raw_formal_blockers") if "raw_formal_blockers" in merged else formal_blockers)
     merged = apply_review_track(merged, referees, track)
     merged |= stalled_signal(rounds, referees, merged)
     if record.get("final_check"):
@@ -4149,11 +4271,11 @@ def _run_review(paper_id: str, *, root: Path, response_letter: str | Path | None
         # orchestrator decides the direction instead of opening another round.
         if merged.get("outcome") == "revision_required":
             merged |= {"stalled": True, "stalled_basis": "final ruling: must-fix items remain after the final check"}
-    elif not formal_blockers and not history_blockers and (
+    elif not remaining_formal and not history_blockers and (
             basis := stall_basis(rounds, referees, merged, record.get("followup_items"))) is not None:
         record["final_ruling_basis"] = basis
         merged = apply_final_ruling(merged, basis)
-    consumes_round = not ((formal_blockers or merged.get("technical_blockers")) and
+    consumes_round = not ((remaining_formal or merged.get("technical_blockers")) and
                           not merged["scientific_blockers"] and not history_blockers and
                           not any(not c.get("advisory") for c in merged["required_changes"]))
     reader = _reader_check_packet(paper_id, root, metadata)
@@ -4213,8 +4335,22 @@ def formal_precision(record: Mapping[str, Any]) -> bool:
     return (record.get("formal_precision") or {}).get("rule") == formal_checks.PRECISION_RULE
 
 
+def formal_accepting_technical(record: Mapping[str, Any]) -> bool:
+    """The decision passed on an accepting panel (all referees at minor revision or accept)
+    while formal-verifier technical failure(s) travelled as advice / needs-rerun."""
+    referees = record.get("referee_reports") or {}
+    recs = {r.get("recommendation") for r in referees.values() if isinstance(r, Mapping)}
+    return bool(record.get("formal_verifier_needs_rerun")) and bool(recs) and recs <= _ACCEPTING
+
+
 def _precision_kwargs(record: Mapping[str, Any]) -> dict[str, Any]:
-    return {"precision": True} if formal_precision(record) else {}
+    kwargs: dict[str, Any] = {}
+    if formal_precision(record):
+        kwargs["precision"] = True
+    if formal_accepting_technical(record):
+        kwargs["precision"] = True
+        kwargs["accepting"] = True
+    return kwargs
 
 
 def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: str) -> dict[str, Any]:
@@ -4284,10 +4420,12 @@ def apply_decision(paper_id: str, *, root: Path, decision_path: Path, digest: st
         release["review_mode"] = "resynthesize"
         release["resynthesis"] = record["resynthesis"]
     if (record.get("formal_check", {}).get("valid") is True or record.get("review_mode") == "resynthesize"
-            or (merged["outcome"] == "ready" and formal_precision(record))):
+            or (merged["outcome"] == "ready" and (formal_precision(record) or formal_accepting_technical(record)))):
         release["formal_check"] = record["formal_check"]
         if formal_precision(record):
             release["formal_precision"] = record["formal_precision"]
+        if formal_accepting_technical(record):
+            release["formal_verifier_needs_rerun"] = list(record["formal_verifier_needs_rerun"])
         access = record["formal_check"].get("unverifiable_source_access")
         if access:
             # Not manuscript defects; listed for manual or other-environment checking.
@@ -4375,11 +4513,15 @@ def delivery_issues(paper_id: str, metadata: Mapping[str, Any], root: Path,
         notes.extend({"kind": "review_suggestion", **change} for change in
                      ((record or {}).get("merged") or {}).get("required_changes", []) if change.get("advisory"))
         formal_summary = ((record or {}).get("formal_check") or {}).get("issue_summary") or {}
-        if formal_precision(record or {}):
+        if formal_precision(record or {}) or formal_accepting_technical(record or {}):
             formal_summary = formal_checks.precision_view(
-                formal_summary, formal_report_kinds((record or {}).get("formal_check"), root)) or {}
+                formal_summary, formal_report_kinds((record or {}).get("formal_check"), root),
+                accepting=formal_accepting_technical(record or {})) or {}
         notes.extend(dict(finding, kind="formal_suggestion") for finding in formal_summary.get("raw_findings", [])
                      if finding.get("category") == "advisory")
+        if formal_accepting_technical(record or {}):
+            notes.append({"kind": "formal_verifier_needs_rerun",
+                          "items": list((record or {}).get("formal_verifier_needs_rerun") or [])})
         access = ((record or {}).get("formal_check") or {}).get("unverifiable_source_access")
         if access:
             notes.append({"kind": "unverifiable_source_access", **dict(access)})
@@ -4523,7 +4665,8 @@ def validate_unified_release(paper_id: str, metadata: Mapping[str, Any], root: P
     else:
         archived = {}
         if fingerprints is not None:
-            if record.get("formal_check", {}).get("valid") is not True and not formal_precision(record):
+            if record.get("formal_check", {}).get("valid") is not True and not (
+                    formal_precision(record) or formal_accepting_technical(record)):
                 problems.append("Missing passing mandatory formal check")
             archived["archived_version"] = record["manuscript_version"]
         problems.extend(formal_checks.validate_binding(record.get("formal_check"), metadata, root,

@@ -122,3 +122,201 @@ def test_hard_error_list_is_narrow():
                             "preregistration_violation", "citation_nonexistent"}
     soft = m.normalize(finding(kind="citation_error_or_unsupported"), source="dimension", context=m.Context())
     assert not m.hard_error(soft)
+
+
+def _reject_report(rec="reject", *, significance="Insufficient advance over prior work.", **dims):
+    base = report(rec, **dims)
+    base["scores"] = {"clarity": 6, "soundness": 5, "significance": 3, "novelty": 3, "overall": 3}
+    base["significance"] = significance
+    base["novelty_and_context"] = "Incremental over prior studies."
+    return base
+
+
+def test_both_reject_or_reject_and_major_without_items_route_to_direction_decision():
+    ed = editor() | {"closest_prior_work": [{"work": "Lee 2023", "source": "reference_list",
+                                             "known_result": "Same design"}]}
+    # Both reject without concrete items: must route to direction_decision, never pass.
+    both = flow.merge(ed, {"referee_a": _reject_report("reject"),
+                           "referee_b": _reject_report("reject")})
+    assert both["outcome"] == "revision_required"
+    assert both["recommendation"] == "reject"
+    assert both["next_action"] == "direction_decision"
+    assert both["direction_context"]["trigger"] == "all_referees_reject"
+    assert both["direction_context"]["options"] == list(flow.DIRECTION_OPTIONS)
+    assert len(both["direction_context"]["referee_rejections"]) == 2
+    assert flow.stall_basis([], {}, both, None) is None
+
+    # Both reject WITH concrete items: still routes to direction_decision (same as old _merge_reports).
+    substantive = finding(repair="Redo the identification.", category="method_or_data", requests=["new_analysis"])
+    both_items = flow.merge(ed, {"referee_a": _reject_report("reject", science=[substantive]),
+                                 "referee_b": _reject_report("reject")})
+    assert both_items["outcome"] == "revision_required"
+    assert both_items["next_action"] == "direction_decision"
+    assert both_items["direction_context"]["trigger"] == "all_referees_reject"
+
+    # One reject + one major_revision with NO concrete blocking items (or wording only): direction_decision.
+    wording = [finding(category="wording", kind="advisory", reader_misconclusion="")]
+    split_strict = flow.merge(ed, {"referee_a": _reject_report("reject", readability=wording),
+                                   "referee_b": _reject_report("major_revision")})
+    assert split_strict["outcome"] == "revision_required"
+    assert split_strict["recommendation"] == "major_revision"
+    assert split_strict["next_action"] == "direction_decision"
+    assert split_strict["direction_context"]["trigger"] == "reject_and_major_without_items"
+    assert {r["recommendation"] for r in split_strict["direction_context"]["referee_rejections"]} == {
+        "reject", "major_revision"}
+
+    # One reject + one major_revision WITH a concrete substantive item: normal revision_required.
+    split_items = flow.merge(ed, {"referee_a": _reject_report("reject", science=[substantive]),
+                                  "referee_b": _reject_report("major_revision")})
+    assert split_items["outcome"] == "revision_required"
+    assert split_items["next_action"] == "evidence_remediation"
+    assert "direction_context" not in split_items
+
+    # Same rule in the follow-up protocol when all previous items are resolved and no new findings remain.
+    item = "[evidence] Add validation."
+    resolved = {"item": item, "resolved": True, "evidence": "Done.", "reader_misconclusion": "",
+                "kind": "advisory", "category": "body_claim", "requests": []}
+    fu_ed = {"review_standard": "materiality_v1", "decision": "send_to_review",
+             "previous_items": [resolved], "new_findings": []}
+    for recs, expected_trigger in ((("reject", "reject"), "all_referees_reject"),
+                                   (("reject", "major_revision"), "reject_and_major_without_items")):
+        fu_refs = {
+            "referee_a": {"recommendation": recs[0], "previous_items": [resolved], "new_findings": [],
+                          "significance": "Core claim remains unconvincing.", "scores": {"significance": 3, "novelty": 3, "overall": 3}},
+            "referee_b": {"recommendation": recs[1], "previous_items": [resolved], "new_findings": [],
+                          "significance": "Advance is too thin.", "scores": {"significance": 4, "novelty": 4, "overall": 4}},
+        }
+        merged = flow.merge(fu_ed, fu_refs, followup_items=[item])
+        assert merged["outcome"] == "revision_required"
+        assert merged["next_action"] == "direction_decision"
+        assert merged["direction_context"]["trigger"] == expected_trigger
+
+
+def test_formal_technical_failure_does_not_block_accepting_panel_but_reports_needs_rerun():
+    from paper_writing import formal_checks as fc
+
+    referees = {"referee_a": report("accept"), "referee_b": report("minor_revision")}
+    quote_err = "Quoted evidence is absent from source S1 at Crossref message.abstract"
+    key_err = "Evidence does not bind every claimed reference key"
+    raw = [
+        {"category": "technical", "root": "main:L39:abc", "location": "main:L39:abc:C1:k",
+         "message": quote_err, "aggregate": False, "reason": "", "status": None},
+        {"category": "technical", "root": "main:L41:def", "location": "main:L41:def:C0:m",
+         "message": key_err, "aggregate": False, "reason": "", "status": None},
+    ]
+    summary = fc.issue_summary(raw)
+
+    # First-round materiality_v1: pure technical failure -> ready, reported as advice/needs-rerun.
+    merged = flow.merge(editor(), referees, formal_blockers=[quote_err, key_err], formal_summary=summary)
+    assert merged["outcome"] == "ready" and merged["next_action"] is None
+    assert merged["formal_verifier_needs_rerun"] == [quote_err, key_err]
+    assert merged["technical_blockers"] == []
+    assert all(a["needs_rerun"] and a["downgrade_reason"] == "formal_accepting_technical"
+               for a in merged["advisory_items"])
+
+    # Follow-up protocol with by_category-only stage failure (e.g. missing evidence file / outage): ready.
+    stage_err = "Mandatory core-verification stage failed: Formal evidence file is missing"
+    stage_summary = {"by_category": {"scientific": [], "technical": [stage_err],
+                                     "source_routing": [], "preparation": []}}
+    fu_ed = {"review_standard": "materiality_v1", "decision": "send_to_review",
+             "previous_items": [], "new_findings": []}
+    fu_refs = {name: {"recommendation": rec, "previous_items": [], "new_findings": []}
+               for name, rec in (("referee_a", "accept"), ("referee_b", "accept"))}
+    fu_merged = flow.merge(fu_ed, fu_refs, formal_blockers=[stage_err],
+                           formal_summary=stage_summary, followup_items=[])
+    assert fu_merged["outcome"] == "ready" and fu_merged["next_action"] is None
+    assert fu_merged["formal_verifier_needs_rerun"] == [stage_err]
+    assert any(a.get("needs_rerun") and a["change"] == stage_err for a in fu_merged["advisory_items"])
+
+    # Mixed technical + verified manuscript error: scientific error STILL blocks.
+    sci_err = "main:L208:abc: error — the stated rate disagrees with Table 1"
+    mixed = fc.issue_summary([
+        *raw,
+        {"category": "scientific", "root": "main:L208:abc", "location": "main:L208:abc",
+         "message": sci_err, "aggregate": False, "reason": "wrong number", "status": "error"},
+    ])
+    blocked = flow.merge(editor(), referees, formal_blockers=[quote_err, sci_err], formal_summary=mixed)
+    assert blocked["outcome"] == "formal_check_blocked"
+    assert sci_err in blocked["scientific_blockers"]
+    assert blocked["formal_verifier_needs_rerun"] == [quote_err]
+
+    # Non-accepting panel (a referee at major_revision): technical failure still blocks.
+    strict = flow.merge(editor(), {"referee_a": report("major_revision"), "referee_b": report("accept")},
+                        formal_blockers=[quote_err], formal_summary=summary)
+    assert strict["outcome"] == "formal_check_blocked"
+    assert strict["technical_blockers"] == [quote_err, key_err]
+
+
+def test_formal_technical_needs_rerun_passes_apply_and_release_validation(tmp_path, monkeypatch):
+    import json
+    from paper_writing import formal_checks as fc
+    from test_formal_checks import ROLE, fixture_workspace, mock_http, simulated_runner
+
+    metadata = fixture_workspace(tmp_path)
+    metadata["target_journal"] = "J"
+    mock_http(monkeypatch)
+    run = tmp_path / "reviews/unified/p/20261126T000000Z"
+    run.mkdir(parents=True)
+
+    # Produce a real bound formal-check report whose ONLY blocker is a verifier technical quote slip.
+    def misquoting_runner(**kw):
+        out, receipt = simulated_runner(**kw)
+        if out["references"]:
+            out["references"][0]["evidence"][0]["quote"] = "paraphrased quote absent from source"
+            workdir = kw["workdir"]
+            raw_out = json.dumps(out, indent=2)
+            (workdir / "output.json").write_text(raw_out)
+            receipt["output_sha256"] = fc.sha(raw_out.encode())
+            (workdir / "receipt.json").write_text(json.dumps(receipt, indent=2))
+        return out, receipt
+
+    binding = fc.run_checks({"metadata": metadata}, tmp_path, run, ROLE, 1, misquoting_runner)
+    assert binding["valid"] is False
+    assert binding["issue_summary"]["by_category"]["technical"]
+    assert not binding["issue_summary"]["by_category"]["scientific"]
+
+    # Strict validation fails, accepting validation passes, and a real scientific error still fails both.
+    assert fc.validate_binding(binding, metadata, tmp_path, ROLE)
+    assert fc.validate_binding(binding, metadata, tmp_path, ROLE, precision=True, accepting=True) == []
+
+    # Wire into apply_decision + validate_unified_release + delivery_issues.
+    config = {"process": flow.PROCESS,
+              "roles": {"editor": ROLE, "referee_a": ROLE, "referee_b": dict(ROLE, model="other-model")},
+              "referee_roles": ["referee_a", "referee_b"], "rejection_clearance_required": True,
+              "max_rounds_per_target": 4, "previous_panels": []}
+    monkeypatch.setattr(flow, "review_config", lambda root: config)
+    written = []
+    monkeypatch.setattr(flow, "load_paper_metadata", lambda *args: metadata)
+    monkeypatch.setattr(flow, "write_paper_metadata", lambda pid, value, root: written.append(value))
+    from paper_writing import operations
+    monkeypatch.setattr(operations, "_review_workspace_fingerprints", lambda *args: {"manuscript_snapshot_sha256": "a" * 64})
+
+    ed = editor() | {"decision": "send_to_review", "desk_reject_category": "none"}
+    refs = {name: report("accept") | {"formal_check_assessment": {"coverage_complete": True, "omissions_or_errors": []}}
+            for name in ("referee_a", "referee_b")}
+    merged = flow.merge(ed, refs, formal_blockers=binding["blockers"], formal_summary=binding["issue_summary"])
+    assert merged["outcome"] == "ready"
+    record = {"paper_id": "p", "target_journal": metadata["target_journal"], "manuscript_version": str(metadata["version"]),
+              "finished_at": "2026-11-26T00:00:00Z", "round_for_target": 1,
+              "review_policy_sha256": flow.review_policy_sha256(config), "active_referee_roles": ["referee_a", "referee_b"],
+              "prior_decisions": [], "editor_screen": ed, "referee_reports": refs, "merged": merged,
+              "formal_check": binding, "formal_verifier_needs_rerun": merged["formal_verifier_needs_rerun"],
+              "fingerprints": {"manuscript_snapshot_sha256": "a" * 64}}
+    decision_path = run / "decision.json"
+    digest = flow._json_dump(decision_path, record)
+    release = flow.apply_decision("p", root=tmp_path, decision_path=decision_path, digest=digest)
+    assert release["status"] == "ready"
+    assert release["formal_verifier_needs_rerun"] == binding["blockers"]
+    metadata["writing_release"] = release
+    assert flow.validate_unified_release("p", metadata, tmp_path, "a" * 64) == []
+
+    # Stage exception (no report file path) also passes validate_binding on an accepting panel,
+    # while a fake non-technical empty summary is rejected.
+    stage_binding = {"valid": False, "schema": fc.VERSION,
+                     "issue_summary": {"by_category": {"scientific": [], "technical": ["stage outage"],
+                                                       "source_routing": [], "preparation": []}}}
+    assert fc.validate_binding(stage_binding, metadata, tmp_path, ROLE, precision=True, accepting=True) == []
+    bad_binding = {"valid": False, "schema": fc.VERSION,
+                   "issue_summary": {"by_category": {"scientific": ["real error"], "technical": ["stage outage"],
+                                                     "source_routing": [], "preparation": []}}}
+    assert fc.validate_binding(bad_binding, metadata, tmp_path, ROLE, precision=True, accepting=True)

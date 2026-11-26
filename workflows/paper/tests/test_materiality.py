@@ -141,6 +141,11 @@ def test_formal_and_presentation_rows():
     assert rule({"category": "scientific", "status": "error", "location": "L1"}, "formal", context) == "formal_precision"
     assert rule({"category": "scientific", "status": "error", "location": "L2"}, "formal", context) == "formal_material"
     assert rule({"category": "source_routing", "location": "k"}, "formal") == "formal_source_routing"
+    assert rule({"category": "technical", "location": "L1"}, "formal") == "formal_material"
+    assert rule({"category": "technical", "location": "L1"}, "formal",
+                m.Context(accepting=True)) == "formal_accepting_technical"
+    assert rule({"category": "scientific", "status": "error", "location": "L2"}, "formal",
+                m.Context(accepting=True)) == "formal_material"
     assert formal_checks.precision_finding({"category": "scientific", "status": "gap", "location": "x"})
     item = {"location": "Fig. 2", "repair": "Panel b disagrees with Table 2.", "category": "claim_or_data_mismatch",
             "blocking": True, "previous_item": 0}

@@ -77,6 +77,10 @@ references; do not omit or duplicate rows. The batch schema restricts IDs to the
 actual supplied objects. source_id is a source record's id, never its URL, DOI or
 bibliographic key. A web lookup does not register a new source ID. Mathematical
 reconstruction may use evidence=[]; do not insert an unbound web URL as evidence.
+For a citation row, every entry in evidence must use a source_id whose
+reference_keys includes that citation's key (or leave evidence=[] when verifying
+without a quote from that work's own source record); citing another reference's
+source_id causes a technical key-binding failure.
 For a directly reconstructed mathematical prerequisite, use evidence=[] rather
 than bibliographic metadata as proof evidence; metadata only identifies a work.
 For internal_derivation, original_locator must be exactly one manuscript passage

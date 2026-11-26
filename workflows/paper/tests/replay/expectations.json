@@ -35,9 +35,12 @@
   },
   {
    "decision": "20261119-quant-energy-nem-settlement-storage/20261123T110235Z",
-   "label": "NEM settlement R2: both referees at accept/minor, so the editor's open mechanism item is advice (UD-20261126-review-pass-two-minor); the formal verifier errors still hold the paper",
-   "outcome_not": "ready",
-   "items": [{"role": "editor", "kind": "previous", "contains": "Base the mechanism on variation of dispatch", "verdict": "advice"}]
+   "label": "NEM settlement R2: both referees at accept/minor; the editor's open mechanism item and the verifier's technical coverage failure are advice (UD-20261126-review-pass-two-minor), so the paper passes",
+   "outcome": "ready",
+   "items": [
+    {"role": "editor", "kind": "previous", "contains": "Base the mechanism on variation of dispatch", "verdict": "advice"},
+    {"role": "formal", "kind": "change", "contains": "Coverage/evidence verification failed", "verdict": "advice"}
+   ]
   }
  ]
 }
