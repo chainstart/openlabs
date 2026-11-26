@@ -24,8 +24,10 @@ its programme committee's standard and vocabulary in place of a journal's.
 Be concrete and honest. Your job is to catch, before submission, the reasons an editor at this
 journal would decline the paper.
 
-1. Restate the main contribution in at most two sentences of your own. If you cannot do so
-   from the title, abstract and introduction, the presentation fails: say so.
+1. Read the title and abstract alone first, as an editor screening the submission does, and
+   check that they let you say what problem the paper solves and for whom. If they do not,
+   the presentation fails: say so. Then restate the main contribution in at most two
+   sentences of your own, from the title, abstract and introduction.
 2. Identify the closest prior work (from the reference list and your own knowledge; say which)
    and state precisely what this paper adds under matching assumptions.
 3. Judge significance and readership for this journal specifically.
