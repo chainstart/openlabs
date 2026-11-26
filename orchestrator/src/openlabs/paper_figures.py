@@ -85,7 +85,7 @@ def check(paths, settings, paper_id, root):
 
 
 def rebuild_unbuilt(paths, settings, paper_id, root, audit):
-    """Render the PDFs a campaign draft lacks; return a fresh audit (or ``audit`` unchanged).
+    """Render a campaign draft's figures from its sources; return a fresh audit.
 
     A seat's built figure PDFs never reach the canonical campaign: ``.pdf`` is an
     artifact-only format, so the Stop hook moves them to the attempt's staging and the
@@ -98,8 +98,10 @@ def rebuild_unbuilt(paths, settings, paper_id, root, audit):
 
     if root is None or Path(root).resolve() == Path(paths.data).resolve():
         return audit
-    if not any(item.get("code") == "FIG-NOT-BUILT" for item in audit.get("blocking") or []):
-        return audit
+    # Every time, not only on FIG-NOT-BUILT: the Stop hook puts the canonical bytes of an
+    # existing PDF back, so after the writer changes a figure source the campaign keeps the
+    # previous render, and the review preflight's rebuild comparison then fails (NC trial
+    # 2026-11-26, round 2 of the ECG manuscript). A build is a few seconds.
     from .program_autonomy import DeliveryError, _run_paper_command
 
     try:

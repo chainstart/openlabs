@@ -229,6 +229,8 @@ def test_control_plane_renders_figures_a_campaign_draft_lacks(tmp_path, monkeypa
     calls.clear()
     assert paper_figures.rebuild_unbuilt(paths, settings, "p1", paths.data,
                                          {"blocking": [{"code": "FIG-NOT-BUILT"}]})["blocking"]
-    assert paper_figures.rebuild_unbuilt(paths, settings, "p1", draft, {"blocking": []}) == {
-        "blocking": []}
     assert calls == []
+    # A draft whose PDFs exist is rendered again too (a changed source keeps a stale PDF).
+    assert paper_figures.rebuild_unbuilt(paths, settings, "p1", draft, {"blocking": []})[
+        "rebuilt_by_control_plane"] is True
+    assert calls == [(str(draft), ["figures", "build", "p1", "--no-manifest"])]
