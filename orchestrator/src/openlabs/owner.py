@@ -3265,8 +3265,7 @@ def render_brief(
            "band."] if research.get("target_stage") == "nc_aim" else []),
         *([nc_grading.grade_note(grade)] if isinstance(
             grade := (topic or {}).get("venue_grade") or (state or {}).get("venue_grade"),
-            Mapping) and grade.get("point") in {nc_grading.POINT_PRE_WRITING,
-                                                nc_grading.POINT_RECHECK} else []),
+            Mapping) and grade.get("point") in nc_grading.GRADED_BEFORE_WRITING else []),
         f"- Budget: {used}/{maximum} Agent seconds used; this seat ends by "
         f"{deadline.strftime('%Y-%m-%d %H:%M')} UTC.",
         *(["- Compute now:", *queue] if (queue := compute_brief_lines(
