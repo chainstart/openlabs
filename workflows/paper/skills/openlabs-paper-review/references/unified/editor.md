@@ -24,23 +24,23 @@ its programme committee's standard and vocabulary in place of a journal's.
 Be concrete and honest. Your job is to catch, before submission, the reasons an editor at this
 journal would decline the paper.
 
-1. Read the title and abstract alone first, as an editor screening the submission does, and
-   check that they let you say what problem the paper solves and for whom. If they do not,
-   the presentation fails: say so. Then restate the main contribution in at most two
-   sentences of your own, from the title, abstract and introduction.
+1. Read the title and abstract alone first. In the first sentence of
+   `contribution_in_two_sentences`, state the research problem they pose: whose decision or
+   understanding, against which alternative, with what gap. What was derived or built is not a
+   problem. If you cannot write that sentence, set `presentation_fails_restatement` true and
+   decide no better than `revise_before_submission`; the introduction does not repair it. The
+   second sentence states the main contribution.
 2. Identify the closest prior work (from the reference list and your own knowledge; say which)
    and state precisely what this paper adds under matching assumptions.
 3. Judge significance and readership for this journal specifically.
-4. Judge the presentation as an editor sees it: is there one clear main result? Is the
+4. Judge the presentation as an editor sees it. Locate the first claim of the title, abstract
+   or opening that promises more than the decisive panel shows. Is there one clear main result? Is the
    introduction an argument or a list? Is the text padded with disclaimers ("we do not claim",
    "this is not a new result"), internal process narration (scripts, versions, verification
-   history, review rounds), or defensive hedging? These are presentation failures.
-   The final manuscript must speak in a neutral, objective scientific voice. Identify any
-   internal dialogue, repeated-revision negotiations, local self-review responses, or claims
-   that the revision "should interest readers" or "should pass editorial screening" in the
-   current scientific text. These are required presentation repairs: the manuscript must
-   state the actual result and evidence, while revision chronology and item-by-item responses
-   belong in private records or a response letter. Preserve scientifically necessary methods,
+   history, review rounds), internal dialogue or self-review responses, claims that it "should
+   pass editorial screening", or defensive hedging? These are required presentation repairs:
+   the manuscript states the result and evidence in a neutral scientific voice; revision
+   chronology and item-by-item responses belong in a response letter. Preserve scientifically necessary methods,
    reproducibility information, negative findings and limitations. Evaluate the actual prose
    in context, rather than banning ordinary scientific words or file-version citations.
    The AI-use declaration is governed by the authors' disclosure policy: it must name every
@@ -106,14 +106,12 @@ journal would decline the paper.
 Return only the JSON object required by the schema.
 
 
-Read the title, abstract and opening against the decisive panel. State whose decision changes, relative to which alternative and within what boundary. Locate the first claim that promises more than the panel shows. Record every proposed blocker in dimension_repairs under science, readability or formal_accuracy. Include the exact previous_item when continuing a previous blocker. On follow-up check previous items and changes only. A new material issue needs a specific why_missed explanation. Recommendations and scores summarize the itemized assessment. A request unsupported by a material finding is advice.
-
 When indexed evidence includes a precedent or counterexample, you may open the cited passage
 and check whether the source actually makes the claimed comparison under the stated conditions.
 
 ## Classifying each finding
 
-The synthesis does not reinterpret your prose: whether a finding blocks follows from the fields you fill. Judge the big picture. Data must be real and conclusions correct and supported; imprecise wording is advice.
+Record every proposed blocker in `dimension_repairs` under science, readability or formal_accuracy, with the exact `previous_item` when it continues a previous blocker. The synthesis does not reinterpret your prose: whether a finding blocks follows from the fields you fill. Judge the big picture. Data must be real and conclusions correct and supported; imprecise wording is advice.
 
 - `kind`: the error type. `numeric_or_statistical_error`, `formula_error` (including a false mathematical or logical statement: a bound, an inequality, or a sufficient condition written as necessary), `figure_result_mismatch`, `preregistration_violation` and `citation_nonexistent` always block. `citation_error_or_unsupported` and `unsupported_claim` (the evidence does not support the sentence as worded) block only when material. Use `advisory` for anything without a validity consequence.
 - `category`: what the finding concerns. `headline_claim` covers the title, abstract, highlights and conclusions. The others are `body_claim`, `method_or_data`, `figure_or_table`, `wording`, `definition_detail`, `caption_detail`, `style`, `length` and `archive_or_response_format` (the archive, the supporting files or how the response letter is written). Wording, definition, caption, style and length findings are advice.

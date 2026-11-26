@@ -25,7 +25,7 @@ EXPECTATIONS = Path(__file__).with_name("expectations.json")
 _NARRATIVE = {"summary", "correctness_findings", "novelty_and_context", "significance", "presentation",
               "evidence_consistency", "contribution_in_two_sentences", "closest_prior_work",
               "advance_over_prior_work", "significance_for_journal", "readership_for_journal",
-              "presentation_fails_restatement", "prior_rejections_addressed"}
+              "prior_rejections_addressed"}
 _QUOTED = re.compile(r"[“\"‘]([^”\"’]{12,600})[”\"’]")
 
 
@@ -69,7 +69,8 @@ def snapshot(record: Mapping[str, Any], root: Path, kinds: Mapping[str, str]) ->
         reader = {k: (("x" if str(v or "").strip() else "") if k in ("question", "comparison", "answer", "meaning",
                                                                       "supporting_panel") else v)
                   for k, v in reader.items() if k in ("question", "comparison", "answer", "meaning",
-                                                      "supporting_panel", "repairs", "image_errors")}
+                                                      "supporting_panel", "repairs", "image_errors",
+                                                      "question_stated_in_title_abstract")}
     inputs = {"editor_screen": slim(record.get("editor_screen")),
               "referee_reports": {n: slim(r) for n, r in (record.get("referee_reports") or {}).items()},
               "delivery_reader": reader}

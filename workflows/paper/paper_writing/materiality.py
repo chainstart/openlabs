@@ -254,6 +254,24 @@ def decide(raw: Mapping[str, Any] | Finding, *, source: str, context: Context, r
     raise AssertionError("the decision table ends with a catch-all rule")
 
 
+def question_finding(recall: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The delivery reader's cold read as a headline finding (pipeline slimming 2026-11-26).
+
+    ``question_stated_in_title_abstract.stated`` false: the title and abstract do not say what
+    problem the paper solves. It goes through the table like any reader repair (category
+    ``headline_claim`` with its reader misconclusion); a record without the field adds nothing.
+    """
+    cold = recall.get("question_stated_in_title_abstract")
+    if not isinstance(cold, Mapping) or cold.get("stated") is not False:
+        return []
+    quote = _text(cold.get("quote"))
+    return [{"repair": "State the research problem in the title and abstract: whose decision or "
+                       "understanding is at stake and what gap the paper closes.",
+             "category": "headline_claim", "requests": ["text_edit"], "in_changed_region": True,
+             "reader_misconclusion": "The reader does not know what problem the paper solves.",
+             "location": "Title and abstract" + (f': "{quote}"' if quote else "")}]
+
+
 # --------------------------------------------------------------------------- normalisation
 
 def _text(value: Any) -> str:

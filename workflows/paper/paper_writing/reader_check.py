@@ -208,6 +208,12 @@ def current_record(notes: Path, main_text_sha256: str | None = None) -> dict[str
     return data
 
 
+# The cold read (pipeline slimming 2026-11-26): the title and abstract alone state the problem.
+QUESTION_FIELD = "question_stated_in_title_abstract"
+QUESTION_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["stated", "quote"],
+                   "properties": {"stated": {"type": "boolean"}, "quote": _TEXT}}
+
+
 def delivery_packet(source: str) -> str:
     """Extract only reader-visible opening, captions and conclusion from expanded TeX."""
     import re
@@ -285,14 +291,18 @@ def delivery_read(source, images, role, workdir, timeout, previous=None, present
     from paper_writing.review_flow import DIMENSION_FINDING
 
     points = ["question", "comparison", "answer", "meaning", "supporting_panel"]
-    schema = {"type": "object", "additionalProperties": False, "required": points + ["repairs"],
-              "properties": {**{key: _TEXT for key in points},
+    schema = {"type": "object", "additionalProperties": False,
+              "required": points + [QUESTION_FIELD, "repairs"],
+              "properties": {**{key: _TEXT for key in points}, QUESTION_FIELD: QUESTION_SCHEMA,
                              "repairs": {"type": "array", "items": DIMENSION_FINDING}}}
     packet = delivery_packet(source)
     if previous is not None:
         packet += "\nPrevious blockers and changes:\n" + json.dumps(previous, ensure_ascii=False)
     system = ("Read the figures and captions, then the supplied text. Restate the question, "
-        "comparison, answer and meaning. Identify the supporting panel and state its uncertainty. "
+        "comparison, answer and meaning. In question_stated_in_title_abstract say whether the "
+        "title and abstract alone state the research problem (whose decision or understanding, "
+        "and the gap), quoting the sentence that states it; a derivation or method is not a "
+        "problem. Identify the supporting panel and state its uncertainty. "
         "For each repair state in reader_misconclusion the actual wrong conclusion a reader of the "
         "manuscript would draw, or leave it empty for advice. Give its kind (an error type, or advisory), "
         "its category and what it requests. Use headline_claim for the title, abstract, highlights and "

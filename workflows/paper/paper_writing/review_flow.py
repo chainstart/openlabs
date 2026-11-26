@@ -2543,6 +2543,10 @@ def _merge_reports(editor, referees, history_blockers, *, previous_ids, formal_b
         if previous_ids is not None:
             raise ValueError("Previous item IDs supplied twice")
         previous_ids, history_blockers = history_blockers, None
+    if editor.get("presentation_fails_restatement") is True and editor.get("decision") == "send_to_review":
+        # The editor could not state the research problem from the title and abstract
+        # (editor.md step 1; pipeline slimming 2026-11-26): no better than a presentation revision.
+        editor = {**editor, "decision": "revise_before_submission"}
     editor_figures = [dict(c, referee="editor", advisory=False, placement="main_text")
                       for c in editor.get("figure_changes", [])]
     if history_blockers:
@@ -3421,7 +3425,7 @@ def _merge_reader(merged, recall, previous=None, changed=None, context: material
     context = dataclasses.replace(
         context, followup=previous is not None, changed_text=changed,
         prior_items=frozenset(previous["items"]) if previous is not None else None)
-    for finding in recall["repairs"]:
+    for finding in [*recall["repairs"], *materiality.question_finding(recall)]:
         repair = finding["repair"]
         decision = materiality.decide(finding, source="reader", role="delivery_reader", context=context)
         change = dict(finding, type="narrative", referee="delivery_reader",
