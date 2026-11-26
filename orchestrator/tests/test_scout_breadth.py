@@ -12,11 +12,13 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 import test_nc_funnel as nc
 import test_parallel_program as parallel
 import test_quota_routing as routing
 import test_research_lines as lines_tests
 import test_research_program_flow as flow
+
 from openlabs import budget as budget_control
 from openlabs import nc_funnel, program_flow
 from openlabs.config import FunnelSettings, RunnerSpec, load_program_settings
@@ -26,7 +28,8 @@ from test_parallel_program import NOW
 
 LINES = ("engineering-vvuq", "astro-photometry")
 GEMINI = RunnerSpec("worker_gemini", "google-antigravity", "worker", "gemini-4-hydrogen-high",
-                    windows=("gemini-weekly",), overflow=True, task_classes=("review", "owner"))
+                    windows=("gemini-weekly",), overflow=True,
+                    task_classes=("review", "owner", "topic_scout"))
 RUNNERS = {**flow.RUNNERS, "worker_gemini": GEMINI}
 ROTATION = ("worker_gpt", "worker_gemini", "worker_claude")
 
@@ -176,6 +179,7 @@ def _route_settings():
 
 
 def test_router_takes_the_preferred_runner_even_an_overflow_one(tmp_path) -> None:
+    # Its task_classes list topic_scout (cc-sg since 2026-11-26); no exemption from them.
     paths, db = routing._setup(tmp_path)
     settings = _route_settings()
     routing._record(db, settings, "worker_gpt", {"seven_day": 0.1})
@@ -190,6 +194,32 @@ def test_router_takes_the_preferred_runner_even_an_overflow_one(tmp_path) -> Non
     _scout(db, paths, "s2", None)
     task, _router = routing._claim(db, settings)
     assert task["runner"] in {"worker_gpt", "worker_claude"}
+
+
+def test_preferred_runner_whose_task_classes_exclude_scouts_is_not_used(tmp_path) -> None:
+    paths, db = routing._setup(tmp_path)
+    review_only = replace(GEMINI, task_classes=("review", "owner"))
+    settings = replace(routing._settings(), runners={**routing.RUNNERS, "worker_gemini": review_only})
+    routing._record(db, settings, "worker_gpt", {"seven_day": 0.1})
+    routing._record(db, settings, "worker_claude", {"five_hour": 0.2, "seven_day": 0.2})
+    budget_control.record_quota_snapshot(db, settings, routing._snapshot(
+        "google-antigravity", GEMINI.model, {"gemini-weekly": 0.1}), runner="worker_gemini")
+    _scout(db, paths, "s1", "worker_gemini")
+    task, router = routing._claim(db, settings)
+    assert task["runner"] in {"worker_gpt", "worker_claude"}
+    assert router.decisions["s1"]["preferred_runner_unavailable"] == "worker_gemini"
+
+
+def test_runner_task_classes_may_list_a_task_type() -> None:
+    from openlabs.config import load_runner_specs
+
+    specs = load_runner_specs({"g": {"provider": "google-antigravity", "tier": "worker",
+                                     "task_classes": ["review", "topic_scout"]}})
+    assert specs["g"].accepts("ordinary", "topic_scout")
+    assert not specs["g"].accepts("ordinary", "research")
+    with pytest.raises(ValueError, match="task_classes"):
+        load_runner_specs({"g": {"provider": "google-antigravity", "tier": "worker",
+                                 "task_classes": ["topic_scot"]}})
 
 
 def test_router_falls_back_when_the_preferred_runner_is_out_of_quota(tmp_path) -> None:

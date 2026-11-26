@@ -1729,8 +1729,8 @@ class QuotaRouter:
         """The runner a scout packet asks for (``preferred_runner``), when configured.
 
         Not for an escalated task (``runner_request`` holding a tier): the escalation wins.
-        A preference may name a runner whose ``task_classes`` exclude the task (the Gemini
-        worker scouts this way): the control plane chose it on purpose.
+        The runner's ``task_classes`` still apply (cc-sg lists ``topic_scout`` for the Gemini
+        worker; UD-20261126-nc-floor-scout-breadth, revised 2026-11-26).
         """
 
         if str(task.get("task_type") or "") not in PREFERRED_RUNNER_TASK_TYPES:
@@ -2153,7 +2153,7 @@ class QuotaRouter:
         sticky = self._sticky_provider(task)
         if preferred is not None and preferred.family != excluded and (
             sticky is None or preferred.provider == sticky
-        ):
+        ) and preferred.accepts(klass, task_type):
             chosen = self._choose([preferred], klass, active_by_runner, manual=manual)
             if chosen is not None:
                 spec, state = chosen
@@ -2172,7 +2172,7 @@ class QuotaRouter:
                 for spec in self.settings.runners.values()
                 if spec.tier == level
                 and spec.family != excluded
-                and spec.accepts(klass)
+                and spec.accepts(klass, task_type)
                 and (sticky is None or spec.provider == sticky)
             ]
 

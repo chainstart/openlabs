@@ -617,7 +617,7 @@ class BudgetSettings:
 
 TIERS = ("lead", "worker", "light")
 # Task classes a runner may restrict itself to (``[runners.<name>].task_classes``); the
-# values ``budget.task_class`` returns.
+# values ``budget.task_class`` returns. A task type (``topic_scout``) may also be listed.
 TASK_CLASSES = ("ordinary", "review", "decision", "owner")
 # The Antigravity CLI (``agy``, Google): one login, several quota pools, and models of
 # three families. Its runners draw quota from this provider; their review independence
@@ -975,8 +975,11 @@ class RunnerSpec:
 
         return self.family_override or runner_family(self.provider, self.model)
 
-    def accepts(self, klass: str) -> bool:
-        return not self.task_classes or klass in self.task_classes
+    def accepts(self, klass: str, task_type: str = "") -> bool:
+        """``task_classes`` lists task classes and, narrower, task types (``topic_scout``)."""
+
+        return (not self.task_classes or klass in self.task_classes
+                or bool(task_type) and task_type in self.task_classes)
 
 
 @dataclass(frozen=True)
@@ -2034,11 +2037,12 @@ def load_runner_specs(payload: Any) -> dict[str, RunnerSpec]:
             raise ValueError(f"[runners.{name}].tier must be one of {TIERS}")
         model = str(raw.get("model") or "").strip() or None
         classes = _string_tuple(raw.get("task_classes"), ())
-        unknown = sorted(set(classes) - set(TASK_CLASSES))
+        task_types = {key for key in DEFAULT_TASK_TIERS if ":" not in key}
+        unknown = sorted(set(classes) - set(TASK_CLASSES) - task_types)
         if unknown:
             raise ValueError(
                 f"[runners.{name}].task_classes has unknown classes {unknown}; "
-                f"known: {list(TASK_CLASSES)}"
+                f"known: {list(TASK_CLASSES)} or a task type"
             )
         family = str(raw.get("family") or "").strip() or None
         specs[runner] = RunnerSpec(
