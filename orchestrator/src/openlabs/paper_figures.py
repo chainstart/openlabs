@@ -84,6 +84,33 @@ def check(paths, settings, paper_id, root):
                               "message": str(exc)}], "repair_required": []}
 
 
+def rebuild_unbuilt(paths, settings, paper_id, root, audit):
+    """Render the PDFs a campaign draft lacks; return a fresh audit (or ``audit`` unchanged).
+
+    A seat's built figure PDFs never reach the canonical campaign: ``.pdf`` is an
+    artifact-only format, so the Stop hook moves them to the attempt's staging and the
+    staging root is removed (NC trial 2026-11-26: every figure of the ECG manuscript was
+    FIG-NOT-BUILT right after the writer's figures check passed in its seat, and the
+    owner's rebuild would have been stripped the same way). The sources are in the
+    campaign, so the control plane renders them there (``--no-manifest``: the binding in
+    production/figure-artifacts.json is the writer's); the PDFs stay untracked.
+    """
+
+    if root is None or Path(root).resolve() == Path(paths.data).resolve():
+        return audit
+    if not any(item.get("code") == "FIG-NOT-BUILT" for item in audit.get("blocking") or []):
+        return audit
+    from .program_autonomy import DeliveryError, _run_paper_command
+
+    try:
+        _run_paper_command(replace(paths, data=root), settings,
+                           ["figures", "build", paper_id, "--no-manifest"],
+                           accept=(0, 1), timeout=900)
+    except DeliveryError as exc:
+        return {**audit, "rebuild_error": str(exc)}
+    return {**check(paths, settings, paper_id, root), "rebuilt_by_control_plane": True}
+
+
 def figure_runner(settings):
     """Runner of the figure seats: ``figure_runner``, else ``writing_runner``; None if unset.
 

@@ -199,3 +199,36 @@ def test_a_phase_a_stop_on_the_calibration_match_is_judged_not_invalid(tmp_path)
     verdict = nc_funnel.evaluate_prescreen(result, settings, set())
     assert verdict["status"] == "fail" and verdict["reason"] == nc_funnel.BAND_REJECTION
     assert verdict["expected_band"] == "zone_2" and "N4-z2" in verdict["why"]
+
+
+def test_control_plane_renders_figures_a_campaign_draft_lacks(tmp_path, monkeypatch) -> None:
+    from openlabs import paper_figures, program_autonomy
+
+    paths = flow._paths(tmp_path)
+    draft = tmp_path / "campaign"
+    draft.mkdir()
+    calls = []
+    built = {"done": False}
+
+    def run(p, settings, arguments, **kwargs):
+        calls.append((str(p.data), arguments))
+        if arguments[:2] == ["figures", "build"]:
+            built["done"] = True
+        return {}
+
+    def check(p, settings, paper_id, root):
+        return {"blocking": [] if built["done"] else [{"code": "FIG-NOT-BUILT", "figure": "f"}]}
+
+    monkeypatch.setattr(program_autonomy, "_run_paper_command", run)
+    monkeypatch.setattr(paper_figures, "check", check)
+    settings = flow._settings()
+    audit = paper_figures.rebuild_unbuilt(paths, settings, "p1", draft, check(paths, settings, "p1", draft))
+    assert audit["blocking"] == [] and audit["rebuilt_by_control_plane"] is True
+    assert calls == [(str(draft), ["figures", "build", "p1", "--no-manifest"])]
+    # The shared data repository and an audit without FIG-NOT-BUILT are left alone.
+    calls.clear()
+    assert paper_figures.rebuild_unbuilt(paths, settings, "p1", paths.data,
+                                         {"blocking": [{"code": "FIG-NOT-BUILT"}]})["blocking"]
+    assert paper_figures.rebuild_unbuilt(paths, settings, "p1", draft, {"blocking": []}) == {
+        "blocking": []}
+    assert calls == []

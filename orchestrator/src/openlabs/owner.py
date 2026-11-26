@@ -1815,6 +1815,7 @@ def _figure_gate(db, paths, settings, report, *, task, packet, result_path, stat
         return False
     campaign_id = str(task["campaign_id"])
     audit = paper_figures.check(paths, settings, paper_id, root) if root is not None else {}
+    audit = paper_figures.rebuild_unbuilt(paths, settings, paper_id, root, audit)
     issues = ([item for item in audit.get("blocking", []) if item["code"] in {
         "FIG-NO-SOURCE", "FIG-NOT-BUILT", "FIG-REBUILD-FAILED", "FIG-UNREADABLE", "FIG-CHECK-FAILED"}] if root is not None else
               [{"figure": "manuscript", "code": "FIG-DRAFT-MISSING",
