@@ -122,7 +122,7 @@ def test_refusals_are_rejections(subject, body):
 
 
 @pytest.mark.parametrize(("subject", "body"), [
-    # SIAM receipt (UID 1593404205): neither "cannot accept electronic files" nor "should it be accepted".
+    # SIAM receipt (UID 1593404188): neither "cannot accept electronic files" nor "should it be accepted".
     ("SISYN manuscript #M100001; receipt of new submission",
      "Please prepare the following items, should you be asked to revise your paper, or should it be accepted for "
      "publication. If your paper is accepted for publication, SIAM will ask for a LaTeX file. Note that SIAM "
