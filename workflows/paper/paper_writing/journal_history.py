@@ -282,6 +282,7 @@ def refresh_history(root: Path, papers: list[dict[str, Any]], *, source: str,
             events = [e for e in paper.get("submission_events", [])
                       if e.get("attempt_id") == aid and is_rejection_event(e)]
             archived_decision_at = None
+            fallback_at = attempt.get("closed_at")
             if attempt["status"] == "closed":
                 # Archived after the decision (freeze, 2026-11-26): a rejection before the archive
                 # still counts -- the last decision that held, as submission_status reads it.
@@ -297,6 +298,10 @@ def refresh_history(root: Path, papers: list[dict[str, Any]], *, source: str,
                 if archives:
                     last = max(archives, key=lambda e: (str(e.get("occurred_at") or ""), str(e.get("created_at") or "")))
                     archived_decision_at = (last.get("payload") or {}).get("decision_at")
+                # Without a rejection event (``decision_received -> rejected``) the row stays
+                # management_status_only, dated by the decision, not by the archive.
+                fallback_at = (archived_decision_at if _instant(archived_decision_at)
+                               else decision.get("occurred_at") or fallback_at)
             elif attempt["status"] != "rejected":
                 continue
             # The latest rejection; at the same time the journal's own ``rejected`` event over a
@@ -309,7 +314,8 @@ def refresh_history(root: Path, papers: list[dict[str, Any]], *, source: str,
             row = {"attempt_id": aid, "paper_id": pid, "title": paper.get("title", ""),
                    "journal": name, "venue_type": venue_type_for(name),
                    "manuscript_number": attempt.get("manuscript_number") or "",
-                   "rejected_at": rejected_at(event, attempt, archived_decision_at=archived_decision_at) if event else str(attempt.get("closed_at") or ""),
+                   "rejected_at": (rejected_at(event, attempt, archived_decision_at=archived_decision_at) if event
+                                   else str(fallback_at or "")),
                    "submitted_at": attempt.get("submitted_at") or "",
                    "reason_summary": reason, "source_event_id": event.get("id") or "",
                    "evidence_level": "decision_event" if event else "management_status_only",

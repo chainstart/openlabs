@@ -234,3 +234,19 @@ def test_import_time_does_not_replace_the_recorded_decision_date(root):
     ]
     refresh_history(root, [p, q], source="test")
     assert (_row(root, b)["rejected_at"], _row(root, b)["source_event_id"]) == ("2026-09-02T20:30:32+08:00", "letter")
+
+
+def test_archived_attempt_without_a_rejection_event_is_dated_by_its_decision(root):
+    # 20260309aillm0004 IJMLC: rejected by a decision_received event (no letter on the site),
+    # then archived by the freeze; the row stays management_status_only at the decision time.
+    p = paper("ijmlc", "International Journal of Machine Learning and Cybernetics", status="closed")
+    a = "attempt-ijmlc"
+    p["submission_attempts"][0]["closed_at"] = "2026-11-26T18:00:00+08:00"
+    p["submission_events"] = [
+        _event("d", a, "decision_received", "submitted", "rejected", "2026-11-09T18:57:46+08:00"),
+        _event("c", a, "status_corrected", "rejected", "closed", "2026-11-26T18:00:00+08:00",
+               source_submission_status="abandoned"),
+    ]
+    refresh_history(root, [p], source="test")
+    row = _row(root, a)
+    assert (row["rejected_at"], row["evidence_level"]) == ("2026-11-09T18:57:46+08:00", "management_status_only")
