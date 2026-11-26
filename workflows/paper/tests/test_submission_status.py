@@ -1,6 +1,7 @@
 """The registry follows the management site's submission status (2026-11-26). Synthetic fixtures."""
 from __future__ import annotations
 
+import pytest
 import yaml
 
 from paper_writing import submission_status
@@ -64,6 +65,29 @@ def test_rejection_moves_the_block_to_history_and_closed_keeps_the_decision(tmp_
         "rejected", "closed", "2026-12-01T09:00:00+08:00")
     assert external["manuscript_number"] == "SA-D-26-1"
     assert external["history"][0]["status"] == "submitted"
+
+
+@pytest.mark.parametrize("closing_from", ["rejected", None])
+def test_closed_attempt_keeps_the_corrected_decision_not_the_first(tmp_path, closing_from):
+    """20260907 hypercube (2026-11-26): a misread ``accepted`` letter, corrected to ``rejected``
+    (the correction keeps the letter's ``occurred_at``), then archived as ``closed``. The
+    registry was written back as accepted from the first decision event."""
+    path = _registry(tmp_path, "p", {})
+    closed = dict(SUBMITTED, status="closed", manuscript_number="SA-D-26-1", closed_at="2026-12-20T00:00:00+08:00")
+    letter = "2026-11-26T12:05:37+08:00"
+    events = [
+        {"attempt_id": "a1", "event_type": "accepted", "from_status": "submitted", "to_status": "accepted",
+         "occurred_at": letter, "created_at": "2026-11-26T12:06:31+08:00"},
+        {"attempt_id": "a1", "event_type": "status_corrected", "from_status": "accepted", "to_status": "rejected",
+         "occurred_at": letter, "created_at": "2026-11-26T14:29:18+08:00"},
+        {"attempt_id": "a1", "event_type": "status_corrected", "from_status": closing_from, "to_status": "closed",
+         "occurred_at": "2026-11-26T15:00:00+08:00", "created_at": "2026-11-26T15:00:01+08:00"},
+        {"attempt_id": "other", "event_type": "accepted", "to_status": "accepted", "occurred_at": "2026-11-27T00:00:00+08:00"},
+    ]
+    for order in (events, events[::-1]):
+        submission_status.reconcile(tmp_path, [_site("p", closed, events=order)], apply=True)
+        external = yaml.safe_load(path.read_text())["external_submission"]
+        assert (external["status"], external["site_status"]) == ("rejected", "closed")
 
 
 def test_latest_attempt_by_number_and_preparing_is_not_a_submission(tmp_path):
