@@ -237,6 +237,9 @@ def provider_pace(router: budget_control.QuotaRouter) -> dict[str, dict[str, Any
     be left over); ``over`` -- some window would pass that ceiling, or ordinary
     work is held at the pace line now; ``on_pace`` otherwise. ``unknown``
     without a usable reading, ``unavailable`` in backoff or at a final ceiling.
+    Under an active manual quota override (no pacing) the forecast is not used:
+    ``under`` while more than ``PACE_MARGIN`` is left below the override ceiling,
+    ``on_pace`` closer than that, ``unavailable`` once it is reached.
     """
 
     result: dict[str, dict[str, Any]] = {}
@@ -258,7 +261,20 @@ def provider_pace(router: budget_control.QuotaRouter) -> dict[str, dict[str, Any
         elif not state.usable:
             signal = "unavailable" if state.reason != "pace" else "over"
             reason = state.reason
-        elif state.state == "unknown" or not gaps:
+        elif state.state == "unknown":
+            signal = "unknown"
+            reason = state.reason or "no_projection"
+        elif state.override is not None:
+            # A manual override lifts the pace: only the override ceiling stops
+            # work, so the pace forecast (projected use at reset) does not apply.
+            # Judge by the room left below that ceiling instead.
+            if state.headroom is None:
+                signal, reason = "unknown", "no_headroom_reading"
+            elif state.headroom > PACE_MARGIN:
+                signal, reason = "under", "override_room_below_ceiling"
+            else:
+                signal, reason = "on_pace", "override_near_ceiling"
+        elif not gaps:
             signal = "unknown"
             reason = state.reason or "no_projection"
         elif min(gaps) < 0:
