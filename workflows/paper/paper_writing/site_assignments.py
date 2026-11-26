@@ -14,14 +14,19 @@ endpoint ``POST /v1/papers/<id>/assignments`` (the previous row is kept, ``activ
 * a ``可投稿`` paper without a real assignee gets one: the recorded original submitter first
   (placeholder notes, the 2026-11-23 park receipts, the site's assignment history), else the
   paper's second author;
-* papers with submission attempts, or past the pre-submission lifecycle (submitted, under
-  review, accepted, published, closed), are never touched;
+* papers with a submission attempt still in progress, or past the pre-submission lifecycle
+  (submitted, under review, accepted, published, closed), are never touched; a paper whose
+  latest attempt has ended (rejected, withdrawn, closed) and that is back before submission --
+  retargeted after a rejection -- follows the same rule as one never submitted (2026-11-26:
+  20260414aiuncertainty0002 and 20260415aiuncertainty0004, rejected by PRICAI in August, kept
+  their submitters while "考虑中");
 * papers under a manual-assignment hold are never touched either (2026-11-24, user: "撤回3篇论文
   中的投稿负责人（将负责人从王琪盛改为未分配）"): the submitter is chosen by a person. The hold is
   the registry field ``manual_assignment: {hold: true, ...}`` or, should the shared data checkout
   lag, an active site assignment whose notes carry ``manual_assignment=hold``.
 
-``可投稿`` means: lifecycle ``backlog|assigned|ready_to_submit``, no submission attempt, the
+``可投稿`` means: lifecycle ``backlog|assigned|ready_to_submit``, no submission attempt in
+progress, the
 site's ``readiness.ready_for_submission`` true, no held/recalled marker, a current package in
 status ``ready`` -- and, when the registry has the paper, its ``writing_release`` is ready
 and its version is the delivered package's version (a revision in progress rolls it back
@@ -46,6 +51,8 @@ from paper_writing.deliverable import openlabs_module, registry_ready, second_au
 SCHEMA = "openlabs.site_assignment_sync.v1"
 MARKER = "[openlabs-site-assignment]"
 PRE_SUBMISSION_LIFECYCLES = frozenset({"backlog", "assigned", "ready_to_submit"})
+# A latest attempt in one of these has ended: the paper may be prepared for another venue.
+ENDED_ATTEMPTS = frozenset({"rejected", "withdrawn", "closed"})
 NOT_READY_REVISION = frozenset({"draft", "blocked", "revision_required"})
 HELD_SUBMISSION = frozenset({"on_hold", "abandoned", "withdrawn"})
 PARK_RECEIPT_GLOB = "SUBMITTER-HIDE-site-receipt-*.json"
@@ -75,13 +82,27 @@ def _settings_authors(root: Path) -> list[Mapping[str, Any]]:
     return [item for item in authors or [] if isinstance(item, Mapping)]
 
 
+def latest_attempt(paper: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The paper's latest submission attempt (by attempt number, not by clock)."""
+
+    def number(attempt: Mapping[str, Any]) -> int:
+        try:
+            return int(attempt.get("attempt_no") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    attempts = [a for a in paper.get("submission_attempts") or [] if isinstance(a, Mapping)]
+    return max(attempts, key=number) if attempts else None
+
+
 def classify(paper: Mapping[str, Any],
              registry: Mapping[str, Any] | None) -> tuple[str, list[str]]:
     """``(untouched|ready|not_ready, reasons)`` for one site paper."""
 
     lifecycle = str(paper.get("lifecycle_status") or "")
-    if paper.get("submission_attempts"):
-        return "untouched", [f"has submission attempts (lifecycle {lifecycle})"]
+    attempt = latest_attempt(paper)
+    if attempt is not None and str(attempt.get("status") or "") not in ENDED_ATTEMPTS:
+        return "untouched", [f"submission attempt {attempt.get('status')} (lifecycle {lifecycle})"]
     if lifecycle not in PRE_SUBMISSION_LIFECYCLES:
         return "untouched", [f"lifecycle {lifecycle} is past pre-submission"]
     reasons: list[str] = []

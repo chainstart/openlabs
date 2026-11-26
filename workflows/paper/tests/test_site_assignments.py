@@ -292,3 +292,33 @@ def test_released_hold_assigns_the_named_submitter_not_the_withdrawn_one(repo: P
     site = FakeSite({PAPER: _paper(lifecycle="ready_to_submit", assignments=copy.deepcopy(parked))})
     entry = sync_site_assignments(site, root=repo)["papers"][0]
     assert entry["action"] == "assign" and entry["target"]["submitter_id"] == OTHER
+
+
+# 2026-11-26: a paper rejected and back before submission (retargeted) was left out of the rule
+# because it "has submission attempts" (20260414aiuncertainty0002, 20260415aiuncertainty0004).
+REJECTED = {"id": "a1", "attempt_no": 1, "status": "rejected", "journal_name": "PRICAI 2026"}
+
+
+def test_rejected_and_not_ready_paper_loses_its_submitter(repo: Path) -> None:
+    site = FakeSite({PAPER: _paper(ready=False, attempts=[REJECTED])})
+    result = sync_site_assignments(site, root=repo, apply=True)
+    entry = result["papers"][0]
+    assert entry["state"] == "not_ready" and entry["action"] == "park"
+    assert _active(site) == [ADMIN]
+
+
+def test_rejected_and_retargeted_ready_paper_gets_a_submitter(repo: Path) -> None:
+    site = FakeSite({PAPER: _paper(lifecycle="ready_to_submit", attempts=[REJECTED], assignments=[])})
+    result = sync_site_assignments(site, root=repo, paper_ids=[PAPER], apply=True)
+    assert result["papers"][0]["action"] == "assign" and _active(site) == [SECOND]
+
+
+@pytest.mark.parametrize("attempts", [
+    [REJECTED, {"id": "a2", "attempt_no": 2, "status": "preparing"}],
+    [REJECTED, {"id": "a2", "attempt_no": 2, "status": "revision_preparing"}],
+    [{"id": "a1", "attempt_no": 1, "status": "resubmitted"}],
+])
+def test_a_later_attempt_in_progress_is_never_touched(repo: Path, attempts: list) -> None:
+    site = FakeSite({PAPER: _paper(ready=False, attempts=attempts)})
+    result = sync_site_assignments(site, root=repo, paper_ids=[PAPER], apply=True)
+    assert result["papers"][0]["state"] == "untouched" and site.posts == []
