@@ -77,16 +77,47 @@ STAGE_EFFECTS: tuple[dict[str, str], ...] = (
 )
 
 
+# Standard-library-only modules of the orchestrator package that paper_writing reads.
+PURE_OPENLABS_MODULES = frozenset({"holds", "delivery_facts"})
+
+
 def openlabs_module(name: str):
     """A pure module of the orchestrator package (openlabs.holds, openlabs.delivery_facts),
-    importable from this checkout without the orchestrator's dependencies."""
+    importable from this checkout without the orchestrator's dependencies.
+
+    The paper-writing environment does not put ``orchestrator/src`` on the path. Appending it
+    and importing ``openlabs.<name>`` was not enough (2026-11-26): from a working directory that
+    holds the code checkout as ``openlabs/`` (``/workspace/openlabs``) Python had already bound
+    ``openlabs`` to that directory as a namespace package, so ``openlabs.holds`` was not found
+    and the site-assignment sync after an upload failed. The file is now loaded from this
+    checkout by path when the package import does not provide it.
+    """
+    if name not in PURE_OPENLABS_MODULES:
+        raise ValueError(f"openlabs.{name} is not a pure orchestrator module")
+    import importlib
+    import importlib.util
+
     try:
-        return __import__(f"openlabs.{name}", fromlist=[name])
+        module = importlib.import_module(f"openlabs.{name}")
     except ImportError:
-        source = str(Path(__file__).resolve().parents[3] / "orchestrator" / "src")
-        if source not in sys.path:
-            sys.path.append(source)
-        return __import__(f"openlabs.{name}", fromlist=[name])
+        module = None
+    if module is not None and getattr(module, "__file__", None):
+        return module
+    key = f"paper_writing._openlabs_{name}"
+    if key in sys.modules:
+        return sys.modules[key]
+    path = Path(__file__).resolve().parents[3] / "orchestrator" / "src" / "openlabs" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(key, path)
+    if spec is None or spec.loader is None or not path.is_file():
+        raise ImportError(f"openlabs.{name} is missing from this checkout: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[key] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(key, None)
+        raise
+    return module
 
 
 def delivered(metadata: Mapping[str, Any] | None, root: str | Path, paper_id: str) -> bool:
