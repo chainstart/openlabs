@@ -161,10 +161,46 @@ def test_table_wins_over_legacy_keys_with_a_warning() -> None:
 @pytest.mark.parametrize("bad", [
     {"a": {"mode": "paused"}}, {"a": {"slots": -1}}, {"a": {"slots": True}},
     {"a": {"nc_aim": "no"}}, {"a": {"seats": 1}}, {"a": "full"}, ["a"],
+    {"a": {"admission_min_band": "zone_9"}}, {"a": {"admission_min_band": ""}},
+    {"a": {"admission_min_band": 2}}, {"a": {"admission_min_band": True}},
 ])
 def test_table_rejects_nonsense(bad) -> None:
     with pytest.raises(ValueError, match="program.lines"):
         load_program_settings({"lines": bad})
+
+
+def test_per_line_admission_min_band_override_and_fallback() -> None:
+    raw = tomllib.loads("""
+polish_mode = true
+[funnel]
+admission_min_band = "zone_1"
+[lines.ml-evaluation-protocols]
+mode = "full"
+slots = 2
+admission_min_band = "zone_2"
+[lines.open-nc-directions]
+mode = "full"
+slots = 1
+""")
+    settings = load_program_settings(raw)
+    assert settings.line("ml-evaluation-protocols") == LineSettings(
+        mode="full", slots=2, nc_aim=True, admission_min_band="zone_2"
+    )
+    assert settings.line("open-nc-directions") == LineSettings(
+        mode="full", slots=1, nc_aim=True, admission_min_band=None
+    )
+    assert settings.admission_min_band("ml-evaluation-protocols") == "zone_2"
+    assert settings.admission_min_band("open-nc-directions") == "zone_1"
+    assert settings.admission_min_band("unlisted-line") == "zone_1"
+    assert settings.admission_min_band(None) == "zone_1"
+
+    strict = load_program_settings({
+        "funnel": {"admission_min_band": "nc"},
+        "lines": {"old": {"mode": "full", "admission_min_band": "zone_2"},
+                  "open": {"mode": "full"}},
+    })
+    assert strict.admission_min_band("old") == "zone_2"
+    assert strict.admission_min_band("open") == "nc"
 
 
 def test_tick_reports_the_conversion_warning(tmp_path, monkeypatch) -> None:

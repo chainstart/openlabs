@@ -635,3 +635,157 @@ def test_scout_guidance_steers_away_from_audits_and_requires_nc_framing():
         assert "diverse fields" in low or "distinct fields" in low
         assert "needs_registration" in text
 
+
+def test_per_line_admission_floor_in_prescreen_admission_instructions_and_metrics(tmp_path):
+    base = flow._settings()
+    settings = replace(
+        base,
+        program=replace(
+            base.program,
+            funnel=FunnelSettings(admission_min_band="nc"),
+            lines={
+                "established": LineSettings(mode="full", slots=2, admission_min_band="zone_2"),
+                "open-line": LineSettings(mode="full", slots=1),
+            },
+        ),
+    )
+    assert nc_funnel.admission_min_band(settings, "established") == "zone_2"
+    assert nc_funnel.admission_min_band(settings, "open-line") == "nc"
+    assert nc_funnel.admission_min_band(settings, "unlisted") == "nc"
+
+    # Card L1 screen records the line's effective floor.
+    card_est = _nc_card(0, research_line="established")
+    card_open = _nc_card(1, research_line="open-line")
+    _, _, extra_est = nc_funnel.screen_card(settings, card_est, {}, {"topics": []}, "nc_aim")
+    _, _, extra_open = nc_funnel.screen_card(settings, card_open, {}, {"topics": []}, "nc_aim")
+    assert extra_est["nc_screen"]["admission_min_band"] == "zone_2"
+    assert extra_open["nc_screen"]["admission_min_band"] == "nc"
+
+    # Prescreen calibration cap and final band check use the line's effective floor.
+    zone2, digest = _prescreen_result(tmp_path / "k.json", match="zone_2", band="zone_2")
+    verdict_est = nc_funnel.evaluate_prescreen(zone2, settings, {digest}, line="established")
+    assert verdict_est["status"] == "pass" and verdict_est["expected_band"] == "zone_2"
+    assert verdict_est["admission_min_band"] == "zone_2"
+    verdict_open = nc_funnel.evaluate_prescreen(zone2, settings, {digest}, line="open-line")
+    assert verdict_open["status"] == "fail" and verdict_open["reason"] == nc_funnel.BAND_REJECTION
+    assert "below the admission floor nc" in verdict_open["why"]
+
+    # Zone 3-4 still fails Phase A on a zone_2 line (without needing a kill test).
+    zone34 = {**zone2, "calibration_match": "zones_3_4", "kill_test": {"ran": False}}
+    verdict_low = nc_funnel.evaluate_prescreen(zone34, settings, set(), line="established")
+    assert verdict_low["status"] == "fail" and verdict_low["reason"] == nc_funnel.BAND_REJECTION
+    assert "below the admission floor zone_2" in verdict_low["why"]
+
+    # Kill-test downgrade: zone_1 -> zone_2 passes on zone_2 line; zone_2 -> zones_3_4 fails.
+    z1_null, digest = _prescreen_result(tmp_path / "k2.json", match="zone_1", band="zone_1",
+                                        null=0.6)
+    v_z1_null = nc_funnel.evaluate_prescreen(z1_null, settings, {digest}, line="established")
+    assert v_z1_null["status"] == "pass" and v_z1_null["expected_band"] == "zone_2"
+    z2_null, digest = _prescreen_result(tmp_path / "k3.json", match="zone_2", band="zone_2",
+                                        null=0.6)
+    v_z2_null = nc_funnel.evaluate_prescreen(z2_null, settings, {digest}, line="established")
+    assert v_z2_null["status"] == "fail" and v_z2_null["reason"] == nc_funnel.BAND_REJECTION
+    assert "below the admission floor zone_2" in v_z2_null["why"]
+
+    # Admission check honors the line's effective floor.
+    ps_z2 = {"status": "pass", "expected_band": "zone_2", "calibration_match": "zone_2"}
+    assert nc_funnel.admission_problems({"novelty_search": _novelty()}, settings, ps_z2,
+                                        line="established") == []
+    gaps_open = nc_funnel.admission_problems({"novelty_search": _novelty()}, settings, ps_z2,
+                                             line="open-line")
+    assert gaps_open and "below the admission floor nc" in gaps_open[0]
+
+    # Instructions reflect each line's effective floor.
+    assert "Admission floor: zone_2" in nc_funnel.scout_floor_instruction(settings, "established")
+    assert "Admission floor: nc" in nc_funnel.scout_floor_instruction(settings, "open-line")
+    est_scout = nc_funnel.scout_instruction(settings, "established")
+    assert "line admission floor zone_2" in est_scout
+    assert "topics aim high" in est_scout
+    assert "would publish in NC" not in est_scout
+    assert nc_funnel.scout_instruction(settings, "open-line") == nc_funnel.SCOUT_INSTRUCTION
+    assert "Effective admission floor: zone_2" in nc_funnel.admission_instruction(
+        settings, "established")
+    assert "Effective admission floor: nc" in nc_funnel.admission_instruction(
+        settings, "open-line")
+
+    # Metrics expose global floor, configured line_floors, and per-line effective floor.
+    stamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    doc = {"topics": [_rejected(0, stamp, line="established"),
+                      _rejected(1, stamp, line="open-line")]}
+    report = nc_funnel.metrics(doc, settings)
+    assert report["admission_min_band"] == "nc"
+    assert report["line_floors"] == {"established": "zone_2", "open-line": "nc"}
+    assert report["lines"]["established"]["admission_min_band"] == "zone_2"
+    assert report["lines"]["open-line"]["admission_min_band"] == "nc"
+
+
+def test_zone2_line_goes_through_graded_funnel_end_to_end(tmp_path, monkeypatch):
+    paths, db, settings = _setup(tmp_path, admission_min_band="nc")
+    settings = replace(
+        settings,
+        program=replace(
+            settings.program,
+            polish_mode=True,
+            lines={lines.LINE: LineSettings(mode="full", slots=2, admission_min_band="zone_2")},
+        ),
+    )
+    assert target_stage.stage_for(db, lines.LINE, settings) == target_stage.NC_AIM
+
+    scout_id, report = flow._scout_round(paths, db, settings, monkeypatch, [_nc_card()])
+    assert report.errors == [], report.errors
+    scout = db.task(scout_id)
+    scout_packet = json.loads(Path(scout["input_path"]).read_text())
+    assert scout_packet["admission_min_band"] == "zone_2"
+    assert "Admission floor: zone_2" in scout["objective"]
+    assert "line admission floor zone_2" in scout["objective"]
+    assert report.program["by_line"][lines.LINE]["admission_min_band"] == "zone_2"
+    assert report.program["nc_funnel"]["lines"][lines.LINE]["admission_min_band"] == "zone_2"
+
+    registered, = report.program["cards_registered"]
+    topic_id = registered["topic_id"]
+    topic = open_topic_ledger(paths, settings.program).topic(topic_id)
+    assert topic["card_check"]["nc_screen"]["admission_min_band"] == "zone_2"
+    prescreen_task = db.task(topic["card_check"]["prescreen"]["task_id"])
+    assert "match below zone_2 rejects the card" in prescreen_task["objective"]
+    assert json.loads(Path(prescreen_task["input_path"]).read_text())[
+        "funnel"]["admission_min_band"] == "zone_2"
+
+    # A zone_2 calibration match + valid kill test passes prescreen and reaches admission.
+    report = _finish_prescreen(paths, db, settings, monkeypatch, prescreen_task,
+                               match="zone_2", band="zone_2")
+    assert report.errors == [], report.errors
+    topic = open_topic_ledger(paths, settings.program).topic(topic_id)
+    assert topic["card_check"]["prescreen"]["status"] == "pass"
+    assert topic["card_check"]["prescreen"]["expected_band"] == "zone_2"
+
+    review = flow._admission_task(db)
+    if review["status"] != "leased":
+        flow._tick(paths, settings, monkeypatch)
+        review = db.task(review["task_id"])
+    assert "Effective admission floor: zone_2" in review["objective"]
+    entry = flow._packet(review)["topic_cards"][0]
+    assert entry["admission_min_band"] == "zone_2"
+    branch = flow._branch(entry, novelty_search=_novelty())
+    flow._complete(db, paths, review["task_id"], extra={"candidate_branches": [branch]})
+    report = flow._tick(paths, settings, monkeypatch)
+    assert report.errors == [], report.errors
+
+    topic = open_topic_ledger(paths, settings.program).topic(topic_id)
+    assert topic["status"] == "active"
+    state = json.loads(Path(db.campaign(topic["campaign_id"])["workstream_state_path"]).read_text())
+    assert state["target_stage"] == "nc_aim"
+    assert state["expected_band"] == "zone_2"
+
+    # Contrast: a line with nc_aim=False keeps its non-nc_aim stage and bypasses NC prescreen.
+    exempt = replace(
+        settings,
+        program=replace(
+            settings.program,
+            lines={lines.LINE: LineSettings(mode="full", slots=2, nc_aim=False,
+                                            admission_min_band="zone_2")},
+        ),
+    )
+    assert target_stage.stage_for(db, lines.LINE, exempt) == target_stage.RUN_IN
+    assert nc_funnel.screen_card(exempt, _nc_card(), {}, {"topics": []},
+                                 target_stage.RUN_IN) == (None, [], {})
+

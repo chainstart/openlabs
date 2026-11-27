@@ -67,10 +67,14 @@ def configured_stage(settings) -> str | None:
     return stage if stage in STAGES else None
 
 
-def scout_instruction(stage: str) -> str:
+def scout_instruction(stage: str, settings=None, line: str | None = None) -> str:
     if stage == TIER2_AIM:
         return TIER2_INSTRUCTION
     if stage == NC_AIM:
+        if settings is not None:
+            from .nc_funnel import scout_instruction as nc_scout_instruction
+
+            return nc_scout_instruction(settings, line)
         from .nc_funnel import SCOUT_INSTRUCTION
 
         return SCOUT_INSTRUCTION
@@ -296,10 +300,15 @@ def refresh(db, document: Mapping, lines, settings=None) -> dict[str, dict]:
     entries = replay(db, document, lines)
     fixed = configured_stage(settings) if settings is not None else None
     if fixed is not None:
+        from .nc_funnel import admission_min_band
+
         # One configured stage: the run_in replay is history only, nothing is promoted.
         for line, entry in entries.items():
-            entry["target_stage"] = stage_for(db, line, settings)
+            stage = stage_for(db, line, settings)
+            entry["target_stage"] = stage
             entry["target_stage_source"] = "[program.funnel].target_stage"
+            if stage == NC_AIM:
+                entry["admission_min_band"] = admission_min_band(settings, line)
         return entries
     for line, entry in entries.items():
         if entry["target_stage"] != RUN_IN:

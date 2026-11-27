@@ -1856,7 +1856,7 @@ cc-sg 的 `paper-writing` 入口使用 `~/.cache/openlabs-paper-venv/bin/python`
 **线状态表**（2026-11-26，精简第二批；用户批准“1-开始”）：每条线一张 `[program.lines.<线>]`，
 `mode` 取 `full`（出题到建 campaign 全部照常）、`supply_only`（只供题：出题、卡片修正与修订、预筛、立项试算、立项评审；
 建 campaign、hold 放行和冻结课题自动重开仍停，立项后的课题停在 admitted）、`polish`（两者都停）、`off`（两者都停，且退出出题轮转）；
-`slots` 是本线名额，`nc_aim = false` 让本线保留自己的模板标准。表的顺序就是出题轮转顺序。`polish_mode` 只作全局默认：
+`slots` 是本线名额，`nc_aim = false` 让本线保留自己的模板标准，`admission_min_band`（可选，取 `nc`/`zone_1`/`zone_2`/`zones_3_4`）覆写本线立项底线（不写则沿用 `[program.funnel].admission_min_band`）。表的顺序就是出题轮转顺序。`polish_mode` 只作全局默认：
 没列在表里的线（含没有研究线的旧课题）在梳理模式下按 `polish`，否则按 `full`。判定只有一个函数
 `ProgramSettings.stops(stage, line)`（`supply` / `research`）。排队中的出题任务，凡所在线的模式停供题的，下一轮取消。
 tick 报告 `program.polish_mode` 给 `line_modes`、`exempt_lines`（full 线）和 `supply_only_lines`。
