@@ -464,12 +464,19 @@ def test_budget_exhaustion_routes_to_one_direction_decision(tmp_path, monkeypatc
 # --------------------------------------------------------------------------- explicit freeze
 
 
-@pytest.mark.parametrize(("declared", "verdict", "expected"), [
-    ("decisive_data_unavailable", "inconclusive", "decisive_data_unavailable"),
-    (None, "inconclusive", "decisive_data_unavailable"),
-    (None, "met", "unspecified"),
+@pytest.mark.parametrize(("declared", "verdict", "expected", "expected_category"), [
+    ("decisive_data_unavailable", "inconclusive", "decisive_data_unavailable", "data_access"),
+    ("data_access", "pending", "data_access", "data_access"),
+    ("method_capability", "inconclusive", "method_capability", "method_capability"),
+    ("negative_result", "failed", "negative_result", "negative_result"),
+    ("resources_exhausted", "pending", "resources_exhausted", "resources_exhausted"),
+    (None, "failed", "primary_endpoint_failed", "negative_result"),
+    (None, "inconclusive", "unspecified", None),
+    (None, "met", "unspecified", None),
 ])
-def test_explicit_freeze_writes_the_ledger_and_releases_the_slot(tmp_path, monkeypatch, declared, verdict, expected):
+def test_explicit_freeze_writes_the_ledger_and_releases_the_slot(
+    tmp_path, monkeypatch, declared, verdict, expected, expected_category
+):
     paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
     research = db.latest_task(topic["campaign_id"])
     _lease(paths, settings, monkeypatch, db, research["task_id"])
@@ -490,11 +497,13 @@ def test_explicit_freeze_writes_the_ledger_and_releases_the_slot(tmp_path, monke
     frozen = _topic(paths, settings, topic["topic_id"])
     assert frozen["status"] == "frozen"
     assert frozen["freeze_reason_class"] == expected
+    assert frozen["freeze_reason_category"] == expected_category
     assert {item["path"] for item in frozen["freeze_evidence"]} >= {str(receipt)}
     assert db.campaign(topic["campaign_id"])["status"] == "frozen"
     after = slot_status(open_topic_ledger(paths, settings.program).read(), settings.program)
     assert after.free_slots == before.free_slots + 1
     assert report.program["topics_frozen"][0]["topic_id"] == topic["topic_id"]
+    assert report.program["topics_frozen"][0]["reason_category"] == expected_category
     notes = [h for h in frozen["history"] if h.get("kind") == "topic_freeze_noted"]
     if declared is None:
         assert notes and notes[0]["detail"]["reason_class_inferred"] is True

@@ -52,9 +52,11 @@ from pathlib import Path
 from typing import Any
 
 from .config import ProgramSettings, WorkspacePaths
+from .contracts import FREEZE_REASON_CATEGORIES as CONTRACT_FREEZE_REASON_CATEGORIES
 from .contracts import FREEZE_REASON_CLASSES as CONTRACT_FREEZE_REASON_CLASSES
+from .contracts import FREEZE_REASON_TO_CATEGORY as CONTRACT_FREEZE_REASON_TO_CATEGORY
 from .contracts import REOPEN_BASIS_TYPES as CONTRACT_REOPEN_BASIS_TYPES
-from .contracts import atomic_write_json, canonical_json_bytes
+from .contracts import atomic_write_json, canonical_json_bytes, freeze_reason_category
 from .db import FactoryDB, utc_now
 from .holds import topic_hold
 
@@ -116,6 +118,8 @@ GUARDED_TRANSITIONS: dict[tuple[str, str], frozenset[str]] = {
 SLOT_STATUSES = ("admitted", "active", "in_review")
 FREEZABLE_STATUSES = ("active", "in_review")
 # Shared with the direction-decision contract (``contracts.FREEZE_REASON_CLASSES``).
+FREEZE_REASON_CATEGORIES = CONTRACT_FREEZE_REASON_CATEGORIES
+FREEZE_REASON_TO_CATEGORY = CONTRACT_FREEZE_REASON_TO_CATEGORY
 FREEZE_REASON_CLASSES = CONTRACT_FREEZE_REASON_CLASSES
 # Shared with the topic-card and admission contracts (``contracts.REOPEN_BASIS_TYPES``).
 REOPEN_CONDITION_TYPES = CONTRACT_REOPEN_BASIS_TYPES
@@ -144,6 +148,7 @@ TOPIC_FIELDS = (
     "admitted_at",
     "frozen_at",
     "freeze_reason_class",
+    "freeze_reason_category",
     "freeze_evidence",
     "decided_by",
     "reopen_conditions",
@@ -1574,6 +1579,7 @@ def freeze_topic(
         updates={
             "frozen_at": utc_now(),
             "freeze_reason_class": reason_class,
+            "freeze_reason_category": freeze_reason_category(reason_class),
             "freeze_evidence": evidence_items,
             "reopen_conditions": conditions,
             **extra,

@@ -161,7 +161,16 @@ _SCOUT_TAIL = (
     "or simple baseline explains and the theoretical ceiling, and `milestones` [{name, kind, "
     "agent_hours, core_hours, model_usd}] whose first item has kind `decisive` (the test that "
     "decides whether the main claim holds). Give each data source its data-catalogue "
-    "`catalog_id`; a newly found source you verified gets `catalog_candidate: true`. NC "
+    "`catalog_id`; a newly found source you verified gets `catalog_candidate: true`. "
+    "For every decisive dataset in `data_sources[]`, check how it is obtained and whether every "
+    "field needed for the decisive analysis actually exists in the public release, and record "
+    "`access` {method: direct|form_or_registration|restricted, required_fields_present: bool, "
+    "required_fields: [...], missing_fields: [...], registration: \"...\"}: e.g. Living Planet "
+    "Database 2026 requires a named-recipient access form and non-commercial terms "
+    "(method: form_or_registration, mark needs_registration on the card), while PhysioNet "
+    "Challenge-2021 Georgia lacks a patient-linkage map for patient-disjoint splits "
+    "(required_fields_present: false, missing_fields: [\"patient_linkage_map\"]). L1 rejects "
+    "any decisive dataset that is restricted or missing a required field. NC "
     "thresholds (at least two must hold): " + thresholds_text() + ". Hooks of accepted NC "
     "papers: " + hooks_text() + " A card that cannot meet two thresholds is not proposed; "
     "do not re-propose a direction the ledger shows rejected or frozen for its substance. "
@@ -379,6 +388,8 @@ def met_thresholds(block: Any) -> list[str]:
 def card_contract_errors(card: Mapping[str, Any]) -> list[str]:
     """Fields an nc_aim card needs (format errors: the card gets one automatic repair)."""
 
+    from .contracts import data_source_access_errors
+
     errors: list[str] = []
     case = card.get("nc_case")
     if not isinstance(case, Mapping):
@@ -410,6 +421,14 @@ def card_contract_errors(card: Mapping[str, Any]) -> list[str]:
         milestones[0], Mapping
     ) or milestones[0].get("kind") != "decisive":
         errors.append("nc_aim requires milestones whose first item has kind decisive")
+    for index, source in enumerate(card.get("data_sources") or []):
+        if isinstance(source, Mapping) and source.get("decisive") is not False:
+            # Skip duplicate structure errors already reported by validate_topic_card when
+            # access is present; require it here when omitted on an nc_aim card.
+            if source.get("access") is None:
+                errors.extend(
+                    data_source_access_errors(source, f"data_sources[{index}]", required=True)
+                )
     return errors
 
 
@@ -531,14 +550,59 @@ def _catalog(line_entry: Mapping[str, Any]) -> dict[str, dict[str, Any]] | None:
             if isinstance(item, Mapping) and item.get("id")}
 
 
+def source_access_problems(card: Mapping[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+    """``(rejecting problems, needs_registration notes)`` from each source's ``access`` field."""
+
+    problems: list[str] = []
+    notes: list[dict[str, Any]] = []
+    for index, source in enumerate(card.get("data_sources") or []):
+        if not isinstance(source, Mapping):
+            continue
+        decisive = source.get("decisive") is not False
+        key = _text(source.get("catalog_id"))
+        label = key or _text(source.get("name")) or _text(source.get("url")) or f"#{index}"
+        access = source.get("access") if isinstance(source.get("access"), Mapping) else {}
+        method = _text(access.get("method"))
+        present = access.get("required_fields_present")
+        missing = [
+            _text(item) for item in (access.get("missing_fields") or [])
+            if _text(item)
+        ] if isinstance(access.get("missing_fields"), list) else []
+        reg_text = (
+            _text(access.get("registration"))
+            or (_text(source.get("needs_registration"))
+                if isinstance(source.get("needs_registration"), str) else "")
+            or _text(source.get("registration_note"))
+        )
+        if decisive and method == "restricted":
+            problems.append(
+                f"decisive data source {label} has restricted access (not freely obtainable)"
+            )
+        if decisive and (present is False or missing):
+            detail = ", ".join(missing) if missing else "unspecified required field(s)"
+            problems.append(
+                f"decisive data source {label} is missing required field(s): {detail}"
+            )
+        if method == "form_or_registration" or bool(source.get("needs_registration")):
+            notes.append({
+                "source": label,
+                "status": "needs_registration",
+                "registration": reg_text or None,
+                "note": "free, needs the owner's registration before the full-scale analysis",
+            })
+    return problems, notes
+
+
 def data_problems(card: Mapping[str, Any], line_entry: Mapping[str, Any],
                   settings) -> tuple[list[str], list[dict[str, Any]]]:
     """``(rejecting problems, catalogue notes)`` of a card's data sources."""
 
+    access_problems, access_notes = source_access_problems(card)
     catalog = _catalog(line_entry)
     if catalog is None:
-        return [], []
-    problems: list[str] = []
+        return access_problems, access_notes
+    reg_by_source = {item["source"]: item for item in access_notes}
+    problems: list[str] = list(access_problems)
     notes: list[dict[str, Any]] = []
     for index, source in enumerate(card.get("data_sources") or []):
         if not isinstance(source, Mapping):
@@ -546,27 +610,44 @@ def data_problems(card: Mapping[str, Any], line_entry: Mapping[str, Any],
         key = _text(source.get("catalog_id"))
         entry = catalog.get(key) if key else None
         label = key or _text(source.get("name")) or _text(source.get("url")) or f"#{index}"
+        reg_note = reg_by_source.pop(label, None)
         if entry is None:
             if source.get("catalog_candidate") is True:
-                notes.append({"source": label, "note": "catalog_candidate (verified by the "
-                              "scout's access receipt; add it to the data catalogue)"})
+                if reg_note is not None:
+                    notes.append({
+                        **reg_note,
+                        "note": reg_note["note"]
+                        + "; catalog_candidate (verified by the scout's access receipt; "
+                        "add it to the data catalogue)",
+                    })
+                else:
+                    notes.append({"source": label, "note": "catalog_candidate (verified by the "
+                                  "scout's access receipt; add it to the data catalogue)"})
             elif settings.program.funnel.uncatalogued_data == "reject":
                 problems.append(f"data source {label} is not in the line's data catalogue "
                                 "(give its catalog_id, or mark a newly verified source "
                                 "catalog_candidate)")
+                if reg_note is not None:
+                    notes.append(reg_note)
             else:
-                notes.append({"source": label, "note": "not in the data catalogue"})
+                notes.append(reg_note if reg_note is not None
+                             else {"source": label, "note": "not in the data catalogue"})
             continue
         status = str(entry.get("status") or "")
         if status == "blocked":
             problems.append(f"data source {key} is blocked in the data catalogue ("
                             + (_text(entry.get("blocked_reason")) or "not obtainable now") + ")")
-        elif status == "needs_registration":
+        elif status == "needs_registration" or reg_note is not None:
             # User rule (free data only): a free source behind a registration is listed for the
             # owner to register, not excluded (NC calibration 2026-11-26). The card goes on; the
             # admission gate makes the registration a before_decisive_analysis condition.
-            notes.append({"source": key, "status": status,
-                          "registration": _text(entry.get("registration")) or None,
+            registration = (
+                _text(entry.get("registration"))
+                or (reg_note.get("registration") if reg_note is not None else None)
+                or None
+            )
+            notes.append({"source": key, "status": "needs_registration",
+                          "registration": registration,
                           "note": "free, needs the owner's registration before the "
                                   "full-scale analysis"})
         else:
@@ -642,6 +723,8 @@ def evaluate_prescreen(result: Any, settings, digests: set[str], *,
     ``{"status": pass|fail|invalid, "reason", "expected_band", "met", ...}``.
     """
 
+    from .contracts import DATA_ACCESS_METHODS
+
     funnel = settings.program.funnel
     floor = admission_min_band(settings, line)
     if not isinstance(result, Mapping):
@@ -662,6 +745,57 @@ def evaluate_prescreen(result: Any, settings, digests: set[str], *,
     if match not in BANDS:
         errors.append("calibration_match must be nc, zone_1, zone_2 or zones_3_4 (the tier of "
                       "the closest papers of the calibration set)")
+    access_check = result.get("data_access_check")
+    access_issues: list[str] = []
+    prescreen_regs: list[dict[str, Any]] = []
+    checked_access: list[dict[str, Any]] = []
+    if access_check is not None:
+        if not isinstance(access_check, list):
+            errors.append("data_access_check must be a list of per-dataset objects")
+        else:
+            for index, item in enumerate(access_check):
+                if not isinstance(item, Mapping):
+                    errors.append(f"data_access_check[{index}] must be an object")
+                    continue
+                src = _text(item.get("source")) or _text(item.get("name")) or f"#{index}"
+                method = _text(item.get("method"))
+                if method not in DATA_ACCESS_METHODS:
+                    errors.append(
+                        f"data_access_check[{index}].method must be one of "
+                        f"{', '.join(DATA_ACCESS_METHODS)}"
+                    )
+                    continue
+                present = item.get("required_fields_present")
+                if not isinstance(present, bool):
+                    errors.append(
+                        f"data_access_check[{index}].required_fields_present must be a boolean"
+                    )
+                    continue
+                missing = [
+                    _text(f) for f in (item.get("missing_fields") or []) if _text(f)
+                ] if isinstance(item.get("missing_fields"), list) else []
+                decisive = item.get("decisive") is not False
+                reg = _text(item.get("registration")) or None
+                checked_access.append({
+                    "source": src, "method": method, "required_fields_present": present,
+                    **({"missing_fields": missing} if missing else {}),
+                    **({"registration": reg} if reg else {}),
+                })
+                if decisive and method == "restricted":
+                    access_issues.append(f"decisive data source {src} has restricted access")
+                if decisive and (present is False or missing):
+                    detail = ", ".join(missing) if missing else "unspecified required field(s)"
+                    access_issues.append(
+                        f"decisive data source {src} is missing required field(s): {detail}"
+                    )
+                if method == "form_or_registration":
+                    prescreen_regs.append({
+                        "source": src,
+                        "status": "needs_registration",
+                        "registration": reg,
+                        "note": "free, needs the owner's registration before the "
+                                "full-scale analysis",
+                    })
     if errors:
         return {"status": "invalid", "errors": errors}
     met = met_thresholds(thresholds)
@@ -670,9 +804,16 @@ def evaluate_prescreen(result: Any, settings, digests: set[str], *,
             "calibration_neighbours": [str(item) for item in
                                        list(result.get("calibration_neighbours") or [])[:5]],
             "closest": list(novelty.get("closest") or [])[:5]}
+    if checked_access:
+        base["data_access_check"] = checked_access
+    if prescreen_regs:
+        base["needs_registration"] = prescreen_regs
     if _text(result.get("summary")):
         # Fed back to later scouts of the line (program_flow._ledger_snapshot).
         base["summary"] = _text(result.get("summary"))[:1500]
+    if access_issues:
+        return {**base, "status": "fail", "reason": DATA_REJECTION,
+                "why": "; ".join(access_issues)}
     if verdict == "scooped" or len(met) < funnel.min_nc_thresholds:
         return {**base, "status": "fail", "reason": PRESCREEN_REJECTION,
                 "why": ("prior work already reports the claim" if verdict == "scooped" else
@@ -827,9 +968,16 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
             "the input path has the card. You did not write it. " + CALIBRATION_TEXT + " A "
             f"match below {floor} rejects the card. Phase A (cheap): a quick "
             "novelty search of the last three years, preprints included (Research Square, arXiv, "
-            "bioRxiv, medRxiv, SSRN, EarthArXiv; list the 3-5 closest papers), and your own "
+            "bioRxiv, medRxiv, SSRN, EarthArXiv; list the 3-5 closest papers), an independent "
+            "data-access check of every decisive dataset in `card.data_sources` (how it is "
+            "obtained: `direct`, `form_or_registration`, or `restricted`, and whether every "
+            "required decisive field actually exists in the public release — e.g. Living Planet "
+            "Database 2026 requires a portal form -> `form_or_registration`, while Challenge-2021 "
+            "Georgia lacks a patient-linkage map -> `required_fields_present: false` with "
+            "`missing_fields: [\"patient_linkage_map\"]`), and your own "
             "scoring of the five NC thresholds on the design's potential as knowable at "
-            "admission; if fewer than "
+            "admission; if any decisive dataset is `restricted` or missing a required field, "
+            "fewer than "
             f"{funnel.min_nc_thresholds} hold, the same claim is already reported (adjacent work "
             "with a different claim is closest prior work, not a scoop) or the calibration "
             "match is below the floor, stop and return without running anything. Judge crowding "
@@ -847,6 +995,8 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
             "is predicted by RR\") is fully explained by the null model: set null_baseline."
             "determined_by_known_relation true and name the relation. Return the "
             "result field `topic_prescreen` {calibration_match, calibration_neighbours, "
+            "data_access_check [{source, method direct|form_or_registration|restricted, "
+            "required_fields_present, missing_fields[], registration}], "
             "novelty_quick {verdict clear|incremental|scooped, "
             "papers_screened, closest[{citation, year, overlap}]}, thresholds {"
             + ", ".join(THRESHOLDS) + ": {met, evidence}}, kill_test {ran, signal {present, "
@@ -929,6 +1079,22 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
 
     def record(topic: Mapping[str, Any], state: dict[str, Any], event: str) -> None:
         check = {**dict(topic.get("card_check") or {}), "prescreen": state}
+        regs = state.get("needs_registration")
+        if isinstance(regs, list) and regs:
+            nc_screen = dict(check.get("nc_screen") or {}) if isinstance(
+                check.get("nc_screen"), Mapping
+            ) else {}
+            existing = list(nc_screen.get("data_catalog") or [])
+            seen = {
+                str(item.get("source") or "") for item in existing
+                if isinstance(item, Mapping) and item.get("status") == "needs_registration"
+            }
+            for item in regs:
+                if isinstance(item, Mapping) and str(item.get("source") or "") not in seen:
+                    existing.append(dict(item))
+                    seen.add(str(item.get("source") or ""))
+            nc_screen["data_catalog"] = existing
+            check["nc_screen"] = nc_screen
         record_topic_note(
             ledger, str(topic["topic_id"]), db=db, event_type="card_prescreen_recorded",
             reason=event, decided_by=PRESCREEN_DECIDER,
@@ -1379,4 +1545,5 @@ __all__ = [
     "admission_problems", "advance_prescreens", "calibrated_band", "card_contract_errors",
     "evaluate_prescreen", "metrics", "nc_grade", "prescreen_held", "research_fields",
     "scout_blocks", "scout_floor_instruction", "scout_instruction", "screen_card",
+    "source_access_problems",
 ]

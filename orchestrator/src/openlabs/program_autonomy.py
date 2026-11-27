@@ -40,11 +40,14 @@ from . import assets as asset_library
 from . import budget as budget_control
 from .config import FactorySettings, WorkspacePaths, dispatch_runner
 from .contracts import (
+    FREEZE_REASON_CATEGORIES,
+    FREEZE_REASON_CATEGORY_DEFINITIONS,
     FREEZE_REASON_CLASSES,
     REOPEN_BASIS_TYPES,
     admission_conditions,
     atomic_write_json,
     canonical_json_bytes,
+    freeze_reason_category,
     sha256_file,
     validate_direction_decision,
     validate_review_outcome,
@@ -676,6 +679,7 @@ def schedule_direction_decision(
         # different model).
         "producer_model": research_model(db, settings, campaign_id),
         "options": options,
+        "freeze_reason_classes": dict(FREEZE_REASON_CATEGORY_DEFINITIONS),
         **({"delivered_revision": topic["delivered_revision"]} if topic.get("delivered_revision") else {}),
         **({"verified_alternatives": candidates,
             "short_format_value": None if zone or grading else "short_format"} if cap or grading else {}),
@@ -706,7 +710,23 @@ def schedule_direction_decision(
             "one entry of reasons_to_answer, normally the strongest rejection or failure reason) "
             "and the block of the chosen branch: `analysis` {name, expected_to_change, data, "
             "budget_seconds, success_criterion}, `retarget` {venue_or_format, why_fits} or "
-            "`freeze` {reason_class, reopen_conditions[]}. Choices whose decisions_remaining is 0 "
+            "`freeze` {reason_class, reopen_conditions[]}. When choosing `freeze`, pick the "
+            "`reason_class` that matches the evidence from the four classes: "
+            "`data_access` (decisive dataset cannot be obtained: access form/registration, "
+            "restricted/paywalled, or public release missing a required decisive field, e.g. "
+            "Living Planet Database 2026 access form or PhysioNet Challenge-2021 Georgia "
+            "missing patient-linkage map), "
+            "`method_capability` (solver/pipeline limit or failure to reproduce a published "
+            "baseline/control, e.g. shared solver missing recovery or spot+third-light support, "
+            "or FEMTO/Paderborn baseline reproduction miss), "
+            "`negative_result` (analysis ran on available data and yielded a failed, null, "
+            "negligible, inconclusive, or insufficient result, e.g. 95% CI spanning zero or "
+            "0.002% effect below materiality threshold; use `no_eligible_venue` only on "
+            "acceptance-grading freezes), or "
+            "`resources_exhausted` (compute/agent budget, calendar deadline, provider quota/"
+            "pacing, or review-round cap exhausted before a decisive result, e.g. core-hour "
+            "allocation exhausted or quota pacing halt). "
+            "Choices whose decisions_remaining is 0 "
             "are refused and the topic is frozen. Do not run the analysis or edit the manuscript."
             + (" For this exhausted cycle choose freeze, or set venue_or_format to an exact "
                + ("verified_alternatives journal name. Read the operator revision and assess subject fit."
@@ -809,7 +829,9 @@ def _freeze(
         )
     if decision.changed:
         _info(report, "topics_frozen").append(
-            {"topic_id": topic_id, "reason_class": reason_class, "decided_by": decided_by,
+            {"topic_id": topic_id, "reason_class": reason_class,
+             "reason_category": freeze_reason_category(reason_class),
+             "decided_by": decided_by,
              **({"note": dict(note)} if note else {})}
         )
 
@@ -916,15 +938,12 @@ def _on_research_result(db, paths, settings, report, *, topic, task, payload, ev
         note: dict[str, Any] | None = None
         reason_class = declared
         if reason_class not in FREEZE_REASON_CLASSES:
-            # Without a usable class the evidence-backed reading is used, never the
-            # judgement "contribution_insufficient".
+            # Without a usable class, only an explicit failed primary endpoint establishes
+            # a negative result. Never mislabel inconclusive/pending freezes as missing data
+            # (2026-11-27 audit: 14 of 16 historical decisive_data_unavailable freezes were
+            # solver, reproduction, budget, or negative-result freezes).
             verdict = str(payload.get("primary_endpoint_verdict") or "")
-            reason_class = (
-                "primary_endpoint_failed" if verdict == "failed" else "decisive_data_unavailable"
-            )
-            if verdict == "met":
-                # A completed endpoint does not establish that decisive data were missing.
-                reason_class = "unspecified"
+            reason_class = "primary_endpoint_failed" if verdict == "failed" else "unspecified"
             note = {"reason_class_inferred": True, "declared_reason_class": declared or None,
                     "primary_endpoint_verdict": verdict or None}
         declared_evidence = _freeze_evidence(gate_result)

@@ -478,23 +478,29 @@ def _requirements(card: Mapping[str, Any], template_entry: Mapping[str, Any],
 def data_problems(paths: WorkspacePaths, settings: FactorySettings, card: Mapping[str, Any],
                   line_entry: Mapping[str, Any], template_entry: Mapping[str, Any]
                   ) -> tuple[list[str], list[dict[str, Any]]]:
-    """``(problems, coverage rows)`` of the card's declared data requirements."""
+    """``(problems, coverage rows)`` of the card's declared data requirements and access."""
 
+    from .nc_funnel import source_access_problems
+
+    access_problems, _access_notes = source_access_problems(card)
     requirements = _requirements(card, template_entry, line_entry)
     if not requirements:
-        return [], []
+        return access_problems, []
     cache = HeaderCache(paths.program_control / "supply-screen" / "headers.json")
     rows = [requirement_coverage(item, data_root=paths.data, cache=cache)
             for item in requirements]
     cache.save()
     problems = [
-        f"data requirement {row['name']}: {row['covered']}/{row['files']} files carry "
-        f"{', '.join(row.get('columns') or []) or 'the files'} "
-        f"(need {row.get('min_fraction', 1.0):g}"
-        + (f"; e.g. missing in {', '.join(row['files_missing_columns'][:3])}"
-           if row.get("files_missing_columns") else "")
-        + (f"; {row['error']}" if row.get("error") else "") + ")"
-        for row in rows if not row.get("ok")
+        *access_problems,
+        *(
+            f"data requirement {row['name']}: {row['covered']}/{row['files']} files carry "
+            f"{', '.join(row.get('columns') or []) or 'the files'} "
+            f"(need {row.get('min_fraction', 1.0):g}"
+            + (f"; e.g. missing in {', '.join(row['files_missing_columns'][:3])}"
+               if row.get("files_missing_columns") else "")
+            + (f"; {row['error']}" if row.get("error") else "") + ")"
+            for row in rows if not row.get("ok")
+        ),
     ]
     return problems, rows
 
