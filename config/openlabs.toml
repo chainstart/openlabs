@@ -127,6 +127,8 @@ domains = []
 #            no scout, no admission review and no new campaign; max_active_topics still caps
 #            the total. Topics whose campaign is paused on purpose hold no slot. Unset: no limit.
 #   nc_aim = false keeps the line's own templated standard instead of the NC aim.
+#   admission_min_band = optional per-line floor ("nc" | "zone_1" | "zone_2" | "zones_3_4");
+#            unset falls back to [program.funnel].admission_min_band.
 # Only program projects of a listed line (mode not "off") are scouted. No table: active
 # projects rotate by line where available, with domains as the fallback filter. Replaces
 # research_lines, polish_exempt_lines, polish_supply_only_lines, line_max_active_topics and
@@ -134,6 +136,7 @@ domains = []
 # [program.lines.astro-survey-photometry]
 # mode = "full"
 # slots = 2
+# admission_min_band = "zone_2"
 # Direction file read by scouts and the admission gate; an admitted card of a
 # line whose environment.status is not "ready" is held until it is.
 research_lines_path = "registry/research-lines.yaml"

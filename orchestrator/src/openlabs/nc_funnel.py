@@ -149,27 +149,8 @@ CALIBRATION_TEXT = (
 )
 
 
-SCOUT_INSTRUCTION = (
-    " NC aim (target_stage nc_aim, user decision 2026-11-25): every topic aims at Nature "
-    "Communications and the results will decide the journal (NC, else CAS Zone 1, 2, 3-4). "
-    "Scout broadly and cheaply across diverse fields: read recent literature and the line's data "
-    "catalogue (research_line_summary.data_catalog), and return distinct cards spread across "
-    "different disciplines and mechanisms (never cluster multiple cards in one subfield or repeat "
-    "a seed direction/domain that recently failed in ledger_snapshot). Prefer substantive "
-    "scientific questions: a new natural/biological/physical/socio-technical phenomenon or "
-    "mechanism, a decision-relevant global quantity with a clear first/largest/causal claim, or "
-    "settling a cross-field debate with direct observational outcomes. Steer away from "
-    "audit/meta-science/reporting-rule framings (auditing one catalogue, archive lag, reporting "
-    "checklist, station-count coverage, monitoring calendar, or literature body: these calibrate "
-    "to Zone 1 comparators, not NC) unless the audit overturns a widely used result, method or "
-    "benchmark across an entire field (multiple independent datasets and all major model classes, "
-    "as in A1/A2). Verify that the data directly measures the claimed real-world outcome (not an "
-    "unvalidated proxy), has enough events/time steps, and is not trivially explained by an "
-    "obvious algebraic or statistical null. Each card states: in `nc_case.claim`, the concrete "
-    "declarative headline finding it would publish in NC if the kill test passes; in "
-    "`audience.who`, why NC readers across fields (beyond one narrow subfield) would care; in "
-    "`closest_prior_work`, the closest prior Nature Communications, Nature or Science papers "
-    "(plus 18-month preprints) and what is genuinely new beyond them; plus the rest of `nc_case` "
+_SCOUT_TAIL = (
+    "plus the rest of `nc_case` "
     "{claim, alternative_claim (the conclusion if the result goes the other way), challenges (the "
     "view, practice or number it overturns), benchmark (the authoritative reference, policy "
     "parameter or largest prior study it is measured against), thresholds {" + ", ".join(THRESHOLDS) + ": {met, "
@@ -206,6 +187,30 @@ SCOUT_INSTRUCTION = (
     "more NC papers in the last 18 months, and the crowded topics of nc-hotspots section 3.3 "
     "(global flash drought and vegetation; urban heat island and greening cooling) - propose one "
     "only with an angle the crowded papers lack, and say so in the card."
+)
+
+SCOUT_INSTRUCTION = (
+    " NC aim (target_stage nc_aim, user decision 2026-11-25): every topic aims at Nature "
+    "Communications and the results will decide the journal (NC, else CAS Zone 1, 2, 3-4). "
+    "Scout broadly and cheaply across diverse fields: read recent literature and the line's data "
+    "catalogue (research_line_summary.data_catalog), and return distinct cards spread across "
+    "different disciplines and mechanisms (never cluster multiple cards in one subfield or repeat "
+    "a seed direction/domain that recently failed in ledger_snapshot). Prefer substantive "
+    "scientific questions: a new natural/biological/physical/socio-technical phenomenon or "
+    "mechanism, a decision-relevant global quantity with a clear first/largest/causal claim, or "
+    "settling a cross-field debate with direct observational outcomes. Steer away from "
+    "audit/meta-science/reporting-rule framings (auditing one catalogue, archive lag, reporting "
+    "checklist, station-count coverage, monitoring calendar, or literature body: these calibrate "
+    "to Zone 1 comparators, not NC) unless the audit overturns a widely used result, method or "
+    "benchmark across an entire field (multiple independent datasets and all major model classes, "
+    "as in A1/A2). Verify that the data directly measures the claimed real-world outcome (not an "
+    "unvalidated proxy), has enough events/time steps, and is not trivially explained by an "
+    "obvious algebraic or statistical null. Each card states: in `nc_case.claim`, the concrete "
+    "declarative headline finding it would publish in NC if the kill test passes; in "
+    "`audience.who`, why NC readers across fields (beyond one narrow subfield) would care; in "
+    "`closest_prior_work`, the closest prior Nature Communications, Nature or Science papers "
+    "(plus 18-month preprints) and what is genuinely new beyond them; "
+    + _SCOUT_TAIL
 )
 
 ADMISSION_NC_INSTRUCTION = (
@@ -248,10 +253,63 @@ GRADE_INSTRUCTION = (
 )
 
 
-def scout_floor_instruction(settings) -> str:
-    """The admission floor a scout's cards face (``[program.funnel].admission_min_band``)."""
+def admission_min_band(settings, line: Any = None) -> str:
+    """Effective admission floor of ``line`` (``[program.lines.<id>]`` if set, else global)."""
 
-    floor = settings.program.funnel.admission_min_band
+    program = getattr(settings, "program", None)
+    if program is not None and hasattr(program, "admission_min_band"):
+        return program.admission_min_band(line)
+    if program is not None and hasattr(program, "line"):
+        override = program.line(line).admission_min_band
+        if override is not None:
+            return override
+    return settings.program.funnel.admission_min_band
+
+
+def scout_instruction(settings, line: str | None = None) -> str:
+    """Graded-funnel scout guidance adapted to the line's effective admission floor."""
+
+    floor = admission_min_band(settings, line) if settings is not None else "nc"
+    if floor == "nc":
+        return SCOUT_INSTRUCTION
+    audit_note = (
+        "Steer away from narrow reporting-rule/metadata-only audits that calibrate below zone_1 "
+        "unless the audit overturns a widely used result, method or benchmark across an entire "
+        "field (multiple independent datasets and all major model classes, as in A1/A2). "
+        if floor == "zone_1" else
+        f"Avoid trivial metadata-only or single-parameter checks that calibrate below {floor}; "
+        f"systematic empirical studies, multi-system or rule-change analyses, and cross-dataset "
+        f"evaluation audits that calibrate at {floor} or better and meet the required thresholds "
+        "are welcome. "
+    )
+    return (
+        f" NC aim (target_stage nc_aim, line admission floor {floor}; standing rule: topics aim "
+        "high and the results will decide the journal — NC, else CAS Zone 1, 2, 3-4). "
+        "Scout broadly and cheaply across diverse fields or within this line's scope: read recent "
+        "literature and the line's data catalogue (research_line_summary.data_catalog), and "
+        "return distinct cards (never cluster multiple cards on one narrow angle or repeat a "
+        "seed direction/domain that recently failed in ledger_snapshot). Prefer substantive "
+        "scientific questions: a new natural/biological/physical/socio-technical phenomenon or "
+        "mechanism, a decision-relevant quantity or systematic multi-system result with a clear "
+        "claim, or settling a debate with direct observational outcomes. "
+        + audit_note
+        + "Verify that the data directly measures the claimed real-world outcome (not an "
+        "unvalidated proxy), has enough events/time steps, and is not trivially explained by an "
+        "obvious algebraic or statistical null. Each card states: in `nc_case.claim`, the concrete "
+        "declarative headline finding the paper would publish if the kill test passes (aim high; "
+        f"cards calibrating at {floor} or better pass prescreen); in `audience.who`, why readers "
+        f"across fields or the target CAS {floor}+ journal community would care; in "
+        "`closest_prior_work`, the closest prior Nature Communications, Nature, Science and "
+        f"leading domain ({floor}+) papers (plus 18-month preprints) and what is genuinely new "
+        "beyond them; "
+        + _SCOUT_TAIL
+    )
+
+
+def scout_floor_instruction(settings, line: str | None = None) -> str:
+    """The admission floor a scout's cards face (line override if set, else global funnel)."""
+
+    floor = admission_min_band(settings, line)
     if floor == "nc":
         return (" Admission floor: nc (user 2026-11-26, \"接下来的出题希望选题至少是够nc档次的\"). "
                 "The prescreen and the admission gate reject a card whose calibration match or "
@@ -259,15 +317,20 @@ def scout_floor_instruction(settings) -> str:
                 "accepted NC paper of the calibration set would resemble; after the research the "
                 "evidence still grades the journal (NC, else Zone 1, 2, 3-4).")
     return (f" Admission floor: {floor}. The prescreen and the admission gate reject a card whose "
-            f"calibration match or expected band is below {floor}.")
+            f"calibration match or expected band is below {floor}; topics still aim high and the "
+            "evidence grades the journal after the research (NC, else Zone 1, 2, 3-4).")
 
 
-def admission_instruction(settings) -> str:
+def admission_instruction(settings, line: str | None = None) -> str:
     funnel = settings.program.funnel
-    return (ADMISSION_NC_INSTRUCTION
+    floor = admission_min_band(settings, line)
+    text = (ADMISSION_NC_INSTRUCTION
             .replace("{years}", str(funnel.novelty_window_years))
             .replace("{papers}", str(funnel.novelty_min_papers))
             .replace("{closest}", str(funnel.novelty_closest)))
+    return (text + f" Effective admission floor: {floor} (topics aim high and the data grade the "
+            f"journal after research; prescreen calibration_match and expected_band must be at "
+            f"least {floor}).")
 
 
 def band_rank(band: Any) -> int:
@@ -536,10 +599,12 @@ def screen_card(settings, card: Mapping[str, Any], line_entry: Mapping[str, Any]
     if stage != target_stage.NC_AIM:
         return None, [], {}
     funnel = settings.program.funnel
+    floor = admission_min_band(settings, card.get("research_line"))
     case = card.get("nc_case") if isinstance(card.get("nc_case"), Mapping) else {}
     claimed = met_thresholds(case.get("thresholds"))
     extra: dict[str, Any] = {"target_stage": stage,
-                             "nc_screen": {"claimed_thresholds": claimed}}
+                             "nc_screen": {"claimed_thresholds": claimed,
+                                           "admission_min_band": floor}}
     problems, notes = data_problems(card, line_entry, settings)
     if notes:
         extra["nc_screen"]["data_catalog"] = notes
@@ -570,13 +635,15 @@ def prescreen_held(topic: Mapping[str, Any]) -> bool:
     return str(state.get("status") or "") in PRESCREEN_WAITING
 
 
-def evaluate_prescreen(result: Any, settings, digests: set[str]) -> dict[str, Any]:
+def evaluate_prescreen(result: Any, settings, digests: set[str], *,
+                       line: str | None = None) -> dict[str, Any]:
     """Deterministic verdict of one ``topic_prescreen`` result.
 
     ``{"status": pass|fail|invalid, "reason", "expected_band", "met", ...}``.
     """
 
     funnel = settings.program.funnel
+    floor = admission_min_band(settings, line)
     if not isinstance(result, Mapping):
         return {"status": "invalid", "errors": ["topic_prescreen is missing"]}
     errors: list[str] = []
@@ -599,6 +666,7 @@ def evaluate_prescreen(result: Any, settings, digests: set[str]) -> dict[str, An
         return {"status": "invalid", "errors": errors}
     met = met_thresholds(thresholds)
     base = {"met": met, "novelty": verdict, "calibration_match": match,
+            "admission_min_band": floor,
             "calibration_neighbours": [str(item) for item in
                                        list(result.get("calibration_neighbours") or [])[:5]],
             "closest": list(novelty.get("closest") or [])[:5]}
@@ -610,13 +678,13 @@ def evaluate_prescreen(result: Any, settings, digests: set[str]) -> dict[str, An
                 "why": ("prior work already reports the claim" if verdict == "scooped" else
                         f"{len(met)} NC threshold(s) hold on an independent reading; "
                         f"{funnel.min_nc_thresholds} required")}
-    if band_rank(match) > band_rank(funnel.admission_min_band):
+    if band_rank(match) > band_rank(floor):
         # Phase A stop on the calibration match (the brief and the skill tell the prescreener
         # not to run the kill test then). Judged here, not left invalid: NC trial 2026-11-26,
         # such a stop was read as "kill_test must run" twice and ended as prescreen_unavailable.
         return {**base, "status": "fail", "reason": BAND_REJECTION, "expected_band": match,
                 "why": f"the calibration set places it at {match}, below the admission floor "
-                       f"{funnel.admission_min_band}"
+                       f"{floor}"
                        + (f" (closest: {', '.join(base['calibration_neighbours'])})"
                           if base["calibration_neighbours"] else "")}
     kill = result.get("kill_test") if isinstance(result.get("kill_test"), Mapping) else {}
@@ -669,10 +737,10 @@ def evaluate_prescreen(result: Any, settings, digests: set[str]) -> dict[str, An
         band = lower_band(band)
     downgrades.extend(kill_downgrades)
     base.update(expected_band=band, claimed_band=claimed, downgrades=downgrades)
-    if band_rank(band) > band_rank(funnel.admission_min_band):
+    if band_rank(band) > band_rank(floor):
         return {**base, "status": "fail", "reason": BAND_REJECTION,
                 "why": f"expected band {band} is below the admission floor "
-                       f"{funnel.admission_min_band}"
+                       f"{floor}"
                        + (f" ({'; '.join(downgrades)})" if downgrades else "")}
     return {**base, "status": "pass"}
 
@@ -710,7 +778,8 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
         return task_id
     card = _topic_card(topic)
     funnel = settings.program.funnel
-    line = project.research_line
+    line = project.research_line or topic.get("research_line")
+    floor = admission_min_band(settings, line)
     ledger = flow.open_topic_ledger(paths, settings.program)
     packet_path = (flow._control_root(paths) / flow._token(project.project_id)
                    / "prescreen-packets" / f"{flow._token(topic_id)}-{attempt}.json")
@@ -734,7 +803,7 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
                    "kill_test_cpus": funnel.kill_test_cpus,
                    "kill_test_max_download_mb": funnel.kill_test_max_download_mb,
                    "null_explained_max": funnel.null_explained_max,
-                   "admission_min_band": funnel.admission_min_band,
+                   "admission_min_band": floor,
                    "calibration": CALIBRATION_PATH,
                    "calibration_rule": "expected band = the worse of your expected_band and "
                                        "calibration_match, as in the acceptance grade"},
@@ -756,7 +825,7 @@ def _enqueue_prescreen(db, paths, settings, *, topic: Mapping[str, Any], attempt
             f"Prescreen one NC-aimed topic card of the {project.domain} research program "
             "(funnel levels 2 and 3; follow the 'Prescreen' section of the skill). The packet at "
             "the input path has the card. You did not write it. " + CALIBRATION_TEXT + " A "
-            f"match below {funnel.admission_min_band} rejects the card. Phase A (cheap): a quick "
+            f"match below {floor} rejects the card. Phase A (cheap): a quick "
             "novelty search of the last three years, preprints included (Research Square, arXiv, "
             "bioRxiv, medRxiv, SSRN, EarthArXiv; list the 3-5 closest papers), and your own "
             "scoring of the five NC thresholds on the design's potential as knowable at "
@@ -864,8 +933,8 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
             ledger, str(topic["topic_id"]), db=db, event_type="card_prescreen_recorded",
             reason=event, decided_by=PRESCREEN_DECIDER,
             detail={key: state.get(key) for key in (
-                "status", "task_id", "attempts", "expected_band", "calibration_match", "met",
-                "reason", "why", "errors")},
+                "status", "task_id", "attempts", "expected_band", "calibration_match",
+                "admission_min_band", "met", "reason", "why", "errors")},
             updates={"card_check": check},
             key=f"card_prescreen:{topic['topic_id']}:{event}:{state.get('attempts')}")
 
@@ -889,7 +958,9 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
                 continue
             running -= 1
             found = _result(db, str(state.get("task_id"))) if status == "succeeded" else None
-            verdict = evaluate_prescreen(found[0], settings, found[1]) if found else {
+            verdict = evaluate_prescreen(
+                found[0], settings, found[1], line=topic.get("research_line")
+            ) if found else {
                 "status": "invalid", "errors": [f"task {status}"]}
             state.update({key: value for key, value in verdict.items() if key != "status"},
                          finished_at=utc_now())
@@ -936,18 +1007,32 @@ def advance_prescreens(db, paths, settings, report) -> list[dict[str, Any]]:
 
 
 def admission_problems(admission: Mapping[str, Any], settings,
-                       prescreen: Mapping[str, Any] | None = None) -> list[str]:
+                       prescreen: Mapping[str, Any] | None = None, *,
+                       line: str | None = None) -> list[str]:
     """Why an nc_aim admit does not meet the NC admission requirements ([] when it does).
 
     Pipeline slimming 2026-11-26: the gate no longer scores the NC thresholds again; it checks
-    that the prescreen passed (thresholds, calibration match, kill test) and adds the
-    independent novelty search.
+    that the prescreen passed (thresholds, calibration match, kill test, line floor) and adds
+    the independent novelty search.
     """
 
     funnel = settings.program.funnel
     gaps: list[str] = []
-    if funnel.prescreen and str((prescreen or {}).get("status") or "") != "pass":
-        gaps.append("the prescreen (card_check.prescreen) has not passed")
+    if funnel.prescreen:
+        if str((prescreen or {}).get("status") or "") != "pass":
+            gaps.append("the prescreen (card_check.prescreen) has not passed")
+        else:
+            floor = admission_min_band(settings, line)
+            match = _text((prescreen or {}).get("calibration_match"))
+            band = _text((prescreen or {}).get("expected_band"))
+            if match in BANDS and band_rank(match) > band_rank(floor):
+                gaps.append(
+                    f"prescreen calibration_match {match} is below the admission floor {floor}"
+                )
+            elif band in BANDS and band_rank(band) > band_rank(floor):
+                gaps.append(
+                    f"prescreen expected_band {band} is below the admission floor {floor}"
+                )
     search = admission.get("novelty_search")
     if not isinstance(search, Mapping):
         gaps.append("admission.novelty_search is missing (independent novelty search)")
@@ -1226,6 +1311,7 @@ def metrics(document: Mapping[str, Any], settings, *, scout_counts: Mapping[str,
         achieved = dict(row["achieved"])
         graded = sum(achieved.values())
         result[line] = {
+            "admission_min_band": admission_min_band(settings, line),
             "all_topics": {level: row["all"][level] for level in FUNNEL_LEVELS},
             "nc_aim": nc_counts, "conversion": conversion,
             "expected_band_at_admission": dict(row["expected"]),
@@ -1234,7 +1320,11 @@ def metrics(document: Mapping[str, Any], settings, *, scout_counts: Mapping[str,
                                 for band, count in achieved.items()} if graded else {},
             **({"scouts": dict(scout_counts.get(line) or {})} if scout_counts else {}),
         }
+    configured_lines = getattr(getattr(settings, "program", None), "lines", None) or {}
     return {"lines": result,
+            "admission_min_band": settings.program.funnel.admission_min_band,
+            "line_floors": {line: admission_min_band(settings, line)
+                            for line in configured_lines},
             "target_mix_per_10": {band: list(pair) for band, pair in target.items()},
             "note": "nc_aim counts only cards registered under the NC aim; all_topics is the "
                     "whole ledger. Conversion is level-to-level within nc_aim."}
@@ -1285,7 +1375,8 @@ def spin_hours(db, settings, document: Mapping[str, Any], scout_campaigns: Mappi
 
 
 __all__ = [
-    "BANDS", "HOOKS", "THRESHOLDS", "admission_problems", "advance_prescreens",
-    "calibrated_band", "card_contract_errors", "evaluate_prescreen", "metrics", "nc_grade",
-    "prescreen_held", "research_fields", "scout_blocks", "screen_card",
+    "BANDS", "HOOKS", "THRESHOLDS", "admission_instruction", "admission_min_band",
+    "admission_problems", "advance_prescreens", "calibrated_band", "card_contract_errors",
+    "evaluate_prescreen", "metrics", "nc_grade", "prescreen_held", "research_fields",
+    "scout_blocks", "scout_floor_instruction", "scout_instruction", "screen_card",
 ]

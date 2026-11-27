@@ -176,11 +176,14 @@ class LineSettings:
     line's papers are polished), off (as polish, and out of the scout rotation).
     ``slots``: the line's research slots (None: only ``max_active_topics``). ``nc_aim``:
     false keeps the line's own templated standard instead of the NC aim.
+    ``admission_min_band``: optional per-line admission floor (from ``EXPECTED_BANDS``;
+    None falls back to ``[program.funnel].admission_min_band``).
     """
 
     mode: str = "full"
     slots: int | None = None
     nc_aim: bool = True
+    admission_min_band: str | None = None
 
 
 @dataclass(frozen=True)
@@ -367,10 +370,12 @@ class ProgramSettings:
     # may declare at once; openlabs-remote refuses a submission beyond it (0 = off).
     campaign_compute_threads: int = 8
     # Line states (2026-11-26, slimming batch 2): ``[program.lines.<id>]`` with ``mode``
-    # (full | supply_only | polish | off), ``slots`` and ``nc_aim``, in scout-rotation order.
+    # (full | supply_only | polish | off), ``slots``, ``nc_aim`` and optional
+    # ``admission_min_band``, in scout-rotation order.
     # One table instead of research_lines, polish_exempt_lines, polish_supply_only_lines,
     # line_max_active_topics and funnel.exempt_lines (still read for one version: converted,
-    # with a tick warning). Read through :meth:`line` and :meth:`stops`.
+    # with a tick warning). Read through :meth:`line`, :meth:`stops` and
+    # :meth:`admission_min_band`.
     lines: dict[str, "LineSettings"] = field(default_factory=dict)
     # Polish mode (2026-11-23, owner: "stop new tasks and new experiments, polish the
     # papers already produced"): the default mode of a line the table does not list (and of a
@@ -387,6 +392,12 @@ class ProgramSettings:
         if isinstance(line, str) and line in self.lines:
             return self.lines[line]
         return LineSettings(mode="polish" if self.polish_mode else "full")
+
+    def admission_min_band(self, line: Any = None) -> str:
+        """Effective admission floor of ``line`` (per-line key if set, else global funnel)."""
+
+        override = self.line(line).admission_min_band
+        return override if override is not None else self.funnel.admission_min_band
 
     def stops(self, stage: str, line: Any = EVERY_LINE) -> bool:
         """Whether ``stage`` is stopped for a topic of ``line``.
@@ -502,7 +513,8 @@ class FunnelSettings:
     # passed with an effect a simple null model largely explained). A signal a known formula
     # or algebraic relation determines counts as fully explained (nc_funnel.evaluate_prescreen).
     null_explained_max: float = 0.5
-    # L4 (admission): independent novelty search and the floor of the expected band.
+    # L4 (admission): independent novelty search and the default floor of the expected band
+    # (may be overridden per line via ``[program.lines.<id>].admission_min_band``).
     novelty_min_papers: int = 50
     novelty_window_years: int = 3
     novelty_closest: int = 5
@@ -1865,7 +1877,7 @@ def legacy_lines(polish_mode: bool, *, research_lines: tuple[str, ...] = (),
 
 
 def _lines_table(value: Any) -> dict[str, LineSettings]:
-    """``[program.lines]``: ``{line id: {mode, slots, nc_aim}}`` in rotation order."""
+    """``[program.lines]``: ``{line id: {mode, slots, nc_aim, admission_min_band}}`` in rotation order."""
 
     if not isinstance(value, dict):
         raise ValueError("[program.lines] must be a table of [program.lines.<line id>]")
@@ -1874,7 +1886,7 @@ def _lines_table(value: Any) -> dict[str, LineSettings]:
         line = str(key or "").strip()
         if not line or not isinstance(raw, dict):
             raise ValueError("[program.lines] entries must be [program.lines.<line id>] tables")
-        unknown = set(raw) - {"mode", "slots", "nc_aim"}
+        unknown = set(raw) - {"mode", "slots", "nc_aim", "admission_min_band"}
         if unknown:
             raise ValueError(f"[program.lines.{line}] has unknown key(s) {sorted(unknown)}")
         mode = str(raw.get("mode", "full")).strip()
@@ -1887,7 +1899,20 @@ def _lines_table(value: Any) -> dict[str, LineSettings]:
         nc_aim = raw.get("nc_aim", True)
         if not isinstance(nc_aim, bool):
             raise ValueError(f"[program.lines.{line}].nc_aim must be true or false")
-        lines[line] = LineSettings(mode=mode, slots=slots, nc_aim=nc_aim)
+        band_raw = raw.get("admission_min_band")
+        band: str | None = None
+        if band_raw is not None:
+            if not isinstance(band_raw, str):
+                raise ValueError(
+                    f"[program.lines.{line}].admission_min_band must be one of {EXPECTED_BANDS}"
+                )
+            band = band_raw.strip()
+            if band not in EXPECTED_BANDS:
+                raise ValueError(
+                    f"[program.lines.{line}].admission_min_band must be one of {EXPECTED_BANDS}"
+                )
+        lines[line] = LineSettings(mode=mode, slots=slots, nc_aim=nc_aim,
+                                   admission_min_band=band)
     return lines
 
 

@@ -1133,6 +1133,7 @@ def _schedule_one_scout(
     line = project.research_line
     line_fields: dict[str, Any] = {}
     stage = target_stage.stage_for(db, line, settings)
+    floor = nc_funnel.admission_min_band(settings, line) if stage == target_stage.NC_AIM else None
     if line:
         line_fields = {
             "research_line": line,
@@ -1163,6 +1164,7 @@ def _schedule_one_scout(
             "domain": project.domain,
             "card_schema": "openlabs.topic_card.v1",
             **line_fields,
+            **({"admission_min_band": floor} if floor is not None else {}),
             "max_cards": max_cards,
             "free_slots": status.free_slots,
             "candidate_pool": len(_proposed_pool(document)),
@@ -1211,7 +1213,9 @@ def _schedule_one_scout(
                     + _queue_instruction(paths, settings, line, db)
                     + (". Under the NC aim these templates and queues are optional starting "
                        "points from the routine stage, not limits: a card that goes beyond them "
-                       "(without paper_template) is welcome when it meets the NC bar"
+                       "(without paper_template) is welcome when it meets "
+                       + ("the NC bar" if floor == "nc"
+                          else f"this line's admission floor ({floor}) and the required thresholds")
                        if stage == target_stage.NC_AIM else "")
                     if line_templates(research_lines_document(paths, settings), line) else ""
                 )
@@ -1229,8 +1233,8 @@ def _schedule_one_scout(
             "with its file:// URI and SHA-256 (a PDF in the workspace fails promotion). An "
             "empty `topic_cards` array is a "
             "valid outcome when nothing clears the bar. Do not start the research itself."
-            + target_stage.scout_instruction(stage)
-            + (nc_funnel.scout_floor_instruction(settings)
+            + target_stage.scout_instruction(stage, settings, line)
+            + (nc_funnel.scout_floor_instruction(settings, line)
                if stage == target_stage.NC_AIM else "")
         ),
         input_path=str(packet_path),
@@ -2852,13 +2856,17 @@ def schedule_topic_admission(
         card = _read_object(card_path)
         if card_sha256(card) != topic.get("card_sha256"):
             raise ValueError(f"topic {topic['topic_id']} card file differs from the ledger")
+        entry_stage = target_stage.stage_for(db, card.get("research_line"), settings)
         entry: dict[str, Any] = {
             "topic_id": topic["topic_id"],
             "source_result_id": _source_id(topic),
             "card_sha256": topic["card_sha256"],
             "proposer_provider": provider,
             "card": card,
-            "target_stage": target_stage.stage_for(db, card.get("research_line"), settings),
+            "target_stage": entry_stage,
+            **({"admission_min_band": nc_funnel.admission_min_band(
+                settings, card.get("research_line"))}
+               if entry_stage == target_stage.NC_AIM else {}),
         }
         if isinstance(topic.get("card_check"), Mapping):
             # Non-blocking gaps found at intake (audience evidence, licence notes, ...).
@@ -3014,8 +3022,9 @@ def schedule_topic_admission(
             )
             + target_stage.admission_instruction(
                 {entry["target_stage"] for entry in entries} - {target_stage.NC_AIM})
-            + (nc_funnel.admission_instruction(settings) if any(
-                entry["target_stage"] == target_stage.NC_AIM for entry in entries) else "")
+            + (nc_funnel.admission_instruction(
+                settings, line=line_ids[0] if len(line_ids) == 1 else None
+            ) if any(entry["target_stage"] == target_stage.NC_AIM for entry in entries) else "")
         ),
         input_path=str(packet_path),
         skill_path=ADMISSION_SKILL,
@@ -3344,7 +3353,8 @@ def materialize_admission_decisions(
                 gaps = [*target_stage.card_errors(card, stage),
                         *nc_funnel.admission_problems(
                             admission, settings,
-                            (topic.get("card_check") or {}).get("prescreen"))]
+                            (topic.get("card_check") or {}).get("prescreen"),
+                            line=card.get("research_line"))]
                 if gaps:
                     reject_topic(ledger, topic_id, db=db, reason=nc_funnel.ADMISSION_REJECTION,
                                  decided_by=review_task_id, evidence=evidence,

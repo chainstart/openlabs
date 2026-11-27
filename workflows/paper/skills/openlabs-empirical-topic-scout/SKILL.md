@@ -97,8 +97,11 @@ before the work is done; their topics are taken and must never be proposed or pa
   `ledger_snapshot` to avoid repeating domains, datasets or angles where recent cards just failed.
   The pool has a cap (the candidate-pool low water) and a weekly model budget per line; a line
   whose recent cards all failed downstream is backed off.
-- **Admission floor nc on cc-sg** (user 2026-11-26: "接下来的出题希望选题至少是够nc档次的"): a card whose
-  calibration match or expected band is below Nature Communications is rejected at the prescreen.
+- **Per-line admission floor** (`admission_min_band` in the packet and task objective; per-line
+  `[program.lines.<id>].admission_min_band` if set, else global `[program.funnel].admission_min_band`):
+  topics still aim high and the data grade the journal after research, while a card whose
+  calibration match or expected band is below that line's floor (e.g. `nc` / `zone_1` on open
+  lines, `zone_2` on established lines) is rejected at prescreen.
 - **The NC surveys point to fields, not claims** (read_resources `nc-survey`, `nc-hotspots`): the ten
   templates A-J of nc-hotspots section 2 (citation statistics, crowding) and the line's
   `seed_directions` (numbers of nc-hotspots section 3.2) are optional illustrations only, never a
