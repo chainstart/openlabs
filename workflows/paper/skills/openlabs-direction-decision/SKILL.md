@@ -84,12 +84,32 @@ Choose `freeze` if neither path addresses the outstanding review findings.
 - `freeze` - when neither of the above can answer the strongest reason within the remaining
   budget and deadline, when the primary endpoint failed against its matched baseline and no
   honest short format fits, or when the decisions left are used up. Freezing is a normal,
-  cost-saving outcome, not a failure of judgement. State the `reason_class`
-  (`primary_endpoint_failed`, `decisive_data_unavailable`, `overdue`,
-  `contribution_insufficient`, `no_eligible_venue`, `review_stalled`, `infrastructure`,
-  `budget_exhausted`) and at least one concrete reopen condition (`type`: new_data_source,
-  new_method, venue_policy_change, external_result; `description`: what would have to become
-  true, specifically enough that a later scout can check it).
+  cost-saving outcome, not a failure of judgement. Choose the `reason_class` that matches the
+  evidence from the four primary classes (never label a solver, reproduction, budget, or negative
+  result as `data_access` / `decisive_data_unavailable`):
+  - `data_access` — decisive dataset cannot be obtained (access form/registration needed,
+    restricted/paywalled, broken archive, or public release missing a required decisive field).
+    Examples: Living Planet Database 2026 portal form/non-commercial terms; PhysioNet
+    Challenge-2021 Georgia subset lacking a patient-linkage map; archive lacking point-in-time
+    price vintages.
+  - `method_capability` — solver, pipeline, or methodological limitation, or failure to reproduce
+    a published baseline/control within tolerance. Examples: mandatory shared solver missing
+    recovery or spot+third-light support; FEMTO/Paderborn baseline reproduction miss; uncalibrated
+    cross-band luminosity conversion.
+  - `negative_result` — analysis ran on available data and yielded a failed, null, negligible,
+    inconclusive, or insufficient scientific result. Examples: primary endpoint failed; 95% CI
+    spanning zero; negligible 0.002% effect below materiality threshold; contribution insufficient.
+    (For acceptance-grading freezes with no fitting verified journal, keep `no_eligible_venue`.)
+  - `resources_exhausted` — compute allocation, agent-time budget, calendar deadline, provider
+    quota/pacing, review-round cap, or infrastructure capacity was exhausted before reaching a
+    decisive result. Examples: core-hour allocation exhausted mid-precheck; provider quota pacing
+    halt; four review rounds exhausted.
+  (Legacy granular codes — `decisive_data_unavailable`, `feasibility_precheck_failed`,
+  `primary_endpoint_failed`, `contribution_insufficient`, `no_eligible_venue`, `budget_exhausted`,
+  `overdue`, `review_stalled`, `infrastructure` — map onto these four classes.)
+  Include at least one concrete reopen condition (`type`: new_data_source, new_method,
+  venue_policy_change, external_result; `description`: what would have to become true,
+  specifically enough that a later scout can check it).
 
 Trigger `research_needs_human`: the research executor stopped and asked for a decision or
 authority instead of continuing (for example it was unsure whether to keep waiting for a remote
@@ -117,7 +137,7 @@ In the result bundle (`openlabs.result_bundle.v1`, status `succeeded`), set
   "analysis": {"name": "", "expected_to_change": "", "data": "", "budget_seconds": 0,
                "success_criterion": ""},
   "retarget": {"venue_or_format": "", "why_fits": ""},
-  "freeze": {"reason_class": "", "reopen_conditions": [{"type": "", "description": ""}]}
+  "freeze": {"reason_class": "data_access | method_capability | negative_result | resources_exhausted", "reopen_conditions": [{"type": "", "description": ""}]}
 }
 ```
 

@@ -89,6 +89,7 @@ ROUTING_OPERATOR_REOPEN = "owner_operator_reopen"
 GRANT_SCOPES = ("text_revision",)
 GRANTABLE_FREEZE_CLASSES = frozenset({"review_stalled", "overdue"})
 SCIENTIFIC_FREEZE_CLASSES = frozenset({
+    "data_access", "method_capability", "negative_result",
     "primary_endpoint_failed", "feasibility_precheck_failed", "decisive_data_unavailable",
     "contribution_insufficient",
 })

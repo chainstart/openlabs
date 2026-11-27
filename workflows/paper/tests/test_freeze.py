@@ -72,6 +72,17 @@ def test_valid_freeze_record_loads_and_reports_reason(tmp_path: Path) -> None:
     assert freeze_block_reason({"discovery_scheduling": "frozen"}) is None
 
 
+@pytest.mark.parametrize(
+    "reason_class",
+    ("data_access", "method_capability", "negative_result", "resources_exhausted"),
+)
+def test_four_primary_freeze_classes_are_accepted(tmp_path: Path, reason_class: str) -> None:
+    root = _repo(tmp_path, freeze_decision=_freeze_decision(freeze_reason_class=reason_class))
+    paper = load_registry(root, include_local_repositories=False)["papers"][f"papers/{PAPER_ID}"]
+    reason = freeze_block_reason(paper, PAPER_ID)
+    assert reason and reason_class in reason
+
+
 def test_minimal_earlier_freeze_record_stays_valid(tmp_path: Path) -> None:
     root = _repo(tmp_path, freeze_decision={"status": "frozen", "reason": "Editorial rejection."})
     load_registry(root, include_local_repositories=False)

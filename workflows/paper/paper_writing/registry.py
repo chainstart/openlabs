@@ -44,16 +44,28 @@ JOURNAL_HISTORY_CLEAR_STATUSES = {"clear", "material_scientific_revision"}
 # revision, Zenodo, handoff). The vocabularies mirror the orchestrator topic ledger
 # (``openlabs.contracts.FREEZE_REASON_CLASSES`` and ``program.REOPEN_CONDITION_TYPES``)
 # so a paper-level freeze can later be imported there unchanged.
-FREEZE_REASON_CLASSES = {
-    "primary_endpoint_failed",
-    "decisive_data_unavailable",
-    "overdue",
-    "contribution_insufficient",
-    "no_eligible_venue",
-    "review_stalled",
-    "infrastructure",
-    "budget_exhausted",
+FREEZE_REASON_CATEGORIES = (
+    "data_access",
+    "method_capability",
+    "negative_result",
+    "resources_exhausted",
+)
+FREEZE_REASON_TO_CATEGORY = {
+    "data_access": "data_access",
+    "method_capability": "method_capability",
+    "negative_result": "negative_result",
+    "resources_exhausted": "resources_exhausted",
+    "decisive_data_unavailable": "data_access",
+    "feasibility_precheck_failed": "method_capability",
+    "primary_endpoint_failed": "negative_result",
+    "contribution_insufficient": "negative_result",
+    "no_eligible_venue": "negative_result",
+    "budget_exhausted": "resources_exhausted",
+    "overdue": "resources_exhausted",
+    "review_stalled": "resources_exhausted",
+    "infrastructure": "resources_exhausted",
 }
+FREEZE_REASON_CLASSES = set(FREEZE_REASON_TO_CATEGORY)
 REOPEN_CONDITION_TYPES = {"new_data_source", "new_method", "venue_policy_change", "external_result"}
 
 

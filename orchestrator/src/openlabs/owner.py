@@ -3349,8 +3349,8 @@ def render_brief(
         "`{\"status\": \"continuing|awaiting_remote|ready_for_review|frozen|blocked_human\", "
         "\"summary\", \"job_ids\", \"paper_id\", \"primary_endpoint_verdict\": "
         "\"met|failed|inconclusive|pending\", \"phase\": \"precheck|solving|writing\", "
-        "\"reason\"}`. Only status is required (job_ids, reason where they apply); the control "
-        "plane fills the rest.",
+        "\"freeze_reason_class\": \"data_access|method_capability|negative_result|"
+        "resources_exhausted\", \"reason\"}`. Only status is required; add others as needed.",
         "- Files: workspace = small text (<= 5 MB: notes, JSON, CSV, scripts, figures); logs, "
         "chains, archives, PDFs, downloads, job inputs, big files -> campaign data dir "
         "(footer; one root, kept across seats; declare the files you cite; strays left in the "

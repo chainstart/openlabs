@@ -74,9 +74,18 @@ A cheaper check before admission, on one card whose author is another model fami
   rule); a match below the admission floor rejects it. A result without a match is invalid.
 - **Phase A (minutes, no compute).** A quick novelty search of the last three years (list the
   3-5 closest papers; `papers_screened` as counted), including preprints: Research Square,
-  arXiv, bioRxiv, medRxiv, SSRN, EarthArXiv. Then your own scoring of the five NC thresholds.
-  When fewer than the required number hold, the claim is already reported (`verdict:
-  scooped`) or the calibration match is below the floor, stop and return; do not run phase B.
+  arXiv, bioRxiv, medRxiv, SSRN, EarthArXiv. **Also check how each decisive dataset in
+  `card.data_sources` is actually obtained and whether all required decisive fields exist in the
+  public release**, returning `data_access_check[]`:
+  `{source, method: "direct" | "form_or_registration" | "restricted", required_fields_present: true | false, missing_fields: [...], registration: "..."}`.
+  Examples: Living Planet Database 2026 requires a named-recipient web form and non-commercial
+  terms (`method: "form_or_registration"`, `registration: "..."` so it routes to
+  `needs_registration`); PhysioNet Challenge-2021 Georgia subset has no patient-linkage map so
+  patient-disjoint splits are impossible (`required_fields_present: false`,
+  `missing_fields: ["patient_linkage_map"]`). Then your own scoring of the five NC thresholds.
+  When any decisive dataset is `restricted` or missing a required decisive field, when fewer than
+  the required number of thresholds hold, when the claim is already reported (`verdict: scooped`),
+  or when the calibration match is below the floor, stop and return; do not run phase B.
 - **Score the thresholds on the design's potential, as knowable at admission.** generality:
   the planned population is global, a whole population or a law across systems; scale: the
   planned data volume against the largest prior study; benchmark: the named authoritative
@@ -115,9 +124,10 @@ A cheaper check before admission, on one card whose author is another model fami
   `null_explained_max` (default 0.5) of the effect, or a ceiling below the claim -> one band
   lower; a band below the admission floor -> rejected; otherwise the card goes to admission with
   your result.
-- Return `topic_prescreen` {calibration_match, calibration_neighbours, novelty_quick, thresholds,
-  kill_test, expected_band, summary}. Be
-  honest about a missing signal: a killed card now saves weeks of compute later.
+- Return `topic_prescreen` {calibration_match, calibration_neighbours, data_access_check,
+  novelty_quick, thresholds, kill_test, expected_band, summary}. Be
+  honest about a missing signal, restricted source, or missing decisive field: a killed card now
+  saves weeks of compute later.
 
 ## The routine admission standard
 

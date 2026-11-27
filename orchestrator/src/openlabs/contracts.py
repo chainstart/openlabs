@@ -847,6 +847,8 @@ def validate_topic_card(card: Any, *, current_year: int | None = None,
             for name in ("version", "license"):
                 if not _text(item.get(name)):
                     warnings.append(f"{prefix}.{name} is missing")
+            if item.get("access") is not None:
+                errors.extend(data_source_access_errors(item, prefix, required=True))
 
     if card.get("computational_only") is not True:
         errors.append("computational_only must be true")
@@ -1014,7 +1016,110 @@ def normalize_topic_card(card: Mapping[str, Any]) -> tuple[dict[str, Any], list[
             precheck["budget"] = text
             precheck.setdefault("budget_detail", budget)
             notes.append("feasibility_precheck.budget object written as text (kept in budget_detail)")
+    sources = fixed.get("data_sources")
+    if isinstance(sources, list):
+        for index, source in enumerate(sources):
+            if not isinstance(source, dict):
+                continue
+            access = source.get("access")
+            if isinstance(access, dict) and _text(access.get("method")) == "form_or_registration":
+                reg = (
+                    _text(access.get("registration"))
+                    or (_text(source.get("needs_registration"))
+                        if isinstance(source.get("needs_registration"), str) else "")
+                    or _text(source.get("registration_note"))
+                )
+                if not source.get("needs_registration") or (
+                    source.get("needs_registration") is True and reg
+                ):
+                    source["needs_registration"] = reg or True
+                    notes.append(
+                        f"data_sources[{index}].needs_registration set from access.method=form_or_registration"
+                    )
+                if reg and not _text(access.get("registration")):
+                    access["registration"] = reg
     return fixed, notes
+
+
+DATA_ACCESS_METHODS = ("direct", "form_or_registration", "restricted")
+
+
+def data_source_access_errors(
+    source: Mapping[str, Any],
+    prefix: str,
+    *,
+    required: bool = False,
+) -> list[str]:
+    """Validate ``data_sources[i].access`` for a decisive dataset.
+
+    Expected shape:
+    ``{method: "direct" | "form_or_registration" | "restricted",
+       required_fields_present: bool,
+       required_fields: [str, ...],     # non-empty when required_fields_present is True
+       missing_fields: [str, ...],      # non-empty when required_fields_present is False
+       registration: str}``             # required when method is form_or_registration
+    """
+
+    access = source.get("access")
+    if access is None:
+        if not required:
+            return []
+        return [
+            f"{prefix}.access is missing (method: {'|'.join(DATA_ACCESS_METHODS)}; "
+            "required_fields_present: bool; required_fields/missing_fields)"
+        ]
+    if not isinstance(access, Mapping):
+        return [f"{prefix}.access must be an object"]
+    errors: list[str] = []
+    method = _text(access.get("method"))
+    if method not in DATA_ACCESS_METHODS:
+        errors.append(
+            f"{prefix}.access.method must be one of {', '.join(DATA_ACCESS_METHODS)}"
+        )
+    present = access.get("required_fields_present")
+    if not isinstance(present, bool):
+        errors.append(f"{prefix}.access.required_fields_present must be a boolean")
+    req_fields = access.get("required_fields")
+    miss_fields = access.get("missing_fields")
+    if req_fields is not None and (
+        not isinstance(req_fields, list) or any(not _text(item) for item in req_fields)
+    ):
+        errors.append(f"{prefix}.access.required_fields must be an array of non-empty strings")
+        req_fields = None
+    if miss_fields is not None and (
+        not isinstance(miss_fields, list) or any(not _text(item) for item in miss_fields)
+    ):
+        errors.append(f"{prefix}.access.missing_fields must be an array of non-empty strings")
+        miss_fields = None
+    if present is True:
+        if not req_fields:
+            errors.append(
+                f"{prefix}.access.required_fields must list the verified decisive fields "
+                "when required_fields_present is true"
+            )
+        if miss_fields:
+            errors.append(
+                f"{prefix}.access.missing_fields must be empty when required_fields_present is true"
+            )
+    elif present is False:
+        if not miss_fields:
+            errors.append(
+                f"{prefix}.access.missing_fields must name which required fields are missing "
+                "when required_fields_present is false"
+            )
+    if method == "form_or_registration":
+        reg = (
+            _text(access.get("registration"))
+            or (_text(source.get("needs_registration"))
+                if isinstance(source.get("needs_registration"), str) else "")
+            or _text(source.get("registration_note"))
+        )
+        if not reg:
+            errors.append(
+                f"{prefix}.access.registration (or needs_registration text) is required when "
+                "access.method is form_or_registration"
+            )
+    return errors
 
 
 def budget_text(value: Any) -> str:
@@ -1360,21 +1465,62 @@ def admission_conditions(admission: Any) -> list[dict[str, str]]:
 # ``pending``: the endpoint has not been evaluated yet (a freeze before the analysis,
 # a paper candidate whose verdict the researcher still owes; neither enters writing).
 PRIMARY_ENDPOINT_VERDICTS = frozenset({"met", "failed", "inconclusive", "pending"})
-FREEZE_REASON_CLASSES = frozenset(
-    {
-        "primary_endpoint_failed",
-        "decisive_data_unavailable",
-        "overdue",
-        "contribution_insufficient",
-        "no_eligible_venue",
-        "review_stalled",
-        "infrastructure",
-        # The hard per-topic Agent-time ceiling was reached.
-        "budget_exhausted",
-        # A research-line card's feasibility precheck missed its pass criterion.
-        "feasibility_precheck_failed",
-    }
+FREEZE_REASON_CATEGORIES = (
+    "data_access",
+    "method_capability",
+    "negative_result",
+    "resources_exhausted",
 )
+FREEZE_REASON_CATEGORY_DEFINITIONS: dict[str, str] = {
+    "data_access": (
+        "Decisive dataset cannot be obtained: requires a free access form or registration "
+        "(e.g. Living Planet Database 2026), is restricted/paywalled, or is a public release "
+        "missing a required decisive field (e.g. Challenge-2021 Georgia missing patient-linkage "
+        "map, or archive lacking point-in-time price vintages)."
+    ),
+    "method_capability": (
+        "Solver, pipeline, or methodological limitation, or failure to reproduce a published "
+        "baseline/control within tolerance (e.g. mandatory shared solver lacking recovery or "
+        "spot+third-light support, uncalibrated conversion, or FEMTO/Paderborn baseline "
+        "reproduction miss)."
+    ),
+    "negative_result": (
+        "Analysis ran on available data and yielded a failed, null, negligible, inconclusive, "
+        "or insufficient scientific result (e.g. primary endpoint failed, 95% CI spanning zero, "
+        "negligible 0.002% effect below materiality threshold, contribution insufficient, or no "
+        "eligible venue for the achieved result)."
+    ),
+    "resources_exhausted": (
+        "Compute allocation, agent-time budget, calendar deadline, provider quota/pacing, "
+        "review-round cap, or infrastructure capacity was exhausted before a decisive result "
+        "could be reached (e.g. core-hour allocation exhausted, quota pacing halt, or review "
+        "rounds exhausted)."
+    ),
+}
+FREEZE_REASON_TO_CATEGORY: dict[str, str] = {
+    # Four primary freeze classes (preferred for new freezes and direction decisions).
+    "data_access": "data_access",
+    "method_capability": "method_capability",
+    "negative_result": "negative_result",
+    "resources_exhausted": "resources_exhausted",
+    # Existing granular reason codes kept for backward compatibility and mapped onto the four.
+    "decisive_data_unavailable": "data_access",
+    "feasibility_precheck_failed": "method_capability",
+    "primary_endpoint_failed": "negative_result",
+    "contribution_insufficient": "negative_result",
+    "no_eligible_venue": "negative_result",
+    "budget_exhausted": "resources_exhausted",
+    "overdue": "resources_exhausted",
+    "review_stalled": "resources_exhausted",
+    "infrastructure": "resources_exhausted",
+}
+FREEZE_REASON_CLASSES = frozenset(FREEZE_REASON_TO_CATEGORY)
+
+
+def freeze_reason_category(reason_class: Any) -> str | None:
+    """Map a freeze reason code onto one of the four primary freeze classes (or None)."""
+
+    return FREEZE_REASON_TO_CATEGORY.get(_text(reason_class))
 REVIEW_NEXT_ACTIONS = frozenset(
     {"text_revision", "evidence_remediation", "retarget_required", "direction_decision"}
 )
@@ -1459,10 +1605,25 @@ def validate_direction_decision(value: Any) -> ValidationResult:
         if not isinstance(freeze, Mapping):
             errors.append("freeze is required for freeze")
         else:
-            if _text(freeze.get("reason_class")) not in FREEZE_REASON_CLASSES:
+            reason_class = _text(freeze.get("reason_class"))
+            if reason_class not in FREEZE_REASON_CLASSES:
                 errors.append(
-                    f"freeze.reason_class must be one of {sorted(FREEZE_REASON_CLASSES)}"
+                    "freeze.reason_class must be one of the four classes "
+                    f"{list(FREEZE_REASON_CATEGORIES)} (or a mapped legacy code in "
+                    f"{sorted(FREEZE_REASON_CLASSES)})"
                 )
+            elif freeze.get("reason_category") is not None:
+                declared_category = _text(freeze.get("reason_category"))
+                expected_category = freeze_reason_category(reason_class)
+                if declared_category not in FREEZE_REASON_CATEGORIES:
+                    errors.append(
+                        f"freeze.reason_category must be one of {list(FREEZE_REASON_CATEGORIES)}"
+                    )
+                elif expected_category and declared_category != expected_category:
+                    errors.append(
+                        f"freeze.reason_category {declared_category!r} does not match "
+                        f"freeze.reason_class {reason_class!r} (expected {expected_category!r})"
+                    )
             conditions = freeze.get("reopen_conditions")
             if not isinstance(conditions, list) or not conditions:
                 errors.append("freeze.reopen_conditions must name at least one reopen condition")

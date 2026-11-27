@@ -358,6 +358,12 @@ def _parser() -> argparse.ArgumentParser:
         "its uncertainty, or was still queued at the precheck end) and could be reopened; "
         "nothing is reopened or written",
     )
+    program_commands.add_parser(
+        "freeze-backfill-report",
+        help="Read-only backfill classification of historical decisive_data_unavailable freezes "
+        "into the four freeze classes (data_access, method_capability, negative_result, "
+        "resources_exhausted); does not rewrite topic-ledger history",
+    )
     line_block = program_commands.add_parser(
         "line-block",
         help="List the research lines blocked on a shared reference (line_facts), or clear "
@@ -667,6 +673,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .line_facts import reopen_report
 
         print(json.dumps(reopen_report(paths, load_settings(paths)), ensure_ascii=False,
+                         indent=2, sort_keys=True, default=str))
+        return 0
+    if args.command == "program" and args.program_command == "freeze-backfill-report":
+        # Read-only: classifies historical decisive_data_unavailable freezes without editing ledger.
+        from .topic_freeze import freeze_backfill_report
+
+        print(json.dumps(freeze_backfill_report(paths, load_settings(paths)), ensure_ascii=False,
                          indent=2, sort_keys=True, default=str))
         return 0
     if args.command == "program" and args.program_command == "target-stage":

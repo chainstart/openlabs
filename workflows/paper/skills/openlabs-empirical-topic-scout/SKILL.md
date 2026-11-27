@@ -148,12 +148,22 @@ before the work is done; their topics are taken and must never be proposed or pa
 - **Data** (user rule: free sources only; registration-free ones are used directly, ones that
   need a free registration are listed for the owner to register): give each data source its
   catalogue `catalog_id`; a source you found and verified yourself (access receipt) gets
-  `catalog_candidate: true`. A free source that needs a registration (an account, API key or
-  data-use agreement we do not hold: ERA5/CDS, GRDC, GloFAS, EM-DAT, IHME GBD and the like) may
-  carry the full-scale analysis: mark it `needs_registration: "<what to register, where>"`, and
-  run the kill test and the access receipt on a registration-free source or sample. The control
-  plane passes such a card on with a note so the owner can register; admission makes the
-  registration a condition. Paid data and `blocked` sources cannot carry a card.
+  `catalog_candidate: true`. **For every decisive dataset in `data_sources[]`, check how it is
+  obtained and whether every field needed for the decisive analysis actually exists in the public
+  release**, and record `access`:
+  `{method: "direct" | "form_or_registration" | "restricted", required_fields_present: true | false, required_fields: [...], missing_fields: [...], registration: "..."}`.
+  - `direct`: freely downloadable with no form/account and every decisive field verified present in
+    the actual public files (not assumed from the paper abstract).
+  - `form_or_registration`: free, but requires a named-recipient web form, account, API key, or
+    non-commercial data-use agreement (e.g. Living Planet Database 2026 portal form — named
+    recipient, non-commercial terms, no redistribution; ERA5/CDS, GRDC, GloFAS, EM-DAT, IHME GBD).
+    Mark it `needs_registration: "<what to register, where>"` (and set `access.registration`) on
+    the card, and run the kill test and access receipt on a registration-free source or sample.
+    L1 routes it through the existing `needs_registration` path to the owner's registration list
+    before admission; admission makes the registration a `before_decisive_analysis` condition.
+  - `restricted` (paid, closed, or `blocked`) or `required_fields_present: false` (e.g. PhysioNet
+    Challenge-2021 Georgia subset lacks a patient-linkage map, making patient-disjoint splits
+    impossible): do not propose the card — L1 rejects it with `card_data_unavailable`.
 - **Routine venue fields are warnings here.** The routine fallback pair in `venues.routine` is
   still named, but `fee_check`, `license_check` and `audience.citations` of an nc_aim card are
   checked as warnings at this stage and completed as admission conditions. Fill them when they
@@ -343,8 +353,13 @@ Each field is there because the gate needs it to decide:
   sentence which observation against the closest published result would make you abandon the
   topic. Check shared controls and data coverage first. Cite any applicable same-version pilot
   and use trial compute for the uncertainty that could still change the decision.
-- `data_sources[]` — each with `doi` or `url`, `version`, `license`. These identify the topic in
-  the ledger.
+- `data_sources[]` — each with `doi` or `url`, `version`, `license`, and (required for every
+  decisive dataset on `nc_aim` cards) `access`: `{method: "direct" | "form_or_registration" |
+  "restricted", required_fields_present: true | false, required_fields: [...], missing_fields:
+  [...], registration: "..."}`. Mark any `form_or_registration` dataset `needs_registration`
+  (what to register, where) so it routes to the user's registration list before admission; never
+  propose a `restricted` dataset or one missing a required decisive field (L1 rejects it). These
+  identify the topic in the ledger.
 - `computational_only: true` and `computational_only_rationale`.
 - `venues` — `routine`: two venues in the routine tiers of
   `settings.yaml#journal_target_policy.venue_eligibility` (fee-free route, team-ledger status

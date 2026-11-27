@@ -49,7 +49,12 @@
     {
       "url": "https://archive.stsci.edu/missions-and-data/tess",
       "version": "TESS sectors as retrieved (record in receipt)",
-      "license": "public archive data; cite per MAST acknowledgement"
+      "license": "public archive data; cite per MAST acknowledgement",
+      "access": {
+        "method": "direct",
+        "required_fields_present": true,
+        "required_fields": ["time_btjd", "pdcsap_flux", "pdcsap_flux_err", "tic_id"]
+      }
     }
   ],
   "computational_only": true,

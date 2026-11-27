@@ -45,6 +45,13 @@ def _nc_fields(**case) -> dict:
 def _nc_card(n: int = 0, **override) -> dict:
     card = lines._line_card(n)
     card.update(_nc_fields())
+    for source in card.get("data_sources") or []:
+        if isinstance(source, dict) and "access" not in source:
+            source["access"] = {
+                "method": "direct",
+                "required_fields_present": True,
+                "required_fields": ["target_outcome"],
+            }
     card.update(override)
     return card
 

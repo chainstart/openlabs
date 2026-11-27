@@ -333,6 +333,8 @@ def _ledger_snapshot(document: Mapping[str, Any]) -> list[dict[str, Any]]:
                     last_rejection_reason(topic) if topic.get("status") == "rejected" else None
                 ),
                 "freeze_reason_class": topic.get("freeze_reason_class"),
+                **({"freeze_reason_category": category}
+                   if (category := topic.get("freeze_reason_category")) else {}),
                 "reopen_conditions": topic.get("reopen_conditions") or [],
                 "supersedes": topic.get("supersedes"),
                 "revision_of": topic.get("revision_of"),
