@@ -10,10 +10,11 @@ between. Each person is copied whole from ``defaults.authors`` (ORCID, email, af
 CRediT roles follow the person). The second author is also the default submitter
 (``deliverable.second_author``), so the site assignment follows without further change.
 
-No extra state file: the paper record keeps ``author_assignment`` (``source: rotation``, the
+The paper record keeps ``author_assignment`` (``source: rotation``, the
 rotation index, the decision id and the user's words), and the next index is one more than
 the largest index recorded in any paper record of the data repository -- its own registry and
-every campaign workspace under ``workspaces/`` (papers are created there and adopted later).
+every campaign workspace under ``workspaces/``. Isolated create roots reserve their
+index in the shared registry so it is visible before promotion.
 The scan and the write run under an exclusive lock on the data repository's settings file, so
 two seats creating papers at the same time do not take the same index. Assigning is
 idempotent: a record that already has ``author_assignment`` or any registered byline is never
@@ -28,16 +29,20 @@ from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 import yaml
 
-from paper_writing.registry import load_paper_metadata, write_paper_metadata
+from paper_writing.registry import load_paper_metadata, review_settings_path, write_paper_metadata
 
 SOURCE = "rotation"
 RULE = "registry/settings.yaml#defaults.second_author_rotation"
 # Paper records under workspaces/: <domain>/<campaign>/ and nested review or publication roots.
-_WORKSPACE_GLOBS = tuple("workspaces/" + "*/" * depth + "registry/papers/*.yaml" for depth in (1, 2, 3, 4))
+_WORKSPACE_DEPTHS = (1, 2, 3, 4)
+_WORKSPACE_GLOBS = tuple("workspaces/" + "*/" * depth + "registry/papers/*.yaml"
+                         for depth in _WORKSPACE_DEPTHS)
+_RESERVATIONS = Path("registry/author-rotation")
 
 
 class AuthorRotationError(ValueError):
@@ -49,8 +54,11 @@ def _now() -> str:
 
 
 def data_root(root: str | Path) -> Path:
-    """The data repository holding ``root``: the nearest ancestor with registry and workspaces."""
+    """Resolve the shared policy repository, retaining standalone workspace support."""
     root = Path(root).resolve()
+    configured = review_settings_path(root)
+    if configured.is_file() and configured.parent.parent != root:
+        return configured.parent.parent
     for candidate in (root, *root.parents):
         if (candidate / "registry" / "settings.yaml").is_file() and (candidate / "workspaces").is_dir():
             return candidate
@@ -104,6 +112,7 @@ def byline(settings: Mapping[str, Any], index: int) -> tuple[list[dict[str, Any]
 
 
 def _paper_records(root: Path) -> Iterator[Path]:
+    yield from sorted((root / _RESERVATIONS).glob("*.yaml"))
     yield from sorted((root / "registry" / "papers").glob("*.yaml"))
     for pattern in _WORKSPACE_GLOBS:
         yield from sorted(root.glob(pattern))
@@ -126,6 +135,16 @@ def recorded_indices(root: str | Path) -> dict[str, int]:
             paper_id = str(record.get("paper_id") or path.stem)
             found[paper_id] = max(found.get(paper_id, -1), assignment["rotation_index"])
     return found
+
+
+def _reserve(pool: Path, paper_id: str, index: int) -> None:
+    path = pool / _RESERVATIONS / f"{paper_id}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    reservation = {"paper_id": paper_id, "author_assignment": {"source": SOURCE, "rotation_index": index}}
+    with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        yaml.safe_dump(reservation, handle)
+        temporary = Path(handle.name)
+    temporary.replace(path)
 
 
 def next_index(root: str | Path) -> int:
@@ -164,9 +183,12 @@ def assign(paper_id: str, root: str | Path) -> dict[str, Any]:
         return {"changed": False, "status": "created_before_rule"}
     lock_root = pool if (pool / "registry" / "settings.yaml").is_file() else root
     with _locked(lock_root):
-        # The create root is usually a campaign workspace under the pool; scan it as well in
-        # case it lies outside the pool's workspace globs.
-        index = max(next_index(pool), next_index(root))
+        metadata = load_paper_metadata(paper_id, root)
+        existing = metadata.get("author_assignment")
+        if isinstance(existing, Mapping):
+            return {"changed": False, "status": "already_assigned", **dict(existing)}
+        indices = recorded_indices(pool)
+        index = indices.get(paper_id, max(indices.values(), default=-1) + 1)
         authors, second = byline(settings, index)
         used = {str(ref) for person in authors for ref in person.get("affiliation_ids") or []}
         affiliations = [deepcopy(dict(item)) for item in (settings.get("defaults") or {}).get("affiliations") or []
@@ -184,5 +206,13 @@ def assign(paper_id: str, root: str | Path) -> dict[str, Any]:
         if not metadata.get("affiliations"):
             metadata["affiliations"] = affiliations
         metadata["author_assignment"] = assignment
+        # An isolated attempt can finish this call long before its record reaches the pool.
+        workspaces = pool / "workspaces"
+        scanned = root == pool or (
+            root.is_relative_to(workspaces)
+            and len(root.relative_to(workspaces).parts) in _WORKSPACE_DEPTHS
+        )
+        if not scanned and paper_id not in indices:
+            _reserve(pool, paper_id, index)
         write_paper_metadata(paper_id, metadata, root)
     return {"changed": True, "status": "assigned", **assignment}
