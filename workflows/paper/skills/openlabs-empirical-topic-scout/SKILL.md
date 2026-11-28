@@ -11,7 +11,7 @@ You are explicitly authorized to start helper sub-agents in parallel to survey s
 
 ## Rules
 - **Templated lines with `queue_candidates`**: draw from `queue_candidates` FIRST using the line's `line_tools` and `data_catalog`. Set `queue_entry_id` to the candidate's `entry_id` (and `reopens` if reopening a listed topic). Propose outside the queue only if the candidates are unsuitable.
-- **Open lines without `queue_candidates`**: search recent literature and `data_catalog` broadly; aim for high-ambition, broad-significance computational questions (Nature Communications level of ambition).
+- **Open lines without `queue_candidates`**: search recent literature and `data_catalog` broadly; propose only questions with a realistic chance of a Nature Communications paper (important, new, of interest across fields). The independent review rejects narrow method checks or benchmark audits on this line; prefer fewer, bolder proposals.
 - **Computational & free data only**: never propose wet-lab work, paid datasets, or `restricted` sources. Free registration-gated sources (`form_or_registration`) are allowed if you record `registration` so the user can register them (and note whether the kill test can run on directly available data).
 - **No duplicates**: check `ledger_snapshot`; do not repeat active, admitted, proposed, or judged-rejected questions unless citing `reopens`.
 
