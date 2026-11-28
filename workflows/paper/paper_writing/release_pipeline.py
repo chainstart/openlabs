@@ -316,6 +316,7 @@ def _support_status(metadata: Mapping[str, Any], settings: Mapping[str, Any],
 def _review_status(paper_id: str, metadata: Mapping[str, Any], root: Path,
                    support: Mapping[str, Any]) -> dict[str, Any]:
     from paper_writing.handoff import _release_paths, manuscript_snapshot_sha256
+    from paper_writing.operations import _review_workspace_fingerprints
     from paper_writing.review_flow import validate_unified_release
 
     release = metadata.get("writing_release") or {}
@@ -332,6 +333,11 @@ def _review_status(paper_id: str, metadata: Mapping[str, Any], root: Path,
                 if (record.get("paper_id") != paper_id
                         or record.get("manuscript_version") != str(metadata.get("version") or "")):
                     problems.append("The unified decision belongs to another paper or version")
+                elif not support.get("prepare_needed") and not release.get("publication_metadata"):
+                    fingerprints = _review_workspace_fingerprints(paper_id, metadata, root)
+                    for key, value in fingerprints.items():
+                        if record["fingerprints"].get(key) != value or release.get(key) != value:
+                            problems.append(f"Reviewed input changed: {key}")
         except Exception as exc:  # noqa: BLE001 - any failure means "not current"
             problems = [f"{type(exc).__name__}: {exc}"]
         if str(release.get("manuscript_version") or "") != str(metadata.get("version") or ""):
@@ -398,6 +404,10 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
             remedy = "zenodo_prepare"
         elif code in CODES and support["release_needed"] and review.get("decision_current"):
             remedy = "publication_metadata"
+        elif (code in CODES and support["release_needed"] and not support["prepare_needed"]
+              and review.get("ready")):
+            # Projection requires the ready decision to cover the current inputs.
+            remedy = "delta_review"
         elif code in {"FIGURES-NOT-REVIEWED", "SCHEMATIC-ROUTE-UNREVIEWED"}:
             remedy = "delta_review"
             if review.get("ready"):
@@ -442,6 +452,7 @@ def release_status(paper_id: str, *, root: str | Path) -> dict[str, Any]:
         "notes": [{"kind": str(note.get("kind") or ""), "code": str(note.get("code") or ""),
                    "message": str(note.get("message") or note.get("note") or "")} for note in notes],
         "publication_metadata_pending": bool(release.get("publication_metadata"))
+                                        and review.get("decision_current", False)
                                         and support["release_needed"] and not support["bound_to_review"],
         "missing_default_contributions": missing_default_contributions(metadata, repo_root),
         "writer_scope": WRITER_SCOPE.replace("<paper_id>", paper_id),
