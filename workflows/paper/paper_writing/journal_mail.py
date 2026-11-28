@@ -627,9 +627,15 @@ def main():
     source.add_argument("--eml", type=Path)
     source.add_argument("--account")
     parser.add_argument("--interval-minutes", type=int, default=20)
+    parser.add_argument("--assignment-notifications", choices=("dry-run", "send"))
+    parser.add_argument("--paper-id", action="append", default=[])
+
     args = parser.parse_args()
     if args.interval_minutes < 1:
         parser.error("interval must be positive")
+    if (args.assignment_notifications and not args.account
+            or args.paper_id and args.assignment_notifications != "send"):
+        parser.error("Assignment notifications require --account; --paper-id requires send mode")
     if args.eml:
         raw = args.eml.read_bytes()
         event = parse(raw, catalog(args.root))
@@ -642,9 +648,7 @@ def main():
     args.state.mkdir(mode=0o700, parents=True, exist_ok=True)
     if args.state.stat().st_mode & 0o077:
         parser.error("Private state directory requires mode 0700")
-    lock = (args.state / "service.lock").open("a")
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    (args.state / "service.pid").write_text(str(os.getpid()) + "\n")
+    from paper_writing.assignment_notifications import reconcile
     settings_file = args.state.parent.parent / "openlabs.toml"
     config = tomllib.loads(settings_file.read_text())
     credentials, error = _credentials_file_values(Path(config["program"]["credentials_file"]))
@@ -652,6 +656,19 @@ def main():
         parser.error(error)
     args.loop = Path(__file__).resolve().parents[3] / "bin/openlabs-container-loop"
     api = ManageApiClient(credentials["ARA_PAPER_MANAGE_API_URL"], credentials["ARA_PAPER_MANAGE_API_KEY"])
+    if args.assignment_notifications:
+        try:
+            ok = reconcile(api, args.state, args.account,
+                           dry_run=args.assignment_notifications == "dry-run", paper_ids=args.paper_id)
+        except (HandoffError, OSError, ValueError, sqlite3.Error, LookupError) as exc:
+            print("Assignment notification run failed", type(exc).__name__, flush=True)
+            ok = False
+        finally:
+            api.close()
+        raise SystemExit(0 if ok else 1)
+    lock = (args.state / "service.lock").open("a")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    (args.state / "service.pid").write_text(str(os.getpid()) + "\n")
     stop = Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     while not stop.is_set():
@@ -664,6 +681,10 @@ def main():
             print(datetime.now(timezone.utc).isoformat(), "journal poll complete", flush=True)
         except (HandoffError, OSError, imaplib.IMAP4.error, ValueError, sqlite3.Error, KeyError, LookupError) as exc:
             print("Journal poll failed", type(exc).__name__, flush=True)
+        try:
+            reconcile(api, args.state, args.account)
+        except (HandoffError, OSError, ValueError, sqlite3.Error, LookupError) as exc:
+            print("Assignment notification run failed", type(exc).__name__, flush=True)
         stop.wait(args.interval_minutes * 60)
 
 
