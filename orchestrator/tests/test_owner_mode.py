@@ -926,7 +926,12 @@ def test_same_journal_retarget_keeps_the_ready_review(tmp_path, monkeypatch, bou
     pending = _direction_task(db)
     packet = json.loads(Path(pending["input_path"]).read_text())
     decision = _retarget_decision(packet["reasons_to_answer"][0], "Zone 3 Journal")
-    decision["retarget"]["achieved_band"] = "zones_3_4"
+    decision["retarget"].update({
+        "achieved_band": "zones_3_4",
+        "nc_scorecard": {key: {"met": False, "evidence": ""} for key in nc_grading.THRESHOLDS},
+        "calibration_match": "zones_3_4",
+        "confidence": "high",
+    })
     report = _decide(paths, settings, monkeypatch, db, decision)
     assert report.program["direction_decisions"][0]["outcome"] == "executed"
     retarget = db.task(pending["task_id"] + ":retarget")

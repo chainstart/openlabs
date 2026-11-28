@@ -1,6 +1,6 @@
 interface:
   display_name: OpenLabs empirical topic scout
-  short_description: Propose computational real-data topics as machine-checked topic cards
-  default_prompt: Use $openlabs-empirical-topic-scout to propose topic cards for the research program.
+  short_description: Scout computational real-data topics as <=1-page Proposal Briefs
+  default_prompt: Use $openlabs-empirical-topic-scout to propose <=1-page topic briefs for the research program.
 policy:
   allow_implicit_invocation: false

@@ -685,3 +685,18 @@ def test_owner_brief_milestone_1_kill_test_and_four_class_freeze(tmp_path, monke
     assert stored["freeze_reason_category"] == "negative_result"
     assert stored["preregistration_sha256"] is None
 
+
+def test_topic_proposal_example_is_valid_and_skills_are_concise() -> None:
+    root = Path(__file__).resolve().parents[2]
+    example = json.loads(
+        (root / "packages/contracts/examples/research-program/topic-proposal.example.json")
+        .read_text(encoding="utf-8")
+    )
+    result = validate_topic_proposal(example)
+    assert result.valid, result.errors
+    scout_lines = (root / "workflows/paper/skills/openlabs-empirical-topic-scout/SKILL.md").read_text(encoding="utf-8").splitlines()
+    review_lines = (root / "workflows/paper/skills/openlabs-topic-admission/SKILL.md").read_text(encoding="utf-8").splitlines()
+    assert len(scout_lines) <= 80, len(scout_lines)
+    assert len(review_lines) <= 70, len(review_lines)
+
+
