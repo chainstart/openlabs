@@ -138,3 +138,27 @@ def test_manual_byline_after_assignment_is_kept(tmp_path):
     assert author_rotation.assign(record["paper_id"], tmp_path)["changed"] is False
     assert _names(load_paper_metadata(record["paper_id"], tmp_path)) == [
         "Zhipeng Chen", "Zhidong Cheng", "Zhicheng Sui"]
+
+
+def test_attempt_creates_share_and_reserve_indices(tmp_path, monkeypatch):
+    pool = tmp_path / "openlabs-data"
+    _settings(pool)
+    campaign = pool / "workspaces" / "lines" / "ai" / "campaign"
+    first_attempt = tmp_path / "artifacts" / "attempt-one"
+    second_attempt = tmp_path / "artifacts" / "attempt-two"
+    for root in (campaign, first_attempt, second_attempt):
+        _settings(root, rotation=False)
+    # Transaction snapshots can themselves look like a complete data repository.
+    (first_attempt / "workspaces").mkdir()
+    monkeypatch.setenv("OPENLABS_REVIEW_DATA", str(pool))
+    records = [
+        _create(campaign, "campaign"),
+        _create(first_attempt, "one"),
+        _create(second_attempt, "two"),
+        _create(pool, "shared"),
+    ]
+    assert [r["author_assignment"]["rotation_index"] for r in records] == [0, 1, 2, 3]
+    assert author_rotation.next_index(pool) == 4
+    retried = _create(second_attempt, "one")
+    assert retried["author_assignment"]["rotation_index"] == 1
+    assert author_rotation.next_index(pool) == 4
