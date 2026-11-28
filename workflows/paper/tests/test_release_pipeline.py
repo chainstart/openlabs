@@ -286,3 +286,40 @@ def test_a_manuscript_without_any_support_mention_is_left_to_the_projection(tmp_
     status = rp.release_status('p', root=tmp_path)
     assert [(i['code'], i['remedy']) for i in status['issues']] == [
         ('SUPPORT-MANUSCRIPT-CITATION-REQUIRED', 'zenodo_prepare')]
+
+
+def test_publication_metadata_waits_for_review_of_added_support_sources(tmp_path, monkeypatch):
+    review_status = rp._review_status
+    metadata = _status_fixture(tmp_path, monkeypatch, publication={"status": "draft"},
+                               support=["SUPPORT-MANUSCRIPT-CITATION-REQUIRED"])
+    monkeypatch.setattr(rp, "_review_status", review_status)
+    monkeypatch.setattr(flow, "validate_unified_release", lambda *args: [])
+    monkeypatch.setattr(rp, "_support_status", lambda *args: {
+        "required": True, "package_sha256": "a" * 64, "bound_to_review": False,
+        "prepare_needed": False, "release_needed": True, "published": False,
+    })
+    from paper_writing.operations import _review_workspace_fingerprints
+
+    (tmp_path / "papers/p/manuscript/main.pdf").write_bytes(b"%PDF")
+    fingerprints = _review_workspace_fingerprints("p", metadata, tmp_path)
+    decision = tmp_path / "decision.json"
+    decision.write_text(json.dumps({
+        "paper_id": "p", "manuscript_version": "1.2.0", "fingerprints": fingerprints,
+    }))
+    metadata["writing_release"].update(
+        fingerprints, decision_record="decision.json", manuscript_version="1.2.0",
+    )
+
+    status = rp.release_status("p", root=tmp_path)
+    assert status["review"]["decision_current"]
+    assert status["issues"][0]["remedy"] == "publication_metadata"
+
+    source = tmp_path / "papers/p/support-materials/README.md"
+    source.parent.mkdir()
+    source.write_text("# Supporting materials\n")
+    metadata["support"]["publication"]["source_files"] = [str(source.relative_to(tmp_path))]
+
+    status = rp.release_status("p", root=tmp_path)
+    assert not status["review"]["decision_current"]
+    assert "Reviewed input changed: support_sources_sha256" in status["review"]["problems"]
+    assert {issue["remedy"] for issue in status["issues"]} == {"delta_review"}
