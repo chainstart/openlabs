@@ -332,7 +332,7 @@ def test_open_slot_schedules_a_worker_tier_scout_with_program_inputs(tmp_path, m
     assert db.task_count("ai-program-scout") == 1
 
 
-def test_scout_not_scheduled_when_full_paused_lead_short_or_too_soon(tmp_path) -> None:
+def test_scout_supply_with_full_slots_ready_queue_and_remaining_guards(tmp_path) -> None:
     def setup(name: str, **program):
         paths = _paths(tmp_path / name)
         _install_program(paths)
@@ -351,13 +351,13 @@ def test_scout_not_scheduled_when_full_paused_lead_short_or_too_soon(tmp_path) -
 
     paths, db, settings, ledger = setup("full", max_active_topics=1)
     active_topic(db, settings, ledger, 0)
-    assert maybe_schedule_scout(db, paths, settings, lead_short=False).reason == "no_free_slot"
+    assert maybe_schedule_scout(db, paths, settings, lead_short=False).task_id is not None
 
     paths, db, settings, ledger = setup("paused", max_ready_unsubmitted=0)
     active_topic(db, settings, ledger, 0)
     mark_topic_in_review(ledger, "t0", db=db, decided_by="r")
     mark_topic_ready(ledger, "t0", db=db, decided_by="r")
-    assert maybe_schedule_scout(db, paths, settings, lead_short=False).reason == "admission_paused"
+    assert maybe_schedule_scout(db, paths, settings, lead_short=False).task_id is not None
 
     paths, db, settings, ledger = setup("lead")
     assert maybe_schedule_scout(db, paths, settings, lead_short=True).reason == "lead_quota_short"

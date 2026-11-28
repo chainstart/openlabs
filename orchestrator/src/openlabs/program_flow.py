@@ -111,10 +111,8 @@ MAX_REVIEW_ATTEMPTS = 2
 MAX_QUEUE_CANDIDATES = 10
 HUMAN_PROVIDER = "human"
 IN_FLIGHT_STATUSES = ("queued", "leased", "running", "awaiting_remote")
-POOL_STATUSES = ("proposed",)
 SCOUT_LOAD_STATUSES = ("proposed", "admitted", "active", "in_review")
 ADMITTED_WORK_STATUSES = ("admitted", "active", "in_review", "ready_queue", "submitted")
-LINE_SLOTS_FULL_REASON = "line_slots_full"
 POLISH_MODE_REASON = "polish_mode"
 COMPUTE_BACKLOG_REASON = "compute_backlog"
 WEEKLY_BUDGET_REASON = "scout_weekly_budget"
@@ -408,8 +406,8 @@ def admission_task_keys(db: FactoryDB, task: Mapping[str, Any]) -> set[str]:
     return {scout_key(project) if project else _topic_key(task)}
 
 
-def _proposed_pool(document: Mapping[str, Any]) -> list[dict[str, Any]]:
-    return topics_by_status(document, *POOL_STATUSES)
+def _candidate_pool(document: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return topics_by_status(document, "proposed", "admitted")
 
 
 def admission_sequence(db: FactoryDB) -> dict[str, int]:
@@ -793,7 +791,10 @@ def _scout_objective(
         "`data_sources` (free only: `direct` or `form_or_registration`, never `restricted`), "
         "`compute_estimate` (`locations`, `data_gb`, `agent_hours`), and optional "
         "`queue_entry_id` / `reopens`. An empty list is valid if nothing clears the bar. "
-        "Do not run the full research."
+        "You are explicitly authorized to start sub-agents in parallel to survey several "
+        "fields or directions using the tools available in your runtime: Codex spawn_agent "
+        "or codex exec, the Claude Agent tool, or Antigravity invoke_subagent. "
+        "Return the best proposals. Do not run the full research."
     )
 
 
@@ -849,7 +850,7 @@ def _schedule_one_scout(
             "max_proposals": max_proposals,
             "max_cards": max_proposals,
             "free_slots": status.free_slots,
-            "candidate_pool": len(_proposed_pool(document)),
+            "candidate_pool": len(_candidate_pool(document)),
             "ledger_snapshot": _ledger_snapshot(document, line=line),
             "read_resources": program_read_resources(paths, settings, ledger),
             **asset_library.packet_fields(paths, settings, domains=[project.domain]),
@@ -945,12 +946,6 @@ def schedule_scouts(
     status = slot_status(
         document, program, parked_program_projects(paths), paused_topic_campaigns(db)
     )
-    if status.admission_paused:
-        return [], "admission_paused"
-    if status.free_slots <= 0:
-        return [], "no_free_slot"
-    if compute_backlogged(settings):
-        return [], COMPUTE_BACKLOG_REASON
     all_projects = program_projects(paths)
     rotating = _rotation_projects(settings, all_projects)
     scouting = [
@@ -961,20 +956,15 @@ def schedule_scouts(
     blocked_lines = lines_not_ready(
         paths, settings, [project.research_line for project in scouting]
     )
-    ready_projects = [
+    projects = [
         project for project in scouting if project.research_line not in blocked_lines
     ]
-    if scouting and not ready_projects:
+    if scouting and not projects:
         return [], "research_line_environment_not_ready"
-    projects = [
-        project for project in ready_projects if not status.line_full(project.research_line)
-    ]
-    if ready_projects and not projects:
-        return [], LINE_SLOTS_FULL_REASON
     if not projects:
         return [], "no_program_project"
 
-    pool_by_key = Counter(_topic_key(topic) for topic in _proposed_pool(document))
+    pool_by_key = Counter(_topic_key(topic) for topic in _candidate_pool(document))
     legacy_keys = {scout_key(project) for project in projects if not project.research_line}
     legacy_pool = sum(pool_by_key[key] for key in legacy_keys)
     pool_cap = supply.candidate_pool_size
@@ -1557,8 +1547,6 @@ def schedule_topic_admission(
         return ReviewSchedule(reason=POLISH_MODE_REASON)
     if not budget_control.routing_enabled(settings):
         return ReviewSchedule(reason="admission_requires_provider_routing")
-    if compute_backlogged(settings):
-        return ReviewSchedule(reason=COMPUTE_BACKLOG_REASON)
     campaign_id = str(campaign["campaign_id"])
     project = load_project(str(campaign["project_config_path"]))
     if settings.program.stops(SUPPLY_STAGE, project.research_line):
@@ -1609,32 +1597,12 @@ def schedule_topic_admission(
     if len(in_flight) >= cap:
         return ReviewSchedule(reason="max_concurrent_reviews")
 
-    slots = slot_status(
-        snapshot_document, settings.program, parked_program_projects(paths),
-        paused_topic_campaigns(db),
-    )
-    reservations = Counter(
-        _topic_key(topic) for topic in _proposed_pool(snapshot_document)
-        if (attempts := topic.get("admission_attempts"))
-        and _attempt_task_id(attempts[-1]) in in_flight
-    )
-    pending = [
-        topic for topic in pending
-        if (free := slots.line_free_slots(topic.get("research_line"))) is None
-        or free > reservations[_topic_key(topic)]
-    ]
-    if not pending:
-        return ReviewSchedule(reason=LINE_SLOTS_FULL_REASON)
-
     pending.sort(key=lambda item: (_proposal_time(item), str(item["topic_id"])))
     key = _topic_key(pending[0])
-    line_free = slots.line_free_slots(pending[0].get("research_line"))
     pending = [topic for topic in pending if _topic_key(topic) == key]
     authors = {str(topic["topic_id"]): card_author(topic, snapshot_document) for topic in pending}
     provider = authors[str(pending[0]["topic_id"])][0]
     batch_size = max(1, int(workstream_policy(campaign).get("review_batch_size") or 8))
-    if line_free is not None:
-        batch_size = min(batch_size, line_free - reservations[key])
     batch = [
         topic for topic in pending if authors[str(topic["topic_id"])][0] == provider
     ][:batch_size]
@@ -2522,8 +2490,8 @@ def run_program_pipeline(
             db, statuses=IN_FLIGHT_STATUSES, where="AND task_type=?", parameters=(SCOUT_TASK_TYPE,)
         ))
         document = open_topic_ledger(paths, settings.program).read()
-        info["candidate_pool"] = len(_proposed_pool(document))
-        info["candidate_pool_topics"] = [str(t["topic_id"]) for t in _proposed_pool(document)]
+        info["candidate_pool"] = len(_candidate_pool(document))
+        info["candidate_pool_topics"] = [str(t["topic_id"]) for t in _candidate_pool(document)]
         info["waiting_admitted"] = [
             str(t["topic_id"]) for t in waiting_admitted(document, admission_sequence(db))
         ]
