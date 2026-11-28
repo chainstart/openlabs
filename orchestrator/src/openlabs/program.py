@@ -506,7 +506,9 @@ class SlotStatus:
         limit = self.line_limit(line)
         if limit is None:
             return None
-        return max(0, limit - self.line_occupied.get(str(line).strip(), 0))
+        # 2026-11-28 (supply reserve, 69ab7d8): admitted topics are the reviewed reserve and
+        # wait for a slot; only topics in research hold one.
+        return max(0, limit - self.line_researching.get(str(line).strip(), 0))
 
     def line_full(self, line: Any) -> bool:
         """A limited line whose slots are all held: no scout, no admission review."""
@@ -526,7 +528,9 @@ class SlotStatus:
 
     @property
     def occupied(self) -> int:
-        return self.admitted + self.active + self.in_review
+        # Admitted topics are the reviewed reserve (2026-11-28): they wait for a slot, so
+        # only topics in research or review hold one.
+        return self.active + self.in_review
 
     @property
     def free_slots(self) -> int:
