@@ -41,97 +41,6 @@ def _queued_line(tmp_path: Path):
     return paths, queue
 
 
-def _empty_scout(paths, db, settings, monkeypatch) -> engine.TickReport:
-    """Tick (schedules and claims a scout), deliver no card, tick again."""
-
-    first = flow._tick(paths, settings, monkeypatch)
-    scouts = first.program["scouts_scheduled"]
-    assert len(scouts) == 1, first.program
-    flow._complete(db, paths, scouts[0]["task_id"], extra={
-        "topic_cards": [], "summary": "No topic cards: every queue entry is in the ledger."},
-        receipt_files={"data-access.json": flow.RECEIPT})
-    return flow._tick(paths, settings, monkeypatch)
-
-
-def _later(monkeypatch, hours: float) -> None:
-    moment = datetime.now(UTC) + timedelta(hours=hours)
-    monkeypatch.setattr(program_flow, "_now_moment", lambda: moment)
-
-
-def test_empty_draw_backs_off_and_a_queue_change_releases_at_once(tmp_path, monkeypatch):
-    paths, queue = _queued_line(tmp_path)
-    db = flow._db(paths)
-    settings = flow._settings(scout_min_interval_hours=0)
-
-    report = _empty_scout(paths, db, settings, monkeypatch)
-    assert report.program["scouts_scheduled"] == []
-    assert report.program["scout_blocked"] == "scout_empty_backoff"
-    block = report.program["scout_supply_blocked"][0]
-    assert block["empty_draws"] == 1 and block["backoff_hours"] == 1.0
-    assert block["empty_reason"] == "candidate_queue_exhausted"
-    assert "every queue entry" in block["last_summary"]
-
-    # One hour later the second draw runs, comes back empty: six hours now.
-    _later(monkeypatch, 1.1)
-    report = _empty_scout(paths, db, settings, monkeypatch)
-    assert report.program["scout_blocked"] == "scout_empty_backoff"
-    assert report.program["scout_supply_blocked"][0]["backoff_hours"] == 6.0
-    assert flow._tick(paths, settings, monkeypatch).program["scouts_scheduled"] == []
-
-    # The queue is refreshed: the backoff is released on the next tick.
-    queue.write_text(json.dumps({"candidates": [{"entry_id": "TIC 2"}]}), encoding="utf-8")
-    report = flow._tick(paths, settings, monkeypatch)
-    assert len(report.program["scouts_scheduled"]) == 1
-    released = [e for e in db.events(entity_type="program", entity_id=lines.LINE)
-                if e["event_type"] == "topic_scout_backoff_released"]
-    assert released and released[-1]["payload"]["reason"] == "candidate_supply_changed"
-
-
-def test_repeated_empty_draws_mark_the_line_exhausted(tmp_path, monkeypatch):
-    paths, queue = _queued_line(tmp_path)
-    db = flow._db(paths)
-    settings = flow._settings(scout_min_interval_hours=0, scout_exhausted_after=2)
-
-    _empty_scout(paths, db, settings, monkeypatch)
-    _later(monkeypatch, 1.1)
-    report = _empty_scout(paths, db, settings, monkeypatch)
-    assert report.program["scout_blocked"] == "candidates_exhausted"
-    blocked = [item for item in report.production_blocked
-               if item["reason"] == "candidates_exhausted"]
-    assert blocked and blocked[0]["research_line"] == lines.LINE
-    assert blocked[0]["empty_draws"] == 2
-
-    # Time alone does not release an exhausted line ...
-    _later(monkeypatch, 24 * 30)
-    report = flow._tick(paths, settings, monkeypatch)
-    assert report.program["scouts_scheduled"] == []
-    assert report.program["scout_blocked"] == "candidates_exhausted"
-    # ... a new line capability (its research-lines.yaml entry) does.
-    lines_path = paths.data / "registry" / "research-lines.yaml"
-    lines_path.write_text(lines_path.read_text(encoding="utf-8").replace(
-        "    title: test line\n", "    title: test line (spot configuration validated)\n"),
-        encoding="utf-8")
-    report = flow._tick(paths, settings, monkeypatch)
-    assert len(report.program["scouts_scheduled"]) == 1
-
-
-def test_a_productive_scout_clears_the_streak(tmp_path, monkeypatch):
-    paths, _queue = _queued_line(tmp_path)
-    db = flow._db(paths)
-    settings = flow._settings(scout_min_interval_hours=0, scout_exhausted_after=2)
-    _empty_scout(paths, db, settings, monkeypatch)
-    _later(monkeypatch, 1.1)
-    first = flow._tick(paths, settings, monkeypatch)
-    scout_id = first.program["scouts_scheduled"][0]["task_id"]
-    flow._complete(db, paths, scout_id, extra={"topic_cards": [templates._templated_card(0)]},
-                   receipt_files={"data-access.json": flow.RECEIPT})
-    report = flow._tick(paths, settings, monkeypatch)
-    assert report.program["cards_registered"]
-    assert report.program["scout_supply_blocked"] == []
-    state = json.loads(db.meta_get(program_flow.SCOUT_SUPPLY_PREFIX + lines.LINE))
-    assert state["count"] == 0
-
-
 # ------------------------------------------------------------- remote re-yield loops
 
 
@@ -308,76 +217,6 @@ def _attempt(db, task_id: str, stamp: str, seconds: float = 120.0) -> None:
             (f"attempt-{task_id}", task_id, stamp, stamp, seconds, stamp))
 
 
-def test_phase_a_prescreen_rejections_are_progress(tmp_path):
-    """2026-11-26 supply stall: prescreens that stopped at the calibration phase (a
-    verdict, no artifact) were counted as no progress, backed off and would have been
-    stopped for a human before the cards were ever judged."""
-
-    paths = rw._paths(tmp_path)
-    db = rw._db(paths)
-    db.register_campaign("scout-c", domain="physics", title="Scouts")
-    settings = FactorySettings()
-    now = datetime.now(UTC)
-    verdict = atomic_write_json(tmp_path / "phase-a.json", {"artifacts": [], "topic_prescreen": {
-        "calibration_match": "zone_1", "expected_band": "zone_1", "summary": "below floor"}})
-    for index in range(9):
-        stamp = _stamp(now - timedelta(minutes=60 - index))
-        _task(db, f"pre-{index}", "scout-c", "succeeded", task_type="topic_prescreen",
-              result_path=str(verdict), updated_at=stamp)
-        _attempt(db, f"pre-{index}", stamp)
-        _task(db, f"scout-{index}", "scout-c", "succeeded", task_type="topic_scout",
-              updated_at=stamp)
-    db.enqueue_task(task_id="pre-next", campaign_id="scout-c", domain="physics",
-                    task_type="topic_prescreen", objective="judge the next card")
-    assert spin_guard.no_progress_streak(db, "scout-c")[0] == 0
-    assert spin_guard.guard_queued_tasks(db, settings, TickReport()) == []
-    assert db.task("pre-next")["status"] == "queued"
-    assert db.task("pre-next")["not_before"] is None
-    # The idle metrics use the same reading: a verdict is output.
-    metrics = spin_guard.idle_metrics(db, now=now)
-    assert metrics["by_task_type"]["topic_prescreen"] == {
-        "attempts": 9, "zero_output": 0, "agent_hours": round(9 * 120 / 3600, 2),
-        "zero_output_agent_hours": 0.0}
-
-    # A prescreen that keeps breaking (needs_replan) is still no progress.
-    for index in range(4):
-        _task(db, f"broken-{index}", "scout-c", "needs_replan", task_type="topic_prescreen",
-              updated_at=_stamp(now - timedelta(minutes=5 - index)))
-    assert spin_guard.no_progress_streak(db, "scout-c")[0] == 4
-    actions = spin_guard.guard_queued_tasks(db, settings, TickReport())
-    assert [item["reason"] for item in actions] == ["no_progress_backoff"]
-
-
-def test_a_finishing_scout_does_not_push_the_backoff(tmp_path):
-    """The backoff counts from the last non-neutral finish: scouts finishing later in
-    the same campaign used to move not_before forward each time."""
-
-    paths = rw._paths(tmp_path)
-    db = rw._db(paths)
-    db.register_campaign("scout-c", domain="physics", title="Scouts")
-    settings = FactorySettings()
-    now = datetime.now(UTC)
-    failed_at = now - timedelta(minutes=20)
-    for index in range(4):
-        _task(db, f"pre-{index}", "scout-c", "needs_replan", task_type="topic_prescreen",
-              updated_at=_stamp(failed_at - timedelta(minutes=3 - index)))
-    _task(db, "scout-late", "scout-c", "succeeded", task_type="topic_scout",
-          updated_at=_stamp(now - timedelta(minutes=1)))
-    db.enqueue_task(task_id="pre-next", campaign_id="scout-c", domain="physics",
-                    task_type="topic_prescreen", objective="judge the next card")
-    streak, latest = spin_guard.no_progress_streak(db, "scout-c")
-    assert streak == 4 and latest["task_id"] == "pre-3"
-    actions = spin_guard.guard_queued_tasks(db, settings, TickReport(), now=now)
-    assert actions[0]["last_task_id"] == "pre-3"
-    expected = _stamp(failed_at + timedelta(minutes=settings.no_progress_backoff_minutes[0]))
-    assert db.task("pre-next")["not_before"] == expected
-    # Another scout finishing does not move it.
-    _task(db, "scout-later", "scout-c", "succeeded", task_type="topic_scout",
-          updated_at=_stamp(now))
-    assert spin_guard.guard_queued_tasks(db, settings, TickReport(), now=now) == []
-    assert db.task("pre-next")["not_before"] == expected
-
-
 def test_same_artifacts_again_are_not_progress(tmp_path):
     paths = rw._paths(tmp_path)
     db = rw._db(paths)
@@ -395,10 +234,15 @@ def test_same_artifacts_again_are_not_progress(tmp_path):
 
 
 def test_tick_report_carries_idle_metrics(tmp_path, monkeypatch):
+    from openlabs.config import SupplySettings
+
     paths, _queue = _queued_line(tmp_path)
     db = flow._db(paths)
-    settings = flow._settings(scout_min_interval_hours=0)
-    report = _empty_scout(paths, db, settings, monkeypatch)
+    settings = flow._settings(supply=SupplySettings(scout_min_interval_hours=0))
+    first = flow._tick(paths, settings, monkeypatch)
+    scout_id = first.program["scouts_scheduled"][0]["task_id"]
+    flow._complete(db, paths, scout_id, extra={"topic_proposals": [], "summary": "Nothing passed."})
+    report = flow._tick(paths, settings, monkeypatch)
     metrics = report.to_dict()["idle_metrics"]
     scout = metrics["by_task_type"]["topic_scout"]
     assert scout["attempts"] == 1 and scout["zero_output"] == 1
@@ -454,32 +298,3 @@ def test_owner_seats_without_progress_count_as_zero_output(tmp_path):
     assert seats["zero_output_agent_hours"] == round(72 / 3600, 2)
     # Still neutral for the generic chain guard (the owner breaker owns that).
     assert spin_guard.no_progress_streak(db, "campaign-o")[0] == 0
-
-
-def test_a_scout_whose_result_was_not_accepted_is_no_empty_draw(tmp_path, monkeypatch):
-    """A scout result the control plane refused (needs_replan: an artifact outside the
-    staging area, a hash mismatch) says nothing about the line's supply: no backoff."""
-
-    paths, _queue = _queued_line(tmp_path)
-    db = flow._db(paths)
-    settings = flow._settings(scout_min_interval_hours=0)
-    first = flow._tick(paths, settings, monkeypatch)
-    task_id = first.program["scouts_scheduled"][0]["task_id"]
-    bogus = tmp_path / "outside.json"
-    bogus.write_text("{}", encoding="utf-8")
-    flow._complete(db, paths, task_id, extra={
-        "topic_cards": [{"question": "a card the gate never saw"}],
-        "artifacts": [{"artifact_id": "queue", "kind": "data", "uri": bogus.resolve().as_uri(),
-                       "sha256": "0" * 64}]},
-        receipt_files={"data-access.json": flow.RECEIPT})
-    # A failed workspace commit can leave a readable, hash-bound one-card bundle.
-    monkeypatch.setattr(program_flow, "_scout_result_cards", lambda task: (1, "one card"))
-    draws = []
-    monkeypatch.setattr(program_flow, "_record_template_draws", lambda *args: draws.append(args))
-    report = flow._tick(paths, settings, monkeypatch)
-    assert db.task(task_id)["status"] != "succeeded"
-    assert not [item for item in report.program.get("scout_outcomes") or []
-                if item.get("event") == "topic_scout_empty"], report.program
-    assert report.program["scout_blocked"] != "scout_empty_backoff"
-    assert not report.program.get("scout_supply_blocked")
-    assert not draws

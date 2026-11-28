@@ -78,77 +78,36 @@ max_active_topics = 5
 max_ready_unsubmitted = 6
 # Relative to the data repository root.
 ledger_path = "registry/topic-ledger.json"
-# A topic scout is scheduled only while fewer proposed (not yet judged) topics on its line
-# than this wait for the admission gate, a slot is free, admissions are not
-# paused and the lead tier has quota. Scouts and the gate need a [runners]
-# table: the gate must run on a different model family than the scout.
-candidate_pool_low_water = 3
-# Default minimum interval per line, even with one scout globally.
-# Optional line_scout_min_interval_hours = { "line-id" = 0.5 } overrides by line.
-scout_min_interval_hours = 12
-# Global ceiling on scouts in flight, with at most max_scouts_per_line per line.
-max_concurrent_scouts = 1
-# Scouts of one line in flight at once (default 1). With scout_runners (runner names, e.g.
-# ["worker_gpt", "worker_gemini", "worker_claude"]) each new scout asks for the runner whose
-# model family the line's in-flight scouts do not use and the line used least recently; the
-# router takes it when quota allows, else routes the scout as usual.
-# max_scouts_per_line = 1
-# scout_runners = []
-# Cards one scout is expected to register (replaced by this instance's own mean
-# once three scouts have finished).
-scout_expected_cards = 2.0
-# Empty-draw backoff: after the n-th consecutive scout of a line that yielded no
-# usable card while its candidate supply (queue files, line entry, held releases,
-# ledger topics) is unchanged, the next scout waits the n-th value (hours, last
-# repeats); after scout_exhausted_after draws the line is candidates_exhausted
-# until its supply changes (0 = never).
-scout_empty_backoff_hours = [1, 6, 24]
-scout_exhausted_after = 4
-# Admission batches in flight per research line (legacy domain fallback).
-# The former max_admissions_per_domain key is accepted as an alias.
-max_admissions_per_line = 1
-# Admission reviews in flight across all lines (0 = no global cap).
-max_concurrent_admissions = 0
 # true: a new researcher/experimenter workstream of an ordinary (non-program)
 # project is not activated unless the ledger links it to an admitted topic.
 enforce_admission = false
-# Reusable scripts/SOP index offered to scouts and the gate when the file exists
+# Reusable scripts/SOP index offered to scouts and reviewers when the file exists
 # (relative to the data repository root).
 asset_index_path = "registry/reusable-assets.json"
 # Legacy host-domain filter and preference order when no [program.lines] table is set.
 domains = []
-# Research lines: one [program.lines.<line id>] table per line (2026-11-26, slimming batch 2),
-# in scout-rotation order (owner direction 2026-11-12: scout by research line, not by lab).
-#   mode   = "full" (supply and research starts) | "supply_only" (scout ... admission; an
-#            admitted topic waits for its campaign) | "polish" (neither) | "off" (neither, and
-#            out of the scout rotation). An unlisted line gets "polish" under polish_mode,
-#            else "full".
-#   slots  = the line's research slots (admitted + active + in-review topics); a full line gets
-#            no scout, no admission review and no new campaign; max_active_topics still caps
-#            the total. Topics whose campaign is paused on purpose hold no slot. Unset: no limit.
-#   nc_aim = false keeps the line's own templated standard instead of the NC aim.
-#   admission_min_band = optional per-line floor ("nc" | "zone_1" | "zone_2" | "zones_3_4");
-#            unset falls back to [program.funnel].admission_min_band.
-# Only program projects of a listed line (mode not "off") are scouted. No table: active
-# projects rotate by line where available, with domains as the fallback filter. Replaces
-# research_lines, polish_exempt_lines, polish_supply_only_lines, line_max_active_topics and
-# [program.funnel].exempt_lines (still read for one version, with a tick warning).
+# Research lines: one [program.lines.<line id>] table per line, in scout-rotation order.
+#   mode  = "full" (supply and research starts) | "supply_only" (scout and review; an
+#           admitted topic waits for its campaign) | "polish" (neither) | "off" (neither,
+#           and out of the scout rotation). Unlisted lines get "polish" under polish_mode,
+#           else "full".
+#   slots = the line's research slots (admitted + active + in-review topics). Unset: no limit.
 # [program.lines.astro-survey-photometry]
 # mode = "full"
 # slots = 2
-# admission_min_band = "zone_2"
-# Direction file read by scouts and the admission gate; an admitted card of a
-# line whose environment.status is not "ready" is held until it is.
+# Direction file read by scouts and reviewers; lines whose environment.status != "ready"
+# are not scouted or reviewed.
 research_lines_path = "registry/research-lines.yaml"
 # Calendar limit from admission to a review-ready manuscript. Past it the topic
 # gets one direction decision (lead tier, other model family); it is not frozen
 # outright.
 max_days_from_admission_to_ready = 28
 # Hard Agent-time ceiling per topic (72 h). A topic campaign's budget is the
-# smaller of this and its card's cost_estimate.agent_seconds; exhausting it
-# schedules one direction decision instead of needs_human, and reaching this
-# ceiling freezes the topic (budget_exhausted).
+# smaller of this and its proposal's compute_estimate.agent_hours.
 topic_max_agent_seconds = 259200
+# Evidence-based journal grading before writing (user decision 2026-11-25, item 3).
+grade_before_writing = true
+nc_journals = ["Nature Communications"]
 # false: ready papers are only queued (ready_queue). true: each ready paper goes
 # through the release pipeline (docs/operations.zh.md, "发布流水线"): formal
 # fixes, Zenodo support material, delta review, local data-repository commits,
@@ -242,44 +201,16 @@ message = "{action}: {paper_id} v{version}"
 # campaign_compute_threads = 8
 # Per-line research slots: [program.lines.<line id>] slots (see research lines above).
 
-# Topic supply and early screens (2026-11-20, pipeline overhaul W1; module docs in
-# orchestrator/src/openlabs/line_facts.py and supply_screen.py). Every switch is on by
-# default; copy this table into an instance TOML to change a value.
+# Topic supply hard guards (2026-11-28, supply simplification: 8 keys).
 [program.supply]
-# 1. Line-level shared facts. A feasibility-precheck freeze that rests on the line's shared
-# reference (environment.standard_solver.control_receipt, a line's shared_references, a job
-# other topics of the line cite) blocks the line (no scout, review or new campaign), sends
-# one representative topic to a direction decision and lets the other affected topics wait
-# instead of freezing them; a freeze requested while a named compute job is still queued or
-# running parks the topic on that job (at most reference_wait_max times per topic); a miss
-# smaller than the measurement's uncertainty (without one: <= borderline_relative_margin x
-# the tolerance) goes to a direction decision instead of a freeze. Waiting topics get their
-# own direction decision after line_block_max_days. `program line-block` lists/clears blocks.
-line_facts = true
-borderline_relative_margin = 0.05
-reference_wait_max = 2
-line_block_max_days = 7
-# 2. Card intake screens: the line's capability table (capabilities / required_capabilities,
-# held queue entries whose capability is not met) and declared data_requirements (column
-# coverage of the matched files, read from their first lines).
-capability_screen = true
-data_screen = true
-# 3. Pilot gate: a template's admission_pilot runs on ailab before the admission review
-# (the card holds no owner seat meanwhile); its budget and verdict are recorded in the
-# ledger's card_check.pilot. Threads per pilot job are capped at pilot_max_threads (<= 8)
-# and cpus x hours at pilot_core_hours_max.
-pilot = true
-pilot_core_hours_max = 16
-pilot_max_threads = 8
-pilot_max_concurrent = 2
-pilot_max_attempts = 2
-# 4. Target memory: a target rejected for a mechanical reason with an unchanged queue entry,
-# or with a frozen topic the card does not `reopens`, gets no new card.
-target_memory = true
-# 5. Scouts: none for a line whose enumerated queues hold nothing drawable; past
-# scout_empty_backoff_hours the empty-draw wait doubles up to scout_backoff_max_hours.
-scout_skip_empty_queue = true
-scout_backoff_max_hours = 48
+max_concurrent_scouts = 2
+scout_min_interval_hours = 1.0
+candidate_pool_size = 4
+scout_runners = []
+scout_weekly_usd_per_line = 100.0
+max_topic_data_gb = 2000.0
+dedup_similarity = 0.8
+max_concurrent_reviews = 4
 
 # Per-topic direction-decision choices that keep a topic alive; afterwards only
 # freeze is accepted (an exhausted choice is refused and the topic frozen).

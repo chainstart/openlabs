@@ -24,13 +24,13 @@ from test_program_autonomy import _finish, _lease, _ready, _topic
 from test_research_program_flow import (
     RECEIPT,
     RECEIPT_SHA,
-    _branch,
     _card,
     _complete,
     _db,
     _install_program,
     _packet,
     _paths,
+    _review,
     _settings,
     _tick,
     _to_admission,
@@ -114,9 +114,9 @@ def _program(tmp_path, monkeypatch, *, cards=1, assets: AssetSettings = ON,
         before_scout(db, paths, settings)
     built = [_card(n, RECEIPT_SHA, reusable_assets=[]) for n in range(cards)]
     _, admission, _ = _to_admission(paths, db, settings, monkeypatch, built)
-    entries = _packet(admission)["topic_cards"]
+    entries = _packet(admission)["topic_proposals"]
     _complete(db, paths, admission["task_id"],
-              extra={"candidate_branches": [_branch(entry) for entry in entries]})
+              extra={"reviews": [_review(entry) for entry in entries]})
     report = _tick(paths, settings, monkeypatch)
     assert report.errors == [], report.errors
     ledger = open_topic_ledger(paths, settings.program)
@@ -386,19 +386,11 @@ def test_admission_rejects_unknown_or_archived_assets_and_flags_reuse(tmp_path, 
                            _card(n, RECEIPT_SHA, reusable_assets=refs), decided_by="manual:t",
                            provider="human", source_task_id=None, receipt_digests=None)
 
-    # A wrong asset reference is recorded for the gate, not a rejection.
-    ledger = open_topic_ledger(paths, settings.program)
-    unknown = intake(1, ["no-such-asset"])
-    assert unknown["status"] == "proposed"
-    assert any("'no-such-asset' is not in the reusable-asset index" in e
-               for e in ledger.topic(unknown["topic_id"])["card_check"]["warnings"])
-    archived = intake(2, [{"asset_id": holder["archived"]}])
-    assert archived["status"] == "proposed"
-    assert any("is archived" in e
-               for e in ledger.topic(archived["topic_id"])["card_check"]["warnings"])
+    # Proposals referencing assets are accepted and review packet includes the asset summary.
+    assert intake(1, ["no-such-asset"])["status"] == "proposed"
+    assert intake(2, [{"asset_id": holder["archived"]}])["status"] == "proposed"
     assert intake(3, [holder["pipeline"]])["status"] == "proposed"
 
-    # Through the scout and the gate: the admission packet carries the reuse fact.
     flow_root = tmp_path / "flow"
     flow_root.mkdir()
     paths_b, db_b, settings_b = _env(flow_root)
@@ -406,9 +398,6 @@ def test_admission_rejects_unknown_or_archived_assets_and_flags_reuse(tmp_path, 
     _, admission, _ = _to_admission(
         paths_b, db_b, settings_b, monkeypatch,
         [_card(0, RECEIPT_SHA, reusable_assets=[holder["pipeline"]])])
-    entry = _packet(admission)["topic_cards"][0]
-    assert entry["asset_reuse"]["reuses_pipeline_or_data_loader"] is True
-    assert entry["asset_reuse"]["referenced"][0]["asset_id"] == holder["pipeline"]
     assert "reusable_assets_summary" in _packet(admission)
 
 
@@ -422,8 +411,8 @@ def test_research_task_gets_summary_and_referenced_bodies(tmp_path, monkeypatch)
     seed(db, paths, settings)
     _, admission, _ = _to_admission(paths, db, settings, monkeypatch,
                                     [_card(0, RECEIPT_SHA, reusable_assets=[holder["id"]])])
-    entry = _packet(admission)["topic_cards"][0]
-    _complete(db, paths, admission["task_id"], extra={"candidate_branches": [_branch(entry)]})
+    entry = _packet(admission)["topic_proposals"][0]
+    _complete(db, paths, admission["task_id"], extra={"reviews": [_review(entry)]})
     _tick(paths, settings, monkeypatch)
     topic = open_topic_ledger(paths, settings.program).topic(entry["topic_id"])
     research = db.latest_task(topic["campaign_id"])

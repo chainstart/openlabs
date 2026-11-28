@@ -341,7 +341,7 @@ def test_duplicate_fingerprint_rejected_and_reopen_supersedes(tmp_path) -> None:
     same = _card(0, topic_id="topic-dup", question="  DOES intervention 0 reduce readmission ")
     decision = propose_topic(ledger, same, db=db, decided_by="scout-2")
     assert decision.status == "rejected"
-    assert decision.reason == "duplicate_fingerprint"
+    assert decision.reason == "duplicate_topic"
     assert decision.duplicate_of == ("topic-0",)
     rejected_events = [
         e for e in _topic_events(db, "topic-dup") if e["event_type"] == "topic_rejected"
@@ -349,12 +349,7 @@ def test_duplicate_fingerprint_rejected_and_reopen_supersedes(tmp_path) -> None:
     assert rejected_events[0]["payload"]["duplicate_of"] == ["topic-0"]
 
     # Reopening a topic that is not frozen is rejected too.
-    reopen = _card(
-        0,
-        topic_id="topic-0b",
-        reopens="topic-0",
-        reopen_basis={"type": "new_data_source", "description": "New registry linkage."},
-    )
+    reopen = _card(0, topic_id="topic-0b", reopens="topic-0")
     assert propose_topic(ledger, reopen, db=db, decided_by="s").reason == (
         "reopens_topic_not_frozen"
     )
@@ -371,33 +366,17 @@ def test_duplicate_fingerprint_rejected_and_reopen_supersedes(tmp_path) -> None:
     # Without reopens the identical card is still a duplicate.
     plain = propose_topic(ledger, _card(0, topic_id="topic-0c"), db=db, decided_by="s")
     assert plain.status == "rejected"
-    # Basis type must match a declared reopen condition.
-    wrong = _card(
-        0,
-        topic_id="topic-0d",
-        reopens="topic-0",
-        reopen_basis={"type": "new_method", "description": "Different estimator."},
-    )
-    assert propose_topic(ledger, wrong, db=db, decided_by="s").reason == (
-        "reopen_basis_not_declared_by_frozen_topic"
-    )
 
+    # Reopening needs only reopens=<frozen topic_id> (no reopen_basis enum required).
     accepted = propose_topic(
-        ledger, _card(0, topic_id="topic-0e", reopens="topic-0", reopen_basis={
-            "type": "new_data_source", "description": "Registry linkage now public."
-        }), db=db, decided_by="scout-3",
+        ledger, _card(0, topic_id="topic-0e", reopens="topic-0"), db=db, decided_by="scout-3",
     )
     assert accepted.status == "proposed"
     assert accepted.supersedes == "topic-0"
     assert ledger.topic("topic-0e")["supersedes"] == "topic-0"
     assert ledger.topic("topic-0e")["topic_id"] != "topic-0"
     # The frozen topic can be superseded only once.
-    again = _card(
-        0,
-        topic_id="topic-0f",
-        reopens="topic-0",
-        reopen_basis={"type": "new_data_source", "description": "Another linkage."},
-    )
+    again = _card(0, topic_id="topic-0f", reopens="topic-0")
     assert propose_topic(ledger, again, db=db, decided_by="s").reason == (
         "reopens_topic_already_superseded"
     )

@@ -243,33 +243,3 @@ def test_brief_documents_reopen_when(tmp_path, monkeypatch):
         paths, settings, task=seat, campaign=db.campaign(topic["campaign_id"]), topic=topic,
         adapter_family=None, deadline=__import__("datetime").datetime(2026, 11, 14))
     assert "reopen_when" in text and "reopen.py" in text
-
-
-def test_scout_instruction_names_the_draw_order_and_held_entries() -> None:
-    from openlabs.program_flow import queue_scout_instruction
-
-    text = queue_scout_instruction({"contact-binary-solution": "/q.json"},
-                                   {"environment.standard_solver.spot_config": False})
-    assert "`rank` order" in text and "held_candidates" in text
-    assert "spot_config not met" in text
-    # 2026-11-16: the card follows its template's card_rules; the single-star symmetry and
-    # control gates are no longer prescribed here (contact-binary v2 forbids them).
-    assert "card_rules" in text and "forbidden_conditions" in text
-    assert "1 % of the eclipse depth" not in text and "2 combined sigma" not in text
-    assert "held_candidates" not in queue_scout_instruction({"t": "/q.json"})
-
-
-def test_held_queue_entries_are_released_by_the_line_capability(tmp_path, monkeypatch):
-    from openlabs.program_flow import held_queue_releases
-
-    paths, db, settings, _ = _owner_program(tmp_path, monkeypatch)
-    queue = tmp_path / "queue.json"
-    key = "environment.standard_solver.spot_config"
-    atomic_write_json(queue, {"candidates": [], "held_candidates": [
-        {"entry_id": "TIC1", "draw_hold": {"reason": "needs_spot", "release_when": {
-            "kind": "line_capability", "line": LINE, "key": key}}}]})
-    _lines(paths, settings)
-    assert held_queue_releases(paths, settings, LINE, {"t": str(queue)}) == {key: False}
-    _lines(paths, settings, spot="astro-std-2")
-    assert held_queue_releases(paths, settings, LINE, {"t": str(queue)}) == {key: True}
-    assert held_queue_releases(paths, settings, LINE, {"t": str(tmp_path / "none.json")}) == {}

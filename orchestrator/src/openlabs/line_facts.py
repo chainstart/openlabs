@@ -127,8 +127,32 @@ def _read_json(path: Path) -> Any:
         return None
 
 
+DEFAULT_LINE_FACTS = True
+DEFAULT_BORDERLINE_MARGIN = 0.05
+DEFAULT_REFERENCE_WAIT_MAX = 2
+DEFAULT_LINE_BLOCK_MAX_DAYS = 7.0
+
+
 def supply_settings(settings: FactorySettings) -> Any:
     return settings.program.supply
+
+
+def _line_facts_enabled(settings: FactorySettings) -> bool:
+    return bool(getattr(supply_settings(settings), "line_facts", DEFAULT_LINE_FACTS))
+
+
+def _reference_wait_max(settings: FactorySettings) -> int:
+    return int(getattr(supply_settings(settings), "reference_wait_max", DEFAULT_REFERENCE_WAIT_MAX))
+
+
+def _borderline_margin(settings: FactorySettings) -> float:
+    return float(getattr(supply_settings(settings), "borderline_relative_margin",
+                         DEFAULT_BORDERLINE_MARGIN))
+
+
+def _line_block_max_days(settings: FactorySettings) -> float:
+    return float(getattr(supply_settings(settings), "line_block_max_days",
+                         DEFAULT_LINE_BLOCK_MAX_DAYS))
 
 
 def result_view(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -637,8 +661,7 @@ def intercept_precheck_freeze(
 ) -> str | None:
     """``"handled"`` when a requested precheck freeze is replaced (see module doc), else None."""
 
-    supply = supply_settings(settings)
-    if not supply.line_facts or reason_class != FREEZE_CLASS:
+    if not _line_facts_enabled(settings) or reason_class != FREEZE_CLASS:
         return None
     raw_payload = payload
     payload = result_view(payload)
@@ -649,7 +672,7 @@ def intercept_precheck_freeze(
     if verdict != "failed" and result_path is not None and result_sha256:
         jobs = pending_jobs(payload)
         count = int(db.meta_get(REFERENCE_WAIT_PREFIX + topic_id) or 0)
-        if jobs and count < supply.reference_wait_max and _park(
+        if jobs and count < _reference_wait_max(settings) and _park(
             db, settings, report, task=task, payload=raw_payload, jobs=jobs,
             result_path=result_path, result_sha256=result_sha256,
         ):
@@ -662,7 +685,7 @@ def intercept_precheck_freeze(
     from .program import open_topic_ledger
 
     artifacts = result_json_artifacts(payload)
-    classification = classify(criteria_of(payload, artifacts), supply.borderline_relative_margin)
+    classification = classify(criteria_of(payload, artifacts), _borderline_margin(settings))
     if classification["verdict"] == "none":
         return None
     document = open_topic_ledger(paths, settings.program).read()
@@ -844,7 +867,7 @@ def on_progress(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings,
                 *, topic: Mapping[str, Any], payload: Mapping[str, Any]) -> bool:
     """Release a block whose representative now reports progress past its precheck."""
 
-    if not supply_settings(settings).line_facts:
+    if not _line_facts_enabled(settings):
         return False
     line = str(topic.get("research_line") or "")
     record = block_of(db, line)
@@ -918,7 +941,7 @@ def tick(db: FactoryDB, paths: WorkspacePaths, settings: FactorySettings, report
             db.update_meta({WAIT_PREFIX + campaign_id: None},
                            events=[("topic", str(wait.get("topic_id")), "line_block_wait_dropped",
                                     {"status": topic.get("status")})])
-    max_age = timedelta(days=supply_settings(settings).line_block_max_days)
+    max_age = timedelta(days=_line_block_max_days(settings))
     for line, record in blocks(db).items():
         reference = record.get("reference") if isinstance(record.get("reference"), Mapping) else {}
         before = record.get("receipt_sha256")
@@ -979,7 +1002,7 @@ def reopen_report(paths: WorkspacePaths, settings: FactorySettings) -> dict[str,
     from .program import open_topic_ledger
 
     document = open_topic_ledger(paths, settings.program).read()
-    margin = supply_settings(settings).borderline_relative_margin
+    margin = _borderline_margin(settings)
     frozen = [topic for topic in document.get("topics") or []
               if isinstance(topic, Mapping) and topic.get("status") == "frozen"]
     rows: list[dict[str, Any]] = []

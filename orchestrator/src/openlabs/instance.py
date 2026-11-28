@@ -115,9 +115,9 @@ PRESETS: dict[str, dict[str, bool]] = {
 #   session file every 10 minutes and extrapolated for up to 48 hours;
 # * the launch ceiling adapts to demand, measured load (80% target) and quota
 #   pace below max_parallel_agents.
-THROUGHPUT_PROGRAM: dict[str, Any] = {
+THROUGHPUT_SUPPLY: dict[str, Any] = {
     "max_concurrent_scouts": len(PROGRAM_DOMAINS),
-    "max_admissions_per_line": 2,
+    "max_concurrent_reviews": 4,
 }
 THROUGHPUT_ROUTING: dict[str, Any] = {
     "utilization_target": 0.9,
@@ -204,12 +204,12 @@ def instance_settings(
             "asset_index_path": f"registry/instances/{name}/reusable-assets.json",
             "enforce_admission": flags["program.enforce_admission"],
             "domains": list(PROGRAM_DOMAINS),
-            "research_lines": [line for line, _ in RESEARCH_LINES],
             "compute_locations": list(CONTAINER_COMPUTE_LOCATIONS),
             "auto_handoff": flags["program.auto_handoff"],
             "auto_release": flags["program.auto_release"],
         }
     )
+    program["lines"] = {line: {"mode": "full"} for line, _ in RESEARCH_LINES}
     if paper_writing_command:
         program["paper_writing_command"] = list(paper_writing_command)
     git = program.setdefault("git", {})
@@ -225,7 +225,7 @@ def instance_settings(
             "root": f"assets/instances/{name}",
         }
     )
-    program.update(THROUGHPUT_PROGRAM)
+    program.setdefault("supply", {}).update(THROUGHPUT_SUPPLY)
     budget = document.setdefault("budget", {})
     budget["max_parallel_agents"] = 3
     budget.update(THROUGHPUT_BUDGET)
@@ -446,7 +446,7 @@ def plan_instance(
         "database_root": str(database),
         "config_file": str(config_file),
         "projects": projects,
-        "research_lines": settings["program"]["research_lines"],
+        "research_lines": list(settings["program"]["lines"]),
         "ledger_path": settings["program"]["ledger_path"],
         "asset_index_path": settings["program"]["asset_index_path"],
         "attempt_workspaces": str(paths.artifacts / "instances" / name / "attempt-workspaces"),

@@ -1,7 +1,8 @@
-"""Research-program front end: topic scout, card intake, admission gate, materialization."""
+"""Research-program front end: topic scout, proposal intake, independent review, materialization."""
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -14,22 +15,27 @@ from openlabs import engine
 from openlabs.config import (
     BudgetSettings,
     FactorySettings,
-    FunnelSettings,
     ProgramSettings,
     RunnerSpec,
+    SupplySettings,
     WorkspacePaths,
 )
 from openlabs.contracts import (
     RECEIPT_SCHEMA,
     RESULT_SCHEMA,
+    TOPIC_PROPOSAL_SCHEMA,
     atomic_write_json,
-    preregistration_sha256,
     sha256_file,
-    validate_topic_admission,
-    validate_topic_card,
+    validate_topic_proposal,
+    validate_topic_review,
 )
 from openlabs.db import FactoryDB
+from openlabs.portfolio import spawn_candidate_workstreams
 from openlabs.program import (
+    REJECTION_BUDGET_EXCEEDED,
+    REJECTION_DUPLICATE_TOPIC,
+    REJECTION_PROPOSAL_INVALID,
+    REJECTION_REVIEW_NO_GO,
     activate_topic,
     admit_topic,
     freeze_topic,
@@ -44,12 +50,11 @@ from openlabs.program import (
 from openlabs.program_flow import (
     LAST_SCOUT_KEY,
     backfill_grandfathered,
-    intake_card,
+    intake_proposal,
     materialize_waiting_topics,
     maybe_schedule_scout,
     run_program_pipeline,
 )
-from openlabs.portfolio import spawn_candidate_workstreams
 from openlabs.projects import load_project
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
@@ -67,7 +72,8 @@ RUNNERS = {
 CLAUDE_ONLY = {name: spec for name, spec in RUNNERS.items() if spec.provider == CLAUDE}
 YEAR = datetime.now(UTC).year
 EVIDENCE = [{"path": "workspaces/ai/x/primary.json", "sha256": "e" * 64}]
-
+RECEIPT = b'{"source": "physionet", "rows": 1024}\n'
+RECEIPT_SHA = hashlib.sha256(RECEIPT).hexdigest()
 
 # --------------------------------------------------------------------------- fixtures
 
@@ -86,6 +92,8 @@ def _paths(tmp_path: Path, code: Path = CODE_ROOT) -> WorkspacePaths:
 
 
 def _settings(runners=RUNNERS, **program) -> FactorySettings:
+    # Default grade_before_writing=False for generic flow/owner/autonomy tests;
+    # test_nc_grading.py and test_supply_flow.py test grade_before_writing=True explicitly.
     return FactorySettings(
         max_worker_processes=8,
         retry_backoff_seconds=0,
@@ -97,10 +105,10 @@ def _settings(runners=RUNNERS, **program) -> FactorySettings:
         default_task_scratch_mib=16,
         budget=BudgetSettings(max_parallel_agents=4),
         runners=dict(runners),
-        # Legacy flow tests keep the per-line stage mechanism (run_in -> tier2_aim); the NC-aim
-        # funnel (the configured default since 2026-11-25) is tested in test_nc_funnel.py.
-        program=ProgramSettings(enabled=True, **{
-            "funnel": FunnelSettings(target_stage="line_events"), **program}),
+        program=ProgramSettings(
+            enabled=True,
+            **{"grade_before_writing": False, **program},
+        ),
     )
 
 
@@ -128,19 +136,53 @@ def _tick(paths: WorkspacePaths, settings: FactorySettings, monkeypatch) -> engi
     return engine.tick(paths, settings)
 
 
-def _card(n: int = 0, receipt_sha: str = "0" * 64, **override) -> dict:
-    card = json.loads((TEMPLATE / "topic-card.example.json").read_text(encoding="utf-8"))
-    card["question"] = f"Question {n}: does retrieval keep its advantage on a later year?"
-    card["data_sources"] = [
-        {"doi": f"10.13026/example-{n}", "version": "2.2", "license": "PhysioNet 1.5.0"}
-    ]
-    for item in card["audience"]["citations"]:
-        item["year"] = YEAR - 1
-    card["decisive_analysis"]["access_receipt"] = {
-        "path": "receipts/data-access.json", "sha256": receipt_sha,
+def _brief(n: int) -> str:
+    return (
+        f"## 1. Question & Claim\nDoes temporal retrieval beat dense baselines on year {n}?\n\n"
+        "## 2. Why It Matters\nEvaluates real deployment drift on multi-year clinical records.\n\n"
+        "## 3. Closest Prior Work & Delta\nPrior studies used random splits; we test strict temporal splits.\n\n"
+        "## 4. Data & Compute\nPublic Zenodo cohort (<2 GB) on container CPU (~4 agent hours).\n\n"
+        "## 5. First Milestone (Kill Test)\nFetch subset, verify timestamps, run baseline vs retrieval.\n\n"
+        "## 6. Kill Criteria & Risks\nFreeze if timestamp leakage or baseline gap < 0.01 AUROC.\n"
+    )
+
+
+_SAMPLE_QUESTIONS = (
+    "Does temporal retrieval keep its advantage on multi-year clinical notes?",
+    "Can sparse attention calibrate arrhythmia alerts across hospital cohorts?",
+    "Do graph neural surrogates preserve power-grid stability under line outages?",
+    "Does photometric phase folding separate contact binaries in TESS sectors?",
+    "Can causal pruning reduce false alarms in bearing vibration diagnostics?",
+    "Does conformal prediction stabilize solar flare lead-time intervals?",
+)
+
+
+def _proposal(n: int = 0, **override) -> dict:
+    question = (
+        _SAMPLE_QUESTIONS[n]
+        if 0 <= n < len(_SAMPLE_QUESTIONS)
+        else f"Question {n}: unique benchmark evaluation for cohort alpha-{n} beta-{n * 7}?"
+    )
+    proposal = {
+        "schema_version": TOPIC_PROPOSAL_SCHEMA,
+        "question": question,
+        "brief": _brief(n),
+        "data_sources": [
+            {"id_or_url": f"https://zenodo.org/records/example-{n}", "access": "direct"}
+        ],
+        "compute_estimate": {
+            "locations": ["container_cpu"],
+            "data_gb": 2.0,
+            "agent_hours": 4.0,
+        },
     }
-    card.update(override)
-    return card
+    proposal.update(override)
+    return proposal
+
+
+def _card(n: int = 0, receipt_sha: str = "0" * 64, **override) -> dict:
+    del receipt_sha
+    return _proposal(n, **override)
 
 
 def _complete(
@@ -165,8 +207,10 @@ def _complete(
         path = campaign_root / "receipts" / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
-        artifacts.append({"artifact_id": f"receipt-{index}", "kind": "data_access_receipt",
-                          "uri": path.resolve().as_uri(), "sha256": sha256_file(path)})
+        artifacts.append({
+            "artifact_id": f"receipt-{index}", "kind": "data_access_receipt",
+            "uri": path.resolve().as_uri(), "sha256": sha256_file(path),
+        })
     payload = {
         "schema_version": RESULT_SCHEMA, "task_id": task_id, "campaign_id": task["campaign_id"],
         "lab_id": "ai", "domain": task["domain"], "status": "succeeded",
@@ -184,20 +228,15 @@ def _complete(
     return output
 
 
-RECEIPT = b'{"source": "physionet", "rows": 1024}\n'
-RECEIPT_SHA = __import__("hashlib").sha256(RECEIPT).hexdigest()
-
-
-def _scout_round(paths, db, settings, monkeypatch, cards) -> tuple[str, engine.TickReport]:
-    """Tick to schedule+claim a scout, deliver ``cards``, tick to register them."""
+def _scout_round(paths, db, settings, monkeypatch, proposals) -> tuple[str, engine.TickReport]:
+    """Tick to schedule+claim a scout, deliver ``proposals``, tick to register them."""
 
     first = _tick(paths, settings, monkeypatch)
     scouts = first.program["scouts_scheduled"]
     assert len(scouts) == 1, first.program
     scout_id = scouts[0]["task_id"]
     assert scout_id in first.launched
-    _complete(db, paths, scout_id, extra={"topic_cards": cards},
-              receipt_files={"data-access.json": RECEIPT})
+    _complete(db, paths, scout_id, extra={"topic_proposals": proposals})
     return scout_id, _tick(paths, settings, monkeypatch)
 
 
@@ -205,106 +244,62 @@ def _admission_task(db: FactoryDB) -> dict:
     with db.connect() as connection:
         row = connection.execute(
             "SELECT * FROM tasks WHERE routing_reason='topic_admission' "
-            "ORDER BY created_at DESC, task_id DESC LIMIT 1"
+            "ORDER BY rowid DESC LIMIT 1"
         ).fetchone()
     assert row is not None
     return dict(row)
 
 
-def _branch(entry: dict, verdict: str = "admit", **admission_override) -> dict:
-    endpoint = dict(entry["card"]["primary_endpoint"])
-    admission = {
-        "verdict": verdict,
-        "target_tier": "routine",
-        "tier_rationale": "Routine readers; no external cohort.",
-        "strongest_rejection_reason": "Could be read as one more benchmark.",
-        "closest_prior_work_checked": [
-            {"citation": "Example A 2025", "assessment": "Random split only; difference holds."}
-        ],
-        "data_access_confirmed": True,
-        "cost_judgement": {"proportionate": True, "rationale": "Reuses a pipeline."},
-        "preregistration": {"primary_endpoint": endpoint,
-                            "sha256": preregistration_sha256(endpoint)},
-        "reopen_conditions": [],
-    }
-    if verdict == "hold":
-        admission["reopen_conditions"] = [
-            {"type": "new_data_source", "description": "A second admission year is released."}
-        ]
-    admission.update(admission_override)
-    return {
-        "candidate_id": entry["topic_id"],
+def _review(entry: dict, verdict: str = "go", **override) -> dict:
+    item = {
         "topic_id": entry["topic_id"],
-        "title": entry["card"]["question"][:60],
-        "objective": "Run the pre-registered temporal comparison.",
-        "rationale": "Judged by the gate.",
-        "source_result_ids": [entry["source_result_id"]],
-        "admission": admission,
+        "verdict": verdict,
+        "rationale": (
+            "The question addresses an under-tested temporal generalization gap with clear "
+            "closest prior work and a fast CPU kill test on open data."
+        ),
+        "likely_band": "zone_1",
     }
+    item.update(override)
+    return item
 
 
 def _packet(task: dict) -> dict:
     return json.loads(Path(str(task["input_path"])).read_text(encoding="utf-8"))
 
 
-def _to_admission(paths, db, settings, monkeypatch, cards):
+def _to_admission(paths, db, settings, monkeypatch, proposals):
     """Run scout + registration; return (scout id, admission task after claim, report)."""
 
-    scout_id, report = _scout_round(paths, db, settings, monkeypatch, cards)
+    scout_id, report = _scout_round(paths, db, settings, monkeypatch, proposals)
     admission = _admission_task(db)
     return scout_id, admission, report
+
+
+def _set_project_status(project_path: Path, status: str) -> None:
+    payload = json.loads(project_path.read_text(encoding="utf-8"))
+    payload["status"] = status
+    atomic_write_json(project_path, payload)
 
 
 # --------------------------------------------------------------------------- contracts
 
 
-def test_topic_card_contract_names_missing_fields() -> None:
-    assert validate_topic_card(_card(), current_year=YEAR).valid
-    missing = _card()
-    for name in ("audience", "cost_estimate", "venues"):
-        missing.pop(name)
-    check = validate_topic_card(missing, current_year=YEAR)
-    # Audience evidence is for the gate to weigh: a warning, not a rejection.
-    assert any(error.startswith("audience is missing") for error in check.warnings)
-    assert any(error.startswith("cost_estimate is missing") for error in check.errors)
-    assert any(error.startswith("venues is missing") for error in check.errors)
-    stale = _card()
-    for item in stale["audience"]["citations"]:
-        item["year"] = YEAR - 6
-    stale_check = validate_topic_card(stale, current_year=YEAR)
-    assert stale_check.valid and any("last 3 years" in e for e in stale_check.warnings)
-    # Only gaps admission cannot judge around reject the card.
-    for name in ("primary_endpoint", "data_sources", "question"):
-        gap = _card()
-        gap.pop(name)
-        assert not validate_topic_card(gap, current_year=YEAR).valid, name
-    no_venue = _card()
-    no_venue["venues"]["routine"] = []
-    assert any(e.startswith("venues.routine needs a named routine target venue")
-               for e in validate_topic_card(no_venue, current_year=YEAR).errors)
-    one_venue = _card()
-    one_venue["venues"]["routine"] = one_venue["venues"]["routine"][:1]
-    assert validate_topic_card(one_venue, current_year=YEAR).valid
-    wet = _card(computational_only=False)
-    assert "computational_only must be true" in validate_topic_card(wet).errors
-    unverified = _card()
-    unverified["decisive_analysis"]["data_access_verified"] = False
-    assert "decisive_analysis.data_access_verified must be true" in validate_topic_card(
-        unverified
-    ).errors
+def test_proposal_and_review_contracts_check_minimal_fields() -> None:
+    assert validate_topic_proposal(_proposal()).valid
+    missing = _proposal()
+    missing.pop("brief")
+    missing.pop("compute_estimate")
+    check = validate_topic_proposal(missing)
+    assert not check.valid
+    assert any("brief" in e for e in check.errors)
+    assert any("compute_estimate" in e for e in check.errors)
 
-
-def test_admission_contract_checks_preregistration_hash() -> None:
-    entry = {"topic_id": "t", "source_result_id": "s", "card": _card()}
-    good = _branch(entry)["admission"]
-    assert validate_topic_admission(good).valid
-    tampered = json.loads(json.dumps(good))
-    tampered["preregistration"]["primary_endpoint"]["stop_rule"] = "never stop"
-    assert any("does not match" in e for e in validate_topic_admission(tampered).errors)
-    hold = _branch(entry, "hold", reopen_conditions=[])["admission"]
-    assert "admission.reopen_conditions is required for hold" in validate_topic_admission(
-        hold
-    ).errors
+    assert validate_topic_review(_review({"topic_id": "t1"})).valid
+    bad = validate_topic_review({"topic_id": "t1", "verdict": "maybe", "rationale": ""})
+    assert not bad.valid
+    assert any("verdict" in e for e in bad.errors)
+    assert any("rationale" in e for e in bad.errors)
 
 
 # --------------------------------------------------------------------------- scout trigger
@@ -325,13 +320,12 @@ def test_open_slot_schedules_a_worker_tier_scout_with_program_inputs(tmp_path, m
     assert task["task_type"] == "topic_scout"
     assert task["agent_role"] == "researcher" and task["session_mode"] == "fresh"
     assert task["campaign_id"] == "ai-program-scout"
-    assert task["runner"] in {"worker_gpt", "worker_claude"}  # routed to the worker tier
+    assert task["runner"] in {"worker_gpt", "worker_claude"}
     packet = _packet(task)
     labels = {item["label"] for item in packet["read_resources"]}
     assert labels == {"settings.yaml#research_portfolio", "team-rejection-ledger",
-                      "reusable-asset-index"}  # no ledger file exists yet
-    assert packet["max_cards"] == 3
-    # Only the controller schedules scouts: the on_demand workstream is not reseeded.
+                      "reusable-asset-index"}
+    assert packet["max_proposals"] == settings.program.supply.candidate_pool_size
     again = _tick(paths, settings, monkeypatch)
     assert again.program["scouts_scheduled"] == []
     assert again.program["scout_blocked"] == "scout_in_flight"
@@ -347,9 +341,8 @@ def test_scout_not_scheduled_when_full_paused_lead_short_or_too_soon(tmp_path) -
         engine._sync_active_projects(db, paths, settings, engine.TickReport())
         return paths, db, settings, open_topic_ledger(paths, settings.program)
 
-    def active_topic(paths, db, settings, ledger, n: int) -> None:
-        topic = {"topic_id": f"t{n}", "domain": "ai", "question": f"q{n}",
-                 "data_sources": [f"s{n}"], "primary_endpoint": "e"}
+    def active_topic(db, settings, ledger, n: int) -> None:
+        topic = {"topic_id": f"t{n}", "domain": "ai", "question": f"q{n}", "data_sources": [f"s{n}"]}
         propose_topic(ledger, topic, db=db, decided_by="s")
         admit_topic(ledger, f"t{n}", db=db, settings=settings.program, decided_by="g",
                     admission_task_id="g")
@@ -357,11 +350,11 @@ def test_scout_not_scheduled_when_full_paused_lead_short_or_too_soon(tmp_path) -
         activate_topic(ledger, f"t{n}", db=db, campaign_id=f"c{n}", decided_by="m")
 
     paths, db, settings, ledger = setup("full", max_active_topics=1)
-    active_topic(paths, db, settings, ledger, 0)
+    active_topic(db, settings, ledger, 0)
     assert maybe_schedule_scout(db, paths, settings, lead_short=False).reason == "no_free_slot"
 
     paths, db, settings, ledger = setup("paused", max_ready_unsubmitted=0)
-    active_topic(paths, db, settings, ledger, 0)
+    active_topic(db, settings, ledger, 0)
     mark_topic_in_review(ledger, "t0", db=db, decided_by="r")
     mark_topic_ready(ledger, "t0", db=db, decided_by="r")
     assert maybe_schedule_scout(db, paths, settings, lead_short=False).reason == "admission_paused"
@@ -369,9 +362,9 @@ def test_scout_not_scheduled_when_full_paused_lead_short_or_too_soon(tmp_path) -
     paths, db, settings, ledger = setup("lead")
     assert maybe_schedule_scout(db, paths, settings, lead_short=True).reason == "lead_quota_short"
 
-    paths, db, settings, ledger = setup("pool", candidate_pool_low_water=1)
+    paths, db, settings, ledger = setup("pool", supply=SupplySettings(candidate_pool_size=1))
     propose_topic(ledger, {"topic_id": "p", "domain": "ai", "question": "q",
-                           "data_sources": ["s"], "primary_endpoint": "e"}, db=db, decided_by="s")
+                           "data_sources": ["s"]}, db=db, decided_by="s")
     assert maybe_schedule_scout(db, paths, settings, lead_short=False).reason == (
         "candidate_pool_at_low_water"
     )
@@ -381,7 +374,10 @@ def test_scout_not_scheduled_when_full_paused_lead_short_or_too_soon(tmp_path) -
     assert maybe_schedule_scout(db, paths, settings, lead_short=False).reason == (
         "scout_min_interval"
     )
-    settings = replace(settings, program=replace(settings.program, scout_min_interval_hours=0))
+    settings = replace(
+        settings,
+        program=replace(settings.program, supply=replace(settings.program.supply, scout_min_interval_hours=0)),
+    )
     assert maybe_schedule_scout(db, paths, settings, lead_short=False).task_id is not None
 
     paths, db, settings, ledger = setup("norunners")
@@ -391,102 +387,73 @@ def test_scout_not_scheduled_when_full_paused_lead_short_or_too_soon(tmp_path) -
     )
 
 
-# --------------------------------------------------------------------------- card intake
+# --------------------------------------------------------------------------- intake & review
 
 
-def test_invalid_cards_are_rejected_with_their_missing_fields(tmp_path, monkeypatch) -> None:
+def test_invalid_proposals_are_rejected_directly_without_repair(tmp_path, monkeypatch) -> None:
     paths = _paths(tmp_path)
     _install_program(paths)
     db = _db(paths)
     settings = _settings()
-    no_audience = _card(1, RECEIPT_SHA)
-    no_audience.pop("primary_endpoint")
-    wet = _card(2, RECEIPT_SHA, computational_only=False)
-    unverified = _card(3, RECEIPT_SHA)
-    unverified["decisive_analysis"]["data_access_verified"] = False
-    unbound = _card(4, "1" * 64)  # receipt not among the scout's artifacts
+    no_brief = _proposal(1)
+    no_brief.pop("brief")
+    bad_access = _proposal(2, data_sources=[{"id_or_url": "https://x.org/d", "access": "paid"}])
 
-    _, report = _scout_round(
-        paths, db, settings, monkeypatch, [_card(0, RECEIPT_SHA), no_audience, wet, unverified,
-                                           unbound],
-    )
+    _, report = _scout_round(paths, db, settings, monkeypatch, [_proposal(0), no_brief, bad_access])
 
     assert report.errors == []
     assert len(report.program["cards_registered"]) == 1
     rejected = report.program["rejected_cards"]
-    assert len(rejected) == 4
-    reasons = [" | ".join(item["errors"]) for item in rejected]
-    assert any("primary_endpoint must be an object" in text for text in reasons)
-    assert any("computational_only must be true" in text for text in reasons)
-    assert any("data_access_verified must be true" in text for text in reasons)
-    assert any("not a hash-bound artifact" in text for text in reasons)
+    assert len(rejected) == 2
+    assert {item["reason"] for item in rejected} == {REJECTION_PROPOSAL_INVALID}
     ledger = open_topic_ledger(paths, settings.program).read()
     rejected_topics = [t for t in ledger["topics"] if t["status"] == "rejected"]
-    assert all(t["card_errors"] for t in rejected_topics)
-    assert {last_rejection_reason(t) for t in rejected_topics} == {"card_invalid"}
-    # Each invalid scout card gets its one automatic repair task.
-    assert {t["card_repair"]["status"] for t in rejected_topics} == {"scheduled"}
+    assert {last_rejection_reason(t) for t in rejected_topics} == {REJECTION_PROPOSAL_INVALID}
+    assert all(not t.get("card_repair") for t in rejected_topics)
 
 
-# --------------------------------------------------------------------------- admission gate
-
-
-def test_admission_goes_to_another_family_worker_and_keeps_independence(tmp_path, monkeypatch):
+def test_review_goes_to_another_family_and_keeps_independence(tmp_path, monkeypatch) -> None:
     paths = _paths(tmp_path)
     _install_program(paths)
     db = _db(paths)
     settings = _settings()
-    scout_id, admission, report = _to_admission(
-        paths, db, settings, monkeypatch, [_card(0, RECEIPT_SHA)]
-    )
+    scout_id, admission, report = _to_admission(paths, db, settings, monkeypatch, [_proposal(0)])
     scout_provider = RUNNERS[db.task(scout_id)["runner"]].provider
     assert admission["task_type"] == "portfolio_review"
     assert admission["agent_role"] == "reviewer" and admission["session_mode"] == "fresh"
     assert admission["exclude_provider"] == scout_provider
     assert report.program["admissions_scheduled"][0]["task_id"] == admission["task_id"]
     routed = RUNNERS[db.task(admission["task_id"])["runner"]]
-    # Worker tier since 2026-11-18 (Opus <-> sol), still the other family.
     assert routed.tier == "worker" and routed.provider != scout_provider
     packet = _packet(admission)
-    assert packet["program"] is True and len(packet["topic_cards"]) == 1
-    assert {item["label"] for item in packet["read_resources"]} >= {
-        "topic-ledger", "reusable-asset-index"
-    }
+    assert packet["program"] is True and len(packet["topic_proposals"]) == 1
 
 
 def test_no_independent_runner_leaves_topic_proposed_and_records_event(tmp_path, monkeypatch):
-    # One family with a single model: neither another family nor another model can judge.
     paths = _paths(tmp_path)
     _install_program(paths)
     db = _db(paths)
     settings = _settings(runners={"lead_claude": RUNNERS["lead_claude"]})
-    _, admission, report = _to_admission(paths, db, settings, monkeypatch,
-                                         [_card(0, RECEIPT_SHA)])
+    _, admission, report = _to_admission(paths, db, settings, monkeypatch, [_proposal(0)])
 
     assert db.task(admission["task_id"])["status"] == "queued"
     assert admission["exclude_provider"] == CLAUDE
     waiting = report.program["admissions_waiting"]
     assert waiting and waiting[0]["excluded_provider"] == CLAUDE
     topic_id = waiting[0]["topic_ids"][0]
-    ledger = open_topic_ledger(paths, settings.program)
-    assert ledger.topic(topic_id)["status"] == "proposed"
+    assert open_topic_ledger(paths, settings.program).topic(topic_id)["status"] == "proposed"
     events = db.events(entity_type="topic", entity_id=topic_id)
     assert "topic_admission_waiting" in {event["event_type"] for event in events}
-    # Still waiting next tick: never re-routed to the same family.
     later = _tick(paths, settings, monkeypatch)
-    assert db.task(admission["task_id"])["status"] == "queued"
     assert admission["task_id"] not in later.launched
 
 
-def test_single_family_admission_goes_to_another_model_of_it(tmp_path, monkeypatch):
-    # Owner 2026-11-15 (Claude quota no longer used): with one family configured the
-    # admission is taken by a different model of that family and labelled so.
+def test_single_family_review_goes_to_another_model_of_it(tmp_path, monkeypatch):
     paths = _paths(tmp_path)
     _install_program(paths)
     db = _db(paths)
     settings = _settings(runners=CLAUDE_ONLY)
-    _, admission, _report = _to_admission(paths, db, settings, monkeypatch,
-                                          [_card(0, RECEIPT_SHA)])
+    _, admission, _ = _to_admission(paths, db, settings, monkeypatch, [_proposal(0)])
     assert admission["exclude_provider"] == CLAUDE
     producer = _packet(admission)["producer_model"]
     _tick(paths, settings, monkeypatch)
@@ -496,15 +463,14 @@ def test_single_family_admission_goes_to_another_model_of_it(tmp_path, monkeypat
     assert routed[0]["model"] != producer and routed[0]["producer_model"] == producer
 
 
-def test_end_to_end_slot_scout_admission_campaign_first_task(tmp_path, monkeypatch) -> None:
+def test_end_to_end_slot_scout_review_campaign_and_idempotent_replay(tmp_path, monkeypatch) -> None:
     paths = _paths(tmp_path)
     _install_program(paths)
     db = _db(paths)
     settings = _settings()
-    _, admission, _ = _to_admission(paths, db, settings, monkeypatch, [_card(0, RECEIPT_SHA)])
-    entry = _packet(admission)["topic_cards"][0]
-    _complete(db, paths, admission["task_id"],
-              extra={"candidate_branches": [_branch(entry)]})
+    _, admission, _ = _to_admission(paths, db, settings, monkeypatch, [_proposal(0)])
+    entry = _packet(admission)["topic_proposals"][0]
+    _complete(db, paths, admission["task_id"], extra={"reviews": [_review(entry, "go")]})
 
     report = _tick(paths, settings, monkeypatch)
 
@@ -513,25 +479,18 @@ def test_end_to_end_slot_scout_admission_campaign_first_task(tmp_path, monkeypat
     ledger = open_topic_ledger(paths, settings.program)
     topic = ledger.topic(entry["topic_id"])
     assert topic["status"] == "active"
-    endpoint = entry["card"]["primary_endpoint"]
-    assert topic["preregistration_sha256"] == preregistration_sha256(endpoint)
-    assert topic["target_tier"] == "routine"
+    assert topic["preregistration_sha256"] is None
     campaign = db.campaign(topic["campaign_id"])
     assert campaign is not None and campaign["status"] == "active"
     state = json.loads(Path(campaign["workstream_state_path"]).read_text(encoding="utf-8"))
     assert state["topic_id"] == entry["topic_id"]
-    assert state["preregistration"]["sha256"] == topic["preregistration_sha256"]
-    assert state["target_tier"] == "routine"
-    assert [venue["name"] for venue in state["routine_fallback"]] == [
-        "Journal of Biomedical Informatics", "Artificial Intelligence in Medicine"
-    ]
-    assert state["cost_budget"]["gpu_hours"] == 12
+    assert state["milestone"] == "kill_test"
+    assert "## 5. First Milestone (Kill Test)" in state["brief"]
+    assert state["compute_estimate"]["data_gb"] == 2.0
+    assert state["likely_band"] == "zone_1"
     first = db.latest_task(topic["campaign_id"])
     assert first["task_type"] == "candidate_maturation"
-    assert first["agent_role"] == "researcher"
-    assert first["task_id"] in report.launched or first["status"] == "queued"
-    # Replaying the gate's handoff and the materialization (crash recovery)
-    # books nothing twice.
+    # Replay is idempotent.
     done = db.task(admission["task_id"])
     replay = spawn_candidate_workstreams(
         db, paths, settings, db.campaign("ai-program-admission"), done,
@@ -540,87 +499,50 @@ def test_end_to_end_slot_scout_admission_campaign_first_task(tmp_path, monkeypat
     )
     assert replay.task_ids == ()
     assert replay.decisions[0]["outcome"] == "admitted"
-    again = materialize_waiting_topics(db, paths, settings)
-    assert again.campaign_ids == ()
+    assert materialize_waiting_topics(db, paths, settings).campaign_ids == ()
     assert len([h for h in ledger.topic(entry["topic_id"])["history"]
                 if h["to"] == "admitted"]) == 1
     assert db.task_count(topic["campaign_id"]) == 1
 
 
-def test_gate_rejects_unconfirmed_data_and_admits_nothing_without_error(tmp_path, monkeypatch):
-    paths = _paths(tmp_path)
-    _install_program(paths)
-    db = _db(paths)
-    settings = _settings()
-    _, admission, _ = _to_admission(paths, db, settings, monkeypatch,
-                                    [_card(0, RECEIPT_SHA), _card(1, RECEIPT_SHA)])
-    entries = _packet(admission)["topic_cards"]
-    branches = [
-        _branch(entries[0], data_access_confirmed=False),
-        _branch(entries[1], "reject"),
-    ]
-    _complete(db, paths, admission["task_id"], extra={"candidate_branches": branches})
-    before = slot_status(open_topic_ledger(paths, settings.program).read(), settings.program)
-
-    report = _tick(paths, settings, monkeypatch)
-
-    assert report.errors == []
-    outcomes = {item["topic_id"]: item for item in report.program["admission_decisions"]}
-    assert outcomes[entries[0]["topic_id"]]["reason"] == "data_access_not_confirmed"
-    assert outcomes[entries[1]["topic_id"]]["outcome"] == "rejected"
-    status = slot_status(open_topic_ledger(paths, settings.program).read(), settings.program)
-    assert status.free_slots == before.free_slots == settings.program.max_active_topics
-    assert report.program["materialized"] == []
-    assert not [c for c in db.campaigns() if "candidate" in str(c["campaign_id"])]
-
-
-def test_hold_and_reject_are_not_materialized_and_return_only_via_reopens(tmp_path, monkeypatch):
+def test_no_go_rejects_and_returns_only_via_reopens(tmp_path, monkeypatch) -> None:
     paths = _paths(tmp_path)
     project_path = _install_program(paths)
     db = _db(paths)
     settings = _settings()
-    cards = [_card(0, RECEIPT_SHA), _card(1, RECEIPT_SHA)]
-    scout_id, admission, _ = _to_admission(paths, db, settings, monkeypatch, cards)
-    entries = _packet(admission)["topic_cards"]
-    _complete(db, paths, admission["task_id"], extra={"candidate_branches": [
-        _branch(entries[0], "reject"), _branch(entries[1], "hold"),
-    ]})
-    _tick(paths, settings, monkeypatch)
+    _, admission, _ = _to_admission(paths, db, settings, monkeypatch, [_proposal(0)])
+    entry = _packet(admission)["topic_proposals"][0]
+    _complete(db, paths, admission["task_id"], extra={"reviews": [_review(entry, "no_go")]})
+    report = _tick(paths, settings, monkeypatch)
+    assert report.errors == []
     ledger = open_topic_ledger(paths, settings.program)
-    rejected, held = (ledger.topic(e["topic_id"]) for e in entries)
-    assert rejected["status"] == held["status"] == "rejected"
-    assert last_rejection_reason(rejected) == "admission_rejected"
-    assert last_rejection_reason(held) == "admission_hold"
-    assert held["reopen_conditions"][0]["type"] == "new_data_source"
-    assert rejected["campaign_id"] is None and held["campaign_id"] is None
+    rejected = ledger.topic(entry["topic_id"])
+    assert rejected["status"] == "rejected"
+    assert last_rejection_reason(rejected) == REJECTION_REVIEW_NO_GO
+    assert rejected["campaign_id"] is None
 
     project = load_project(project_path)
-    digests = {RECEIPT_SHA}
-    # Resubmitting the identical card is a no-op on the judged topic ...
-    same = intake_card(db, paths, settings, project, _card(1, RECEIPT_SHA),
-                       decided_by="scout-2", provider=GPT, source_task_id="scout-2",
-                       receipt_digests={RECEIPT_SHA})
-    assert same["topic_id"] == held["topic_id"] and same["status"] == "rejected"
-    # ... and a reworded card with the same fingerprint is rejected as a duplicate.
-    reworded = _card(1, RECEIPT_SHA)
+    # Identical resubmission returns the already-rejected topic idempotently.
+    same = intake_proposal(db, paths, settings, project, _proposal(0),
+                           decided_by="scout-2", provider=GPT, source_task_id="scout-2")
+    assert same["topic_id"] == rejected["topic_id"] and same["status"] == "rejected"
+    # A slightly reworded duplicate without reopens is rejected as duplicate_topic.
+    reworded = _proposal(0, brief=_brief(0) + "\nExtra note.\n")
     reworded["question"] = reworded["question"].upper() + "  "
-    reworded["cost_estimate"]["basis"] = "A different estimate wording."
-    duplicate = intake_card(db, paths, settings, project, reworded,
-                            decided_by="scout-2", provider=GPT, source_task_id="scout-2",
-                            receipt_digests=digests)
-    assert duplicate["status"] == "rejected" and duplicate["reason"] == "duplicate_fingerprint"
-    # A reopening card citing the declared condition is accepted.
-    reopening = intake_card(
+    duplicate = intake_proposal(db, paths, settings, project, reworded,
+                                decided_by="scout-2", provider=GPT, source_task_id="scout-2")
+    assert duplicate["status"] == "rejected" and duplicate["reason"] == REJECTION_DUPLICATE_TOPIC
+    # Reopening a judged rejection succeeds and records supersedes.
+    reopening = intake_proposal(
         db, paths, settings, project,
-        _card(1, RECEIPT_SHA, reopens=held["topic_id"], reopen_basis={
-            "type": "new_data_source", "description": "The 2026 admission year is out."}),
-        decided_by="scout-3", provider=GPT, source_task_id="scout-3", receipt_digests=digests,
+        _proposal(0, brief=_brief(0) + "\nNew cohort released.\n", reopens=rejected["topic_id"]),
+        decided_by="scout-3", provider=GPT, source_task_id="scout-3",
     )
     assert reopening["status"] == "proposed"
-    assert ledger.topic(reopening["topic_id"])["supersedes"] == held["topic_id"]
+    assert ledger.topic(reopening["topic_id"])["supersedes"] == rejected["topic_id"]
 
 
-def test_admitted_topics_wait_for_a_slot_and_materialize_in_admission_order(
+def test_admitted_topics_wait_for_a_slot_and_materialize_in_review_order(
     tmp_path, monkeypatch
 ) -> None:
     paths = _paths(tmp_path)
@@ -628,41 +550,40 @@ def test_admitted_topics_wait_for_a_slot_and_materialize_in_admission_order(
     db = _db(paths)
     settings = _settings(max_active_topics=2)
     ledger = open_topic_ledger(paths, settings.program)
-    # One running (grandfathered) topic holds a slot.
     propose_topic(ledger, {"topic_id": "old", "domain": "ai", "question": "old",
-                           "data_sources": ["s"], "primary_endpoint": "e"}, db=db,
-                  decided_by="backfill")
+                           "data_sources": ["s"]}, db=db, decided_by="backfill")
     admit_topic(ledger, "old", db=db, settings=settings.program, decided_by="b",
                 admission_task_id="b")
     db.register_campaign("old-campaign", domain="ai", title="old")
     activate_topic(ledger, "old", db=db, campaign_id="old-campaign", decided_by="b")
 
-    _, admission, _ = _to_admission(paths, db, settings, monkeypatch,
-                                    [_card(0, RECEIPT_SHA), _card(1, RECEIPT_SHA)])
-    entries = _packet(admission)["topic_cards"]
-    # The gate lists the second card first: admission order follows its decisions.
-    _complete(db, paths, admission["task_id"], extra={"candidate_branches": [
-        _branch(entries[1]), _branch(entries[0]),
-    ]})
+    _, admission, _ = _to_admission(
+        paths, db, settings, monkeypatch,
+        [_proposal(0, question="Does sparse attention improve long EEG decoding?"),
+         _proposal(1, question="Can causal graph pruning reduce hospital readmission drift?")],
+    )
+    entries = _packet(admission)["topic_proposals"]
+    _complete(db, paths, admission["task_id"],
+              extra={"reviews": [_review(entries[1]), _review(entries[0])]})
     report = _tick(paths, settings, monkeypatch)
 
     first, second = entries[1]["topic_id"], entries[0]["topic_id"]
     assert ledger.topic(first)["status"] == "active"
     assert ledger.topic(second)["status"] == "admitted"
     assert report.program["waiting_admitted"] == [second]
-    assert report.program["scouts_scheduled"] == []  # no free slot left
+    assert report.program["scouts_scheduled"] == []
 
-    freeze_topic(ledger, "old", db=db, reason_class="overdue", evidence=EVIDENCE,
+    freeze_topic(ledger, "old", db=db, reason_class="resources_exhausted", evidence=EVIDENCE,
                  decided_by="judge")
-    report = engine.TickReport()
-    report.program = {}
-    run_program_pipeline(db, paths, settings, report)
+    tick_report = engine.TickReport()
+    tick_report.program = {}
+    run_program_pipeline(db, paths, settings, tick_report)
     assert ledger.topic(second)["status"] == "active"
-    assert report.program["materialized"] == [ledger.topic(second)["campaign_id"]]
-    assert report.program["waiting_admitted"] == []
+    assert tick_report.program["materialized"] == [ledger.topic(second)["campaign_id"]]
+    assert tick_report.program["waiting_admitted"] == []
 
 
-# --------------------------------------------------------------------------- structure
+# --------------------------------------------------------------------------- structure & protocol
 
 
 def _manual_lab(paths: WorkspacePaths) -> None:
@@ -691,7 +612,7 @@ def _manual_lab(paths: WorkspacePaths) -> None:
     })
 
 
-def test_enforce_admission_blocks_unadmitted_manual_research(tmp_path) -> None:
+def test_enforce_admission_blocks_manual_and_allows_admitted(tmp_path) -> None:
     paths = _paths(tmp_path, code=tmp_path / "openlabs")
     _manual_lab(paths)
     db = _db(paths)
@@ -700,22 +621,10 @@ def test_enforce_admission_blocks_unadmitted_manual_research(tmp_path) -> None:
         blocked.production_blocked[0].items()
     )
     assert db.campaign("manual-stream") is None
-
-    # Default (enforce_admission = false) keeps the old behaviour.
-    allowed = engine.tick(paths, replace(_settings(), launch_jobs=False))
-    assert "manual-stream" in allowed.production_synced
-    assert db.campaign("manual-stream") is not None
-
-
-def test_enforce_admission_accepts_a_workstream_linked_to_an_admitted_topic(tmp_path) -> None:
-    paths = _paths(tmp_path, code=tmp_path / "openlabs")
-    _manual_lab(paths)
-    db = _db(paths)
     settings = replace(_settings(enforce_admission=True), launch_jobs=False)
     ledger = open_topic_ledger(paths, settings.program)
     propose_topic(ledger, {"topic_id": "m", "domain": "test-domain", "question": "q",
-                           "data_sources": ["s"], "primary_endpoint": "e"}, db=db,
-                  decided_by="gate")
+                           "data_sources": ["s"]}, db=db, decided_by="gate")
     admit_topic(ledger, "m", db=db, settings=settings.program, decided_by="g",
                 admission_task_id="g")
     db.register_campaign("manual-stream", domain="test-domain", title="m")
@@ -724,7 +633,7 @@ def test_enforce_admission_accepts_a_workstream_linked_to_an_admitted_topic(tmp_
     assert "manual-stream" in report.production_synced
 
 
-def test_program_protocol_rejects_static_research_and_missing_preregistration(tmp_path):
+def test_program_protocol_accepts_simplified_brief_and_rejects_static_research(tmp_path) -> None:
     spec = importlib.util.spec_from_file_location(
         "research_program_protocol",
         CODE_ROOT / "packages" / "research-core" / "research_program_protocol.py",
@@ -737,6 +646,19 @@ def test_program_protocol_rejects_static_research_and_missing_preregistration(tm
     root = project_path.parent
     assert module.validate(project_path, root / "scout_state.json", "discovery") == []
     assert module.validate(project_path, root / "admission_state.json", "commit") == []
+
+    # Dynamic simplified research state passes.
+    dyn = root / "dynamic_state.json"
+    atomic_write_json(dyn, {
+        "schema_version": "openlabs.research_program_state.v1",
+        "project_id": "ai-research-program", "workstream_id": "w1",
+        "topic_id": "t1", "admission_task_id": "rev-1", "program_role": "research",
+        "brief": _brief(0), "compute_estimate": {"locations": ["container_cpu"], "data_gb": 1, "agent_hours": 2},
+        "milestone": "kill_test", "status": "active",
+    })
+    assert module.validate(project_path, dyn, "discovery") == []
+
+    # Static research state without brief or preregistration is rejected.
     research = {"schema_version": "openlabs.research_program_state.v1",
                 "project_id": "ai-research-program", "workstream_id": "x",
                 "program_role": "research", "status": "active"}
@@ -746,241 +668,79 @@ def test_program_protocol_rejects_static_research_and_missing_preregistration(tm
     assert any("preregistration" in e for e in errors)
 
 
-def test_backfill_is_dry_run_by_default_and_idempotent(tmp_path) -> None:
-    paths = _paths(tmp_path)
+def test_backfill_cli_disabled_program_and_lab_registrations(tmp_path, monkeypatch) -> None:
+    from openlabs.__main__ import _parser
+    from openlabs.labs import load_lab
+
+    paths = _paths(tmp_path / "bf")
     db = _db(paths)
     settings = _settings()
     db.register_campaign("running-study", domain="ai", title="Running study")
-    db.register_campaign("review-lane", domain="ai", title="Reviewer")
-    db.configure_project_campaign(
-        "review-lane", project_config_path="", workstream_state_path="", protocol_id="",
-        primary_skill="", execution_policy={}, project_id="p",
-        workstream_policy={"default_agent_role": "reviewer"},
-    )
     dry = backfill_grandfathered(db, paths, settings)
-    assert dry["dry_run"] is True
-    assert [item["campaign_id"] for item in dry["planned"]] == ["running-study"]
-    assert not (paths.data / "registry" / "topic-ledger.json").exists()
-
+    assert dry["dry_run"] is True and [i["campaign_id"] for i in dry["planned"]] == ["running-study"]
     written = backfill_grandfathered(db, paths, settings, write=True)
-    ledger = open_topic_ledger(paths, settings.program)
-    topic = ledger.topic(written["registered"][0])
-    assert topic["status"] == "active" and topic["campaign_id"] == "running-study"
-    assert topic["admission"] == "grandfathered"
-    again = backfill_grandfathered(db, paths, settings, write=True)
-    assert again["registered"] == []
-    assert {"campaign_id": "running-study", "reason": "already_in_ledger"} in again["skipped"]
-
-
-def test_cli_exposes_program_backfill_and_submit_card() -> None:
-    from openlabs.__main__ import _parser
+    assert open_topic_ledger(paths, settings.program).topic(written["registered"][0])["status"] == "active"
+    assert backfill_grandfathered(db, paths, settings, write=True)["registered"] == []
 
     args = _parser().parse_args(["program", "backfill"])
-    assert args.command == "program" and args.program_command == "backfill" and not args.write
-    args = _parser().parse_args(["program", "submit-card", "--project", "p.json", "--card",
-                                 "c.json"])
-    assert args.program_command == "submit-card"
+    assert args.program_command == "backfill" and not args.write
+    assert _parser().parse_args(["program", "submit-card", "--project", "p.json", "--card", "c.json"]).program_command == "submit-card"
+
+    off_paths = _paths(tmp_path / "off")
+    _install_program(off_paths)
+    _db(off_paths)
+    off_report = _tick(off_paths, replace(_settings(), program=ProgramSettings()), monkeypatch)
+    assert off_report.program == {}
+
+    for lab in ("ai", "biomed", "materials", "math", "physics", "quant"):
+        manifest = load_lab(CODE_ROOT / "labs" / lab / "lab.json")
+        protocol = manifest.protocol("research-program")
+        assert protocol is not None
+        assert {"openlabs-empirical-topic-scout", "openlabs-topic-admission"} <= set(protocol.runtime_skills)
 
 
-def test_disabled_program_leaves_program_projects_idle(tmp_path, monkeypatch) -> None:
-    paths = _paths(tmp_path)
-    _install_program(paths)
-    db = _db(paths)
-    settings = replace(_settings(), program=ProgramSettings())
-    report = _tick(paths, settings, monkeypatch)
-    assert report.program == {}
-    assert not (paths.data / "registry" / "topic-ledger.json").exists()
-    with db.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM tasks WHERE task_type='topic_scout'"
-        ).fetchone()[0] == 0
-    assert {"campaign_id": "ai-program-admission", "reason": "program_disabled"} in (
-        report.production_blocked
-    )
-
-
-@pytest.mark.parametrize("lab", ["ai", "biomed", "materials", "math", "physics", "quant"])
-def test_every_lab_registers_the_program_protocol_and_skills(lab: str) -> None:
-    from openlabs.labs import load_lab
-
-    manifest = load_lab(CODE_ROOT / "labs" / lab / "lab.json")
-    protocol = manifest.protocol("research-program")
-    assert protocol is not None
-    assert {"openlabs-empirical-topic-scout", "openlabs-topic-admission"} <= set(
-        protocol.runtime_skills
-    )
-    for skill in protocol.runtime_skills:
-        assert manifest.skill_path(skill) is not None and manifest.skill_path(skill).is_file()
-
-
-def test_lead_shortage_pauses_the_admission_gate(tmp_path) -> None:
-    from openlabs import budget as budget_control
-
-    paths = _paths(tmp_path)
-    db = _db(paths)
-    base = _settings()
-    # Admission configured on the lead tier (the default is worker since 2026-11-18).
-    settings = replace(base, routing=replace(base.routing, task_tiers={
-        **base.routing.task_tiers, "portfolio_review:topic_admission": "lead"}))
-    router = budget_control.QuotaRouter.build(db, settings)
-    router.lead_short = True
-    task = {"task_id": "gate", "task_type": "portfolio_review", "routing_reason": "topic_admission",
-            "agent_role": "reviewer", "runner": "frontier"}
-    assert router.route(task, {}) is None
-    assert router.deferred["gate"]["reason"] == "lead_quota_short"
-    ordinary = {**task, "task_id": "review", "routing_reason": "new_project_results_review"}
-    assert router.route(ordinary, {}) is not None or router.deferred["review"]["reason"] != (
-        "lead_quota_short"
-    )
-
-
-# --------------------------------------------------------------------------- compute locations
-
-
-def _math_card(n: int, receipt_sha: str = RECEIPT_SHA) -> dict:
-    card = _card(n, receipt_sha)
-    card["cost_estimate"]["gpu_hours"] = 0
-    card["cost_estimate"]["compute_plan"] = {"locations": ["container_cpu", "wsl_math"]}
-    return card
-
-
-def test_topic_card_needs_a_compute_plan_with_sizes_per_location() -> None:
-    card = _card()
-    card["cost_estimate"].pop("compute_plan")
-    errors = validate_topic_card(card, current_year=YEAR).errors
-    assert any(e.startswith("cost_estimate.compute_plan is missing") for e in errors)
-    card["cost_estimate"]["compute_plan"] = {"locations": ["laptop"]}
-    assert any("compute_plan.locations must be" in e
-               for e in validate_topic_card(card, current_year=YEAR).errors)
-    card["cost_estimate"]["compute_plan"] = {"locations": ["container_cpu", "ailab"]}
-    errors = validate_topic_card(card, current_year=YEAR).errors
-    assert "cost_estimate.compute_plan.ailab needs cpus, memory_mib and hours" in errors
-    assert "cost_estimate.gpu_hours > 0 needs container_gpu in compute_plan.locations" in errors
-    card["cost_estimate"]["gpu_hours"] = 0
-    card["cost_estimate"]["compute_plan"]["ailab"] = {"cpus": 16, "memory_mib": 8192, "hours": 3}
-    assert any("ailab.cpus must be 1-8" in e
-               for e in validate_topic_card(card, current_year=YEAR).errors)
-    card["cost_estimate"]["compute_plan"]["ailab"]["cpus"] = 8
-    assert validate_topic_card(card, current_year=YEAR).valid
-    assert validate_topic_card(_math_card(0), current_year=YEAR).valid
-
-
-def test_container_instance_rejects_wsl_math_cards_at_registration(tmp_path, monkeypatch):
+def test_container_rejects_wsl_math_and_paused_project_parks_slots(tmp_path, monkeypatch) -> None:
     import openlabs.program_flow as program_flow
 
     marker = tmp_path / "dockerenv"
     marker.write_text("", encoding="utf-8")
     monkeypatch.setattr(program_flow, "CONTAINER_MARKER", marker)
-    paths = _paths(tmp_path)
+    paths = _paths(tmp_path / "wsl")
     _install_program(paths)
     db = _db(paths)
     settings = _settings()
-
-    _, report = _scout_round(paths, db, settings, monkeypatch,
-                             [_card(0, RECEIPT_SHA), _math_card(1)])
-
+    wsl_prop = _proposal(
+        1,
+        question="Symbolic convergence proof using wsl_math backend",
+        compute_estimate={"locations": ["container_cpu", "wsl_math"], "data_gb": 1.0, "agent_hours": 2.0},
+    )
+    _, report = _scout_round(paths, db, settings, monkeypatch, [_proposal(0), wsl_prop])
     assert len(report.program["cards_registered"]) == 1
     [rejected] = report.program["rejected_cards"]
-    assert any(error.startswith("compute_location_unavailable:wsl_math")
-               and "WSL host" in error for error in rejected["errors"])
+    assert rejected["reason"] == REJECTION_BUDGET_EXCEEDED
+    assert any("wsl_math" in e for e in rejected["errors"])
 
-
-def test_container_instance_refuses_to_admit_a_wsl_math_topic(tmp_path, monkeypatch):
-    import openlabs.program_flow as program_flow
-
-    marker = tmp_path / "dockerenv"
-    monkeypatch.setattr(program_flow, "CONTAINER_MARKER", marker)  # absent: not a container
-    paths = _paths(tmp_path)
-    _install_program(paths)
-    db = _db(paths)
-    settings = _settings()
-    _, admission, report = _to_admission(paths, db, settings, monkeypatch, [_math_card(0)])
-    assert len(report.program["cards_registered"]) == 1
-    [entry] = _packet(admission)["topic_cards"]
-    _complete(db, paths, admission["task_id"], extra={"candidate_branches": [_branch(entry)]})
-    marker.write_text("", encoding="utf-8")  # the admission runs in the container instance
-
-    report = _tick(paths, settings, monkeypatch)
-
-    [decision] = report.program["admission_decisions"]
-    assert decision["outcome"] == "rejected"
-    assert decision["reason"].startswith("compute_location_unavailable:wsl_math")
-    topic = open_topic_ledger(paths, settings.program).read()["topics"][0]
-    assert topic["status"] == "rejected"
-    assert report.program["materialized"] == []
-    # An explicit [program].compute_locations without wsl_math refuses it anywhere.
-    marker.unlink()
-    narrowed = replace(settings, program=replace(
-        settings.program, compute_locations=("container_cpu", "container_gpu", "ailab")))
-    assert program_flow.compute_location_problem(narrowed, _math_card(1)).startswith(
-        "compute_location_unavailable:wsl_math")
-    assert program_flow.compute_location_problem(settings, _math_card(1)) is None
-
-
-# --------------------------------------------------------------------------- paused projects
-
-
-def _set_project_status(project_path: Path, status: str) -> None:
-    payload = json.loads(project_path.read_text(encoding="utf-8"))
-    payload["status"] = status
-    atomic_write_json(project_path, payload)
-
-
-def test_paused_program_project_parks_its_topics_and_resumes(tmp_path, monkeypatch) -> None:
-    """Pausing a program project frees its slots for the others and holds its admitted topics."""
-
-    paths = _paths(tmp_path)
-    project_path = _install_program(paths)
-    db = _db(paths)
-    settings = _settings(max_active_topics=2)
-    ledger = open_topic_ledger(paths, settings.program)
-    # Two running topics of another, paused program project fill both slots.
-    other = paths.data / "workspaces" / "ai" / "projects" / "other-program"
-    other.mkdir(parents=True)
-    payload = json.loads(project_path.read_text(encoding="utf-8"))
-    payload.update({"project_id": "other-program", "status": "paused"})
-    for workstream in payload["workstreams"]:
-        workstream["workstream_id"] = "other-" + workstream["workstream_id"]
-        shutil.copyfile(TEMPLATE / workstream["state_path"], other / workstream["state_path"])
-    atomic_write_json(other / "project.json", payload)
-    for name in ("parked-a", "parked-b"):
-        propose_topic(ledger, {"topic_id": name, "domain": "ai", "question": name,
-                               "data_sources": ["s"], "primary_endpoint": "e"}, db=db,
-                      decided_by="backfill", metadata={"program_project_id": "other-program"})
-        admit_topic(ledger, name, db=db, settings=settings.program, decided_by="b",
-                    admission_task_id="b")
-        db.register_campaign(f"{name}-campaign", domain="ai", title=name)
-        activate_topic(ledger, name, db=db, campaign_id=f"{name}-campaign", decided_by="b")
-
-    assert parked_program_projects(paths) == frozenset({"other-program"})
-    document = ledger.read()
-    assert slot_status(document, settings.program).free_slots == 0
-    parked = slot_status(document, settings.program, parked_program_projects(paths))
-    assert (parked.free_slots, parked.parked) == (2, 2)
-
-    # The active project still admits and materializes into the freed slots; the third
-    # admitted topic waits for a slot.
-    _, admission, _ = _to_admission(paths, db, settings, monkeypatch,
-                                    [_card(n, RECEIPT_SHA) for n in range(3)])
-    entries = _packet(admission)["topic_cards"]
-    _complete(db, paths, admission["task_id"],
-              extra={"candidate_branches": [_branch(entry) for entry in entries]})
-    report = _tick(paths, settings, monkeypatch)
-    assert report.errors == []
-    first, second, third = (entry["topic_id"] for entry in entries)
-    assert [ledger.topic(t)["status"] for t in (first, second, third)] == [
-        "active", "active", "admitted"]
-    assert report.program["parked_topics"] == 2
-
-    # Paused, the project's admitted topic is not materialized even when a slot opens.
+    # Paused project parks slots and holds waiting admissions until active again.
+    p_paths = _paths(tmp_path / "park")
+    project_path = _install_program(p_paths)
+    p_db = _db(p_paths)
+    p_settings = _settings(max_active_topics=1)
+    _, admission, _ = _to_admission(
+        p_paths, p_db, p_settings, monkeypatch,
+        [_proposal(0, question="Topic alpha on solar wind photometry"),
+         _proposal(1, question="Topic beta on power grid congestion forecasting")],
+    )
+    entries = _packet(admission)["topic_proposals"]
+    _complete(p_db, p_paths, admission["task_id"],
+              extra={"reviews": [_review(entries[0]), _review(entries[1])]})
+    _tick(p_paths, p_settings, monkeypatch)
+    ledger = open_topic_ledger(p_paths, p_settings.program)
+    first, second = entries[0]["topic_id"], entries[1]["topic_id"]
+    assert [ledger.topic(first)["status"], ledger.topic(second)["status"]] == ["active", "admitted"]
     _set_project_status(project_path, "paused")
-    freeze_topic(ledger, first, db=db, reason_class="overdue", evidence=EVIDENCE,
-                 decided_by="judge")
-    assert materialize_waiting_topics(db, paths, settings).campaign_ids == ()
-    assert ledger.topic(third)["status"] == "admitted"
-
-    # Active again: it takes the slot.
+    freeze_topic(ledger, first, db=p_db, reason_class="negative_result", evidence=EVIDENCE, decided_by="o")
+    assert materialize_waiting_topics(p_db, p_paths, p_settings).campaign_ids == ()
     _set_project_status(project_path, "active")
-    spawned = materialize_waiting_topics(db, paths, settings)
-    assert spawned.campaign_ids == (ledger.topic(third)["campaign_id"],)
-    assert ledger.topic(third)["status"] == "active"
+    assert materialize_waiting_topics(p_db, p_paths, p_settings).campaign_ids == (
+        ledger.topic(second)["campaign_id"],
+    )

@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
-
-from .remote_compute import CPU_RANGE, MEMORY_MIB_RANGE
 
 TASK_SCHEMA = "openlabs.task.v3"
 RESULT_SCHEMA = "openlabs.result_bundle.v1"
@@ -587,13 +584,6 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
                 or wall_seconds < 1
             ):
                 errors.append(f"{prefix}.wall_seconds must be a positive integer")
-            if "admission" in branch:
-                if not _text(branch.get("topic_id")):
-                    errors.append(f"{prefix}.topic_id is required with an admission decision")
-                errors.extend(
-                    f"{prefix}.{item}"
-                    for item in validate_topic_admission(branch.get("admission")).errors
-                )
     for name, validator in (
         ("review_outcome", validate_review_outcome),
         ("direction_decision", validate_direction_decision),
@@ -615,28 +605,29 @@ def validate_result_bundle(payload: Any) -> ValidationResult:
     declared = payload.get("preregistration_sha256")
     if declared is not None and not SHA256.fullmatch(_text(declared)):
         errors.append("preregistration_sha256 must be a lowercase SHA-256 digest")
-    topic_cards = payload.get("topic_cards")
-    # Card contents are judged per card by the program controller (a bad card is
-    # rejected with reasons, not the whole scout result).
-    if topic_cards is not None and (
-        not isinstance(topic_cards, list)
-        or any(not isinstance(item, Mapping) for item in topic_cards)
-    ):
-        errors.append("topic_cards must be an array of objects")
+    # Proposals, legacy topic_cards (backward compat for in-flight scouts) and independent
+    # topic reviews are checked per item by the program controller.
+    for field_name in ("topic_proposals", "topic_cards", "reviews"):
+        items = payload.get(field_name)
+        if items is not None and (
+            not isinstance(items, list)
+            or any(not isinstance(item, Mapping) for item in items)
+        ):
+            errors.append(f"{field_name} must be an array of objects")
     return ValidationResult(not errors, tuple(errors), tuple(warnings))
 
 
 # ---------------------------------------------------------------- research program
 
-TOPIC_CARD_SCHEMA = "openlabs.topic_card.v1"
-TOPIC_TIERS = frozenset({"routine", "escalation"})
-ADMISSION_VERDICTS = frozenset({"admit", "reject", "hold"})
-# Admission policy (skill ``openlabs-topic-admission``). v2 (2026-11-12): routine
-# topics are admitted on a stated increment, confirmed data, an identifying
-# design and line fit; fixable gaps become ``admission.conditions`` instead of a
-# rejection, and holds or fixable rejections return as one revision card.
-ADMISSION_POLICY_VERSION = "openlabs.topic_admission_policy.v2"
-# When an admission condition must be met (``admission.conditions[].due``).
+TOPIC_PROPOSAL_SCHEMA = "openlabs.topic_proposal.v1"
+MAX_BRIEF_CHARS = 6_000
+DATA_ACCESS_METHODS = ("direct", "form_or_registration", "restricted")
+REVIEW_VERDICTS = frozenset({"go", "no_go"})
+LIKELY_BANDS = ("nc", "zone_1", "zone_2", "zones_3_4")
+# Where a topic's experiments run (AGENTS.md, "Where computation runs").
+COMPUTE_LOCATIONS = ("container_cpu", "container_gpu", "ailab", "wsl_math")
+# Kept for legacy admitted topics that still carry admission_conditions and for
+# direction-decision / retrospective reopen conditions.
 ADMISSION_CONDITION_DUES = ("before_precheck", "before_decisive_analysis", "before_submission")
 REOPEN_BASIS_TYPES = frozenset(
     {
@@ -644,30 +635,18 @@ REOPEN_BASIS_TYPES = frozenset(
         "new_method",
         "venue_policy_change",
         "external_result",
-        # The card's research line got a ready environment (registry/research-lines.yaml).
         "line_environment_ready",
     }
 )
-PRIMARY_ENDPOINT_FIELDS = ("metric", "matched_baseline", "split", "decision_rule", "stop_rule")
-COST_ESTIMATE_FIELDS = ("agent_seconds", "tokens", "gpu_hours", "calendar_days")
-# Where a topic's experiments run (AGENTS.md, "Where computation runs").
-COMPUTE_LOCATIONS = ("container_cpu", "container_gpu", "ailab", "wsl_math")
-AUDIENCE_RECENT_YEARS = 3
-# Research-line cards (``research_line`` set): fee evidence levels as in
-# registry/research-lines.yaml, and what a licence item may be.
-FEE_EVIDENCE_LEVELS = ("verified_journal", "verified_publisher", "secondary", "unverified")
-VERIFIED_FEE_LEVELS = frozenset({"verified_journal", "verified_publisher"})
-FEE_CHARGE_FIELDS = ("page_charges", "colour_charges", "submission_fee")
-LICENSE_ITEM_KINDS = ("software", "weights", "data")
-PRECHECK_FIELDS = ("description", "pass_criterion", "budget")
-
-
-def _normalized_name(value: Any) -> str:
-    return " ".join(re.sub(r"[^\w]+", " ", _text(value).casefold()).split())
 
 
 def _nonnegative_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and value >= 0
+    )
 
 
 def preregistration_sha256(primary_endpoint: Any) -> str:
@@ -676,778 +655,300 @@ def preregistration_sha256(primary_endpoint: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(primary_endpoint)).hexdigest()
 
 
-def _endpoint_errors(value: Any, label: str) -> list[str]:
-    if not isinstance(value, Mapping):
-        return [f"{label} must be an object with {', '.join(PRIMARY_ENDPOINT_FIELDS)}"]
-    return [
-        f"{label}.{name} is missing"
-        for name in PRIMARY_ENDPOINT_FIELDS
-        if not _text(value.get(name))
-    ]
-
-
-def escalation_venue_names(escalation: Any) -> list[str]:
-    """Venue names of ``venues.escalation``: its ``name``, or a ``venues`` list."""
-
-    if not isinstance(escalation, Mapping):
-        return []
-    names = [_text(escalation.get("name"))] if _text(escalation.get("name")) else []
-    listed = escalation.get("venues")
-    for item in listed if isinstance(listed, list) else []:
-        name = _text(item.get("name")) if isinstance(item, Mapping) else _text(item)
-        if name:
-            names.append(name)
-    return names
-
-
-def _venue_names(venues: Mapping[str, Any]) -> set[str]:
-    names: set[str] = set()
-    for item in list(venues.get("routine") or []):
-        if isinstance(item, Mapping) and _text(item.get("name")):
-            names.add(_normalized_name(item.get("name")))
-    names.update(_normalized_name(name) for name in escalation_venue_names(venues.get("escalation")))
-    return names
-
-
 def data_source_identifiers(data_sources: Any) -> list[str]:
-    """Stable identifiers (DOI preferred, else URL) used by the topic fingerprint."""
+    """Stable identifiers (id_or_url / catalog_id / doi / url / name) used by fingerprints."""
 
     identifiers: list[str] = []
     for item in data_sources if isinstance(data_sources, list) else []:
         if isinstance(item, Mapping):
-            identifier = _text(item.get("doi")) or _text(item.get("url"))
+            identifier = (
+                _text(item.get("id_or_url"))
+                or _text(item.get("catalog_id"))
+                or _text(item.get("doi"))
+                or _text(item.get("url"))
+                or _text(item.get("name"))
+            )
             if identifier:
                 identifiers.append(identifier)
+        elif isinstance(item, str) and item.strip():
+            identifiers.append(item.strip())
     return identifiers
 
 
-def validate_topic_card(card: Any, *, current_year: int | None = None,
-                        feasibility_precheck: bool = True) -> ValidationResult:
-    """Machine check of a topic card's structure (``openlabs.topic_card.v1``).
+def compute_plan_locations(estimate_or_card: Any) -> tuple[str, ...]:
+    """Experiment locations of a proposal's ``compute_estimate`` or legacy ``cost_estimate``."""
 
-    The check only establishes that every field the admission gate needs is
-    present and well formed; whether the answers are good is the gate's call.
-    ``errors`` are gaps that change what admission can judge or a hard limit (no
-    question, no pre-registrable primary endpoint, no data source, no target venue,
-    no closest prior work, unverified data access, a non-computational topic, the
-    compute plan, a line card's precheck, licences and fees - warnings for nc_aim cards
-    - a revision's answers):
-    the card is rejected and gets one repair. Everything else is a ``warning``
-    recorded with the card and shown to the admission gate (audience evidence,
-    data-source version or licence notes, cost numbers, occupancy search, ...).
-    Run :func:`normalize_topic_card` first to fix the purely mechanical slips.
-    """
-
-    if not isinstance(card, Mapping):
-        return ValidationResult(False, ("topic card must be a JSON object",))
-    year = current_year or datetime.now(UTC).year
-    errors: list[str] = []
-    warnings: list[str] = []
-    schema = card.get("schema_version")
-    if schema is not None and schema != TOPIC_CARD_SCHEMA:
-        errors.append(f"schema_version must be {TOPIC_CARD_SCHEMA}")
-    if not _text(card.get("question")):
-        errors.append("question is missing")
-
-    venues = card.get("venues")
-    if not isinstance(venues, Mapping):
-        errors.append("venues is missing (two routine candidates, optional escalation)")
-        venues = {}
-    else:
-        routine = venues.get("routine")
-        named = [
-            item for item in routine if isinstance(item, Mapping) and _text(item.get("name"))
-        ] if isinstance(routine, list) else []
-        if not named:
-            errors.append("venues.routine needs a named routine target venue (two preferred)")
-        else:
-            if len(named) < 2:
-                warnings.append("venues.routine names one routine venue (two preferred)")
-            for index, item in enumerate(routine):
-                if not isinstance(item, Mapping) or not _text(item.get("name")):
-                    warnings.append(f"venues.routine[{index}].name is missing")
-        escalation = venues.get("escalation")
-        # An escalation names its venue in ``name`` or, for alternatives, a ``venues`` list.
-        if escalation is not None and not escalation_venue_names(escalation):
-            warnings.append(
-                "venues.escalation must be null or an object with a name (or a venues list)"
-            )
-    venue_names = _venue_names(venues)
-
-    audience = card.get("audience")
-    if not isinstance(audience, Mapping):
-        warnings.append("audience is missing (who cares, with two recent candidate-venue papers)")
-    else:
-        if not _text(audience.get("who")):
-            warnings.append("audience.who is missing")
-        citations = audience.get("citations")
-        recent = 0
-        if not isinstance(citations, list):
-            warnings.append("audience.citations is missing")
-            citations = []
-        for index, item in enumerate(citations):
-            prefix = f"audience.citations[{index}]"
-            if not isinstance(item, Mapping) or not _text(item.get("citation")):
-                warnings.append(f"{prefix}.citation is missing")
-                continue
-            published = item.get("year")
-            if not isinstance(published, int) or isinstance(published, bool):
-                warnings.append(f"{prefix}.year must be an integer")
-                continue
-            # Readers' papers in other venues are ordinary evidence of the audience; only
-            # papers in the candidate venues count towards the venue-readership minimum.
-            if _normalized_name(item.get("venue")) not in venue_names:
-                continue
-            if year - AUDIENCE_RECENT_YEARS <= published <= year:
-                recent += 1
-        if recent < 2:
-            warnings.append(
-                "audience.citations needs at least two papers from the last "
-                f"{AUDIENCE_RECENT_YEARS} years published in candidate venues"
-            )
-
-    prior = card.get("closest_prior_work")
-    if not isinstance(prior, list) or not prior:
-        errors.append("closest_prior_work is missing")
-    else:
-        for index, item in enumerate(prior):
-            for name in ("citation", "what_it_shows", "our_difference"):
-                if not isinstance(item, Mapping) or not _text(item.get(name)):
-                    warnings.append(f"closest_prior_work[{index}].{name} is missing")
-
-    decisive = card.get("decisive_analysis")
-    if not isinstance(decisive, Mapping):
-        errors.append("decisive_analysis is missing")
-    else:
-        if not _text(decisive.get("description")):
-            warnings.append("decisive_analysis.description is missing")
-        if decisive.get("data_access_verified") is not True:
-            errors.append("decisive_analysis.data_access_verified must be true")
-        receipt = decisive.get("access_receipt")
-        if (
-            not isinstance(receipt, Mapping)
-            or not _text(receipt.get("path"))
-            or not SHA256.fullmatch(_text(receipt.get("sha256")))
-        ):
-            errors.append("decisive_analysis.access_receipt needs a path and a sha256")
-
-    errors.extend(_endpoint_errors(card.get("primary_endpoint"), "primary_endpoint"))
-
-    sources = card.get("data_sources")
-    if not isinstance(sources, list) or not sources:
-        errors.append("data_sources is missing")
-    else:
-        for index, item in enumerate(sources):
-            prefix = f"data_sources[{index}]"
-            if not isinstance(item, Mapping):
-                errors.append(f"{prefix} must be an object")
-                continue
-            if not (_text(item.get("doi")) or _text(item.get("url"))):
-                errors.append(f"{prefix} needs a stable doi or url")
-            for name in ("version", "license"):
-                if not _text(item.get(name)):
-                    warnings.append(f"{prefix}.{name} is missing")
-            if item.get("access") is not None:
-                errors.extend(data_source_access_errors(item, prefix, required=True))
-
-    if card.get("computational_only") is not True:
-        errors.append("computational_only must be true")
-    if not _text(card.get("computational_only_rationale")):
-        warnings.append(
-            "computational_only_rationale is missing (why no wet lab or real-world interaction)"
-        )
-
-    cost = card.get("cost_estimate")
-    if not isinstance(cost, Mapping):
-        errors.append("cost_estimate is missing")
-    else:
-        for name in COST_ESTIMATE_FIELDS:
-            if not _nonnegative_number(cost.get(name)):
-                warnings.append(f"cost_estimate.{name} must be a non-negative number")
-        if not _text(cost.get("basis")):
-            warnings.append("cost_estimate.basis is missing")
-        errors.extend(compute_plan_errors(cost))
-
-    assets = card.get("reusable_assets")
-    if not isinstance(assets, list):
-        warnings.append("reusable_assets must be an array (possibly empty)")
-
-    ledger_check = card.get("ledger_check")
-    if not isinstance(ledger_check, Mapping) or not isinstance(
-        ledger_check.get("compared_topic_ids"), list
-    ):
-        warnings.append("ledger_check.compared_topic_ids must be an array")
-
-    if card.get("research_line") is not None:
-        line_errors = research_line_card_errors(card, venues,
-                                                feasibility_precheck=feasibility_precheck)
-        if feasibility_precheck:
-            errors.extend(line_errors)
-        else:
-            # nc_aim cards (NC calibration 2026-11-26): the licence and fee evidence of the
-            # routine fallback venues is completed as admission conditions; at the scout stage
-            # it is a warning, so scout effort goes to the question and the novelty search.
-            for item in line_errors:
-                (errors if item.startswith("research_line ") else warnings).append(item)
-
-    tier = card.get("target_tier")
-    if tier is not None and tier not in TOPIC_TIERS:
-        warnings.append("target_tier must be routine or escalation")
-    if card.get("reopens") is not None:
-        basis = card.get("reopen_basis")
-        if not _text(card.get("reopens")):
-            errors.append("reopens must name the topic_id being reopened")
-        if (
-            not isinstance(basis, Mapping)
-            or _text(basis.get("type")) not in REOPEN_BASIS_TYPES
-            or not _text(basis.get("description"))
-        ):
-            errors.append("reopen_basis needs a type and a description")
-    warnings.extend(paper_template_errors(card))
-    if card.get("revises") is not None:
-        # A revision card answers the reopen conditions of the held or fixably
-        # rejected topic it revises (the control plane sets ``revises``).
-        if not _text(card.get("revises")):
-            errors.append("revises must name the topic_id being revised")
-        responses = card.get("condition_responses")
-        if not isinstance(responses, list) or not responses:
-            errors.append("condition_responses must answer the revised topic's reopen conditions")
-            responses = []
-        for index, item in enumerate(responses):
-            condition = item.get("condition") if isinstance(item, Mapping) else None
-            if (
-                not isinstance(condition, int)
-                or isinstance(condition, bool)
-                or condition < 0
-                or not _text(item.get("response"))
-            ):
-                errors.append(
-                    f"condition_responses[{index}] needs condition (index into the revised "
-                    "topic's reopen_conditions) and response"
-                )
-    return ValidationResult(not errors, tuple(errors), tuple(warnings))
-
-
-def _number_from_text(value: Any) -> Any:
-    """``"3600"``/``"0.5"`` -> number; anything else unchanged."""
-
-    if isinstance(value, str) and re.fullmatch(r"\s*\d+(\.\d+)?\s*", value):
-        number = float(value)
-        return int(number) if number.is_integer() else number
-    return value
-
-
-def normalize_topic_card(card: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """Fix the purely mechanical slips of a topic card; return the card and what changed.
-
-    Only formatting is touched (schema tag, numbers written as text, an empty
-    escalation, an unknown tier, missing empty lists, the one allowed precheck
-    ``on_failure``). Nothing the admission gate judges is invented: a missing
-    endpoint, data source, venue or receipt stays missing and is an error.
-    """
-
-    fixed = copy.deepcopy(dict(card))
-    notes: list[str] = []
-    if fixed.get("schema_version") not in (None, TOPIC_CARD_SCHEMA):
-        notes.append(f"schema_version set to {TOPIC_CARD_SCHEMA}")
-        fixed["schema_version"] = TOPIC_CARD_SCHEMA
-    audience = fixed.get("audience")
-    if isinstance(audience, dict) and isinstance(audience.get("citations"), list):
-        for index, item in enumerate(audience["citations"]):
-            if isinstance(item, dict) and isinstance(item.get("year"), str):
-                year = _number_from_text(item["year"])
-                if isinstance(year, int):
-                    item["year"] = year
-                    notes.append(f"audience.citations[{index}].year read as a number")
-    cost = fixed.get("cost_estimate")
-    if isinstance(cost, dict):
-        for name in COST_ESTIMATE_FIELDS:
-            value = _number_from_text(cost.get(name))
-            if value is not cost.get(name):
-                cost[name] = value
-                notes.append(f"cost_estimate.{name} read as a number")
-    venues = fixed.get("venues")
-    if isinstance(venues, dict):
-        # Research-line templates list routine venues as plain names; the card schema
-        # wants named objects. The name is the agent's own, only its shape changes.
-        routine = venues.get("routine")
-        if isinstance(routine, str) and routine.strip():
-            routine = [routine]
-            venues["routine"] = routine
-            notes.append("venues.routine was a single name; read as a list")
-        if isinstance(routine, list):
-            for index, item in enumerate(routine):
-                if isinstance(item, str) and item.strip():
-                    routine[index] = {"name": item.strip()}
-                    notes.append(f"venues.routine[{index}] name written as {{name: ...}}")
-        escalation = venues.get("escalation")
-        if isinstance(escalation, str) and escalation.strip():
-            venues["escalation"] = {"name": escalation.strip()}
-            notes.append("venues.escalation name written as {name: ...}")
-    if (
-        isinstance(venues, dict)
-        and venues.get("escalation") is not None
-        and not escalation_venue_names(venues.get("escalation"))
-    ):
-        venues["escalation"] = None
-        notes.append("venues.escalation without a venue name set to null")
-    if fixed.get("target_tier") is not None and fixed.get("target_tier") not in TOPIC_TIERS:
-        notes.append(f"target_tier {fixed.get('target_tier')!r} dropped (routine or escalation)")
-        fixed.pop("target_tier")
-    if not isinstance(fixed.get("reusable_assets"), list):
-        notes.append("reusable_assets was not an array; set to []")
-        fixed["reusable_assets"] = []
-    ledger_check = fixed.get("ledger_check")
-    if not isinstance(ledger_check, dict):
-        fixed["ledger_check"] = {"compared_topic_ids": []}
-        notes.append("ledger_check.compared_topic_ids set to []")
-    elif not isinstance(ledger_check.get("compared_topic_ids"), list):
-        ledger_check["compared_topic_ids"] = []
-        notes.append("ledger_check.compared_topic_ids set to []")
-    precheck = fixed.get("feasibility_precheck")
-    if isinstance(precheck, dict) and not _text(precheck.get("on_failure")):
-        precheck["on_failure"] = "freeze"
-        notes.append("feasibility_precheck.on_failure set to freeze (the only allowed value)")
-    if isinstance(precheck, dict):
-        budget = precheck.get("budget")
-        text = budget_text(budget)
-        if text and not _text(budget):
-            # A structured budget keeps its numbers; the schema's text form is derived.
-            precheck["budget"] = text
-            precheck.setdefault("budget_detail", budget)
-            notes.append("feasibility_precheck.budget object written as text (kept in budget_detail)")
-    sources = fixed.get("data_sources")
-    if isinstance(sources, list):
-        for index, source in enumerate(sources):
-            if not isinstance(source, dict):
-                continue
-            access = source.get("access")
-            if isinstance(access, dict) and _text(access.get("method")) == "form_or_registration":
-                reg = (
-                    _text(access.get("registration"))
-                    or (_text(source.get("needs_registration"))
-                        if isinstance(source.get("needs_registration"), str) else "")
-                    or _text(source.get("registration_note"))
-                )
-                if not source.get("needs_registration") or (
-                    source.get("needs_registration") is True and reg
-                ):
-                    source["needs_registration"] = reg or True
-                    notes.append(
-                        f"data_sources[{index}].needs_registration set from access.method=form_or_registration"
-                    )
-                if reg and not _text(access.get("registration")):
-                    access["registration"] = reg
-    return fixed, notes
-
-
-DATA_ACCESS_METHODS = ("direct", "form_or_registration", "restricted")
-
-
-def data_source_access_errors(
-    source: Mapping[str, Any],
-    prefix: str,
-    *,
-    required: bool = False,
-) -> list[str]:
-    """Validate ``data_sources[i].access`` for a decisive dataset.
-
-    Expected shape:
-    ``{method: "direct" | "form_or_registration" | "restricted",
-       required_fields_present: bool,
-       required_fields: [str, ...],     # non-empty when required_fields_present is True
-       missing_fields: [str, ...],      # non-empty when required_fields_present is False
-       registration: str}``             # required when method is form_or_registration
-    """
-
-    access = source.get("access")
-    if access is None:
-        if not required:
-            return []
-        return [
-            f"{prefix}.access is missing (method: {'|'.join(DATA_ACCESS_METHODS)}; "
-            "required_fields_present: bool; required_fields/missing_fields)"
-        ]
-    if not isinstance(access, Mapping):
-        return [f"{prefix}.access must be an object"]
-    errors: list[str] = []
-    method = _text(access.get("method"))
-    if method not in DATA_ACCESS_METHODS:
-        errors.append(
-            f"{prefix}.access.method must be one of {', '.join(DATA_ACCESS_METHODS)}"
-        )
-    present = access.get("required_fields_present")
-    if not isinstance(present, bool):
-        errors.append(f"{prefix}.access.required_fields_present must be a boolean")
-    req_fields = access.get("required_fields")
-    miss_fields = access.get("missing_fields")
-    if req_fields is not None and (
-        not isinstance(req_fields, list) or any(not _text(item) for item in req_fields)
-    ):
-        errors.append(f"{prefix}.access.required_fields must be an array of non-empty strings")
-        req_fields = None
-    if miss_fields is not None and (
-        not isinstance(miss_fields, list) or any(not _text(item) for item in miss_fields)
-    ):
-        errors.append(f"{prefix}.access.missing_fields must be an array of non-empty strings")
-        miss_fields = None
-    if present is True:
-        if not req_fields:
-            errors.append(
-                f"{prefix}.access.required_fields must list the verified decisive fields "
-                "when required_fields_present is true"
-            )
-        if miss_fields:
-            errors.append(
-                f"{prefix}.access.missing_fields must be empty when required_fields_present is true"
-            )
-    elif present is False:
-        if not miss_fields:
-            errors.append(
-                f"{prefix}.access.missing_fields must name which required fields are missing "
-                "when required_fields_present is false"
-            )
-    if method == "form_or_registration":
-        reg = (
-            _text(access.get("registration"))
-            or (_text(source.get("needs_registration"))
-                if isinstance(source.get("needs_registration"), str) else "")
-            or _text(source.get("registration_note"))
-        )
-        if not reg:
-            errors.append(
-                f"{prefix}.access.registration (or needs_registration text) is required when "
-                "access.method is form_or_registration"
-            )
-    return errors
-
-
-def budget_text(value: Any) -> str:
-    """Deterministic text form of a structured budget (``""`` when there is nothing)."""
-
-    if isinstance(value, bool) or value is None:
-        return ""
-    if isinstance(value, (int, float)):
-        return f"{value:g}"
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, Mapping):
-        parts: list[str] = []
-        note = ""
-        for key, item in value.items():
-            if key in {"note", "notes"}:
-                note = budget_text(item)
-                continue
-            rendered = budget_text(item)
-            if rendered:
-                parts.append(f"{str(key).replace('_', ' ')} {rendered}")
-        if note:
-            parts.append(note)
-        return "; ".join(parts)
-    if isinstance(value, list):
-        return ", ".join(text for text in (budget_text(item) for item in value) if text)
-    return ""
-
-
-SERIES_MIN_MEMBERS = 2
-
-
-def paper_template_errors(card: Mapping[str, Any]) -> list[str]:
-    """Optional ``paper_template`` / ``series`` fields of a templated card.
-
-    ``paper_template`` names a ``paper_templates[].id`` of the card's research line;
-    such a card records the occupancy search that shows its system x property
-    combination is unreported (``occupancy_search``). ``series`` lists the adjacent
-    systems one card covers with one pipeline (one paper per card).
-    """
-
-    errors: list[str] = []
-    template = card.get("paper_template")
-    if template is not None:
-        if not _text(template):
-            errors.append("paper_template must name a paper_templates id of the research line")
-        if not _text(card.get("research_line")):
-            errors.append("paper_template needs research_line")
-        search = card.get("occupancy_search")
-        if not isinstance(search, Mapping):
-            errors.append(
-                "occupancy_search is missing (queries, databases, searched_at, findings) for a "
-                "paper_template card"
-            )
-        else:
-            for name in ("queries", "databases"):
-                value = search.get(name)
-                if not isinstance(value, list) or not any(_text(item) for item in value):
-                    errors.append(f"occupancy_search.{name} must be a non-empty array")
-            for name in ("searched_at", "findings"):
-                if not _text(search.get(name)):
-                    errors.append(f"occupancy_search.{name} is missing")
-    series = card.get("series")
-    if series is not None:
-        members = series.get("members") if isinstance(series, Mapping) else None
-        if not isinstance(members, list) or len(
-            [item for item in members if _text(item) or isinstance(item, Mapping)]
-        ) < SERIES_MIN_MEMBERS:
-            errors.append(
-                f"series.members must list at least {SERIES_MIN_MEMBERS} adjacent systems"
-            )
-        if isinstance(series, Mapping) and not _text(series.get("shared_pipeline")):
-            errors.append("series.shared_pipeline is missing (what the members share)")
-    return errors
-
-
-def research_line_card_errors(card: Mapping[str, Any], venues: Mapping[str, Any], *,
-                              feasibility_precheck: bool = True) -> list[str]:
-    """Fields a research-line card adds: the decisive precheck, licences and fees.
-
-    ``feasibility_precheck`` is the cheap decisive analysis run first after
-    admission (failure freezes the topic); ``license_check`` covers every
-    software package, model weight and dataset; ``fee_check`` covers page,
-    colour and submission charges of every routine venue, and at least one
-    routine venue must have a verified fee-free route. ``feasibility_precheck=False``
-    (nc_aim cards): the prescreen's kill test takes the precheck's place, and
-    :func:`validate_topic_card` reports the licence and fee gaps as warnings.
-    """
-
-    errors: list[str] = []
-    if not _text(card.get("research_line")):
-        errors.append("research_line must name a line of registry/research-lines.yaml")
-    precheck = card.get("feasibility_precheck")
-    if feasibility_precheck and not isinstance(precheck, Mapping):
-        errors.append(
-            "feasibility_precheck is missing (description, pass_criterion, budget, "
-            "on_failure: freeze)"
-        )
-    elif feasibility_precheck:
-        for name in PRECHECK_FIELDS:
-            if not _text(precheck.get(name)):
-                errors.append(f"feasibility_precheck.{name} is missing")
-        if _text(precheck.get("on_failure")) != "freeze":
-            errors.append("feasibility_precheck.on_failure must be freeze")
-    licenses = card.get("license_check")
-    if not isinstance(licenses, Mapping):
-        errors.append("license_check is missing (items, blacklist_checked)")
-    else:
-        items = licenses.get("items")
-        if not isinstance(items, list) or not items:
-            errors.append("license_check.items must list every software, weight and dataset used")
-            items = []
-        for index, item in enumerate(items):
-            prefix = f"license_check.items[{index}]"
-            if not isinstance(item, Mapping):
-                errors.append(f"{prefix} must be an object")
-                continue
-            for name in ("name", "license", "evidence"):
-                if not _text(item.get(name)):
-                    errors.append(f"{prefix}.{name} is missing")
-            if _text(item.get("kind")) not in LICENSE_ITEM_KINDS:
-                errors.append(f"{prefix}.kind must be one of {', '.join(LICENSE_ITEM_KINDS)}")
-            if item.get("allowed") is not True:
-                errors.append(f"{prefix}.allowed must be true (a blocked item cannot be used)")
-        if licenses.get("blacklist_checked") is not True:
-            errors.append("license_check.blacklist_checked must be true")
-    fees = card.get("fee_check")
-    routine = {
-        _normalized_name(item.get("name"))
-        for item in (venues.get("routine") or [])
-        if isinstance(item, Mapping) and _text(item.get("name"))
-    }
-    if not isinstance(fees, list) or not fees:
-        errors.append("fee_check must cover every routine venue")
-        return errors
-    covered: set[str] = set()
-    verified_free = False
-    for index, item in enumerate(fees):
-        prefix = f"fee_check[{index}]"
-        if not isinstance(item, Mapping) or not _text(item.get("venue")):
-            errors.append(f"{prefix}.venue is missing")
-            continue
-        name = _normalized_name(item.get("venue"))
-        covered.add(name)
-        for field_name in (*FEE_CHARGE_FIELDS, "evidence"):
-            if not _text(item.get(field_name)):
-                errors.append(f"{prefix}.{field_name} is missing")
-        level = _text(item.get("evidence_level"))
-        if level not in FEE_EVIDENCE_LEVELS:
-            errors.append(f"{prefix}.evidence_level must be one of {', '.join(FEE_EVIDENCE_LEVELS)}")
-        free = item.get("fee_free_route")
-        if free is False:
-            errors.append(f"{prefix}: a venue with a mandatory fee cannot be a candidate")
-        elif free is not True and free != "unverified":
-            errors.append(f"{prefix}.fee_free_route must be true or \"unverified\"")
-        if free is True and level in VERIFIED_FEE_LEVELS and name in routine:
-            verified_free = True
-    missing = sorted(routine - covered)
-    if missing:
-        errors.append("fee_check does not cover routine venue(s): " + ", ".join(missing))
-    if routine and not verified_free:
-        errors.append(
-            "fee_check needs at least one routine venue with fee_free_route true and "
-            "evidence_level verified_journal or verified_publisher"
-        )
-    return errors
-
-
-def compute_plan_locations(cost_estimate: Any) -> tuple[str, ...]:
-    """Locations named by ``cost_estimate.compute_plan`` (``()`` when absent or malformed)."""
-
-    if not isinstance(cost_estimate, Mapping):
+    if not isinstance(estimate_or_card, Mapping):
         return ()
-    plan = cost_estimate.get("compute_plan")
+    estimate = estimate_or_card.get("compute_estimate")
+    if isinstance(estimate, Mapping) and isinstance(estimate.get("locations"), list):
+        return tuple(str(item) for item in estimate["locations"] if isinstance(item, str))
+    if isinstance(estimate_or_card.get("locations"), list):
+        return tuple(str(item) for item in estimate_or_card["locations"] if isinstance(item, str))
+    cost = estimate_or_card.get("cost_estimate")
+    plan = (
+        cost.get("compute_plan") if isinstance(cost, Mapping)
+        else estimate_or_card.get("compute_plan")
+    )
     locations = plan.get("locations") if isinstance(plan, Mapping) else None
     if not isinstance(locations, list):
         return ()
     return tuple(str(item) for item in locations if isinstance(item, str))
 
 
-def compute_plan_errors(cost: Mapping[str, Any]) -> list[str]:
-    """``cost_estimate.compute_plan``: where the experiments run and rough sizes per place."""
+def validate_topic_proposal(proposal: Any) -> ValidationResult:
+    """Minimal control-plane structural check of a topic proposal (6 machine fields)."""
 
-    plan = cost.get("compute_plan")
-    if not isinstance(plan, Mapping):
-        return [
-            "cost_estimate.compute_plan is missing (locations: "
-            + ", ".join(COMPUTE_LOCATIONS) + ")"
-        ]
+    if not isinstance(proposal, Mapping):
+        return ValidationResult(False, ("topic proposal must be a JSON object",))
     errors: list[str] = []
-    locations = plan.get("locations")
-    if (
-        not isinstance(locations, list)
-        or not locations
-        or any(item not in COMPUTE_LOCATIONS for item in locations)
-        or len(set(locations)) != len(locations)
-    ):
-        errors.append(
-            "cost_estimate.compute_plan.locations must be a non-empty list of distinct values from "
-            + ", ".join(COMPUTE_LOCATIONS)
-        )
-        locations = []
-    if "container_gpu" in locations:
-        memory = plan.get("gpu_memory_mib")
-        if not _nonnegative_number(memory) or memory <= 0:
-            errors.append("cost_estimate.compute_plan.gpu_memory_mib must be a positive number "
-                          "when container_gpu is used")
-    elif _nonnegative_number(cost.get("gpu_hours")) and cost["gpu_hours"] > 0:
-        errors.append("cost_estimate.gpu_hours > 0 needs container_gpu in compute_plan.locations")
-    if "ailab" in locations:
-        ailab = plan.get("ailab")
-        if not isinstance(ailab, Mapping):
-            errors.append("cost_estimate.compute_plan.ailab needs cpus, memory_mib and hours")
-        else:
-            cpus, memory, hours = ailab.get("cpus"), ailab.get("memory_mib"), ailab.get("hours")
-            if not (isinstance(cpus, int) and not isinstance(cpus, bool)
-                    and CPU_RANGE[0] <= cpus <= CPU_RANGE[1]):
+    schema = proposal.get("schema_version")
+    if schema is not None and schema != TOPIC_PROPOSAL_SCHEMA:
+        errors.append(f"schema_version must be {TOPIC_PROPOSAL_SCHEMA}")
+    if not _text(proposal.get("question")):
+        errors.append("question is missing")
+    brief = proposal.get("brief")
+    if not isinstance(brief, str) or not brief.strip():
+        errors.append("brief is missing")
+    elif len(brief) > MAX_BRIEF_CHARS:
+        errors.append(f"brief exceeds {MAX_BRIEF_CHARS} characters")
+    sources = proposal.get("data_sources")
+    if not isinstance(sources, list) or not sources:
+        errors.append("data_sources must be a non-empty array")
+    else:
+        for index, item in enumerate(sources):
+            prefix = f"data_sources[{index}]"
+            if not isinstance(item, Mapping):
+                errors.append(f"{prefix} must be an object")
+                continue
+            if not _text(item.get("id_or_url")):
+                errors.append(f"{prefix}.id_or_url is missing")
+            access = _text(item.get("access"))
+            if access not in DATA_ACCESS_METHODS:
                 errors.append(
-                    f"cost_estimate.compute_plan.ailab.cpus must be {CPU_RANGE[0]}-{CPU_RANGE[1]}"
+                    f"{prefix}.access must be one of {', '.join(DATA_ACCESS_METHODS)}"
                 )
-            if not (_nonnegative_number(memory)
-                    and MEMORY_MIB_RANGE[0] <= memory <= MEMORY_MIB_RANGE[1]):
-                errors.append(
-                    "cost_estimate.compute_plan.ailab.memory_mib must be "
-                    f"{MEMORY_MIB_RANGE[0]}-{MEMORY_MIB_RANGE[1]}"
-                )
-            if not _nonnegative_number(hours) or hours <= 0:
-                errors.append("cost_estimate.compute_plan.ailab.hours must be a positive number")
-    return errors
-
-
-def validate_topic_admission(admission: Any) -> ValidationResult:
-    """Structure of one admission-gate decision (``candidate_branches[i].admission``)."""
-
-    if not isinstance(admission, Mapping):
-        return ValidationResult(False, ("admission must be an object",))
-    errors: list[str] = []
-    verdict = _text(admission.get("verdict"))
-    if verdict not in ADMISSION_VERDICTS:
-        errors.append("admission.verdict must be admit, reject or hold")
-    if not _text(admission.get("strongest_rejection_reason")):
-        errors.append("admission.strongest_rejection_reason is missing")
-    if not isinstance(admission.get("data_access_confirmed"), bool):
-        errors.append("admission.data_access_confirmed must be a boolean")
-    cost = admission.get("cost_judgement")
-    if (
-        not isinstance(cost, Mapping)
-        or not isinstance(cost.get("proportionate"), bool)
-        or not _text(cost.get("rationale"))
-    ):
-        errors.append("admission.cost_judgement needs proportionate (boolean) and rationale")
-    checked = admission.get("closest_prior_work_checked")
-    if not isinstance(checked, list):
-        errors.append("admission.closest_prior_work_checked must be an array")
-        checked = []
-    for index, item in enumerate(checked):
-        if not isinstance(item, Mapping) or not _text(item.get("citation")) or not _text(
-            item.get("assessment")
+            for opt in ("catalog_id", "registration"):
+                val = item.get(opt)
+                if val is not None and not isinstance(val, str):
+                    errors.append(f"{prefix}.{opt} must be a string when present")
+    estimate = proposal.get("compute_estimate")
+    if not isinstance(estimate, Mapping):
+        errors.append("compute_estimate is missing (locations, data_gb, agent_hours)")
+    else:
+        locations = estimate.get("locations")
+        if (
+            not isinstance(locations, list)
+            or not locations
+            or any(not isinstance(item, str) or item not in COMPUTE_LOCATIONS
+                   for item in locations)
+            or len(set(locations)) != len(locations)
         ):
             errors.append(
-                f"admission.closest_prior_work_checked[{index}] needs citation and assessment"
+                "compute_estimate.locations must be a non-empty list of distinct values from "
+                + ", ".join(COMPUTE_LOCATIONS)
             )
-    conditions = admission.get("reopen_conditions", [])
-    if not isinstance(conditions, list):
-        errors.append("admission.reopen_conditions must be an array")
-        conditions = []
-    for index, item in enumerate(conditions):
-        if (
-            not isinstance(item, Mapping)
-            or _text(item.get("type")) not in REOPEN_BASIS_TYPES
-            or not _text(item.get("description"))
-        ):
-            errors.append(f"admission.reopen_conditions[{index}] needs a type and description")
-    if verdict == "hold" and not conditions:
-        errors.append("admission.reopen_conditions is required for hold")
-    errors.extend(admission_condition_errors(admission.get("conditions")))
-    revisable = admission.get("revisable")
-    if revisable is not None and not isinstance(revisable, bool):
-        errors.append("admission.revisable must be a boolean when present")
-    if verdict == "admit":
-        if _text(admission.get("target_tier")) not in TOPIC_TIERS:
-            errors.append("admission.target_tier must be escalation or routine")
-        if not _text(admission.get("tier_rationale")):
-            errors.append("admission.tier_rationale is missing")
-        if not checked:
-            errors.append("admission.closest_prior_work_checked must not be empty for admit")
-        preregistration = admission.get("preregistration")
-        if not isinstance(preregistration, Mapping):
-            errors.append("admission.preregistration is missing")
-        else:
-            endpoint = preregistration.get("primary_endpoint")
-            endpoint_errors = _endpoint_errors(
-                endpoint, "admission.preregistration.primary_endpoint"
-            )
-            errors.extend(endpoint_errors)
-            digest = _text(preregistration.get("sha256"))
-            if not SHA256.fullmatch(digest):
-                errors.append("admission.preregistration.sha256 must be a SHA-256 digest")
-            elif not endpoint_errors and digest != preregistration_sha256(endpoint):
-                errors.append(
-                    "admission.preregistration.sha256 does not match the primary_endpoint block"
-                )
+        if not _nonnegative_number(estimate.get("data_gb")):
+            errors.append("compute_estimate.data_gb must be a non-negative number")
+        hours = estimate.get("agent_hours")
+        if not _nonnegative_number(hours) or float(hours) <= 0:
+            errors.append("compute_estimate.agent_hours must be a positive number")
+    for opt in ("research_line", "queue_entry_id", "reopens"):
+        val = proposal.get(opt)
+        if val is not None and not _text(val):
+            errors.append(f"{opt} must be null or a non-empty string")
     return ValidationResult(not errors, tuple(errors))
 
 
-def admission_condition_errors(value: Any) -> list[str]:
-    """``admission.conditions``: fixable gaps an admit carries (``description``, ``due``)."""
+def _legacy_access(source: Mapping[str, Any]) -> tuple[str, str | None]:
+    raw_access = source.get("access")
+    registration = ""
+    if isinstance(raw_access, Mapping):
+        method = _text(raw_access.get("method"))
+        registration = _text(raw_access.get("registration"))
+    elif isinstance(raw_access, str):
+        method = raw_access.strip()
+    else:
+        method = ""
+    reg_field = source.get("needs_registration")
+    if not registration:
+        if isinstance(reg_field, str):
+            registration = reg_field.strip()
+        else:
+            registration = _text(source.get("registration")) or _text(source.get("registration_note"))
+    if method not in DATA_ACCESS_METHODS:
+        method = "form_or_registration" if (reg_field or registration) else "direct"
+    return method, (registration or None)
 
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        return ["admission.conditions must be an array"]
+
+def _legacy_brief(card: Mapping[str, Any]) -> str:
+    """Render a compact one-page Markdown brief from a legacy topic_card JSON."""
+
+    parts: list[str] = []
+    question = _text(card.get("question"))
+    if question:
+        parts.append(f"## 1. Research Question\n{question}")
+    why_bits: list[str] = []
+    nc_case = card.get("nc_case")
+    if isinstance(nc_case, Mapping):
+        for key in ("claim", "hook", "why_broad_audience"):
+            if _text(nc_case.get(key)):
+                why_bits.append(_text(nc_case.get(key)))
+    audience = card.get("audience")
+    if isinstance(audience, Mapping) and _text(audience.get("who")):
+        why_bits.append(f"Audience: {_text(audience.get('who'))}")
+    if why_bits:
+        parts.append("## 2. Why It Matters\n" + "\n".join(why_bits))
+    prior = card.get("closest_prior_work")
+    if isinstance(prior, list) and prior:
+        lines = []
+        for item in prior[:5]:
+            if isinstance(item, Mapping):
+                cit = _text(item.get("citation")) or _text(item.get("title"))
+                diff = _text(item.get("our_difference")) or _text(item.get("what_it_shows"))
+                if cit or diff:
+                    lines.append(f"- {cit}: {diff}" if cit and diff else f"- {cit or diff}")
+        if lines:
+            parts.append("## 3. Closest Prior Work & What Is New\n" + "\n".join(lines))
+    sources = card.get("data_sources")
+    if isinstance(sources, list) and sources:
+        lines = []
+        for item in sources:
+            if isinstance(item, Mapping):
+                ident = (_text(item.get("name")) or _text(item.get("id_or_url"))
+                         or _text(item.get("doi")) or _text(item.get("url")))
+                method, reg = _legacy_access(item)
+                line = f"- {ident} ({method})"
+                if reg:
+                    line += f" — registration: {reg}"
+                lines.append(line)
+        if lines:
+            parts.append("## 4. Data Sources & Access\n" + "\n".join(lines))
+    decisive = card.get("decisive_analysis")
+    precheck = card.get("feasibility_precheck")
+    kill = card.get("kill_test")
+    test_bits: list[str] = []
+    if isinstance(kill, Mapping) and _text(kill.get("test") or kill.get("description")):
+        test_bits.append(_text(kill.get("test") or kill.get("description")))
+    if isinstance(precheck, Mapping) and _text(precheck.get("description")):
+        test_bits.append(_text(precheck.get("description")))
+    if isinstance(decisive, Mapping) and _text(decisive.get("description")):
+        test_bits.append(_text(decisive.get("description")))
+    if test_bits:
+        parts.append("## 5. First Decisive Test (Kill Test)\n" + "\n".join(test_bits))
+    stop_bits: list[str] = []
+    if isinstance(kill, Mapping) and _text(kill.get("kill_criterion") or kill.get("stop_rule")):
+        stop_bits.append(_text(kill.get("kill_criterion") or kill.get("stop_rule")))
+    if isinstance(precheck, Mapping) and _text(precheck.get("pass_criterion")):
+        stop_bits.append(f"Pass criterion: {_text(precheck.get('pass_criterion'))}")
+    endpoint = card.get("primary_endpoint")
+    if isinstance(endpoint, Mapping) and _text(endpoint.get("stop_rule")):
+        stop_bits.append(_text(endpoint.get("stop_rule")))
+    if stop_bits:
+        parts.append("## 6. What Result Would Kill This Topic\n" + "\n".join(stop_bits))
+    rendered = "\n\n".join(parts).strip() or question
+    if len(rendered) > MAX_BRIEF_CHARS:
+        rendered = rendered[: MAX_BRIEF_CHARS - 16].rstrip() + "\n...(truncated)"
+    return rendered
+
+
+def proposal_from_legacy_card(card: Mapping[str, Any]) -> dict[str, Any]:
+    """Read-only adapter turning a legacy ``topic_card`` into a ``topic_proposal.v1`` view."""
+
+    if isinstance(card.get("brief"), str) and card["brief"].strip() and isinstance(
+        card.get("compute_estimate"), Mapping
+    ):
+        return dict(card)
+    sources: list[dict[str, Any]] = []
+    for item in card.get("data_sources") if isinstance(card.get("data_sources"), list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        ident = (
+            _text(item.get("id_or_url"))
+            or _text(item.get("doi"))
+            or _text(item.get("url"))
+            or _text(item.get("catalog_id"))
+            or _text(item.get("name"))
+        )
+        method, reg = _legacy_access(item)
+        entry: dict[str, Any] = {"id_or_url": ident, "access": method}
+        if _text(item.get("catalog_id")):
+            entry["catalog_id"] = _text(item.get("catalog_id"))
+        if reg:
+            entry["registration"] = reg
+        if ident:
+            sources.append(entry)
+    locations = list(compute_plan_locations(card)) or ["container_cpu"]
+    volume = card.get("data_volume") if isinstance(card.get("data_volume"), Mapping) else {}
+    gb_candidates = [
+        float(volume[key]) for key in ("download_gb", "storage_gb")
+        if _nonnegative_number(volume.get(key))
+    ]
+    data_gb = max(gb_candidates) if gb_candidates else 0.0
+    cost = card.get("cost_estimate") if isinstance(card.get("cost_estimate"), Mapping) else {}
+    secs = cost.get("agent_seconds")
+    agent_hours = (
+        round(float(secs) / 3600.0, 2)
+        if _nonnegative_number(secs) and float(secs) > 0
+        else 12.0
+    )
+    queue_entry_id = _text(card.get("queue_entry_id")) or None
+    if not queue_entry_id and isinstance(card.get("candidate_queue_entry"), Mapping):
+        q = card["candidate_queue_entry"]
+        queue_entry_id = _text(q.get("entry_id") or q.get("id") or q.get("batch_id")) or None
+    proposal: dict[str, Any] = {
+        "schema_version": TOPIC_PROPOSAL_SCHEMA,
+        "question": _text(card.get("question")),
+        "brief": _legacy_brief(card),
+        "data_sources": sources,
+        "compute_estimate": {
+            "locations": locations,
+            "data_gb": data_gb,
+            "agent_hours": agent_hours,
+        },
+    }
+    if _text(card.get("research_line")):
+        proposal["research_line"] = _text(card.get("research_line"))
+    if _text(card.get("domain")):
+        proposal["domain"] = _text(card.get("domain"))
+    if queue_entry_id:
+        proposal["queue_entry_id"] = queue_entry_id
+    if _text(card.get("reopens")):
+        proposal["reopens"] = _text(card.get("reopens"))
+    return proposal
+
+
+def validate_topic_review(review: Any) -> ValidationResult:
+    """Minimal check of one independent topic review entry (``reviews[]``)."""
+
+    if not isinstance(review, Mapping):
+        return ValidationResult(False, ("review must be an object",))
     errors: list[str] = []
-    for index, item in enumerate(value):
-        if (
-            not isinstance(item, Mapping)
-            or not _text(item.get("description"))
-            or _text(item.get("due")) not in ADMISSION_CONDITION_DUES
-        ):
-            errors.append(
-                f"admission.conditions[{index}] needs a description and due "
-                f"({', '.join(ADMISSION_CONDITION_DUES)})"
-            )
-    return errors
+    if not _text(review.get("topic_id")):
+        errors.append("topic_id is missing")
+    verdict = _text(review.get("verdict"))
+    if verdict not in REVIEW_VERDICTS:
+        errors.append(f"verdict must be one of {sorted(REVIEW_VERDICTS)}")
+    if not _text(review.get("rationale")):
+        errors.append("rationale is missing")
+    band = review.get("likely_band")
+    if band is not None and _text(band) not in LIKELY_BANDS:
+        errors.append(f"likely_band must be null or one of {', '.join(LIKELY_BANDS)}")
+    needs_reg = review.get("needs_registration")
+    if needs_reg is not None:
+        if not isinstance(needs_reg, list):
+            errors.append("needs_registration must be an array")
+        else:
+            for index, item in enumerate(needs_reg):
+                if not isinstance(item, Mapping) or not _text(item.get("source")):
+                    errors.append(
+                        f"needs_registration[{index}] must be an object with a non-empty source"
+                    )
+    return ValidationResult(not errors, tuple(errors))
 
 
 def admission_conditions(admission: Any) -> list[dict[str, str]]:
-    """Normalized conditions of an admit (``[]`` for other verdicts or none)."""
+    """Normalized conditions of a legacy admit (``[]`` for simplified topics or none)."""
 
     if not isinstance(admission, Mapping) or _text(admission.get("verdict")) not in ("admit", ""):
         return []

@@ -25,12 +25,12 @@ from test_research_program_flow import (
     RECEIPT_SHA,
     RUNNERS,
     TEMPLATE,
-    _branch,
     _card,
     _db,
     _install_program,
     _packet,
     _paths,
+    _review,
     _settings,
     _tick,
     _to_admission,
@@ -108,15 +108,21 @@ def _program(tmp_path, monkeypatch, *, cards: int = 1, tier: str = "routine", **
     _, admission, _ = _to_admission(
         paths, db, settings, monkeypatch, [_card(n, RECEIPT_SHA) for n in range(cards)]
     )
-    entries = _packet(admission)["topic_cards"]
+    entries = _packet(admission)["topic_proposals"]
     from test_research_program_flow import _complete
 
-    _complete(db, paths, admission["task_id"], extra={"candidate_branches": [
-        _branch(entry, target_tier=tier) for entry in entries
+    _complete(db, paths, admission["task_id"], extra={"reviews": [
+        _review(entry) for entry in entries
     ]})
     report = _tick(paths, settings, monkeypatch)
     assert report.errors == [], report.errors
     ledger = open_topic_ledger(paths, settings.program)
+    if tier != "routine":
+        with ledger.transaction() as doc:
+            for e in entries:
+                for t in doc["topics"]:
+                    if t["topic_id"] == e["topic_id"]:
+                        t["target_tier"] = tier
     return paths, db, settings, [ledger.topic(e["topic_id"]) for e in entries]
 
 
@@ -279,15 +285,16 @@ def test_config_defaults_and_toml(tmp_path) -> None:
 
 def test_preregistration_hash_must_match_the_ledger(tmp_path, monkeypatch) -> None:
     paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
+    legacy_sha = "a" * 64
+    with open_topic_ledger(paths, settings.program).transaction() as doc:
+        for item in doc["topics"]:
+            if item["topic_id"] == topic["topic_id"]:
+                item["preregistration_sha256"] = legacy_sha
     research = db.latest_task(topic["campaign_id"])
     _lease(paths, settings, monkeypatch, db, research["task_id"])
-    # The agent also edits its own state file: only the ledger counts.
-    state_path = Path(db.campaign(topic["campaign_id"])["workstream_state_path"])
-    state = json.loads(state_path.read_text(encoding="utf-8"))
     forged = "f" * 64
     _finish(db, paths, research["task_id"],
             extra=_research_payload(topic, preregistration_sha256=forged), session="r1")
-    assert state["preregistration"]["sha256"] == topic["preregistration_sha256"]
 
     report = _tick(paths, settings, monkeypatch)
 
@@ -331,6 +338,11 @@ def test_paper_candidate_without_verdict_keeps_researching_without_a_replan(
     tmp_path, monkeypatch
 ):
     paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
+    legacy_sha = "b" * 64
+    with open_topic_ledger(paths, settings.program).transaction() as doc:
+        for item in doc["topics"]:
+            if item["topic_id"] == topic["topic_id"]:
+                item["preregistration_sha256"] = legacy_sha
     research = db.latest_task(topic["campaign_id"])
     _lease(paths, settings, monkeypatch, db, research["task_id"])
     _finish(db, paths, research["task_id"], extra={"paper_candidate": True}, session="r1")
@@ -345,7 +357,7 @@ def test_paper_candidate_without_verdict_keeps_researching_without_a_replan(
         "primary_endpoint_verdict pending (not stated)",
     ]
     archived = json.loads(Path(task["result_path"]).read_text(encoding="utf-8"))
-    assert archived["preregistration_sha256"] == topic["preregistration_sha256"]
+    assert archived["preregistration_sha256"] == legacy_sha
     assert not [t for t in report.enqueued if db.task(t)["task_type"] == "paper_readiness"]
     assert not [t for t in report.enqueued if db.task(t)["task_type"] == "replan"]
 
@@ -424,12 +436,12 @@ def test_budget_exhaustion_routes_to_one_direction_decision(tmp_path, monkeypatc
     paths, db, settings, (topic,) = _program(tmp_path, monkeypatch)
     campaign_id = topic["campaign_id"]
     campaign = db.campaign(campaign_id)
-    assert campaign["max_agent_seconds"] == 43_200  # card estimate below the 72 h ceiling
+    assert campaign["max_agent_seconds"] == 14_400  # proposal estimate (4h) below the 72 h ceiling
     policy = json.loads(campaign["workstream_policy_json"])
-    assert policy["max_agent_seconds"] == 43_200
+    assert policy["max_agent_seconds"] == 14_400
     queued = db.latest_task(campaign_id)
     with db.connect() as connection:
-        connection.execute("UPDATE campaigns SET agent_seconds_used=43200 WHERE campaign_id=?",
+        connection.execute("UPDATE campaigns SET agent_seconds_used=14400 WHERE campaign_id=?",
                            (campaign_id,))
         connection.execute("UPDATE tasks SET status='queued' WHERE task_id=?",
                            (queued["task_id"],))
@@ -609,7 +621,7 @@ def test_direction_decision_goes_to_the_lead_tier_of_another_family(tmp_path, mo
     assert packet["decisions_remaining"] == {"targeted_core_analysis": 1,
                                              "retarget_or_short_format": 2}
     assert packet["ledger_entry"]["topic_id"] == topic["topic_id"]
-    assert packet["routine_fallback"] and packet["budget"]["topic_max_agent_seconds"] == 259_200
+    assert packet["budget"]["topic_max_agent_seconds"] == 259_200
 
 
 def _assert_resume_or_model_drop(db, task) -> None:
@@ -655,6 +667,10 @@ def test_retarget_resumes_the_writer_and_escalation_defaults_to_the_fallback(
     tmp_path, monkeypatch
 ):
     paths, db, settings, (topic,) = _program(tmp_path, monkeypatch, tier="escalation")
+    with open_topic_ledger(paths, settings.program).transaction() as doc:
+        for item in doc["topics"]:
+            if item["topic_id"] == topic["topic_id"]:
+                item["routine_fallback"] = [{"name": "Journal of Biomedical Informatics"}]
     assert topic["target_tier"] == "escalation"
     _review_direction(paths, db, settings, monkeypatch, topic)
     reason = CONTEXT["referee_rejections"][0]["principal_reason"]

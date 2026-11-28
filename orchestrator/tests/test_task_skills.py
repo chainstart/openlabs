@@ -13,8 +13,7 @@ def _skills(**task) -> tuple[str, ...]:
 
 
 def test_program_control_tasks_get_their_own_skill_only() -> None:
-    for task_type in ("topic_scout", "topic_card_repair", "topic_revision"):
-        assert _skills(task_type=task_type) == ("openlabs-empirical-topic-scout",)
+    assert _skills(task_type="topic_scout") == ("openlabs-empirical-topic-scout",)
     assert _skills(task_type="portfolio_review", routing_reason="topic_admission") == (
         "openlabs-topic-admission",)
     assert _skills(task_type="direction_decision") == ("openlabs-direction-decision",)

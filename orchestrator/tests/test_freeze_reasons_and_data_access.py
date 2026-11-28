@@ -1,34 +1,24 @@
-"""Tests for 2026-11-27 freeze-reason classes, backfill report, and pre-admission data-access checks."""
+"""Tests for 2026-11-27 four-class freeze reasons and read-only backfill report."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-import test_nc_funnel as nc_tests
 import test_program_autonomy as autonomy
-import test_research_lines as lines_tests
-import test_research_program_flow as flow
 
-from openlabs import nc_funnel, owner, program_autonomy, supply_screen
-from openlabs.config import FunnelSettings
+from openlabs import owner
 from openlabs.contracts import (
     FREEZE_REASON_CATEGORIES,
     FREEZE_REASON_TO_CATEGORY,
     freeze_reason_category,
-    normalize_topic_card,
     validate_direction_decision,
-    validate_topic_card,
 )
 from openlabs.program import freeze_topic, open_topic_ledger
-from openlabs.program_flow import intake_card
-from openlabs.projects import load_project
 from openlabs.reopen import ReopenGrantError, grant_operator_reopen
 from openlabs.topic_freeze import (
-    classify_historical_freeze,
     freeze_backfill_report,
     operator_freeze,
 )
@@ -306,185 +296,3 @@ def test_freeze_backfill_report_is_read_only_and_classifies_four_classes(
         "negative_result": 1,
         "resources_exhausted": 1,
     }
-
-
-# --------------------------------------------------------------------------- 2. Pre-admission data-access checks
-
-
-def test_l1_rejects_restricted_and_missing_field_decisive_data() -> None:
-    settings = replace(
-        flow._settings(),
-        program=replace(flow._settings().program, funnel=FunnelSettings()),
-    )
-
-    # Restricted decisive dataset -> rejected at L1 with clear reason.
-    restricted_card = nc_tests._nc_card(
-        data_sources=[
-            {
-                "url": "https://example.org/commercial-dataset",
-                "version": "2026",
-                "license": "commercial",
-                "catalog_candidate": True,
-                "access": {
-                    "method": "restricted",
-                    "required_fields_present": True,
-                    "required_fields": ["outcome"],
-                },
-            }
-        ]
-    )
-    reason, errors, _ = nc_funnel.screen_card(settings, restricted_card, {}, {"topics": []}, "nc_aim")
-    assert reason == nc_funnel.DATA_REJECTION
-    assert any("restricted" in err for err in errors)
-
-    # Public release missing a decisive required field (Challenge-2021 Georgia example) -> L1 rejects.
-    missing_field_card = nc_tests._nc_card(
-        data_sources=[
-            {
-                "url": "https://physionet.org/content/challenge-2021/1.0.3/",
-                "version": "1.0.3",
-                "license": "CC BY 4.0",
-                "catalog_id": "challenge-2021",
-                "access": {
-                    "method": "direct",
-                    "required_fields_present": False,
-                    "required_fields": ["12_lead_ecg", "chronological_age", "patient_linkage_map"],
-                    "missing_fields": ["patient_linkage_map"],
-                },
-            }
-        ]
-    )
-    reason, errors, _ = nc_funnel.screen_card(
-        settings, missing_field_card, {}, {"topics": []}, "nc_aim"
-    )
-    assert reason == nc_funnel.DATA_REJECTION
-    assert any("patient_linkage_map" in err for err in errors)
-
-    # Routine supply_screen also rejects missing-field decisive data.
-    s_problems, _ = supply_screen.data_problems(
-        paths=None, settings=settings, card=missing_field_card, line_entry={}, template_entry={}
-    )
-    assert any("patient_linkage_map" in err for err in s_problems)
-
-
-def test_registration_gated_data_marked_needs_registration_and_routed_through_l1(
-    tmp_path: Path,
-) -> None:
-    # Living Planet Database 2026 example: form_or_registration + catalog_candidate (not yet in catalog).
-    lpd_source = {
-        "name": "Living Planet Database 2026.1",
-        "url": "https://www.livingplanetindex.org/data_portal",
-        "version": "2026.1",
-        "license": "ZSL/WWF LPI Data Use Policy 2026 (non-commercial, no redistribution)",
-        "catalog_candidate": True,
-        "access": {
-            "method": "form_or_registration",
-            "registration": (
-                "Named recipient completes Living Planet Database 2026.1 portal form at "
-                "livingplanetindex.org/data_portal and accepts non-commercial terms"
-            ),
-            "required_fields_present": True,
-            "required_fields": ["population_id", "species", "annual_counts"],
-        },
-    }
-    card = nc_tests._nc_card(data_sources=[lpd_source])
-    # normalize_topic_card automatically stamps needs_registration on the card itself.
-    fixed, norm_notes = normalize_topic_card(card)
-    assert fixed["data_sources"][0]["needs_registration"] == lpd_source["access"]["registration"]
-    assert any("needs_registration" in note for note in norm_notes)
-    assert validate_topic_card(fixed, feasibility_precheck=False).valid
-    assert nc_funnel.card_contract_errors(fixed) == []
-
-    # L1 passes the card and routes it through the existing data_catalog needs_registration path,
-    # both with a line data_catalog (where the source is a catalog_candidate) and without one.
-    catalog = tmp_path / "catalog.yaml"
-    catalog.write_text(
-        "schema_version: openlabs.data_catalog.v1\nline: open-nc\nsources:\n"
-        "  - {id: biotime, name: BioTIME 2.0, summary: s, licence: CC-BY, status: catalogued,"
-        " access: {kind: bulk_download}}\n",
-        encoding="utf-8",
-    )
-    entry = {"environment": {"data_catalog": str(catalog)}}
-    settings = replace(
-        flow._settings(),
-        program=replace(flow._settings().program, funnel=FunnelSettings()),
-    )
-
-    for line_entry in ({}, entry):
-        reason, errors, extra = nc_funnel.screen_card(
-            settings, fixed, line_entry, {"topics": []}, "nc_aim"
-        )
-        assert reason is None and errors == []
-        cat_notes = extra["nc_screen"]["data_catalog"]
-        assert len(cat_notes) == 1
-        assert cat_notes[0]["status"] == "needs_registration"
-        assert "livingplanetindex.org" in cat_notes[0]["registration"]
-
-
-def test_nc_card_missing_access_fails_contract_and_prescreen_checks_access(
-    tmp_path: Path, monkeypatch
-) -> None:
-    # nc_aim card without access block triggers contract error (repairable).
-    card_no_access = nc_tests._nc_card(
-        data_sources=[{"doi": "10/x", "version": "1", "license": "CC-BY"}]
-    )
-    contract_errs = nc_funnel.card_contract_errors(card_no_access)
-    assert any("data_sources[0].access" in err for err in contract_errs)
-
-    # Prescreen Phase A rejects missing required decisive field without running kill test.
-    settings = replace(
-        flow._settings(),
-        program=replace(flow._settings().program, funnel=FunnelSettings()),
-    )
-    prescreen_fail = {
-        "calibration_match": "nc",
-        "calibration_neighbours": ["M2", "A1"],
-        "data_access_check": [
-            {
-                "source": "challenge-2021-georgia",
-                "method": "direct",
-                "required_fields_present": False,
-                "missing_fields": ["patient_linkage_map"],
-            }
-        ],
-        "novelty_quick": {"verdict": "clear", "papers_screened": 25, "closest": []},
-        "thresholds": {
-            key: {"met": key in ("generality", "benchmark"), "evidence": "ok"}
-            for key in nc_funnel.THRESHOLDS
-        },
-        "expected_band": "nc",
-        "summary": "Georgia public release lacks patient-linkage map.",
-    }
-    verdict = nc_funnel.evaluate_prescreen(prescreen_fail, settings, set())
-    assert verdict["status"] == "fail"
-    assert verdict["reason"] == nc_funnel.DATA_REJECTION
-    assert "patient_linkage_map" in verdict["why"]
-
-    # Prescreen discovering a form_or_registration dataset propagates needs_registration onto card_check.
-    paths, db, p_settings, topic_id, task = nc_tests._to_prescreen(tmp_path, monkeypatch)
-    if db.task(task["task_id"])["status"] != "leased":
-        flow._tick(paths, p_settings, monkeypatch)
-    out = paths.data / "workspaces" / "kill.json"
-    ps_result, _digest = nc_tests._prescreen_result(out)
-    ps_result["data_access_check"] = [
-        {
-            "source": "Living Planet Database 2026.1",
-            "method": "form_or_registration",
-            "required_fields_present": True,
-            "registration": "portal form at livingplanetindex.org/data_portal",
-        }
-    ]
-    flow._complete(
-        db, paths, task["task_id"],
-        extra={"topic_prescreen": ps_result},
-        receipt_files={"kill.json": out.read_bytes()},
-    )
-    flow._tick(paths, p_settings, monkeypatch)
-    topic = open_topic_ledger(paths, p_settings.program).topic(topic_id)
-    assert topic["card_check"]["prescreen"]["status"] == "pass"
-    catalog_notes = topic["card_check"]["nc_screen"]["data_catalog"]
-    assert any(
-        item.get("status") == "needs_registration"
-        and "Living Planet Database 2026.1" in str(item.get("source"))
-        for item in catalog_notes
-    )

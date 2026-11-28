@@ -69,24 +69,30 @@ def _research_errors(state: dict) -> list[str]:
     for name in ("workstream_id", "topic_id", "admission_task_id"):
         if not _text(state.get(name)):
             errors.append(f"research state needs {name}")
-    if state.get("target_tier") not in TIERS:
-        errors.append("research state target_tier must be routine or escalation")
-    fallback = state.get("routine_fallback")
-    if not isinstance(fallback, list) or not fallback:
-        errors.append("research state needs the routine_fallback venues")
-    if not isinstance(state.get("cost_budget"), dict):
-        errors.append("research state needs cost_budget")
-    preregistration = state.get("preregistration")
-    if not isinstance(preregistration, dict):
-        errors.append("research state needs the preregistration block")
+    # Simplified proposal research states carry a free-form brief + compute_estimate
+    # instead of preregistration / target_tier / routine_fallback.
+    if _text(state.get("brief")):
+        if not isinstance(state.get("compute_estimate"), dict):
+            errors.append("research state needs compute_estimate")
     else:
-        endpoint = preregistration.get("primary_endpoint")
-        if not isinstance(endpoint, dict) or any(
-            not _text(endpoint.get(name)) for name in ENDPOINT_FIELDS
-        ):
-            errors.append("preregistration.primary_endpoint is incomplete")
-        elif preregistration.get("sha256") != canonical_sha256(endpoint):
-            errors.append("preregistration.sha256 does not match the primary endpoint")
+        if state.get("target_tier") not in TIERS:
+            errors.append("research state target_tier must be routine or escalation")
+        fallback = state.get("routine_fallback")
+        if not isinstance(fallback, list) or not fallback:
+            errors.append("research state needs the routine_fallback venues")
+        if not isinstance(state.get("cost_budget"), dict):
+            errors.append("research state needs cost_budget")
+        preregistration = state.get("preregistration")
+        if not isinstance(preregistration, dict):
+            errors.append("research state needs the preregistration block")
+        else:
+            endpoint = preregistration.get("primary_endpoint")
+            if not isinstance(endpoint, dict) or any(
+                not _text(endpoint.get(name)) for name in ENDPOINT_FIELDS
+            ):
+                errors.append("preregistration.primary_endpoint is incomplete")
+            elif preregistration.get("sha256") != canonical_sha256(endpoint):
+                errors.append("preregistration.sha256 does not match the primary endpoint")
     if state.get("status") not in RESEARCH_STATUSES:
         errors.append("invalid research status")
     return errors

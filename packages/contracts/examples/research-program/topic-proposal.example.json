@@ -1,0 +1,24 @@
+{
+  "schema_version": "openlabs.topic_proposal.v1",
+  "research_line": "ml-evaluation-protocols",
+  "question": "Does strict patient-level temporal splitting reverse the ranking of transformer versus simple convolutional baselines on multi-centre 12-lead ECG arrhythmia detection?",
+  "brief": "## 1. Research Question\nDoes strict patient-level temporal splitting reverse the ranking of transformer versus simple convolutional baselines on multi-centre 12-lead ECG arrhythmia detection?\n\n## 2. Why It Matters (and to Whom)\nClinical AI benchmarks routinely evaluate on random patient splits across pooled cohorts, inflating complex architecture gains that fail under calendar drift and cross-hospital transfer. Quantifying ranking reversals guides cardiology ML evaluation standards.\n\n## 3. Closest Prior Work & What Is New\n- Strodthoff et al. (2021, IEEE JBHI, 10.1109/JBHI.2020.3022989) benchmarked PTB-XL under random stratified folds.\n- Reyna et al. (2021, PhysioNet Challenge, 10.1088/1361-6579/ac455a) tested multi-source generalization without calendar-year shift controls.\nDelta: We pair strict temporal holdouts with cross-centre external validation across four open cohorts under matched preprocessing and calibration.\n\n## 4. Data Sources & Access\n- PTB-XL v1.0.3 (https://physionet.org/content/ptb-xl/1.0.3/, `direct`, free CC-BY 4.0; includes recording year and patient IDs).\n- Chapman-Shaoxing 12-lead ECG (https://physionet.org/content/ecg-arrhythmia/1.0.0/, `direct`, free CC-BY 4.0).\nAll required rhythm labels and patient IDs are present in the direct releases.\n\n## 5. First Decisive Test (Kill Test)\nDownload PTB-XL metadata and 2,000 stratified records (~1.5 GB, <= 2 CPU core-hours). Verify recording-year coverage and run a matched ResNet-1D vs lightweight transformer comparison on random vs temporal split.\n\n## 6. What Result Would Kill This Topic\nFreeze if recording dates are missing for >30% of patients (`data_access`) or if the random-vs-temporal AUROC ranking difference between architectures is <0.005 with overlapping 95% CIs (`negative_result`).",
+  "data_sources": [
+    {
+      "id_or_url": "https://physionet.org/content/ptb-xl/1.0.3/",
+      "access": "direct",
+      "catalog_id": "ptb-xl"
+    },
+    {
+      "id_or_url": "https://physionet.org/content/ecg-arrhythmia/1.0.0/",
+      "access": "direct"
+    }
+  ],
+  "compute_estimate": {
+    "locations": ["container_cpu", "container_gpu"],
+    "data_gb": 12.0,
+    "agent_hours": 10.0
+  },
+  "queue_entry_id": null,
+  "reopens": null
+}

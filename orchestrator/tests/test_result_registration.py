@@ -147,32 +147,3 @@ def test_a_supported_claim_without_evidence_is_read_as_unsupported() -> None:
     assert [item["kind"] for item in changes] == ["claim_unsupported"]
     hypothesis = _bundle([], [_claim([], status="hypothesis")])
     assert normalize_registration(hypothesis)[1] == []
-
-
-def test_the_cost_judgement_texts_become_its_rationale() -> None:
-    from openlabs.contracts import validate_topic_admission
-    from openlabs.result_normalize import normalize_admission_shapes, normalize_result
-
-    # 9f5d47fb before its Stop block: a boolean and per-item texts, no rationale.
-    admission = {
-        "verdict": "admit", "strongest_rejection_reason": "Narrow increment.",
-        "data_access_confirmed": "true", "closest_prior_work_checked": [],
-        "cost_judgement": {"proportionate": True,
-                           "agent_time": "8 hours and 0.8M tokens fit the template.",
-                           "compute": "200 core-hours on ailab, no GPU."},
-    }
-    payload = {**_bundle([]), "candidate_branches": [{"admission": admission}]}
-    fixed, changes = normalize_admission_shapes(payload)
-    cost = fixed["candidate_branches"][0]["admission"]["cost_judgement"]
-    assert cost["rationale"] == ("agent time: 8 hours and 0.8M tokens fit the template.; "
-                                 "compute: 200 core-hours on ailab, no GPU.")
-    assert fixed["candidate_branches"][0]["admission"]["data_access_confirmed"] is True
-    assert not any("cost_judgement" in e for e in validate_topic_admission(
-        fixed["candidate_branches"][0]["admission"]).errors)
-    assert {item["kind"] for item in changes} == {"admission_rationale_joined",
-                                                  "admission_boolean"}
-    # The judgement itself is never invented.
-    missing = {**_bundle([]), "candidate_branches": [{"admission": {
-        **admission, "cost_judgement": {"compute": "x"}}}]}
-    cost = normalize_result(missing)[0]["candidate_branches"][0]["admission"]["cost_judgement"]
-    assert "proportionate" not in cost

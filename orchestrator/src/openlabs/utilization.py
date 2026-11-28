@@ -744,20 +744,12 @@ def division_of_labour(
     }
 
 
-def _nc_funnel_report(db, paths, settings, document, moment) -> dict[str, Any]:
-    """NC funnel per line (weekly view): levels, bands vs target mix, cost per paper, spin."""
+def _supply_metrics_report(db, paths, settings, document, moment) -> dict[str, Any]:
+    """Supply health per line: review pass rate, admitted->ready, 7d spend, freezes, registrations."""
 
-    from . import nc_funnel
-    from .program_flow import program_projects, scout_workstream_id
+    from . import program_flow
 
-    report = nc_funnel.metrics(document, settings, scout_counts=nc_funnel.scout_counts(db))
-    campaigns = {project.research_line: scout_workstream_id(project)
-                 for project in program_projects(paths)
-                 if project.research_line and scout_workstream_id(project)}
-    spin = nc_funnel.spin_hours(db, settings, document, campaigns, moment=moment)
-    for line, hours in spin.items():
-        report["lines"].setdefault(line, {})["spin_agent_hours_7d"] = hours
-    return report
+    return program_flow.supply_metrics(document, settings, db=db, paths=paths, moment=moment)
 
 
 def utilization_report(
@@ -827,9 +819,9 @@ def utilization_report(
             except (OSError, ValueError, TypeError):
                 program["funnel"] = {"status": "unavailable"}
             try:
-                program["nc_funnel"] = _nc_funnel_report(db, paths, settings, document, moment)
+                program["supply_metrics"] = _supply_metrics_report(db, paths, settings, document, moment)
             except (OSError, ValueError, TypeError, KeyError):
-                program["nc_funnel"] = {"status": "unavailable"}
+                program["supply_metrics"] = {"status": "unavailable"}
     from .paper_figures import latest_metrics
     figures = list(latest_metrics(db).values())
     program["figure_metrics"] = {
