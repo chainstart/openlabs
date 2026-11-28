@@ -171,19 +171,14 @@ EVERY_LINE: Any = _EveryLine()
 class LineSettings:
     """One ``[program.lines.<id>]`` entry.
 
-    ``mode``: full (supply and research starts), supply_only (scout ... admission; an
+    ``mode``: full (supply and research starts), supply_only (scout and review; an
     admitted topic waits for its campaign), polish (no new supply or research start; the
     line's papers are polished), off (as polish, and out of the scout rotation).
-    ``slots``: the line's research slots (None: only ``max_active_topics``). ``nc_aim``:
-    false keeps the line's own templated standard instead of the NC aim.
-    ``admission_min_band``: optional per-line admission floor (from ``EXPECTED_BANDS``;
-    None falls back to ``[program.funnel].admission_min_band``).
+    ``slots``: the line's research slots (None: only ``max_active_topics``).
     """
 
     mode: str = "full"
     slots: int | None = None
-    nc_aim: bool = True
-    admission_min_band: str | None = None
 
 
 @dataclass(frozen=True)
@@ -202,64 +197,30 @@ class ProgramSettings:
     max_ready_unsubmitted: int = 6
     # Relative to the data repository root (``WorkspacePaths.data``).
     ledger_path: str = DEFAULT_TOPIC_LEDGER_PATH
-    # Proposed cards needed per line. Unbound legacy projects share their own pool.
-    candidate_pool_low_water: int = 3
-    # Default interval per research line (domain fallback for projects without a line).
-    scout_min_interval_hours: float = 12.0
-    line_scout_min_interval_hours: dict[str, float] = field(default_factory=dict)
-    # Program-wide worker ceiling; ``max_scouts_per_line`` scouts of one line at once.
-    max_concurrent_scouts: int = 1
-    # Scouts of one research line in flight at once (2026-11-26, user: "并行agent数量，扩大搜索
-    # 范围，更多的集思广益"). With ``scout_runners`` the scouts of a line in flight use different
-    # model families. 1 (the default) keeps one scout per line.
-    max_scouts_per_line: int = 1
-    # Runners the scouts rotate over (2026-11-26, same decision): each new scout of a line asks
-    # for the configured runner whose model family is least used by the scouts in flight and least
-    # recently used on that line, so every family proposes its own cards. A preference only: the
-    # router takes the preferred runner when its quota and parallelism allow, otherwise routes the
-    # scout as usual. Empty (the default) leaves scouts to the router alone.
-    scout_runners: tuple[str, ...] = ()
-    # Expected cards per legacy scout for the shared pool, until enough finish
-    # to use this instance's measured average.
-    scout_expected_cards: float = 2.0
-    # Empty-draw backoff (2026-11-16): after the n-th consecutive scout of a line
-    # that registered no usable card while the line's candidate supply (queue files,
-    # line entry, held-entry releases, its ledger topics) is unchanged, the next
-    # scout of that line waits scout_empty_backoff_hours[n-1] (last value repeats).
-    # A supply change releases the backoff at once. After scout_exhausted_after
-    # such draws the line is reported as candidates_exhausted and no longer scouted
-    # until its supply changes (0 = never mark exhausted).
-    scout_empty_backoff_hours: tuple[float, ...] = (1.0, 6.0, 24.0)
-    scout_exhausted_after: int = 4
-    # Admission batches in flight per line. TOML accepts the former domain key as an alias.
-    max_admissions_per_line: int = 1
-    # Admission reviews in flight across all lines; 0 means no global cap.
-    max_concurrent_admissions: int = 0
     # When true, a new research workstream of a non-program project is only
     # activated if the topic ledger links it to an admitted topic.
     enforce_admission: bool = False
-    # Reusable-asset index offered to scouts and the admission gate when present
+    # Reusable-asset index offered to scouts and the review gate when present
     # (relative to the data repository root).
     asset_index_path: str = DEFAULT_ASSET_INDEX_PATH
     # Domains taking part in scout rotation, in preference order; empty means
     # every domain that has an active program project.
     domains: tuple[str, ...] = ()
     # Research lines taking part in scout rotation, in preference order: the
-    # ``[program.lines]`` entries whose mode is not ``off`` (or the legacy ``research_lines``
-    # key). When set, only program projects whose ``research_line`` is listed are scouted
-    # (rotation, per-line interval and load are kept per line); projects without a line keep
-    # their admissions and campaigns but get no new scouts. Empty: use the legacy
-    # host-domain filter, with rotation still keyed by line when one is present.
+    # ``[program.lines]`` entries whose mode is not ``off``.
     research_lines: tuple[str, ...] = ()
     # Direction file (relative to the data repository root): line definitions read
-    # by scouts and the admission gate, and each line's environment status.
+    # by scouts and reviewers, and each line's environment status.
     research_lines_path: str = DEFAULT_RESEARCH_LINES_PATH
     # Calendar limit from admission to review ``ready``; past it the topic gets
     # one direction decision (it is not frozen outright).
     max_days_from_admission_to_ready: float = 28.0
     # Hard per-topic Agent-time ceiling. A topic campaign's budget is the smaller
-    # of this and its card's ``cost_estimate.agent_seconds``.
+    # of this and its proposal's ``compute_estimate.agent_hours``.
     topic_max_agent_seconds: int = 259_200
+    # Evidence-based journal grading before writing (user decision 2026-11-25, item 3).
+    grade_before_writing: bool = True
+    nc_journals: tuple[str, ...] = ("Nature Communications",)
     # Per-topic number of direction-decision choices that keep a topic alive;
     # once used up only ``freeze`` is accepted.
     direction_limits: dict[str, int] = field(
@@ -268,122 +229,52 @@ class ProgramSettings:
     # Deliver ready papers to the paper-management site automatically (without
     # a submission handler). False: ready papers are only queued.
     auto_handoff: bool = False
-    # Site submitter reconciliation (2026-11-25, B1): every tick, a pre-submission paper on the
-    # management site that is not submittable loses its active submitter, a submittable one gets
-    # its recorded submitter (else the second author), and a paper under a manual-assignment
-    # hold is left alone (paper_writing.site_assignments). Independent of ``auto_handoff``:
-    # holding deliveries back must not hold back taking a submitter off a not-ready paper.
+    # Site submitter reconciliation (2026-11-25, B1).
     site_assignment_sync: bool = True
-    # Model triage of journal letters (2026-11-26, user-approved design): letters the
-    # journal_mail rules leave to a person get a light-tier ``journal_mail_triage`` reading that
-    # the review digest shows ("系统判断为 X，请核对登记"); it never writes the site or the
-    # ledger. The journal_mail service reads the same key to queue briefs (openlabs.journal_triage).
+    # Model triage of journal letters (2026-11-26).
     journal_mail_model_review: bool = False
-    # argv prefix of the paper-writing CLI used for delivery and handler
-    # assignment (it owns the YAML/HTTP dependencies the orchestrator avoids).
+    # argv prefix of the paper-writing CLI used for delivery and handler assignment.
     paper_writing_command: tuple[str, ...] = ("paper-writing",)
     # Delivery attempts per ready paper (one per tick) before it waits for a human.
     handoff_max_attempts: int = 3
-    # Credentials file of the release pipeline (2026-11-20): NAME=VALUE lines read by the
-    # tick for the delivery (ARA_PAPER_MANAGE_API_URL/_KEY) and Zenodo (ZENODO_ACCESS_TOKEN)
-    # child processes only -- never exported into the tick, so research seats (which inherit
-    # the tick's environment) do not see them. Must be a regular file of this user, mode
-    # 0600 or stricter (otherwise ignored, and the pipeline waits for credentials). The
-    # process environment still wins over the file. None: environment only.
+    # Credentials file of the release pipeline (NAME=VALUE, 0600, outside Git).
     credentials_file: str | None = None
-    # Ledger reconciliation (``program reconcile``, program_reconcile.py) and the tick's
-    # next-step check: a topic or task untouched this many days counts as stale (a parked
-    # legacy topic is archived, an orphaned needs_human record closed, an admitted card
-    # never materialized is reported without a next step).
+    # Ledger reconciliation staleness threshold in days.
     reconcile_stale_days: float = 5.0
-    # A held topic (research_state ``paused``, openlabs.holds.topic_hold) is never archived by
-    # reconcile; it is reported, as expired once its ``until`` passed. The former
-    # ``reconcile_operator_pause_days`` knob (2026-11-24, P01) was retired on 2026-11-25 (B3)
-    # and is ignored when an instance file still sets it.
-    # Release pipeline (runs while auto_handoff is on): publish the Zenodo support
-    # material (prepare/release) on the standing production authorization of
-    # registry/settings.yaml#support_publication. False: stop before the first
-    # Zenodo write and wait for a human.
+    # Release pipeline: publish Zenodo support material on standing authorization.
     auto_release: bool = False
-    # How a ready paper's support material is released before delivery. "zenodo":
-    # the Zenodo steps above. "none": no Zenodo (or other public) record is ever
-    # created; a paper whose support record is still only planned gets
-    # support.publication.mode not_required with ``support_none_reason`` (refused,
-    # and the pipeline waits for the owner, when a record exists or the
-    # manuscript's data-availability section names a Zenodo deposit).
     support_release: str = "zenodo"
     support_none_reason: str = DEFAULT_SUPPORT_NONE_REASON
-    # Failures per release stage, and writer rounds for formal fixes, before the
-    # pipeline stops for a human.
     release_max_attempts: int = 3
-    # Upper bound for one `review unified-run --delta-only` (formal stage included).
     release_review_timeout_seconds: int = 7_200
-    # [program.git]: identity and message of the local data-repository commits the
-    # pipeline makes (never pushed). Unset identity: the repository's own
-    # user.name/user.email; neither set: the commit step fails and waits.
+    # [program.git]: identity and message of local data-repository commits.
     git_user_name: str | None = None
     git_user_email: str | None = None
     git_message: str = DEFAULT_GIT_MESSAGE
-    # Experiment locations this instance can serve (topic card
-    # cost_estimate.compute_plan.locations). A card naming another location is
-    # rejected at registration and admission. Inside a container ``wsl_math`` is
-    # never available, whatever this says (the launcher refuses mathematics there).
+    # Experiment locations this instance can serve. Inside a container ``wsl_math`` is
+    # never available, whatever this says.
     compute_locations: tuple[str, ...] = (
         "container_cpu", "container_gpu", "ailab", "wsl_math",
     )
-    # Owner mode (owner decision 2026-11-14): after admission one owner agent
-    # session carries a topic to a reviewed manuscript or a freeze. "off" keeps
-    # the staged post-admission flow; "all" applies it to every program topic; a
-    # list of research-line ids applies it to the topics of those lines only.
+    # Owner mode: after admission one owner agent carries a topic end to end.
     owner_mode: str | tuple[str, ...] = "off"
     owner: OwnerSettings = field(default_factory=lambda: OwnerSettings())
-    # [program.supply] (2026-11-20, W1): topic supply and early screening.
+    # [program.supply] (2026-11-28, supply simplification): the 8 supply hard guards.
     supply: SupplySettings = field(default_factory=lambda: SupplySettings())
-    # [program.funnel] (2026-11-25, NC aim): target stage and the topic funnel's parameters.
-    funnel: FunnelSettings = field(default_factory=lambda: FunnelSettings())
-    # Automatic reopens per frozen topic whose recorded line-level conditions
-    # (``auto_reopen``: shared control receipt, line capability) came true; a
-    # topic may ask for fewer. 0 turns automatic reopening off.
+    # Automatic reopens and operator text-revision grants per frozen topic.
     auto_reopen_max: int = 1
-    # Operator text-revision grants per frozen topic (``program reopen-grant``,
-    # 2026-11-20), counted apart from ``auto_reopen_max``. 0 turns the command off.
     operator_reopen_max: int = 1
-    # Card intake (2026-11-16): run the mechanical precheck a research line declares
-    # (``admission_precheck`` in research-lines.yaml, no model involved) before a card is
-    # registered for admission, and raise a card's compute plan to the line's typical
-    # cost (``card_compute_floor`` / ``per_paper_cost``). A line that declares
-    # neither is unaffected. The timeout caps any line's own timeout_seconds.
-    card_precheck: bool = True
-    card_precheck_max_seconds: int = 900
-    card_compute_floor: bool = True
-    # Compute backlog gate (2026-11-18, after 9 topics in 10 hours left ailab with 21
-    # queued jobs declaring 11x its threads): while the CPU threads declared by queued
-    # jobs of the ailab and local compute queues exceed compute_backlog_ratio x their
-    # combined capacity (or more than compute_backlog_max_queued_jobs jobs are queued,
-    # 0 = no job-count limit), no new scout, admission review or materialization starts.
-    # Topics already in research are not affected; the gate lifts by itself once the
-    # backlog falls. Reported as production_blocked reason compute_backlog.
+    # Compute backlog gate: holds new supply and materialization when queues fill.
     compute_backlog_gate: bool = True
     compute_backlog_ratio: float = 2.0
     compute_backlog_max_queued_jobs: int = 0
-    # Brief limit per topic (owner seats): CPU threads its queued + running compute jobs
-    # may declare at once; openlabs-remote refuses a submission beyond it (0 = off).
+    # Per-topic queued + running compute thread ceiling (0 = off).
     campaign_compute_threads: int = 8
-    # Line states (2026-11-26, slimming batch 2): ``[program.lines.<id>]`` with ``mode``
-    # (full | supply_only | polish | off), ``slots``, ``nc_aim`` and optional
-    # ``admission_min_band``, in scout-rotation order.
-    # One table instead of research_lines, polish_exempt_lines, polish_supply_only_lines,
-    # line_max_active_topics and funnel.exempt_lines (still read for one version: converted,
-    # with a tick warning). Read through :meth:`line`, :meth:`stops` and
-    # :meth:`admission_min_band`.
+    # Line states: ``[program.lines.<id>]`` with ``mode`` and optional ``slots``.
     lines: dict[str, "LineSettings"] = field(default_factory=dict)
-    # Polish mode (2026-11-23, owner: "stop new tasks and new experiments, polish the
-    # papers already produced"): the default mode of a line the table does not list (and of a
-    # topic without a line). Writing, reviews, delivery, delivered-version revisions
-    # (revise-delivered), operator reopen grants, journal mail and topics already in research
-    # keep running in every mode.
+    # Polish mode: default mode of unlisted lines ("polish" when true, else "full").
     polish_mode: bool = False
-    # Configuration notes for the tick report (legacy keys converted or ignored).
+    # Configuration notes for the tick report (removed keys ignored during migration).
     config_warnings: tuple[str, ...] = field(default=(), compare=False)
 
     def line(self, line: Any) -> "LineSettings":
@@ -393,19 +284,13 @@ class ProgramSettings:
             return self.lines[line]
         return LineSettings(mode="polish" if self.polish_mode else "full")
 
-    def admission_min_band(self, line: Any = None) -> str:
-        """Effective admission floor of ``line`` (per-line key if set, else global funnel)."""
-
-        override = self.line(line).admission_min_band
-        return override if override is not None else self.funnel.admission_min_band
-
     def stops(self, stage: str, line: Any = EVERY_LINE) -> bool:
         """Whether ``stage`` is stopped for a topic of ``line``.
 
-        ``supply`` is scout, card repair and revision, prescreen, pilot and admission;
-        ``research`` is materialization, hold release and auto-reopen. ``full`` runs both,
-        ``supply_only`` only supply, ``polish`` and ``off`` neither. Without ``line``: the
-        stage is stopped for every line, listed or not (callers skip the whole step).
+        ``supply`` is scout and independent topic review; ``research`` is
+        materialization and auto-reopen. ``full`` runs both, ``supply_only`` only
+        supply, ``polish`` and ``off`` neither. Without ``line``: the stage is stopped
+        for every line, listed or not (callers skip the whole step).
         """
 
         if stage not in LINE_STAGES:
@@ -417,10 +302,7 @@ class ProgramSettings:
 
     @property
     def line_max_active_topics(self) -> dict[str, int]:
-        """Per-line research slots: {line id: limit} for the lines that set ``slots``. A
-        line at its limit (admitted + active + in-review topics of the line) gets no scout,
-        no admission review and no new campaign; ``max_active_topics`` still caps the total.
-        """
+        """Per-line research slots: {line id: limit} for the lines that set ``slots``."""
 
         return {line: entry.slots for line, entry in self.lines.items()
                 if entry.slots is not None}
@@ -431,110 +313,24 @@ DEFAULT_OWNER_RUNNERS: tuple[str, ...] = ("lead_claude", "worker_claude", "lead_
 
 @dataclass(frozen=True)
 class SupplySettings:
-    """``[program.supply]`` (2026-11-20, pipeline overhaul W1): topic supply and early screens.
+    """``[program.supply]`` (2026-11-28, supply simplification): the 8 supply guards."""
 
-    Every switch defaults to on; a research line that declares none of the fields these
-    screens read (``capabilities``/``required_capabilities``, ``data_requirements``,
-    ``admission_pilot``) is unaffected by items 2 and 3.
-    """
-
-    # 1. Line-level shared facts: a feasibility-precheck freeze caused by a shared line
-    # reference (control receipt) blocks the line instead of freezing each topic; a
-    # freeze while a named compute job is still queued/running parks the topic on the
-    # job (at most reference_wait_max times per topic); a borderline miss (the excess
-    # over the tolerance is below the measurement's uncertainty, or without one at most
-    # borderline_relative_margin x the tolerance) goes to a direction decision.
-    line_facts: bool = True
-    borderline_relative_margin: float = 0.05
-    reference_wait_max: int = 2
-    # Days a line block may hold its waiting topics before each gets its own direction
-    # decision.
-    line_block_max_days: float = 7.0
-    # 2. Capability table and data availability screens at card intake.
-    capability_screen: bool = True
-    data_screen: bool = True
-    # 3. Pilot gate: a template's declared admission_pilot runs on ailab before review.
-    pilot: bool = True
-    pilot_core_hours_max: float = 16.0
-    pilot_max_threads: int = 8
-    pilot_max_concurrent: int = 2
-    pilot_max_attempts: int = 2
-    # 4. Target memory: a target that failed for a mechanical reason with unchanged
-    # input, or that has a frozen topic the card does not reopen, gets no new card.
-    target_memory: bool = True
-    # 5. Scouts: no scout for a line whose enumerated queues have nothing drawable;
-    # the empty-draw backoff keeps doubling past scout_empty_backoff_hours up to this.
-    scout_skip_empty_queue: bool = True
-    scout_backoff_max_hours: float = 48.0
-
-
-# Research target stages (target_stage.py). "line_events" keeps the per-line recorded stage
-# (run_in -> tier2_aim, 2026-11-22); any other value is the one stage of every line.
-FUNNEL_TARGET_STAGES = ("nc_aim", "line_events")
-EXPECTED_BANDS = ("nc", "zone_1", "zone_2", "zones_3_4")
-
-
-@dataclass(frozen=True)
-class FunnelSettings:
-    """``[program.funnel]`` (2026-11-25): NC-aimed topic selection as a graded funnel.
-
-    User decision UD-20261125-nc-aim (registry/user-decisions.yaml): every topic aims at
-    Nature Communications; the journal is decided by the results (NC, then CAS Zone 1, 2, 3-4).
-    Each funnel level is dearer and stricter than the one before (design:
-    maintenance/20261125-nc-aim/DESIGN.md). Hard stops are only: data unavailable, fewer than
-    ``min_nc_thresholds`` NC thresholds in the prescreen, a kill test whose signal is absent,
-    and an expected band below ``admission_min_band``; everything else is recorded.
-    """
-
-    target_stage: str = "nc_aim"
-    # NC thresholds (generality, counterintuitive, scale, benchmark, resource) a topic must meet.
-    min_nc_thresholds: int = 2
-    # L1 (mechanical): data source catalogue, capacity and near-duplicate screens.
-    uncatalogued_data: str = "reject"  # reject | warn
+    # 1. Global concurrent scouts (per-line cap is fixed at 1 in code).
+    max_concurrent_scouts: int = 2
+    # 2. Minimum interval in hours between scouts of the same line.
+    scout_min_interval_hours: float = 1.0
+    # 3. Proposed-topic pool size cap per line.
+    candidate_pool_size: int = 4
+    # 4. Preferred scout runners in order (falls back to default routing if unavailable).
+    scout_runners: tuple[str, ...] = ()
+    # 5. Weekly equivalent USD cap per line (scouts + reviews over the last 7 days; 0 = off).
+    scout_weekly_usd_per_line: float = 100.0
+    # 6. Per-topic data + storage ceiling in GB.
     max_topic_data_gb: float = 2000.0
-    max_topic_storage_gb: float = 2000.0
-    dedup_reject_similarity: float = 0.8
-    dedup_warn_similarity: float = 0.5
-    # L2+L3 (topic_prescreen task): quick novelty + NC pre-assessment, then the kill test.
-    prescreen: bool = True
-    prescreen_max_concurrent: int = 2
-    prescreen_max_attempts: int = 2
-    prescreen_wall_seconds: int = 5_400
-    # Runners the prescreen asks for first, in order (2026-11-26, user: "派给gemini"): the first
-    # one whose model family is not the card's proposer's goes into the packet as
-    # ``preferred_runner``; the router takes it when its quota and parallelism allow, else routes
-    # the prescreen as usual (same mechanism as ``[program].scout_runners``). Empty: router alone.
-    prescreen_runners: tuple[str, ...] = ()
-    kill_test_core_hours: float = 2.0
-    kill_test_cpus: int = 2
-    kill_test_max_download_mb: int = 200
-    # A null model explaining at least this share of the claimed effect lowers the band one
-    # step. Was 0.8; 0.5 after the NC trial (2026-11-25 report section 5, item 2: the ECG card
-    # passed with an effect a simple null model largely explained). A signal a known formula
-    # or algebraic relation determines counts as fully explained (nc_funnel.evaluate_prescreen).
-    null_explained_max: float = 0.5
-    # L4 (admission): independent novelty search and the default floor of the expected band
-    # (may be overridden per line via ``[program.lines.<id>].admission_min_band``).
-    novelty_min_papers: int = 50
-    novelty_window_years: int = 3
-    novelty_closest: int = 5
-    admission_min_band: str = "zone_1"
-    # L0 (scouts): weekly model budget per line (USD equivalent, 0 = off) and stall backoff.
-    scout_weekly_usd_per_line: float = 60.0
-    stall_zero_pass_after: int = 5
-    stall_backoff_hours: float = 48.0
-    # L6 (grading): journals of the NC band (the rest is graded by CAS zone).
-    nc_journals: tuple[str, ...] = ("Nature Communications",)
-    # User 2026-11-25 (item 3): grade the journal before writing (owner hand-over to writing),
-    # no re-check at review-ready (2026-11-26 slimming). readiness_returns: how often an
-    # owner seat without the decisive analysis and the four required checks is sent back.
-    grade_before_writing: bool = True
-    readiness_returns: int = 2
-    # Target mix per 10 topics (user 2026-11-25): 2-3 NC, 2-3 Zone 1, the rest lower.
-    target_mix: dict[str, tuple[int, int]] = field(default_factory=lambda: {
-        "nc": (2, 3), "zone_1": (2, 3)})
-    # A line that keeps its own (templated) standard instead of the NC aim: [program.lines]
-    # nc_aim = false (was funnel.exempt_lines until 2026-11-26).
+    # 7. Same-line question bag-of-words Jaccard rejection threshold.
+    dedup_similarity: float = 0.8
+    # 8. Global concurrent independent topic reviews.
+    max_concurrent_reviews: int = 4
 
 
 @dataclass(frozen=True)
@@ -783,16 +579,8 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
     "analysis": "worker",
     "evidence_remediation": "worker",
     "candidate_maturation": "worker",
-    # Topic scouting verifies data access and estimates cost, not just
-    # literature screening, so it runs on the worker tier.
+    # Topic scouting proposes a one-page brief and checks data access, so it runs on worker.
     "topic_scout": "worker",
-    # Revising a held topic against its reopen conditions is scout work; fixing
-    # a card's format errors is light.
-    "topic_revision": "worker",
-    "topic_card_repair": "light",
-    # NC funnel prescreen (2026-11-25): quick novelty + NC thresholds, then a <= 2 core-hour
-    # kill test it writes and runs itself; worker tier because it writes a little code.
-    "topic_prescreen": "worker",
     # Distilling a finished topic into reusable assets is bookkeeping-sized work.
     "topic_retrospective": "light",
     "paper_revision": "worker",
@@ -816,8 +604,7 @@ DEFAULT_TASK_TIERS: dict[str, str] = {
 # (test_task_tiers checks it).
 KNOWN_ROUTING_REASONS: frozenset[str] = frozenset({
     # program_flow
-    "topic_admission", "program_slot_open", "topic_card_repair", "topic_revision",
-    "topic_prescreen",
+    "topic_admission", "program_slot_open",
     # portfolio
     "new_project_results_review", "reviewer_selected_candidate_maturation",
     # owner
@@ -939,11 +726,7 @@ DEFAULT_DECISION_TASK_TYPES: tuple[str, ...] = (
     "portfolio_review",
     "portfolio_planning",
 )
-# topic_prescreen (2026-11-25 NC trial): the funnel's independent judgment of another family's
-# card, the cheap first half of the admission gate - a review like the worker-tier admission
-# review, so a review-class runner (Gemini) may take it when the card's other family is paced.
-DEFAULT_REVIEW_TASK_TYPES: tuple[str, ...] = ("paper_review", "independent_review", "review",
-                                              "topic_prescreen")
+DEFAULT_REVIEW_TASK_TYPES: tuple[str, ...] = ("paper_review", "independent_review", "review")
 # Claim order while parallelism is limited (higher first); unlisted types use
 # ``default_claim_rank`` (in-progress research).
 DEFAULT_CLAIM_RANKS: dict[str, int] = {
@@ -958,9 +741,6 @@ DEFAULT_CLAIM_RANKS: dict[str, int] = {
     "paper_writing": 3,
     "paper_figure_repair": 3,
     "topic_admission": 1,
-    "topic_card_repair": 1,
-    "topic_prescreen": 1,
-    "topic_revision": 0,
     "topic_scout": 0,
     "literature_scan": 0,
     "literature_search": 0,
@@ -970,9 +750,6 @@ DEFAULT_CLAIM_RANKS: dict[str, int] = {
 DEFAULT_LEAD_SHORTAGE_PAUSED: tuple[str, ...] = (
     "topic_admission",
     "topic_scout",
-    "topic_revision",
-    "topic_card_repair",
-    "topic_prescreen",
     "literature_scan",
     "literature_search",
     "literature_screening",
@@ -1373,6 +1150,8 @@ class ModelPrice:
 DEFAULT_MODEL_PRICES: dict[str, ModelPrice] = {
     "claude-fable-5-2": ModelPrice(8.0, 0.20, 40.0, 10.0, 16.0),
     "claude-opus-5-5": ModelPrice(4.0, 0.20, 20.0, 5.0, 8.0),
+    # Conservative estimate for claude-sonnet-5-5 (sub-agent model); cache ratios match Opus/Haiku.
+    "claude-sonnet-5-5": ModelPrice(1.5, 0.15, 7.5, 1.875, 3.0),
     "claude-haiku-5-5": ModelPrice(0.10, 0.01, 0.50, 0.125, 0.20),
     "gpt-6.2-sol": ModelPrice(2.0, 0.10, 10.0, 2.5),
     "gpt-6.2-astra": ModelPrice(8.0, 0.40, 40.0, 10.0),
@@ -1380,6 +1159,14 @@ DEFAULT_MODEL_PRICES: dict[str, ModelPrice] = {
     "gpt-6.1-sol": ModelPrice(2.0, 0.10, 10.0, 2.5),
     "gpt-6-astra": ModelPrice(10.0, 1.0, 50.0, 12.5),
     "gpt-6-luna": ModelPrice(0.10, 0.01, 0.50, 0.125),
+    # Conservative equivalent list prices (USD / 1M tokens) for subscription-billed Antigravity
+    # CLI models (estimates; no separate API list price is published in this repo), added so
+    # [program.supply].scout_weekly_usd_per_line and utilization reports count Gemini/agy spend.
+    # claude-opus-5-5-high (worker_agy_opus) already prefix-matches "claude-opus-5-5" above.
+    "gemini-4-neon": ModelPrice(4.0, 0.40, 20.0),
+    "gemini-4-hydrogen": ModelPrice(2.0, 0.20, 12.0),
+    "gemini-3.8-flash": ModelPrice(0.30, 0.03, 1.50),
+    "gpt-oss": ModelPrice(0.50, 0.05, 2.0),
 }
 
 
@@ -1679,15 +1466,6 @@ def _nonnegative_float(value: Any, default: float) -> float:
     return parsed if parsed >= 0 else default
 
 
-def _hours_sequence(value: Any, default: tuple[float, ...]) -> tuple[float, ...]:
-    if not isinstance(value, (list, tuple)) or not value:
-        return default
-    parsed = tuple(_nonnegative_float(item, -1.0) for item in value)
-    if any(item < 0 for item in parsed):
-        return default
-    return parsed
-
-
 def _domain_list(value: Any, key: str = "domains") -> tuple[str, ...]:
     if value is None:
         return ()
@@ -1713,53 +1491,69 @@ def _optional_path_text(value: Any, label: str) -> str | None:
     return str(Path(value.strip()).expanduser())
 
 
-def _line_scout_intervals(value: Any) -> dict[str, float]:
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ValueError("[program].line_scout_min_interval_hours must be a table")
-    intervals = {}
-    for line, raw in value.items():
-        hours = _nonnegative_float(raw, -1.0)
-        if not line.strip() or isinstance(raw, bool) or not 0 <= hours < float("inf"):
-            raise ValueError(f"invalid scout interval for research line {line!r}")
-        intervals[line.strip()] = hours
-    return intervals
+# Keys removed by the 2026-11-28 supply simplification; tolerated with a tick warning so an
+# un-migrated live config loads cleanly during code rollout before the TOML is rewritten.
+_REMOVED_PROGRAM_KEYS = frozenset({
+    "candidate_pool_low_water", "scout_min_interval_hours", "line_scout_min_interval_hours",
+    "max_concurrent_scouts", "max_scouts_per_line", "scout_runners", "scout_expected_cards",
+    "scout_empty_backoff_hours", "scout_exhausted_after", "max_admissions_per_line",
+    "max_admissions_per_domain", "max_concurrent_admissions", "card_precheck",
+    "card_precheck_max_seconds", "card_compute_floor",
+    # Pre-2026-11-26 legacy line keys replaced by [program.lines].
+    "research_lines", "polish_exempt_lines", "polish_supply_only_lines",
+    "line_max_active_topics",
+})
+_REMOVED_LINE_KEYS = frozenset({"nc_aim", "admission_min_band"})
+_SUPPLY_KEYS = frozenset({
+    "max_concurrent_scouts", "scout_min_interval_hours", "candidate_pool_size",
+    "scout_runners", "scout_weekly_usd_per_line", "max_topic_data_gb",
+    "dedup_similarity", "max_concurrent_reviews",
+})
+_REMOVED_SUPPLY_KEYS = frozenset({
+    "line_facts", "borderline_relative_margin", "reference_wait_max", "line_block_max_days",
+    "capability_screen", "data_screen", "pilot", "pilot_core_hours_max", "pilot_max_threads",
+    "pilot_max_concurrent", "pilot_max_attempts", "target_memory", "scout_skip_empty_queue",
+    "scout_backoff_max_hours",
+})
 
 
 def load_program_settings(payload: Any) -> ProgramSettings:
     program = payload if isinstance(payload, dict) else {}
+    warnings: list[str] = []
+    removed_prog = sorted(key for key in _REMOVED_PROGRAM_KEYS if key in program and program[key] not in (None, [], {}))
+    if removed_prog:
+        warnings.append(
+            f"[program] ignores removed key(s) {', '.join(removed_prog)}: "
+            "move active supply keys to [program.supply] and lines to [program.lines]"
+        )
+    funnel = program.get("funnel") if isinstance(program.get("funnel"), dict) else {}
+    if funnel:
+        warnings.append(
+            "[program.funnel] was removed by supply simplification; move retained keys "
+            "(grade_before_writing, nc_journals, scout_weekly_usd_per_line, max_topic_data_gb, "
+            "dedup_similarity) to [program] and [program.supply]"
+        )
+    journals_raw = program.get("nc_journals", funnel.get("nc_journals"))
+    nc_journals = (
+        tuple(str(item).strip() for item in journals_raw if str(item).strip())
+        if isinstance(journals_raw, list) and journals_raw
+        else ("Nature Communications",)
+    )
+    grade_raw = program.get("grade_before_writing", funnel.get("grade_before_writing", True))
+    lines, research_lines = _line_settings(program, warnings)
+    supply = _supply_settings(program.get("supply"), program=program, funnel=funnel,
+                              warnings=warnings)
     return ProgramSettings(
         enabled=program.get("enabled", False) is True,
         max_active_topics=_positive_int(program.get("max_active_topics"), 5),
         max_ready_unsubmitted=_nonnegative_int(program.get("max_ready_unsubmitted"), 6),
         ledger_path=_relative_ledger_path(program.get("ledger_path")),
-        candidate_pool_low_water=_nonnegative_int(program.get("candidate_pool_low_water"), 3),
-        scout_min_interval_hours=_nonnegative_float(
-            program.get("scout_min_interval_hours"), 12.0
-        ),
-        line_scout_min_interval_hours=_line_scout_intervals(
-            program.get("line_scout_min_interval_hours")
-        ),
-        max_concurrent_scouts=_positive_int(program.get("max_concurrent_scouts"), 1),
-        max_scouts_per_line=_positive_int(program.get("max_scouts_per_line"), 1),
-        scout_runners=_domain_list(program.get("scout_runners"), "scout_runners"),
-        scout_expected_cards=_positive_float(program.get("scout_expected_cards"), 2.0),
-        scout_empty_backoff_hours=_hours_sequence(
-            program.get("scout_empty_backoff_hours"), (1.0, 6.0, 24.0)
-        ),
-        scout_exhausted_after=_nonnegative_int(program.get("scout_exhausted_after"), 4),
-        max_admissions_per_line=_positive_int(
-            program.get("max_admissions_per_line", program.get("max_admissions_per_domain")), 1
-        ),
-        max_concurrent_admissions=_nonnegative_int(
-            program.get("max_concurrent_admissions"), 0
-        ),
         enforce_admission=program.get("enforce_admission", False) is True,
         asset_index_path=_relative_data_path(
             program.get("asset_index_path"), DEFAULT_ASSET_INDEX_PATH, "asset_index_path"
         ),
         domains=_domain_list(program.get("domains")),
+        research_lines=research_lines,
         research_lines_path=_relative_data_path(
             program.get("research_lines_path"), DEFAULT_RESEARCH_LINES_PATH,
             "research_lines_path",
@@ -1768,6 +1562,8 @@ def load_program_settings(payload: Any) -> ProgramSettings:
             program.get("max_days_from_admission_to_ready"), 28.0
         ),
         topic_max_agent_seconds=_positive_int(program.get("topic_max_agent_seconds"), 259_200),
+        grade_before_writing=grade_raw is not False,
+        nc_journals=nc_journals,
         direction_limits=_direction_limits(program.get("direction_limits")),
         auto_handoff=program.get("auto_handoff", False) is True,
         site_assignment_sync=program.get("site_assignment_sync", True) is not False,
@@ -1788,96 +1584,35 @@ def load_program_settings(payload: Any) -> ProgramSettings:
         compute_locations=_compute_locations(program.get("compute_locations")),
         owner_mode=_owner_mode(program.get("owner_mode")),
         owner=_owner_settings(program.get("owner")),
-        supply=_supply_settings(program.get("supply")),
-        funnel=_funnel_settings(program.get("funnel")),
+        supply=supply,
         auto_reopen_max=_nonnegative_int(program.get("auto_reopen_max"), 1),
         operator_reopen_max=_nonnegative_int(program.get("operator_reopen_max"), 1),
-        card_precheck=program.get("card_precheck", True) is not False,
-        card_precheck_max_seconds=_positive_int(program.get("card_precheck_max_seconds"), 900),
-        card_compute_floor=program.get("card_compute_floor", True) is not False,
         compute_backlog_gate=program.get("compute_backlog_gate", True) is not False,
         compute_backlog_ratio=_positive_float(program.get("compute_backlog_ratio"), 2.0),
         compute_backlog_max_queued_jobs=_nonnegative_int(
             program.get("compute_backlog_max_queued_jobs"), 0
         ),
         campaign_compute_threads=_nonnegative_int(program.get("campaign_compute_threads"), 8),
+        lines=lines,
         polish_mode=program.get("polish_mode", False) is True,
-        **_line_settings(program),
+        config_warnings=tuple(warnings),
         **_git_settings(program.get("git")),
     )
 
 
-# Keys the [program.lines] table replaced on 2026-11-26 (slimming batch 2); read for one more
-# version. ``funnel.exempt_lines`` lives in the [program.funnel] sub-table.
-LEGACY_LINE_KEYS = ("research_lines", "polish_exempt_lines", "polish_supply_only_lines",
-                    "line_max_active_topics", "funnel.exempt_lines")
-
-
-def _line_settings(program: Mapping[str, Any]) -> dict[str, Any]:
-    """``lines``, ``research_lines`` and ``config_warnings`` from ``[program.lines]``.
-
-    Without the table, the legacy keys are converted to it (same decision for every line)
-    and a warning names them; with it, a legacy key still present is ignored with a warning.
-    """
-
-    funnel = program.get("funnel") if isinstance(program.get("funnel"), dict) else {}
-    legacy = {
-        "research_lines": _domain_list(program.get("research_lines"), "research_lines"),
-        "polish_exempt_lines": _domain_list(program.get("polish_exempt_lines"),
-                                            "polish_exempt_lines"),
-        "polish_supply_only_lines": _domain_list(program.get("polish_supply_only_lines"),
-                                                 "polish_supply_only_lines"),
-        "line_max_active_topics": _line_limits(program.get("line_max_active_topics")),
-        "funnel.exempt_lines": _domain_list(funnel.get("exempt_lines"), "funnel.exempt_lines"),
-    }
-    present = [key for key in LEGACY_LINE_KEYS if legacy[key]]
+def _line_settings(
+    program: Mapping[str, Any], warnings: list[str]
+) -> tuple[dict[str, LineSettings], tuple[str, ...]]:
     table = program.get("lines")
-    if table is not None:
-        lines = _lines_table(table)
-        warnings = (f"[program] ignores the legacy line key(s) {', '.join(present)}: "
-                    "[program.lines] decides; delete them",) if present else ()
-        return {"lines": lines, "config_warnings": warnings,
-                "research_lines": tuple(line for line, entry in lines.items()
-                                        if entry.mode != "off")}
-    lines = legacy_lines(program.get("polish_mode", False) is True, **{
-        key.replace("funnel.", "nc_"): value for key, value in legacy.items()})
-    warnings = (f"[program] legacy line key(s) {', '.join(present)} converted to "
-                "[program.lines] (read for one more version; write the table instead)",
-                ) if present else ()
-    return {"lines": lines, "config_warnings": warnings,
-            "research_lines": legacy["research_lines"]}
+    if table is None:
+        return {}, ()
+    lines = _lines_table(table, warnings)
+    active = tuple(line for line, entry in lines.items() if entry.mode != "off")
+    return lines, active
 
 
-def legacy_lines(polish_mode: bool, *, research_lines: tuple[str, ...] = (),
-                 polish_exempt_lines: tuple[str, ...] = (),
-                 polish_supply_only_lines: tuple[str, ...] = (),
-                 line_max_active_topics: Mapping[str, int] | None = None,
-                 nc_exempt_lines: tuple[str, ...] = ()) -> dict[str, LineSettings]:
-    """The ``[program.lines]`` table equal to the legacy line keys.
-
-    Legacy rule: polish mode stops supply and research of every line except an exempt line
-    (both run) and a supply-only line (supply runs); without polish mode every line runs.
-    The rotation order (``research_lines``) is kept by the caller.
-    """
-
-    limits = dict(line_max_active_topics or {})
-    order: list[str] = []
-    for line in (*research_lines, *polish_exempt_lines, *polish_supply_only_lines,
-                 *limits, *nc_exempt_lines):
-        if line not in order:
-            order.append(line)
-
-    def mode(line: str) -> str:
-        if not polish_mode or line in polish_exempt_lines:
-            return "full"
-        return "supply_only" if line in polish_supply_only_lines else "polish"
-
-    return {line: LineSettings(mode=mode(line), slots=limits.get(line),
-                               nc_aim=line not in nc_exempt_lines) for line in order}
-
-
-def _lines_table(value: Any) -> dict[str, LineSettings]:
-    """``[program.lines]``: ``{line id: {mode, slots, nc_aim, admission_min_band}}`` in rotation order."""
+def _lines_table(value: Any, warnings: list[str] | None = None) -> dict[str, LineSettings]:
+    """``[program.lines]``: ``{line id: {mode, slots}}`` in rotation order."""
 
     if not isinstance(value, dict):
         raise ValueError("[program.lines] must be a table of [program.lines.<line id>]")
@@ -1886,7 +1621,12 @@ def _lines_table(value: Any) -> dict[str, LineSettings]:
         line = str(key or "").strip()
         if not line or not isinstance(raw, dict):
             raise ValueError("[program.lines] entries must be [program.lines.<line id>] tables")
-        unknown = set(raw) - {"mode", "slots", "nc_aim", "admission_min_band"}
+        removed = sorted(set(raw) & _REMOVED_LINE_KEYS)
+        if removed and warnings is not None:
+            warnings.append(
+                f"[program.lines.{line}] ignores removed key(s) {', '.join(removed)}"
+            )
+        unknown = set(raw) - {"mode", "slots"} - _REMOVED_LINE_KEYS
         if unknown:
             raise ValueError(f"[program.lines.{line}] has unknown key(s) {sorted(unknown)}")
         mode = str(raw.get("mode", "full")).strip()
@@ -1896,43 +1636,8 @@ def _lines_table(value: Any) -> dict[str, LineSettings]:
         if slots is not None and (isinstance(slots, bool) or not isinstance(slots, int)
                                   or slots < 0):
             raise ValueError(f"[program.lines.{line}].slots must be a non-negative integer")
-        nc_aim = raw.get("nc_aim", True)
-        if not isinstance(nc_aim, bool):
-            raise ValueError(f"[program.lines.{line}].nc_aim must be true or false")
-        band_raw = raw.get("admission_min_band")
-        band: str | None = None
-        if band_raw is not None:
-            if not isinstance(band_raw, str):
-                raise ValueError(
-                    f"[program.lines.{line}].admission_min_band must be one of {EXPECTED_BANDS}"
-                )
-            band = band_raw.strip()
-            if band not in EXPECTED_BANDS:
-                raise ValueError(
-                    f"[program.lines.{line}].admission_min_band must be one of {EXPECTED_BANDS}"
-                )
-        lines[line] = LineSettings(mode=mode, slots=slots, nc_aim=nc_aim,
-                                   admission_min_band=band)
+        lines[line] = LineSettings(mode=mode, slots=slots)
     return lines
-
-
-def _line_limits(value: Any) -> dict[str, int]:
-    """``[program].line_max_active_topics``: ``{line id: non-negative int}``."""
-
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ValueError("[program].line_max_active_topics must be a table of line = limit")
-    limits: dict[str, int] = {}
-    for key, raw in value.items():
-        line = str(key or "").strip()
-        if not line:
-            raise ValueError("[program].line_max_active_topics keys must be line ids")
-        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
-            raise ValueError(
-                f"[program].line_max_active_topics.{line} must be a non-negative integer")
-        limits[line] = raw
-    return limits
 
 
 def _owner_mode(value: Any) -> str | tuple[str, ...]:
@@ -1948,114 +1653,74 @@ def _owner_mode(value: Any) -> str | tuple[str, ...]:
     raise ValueError('[program].owner_mode must be "off", "all" or an array of line ids')
 
 
-def _funnel_settings(value: Any) -> FunnelSettings:
-    """``[program.funnel]``; absent keys keep their defaults."""
+def _supply_settings(
+    value: Any,
+    *,
+    program: Mapping[str, Any] = (),
+    funnel: Mapping[str, Any] = (),
+    warnings: list[str] | None = None,
+) -> SupplySettings:
+    """``[program.supply]`` (8 keys); falls back to removed keys during config migration."""
 
-    if value is None:
-        return FunnelSettings()
-    if not isinstance(value, dict):
-        raise ValueError("[program.funnel] must be a table")
-    d = FunnelSettings()
-    stage = str(value.get("target_stage", d.target_stage)).strip()
-    if stage not in FUNNEL_TARGET_STAGES:
-        raise ValueError(f"[program.funnel].target_stage must be one of {FUNNEL_TARGET_STAGES}")
-    band = str(value.get("admission_min_band", d.admission_min_band)).strip()
-    if band not in EXPECTED_BANDS:
-        raise ValueError(f"[program.funnel].admission_min_band must be one of {EXPECTED_BANDS}")
-    data = str(value.get("uncatalogued_data", d.uncatalogued_data)).strip()
-    if data not in {"reject", "warn"}:
-        raise ValueError('[program.funnel].uncatalogued_data must be "reject" or "warn"')
-    mix = value.get("target_mix")
-    target_mix = dict(d.target_mix)
-    if isinstance(mix, dict):
-        for key, pair in mix.items():
-            if key not in EXPECTED_BANDS or not isinstance(pair, list) or len(pair) != 2:
-                raise ValueError("[program.funnel].target_mix maps a band to [low, high]")
-            target_mix[key] = (int(pair[0]), int(pair[1]))
-    journals = value.get("nc_journals")
-    return FunnelSettings(
-        target_stage=stage,
-        min_nc_thresholds=min(5, _positive_int(value.get("min_nc_thresholds"),
-                                               d.min_nc_thresholds)),
-        uncatalogued_data=data,
-        max_topic_data_gb=_positive_float(value.get("max_topic_data_gb"), d.max_topic_data_gb),
-        max_topic_storage_gb=_positive_float(value.get("max_topic_storage_gb"),
-                                             d.max_topic_storage_gb),
-        dedup_reject_similarity=min(1.0, _positive_float(value.get("dedup_reject_similarity"),
-                                                         d.dedup_reject_similarity)),
-        dedup_warn_similarity=min(1.0, _positive_float(value.get("dedup_warn_similarity"),
-                                                       d.dedup_warn_similarity)),
-        prescreen=value.get("prescreen", d.prescreen) is not False,
-        prescreen_max_concurrent=_positive_int(value.get("prescreen_max_concurrent"),
-                                               d.prescreen_max_concurrent),
-        prescreen_max_attempts=_positive_int(value.get("prescreen_max_attempts"),
-                                             d.prescreen_max_attempts),
-        prescreen_wall_seconds=_positive_int(value.get("prescreen_wall_seconds"),
-                                             d.prescreen_wall_seconds),
-        prescreen_runners=_domain_list(value.get("prescreen_runners"), "funnel.prescreen_runners"),
-        kill_test_core_hours=_positive_float(value.get("kill_test_core_hours"),
-                                             d.kill_test_core_hours),
-        kill_test_cpus=_positive_int(value.get("kill_test_cpus"), d.kill_test_cpus),
-        kill_test_max_download_mb=_positive_int(value.get("kill_test_max_download_mb"),
-                                                d.kill_test_max_download_mb),
-        null_explained_max=min(1.0, _positive_float(value.get("null_explained_max"),
-                                                    d.null_explained_max)),
-        novelty_min_papers=_positive_int(value.get("novelty_min_papers"), d.novelty_min_papers),
-        novelty_window_years=_positive_int(value.get("novelty_window_years"),
-                                           d.novelty_window_years),
-        novelty_closest=_positive_int(value.get("novelty_closest"), d.novelty_closest),
-        admission_min_band=band,
-        scout_weekly_usd_per_line=_nonnegative_float(value.get("scout_weekly_usd_per_line"),
-                                                     d.scout_weekly_usd_per_line),
-        stall_zero_pass_after=_nonnegative_int(value.get("stall_zero_pass_after"),
-                                               d.stall_zero_pass_after),
-        stall_backoff_hours=_nonnegative_float(value.get("stall_backoff_hours"),
-                                               d.stall_backoff_hours),
-        nc_journals=tuple(str(item) for item in journals) if isinstance(journals, list)
-        and journals else d.nc_journals,
-        grade_before_writing=value.get("grade_before_writing", d.grade_before_writing)
-        is not False,
-        readiness_returns=_nonnegative_int(value.get("readiness_returns"), d.readiness_returns),
-        target_mix=target_mix,
-    )
-
-
-def _supply_settings(value: Any) -> SupplySettings:
-    """``[program.supply]``; absent keys keep their (enabled) defaults."""
-
-    if value is None:
-        return SupplySettings()
-    if not isinstance(value, dict):
+    if value is not None and not isinstance(value, dict):
         raise ValueError("[program.supply] must be a table")
-    defaults = SupplySettings()
+    raw = value if isinstance(value, dict) else {}
+    prog = program if isinstance(program, Mapping) else {}
+    fun = funnel if isinstance(funnel, Mapping) else {}
+    removed = sorted(set(raw) & _REMOVED_SUPPLY_KEYS)
+    if removed and warnings is not None:
+        warnings.append(f"[program.supply] ignores removed key(s) {', '.join(removed)}")
+    unknown = sorted(set(raw) - _SUPPLY_KEYS - _REMOVED_SUPPLY_KEYS)
+    if unknown:
+        raise ValueError(f"[program.supply] has unknown key(s) {unknown}")
+    d = SupplySettings()
 
-    def switch(key: str) -> bool:
-        return value.get(key, getattr(defaults, key)) is not False
+    def pick(key: str, *fallbacks: Any) -> Any:
+        if key in raw and raw[key] is not None:
+            return raw[key]
+        for candidate in fallbacks:
+            if candidate is not None:
+                return candidate
+        return None
 
-    margin = _nonnegative_float(value.get("borderline_relative_margin"),
-                                defaults.borderline_relative_margin)
+    old_reviews = prog.get("max_concurrent_admissions")
+    if not isinstance(old_reviews, int) or isinstance(old_reviews, bool) or old_reviews <= 0:
+        old_reviews = fun.get("prescreen_max_concurrent")
     return SupplySettings(
-        line_facts=switch("line_facts"),
-        borderline_relative_margin=min(margin, 1.0),
-        reference_wait_max=_nonnegative_int(value.get("reference_wait_max"),
-                                            defaults.reference_wait_max),
-        line_block_max_days=_positive_float(value.get("line_block_max_days"),
-                                            defaults.line_block_max_days),
-        capability_screen=switch("capability_screen"),
-        data_screen=switch("data_screen"),
-        pilot=switch("pilot"),
-        pilot_core_hours_max=_positive_float(value.get("pilot_core_hours_max"),
-                                             defaults.pilot_core_hours_max),
-        pilot_max_threads=min(8, _positive_int(value.get("pilot_max_threads"),
-                                               defaults.pilot_max_threads)),
-        pilot_max_concurrent=_positive_int(value.get("pilot_max_concurrent"),
-                                           defaults.pilot_max_concurrent),
-        pilot_max_attempts=_positive_int(value.get("pilot_max_attempts"),
-                                         defaults.pilot_max_attempts),
-        target_memory=switch("target_memory"),
-        scout_skip_empty_queue=switch("scout_skip_empty_queue"),
-        scout_backoff_max_hours=_positive_float(value.get("scout_backoff_max_hours"),
-                                                defaults.scout_backoff_max_hours),
+        max_concurrent_scouts=_positive_int(
+            pick("max_concurrent_scouts", prog.get("max_concurrent_scouts")),
+            d.max_concurrent_scouts,
+        ),
+        scout_min_interval_hours=_nonnegative_float(
+            pick("scout_min_interval_hours", prog.get("scout_min_interval_hours")),
+            d.scout_min_interval_hours,
+        ),
+        candidate_pool_size=_nonnegative_int(
+            pick("candidate_pool_size", prog.get("candidate_pool_low_water")),
+            d.candidate_pool_size,
+        ),
+        scout_runners=_domain_list(
+            pick("scout_runners", prog.get("scout_runners")), "supply.scout_runners"
+        ),
+        scout_weekly_usd_per_line=_nonnegative_float(
+            pick("scout_weekly_usd_per_line", fun.get("scout_weekly_usd_per_line")),
+            d.scout_weekly_usd_per_line,
+        ),
+        max_topic_data_gb=_positive_float(
+            pick("max_topic_data_gb", fun.get("max_topic_data_gb")),
+            d.max_topic_data_gb,
+        ),
+        dedup_similarity=min(
+            1.0,
+            _positive_float(
+                pick("dedup_similarity", fun.get("dedup_reject_similarity")),
+                d.dedup_similarity,
+            ),
+        ),
+        max_concurrent_reviews=_positive_int(
+            pick("max_concurrent_reviews", old_reviews),
+            d.max_concurrent_reviews,
+        ),
     )
 
 

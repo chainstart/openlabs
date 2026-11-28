@@ -219,12 +219,16 @@ def campaign_topic(
 
 
 def topic_budget_seconds(cost_estimate: Any, settings: FactorySettings) -> int:
-    """Smaller of the card's ``cost_estimate.agent_seconds`` and the configured ceiling."""
+    """Smaller of the proposal/card's agent-time budget and the configured ceiling."""
 
     cap = int(settings.program.topic_max_agent_seconds)
-    estimate = cost_estimate.get("agent_seconds") if isinstance(cost_estimate, Mapping) else None
-    if isinstance(estimate, (int, float)) and not isinstance(estimate, bool) and estimate >= 1:
-        return max(1, min(cap, int(estimate)))
+    if isinstance(cost_estimate, Mapping):
+        hours = cost_estimate.get("agent_hours")
+        if isinstance(hours, (int, float)) and not isinstance(hours, bool) and hours > 0:
+            return max(1, min(cap, int(hours * 3600)))
+        estimate = cost_estimate.get("agent_seconds")
+        if isinstance(estimate, (int, float)) and not isinstance(estimate, bool) and estimate >= 1:
+            return max(1, min(cap, int(estimate)))
     return cap
 
 

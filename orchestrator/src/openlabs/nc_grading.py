@@ -116,36 +116,20 @@ def _grade_before_writing(settings: Any) -> bool:
     program = _program(settings)
     if program is None:
         return False
-    if hasattr(program, "grade_before_writing"):
-        return bool(program.grade_before_writing)
-    funnel = getattr(program, "funnel", None)
-    return bool(getattr(funnel, "grade_before_writing", True)) if funnel is not None else False
+    return bool(getattr(program, "grade_before_writing", True))
 
 
 def _nc_journals(settings: Any) -> tuple[str, ...]:
     program = _program(settings)
-    if program is not None and hasattr(program, "nc_journals"):
-        return tuple(program.nc_journals)
-    funnel = getattr(program, "funnel", None)
-    if funnel is not None and hasattr(funnel, "nc_journals"):
-        return tuple(funnel.nc_journals)
-    return ("Nature Communications",)
+    journals = getattr(program, "nc_journals", None) if program is not None else None
+    return tuple(journals) if journals else ("Nature Communications",)
 
 
-def _readiness_returns(settings: Any) -> int:
-    program = _program(settings)
-    if program is not None and hasattr(program, "readiness_returns"):
-        return int(program.readiness_returns)
-    funnel = getattr(program, "funnel", None)
-    if funnel is not None and hasattr(funnel, "readiness_returns"):
-        return int(funnel.readiness_returns)
+def _readiness_returns(_settings: Any) -> int:
     return READINESS_RETURNS
 
 
-def _min_nc_thresholds(settings: Any) -> int:
-    funnel = getattr(_program(settings), "funnel", None)
-    if funnel is not None and hasattr(funnel, "min_nc_thresholds"):
-        return int(funnel.min_nc_thresholds)
+def _min_nc_thresholds(_settings: Any) -> int:
     return MIN_NC_THRESHOLDS
 
 
@@ -280,11 +264,6 @@ def enabled(settings: Any, topic: Mapping[str, Any] | None) -> bool:
 
     if topic is None or not _grade_before_writing(settings):
         return False
-    program = _program(settings)
-    if program is not None and hasattr(program, "line"):
-        line = program.line(topic.get("research_line"))
-        if getattr(line, "nc_aim", True) is False:
-            return False
     return admitted_stage(topic) == "nc_aim"
 
 

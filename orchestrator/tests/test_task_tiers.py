@@ -84,7 +84,7 @@ def _tier(settings: FactorySettings, task_type: str, reason: str | None = None) 
         ("direction_decision", "direction_decision", "lead"),
         ("paper_review", "paper_review_scope_selection", "lead"),
         ("portfolio_planning", None, "lead"),
-        ("topic_card_repair", "topic_card_repair", "light"),
+        ("topic_scout", "program_slot_open", "worker"),
     ],
 )
 def test_default_division_of_labour(task_type, reason, tier) -> None:
@@ -150,7 +150,6 @@ def test_known_routing_reasons_cover_the_dispatching_constants() -> None:
 
     constants = {
         program_flow.ADMISSION_ROUTING_REASON, program_flow.SCOUT_ROUTING_REASON,
-        program_flow.REPAIR_ROUTING_REASON, program_flow.REVISION_ROUTING_REASON,
         owner.ROUTING_FIRST, owner.ROUTING_CONTINUE, owner.ROUTING_CONVERTED,
         owner.ROUTING_REVIEW, owner.ROUTING_REVIEWED, owner.ROUTING_RECOMPUTE,
         owner.ROUTING_RECOMPUTED, owner.ROUTING_RETRY, reopen.ROUTING_REOPENED,
@@ -421,7 +420,11 @@ def test_runner_model_warnings_flag_mismatch_and_fable() -> None:
 
 
 def test_newest_gpt_versions_are_priced() -> None:
-    for model in ("gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-luna", "gpt-6.2-sol[1m]"):
+    for model in (
+        "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-luna", "gpt-6.2-sol[1m]",
+        "gemini-4-neon-xhigh", "gemini-4-hydrogen-high", "gemini-3.8-flash-medium",
+        "claude-opus-5-5-high", "claude-sonnet-5-5",
+    ):
         assert usage._price(DEFAULT_MODEL_PRICES, model) is not None, model
     assert usage._price(DEFAULT_MODEL_PRICES, "gpt-6.2-astra").output == 40.0
     # The older versions stay priced for attempts recorded under them.

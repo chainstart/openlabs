@@ -49,13 +49,12 @@ def retry_not_before(attempt: int, base_seconds: int) -> str | None:
 
 
 DEFAULT_RUNNER = "balanced"
-# Topic-supply tasks (2026-11-26, slimming batch 2; user "1-开始"): scout, prescreen, card repair
-# and revision by task type, and the admission gate (a portfolio_review with routing reason
-# topic_admission; that task type is shared with ordinary campaigns). Supply tasks of one
-# campaign run beside each other; their schedulers bound how many are queued
-# (max_scouts_per_line, prescreen_max_concurrent, max_admissions_per_line). Every other task
-# waits until its campaign runs nothing.
-SUPPLY_TASK_TYPES = ("topic_scout", "topic_prescreen", "topic_card_repair", "topic_revision")
+# Topic-supply tasks: scout by task type, and the independent topic review
+# (a portfolio_review with routing reason topic_admission; that task type is shared with
+# ordinary campaigns). Supply tasks of one campaign run beside each other; their
+# schedulers bound how many are queued (max_concurrent_scouts, max_concurrent_reviews).
+# Every other task waits until its campaign runs nothing.
+SUPPLY_TASK_TYPES = ("topic_scout",)
 
 
 def supply_task_sql(table: str) -> str:

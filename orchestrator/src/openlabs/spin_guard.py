@@ -53,10 +53,6 @@ from .db import FactoryDB
 DECISION_TASK_TYPES = frozenset({
     "direction_decision", "portfolio_review", "paper_review", "independent_review",
     "paper_readiness", "topic_admission",
-    # A prescreen's product is its verdict (nc_funnel.advance_prescreens); a card stopped
-    # at phase A is the funnel moving, not a spin. Line-level "every card fails" is the
-    # funnel stall backoff's job (nc_funnel.scout_blocks), which limits scouts only.
-    "topic_prescreen",
 })
 NEUTRAL_TASK_TYPES = frozenset({"topic_owner", "topic_scout", "smoke"})
 FINISHED_STATUSES = ("succeeded", "needs_replan", "needs_human", "failed", "quarantined",
@@ -141,7 +137,7 @@ def result_products(payload: Mapping[str, Any] | None) -> set[str]:
         digest = str(item.get("sha256") or "")
         if digest and not any(word in kind for word in SOURCE_KINDS):
             products.add("artifact:" + digest)
-    for card in payload.get("topic_cards") or []:
+    for card in (*(payload.get("topic_proposals") or []), *(payload.get("topic_cards") or [])):
         products.add("card:" + hashlib.sha256(
             json.dumps(card, sort_keys=True, default=str).encode()).hexdigest())
     if payload.get("paper_candidate") is True:

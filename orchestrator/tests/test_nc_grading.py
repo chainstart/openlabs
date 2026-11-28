@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from openlabs import nc_grading, owner, program_autonomy
-from openlabs.config import FunnelSettings, OwnerSettings, load_program_settings
+from openlabs.config import OwnerSettings, load_program_settings
 from test_owner_mode import _first_seat, _latest, _owner_program, _seat_packet
 from test_program_autonomy import _decide, _direction_task, _lease, _retarget_decision, _topic
 from test_research_program_flow import _packet, _tick
@@ -39,12 +39,15 @@ def _retarget(band, journal, *, met=("generality", "counterintuitive"), match="n
             "confidence": confidence, **extra}
 
 
-def _nc_program(tmp_path, monkeypatch, *, writer=WRITER, **funnel):
+def _nc_program(tmp_path, monkeypatch, *, writer=WRITER, grade_before_writing=True,
+                readiness_returns=None):
     owner_settings = OwnerSettings(runners=("worker_gpt",), writing_runner=writer)
     paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch,
                                                    owner_settings=owner_settings)
     settings = replace(settings, program=replace(settings.program,
-                                                 funnel=FunnelSettings(**funnel)))
+                                                 grade_before_writing=grade_before_writing))
+    if readiness_returns is not None:
+        monkeypatch.setattr(nc_grading, "READINESS_RETURNS", readiness_returns)
     monkeypatch.setattr(nc_grading, "admitted_stage", lambda _topic: "nc_aim")
     registry = paths.data / "registry"
     registry.mkdir(parents=True, exist_ok=True)
@@ -69,11 +72,13 @@ def _declare(paths, db, settings, monkeypatch, seat, packet):
 
 
 def test_config_keys_parse() -> None:
-    funnel = load_program_settings({"funnel": {"grade_before_writing": False,
-                                               "readiness_returns": 0}}).funnel
-    assert funnel.grade_before_writing is False and funnel.readiness_returns == 0
-    default = load_program_settings({}).funnel
-    assert default.grade_before_writing is True and default.readiness_returns == 2
+    off = load_program_settings({"grade_before_writing": False,
+                                 "nc_journals": ["Nature Communications", "Science Advances"]})
+    assert off.grade_before_writing is False
+    assert off.nc_journals == ("Nature Communications", "Science Advances")
+    default = load_program_settings({})
+    assert default.grade_before_writing is True
+    assert default.nc_journals == ("Nature Communications",)
 
 
 def test_research_done_without_the_required_checks_goes_back_to_the_owner(
@@ -165,7 +170,7 @@ def test_switch_off_and_non_nc_topics_keep_the_old_hand_over(tmp_path, monkeypat
     assert _latest(db, topic["campaign_id"])["runner"] == WRITER
     monkeypatch.setattr(nc_grading, "admitted_stage", lambda _topic: "tier2_aim")
     assert not nc_grading.enabled(replace(settings, program=replace(
-        settings.program, funnel=FunnelSettings())), topic)
+        settings.program, grade_before_writing=True)), topic)
 
 
 def test_unavailable_grade_lets_writing_go_on(tmp_path, monkeypatch) -> None:
