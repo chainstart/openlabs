@@ -17,14 +17,13 @@ from openlabs.contracts import atomic_write_json
 from openlabs.program import (
     activate_topic,
     admit_topic,
+    freeze_topic,
     open_topic_ledger,
     paused_topic_campaigns,
     propose_topic,
     slot_status,
 )
 from openlabs.program_flow import (
-    LAST_SCOUT_KEY,
-    LINE_SLOTS_FULL_REASON,
     _admission_record_path,
     ledger_queue_entries,
     materialize_waiting_topics,
@@ -147,29 +146,22 @@ def _full_astro(tmp_path, **program):
     return paths, db, settings, projects, ledger, waiting
 
 
-def test_a_full_line_gets_no_scout_and_the_free_line_scouts_up_to_pool(tmp_path):
-    paths, db, settings, _, _, _ = _full_astro(tmp_path)
-    scheduled, _ = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
-    assert [item.research_line for item in scheduled] == [ENGINEERING]
-    packet = json.loads(Path(parallel._scouts(db)[0]["input_path"]).read_text())
-    assert packet["max_proposals"] == 4 and packet["line_free_slots"] == 1
-    parallel._finish(db, [item.task_id for item in scheduled])
-    db.update_meta({LAST_SCOUT_KEY: "2000-01-01T00:00:00Z", f"{LAST_SCOUT_KEY}:{ENGINEERING}": "2000-01-01T00:00:00Z"})
-    ledger = open_topic_ledger(paths, settings.program)
-    project = next(load_project(p).project_id for p in paths.project_config_paths()
-                   if load_project(p).research_line == ENGINEERING)
-    for n in range(4):
-        _seed(ledger, db, settings, project, ENGINEERING, 9 + n, "proposed")
-    again, reason = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
-    assert again == [] and reason == "candidate_pool_at_low_water"
-
-
-def test_waiting_cards_of_a_full_line_do_not_hold_the_pool(tmp_path):
+def test_supply_counts_proposed_and_waiting_admitted_in_each_line(tmp_path):
     paths, db, settings, projects, ledger, _ = _full_astro(tmp_path)
-    for n in range(10, 14):  # four astro cards: the pool's low water, all of a full line
+    for n in range(4):
+        _seed(ledger, db, settings, projects[ENGINEERING], ENGINEERING, n, "proposed")
+
+    scheduled, _ = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
+    assert [item.research_line for item in scheduled] == [ASTRO]
+    packet = json.loads(Path(parallel._scouts(db)[0]["input_path"]).read_text())
+    assert packet["max_proposals"] == 3 and packet["line_free_slots"] == 0
+
+    parallel._finish(db, [item.task_id for item in scheduled])
+    for n in range(10, 13):
         _seed(ledger, db, settings, projects[ASTRO], ASTRO, n, "proposed")
-    scheduled, reason = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
-    assert [item.research_line for item in scheduled] == [ENGINEERING], reason
+    assert schedule_scouts(db, paths, settings, lead_short=False, now=NOW) == (
+        [], "candidate_pool_at_low_water"
+    )
 
 
 def test_an_admitted_topic_of_a_full_line_waits_and_is_not_dropped(tmp_path):
@@ -182,20 +174,39 @@ def test_an_admitted_topic_of_a_full_line_waits_and_is_not_dropped(tmp_path):
     assert topic["status"] == "admitted" and not topic.get("campaign_id")
 
 
-def test_admission_of_a_full_line_waits_for_its_slot(tmp_path, monkeypatch):
+def test_go_reviewed_topics_wait_for_their_line_slot_in_admission_order(tmp_path, monkeypatch):
     paths = flow._paths(tmp_path)
     flow._install_program(paths)
     lines_tests._make_line_project(paths)
     lines_tests._lines_file(paths, "ready")
     db = flow._db(paths)
     settings = flow._settings(lines={lines_tests.LINE: LineSettings(slots=0)})
-    card = lines_tests._line_card(0)
-    first = flow._tick(paths, settings, monkeypatch)
-    assert first.program["scouts_scheduled"] == []
-    assert first.program["scout_blocked"] == LINE_SLOTS_FULL_REASON
+    _, admission, _ = flow._to_admission(
+        paths, db, settings, monkeypatch,
+        [lines_tests._line_card(0), lines_tests._line_card(1)],
+    )
+    entries = flow._packet(admission)["topic_proposals"]
+    first, second = [entry["topic_id"] for entry in entries]
+    flow._complete(db, paths, admission["task_id"],
+                   extra={"reviews": [flow._review(entry) for entry in entries]})
+    report = flow._tick(paths, settings, monkeypatch)
+    ledger = open_topic_ledger(paths, settings.program)
+    assert report.program["waiting_admitted"] == [first, second]
+    assert [(ledger.topic(topic_id)["status"], ledger.topic(topic_id)["campaign_id"])
+            for topic_id in (first, second)] == [("admitted", None), ("admitted", None)]
+
     settings = flow._settings(lines={lines_tests.LINE: LineSettings(slots=1)})
-    _, admission, _ = flow._to_admission(paths, db, settings, monkeypatch, [card])
-    assert len(flow._packet(admission)["topic_proposals"]) == 1
+    spawned = materialize_waiting_topics(db, paths, settings)
+    assert spawned.campaign_ids == (ledger.topic(first)["campaign_id"],)
+    assert ledger.topic(first)["status"] == "active"
+    assert ledger.topic(second)["status"] == "admitted"
+    assert materialize_waiting_topics(db, paths, settings).campaign_ids == ()
+
+    freeze_topic(ledger, first, db=db, reason_class="negative_result",
+                 evidence=flow.EVIDENCE, decided_by="test")
+    spawned = materialize_waiting_topics(db, paths, settings)
+    assert spawned.campaign_ids == (ledger.topic(second)["campaign_id"],)
+    assert ledger.topic(second)["status"] == "active"
 
 
 # --------------------------------------------------------------------------- line resources

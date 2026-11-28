@@ -2,9 +2,9 @@
 
 After the 2026-11-16 restart 9 topics were admitted in 10 hours and their owners each
 queued tens to hundreds of profile jobs; ailab (8 threads) had 21 jobs queued whose
-declared threads were 11x its capacity. The backlog gate holds new scouts, admissions
-and materializations while the queues are backlogged; each topic may keep at most
-``campaign_compute_threads`` declared threads in the queues, enforced at submission.
+declared threads were 11x its capacity. The backlog gate holds materialization while
+the queues are backlogged. Each topic may keep at most ``campaign_compute_threads``
+declared threads in the queues, enforced at submission.
 """
 
 from __future__ import annotations
@@ -16,8 +16,12 @@ from pathlib import Path
 import pytest
 from openlabs import engine, local_compute, owner, program_flow, remote_compute, utilization
 from openlabs.config import load_program_settings
-from openlabs.program_flow import run_program_pipeline, schedule_scouts
-from test_research_program_flow import _db, _install_program, _paths, _settings, _tick
+from openlabs.program import open_topic_ledger
+from openlabs.program_flow import run_program_pipeline
+from test_research_program_flow import (
+    _complete, _db, _install_program, _packet, _paths, _proposal, _review, _settings,
+    _tick, _to_admission,
+)
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
 
@@ -95,7 +99,7 @@ def test_backlog_counts_queued_threads_of_both_queues_against_capacity(queues) -
     assert utilization.compute_backlog(_settings(compute_backlog_gate=False)) is None
 
 
-def test_backlog_holds_scouts_admissions_and_materialization_then_lifts(
+def test_supply_scouts_and_reviews_during_backlog_but_materialization_waits(
         tmp_path, monkeypatch) -> None:
     paths = _paths(tmp_path)
     _install_program(paths)
@@ -103,22 +107,25 @@ def test_backlog_holds_scouts_admissions_and_materialization_then_lifts(
     settings = _settings()
     backlog = {"backlogged": True, "detail": "queued jobs declare 90 CPU threads > 2 x 20"}
     monkeypatch.setattr(program_flow, "compute_backlog", lambda _settings: dict(backlog))
-    assert schedule_scouts(db, paths, settings, lead_short=False) == ([], "compute_backlog")
-    report = _tick(paths, settings, monkeypatch)
-    assert report.program["scouts_scheduled"] == []
-    assert report.program["scout_blocked"] == "compute_backlog"
+    _, admission, report = _to_admission(paths, db, settings, monkeypatch, [_proposal(0)])
     assert report.program["compute_backlog"]["backlogged"] is True
     assert {"campaign_id": "", "reason": "compute_backlog",
             "detail": backlog["detail"]} in report.production_blocked
-    spawn = program_flow.materialize_waiting_topics(db, paths, settings)
-    assert spawn.campaign_ids == ()
-    campaign = db.campaign("ai-program-scout") or {"campaign_id": "x"}
-    assert program_flow.schedule_topic_admission(
-        db, paths, settings, campaign, epoch=1).reason == "compute_backlog"
-    # The backlog falls: the next tick schedules the scout again.
+
+    [entry] = _packet(admission)["topic_proposals"]
+    _complete(db, paths, admission["task_id"], extra={"reviews": [_review(entry)]})
+    report = _tick(paths, settings, monkeypatch)
+    ledger = open_topic_ledger(paths, settings.program)
+    topic_id = entry["topic_id"]
+    assert report.program["waiting_admitted"] == [topic_id]
+    assert ledger.topic(topic_id)["campaign_id"] is None
+    assert program_flow.materialize_waiting_topics(db, paths, settings).campaign_ids == ()
+
     backlog["backlogged"] = False
     report = _tick(paths, settings, monkeypatch)
-    assert [item["domain"] for item in report.program["scouts_scheduled"]] == ["ai"]
+    topic = ledger.topic(topic_id)
+    assert topic["status"] == "active"
+    assert report.program["materialized"] == [topic["campaign_id"]]
     assert not [item for item in report.production_blocked
                 if item.get("reason") == "compute_backlog"]
 

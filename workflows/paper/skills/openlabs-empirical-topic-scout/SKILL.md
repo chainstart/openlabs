@@ -7,6 +7,8 @@ description: Scout computational, real-data research topics and write a <=1-page
 
 Read the scout packet at the input path (`ledger_snapshot`, `research_line_summary`, `line_tools`, `data_catalog`, and — on templated lines — `queue_candidates`). Return up to `max_proposals` proposals in `topic_proposals[]`. An empty list is valid if nothing clears the bar. Do not start the full study.
 
+You are explicitly authorized to start helper sub-agents in parallel to survey several fields or directions. Use the tools available in your runtime (Codex `spawn_agent` or `codex exec`, the Claude Agent tool, or Antigravity `invoke_subagent`) and return the best proposals.
+
 ## Rules
 - **Templated lines with `queue_candidates`**: draw from `queue_candidates` FIRST using the line's `line_tools` and `data_catalog`. Set `queue_entry_id` to the candidate's `entry_id` (and `reopens` if reopening a listed topic). Propose outside the queue only if the candidates are unsuitable.
 - **Open lines without `queue_candidates`**: search recent literature and `data_catalog` broadly; aim for high-ambition, broad-significance computational questions (Nature Communications level of ambition).
