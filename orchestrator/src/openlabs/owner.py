@@ -3226,7 +3226,7 @@ def compute_brief_lines(settings: FactorySettings, campaign_id: str) -> list[str
     if limit > 0:
         lines.append(
             f"  - Limit: this topic's queued+running jobs <= {limit} thr; submit refuses more. "
-            "Batches, coarse first; `openlabs-remote list --mine`, `withdraw ID`.")
+            "Batches, coarse first; local busy -> ailab; `list --mine`, `withdraw ID`.")
         if mine["cpu_threads"] > limit:
             lines.append(
                 f"  - Over the limit now: this topic has {mine['queued']} job(s) queued, "
