@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from openlabs import nc_funnel, nc_grading, owner, program_autonomy, target_stage
+from openlabs import nc_grading, owner, program_autonomy
 from openlabs.config import FunnelSettings, OwnerSettings, load_program_settings
 from test_owner_mode import _first_seat, _latest, _owner_program, _seat_packet
 from test_program_autonomy import _decide, _direction_task, _lease, _retarget_decision, _topic
@@ -34,7 +34,7 @@ def _retarget(band, journal, *, met=("generality", "counterintuitive"), match="n
               confidence="high", **extra) -> dict:
     return {"venue_or_format": journal, "why_fits": "scope", "achieved_band": band,
             "nc_scorecard": {key: {"met": key in met, "evidence": "e" if key in met else ""}
-                             for key in nc_funnel.THRESHOLDS},
+                             for key in nc_grading.THRESHOLDS},
             "calibration_match": match, "calibration_neighbours": ["N6"],
             "confidence": confidence, **extra}
 
@@ -45,10 +45,10 @@ def _nc_program(tmp_path, monkeypatch, *, writer=WRITER, **funnel):
                                                    owner_settings=owner_settings)
     settings = replace(settings, program=replace(settings.program,
                                                  funnel=FunnelSettings(**funnel)))
-    monkeypatch.setattr(target_stage, "admitted_stage", lambda _topic: "nc_aim")
+    monkeypatch.setattr(nc_grading, "admitted_stage", lambda _topic: "nc_aim")
     registry = paths.data / "registry"
     registry.mkdir(parents=True, exist_ok=True)
-    (paths.data / nc_funnel.CALIBRATION_PATH).write_text("papers: []\n", encoding="utf-8")
+    (paths.data / nc_grading.CALIBRATION_PATH).write_text("papers: []\n", encoding="utf-8")
     (registry / "verified-venues.yaml").write_text(REGISTRY, encoding="utf-8")
     original = program_autonomy._run_paper_command
 
@@ -163,7 +163,7 @@ def test_switch_off_and_non_nc_topics_keep_the_old_hand_over(tmp_path, monkeypat
     _declare(paths, db, settings, monkeypatch, seat,
              {"status": "continuing", "phase": "writing"})
     assert _latest(db, topic["campaign_id"])["runner"] == WRITER
-    monkeypatch.setattr(target_stage, "admitted_stage", lambda _topic: "tier2_aim")
+    monkeypatch.setattr(nc_grading, "admitted_stage", lambda _topic: "tier2_aim")
     assert not nc_grading.enabled(replace(settings, program=replace(
         settings.program, funnel=FunnelSettings())), topic)
 

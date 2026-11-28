@@ -532,14 +532,13 @@ def _resource(label: str, path: Path) -> dict[str, str] | None:
 
 
 def _nc_grading_packet(settings: FactorySettings, topic: Mapping[str, Any]) -> dict[str, Any]:
-    from .nc_funnel import grading_packet
+    from .nc_grading import grading_packet
 
     return grading_packet(settings, topic)
 
 
 def _nc_grading_instruction(trigger: str = TRIGGER_VENUE_GRADE) -> str:
-    from .nc_funnel import GRADE_INSTRUCTION
-    from .nc_grading import PRE_WRITING_INSTRUCTION
+    from .nc_grading import GRADE_INSTRUCTION, PRE_WRITING_INSTRUCTION
 
     if trigger == TRIGGER_PRE_WRITING_GRADE:
         return GRADE_INSTRUCTION.replace("this manuscript looks like", "this research looks like") \
@@ -603,13 +602,11 @@ def schedule_direction_decision(
         ) if item is not None
     ]
     grading = trigger in GRADE_TRIGGERS
-    from . import target_stage as _stages
+    from . import nc_grading as _grading
 
-    nc_grading = grading and _stages.admitted_stage(topic) == _stages.NC_AIM
+    nc_grading = grading and _grading.admitted_stage(topic) == "nc_aim"
     if nc_grading:
-        from .nc_funnel import calibration_resource
-
-        resources.extend(item for item in [calibration_resource(paths)] if item is not None)
+        resources.extend(item for item in [_grading.calibration_resource(paths)] if item is not None)
     cap = trigger in {TRIGGER_REVIEW_ROUNDS, "owner_review_rounds_exhausted"}
     options = ["retarget_or_short_format", "freeze"]
     candidates = []
@@ -1177,9 +1174,9 @@ def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payl
     task_id = str(task["task_id"])
     paper_id = str(outcome.get("paper_id") or payload.get("paper_id") or topic.get("paper_id")
                    or "").strip() or None
-    from . import target_stage
+    from . import nc_grading as _grading
 
-    if target_stage.tier2_topic(topic):
+    if _grading.needs_acceptance_grade(settings, topic):
         journal = outcome.get("target_journal")
         decision_record = outcome.get("decision_record")
         if isinstance(decision_record, str) and decision_record:
@@ -1196,10 +1193,8 @@ def queue_ready_topic(db, paths, settings, report, *, topic, task, outcome, payl
                     journal = json.loads(decision_path.read_text()).get("target_journal") or journal
                     break
         grade = topic.get("venue_grade") or {}
-        from .nc_grading import GRADED_BEFORE_WRITING
-
         # Graded before writing: review ready goes straight to the queue (no re-check).
-        if grade.get("point") not in GRADED_BEFORE_WRITING and (
+        if grade.get("point") not in _grading.GRADED_BEFORE_WRITING and (
                 not grade or grade.get("journal") != journal):
             schedule_direction_decision(
                 db, paths, settings, report, topic=topic, trigger=TRIGGER_VENUE_GRADE,
@@ -1362,20 +1357,22 @@ def apply_direction_decision(
                             else "choose a verified alternative, short_format or freeze")
     grade = None
     if not problems and trigger in GRADE_TRIGGERS:
-        from .target_stage import venue_grade
+        from .nc_grading import (
+            POINT_AFTER_REVIEW,
+            POINT_PRE_WRITING,
+            admitted_stage,
+            venue_format,
+            venue_grade,
+        )
 
         if decision["choice"] == "freeze":
             if decision["freeze"]["reason_class"] != "no_eligible_venue":
                 problems.append("acceptance grading may freeze only when no verified journal fits")
         else:
-            from .target_stage import admitted_stage
-
             stage = admitted_stage(topic)
             grade = venue_grade(decision, packet["verified_alternatives"], stage=stage,
                                 settings=settings)
             if grade is not None and stage == "nc_aim":
-                from .nc_grading import POINT_AFTER_REVIEW, POINT_PRE_WRITING, venue_format
-
                 grade = {**grade, "point": POINT_PRE_WRITING
                          if trigger == TRIGGER_PRE_WRITING_GRADE else POINT_AFTER_REVIEW,
                          **({"format": form} if (form := venue_format(
