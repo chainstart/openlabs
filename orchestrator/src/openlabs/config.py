@@ -207,8 +207,6 @@ class ProgramSettings:
     # every domain that has an active program project.
     domains: tuple[str, ...] = ()
     # Research lines taking part in scout rotation, in preference order: the
-    # ``[program.lines]`` entries whose mode is not ``off``.
-    research_lines: tuple[str, ...] = ()
     # Direction file (relative to the data repository root): line definitions read
     # by scouts and reviewers, and each line's environment status.
     research_lines_path: str = DEFAULT_RESEARCH_LINES_PATH
@@ -299,6 +297,12 @@ class ProgramSettings:
             return all(stage in _MODE_STOPS[entry.mode]
                        for entry in (self.line(None), *self.lines.values()))
         return stage in _MODE_STOPS[self.line(line).mode]
+
+    @property
+    def research_lines(self) -> tuple[str, ...]:
+        """``[program.lines]`` ids in rotation order whose mode is not ``off``."""
+
+        return tuple(line for line, entry in self.lines.items() if entry.mode != "off")
 
     @property
     def line_max_active_topics(self) -> dict[str, int]:
@@ -1553,7 +1557,6 @@ def load_program_settings(payload: Any) -> ProgramSettings:
             program.get("asset_index_path"), DEFAULT_ASSET_INDEX_PATH, "asset_index_path"
         ),
         domains=_domain_list(program.get("domains")),
-        research_lines=research_lines,
         research_lines_path=_relative_data_path(
             program.get("research_lines_path"), DEFAULT_RESEARCH_LINES_PATH,
             "research_lines_path",

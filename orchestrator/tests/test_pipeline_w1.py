@@ -1,21 +1,16 @@
-"""Pipeline overhaul W1 (2026-11-20): line-level shared facts, intake screens, the pilot
-gate, target memory and scout backoff."""
+"""Pipeline overhaul W1 (2026-11-20): line-level shared facts and simplified supply config."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import sys
-import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import test_idle_spin as idle
-import test_owner_recompute as recompute
 import test_research_lines as lines_tests
 import test_research_program_flow as flow
-from openlabs import engine, line_facts, program_flow, supply_screen
+from openlabs import engine, line_facts
 from openlabs.config import OWNER_TASK_TYPE, SupplySettings, load_program_settings
 from openlabs.program import open_topic_ledger
 from test_owner_mode import _first_seat, _latest, _owner_program, _seat_packet
@@ -29,16 +24,20 @@ JOB = "9fe82e22248d4c05b603128efb6b1368"
 # --------------------------------------------------------------------------- config
 
 
-def test_supply_settings_default_on_and_overridable() -> None:
+def test_supply_settings_defaults_and_overrides() -> None:
     supply = load_program_settings({}).supply
     assert supply == SupplySettings()
-    assert supply.line_facts and supply.pilot and supply.target_memory
-    assert supply.borderline_relative_margin == 0.05 and supply.pilot_max_threads == 8
+    assert supply.max_concurrent_scouts == 2
+    assert supply.candidate_pool_size == 4
+    assert supply.max_concurrent_reviews == 4
     parsed = load_program_settings({"supply": {
-        "line_facts": False, "pilot_max_threads": 28, "pilot_core_hours_max": 6,
-        "borderline_relative_margin": 0.1}}).supply
-    assert not parsed.line_facts and parsed.pilot_max_threads == 8  # never above 8 threads
-    assert parsed.pilot_core_hours_max == 6 and parsed.borderline_relative_margin == 0.1
+        "max_concurrent_scouts": 3, "scout_min_interval_hours": 0.5,
+        "scout_weekly_usd_per_line": 120, "max_topic_data_gb": 1000,
+        "dedup_similarity": 0.75, "max_concurrent_reviews": 2,
+    }}).supply
+    assert parsed.max_concurrent_scouts == 3 and parsed.scout_min_interval_hours == 0.5
+    assert parsed.scout_weekly_usd_per_line == 120.0 and parsed.max_topic_data_gb == 1000.0
+    assert parsed.dedup_similarity == 0.75 and parsed.max_concurrent_reviews == 2
 
 
 def test_repository_config_documents_the_supply_table() -> None:
@@ -190,8 +189,9 @@ def test_a_freeze_while_a_named_job_is_queued_parks_on_it(tmp_path, monkeypatch,
 
 
 def test_the_job_wait_is_bounded_and_a_finished_job_does_not_park(tmp_path, monkeypatch, queue):
-    paths, db, settings, (topic,) = _owner_program(
-        tmp_path, monkeypatch, supply=SupplySettings(reference_wait_max=0))
+    paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    # Pre-fill the per-topic reference wait count to the built-in limit (2).
+    db.update_meta({line_facts.REFERENCE_WAIT_PREFIX + topic["topic_id"]: "2"})
     _job(queue, JOB, "queued")
     seat = _first_seat(paths, db, settings, monkeypatch, topic)
     _seat_packet(db, paths, seat["task_id"], _freeze_packet(
@@ -214,18 +214,11 @@ def test_a_borderline_own_miss_goes_to_a_direction_decision(tmp_path, monkeypatc
     assert any("borderline" in reason for reason in packet["reasons_to_answer"])
 
 
-def test_a_clear_own_failure_and_the_switch_off_still_freeze(tmp_path, monkeypatch):
+def test_a_clear_own_failure_still_freezes(tmp_path, monkeypatch):
     paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
     seat = _first_seat(paths, db, settings, monkeypatch, topic)
     clear = [{"name": "E1", "delta": 0.5, "tolerance": 0.1, "uncertainty": 0.01}]
     _seat_packet(db, paths, seat["task_id"], _freeze_packet(failed_criteria=clear),
-                 session="s1", artifact=True)
-    _tick(paths, settings, monkeypatch)
-    assert _topic(paths, settings, topic["topic_id"])["status"] == "frozen"
-    paths, db, settings, (topic,) = _owner_program(
-        tmp_path / "off", monkeypatch, supply=SupplySettings(line_facts=False))
-    seat = _first_seat(paths, db, settings, monkeypatch, topic)
-    _seat_packet(db, paths, seat["task_id"], _freeze_packet(failed_criteria=BORDERLINE),
                  session="s1", artifact=True)
     _tick(paths, settings, monkeypatch)
     assert _topic(paths, settings, topic["topic_id"])["status"] == "frozen"
@@ -269,8 +262,6 @@ def test_a_shared_reference_blocks_the_line_and_later_topics_wait(tmp_path, monk
     block = line_facts.block_of(db, "astro-test")
     assert block["state"] == "decision_pending" and block["topic_id"] == first["topic_id"]
     assert block["reason"] == "reference_borderline"
-    assert program_flow.lines_not_ready(paths, settings, ["astro-test"], db=db) == {
-        "astro-test": "line_blocked:reference_borderline"}
     (decision,) = _direction_tasks(db)
     packet = json.loads(Path(decision["input_path"]).read_text(encoding="utf-8"))
     assert packet["trigger"]["reason"] == line_facts.TRIGGER_LINE_REFERENCE
@@ -408,448 +399,6 @@ def test_line_reopen_report_lists_line_level_freezes_and_writes_nothing(tmp_path
     assert report["dry_run"] is True and report["by_category"]["line_reference_borderline"] == 1
 
 
-# --------------------------------------------------------------------------- intake screens
-
-
-def _card(n: int = 0, **extra) -> dict:
-    card = recompute._queued_card(n)
-    card.update(extra)
-    return card
-
-
-def _caps_yaml(queue_path: Path | None = None) -> str:
-    text = ("    capabilities:\n"
-            "      third_light_prior: {available: true}\n"
-            "      spot_model: {key: environment.standard_solver.spot_config}\n")
-    return text
-
-
-def test_a_card_needing_a_missing_capability_is_rejected(tmp_path, monkeypatch):
-    card = _card(0, required_capabilities=["spot_model"])
-    *_, outcome, topic = recompute._intake(tmp_path, monkeypatch, _caps_yaml(), card=card)
-    assert outcome["status"] == "rejected" and outcome["reason"] == "card_capability_missing"
-    assert "spot_model" in topic["card_errors"][0]
-    assert topic["card_repair"]["status"] == "not_repairable"
-    ok = _card(1, required_capabilities=["third_light_prior"])
-    *_, outcome, _topic_ = recompute._intake(tmp_path / "b", monkeypatch, _caps_yaml(), card=ok)
-    assert outcome["status"] == "proposed", outcome
-    unknown = _card(2, required_capabilities=["flux_calibration"])
-    *_, outcome, topic = recompute._intake(tmp_path / "c", monkeypatch, _caps_yaml(),
-                                           card=unknown)
-    assert outcome["reason"] == "card_capability_missing"
-    assert "not in the line's capability table" in topic["card_errors"][0]
-
-
-def test_capability_table_reading() -> None:
-    entry = {"capabilities": {"a": True, "b": "unavailable", "c": {"status": "validated"},
-                              "d": {"key": "environment.x"}},
-             "environment": {"x": {"validated": False}}}
-    assert supply_screen.capability_status(entry, "a")[0]
-    assert not supply_screen.capability_status(entry, "b")[0]
-    assert supply_screen.capability_status(entry, "c")[0]
-    assert not supply_screen.capability_status(entry, "d")[0]
-    assert not supply_screen.capability_status(entry, "environment.x")[0]
-
-
-def _aemo_zip(path: Path, columns: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    body = ("C,NEMP.WORLD,DVD_DISPATCHLOAD,AEMO,PUBLIC\n"
-            "I,DISPATCH,UNIT_SOLUTION,5," + ",".join(columns) + "\n"
-            "D,DISPATCH,UNIT_SOLUTION,5," + ",".join("1" for _ in columns) + "\n")
-    with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr(path.stem + ".CSV", body)
-
-
-def test_data_requirements_check_column_coverage(tmp_path, monkeypatch):
-    folder = tmp_path / "DISPATCHLOAD"
-    for month in ("202101", "202102", "202103", "202104"):
-        columns = ["SETTLEMENTDATE", "DUID"] + (["UIGF"] if month == "202104" else [])
-        _aemo_zip(folder / f"{month}_FILE01_PUBLIC_DVD_DISPATCHLOAD_{month}010000.zip", columns)
-    requirement = {"name": "UIGF", "glob": str(folder / "*.zip"), "columns": ["UIGF"],
-                   "header": "aemo_mms"}
-    card = _card(0, data_requirements=[requirement])
-    *_, outcome, topic = recompute._intake(tmp_path, monkeypatch, "", card=card)
-    assert outcome["reason"] == "card_data_unavailable"
-    assert "1/4 files" in topic["card_errors"][0]
-    coverage = topic["card_check"]["data_coverage"][0]
-    assert coverage["files"] == 4 and coverage["covered"] == 1
-    narrow = _card(1, data_requirements=[
-        {**requirement, "months": {"from": "2021-04", "to": "2021-12"}}])
-    *_, outcome, _ = recompute._intake(tmp_path / "b", monkeypatch, "", card=narrow)
-    assert outcome["status"] == "proposed", outcome
-    csv = tmp_path / "plain" / "a.csv"
-    csv.parent.mkdir()
-    csv.write_text("time,load\n1,2\n")
-    assert supply_screen.file_columns(csv, "csv") == ["TIME", "LOAD"]
-
-
-COUNTING_FAIL = (
-    "import json, sys\nopen(%r, 'a').write('x')\n"
-    "print(json.dumps({'verdict': 'fail', 'checks': [{'name': 'totality', 'pass': False, "
-    "'hard': True, 'value': 0.3, 'rule': 'R_max >= 0.42'}]}))\nsys.exit(1)\n")
-
-
-def test_a_target_that_failed_with_an_unchanged_entry_gets_no_new_card(tmp_path, monkeypatch):
-    calls = tmp_path / "calls.txt"
-    script = recompute._script(tmp_path, COUNTING_FAIL % str(calls))
-    queue_file = tmp_path / "queue.json"
-    queue_file.write_text(json.dumps({"candidates": [{"entry_id": "TIC441806604", "x": 1}]}))
-    extra = recompute._precheck_yaml(script).replace(
-        "          command:", f"          candidate_queue_unused: x\n          command:")
-    paths, db, settings, outcome, topic = recompute._intake(tmp_path, monkeypatch, extra)
-    assert outcome["reason"] == "card_precheck_failed" and calls.read_text() == "x"
-    assert topic["card_check"]["target"] == "TIC441806604"
-    from openlabs.program_flow import intake_card
-    from openlabs.projects import load_project
-
-    project = load_project(paths.data / "workspaces" / "ai" / "projects" / "research-program"
-                           / "project.json")
-    again = intake_card(db, paths, settings, project, recompute._queued_card(1),
-                        decided_by="manual:t", provider="human", source_task_id=None,
-                        receipt_digests=None)
-    assert again["reason"] == "card_target_repeat_failure"
-    assert calls.read_text() == "x"  # the precheck was not run again
-    failed = supply_screen.failed_targets(open_topic_ledger(paths, settings.program).read(),
-                                          lines_tests.LINE, {})
-    assert failed == {"TIC441806604": "rejected:card_precheck_failed"}
-    # Target memory off: the card is checked again.
-    off = replace(settings, program=replace(settings.program, supply=SupplySettings(
-        target_memory=False)))
-    third = intake_card(db, paths, off, project, recompute._queued_card(2),
-                        decided_by="manual:t", provider="human", source_task_id=None,
-                        receipt_digests=None)
-    assert third["reason"] == "card_precheck_failed" and calls.read_text() == "xx"
-
-
-def test_entry_digest_change_lets_a_target_be_checked_again(tmp_path) -> None:
-    queue_file = tmp_path / "queue.json"
-    queue_file.write_text(json.dumps({"candidates": [{"entry_id": "TIC1", "metrics": 1,
-                                                      "ledger_occupancy": {"state": "free"}}]}))
-    digest = supply_screen.entry_digest(queue_file, "TIC1")
-    document = {"topics": [{"topic_id": "topic-a", "research_line": "l", "status": "rejected",
-                            "history": [{"to": "rejected", "reason": "card_precheck_failed",
-                                         "at": "2099-01-01T00:00:00Z"}],
-                            "card_check": {"target": "TIC1", "entry_digest": digest}}]}
-    card = {"research_line": "l", "candidate_queue_entry": {"entry_id": "TIC1"}}
-    template = {"candidate_queue": str(queue_file)}
-    assert supply_screen.repeat_failure(document, card, template)
-    # Only the occupancy changed: still the same input.
-    queue_file.write_text(json.dumps({"candidates": [{"entry_id": "TIC1", "metrics": 1,
-                                                      "ledger_occupancy": {"state": "x"}}]}))
-    assert supply_screen.repeat_failure(document, card, template)
-    queue_file.write_text(json.dumps({"candidates": [{"entry_id": "TIC1", "metrics": 2}]}))
-    assert supply_screen.repeat_failure(document, card, template) is None
-    frozen = {"topics": [{"topic_id": "topic-f", "research_line": "l", "status": "frozen",
-                          "freeze_reason_class": "feasibility_precheck_failed", "history": [],
-                          "card_check": {"target": "TIC1"}}]}
-    assert "reopens" in supply_screen.repeat_failure(frozen, card, template)
-    assert supply_screen.repeat_failure(frozen, {**card, "reopens": "topic-f"}, template) is None
-
-
-# --------------------------------------------------------------------------- pilot gate
-
-
-STAGE = ("import json, pathlib, sys\nout = pathlib.Path(sys.argv[sys.argv.index('--out') + 1])\n"
-         "out.mkdir(parents=True, exist_ok=True)\n"
-         "(out / 'run.sh').write_text('echo pilot')\n"
-         "print(json.dumps({'argv': ['bash', 'run.sh']}))\n")
-
-
-def _pilot_yaml(tmp_path: Path, **spec) -> str:
-    stage = tmp_path / "pilot_stage.py"
-    stage.parent.mkdir(parents=True, exist_ok=True)
-    stage.write_text(STAGE)
-    body = {"cpus": 12, "memory_mib": 4096, "timeout_seconds": 36000, "core_hours": 40,
-            "verdict_file": "pilot.json", **spec}
-    lines = "".join(f"          {key}: {value}\n" for key, value in body.items())
-    return ("    admission_pilot:\n      per_template:\n        contact-binary-solution:\n"
-            f"          stage: {sys.executable} {stage} {{entry_id}} --card {{card}} "
-            "--out {out}\n" + lines)
-
-
-def _finish_job(queue_root: Path, job_id: str, verdict: dict | None, state: str = "succeeded"):
-    _job(queue_root, job_id, state, updated_at=datetime.now(UTC).isoformat())
-    if verdict is not None:
-        outputs = queue_root / "jobs" / job_id / "result" / "outputs"
-        outputs.mkdir(parents=True, exist_ok=True)
-        (outputs / "pilot.json").write_text(json.dumps(verdict))
-
-
-def test_the_pilot_runs_on_ailab_before_review_and_its_verdict_is_on_the_card(
-        tmp_path, monkeypatch, queue):
-    paths, db, settings, outcome, topic = recompute._intake(
-        tmp_path, monkeypatch, _pilot_yaml(tmp_path / "s"),
-        supply=SupplySettings(pilot_core_hours_max=16))
-    assert outcome["status"] == "proposed", outcome
-    pilot = topic["card_check"]["pilot"]
-    # 12 threads asked: capped at 8; 40 core-hours asked: capped at 16 -> 2 h wall.
-    assert pilot["status"] == "pending" and pilot["budget"]["cpus"] == 8
-    assert pilot["budget"]["wall_seconds"] == 7200 and pilot["budget"]["core_hours_budget"] == 16
-    engine._sync_active_projects(db, paths, settings, engine.TickReport())
-    with db.connect() as connection:
-        admission = dict(connection.execute(
-            "SELECT * FROM campaigns WHERE campaign_id LIKE '%admission%' LIMIT 1").fetchone())
-    schedule = program_flow.schedule_topic_admission(db, paths, settings, admission, epoch=1)
-    assert schedule.task_id is None and schedule.reason == "admission_pilot_pending"
-    submitted = []
-
-    def fake_submit(source, argv, **kwargs):
-        submitted.append((Path(source), argv, kwargs))
-        job = "e" * 32
-        _job(queue, job, "queued")
-        return type("Submission", (), {"job_id": job})()
-
-    (out,) = supply_screen.advance_pilots(db, paths, settings, engine.TickReport(),
-                                          queue_root=queue, submit=fake_submit)
-    assert out["status"] == "submitted" and out["cpus"] == 8
-    source, argv, kwargs = submitted[0]
-    assert (source / "run.sh").is_file() and argv == ["bash", "run.sh"]
-    assert kwargs == {"cpu_threads": 8, "memory_mib": 4096, "wall_seconds": 7200}
-    (out,) = supply_screen.advance_pilots(db, paths, settings, engine.TickReport(),
-                                          queue_root=queue, submit=fake_submit)
-    assert out["status"] == "running"
-    _finish_job(queue, "e" * 32, {"verdict": "pass", "metrics": {"e1_half_width": 0.06}})
-    (out,) = supply_screen.advance_pilots(db, paths, settings, engine.TickReport(),
-                                          queue_root=queue, submit=fake_submit)
-    assert out["status"] == "pass"
-    card = open_topic_ledger(paths, settings.program).topic(topic["topic_id"])
-    pilot = card["card_check"]["pilot"]
-    assert pilot["verdict"] == "pass" and pilot["metrics"] == {"e1_half_width": 0.06}
-    assert pilot["job_id"] == "e" * 32 and pilot["used_core_hours"] is not None
-    schedule = program_flow.schedule_topic_admission(db, paths, settings, admission, epoch=1)
-    assert schedule.task_id is not None
-
-
-def test_a_failed_pilot_rejects_the_card_and_a_broken_one_retries(tmp_path, monkeypatch, queue):
-    paths, db, settings, outcome, topic = recompute._intake(
-        tmp_path, monkeypatch, _pilot_yaml(tmp_path / "s"))
-    jobs = iter(["1" * 32, "2" * 32, "3" * 32])
-
-    def fake_submit(source, argv, **kwargs):
-        job = next(jobs)
-        _job(queue, job, "queued")
-        return job
-
-    supply_screen.advance_pilots(db, paths, settings, engine.TickReport(), queue_root=queue,
-                                 submit=fake_submit)
-    _finish_job(queue, "1" * 32, None, state="failed")  # crashed: retried
-    (out,) = supply_screen.advance_pilots(db, paths, settings, engine.TickReport(),
-                                          queue_root=queue, submit=fake_submit)
-    assert out["status"] == "submitted" and out["job_id"] == "2" * 32
-    _finish_job(queue, "2" * 32, {"verdict": "fail", "reasons": ["E1 interval open"]})
-    (out,) = supply_screen.advance_pilots(db, paths, settings, engine.TickReport(),
-                                          queue_root=queue, submit=fake_submit)
-    assert out["status"] == "fail"
-    rejected = open_topic_ledger(paths, settings.program).topic(topic["topic_id"])
-    assert rejected["status"] == "rejected"
-    assert rejected["history"][-1]["reason"] == "card_pilot_failed"
-    assert rejected["card_check"]["pilot"]["reasons"] == ["E1 interval open"]
-
-
-# --------------------------------------------------------------------------- scouts
-
-
-def test_no_scout_for_a_queue_with_nothing_drawable(tmp_path, monkeypatch):
-    paths, queue_file = idle._queued_line(tmp_path)
-    queue_file.write_text(json.dumps({"candidates": [
-        {"entry_id": "TIC 1", "ledger_occupancy": {"state": "in_flight"}}]}))
-    db = flow._db(paths)
-    settings = flow._settings(scout_min_interval_hours=0)
-    templates = program_flow.line_templates(
-        program_flow.research_lines_document(paths, settings), lines_tests.LINE)
-    if any("candidate_queue" not in item for item in templates):
-        # Only a line whose every template is enumerated is judged by its queue.
-        path = paths.data / "registry" / "research-lines.yaml"
-        text = path.read_text(encoding="utf-8")
-        path.write_text(text.replace("        minimum_content:", f"        candidate_queue: "
-                                     f"{queue_file}\n        minimum_content:")
-                        .replace(f"        candidate_queue: {queue_file}\n"
-                                 f"        candidate_queue: {queue_file}\n",
-                                 f"        candidate_queue: {queue_file}\n"),
-                        encoding="utf-8")
-    report = _tick(paths, settings, monkeypatch)
-    assert report.program["scouts_scheduled"] == []
-    assert report.program["scout_blocked"] == "candidate_queue_empty"
-    (signal,) = report.program["line_supply"]
-    assert signal["signal"] == "supply_exhausted" and signal["drawable"] == 0
-    queue_file.write_text(json.dumps({"candidates": [{"entry_id": "TIC 2"}]}))
-    report = _tick(paths, settings, monkeypatch)
-    assert len(report.program["scouts_scheduled"]) == 1
-
-
-def test_empty_draw_backoff_doubles_past_the_steps_up_to_the_cap(tmp_path, monkeypatch):
-    paths, _queue = idle._queued_line(tmp_path)
-    db = flow._db(paths)
-    settings = flow._settings(scout_min_interval_hours=0, scout_exhausted_after=0,
-                              scout_empty_backoff_hours=(1.0, 6.0))
-    state = {"count": 4, "fingerprint": None, "last_at": datetime.now(UTC).isoformat(),
-             "reason": "candidate_queue_exhausted"}
-    projects = program_flow.program_projects(paths)
-    document = open_topic_ledger(paths, settings.program).read()
-    state["fingerprint"] = program_flow.scout_supply_fingerprint(paths, settings, projects[0],
-                                                                 document)
-    db.update_meta({program_flow.SCOUT_SUPPLY_PREFIX + lines_tests.LINE: json.dumps(state)})
-    blocks = program_flow.scout_supply_blocks(db, paths, settings, projects, document,
-                                              moment=datetime.now(UTC))
-    assert blocks[lines_tests.LINE]["backoff_hours"] == 24.0  # 6 x 2 x 2
-    state["count"] = 9
-    db.update_meta({program_flow.SCOUT_SUPPLY_PREFIX + lines_tests.LINE: json.dumps(state)})
-    blocks = program_flow.scout_supply_blocks(db, paths, settings, projects, document,
-                                              moment=datetime.now(UTC))
-    assert blocks[lines_tests.LINE]["backoff_hours"] == 48.0
-
-
-def test_a_card_drawn_from_a_held_entry_waits_for_its_capability(tmp_path, monkeypatch):
-    queue_file = tmp_path / "held-queue.json"
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    queue_file.write_text(json.dumps({"candidates": [], "held_candidates": [
-        {"entry_id": "TIC441806604", "draw_hold": {
-            "reason": "needs_spot", "release_when": {
-                "kind": "line_capability", "key": "environment.standard_solver.spot_config"}}}]}))
-    entry = {"id": "l", "paper_templates": [], "environment": {"standard_solver": {}}}
-    card = _card(0)
-    card["research_line"] = "l"
-    problems = supply_screen.capability_problems(
-        None, None, card, entry, {"candidate_queue": str(queue_file)})
-    assert problems and "needs_spot" in problems[0]
-    entry["environment"]["standard_solver"]["spot_config"] = {"validated": True}
-    assert supply_screen.capability_problems(
-        None, None, card, entry, {"candidate_queue": str(queue_file)}) == []
-
-
-def _aemo_rows_zip(path: Path, columns: list[str], values: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    body = ("C,NEMP.WORLD,DVD_DISPATCHLOAD,AEMO,PUBLIC\n"
-            "I,DISPATCH,UNIT_SOLUTION,5," + ",".join(columns) + "\n"
-            + "".join("D,DISPATCH,UNIT_SOLUTION,5," + ",".join(values) + "\n" for _ in range(3)))
-    with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr(path.stem + ".CSV", body)
-
-
-def test_nonblank_requirement_counts_only_files_whose_column_has_values(tmp_path):
-    folder = tmp_path / "DISPATCHLOAD"
-    _aemo_rows_zip(folder / "202307_FILE01_X_202307010000.zip", ["DUID", "UIGF"], ["A", ""])
-    _aemo_rows_zip(folder / "202309_FILE01_X_202309010000.zip", ["DUID", "UIGF"], ["A", "12.5"])
-    cache = supply_screen.HeaderCache(tmp_path / "headers.json")
-    item = {"name": "UIGF", "glob": str(folder / "*.zip"), "columns": ["UIGF"],
-            "header": "aemo_mms"}
-    assert supply_screen.requirement_coverage(item, data_root=tmp_path, cache=cache)["ok"]
-    row = supply_screen.requirement_coverage({**item, "nonblank": True}, data_root=tmp_path,
-                                             cache=cache)
-    assert not row["ok"] and row["covered"] == 1
-    assert row["files_missing_columns"] == ["202307_FILE01_X_202307010000.zip"]
-    narrow = {**item, "nonblank": True, "months": {"from": "2023-09"}}
-    assert supply_screen.requirement_coverage(narrow, data_root=tmp_path, cache=cache)["ok"]
-    cache.save()
-    stored = json.loads((tmp_path / "headers.json").read_text())
-    assert all(key.endswith("|v2") for key in stored)
-    csv = tmp_path / "plain.csv"
-    csv.write_text("unit,rms,label\n1,,\n2,0.5,\n")
-    assert supply_screen.file_profile(csv, "csv") == {"columns": ["UNIT", "RMS", "LABEL"],
-                                                      "valued": ["RMS", "UNIT"]}
-
-
-def test_presence_only_requirement_with_a_file_count(tmp_path):
-    folder = tmp_path / "mat"
-    folder.mkdir()
-    for index in range(3):
-        # Binary content without line breaks must not be read as a header.
-        (folder / f"B{index}.mat").write_bytes(
-            bytes(value for value in range(256) if value not in (10, 13)) * 4096)
-    (folder / "subdir.mat").mkdir()
-    cache = supply_screen.HeaderCache(None)
-    item = {"name": "bearings", "glob": str(folder / "*.mat"), "header": "none", "min_files": 3}
-    row = supply_screen.requirement_coverage(item, data_root=tmp_path, cache=cache)
-    assert row["files"] == 4 and row["covered"] == 3 and row["unreadable"] == ["subdir.mat"]
-    assert not row["ok"]  # the directory is not a data file: 3/4 < min_fraction 1.0
-    row = supply_screen.requirement_coverage({**item, "min_fraction": 0.75}, data_root=tmp_path,
-                                             cache=cache)
-    assert row["ok"]
-    row = supply_screen.requirement_coverage({**item, "min_files": 5, "min_fraction": 0.5},
-                                             data_root=tmp_path, cache=cache)
-    assert not row["ok"] and "5 required" in row["error"]
-    bad = supply_screen.requirement_coverage({**item, "header": "parquet"}, data_root=tmp_path,
-                                             cache=cache)
-    assert not bad["ok"] and "equivalent_exports" in bad["error"]
-    # A csv reading of a binary file stops at the bounded line length.
-    lines = supply_screen._header_lines(folder / "B0.mat")
-    assert len(lines) == 1 and len(lines[0]) <= supply_screen.HEADER_LINE_CHARS
-
-
-def test_queue_entry_data_requirements_join_the_card_screen(tmp_path):
-    folder = tmp_path / "DISPATCHLOAD"
-    _aemo_rows_zip(folder / "202101_FILE01_X_202101010000.zip", ["DUID"], ["A"])
-    queue_file = tmp_path / "queue.json"
-    need = {"name": "UIGF", "glob": str(folder / "*.zip"), "columns": ["UIGF"],
-            "header": "aemo_mms"}
-    queue_file.write_text(json.dumps({"candidates": [
-        {"entry_id": "PMB-90", "card_fields": {"data_requirements": [need]}},
-        {"entry_id": "PMB-91", "data_requirements": [{**need, "columns": ["DUID"]}]},
-        {"entry_id": "PMB-92"}]}))
-
-    class _Paths:
-        program_control = tmp_path / "program-control"
-        data = tmp_path
-
-    template = {"candidate_queue": str(queue_file)}
-
-    def problems(entry_id: str) -> tuple[list[str], list[dict]]:
-        card = {"candidate_queue_entry": {"entry_id": entry_id, "queue": str(queue_file)}}
-        return supply_screen.data_problems(_Paths, None, card, {}, template)
-
-    failed, rows = problems("PMB-90")
-    assert len(failed) == 1 and "0/1 files" in failed[0] and rows[0]["name"] == "UIGF"
-    failed, rows = problems("PMB-91")
-    assert failed == [] and rows[0]["covered"] == 1
-    assert problems("PMB-92") == ([], [])
-    # A card-level item of the same name overrides the entry's.
-    card = {"candidate_queue_entry": {"entry_id": "PMB-90", "queue": str(queue_file)},
-            "data_requirements": [{"name": "UIGF", "columns": ["DUID"]}]}
-    failed, rows = supply_screen.data_problems(_Paths, None, card, {}, template)
-    assert failed == [] and rows[0]["columns"] == ["DUID"]
-
-
-def test_pilot_cache_requires_version_and_exact_staged_bytes(tmp_path):
-    staged = {"source": tmp_path, "argv": ["bash", "run.sh"]}
-    script = tmp_path / "run.sh"
-    script.write_text("echo first")
-    digest = supply_screen.pilot_input_digest
-    assert digest(staged, {}, {}, {}) is None
-    first = digest(staged, {}, {"data_version": "v1"}, {})
-    assert first == digest(staged, {}, {"data_version": "v1"}, {})
-    assert first != digest(staged, {}, {"data_version": "v2"}, {})
-    script.write_text("echo second")
-    assert first != digest(staged, {}, {"data_version": "v1"}, {})
-
-
-def test_equivalent_export_is_bound_to_both_files(tmp_path):
-    source = tmp_path / "data.bin"
-    source.write_bytes(b"sample")
-    csv = tmp_path / "export.csv"
-    csv.write_text("RATE\n0.5\n")
-    proof = {"csv": csv.name, "csv_sha256": hashlib.sha256(csv.read_bytes()).hexdigest(),
-             "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "explanation": "RATE in Hz"}
-    req = {"glob": "*.bin", "columns": ["RATE"], "header": "binary", "equivalent_exports": {source.name: proof}}
-    cache = supply_screen.HeaderCache(tmp_path / "headers.json")
-    assert supply_screen.requirement_coverage(req, data_root=tmp_path, cache=cache)["ok"]
-    source.write_bytes(b"new")
-    assert not supply_screen.requirement_coverage(req, data_root=tmp_path, cache=cache)["ok"]
-
-
 def test_changed_reference_receipt_is_not_the_same_shared_failure():
     record = {"reference_id": "control", "receipt_sha256": "old"}
     assert not line_facts._same_reference(record, {"id": "control", "receipt_sha256": "new"})
-
-
-def test_photometry_pilot_reuses_identical_scientific_inputs_across_staging_times(tmp_path):
-    light_curve = hashlib.sha256(b"light curve").hexdigest()
-    staged = {"source": tmp_path, "argv": ["bash", "run.sh"], "pilot_version": "ap-pilot-1",
-              "data_digest": light_curve}
-    params = {"lc_sha256": light_curve, "period": 0.3, "staged_at": "yesterday", "card": "old.json"}
-    card = {"paper_template": "contact-binary-solution"}
-    def fingerprint(**changes):
-        (tmp_path / "params.json").write_text(json.dumps({**params, **changes}))
-        return supply_screen.pilot_input_digest(staged, {}, card, {})
-    first = fingerprint()
-    assert first and first == fingerprint(staged_at="today", card="new.json")
-    assert first != fingerprint(period=0.4)

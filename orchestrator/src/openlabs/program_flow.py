@@ -2024,6 +2024,8 @@ def _research_state(
             "card_sha256": record.get("card_sha256"),
             **({"research_line": line} if line else {}),
             **({"queue_entry_id": q_id} if q_id else {}),
+            **({"reusable_assets": proposal["reusable_assets"]}
+               if proposal.get("reusable_assets") else {}),
         }
 
     # Backward compatibility for legacy v1/v2 admission records already on disk.
@@ -2104,7 +2106,7 @@ def materialize_waiting_topics(
         branch["objective"] = (
             f"Execute admitted topic `{topic_id}`: {topic.get('question') or ''}. "
             "Read the proposal brief and review rationale in research_state.json. "
-            "Run Milestone 1 (Kill Test: sections 5 & 6 of the brief) first on real data; "
+            "Run Milestone 1 (Kill Test) — sections 5 & 6 of the brief — first on real data; "
             "if it fails, freeze immediately with one of the four freeze classes "
             "(data_access, method_capability, negative_result, resources_exhausted) and evidence; "
             "if it passes, advance to solving and complete the full study."

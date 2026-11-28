@@ -19,21 +19,19 @@ from openlabs.config import load_program_settings
 from openlabs.program import open_topic_ledger, paused_topic_campaigns
 from openlabs.program_flow import (
     materialize_waiting_topics,
-    schedule_card_repairs,
-    schedule_revisions,
     schedule_scouts,
 )
 from openlabs.reopen import reopen_ready_topics
 from openlabs.topic_pause import TopicPauseError, pause_topic
 from test_research_program_flow import (
     RECEIPT_SHA,
-    _branch,
     _card,
     _complete,
     _db,
     _install_program,
     _packet,
     _paths,
+    _review,
     _settings,
     _tick,
     _to_admission,
@@ -61,8 +59,6 @@ def test_polish_mode_holds_scouts_admissions_repairs_and_materialization(
     polish = _polish(settings)
 
     assert schedule_scouts(db, paths, polish, lead_short=False) == ([], "polish_mode")
-    assert schedule_revisions(db, paths, polish, lead_short=False) == ([], "polish_mode")
-    assert schedule_card_repairs(db, paths, polish) == []
     assert reopen_ready_topics(db, paths, polish, None) == []
     campaign = db.campaign("ai-program-scout") or {"campaign_id": "x"}
     assert program_flow.schedule_topic_admission(
@@ -89,8 +85,8 @@ def test_admitted_topic_waits_in_polish_mode_and_starts_after(tmp_path, monkeypa
     settings = _settings()
     # An admission review already in flight when polish mode is switched on.
     _, admission, _ = _to_admission(paths, db, settings, monkeypatch, [_card(0, RECEIPT_SHA)])
-    entry = _packet(admission)["topic_cards"][0]
-    _complete(db, paths, admission["task_id"], extra={"candidate_branches": [_branch(entry)]})
+    entry = _packet(admission)["topic_proposals"][0]
+    _complete(db, paths, admission["task_id"], extra={"reviews": [_review(entry)]})
     polish = _polish(settings)
 
     report = _tick(paths, polish, monkeypatch)
@@ -111,8 +107,8 @@ def _active_topic(tmp_path, monkeypatch):
     db = _db(paths)
     settings = _settings()
     _, admission, _ = _to_admission(paths, db, settings, monkeypatch, [_card(0, RECEIPT_SHA)])
-    entry = _packet(admission)["topic_cards"][0]
-    _complete(db, paths, admission["task_id"], extra={"candidate_branches": [_branch(entry)]})
+    entry = _packet(admission)["topic_proposals"][0]
+    _complete(db, paths, admission["task_id"], extra={"reviews": [_review(entry)]})
     report = _tick(paths, settings, monkeypatch)
     assert report.errors == []
     topic = open_topic_ledger(paths, settings.program).topic(entry["topic_id"])

@@ -11,8 +11,8 @@ import pytest
 import test_parallel_program as parallel
 import test_research_lines as lines_tests
 import test_research_program_flow as flow
-from openlabs import card_precheck, local_compute, utilization
-from openlabs.config import LineSettings, load_program_settings
+from openlabs import local_compute, utilization
+from openlabs.config import LineSettings, SupplySettings, load_program_settings
 from openlabs.contracts import atomic_write_json
 from openlabs.program import (
     activate_topic,
@@ -28,8 +28,8 @@ from openlabs.program_flow import (
     _admission_record_path,
     ledger_queue_entries,
     materialize_waiting_topics,
+    queue_candidates,
     schedule_scouts,
-    template_supply,
 )
 from openlabs.projects import load_project
 from openlabs.research_lines import line_resources, line_uses_gpu
@@ -42,14 +42,17 @@ ASTRO, ENGINEERING = "astro-photometry", "engineering-vvuq"
 
 
 def test_line_limits_parse_and_reject_nonsense() -> None:
-    settings = load_program_settings({"enabled": True, "line_max_active_topics": {
-        "astro-survey-photometry": 2, "power-market-backtest": 2, "phm-evaluation-audit": 1}})
+    settings = load_program_settings({"enabled": True, "lines": {
+        "astro-survey-photometry": {"slots": 2},
+        "power-market-backtest": {"slots": 2},
+        "phm-evaluation-audit": {"slots": 1},
+    }})
     assert settings.line_max_active_topics == {
         "astro-survey-photometry": 2, "power-market-backtest": 2, "phm-evaluation-audit": 1}
     assert load_program_settings({}).line_max_active_topics == {}
-    for bad in ({"x": -1}, {"x": "2"}, {"x": True}, ["x"]):
-        with pytest.raises(ValueError, match="line_max_active_topics"):
-            load_program_settings({"line_max_active_topics": bad})
+    for bad in (-1, "2", True):
+        with pytest.raises(ValueError, match="slots"):
+            load_program_settings({"lines": {"x": {"slots": bad}}})
 
 
 # --------------------------------------------------------------------------- slot counts
@@ -61,9 +64,9 @@ def _topic(topic_id: str, status: str, line: str, campaign: str | None = None) -
 
 
 def test_paused_topics_and_line_waiting_admissions_hold_no_slot() -> None:
-    settings = load_program_settings({"enabled": True, "max_active_topics": 5,
-                                      "line_max_active_topics": {"astro": 2, "power": 2,
-                                                                 "phm": 1}})
+    settings = load_program_settings({"enabled": True, "max_active_topics": 5, "lines": {
+        "astro": {"slots": 2}, "power": {"slots": 2}, "phm": {"slots": 1},
+    }})
     ledger = {"topics": [
         _topic("a1", "active", "astro", "c1"), _topic("a2", "active", "astro", "c2"),
         *[_topic(f"p{n}", "active", "astro", f"paused-{n}") for n in range(4)],
@@ -131,8 +134,9 @@ def _seed(ledger, db, settings, project_id: str, line: str, n: int, status: str,
 
 def _full_astro(tmp_path, **program):
     paths, db, settings = lines_tests._line_program(
-        tmp_path, (ASTRO, ENGINEERING), max_concurrent_scouts=1, candidate_pool_low_water=4,
-        scout_min_interval_hours=0, lines={ASTRO: LineSettings(slots=2), ENGINEERING: LineSettings(slots=1)},
+        tmp_path, (ASTRO, ENGINEERING),
+        supply=SupplySettings(max_concurrent_scouts=1, candidate_pool_size=4, scout_min_interval_hours=0),
+        lines={ASTRO: LineSettings(slots=2), ENGINEERING: LineSettings(slots=1)},
         max_active_topics=5, **program)
     projects = {load_project(path).research_line: load_project(path).project_id
                 for path in paths.project_config_paths() if load_project(path).research_line}
@@ -143,21 +147,21 @@ def _full_astro(tmp_path, **program):
     return paths, db, settings, projects, ledger, waiting
 
 
-def test_a_full_line_gets_no_scout_and_the_free_line_asks_only_for_its_slots(tmp_path):
+def test_a_full_line_gets_no_scout_and_the_free_line_scouts_up_to_pool(tmp_path):
     paths, db, settings, _, _, _ = _full_astro(tmp_path)
     scheduled, _ = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
     assert [item.research_line for item in scheduled] == [ENGINEERING]
     packet = json.loads(Path(parallel._scouts(db)[0]["input_path"]).read_text())
-    assert packet["max_cards"] == 1 and packet["line_free_slots"] == 1
-    # Once the engineering line's card waits for admission, it has no room left either.
+    assert packet["max_proposals"] == 4 and packet["line_free_slots"] == 1
     parallel._finish(db, [item.task_id for item in scheduled])
-    db.update_meta({LAST_SCOUT_KEY: "2000-01-01T00:00:00Z"})
+    db.update_meta({LAST_SCOUT_KEY: "2000-01-01T00:00:00Z", f"{LAST_SCOUT_KEY}:{ENGINEERING}": "2000-01-01T00:00:00Z"})
     ledger = open_topic_ledger(paths, settings.program)
     project = next(load_project(p).project_id for p in paths.project_config_paths()
                    if load_project(p).research_line == ENGINEERING)
-    _seed(ledger, db, settings, project, ENGINEERING, 9, "proposed")
+    for n in range(4):
+        _seed(ledger, db, settings, project, ENGINEERING, 9 + n, "proposed")
     again, reason = schedule_scouts(db, paths, settings, lead_short=False, now=NOW)
-    assert again == [] and reason == LINE_SLOTS_FULL_REASON
+    assert again == [] and reason == "candidate_pool_at_low_water"
 
 
 def test_waiting_cards_of_a_full_line_do_not_hold_the_pool(tmp_path):
@@ -189,37 +193,9 @@ def test_admission_of_a_full_line_waits_for_its_slot(tmp_path, monkeypatch):
     first = flow._tick(paths, settings, monkeypatch)
     assert first.program["scouts_scheduled"] == []
     assert first.program["scout_blocked"] == LINE_SLOTS_FULL_REASON
-    # With a slot the same line scouts and reviews as before.
     settings = flow._settings(lines={lines_tests.LINE: LineSettings(slots=1)})
     _, admission, _ = flow._to_admission(paths, db, settings, monkeypatch, [card])
-    assert len(flow._packet(admission)["topic_cards"]) == 1
-
-
-# --------------------------------------------------------------------------- card floor
-
-
-def test_gpu_hour_floor_raises_a_gpu_card_only() -> None:
-    line = {"card_compute_floor": {"core_hours": 20, "gpu_hours": 40, "agent_hours": 10}}
-    floor = card_precheck.compute_floor(line, {})
-    assert floor == {"source": "line card_compute_floor", "core_hours": 20.0,
-                     "agent_seconds": 36000, "gpu_hours": 40.0}
-    gpu_card = {"cost_estimate": {"agent_seconds": 7200, "gpu_hours": 12, "compute_plan": {
-        "locations": ["container_gpu", "container_cpu"], "gpu_memory_mib": 2048}}}
-    fixed, notes = card_precheck.apply_compute_floor(gpu_card, floor)
-    assert fixed["cost_estimate"]["gpu_hours"] == 40
-    assert fixed["cost_estimate"]["agent_seconds"] == 36000
-    assert any("gpu_hours raised from 12 to 40" in note for note in notes)
-    cpu_card = {"cost_estimate": {"agent_seconds": 72000, "gpu_hours": 0, "compute_plan": {
-        "locations": ["container_cpu"]}}}
-    fixed, notes = card_precheck.apply_compute_floor(cpu_card, floor)
-    assert fixed["cost_estimate"]["gpu_hours"] == 0 and notes == []
-    # per_paper_cost: gpu_hours_lower_bound first, else the leading number of gpu_hours.
-    template = {"per_paper_cost": {"gpu_hours_lower_bound": 40, "gpu_hours": "60-200 est"}}
-    assert card_precheck.compute_floor({}, template)["gpu_hours"] == 40
-    template = {"per_paper_cost": {"gpu_hours": "60-200 (estimate)", "agent_hours": "10-30"}}
-    assert card_precheck.compute_floor({}, template)["gpu_hours"] == 60
-    astro = {"per_paper_cost": {"cpu_core_hours": "60-120", "gpu_hours": 0}}
-    assert "gpu_hours" not in card_precheck.compute_floor({}, astro)
+    assert len(flow._packet(admission)["topic_proposals"]) == 1
 
 
 # --------------------------------------------------------------------------- line resources
@@ -421,21 +397,8 @@ def test_queue_entries_taken_by_ledger_topics(tmp_path) -> None:
          "card_path": card(tmp_path / "c.json", "PMB-03")},
     ]}
     taken = ledger_queue_entries(document, "pmb")
-    assert taken == {"PMB-01": "active"}  # a format rejection may be drawn again
-    queue = tmp_path / "queue.json"
-    queue.write_text(json.dumps({"candidates": [
-        {"entry_id": "PMB-01", "rank": 1}, {"entry_id": "PMB-02", "rank": 2},
-        {"entry_id": "TIC1", "ledger_occupancy": {"state": "blocked"}}]}))
-    assert template_supply({"t": str(queue)}, taken)["t"]["drawable"] == 1
-    assert template_supply({"t": str(queue)})["t"]["drawable"] == 2
-    # One queue file shared by two templates: each counts its own entries.
-    shared = tmp_path / "shared.json"
-    shared.write_text(json.dumps({"candidates": [
-        {"entry_id": "PMB-01", "card_fields": {"paper_template": "rule"}},
-        {"entry_id": "PMB-13", "card_fields": {"paper_template": "evolution"}},
-        {"entry_id": "PMB-03", "card_fields": {"paper_template": "rule"}}]}))
-    supply = template_supply({"rule": str(shared), "evolution": str(shared)}, taken)
-    assert supply["rule"]["drawable"] == 1 and supply["evolution"]["drawable"] == 1
+    assert set(taken) == {"pmb-01"}  # a format rejection may be drawn again
+    assert taken["pmb-01"]["status"] == "active"
 
 
 # --------------------------------------------------------------------------- repository
@@ -456,14 +419,11 @@ def test_new_lines_in_the_repository_direction_file_are_complete() -> None:
         assert entry["review_checklist"]["path"].startswith("registry/research-lines/sop-")
         assert entry["venues"]["tier_policy"]
         for template in entry["paper_templates"]:
-            spec = card_precheck.precheck_spec(entry, template["id"])
-            assert spec is not None and "{entry_id}" in spec["command"]
             assert Path(template["candidate_queue"]).is_absolute()
-        assert card_precheck.compute_floor(entry, entry["paper_templates"][0])
         resources = line_resources(entry)
         assert {"analysis_package", "control_receipt", "data", "sop"} <= set(resources)
     phm = next(item for item in document["lines"] if item["id"] == "phm-evaluation-audit")
-    assert line_uses_gpu(phm) and card_precheck.compute_floor(phm, {})["gpu_hours"] == 40
+    assert line_uses_gpu(phm)
 
 
 # --------------------------------------------------------------------------- 2026-11-19 fixes

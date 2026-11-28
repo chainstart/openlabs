@@ -639,3 +639,49 @@ def test_supply_metrics_summarizes_rates_freezes_and_registrations(tmp_path) -> 
     assert row["freeze_categories"] == {"data_access": 1}
     assert row["rejection_reasons"] == {REJECTION_REVIEW_NO_GO: 1}
     assert metrics["needs_registration"][0]["source"] == "MIMIC-IV"
+
+
+# --------------------------------------------------------------------------- 6. owner kill test & 4-class freeze
+
+
+def test_owner_brief_milestone_1_kill_test_and_four_class_freeze(tmp_path, monkeypatch) -> None:
+    from openlabs import owner
+    from test_owner_mode import _first_seat, _owner_program, _seat_packet
+
+    paths, db, settings, (topic,) = _owner_program(
+        tmp_path, monkeypatch, grade_before_writing=True,
+    )
+    campaign = db.campaign(topic["campaign_id"])
+    seat = _first_seat(paths, db, settings, monkeypatch, topic)
+
+    brief = owner.render_brief(
+        paths, settings, task=seat, campaign=campaign, topic=topic,
+        adapter_family="anthropic", deadline=datetime.now(UTC) + timedelta(hours=2),
+    )
+    assert "Milestone 1 (Kill Test)" in brief
+    assert "kill_test|solving|writing" in brief
+    assert "prescreen.kill_test" not in brief
+    assert "Pre-writing journal grading" in brief
+    for cls in ("data_access", "method_capability", "negative_result", "resources_exhausted"):
+        assert cls in brief
+
+    # Owner advances from kill_test -> solving and can freeze cleanly without preregistration_sha256.
+    _seat_packet(
+        db, paths, seat["task_id"],
+        {
+            "status": "frozen",
+            "phase": "kill_test",
+            "freeze_reason_class": "negative_result",
+            "reason": "Kill test showed baseline gap < 0.002 AUROC on real data.",
+        },
+        session="s1",
+        artifact=True,
+    )
+    report = _tick(paths, settings, monkeypatch)
+    assert report.errors == []
+    stored = open_topic_ledger(paths, settings.program).topic(topic["topic_id"])
+    assert stored["status"] == "frozen"
+    assert stored["freeze_reason_class"] == "negative_result"
+    assert stored["freeze_reason_category"] == "negative_result"
+    assert stored["preregistration_sha256"] is None
+

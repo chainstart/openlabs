@@ -109,10 +109,3 @@ def test_pause_event_records_the_reason_kind(tmp_path) -> None:
             "SELECT payload_json FROM events WHERE entity_id=? AND event_type="
             "'continuous_production_paused' ORDER BY rowid DESC LIMIT 1", (campaign_id,)).fetchone()
     assert json.loads(row[0])["reason_kind"] == "rounds_exhausted"
-
-
-def test_polish_mode_keeps_admission_holds_held(tmp_path) -> None:
-    from openlabs import program_flow
-
-    paths, db, program_settings, _ = _setup(tmp_path, polish_mode=True)
-    assert program_flow.release_ready_holds(db, paths, SimpleNamespace(program=program_settings)) == []

@@ -170,8 +170,12 @@ def test_tick_reports_the_ceiling_and_launches_against_it(tmp_path, monkeypatch)
     paths = flow._paths(tmp_path)
     flow._install_program(paths)
     db = flow._db(paths)
-    settings = replace(flow._settings(max_concurrent_scouts=2, scout_min_interval_hours=0),
-                       budget=BudgetSettings(max_parallel_agents=4, adaptive_parallel=True))
+    from openlabs.config import SupplySettings
+
+    settings = replace(
+        flow._settings(supply=SupplySettings(max_concurrent_scouts=2, scout_min_interval_hours=0)),
+        budget=BudgetSettings(max_parallel_agents=4, adaptive_parallel=True),
+    )
     report = flow._tick(paths, settings, monkeypatch)
     payload = report.to_dict()
     assert payload["parallel_limit"]["adaptive"] is True

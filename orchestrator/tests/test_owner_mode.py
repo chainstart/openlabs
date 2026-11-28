@@ -295,7 +295,7 @@ def test_ready_for_review_goes_to_another_family_and_comments_return_to_the_owne
     review = _latest(db, topic["campaign_id"])
     assert review["task_type"] == "paper_review" and review["parent_task_id"] == seat["task_id"]
     assert "20261114-ai-owner" in review["objective"]
-    assert topic["preregistration_sha256"] in review["objective"]
+    assert "proposal brief" in review["objective"]
     assert _topic(paths, settings, topic["topic_id"])["status"] == "in_review"
     review = _lease(paths, settings, monkeypatch, db, review["task_id"])
     assert RUNNERS[review["runner"]].provider != RUNNERS[seat["runner"]].provider
@@ -360,6 +360,12 @@ def test_ready_for_review_needs_an_endpoint_verdict(tmp_path, monkeypatch):
 
 def test_frozen_packet_freezes_with_the_ledger_hash(tmp_path, monkeypatch):
     paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    # Legacy active topic with a recorded preregistration_sha256 keeps hash backfill on freeze.
+    legacy_sha = "a" * 64
+    with open_topic_ledger(paths, settings.program).transaction() as doc:
+        for item in doc["topics"]:
+            if item["topic_id"] == topic["topic_id"]:
+                item["preregistration_sha256"] = legacy_sha
     seat = _first_seat(paths, db, settings, monkeypatch, topic)
     _seat_packet(db, paths, seat["task_id"], {
         "status": "frozen", "freeze_reason_class": "feasibility_precheck_failed",
@@ -370,14 +376,18 @@ def test_frozen_packet_freezes_with_the_ledger_hash(tmp_path, monkeypatch):
     frozen = _topic(paths, settings, topic["topic_id"])
     assert frozen["status"] == "frozen"
     stored = json.loads(Path(db.task(seat["task_id"])["result_path"]).read_text())
-    assert stored["preregistration_sha256"] == topic["preregistration_sha256"]
+    assert stored["preregistration_sha256"] == legacy_sha
     assert stored["primary_endpoint_verdict"] == "pending"  # unstated: never evaluated
 
 
 def test_failed_gate_returns_to_the_owner_not_to_a_replan(tmp_path, monkeypatch):
     paths, db, settings, (topic,) = _owner_program(tmp_path, monkeypatch)
+    with open_topic_ledger(paths, settings.program).transaction() as doc:
+        for item in doc["topics"]:
+            if item["topic_id"] == topic["topic_id"]:
+                item["preregistration_sha256"] = "a" * 64
     seat = _first_seat(paths, db, settings, monkeypatch, topic)
-    # A wrong hash is a real integrity failure: refused, then back to the owner.
+    # A wrong hash on a legacy preregistered topic is refused, then back to the owner.
     _seat_packet(db, paths, seat["task_id"], {"status": "frozen", "reason": "x",
                                               "preregistration_sha256": "f" * 64}, session="s1")
     _tick(paths, settings, monkeypatch)
@@ -539,7 +549,7 @@ def test_brief_is_short_has_the_four_parts_and_forces_no_skill(tmp_path, monkeyp
     # budget, deadline and queue snapshot all come after "## Ending a seat".
     static_end = body.index("## Ending a seat")
     for dynamic in (topic["topic_id"], "Agent seconds used", "Capacity: ailab",
-                    topic["preregistration_sha256"]):
+                    "Milestone 1 (Kill Test)"):
         assert body.index(dynamic) > static_end, dynamic
     assert body.startswith("# Topic owner\n") and "Context: every output stays" in body
     assert "large proxy downloads (>= 200 MB file or 1024 MB batch) only 02:00-14:00 " \
@@ -549,7 +559,7 @@ def test_brief_is_short_has_the_four_parts_and_forces_no_skill(tmp_path, monkeyp
     for heading in ("## Goal", "## Resources", "## Tools", "## Hard limits", "## Ending a seat"):
         assert heading in request
     assert "Invoke" not in request and "Skill tool" not in request
-    assert topic["preregistration_sha256"] in request
+    assert "Milestone 1 (Kill Test)" in request
     assert "codex exec -m gpt-6.2-sol" in request and "Agent tool" in request
     assert "program utilization" in request and "download-submit" in request
     assert block["claude_subagent_model"] == "claude-opus-5-5"
@@ -874,13 +884,13 @@ def test_same_journal_retarget_keeps_the_ready_review(tmp_path, monkeypatch, bou
     import hashlib
 
     import yaml
-    from openlabs import program_autonomy, target_stage
+    from openlabs import nc_grading, program_autonomy
     from test_program_autonomy import _deliverable, _direction_task, _retarget_decision
 
     paths, db, settings, (topic,) = _owner_program(
         tmp_path, monkeypatch, auto_handoff=True,
         owner_settings=OwnerSettings(recompute_review=False, session_max_seats=0))
-    monkeypatch.setattr(target_stage, "tier2_topic", lambda _: True)
+    monkeypatch.setattr(nc_grading, "needs_acceptance_grade", lambda _s, _t: True)
     _deliverable(monkeypatch)
     monkeypatch.setenv("ARA_PAPER_MANAGE_API_URL", "https://manage.invalid")
     monkeypatch.setenv("ARA_PAPER_MANAGE_API_KEY", "test-key")

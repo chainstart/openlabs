@@ -129,7 +129,9 @@ STAGE_MINOR = "minor_revision"
 STAGE_PASSED = "recompute_passed"
 STAGE_UNIFIED = "unified_review"
 # Phases an owner may declare in its packet (``phase``); reported per topic.
-OWNER_PHASES = ("precheck", "solving", "writing")
+# Legacy topics recorded "precheck" (rank 0, aliased to "kill_test").
+OWNER_PHASES = ("kill_test", "solving", "writing")
+_PHASE_ALIASES = {"precheck": "kill_test"}
 # Directory names never part of the progress fingerprint: runtime and outputs.
 _DIGEST_SKIP_DIRS = frozenset({".agents", ".codex", ".claude", "attempts", "__pycache__"})
 _DIGEST_SKIP_FILES = frozenset({WORK_LOG_NAME, BRIEF_NAME, HANDOVER_NAME})
@@ -1481,7 +1483,8 @@ def record_seat(
         reasons.append("jobs_finished")
     if final_status == "yielded":
         reasons.append("jobs_submitted")
-    previous_phase = str(state.get("phase") or "")
+    phase = _PHASE_ALIASES.get(phase, phase)
+    previous_phase = _PHASE_ALIASES.get(str(state.get("phase") or ""), str(state.get("phase") or ""))
     if (promoted and phase in OWNER_PHASES and previous_phase in OWNER_PHASES
             and OWNER_PHASES.index(phase) > OWNER_PHASES.index(previous_phase)):
         reasons.append("phase_advanced")
@@ -1833,6 +1836,18 @@ def _review_objective(packet: Mapping[str, Any], topic: Mapping[str, Any] | None
                       state: Mapping[str, Any] | None = None) -> str:
     paper = str(packet.get("paper_id") or "").strip()
     sha = str((topic or {}).get("preregistration_sha256") or "")
+    endpoint_check = (
+        "Also compare the pre-registered primary endpoint (research_state.json "
+        f"`preregistration`, sha256 {sha}) word for word with the manuscript: quote "
+        "the registered endpoint and decision rule, quote the reported outcome, and check the "
+        "verdict follows from the registered text read literally; a handling added later is "
+        "only a supplementary analysis and the result judged by the original text must also be "
+        "reported (a mismatch is a scientific blocker). "
+        if sha else
+        "Also compare the proposal brief in research_state.json (`brief`) with the manuscript: "
+        "check that the core claim, evaluation protocol, and reported outcome match honestly and "
+        "exploratory deviations are labeled clearly. "
+    )
     return (
         _recompute_context(state or {})
         + (f"The owner names paper ID {paper}. " if paper else
@@ -1840,12 +1855,9 @@ def _review_objective(packet: Mapping[str, Any], topic: Mapping[str, Any] | None
         + "Run `paper-writing review unified-run --paper-id <id>` (pass the writer's JSON --response for a "
         "re-review). It runs the preflight, the target-journal editor screen, two blind "
         "referees and the conservative decision; do not reproduce its stages or edit the "
-        "manuscript. Also compare the pre-registered primary endpoint (research_state.json "
-        f"`preregistration`, sha256 {sha or 'n/a'}) word for word with the manuscript: quote "
-        "the registered endpoint and decision rule, quote the reported outcome, and check the "
-        "verdict follows from the registered text read literally; a handling added later is "
-        "only a supplementary analysis and the result judged by the original text must also be "
-        "reported (a mismatch is a scientific blocker). Check that no simulated or synthetic "
+        "manuscript. "
+        + endpoint_check
+        + "Check that no simulated or synthetic "
         "data is presented as observation. Return "
         "paper_candidate=true only for outcome ready; otherwise return exactly one structured "
         "text_revision or evidence_remediation action, or none for retarget_required/blocked. "
@@ -3347,8 +3359,8 @@ def render_brief(
         f" evidence paths, pending jobs and next action); answer review items in "
         f"{RESPONSE_NAME}. Then write JSON to the result path: "
         "`{\"status\": \"continuing|awaiting_remote|ready_for_review|frozen|blocked_human\", "
-        "\"summary\", \"job_ids\", \"paper_id\", \"primary_endpoint_verdict\": "
-        "\"met|failed|inconclusive|pending\", \"phase\": \"precheck|solving|writing\", "
+        "\"primary_endpoint_verdict\": \"met|failed|inconclusive|pending\", "
+        "\"phase\": \"kill_test|solving|writing\", "
         "\"freeze_reason_class\": \"data_access|method_capability|negative_result|"
         "resources_exhausted\", \"reason\"}`. Only status is required; add others as needed.",
         "- Files: workspace = small text (<= 5 MB: notes, JSON, CSV, scripts, figures); logs, "
@@ -3356,36 +3368,54 @@ def render_brief(
         "(footer; one root, kept across seats; declare the files you cite; strays left in the "
         "workspace are archived and taken out of it).",
         "- Frozen for a line-level fact? Add `reopen_when` (CODE/orchestrator/src/openlabs/"
-        "reopen.py): all true -> reopened once, same pre-registration.",
+        "reopen.py): all true -> reopened once.",
         "",
         f"## This topic: {topic_name}",
-        *([precheck.strip()] if precheck else []),
-        f"- Question: {_short(research.get('question') or campaign.get('title') or '', 220)}",
-        f"- Pre-registered primary endpoint (sha256 {sha}): "
-        f"{_short(prereg.get('primary_endpoint') or prereg, 240)} (full: research_state.json "
-        "`preregistration`).",
-        f"- Target: {research.get('target_tier') or 'routine'}; venues: {routine}"
-        + (f"; escalation: {escalation}" if escalation else "") + f". Admission conditions: "
-        f"{len(conditions) if isinstance(conditions, list) else 0} (`admission_conditions`).",
-        *(["- CAS Zone 1–2 evidence design: plan data scale, independent/external validation, "
-           "strong controls and uncertainty checks against the closest recent precedent. "
-           "Preserve the preregistered endpoint and document what the actual results support "
-           "for journal selection."] if research.get("target_stage") == "tier2_aim" else []),
-        *(["- NC aim (user 2026-11-25): the claim is "
-           + _short(str((research.get("nc_case") or {}).get("claim") or "see nc_case"), 200)
-           + ". Validate to the NC standard: sensitivity analysis, uncertainty, external "
-           "validation, and a simple baseline or confounder check are required in Results. "
-           "The prescreen's kill test (research_state.json `prescreen.kill_test`) already "
-           "showed the key signal; there is no separate feasibility precheck. The first "
-           "milestone (research_state.json `milestones`) is the decisive analysis; "
-           "keep each milestone's compute and token budget. If the decisive analysis fails, "
-           "stop early: freeze, or record a lower `expected_band` in OWNER_LOG.md and continue "
-           "for that band - do not force the NC claim. When the decisive analysis and the four "
-           "checks are done, end the seat with phase writing and " + nc_grading.READINESS_PACKET
-           + " The journal is then graded from that evidence before writing (cross-family, "
-           "calibration set: NC, else CAS Zone 1, 2, 3-4) and the manuscript is written for "
-           "the graded journal's length and format. Write and draw to top-journal standard in every "
-           "band."] if research.get("target_stage") == "nc_aim" else []),
+        *(
+            [
+                f"- Question: {_short(research.get('question') or campaign.get('title') or '', 220)}",
+                "- Proposal brief & review rationale: read research_state.json (`brief`, "
+                "`review_rationale`, `compute_estimate`, `data_sources`).",
+                "- Milestone 1 (Kill Test): execute sections 5 & 6 of the proposal brief first on "
+                "real data (download/verify a small subset and test the key signal or baseline gap). "
+                "If the kill test fails, stop early and end the seat with `status: \"frozen\"`, "
+                "one of the four `freeze_reason_class` values (`data_access`, `method_capability`, "
+                "`negative_result`, `resources_exhausted`), a concrete `reason`, and evidence "
+                "artifacts. If it passes, advance to `phase: \"solving\"` and complete the full study.",
+                *([
+                    "- Free-registration data noted: "
+                    + ", ".join(
+                        str(item.get("source") or "")
+                        for item in research.get("needs_registration") or []
+                        if isinstance(item, Mapping) and item.get("source")
+                    )
+                    + " (verify credentials before depending on them)."
+                ] if any(
+                    isinstance(item, Mapping) and item.get("source")
+                    for item in (research.get("needs_registration") or [])
+                ) else []),
+            ]
+            if isinstance(research.get("brief"), str) and research["brief"].strip()
+            else [
+                *([precheck.strip()] if precheck else []),
+                f"- Question: {_short(research.get('question') or campaign.get('title') or '', 220)}",
+                f"- Pre-registered primary endpoint (sha256 {sha}): "
+                f"{_short(prereg.get('primary_endpoint') or prereg, 240)} (full: research_state.json "
+                "`preregistration`).",
+                f"- Target: {research.get('target_tier') or 'routine'}; venues: {routine}"
+                + (f"; escalation: {escalation}" if escalation else "") + f". Admission conditions: "
+                f"{len(conditions) if isinstance(conditions, list) else 0} (`admission_conditions`).",
+            ]
+        ),
+        *([
+            "- Pre-writing journal grading: when the core experiments and robustness checks "
+            "(sensitivity, uncertainty, external/independent validation, and a simple baseline or "
+            "confounder check) are done, end the seat with `phase: \"writing\"` and "
+            + nc_grading.READINESS_PACKET
+            + " The journal is then graded from that evidence before writing (cross-family, "
+            "calibration set: NC, else CAS Zone 1, 2, 3-4) and the manuscript is written for the "
+            "graded journal's length and format. Write and draw to top-journal standard in every band."
+        ] if nc_grading.enabled(settings, topic) else []),
         *([nc_grading.grade_note(grade)] if isinstance(
             grade := (topic or {}).get("venue_grade") or (state or {}).get("venue_grade"),
             Mapping) and grade.get("point") in nc_grading.GRADED_BEFORE_WRITING else []),

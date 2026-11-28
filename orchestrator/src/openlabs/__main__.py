@@ -167,13 +167,6 @@ def _parser() -> argparse.ArgumentParser:
         "program", help="Research-program topic ledger maintenance"
     )
     program_commands = program.add_subparsers(dest="program_command", required=True)
-    stage = program_commands.add_parser(
-        "target-stage", help="Replay unattended delivery progress or set a research line target stage"
-    )
-    stage.add_argument("--line")
-    stage.add_argument("--stage", choices=("run_in", "tier2_aim", "nc_aim"))
-    stage.add_argument("--by")
-    stage.add_argument("--reason")
     backfill = program_commands.add_parser(
         "backfill",
         help="Register existing active research campaigns as grandfathered active topics "
@@ -182,11 +175,14 @@ def _parser() -> argparse.ArgumentParser:
     backfill.add_argument("--write", action="store_true", help="Write the topic ledger")
     submit = program_commands.add_parser(
         "submit-card",
-        help="Submit a human-written topic card to a research-program project's admission gate",
+        help="Submit a human-written topic proposal to a research-program project's review gate",
     )
     submit.add_argument("--project", required=True, type=Path, help="Program project.json")
-    submit.add_argument("--card", required=True, type=Path, help="openlabs.topic_card.v1 JSON")
-    submit.add_argument("--by", default="operator", help="Who submits the card (provenance)")
+    submit.add_argument(
+        "--card", required=True, type=Path,
+        help="openlabs.topic_proposal.v1 (or legacy topic_card) JSON",
+    )
+    submit.add_argument("--by", default="operator", help="Who submits the proposal (provenance)")
     assign = program_commands.add_parser(
         "assign-handler",
         help="After the owner's review of a delivered paper, assign its submission handler "
@@ -266,14 +262,6 @@ def _parser() -> argparse.ArgumentParser:
     reconcile.add_argument("--apply", action="store_true",
                            help="Carry the listed changes out (default: dry run)")
     reconcile.add_argument("--json", action="store_true", help="JSON instead of the text list")
-    revisable = program_commands.add_parser(
-        "mark-revisable",
-        help="Record that a judged rejection's defect is fixable, so the program schedules one "
-        "revision card against its reopen conditions",
-    )
-    revisable.add_argument("--topic-id", required=True)
-    revisable.add_argument("--reason", required=True, help="Why the defect is fixable")
-    revisable.add_argument("--by", default="operator", help="Who decided (provenance)")
     reopen_register = program_commands.add_parser(
         "reopen-register",
         help="Attach machine-checkable line-level reopen conditions (auto_reopen) to a frozen "
@@ -682,49 +670,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(freeze_backfill_report(paths, load_settings(paths)), ensure_ascii=False,
                          indent=2, sort_keys=True, default=str))
         return 0
-    if args.command == "program" and args.program_command == "target-stage":
-        from . import target_stage
-        from .locking import factory_operation_lock
-        from .program import open_topic_ledger
-        from .program_flow import program_projects
-        from .utilization import ReadOnlyFactoryDB
-
-        settings = load_settings(paths)
-        try:
-            lines = settings.program.research_lines or tuple(sorted({
-                project.research_line for project in program_projects(paths) if project.research_line
-            }))
-            if args.line is not None and args.line not in lines:
-                raise ValueError(f"unknown configured research line {args.line!r}")
-            if not paths.database_file.is_file():
-                raise ValueError(f"no database at {paths.database_file}")
-            if args.stage:
-                with factory_operation_lock(paths):
-                    payload = target_stage.set_stage(
-                        FactoryDB(paths.database_file), args.line, args.stage,
-                        by=args.by or "", reason=args.reason or "",
-                    )
-            else:
-                if args.by is not None or args.reason is not None:
-                    raise ValueError("--by and --reason require --stage")
-                payload = target_stage.replay(
-                    ReadOnlyFactoryDB(paths.database_file),
-                    open_topic_ledger(paths, settings.program).read(),
-                    [args.line] if args.line else lines,
-                )
-                configured = target_stage.configured_stage(settings)
-                if configured is not None:
-                    # [program.funnel].target_stage decides; the replay is history only.
-                    for line, entry in payload.items():
-                        entry["recorded_stage"] = entry["target_stage"]
-                        entry["target_stage"] = target_stage.stage_for(None, line, settings)
-                        entry["target_stage_source"] = "[program.funnel].target_stage"
-        except (ValueError, sqlite3.Error) as exc:
-            print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
-                  file=sys.stderr)
-            return 1
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-        return 0
     if args.command == "program" and args.program_command == "utilization":
         # Read-only: the database is opened with mode=ro and nothing is created.
         from .utilization import ReadOnlyFactoryDB, utilization_report
@@ -897,15 +842,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(json.dumps({"status": "refused", "error": str(exc)}, ensure_ascii=False),
                       file=sys.stderr)
                 return 1
-        elif args.program_command == "mark-revisable":
-            from .program_flow import mark_revisable
-
-            payload = {
-                "schema_version": "openlabs.program_mark_revisable.v1",
-                "topic_id": args.topic_id,
-                "written": mark_revisable(db, paths, settings, args.topic_id,
-                                          decided_by=f"manual:{args.by}", reason=args.reason),
-            }
         elif args.program_command == "requeue":
             try:
                 payload = {"schema_version": "openlabs.program_requeue.v1",

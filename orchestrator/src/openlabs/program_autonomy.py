@@ -1559,7 +1559,7 @@ def _enqueue_targeted_analysis(db, settings, *, campaign, decision, decision_tas
 def _enqueue_retarget(db, settings, *, topic, campaign, decision, decision_task_id,
                       source_task_id, input_path) -> str:
     from .engine import _paper_skill
-    from .target_stage import tier2_topic
+    from .nc_grading import needs_acceptance_grade
 
     retarget = decision["retarget"]
     requested = str(retarget.get("venue_or_format") or "").strip()
@@ -1576,7 +1576,8 @@ def _enqueue_retarget(db, settings, *, topic, campaign, decision, decision_task_
         f"{routine[0]!r} and mark target_escalation as superseded by the fallback. Before "
         f"switching to it run `paper-writing program check-fallback --paper-id <id>` (add "
         f"`--fallback-evidence <file>` to complete an older record); it must pass."
-        if str(topic.get("target_tier") or "") == "escalation" and routine and not tier2_topic(topic)
+        if str(topic.get("target_tier") or "") == "escalation" and routine
+        and not needs_acceptance_grade(settings, topic)
         else ""
     )
     objective = (
@@ -2084,7 +2085,7 @@ def _registered_topic_paper(db, paths, topic):
 
 def queue_registered_ready(db, paths, settings, report, topic_id, *, automatic=False):
     """Queue a bound decision applied outside a factory review task."""
-    from .target_stage import tier2_topic
+    from .nc_grading import needs_acceptance_grade
 
     topic = find_topic(_ledger(paths, settings).read(), topic_id)
     if topic and topic.get("status") == "ready_queue":
@@ -2107,7 +2108,8 @@ def queue_registered_ready(db, paths, settings, report, topic_id, *, automatic=F
     if (verdict.get("frozen") or not verdict.get("decision_current")
             or (automatic and verdict.get("review_mode") not in AUTO_QUEUED_REVIEW_MODES)):
         raise DeliveryError(f"Paper {paper_id} has no eligible current ready decision")
-    if tier2_topic(topic) and (topic.get("venue_grade") or {}).get("journal") != status.get("target_journal"):
+    if (needs_acceptance_grade(settings, topic)
+            and (topic.get("venue_grade") or {}).get("journal") != status.get("target_journal")):
         raise DeliveryError(f"Paper {paper_id} needs a recorded acceptance grade")
     source = "registered-review:" + review["decision_sha256"]
     evidence = [_write_evidence(paths, topic_id, "registered-review", {
@@ -2895,10 +2897,10 @@ class _ReleasePipeline:
             self.return_to_review(status, {"reason": "writing_release is no longer ready",
                                            "problems": review.get("problems") or []})
             return False
-        from .target_stage import tier2_topic
+        from .nc_grading import needs_acceptance_grade
 
         graded_journal = (self.topic.get("venue_grade") or {}).get("journal")
-        if tier2_topic(self.topic) and (
+        if needs_acceptance_grade(self.settings, self.topic) and (
             not graded_journal or graded_journal != status.get("target_journal")
         ):
             raise ReleaseWait("check", "venue_grade_pending",

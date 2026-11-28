@@ -153,6 +153,15 @@ def admitted_stage(topic: Mapping[str, Any] | None) -> str:
     return "nc_aim"
 
 
+def graded_topic(topic: Mapping[str, Any]) -> bool:
+    """A legacy topic admitted under a stage whose delivery waits for an acceptance grade."""
+
+    return admitted_stage(topic) in {"tier2_aim", "nc_aim"}
+
+
+tier2_topic = graded_topic
+
+
 def band_rank(band: Any) -> int:
     return BANDS.index(band) if band in BANDS else len(BANDS)
 

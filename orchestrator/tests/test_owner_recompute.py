@@ -4,13 +4,11 @@ prechecks and the compute floor, per-attempt token increments and topic economic
 from __future__ import annotations
 
 import json
-import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import test_research_lines as lines_tests
 import test_research_program_flow as flow
-from openlabs import card_precheck, owner, usage
+from openlabs import owner, usage
 from openlabs.config import (
     OWNER_TASK_TYPE,
     FactorySettings,
@@ -21,7 +19,6 @@ from openlabs.config import (
     load_reporting_settings,
 )
 from openlabs.program import open_topic_ledger
-from openlabs.projects import load_project
 from test_owner_mode import _first_seat, _latest, _owner_program, _seat_packet
 from test_program_autonomy import _direction_tasks, _finish, _lease, _outcome, _topic
 from test_research_program_flow import RUNNERS, _tick
@@ -319,229 +316,6 @@ def test_a_session_is_resumed_until_its_token_threshold(tmp_path, monkeypatch):
                          "cached_input_tokens": 1_200_000}), seat["task_id"]))
     keep, reason = owner.keep_session(db, settings, finished)
     assert not keep and reason.startswith("session_max_tokens_read")
-
-
-# --------------------------------------------------------------------------- card intake
-
-
-def _intake(tmp_path, monkeypatch, line_yaml_extra: str, card: dict | None = None, **program):
-    paths, db, settings = lines_tests._line_setup(tmp_path, "ready")
-    path = paths.data / "registry" / "research-lines.yaml"
-    path.write_text(path.read_text(encoding="utf-8") + line_yaml_extra, encoding="utf-8")
-    if program:
-        from dataclasses import replace
-
-        settings = replace(settings, program=replace(settings.program, **program))
-    from openlabs.program_flow import intake_card
-
-    project = load_project(paths.data / "workspaces" / "ai" / "projects" / "research-program"
-                           / "project.json")
-    receipt = paths.data / "receipts" / "data-access.json"
-    receipt.parent.mkdir(parents=True, exist_ok=True)
-    receipt.write_bytes(flow.RECEIPT)
-    outcome = intake_card(db, paths, settings, project, card or _queued_card(),
-                          decided_by="manual:t", provider="human", source_task_id=None,
-                          receipt_digests=None)
-    topic = open_topic_ledger(paths, settings.program).topic(outcome["topic_id"])
-    return paths, db, settings, outcome, topic
-
-
-def _queued_card(n: int = 0, template: str = "contact-binary-solution",
-                 entry: str = "TIC441806604") -> dict:
-    return lines_tests._line_card(
-        n, paper_template=template,
-        occupancy_search={"queries": ["SIMBAD TIC"], "databases": ["SIMBAD"],
-                          "searched_at": "2026-11-13", "findings": "none"},
-        candidate_queue_entry={"entry_id": entry, "queue": "/q/queue.json"})
-
-
-def _script(tmp_path, body: str) -> Path:
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    script = tmp_path / "admission_precheck.py"
-    script.write_text(body, encoding="utf-8")
-    return script
-
-
-def _precheck_yaml(script: Path, extra: str = "") -> str:
-    """The astro line's draft schema (research-lines.yaml, 2026-11-16), one template."""
-
-    return ("    admission_precheck:\n"
-            "      schema: draft-2026-11-16\n"
-            "      model_calls: none\n"
-            "      network: none\n"
-            "      per_template:\n"
-            "        contact-binary-solution:\n"
-            f"          command: {sys.executable} {script} {{entry_id}} --json\n"
-            "          pass_condition: exit code 0 and JSON verdict == \"pass\"\n"
-            "          hard_checks: [data availability]\n"
-            "          typical_seconds: 0.1-1\n" + extra)
-
-
-FAIL_SCRIPT = (
-    "import json, sys\nentry = sys.argv[1]\nassert sys.argv[2] == '--json'\n"
-    "print(json.dumps({'entry_id': entry, 'verdict': 'fail', 'failed': ['totality'], "
-    "'checks': [{'name': 'totality', 'pass': False, 'hard': True, 'value': 0.3, "
-    "'rule': 'R_max >= 0.42'}, {'name': 'brightness', 'pass': True, 'hard': True}]}))\n"
-    "sys.exit(1)\n")
-PASS_SCRIPT = (
-    "import json, os, sys\nassert os.environ['OPENLABS_QUEUE_ENTRY_ID'] == sys.argv[1]\n"
-    "print('checking', sys.argv[1])\n"
-    "print(json.dumps({'entry_id': sys.argv[1], 'verdict': 'pass', 'failed': [], "
-    "'warnings': ['product list not cached'], 'checks': []}, indent=1))\n")
-
-
-def test_a_failed_line_precheck_keeps_the_card_from_admission(tmp_path, monkeypatch):
-    script = _script(tmp_path, FAIL_SCRIPT)
-    paths, db, settings, outcome, topic = _intake(tmp_path, monkeypatch, _precheck_yaml(script))
-    assert outcome["status"] == "rejected" and outcome["reason"] == "card_precheck_failed"
-    assert outcome["precheck"] == "fail"
-    assert topic["status"] == "rejected"
-    assert topic["history"][-1]["reason"] == "card_precheck_failed"
-    assert "totality" in topic["card_errors"][0] and "R_max >= 0.42" in topic["card_errors"][0]
-    assert "brightness" not in topic["card_errors"][0]
-    assert topic["card_repair"]["status"] == "not_repairable"
-    precheck = topic["card_check"]["precheck"]
-    assert precheck["status"] == "fail" and precheck["entry_id"] == "TIC441806604"
-    assert precheck["command"][-2:] == ["TIC441806604", "--json"]
-    from openlabs.program_flow import precheck_statistics
-
-    stats = precheck_statistics(open_topic_ledger(paths, settings.program).read())
-    assert stats == {lines_tests.LINE: {"rejected": 1, "waiting_on_error": 0}}
-
-
-def test_a_passed_precheck_travels_with_the_card_to_admission(tmp_path, monkeypatch):
-    script = _script(tmp_path, PASS_SCRIPT)
-    paths, db, settings, outcome, topic = _intake(tmp_path, monkeypatch, _precheck_yaml(script))
-    assert outcome["status"] == "proposed", outcome
-    precheck = topic["card_check"]["precheck"]
-    assert precheck["status"] == "pass" and precheck["warnings"] == ["product list not cached"]
-    assert Path(precheck["output_path"]).is_file()
-
-
-def test_templates_without_a_declared_precheck_and_cards_without_an_entry(tmp_path, monkeypatch):
-    script = _script(tmp_path, PASS_SCRIPT)
-    # Another template of the line declares no precheck: nothing runs.
-    *_, outcome, topic = _intake(tmp_path / "a", monkeypatch, _precheck_yaml(script),
-                                 card=_queued_card(template="nn-catalogue-audit"))
-    assert outcome["status"] == "proposed" and "precheck" not in (topic.get("card_check") or {})
-    # A card of the template without its queue entry cannot be checked: a card defect.
-    card = _queued_card()
-    card.pop("candidate_queue_entry")
-    *_, outcome, topic = _intake(tmp_path / "b", monkeypatch, _precheck_yaml(script), card=card)
-    assert outcome["reason"] == "card_precheck_failed"
-    assert "candidate_queue_entry" in topic["card_errors"][0]
-    # The instance switch turns prechecks off.
-    *_, outcome, topic = _intake(tmp_path / "c", monkeypatch, _precheck_yaml(script),
-                                 card_precheck=False)
-    assert outcome["status"] == "proposed" and "precheck" not in (topic.get("card_check") or {})
-
-
-def test_an_erring_precheck_holds_the_card_reports_it_and_is_retried(tmp_path, monkeypatch):
-    from openlabs import engine
-    from openlabs.program_flow import retry_held_prechecks, schedule_topic_admission
-
-    flag = tmp_path / "mode.txt"
-    flag.parent.mkdir(parents=True, exist_ok=True)
-    flag.write_text("broken")
-    script = _script(tmp_path, (
-        "import json, sys\nmode = open(%r).read()\n"
-        "if mode == 'broken':\n    print('Traceback: cache missing')\n    sys.exit(1)\n"
-        "if mode == 'slow':\n    import time; time.sleep(5)\n"
-        "print(json.dumps({'verdict': mode}))\nsys.exit(0 if mode == 'pass' else 1)\n"
-    ) % str(flag))
-    paths, db, settings, outcome, topic = _intake(
-        tmp_path, monkeypatch, _precheck_yaml(script, "          timeout_seconds: 2\n"))
-    # Not JSON: an infrastructure error, neither a pass nor a fail.
-    assert outcome["status"] == "proposed" and outcome["precheck"] == "error"
-    assert "not a JSON object" in outcome["precheck_error"]
-    engine._sync_active_projects(db, paths, settings, engine.TickReport())
-    with db.connect() as connection:
-        admission_campaign = dict(connection.execute(
-            "SELECT * FROM campaigns WHERE campaign_id LIKE '%admission%' LIMIT 1").fetchone())
-    schedule = schedule_topic_admission(db, paths, settings, admission_campaign, epoch=1)
-    assert schedule.task_id is None and schedule.reason == "admission_precheck_error"
-    report = engine.TickReport()
-    flag.write_text("slow")
-    (retried,) = retry_held_prechecks(db, paths, settings, report)
-    assert retried["status"] == "error" and retried["attempts"] == 2
-    assert any("timed out" in error and topic["topic_id"] in error for error in report.errors)
-    flag.write_text("pass")
-    (retried,) = retry_held_prechecks(db, paths, settings, engine.TickReport())
-    assert retried["status"] == "pass"
-    held = open_topic_ledger(paths, settings.program).topic(topic["topic_id"])
-    assert held["status"] == "proposed" and held["card_check"]["precheck"]["attempts"] == 3
-    schedule = schedule_topic_admission(db, paths, settings, admission_campaign, epoch=1)
-    assert schedule.task_id is not None
-    assert retry_held_prechecks(db, paths, settings, engine.TickReport()) == []
-
-
-def test_a_retried_precheck_that_fails_rejects_the_card(tmp_path, monkeypatch):
-    from openlabs import engine
-    from openlabs.program_flow import retry_held_prechecks
-
-    flag = tmp_path / "mode.txt"
-    flag.parent.mkdir(parents=True, exist_ok=True)
-    flag.write_text("broken")
-    script = _script(tmp_path, (
-        "import json, sys\nif open(%r).read() == 'broken':\n    sys.exit(7)\n"
-        "print(json.dumps({'verdict': 'not_found'}))\nsys.exit(2)\n") % str(flag))
-    paths, db, settings, outcome, topic = _intake(tmp_path, monkeypatch, _precheck_yaml(script))
-    assert outcome["precheck"] == "error"
-    flag.write_text("ok")
-    (retried,) = retry_held_prechecks(db, paths, settings, engine.TickReport())
-    assert retried["status"] == "fail"
-    rejected = open_topic_ledger(paths, settings.program).topic(topic["topic_id"])
-    assert rejected["status"] == "rejected"
-    assert rejected["history"][-1]["reason"] == "card_precheck_failed"
-
-
-def test_the_real_astro_entry_parses_into_a_command(tmp_path) -> None:
-    data = Path("/workspace/openlabs/openlabs-data/registry/research-lines.yaml")
-    if not data.is_file():
-        return
-    from openlabs.research_lines import line_entry, load_research_lines
-
-    entry = line_entry(load_research_lines(data), "astro-survey-photometry") or {}
-    if not isinstance(entry.get("admission_precheck"), dict):
-        return  # the data repository has not got the field (yet)
-    for template in ("contact-binary-solution", "nn-catalogue-audit"):
-        spec = card_precheck.precheck_spec(entry, template)
-        assert spec is not None and "{entry_id}" in spec["command"], template
-
-
-def test_card_core_hours_are_raised_to_the_line_floor(tmp_path, monkeypatch):
-    card = lines_tests._line_card(0)
-    card["cost_estimate"]["agent_seconds"] = 7_200
-    card["cost_estimate"]["compute_plan"] = {
-        "locations": ["container_cpu", "container_gpu", "ailab"], "gpu_memory_mib": 8000,
-        "ailab": {"cpus": 4, "memory_mib": 5120, "hours": 2}}
-    floor = "    card_compute_floor: {ailab_core_hours: 60, agent_hours: 6}\n"
-    paths, db, settings, outcome, topic = _intake(tmp_path, monkeypatch, floor, card=card)
-    assert outcome["status"] == "proposed", outcome
-    stored = json.loads(Path(topic["card_path"]).read_text(encoding="utf-8"))
-    assert stored["cost_estimate"]["compute_plan"]["ailab"]["hours"] == 15
-    assert stored["cost_estimate"]["agent_seconds"] == 21_600
-    notes = " ".join(topic["card_check"]["normalized"])
-    assert "raised from 2 to 15" in notes and "60 core-hours" in notes
-
-
-def test_compute_floor_reads_per_paper_cost_lower_bounds() -> None:
-    template = {"per_paper_cost": {"cpu_core_hours": "8-12 per symmetric target",
-                                   "agent_hours": "6-10"}}
-    assert card_precheck.compute_floor({}, template) == {
-        "source": "template per_paper_cost", "core_hours": 8.0, "agent_seconds": 21_600}
-    assert card_precheck.compute_floor({"per_paper_cost": {"cpu_core_hours": "< 5"}}, {}) == {}
-    explicit = {"card_compute_floor": {"ailab_core_hours": 60}}
-    assert card_precheck.compute_floor({}, explicit)["core_hours"] == 60
-    card = {"cost_estimate": {"agent_seconds": 50_000, "compute_plan": {
-        "locations": ["ailab"], "ailab": {"cpus": 7, "hours": 130, "memory_mib": 9000}}}}
-    fixed, notes = card_precheck.apply_compute_floor(card, {"core_hours": 60,
-                                                            "agent_seconds": 3600})
-    assert fixed == card and notes == []
-    line = {"admission_precheck": {"per_template": {"a": {"command": "x {entry_id}"}}}}
-    assert card_precheck.precheck_spec(line, "a")["command"] == "x {entry_id}"
-    assert card_precheck.precheck_spec(line, "b") is None
-    assert card_precheck.precheck_spec({}, "a") is None
 
 
 # --------------------------------------------------------------------------- tokens
