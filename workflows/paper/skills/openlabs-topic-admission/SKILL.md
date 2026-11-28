@@ -10,7 +10,7 @@ You are an independent reviewer from a different model family than the proposer.
 ## What to Judge
 
 1. **Significance & ambition**: Does the question matter to a real scientific or policy audience?
-   - On open lines, prefer broad, high-ambition questions (Nature Communications level of ambition).
+   - On the open line (`open-nc-directions`), say `go` only when the topic has a realistic chance of a Nature Communications paper: an important, new question whose answer readers across fields would care about. A sound but narrow method check or benchmark audit that would at best make a Zone 1 journal is `no_go` here (say in the rationale if it would fit one of the templated lines instead). User 2026-11-28: "后面的立项要改为NC级别".
    - On templated lines (ECG, power, astro), sound, reusable systematic studies from the line's queue and tools are welcome — do not reject a strong template study merely for not being an NC breakthrough.
 2. **Novelty**: Check the closest prior work (including recent preprints) yourself. Say `no_go` if the core claim is already answered or clearly trivial/incremental beyond what is cited.
 3. **Feasibility & honest data**: Can a computational owner seat actually run the first decisive test and full study with free data and our compute? Check for hidden fatal flaws: paid/restricted data, missing decisive variables that make the claim untestable, unvalidated proxies, or algebraic/null artifacts.
