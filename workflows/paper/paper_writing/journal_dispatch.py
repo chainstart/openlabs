@@ -32,12 +32,17 @@ def ledger(args, event, extra=()):
 SMTP_SIZE_LIMIT = 20_000_000
 
 
-def handler_address(api, paper):
+def mail_connection():
+    return smtplib.SMTP_SSL("smtp.qiye.163.com", timeout=15, context=ssl.create_default_context())
+
+
+def handler_address(api, paper, *, users=None):
     """The mailbox of the paper's one active submitter (ValueError when there is none)."""
     assigned = {a["submitter_id"] for a in paper.get("assignments", []) if a.get("active")}
     if len(assigned) != 1:
         raise ValueError("Missing unique active assignment")
-    users = api._request("GET", "/v1/users")
+    if users is None:
+        users = api._request("GET", "/v1/users")
     emails = [u.get("email") for u in users if u["id"] in assigned and u.get("active")]
     if len(emails) != 1 or not re.fullmatch(r"[^\s<>@,;]+@[^\s<>@,;]+", (emails[0] or "")):
         raise ValueError("Missing handler address")
@@ -71,7 +76,7 @@ def notify(api, paper, event, account, before_send=lambda: None, *, raw=None, no
             message.add_attachment(summary, filename="summary.txt")
         return message.as_bytes(policy=SMTP)
 
-    with smtplib.SMTP_SSL("smtp.qiye.163.com", timeout=15, context=ssl.create_default_context()) as smtp:
+    with mail_connection() as smtp:
         smtp.login(account, os.environ["SDJU_MAIL_PASSWORD"])
         advertised = smtp.esmtp_features.get("size", "").strip()
         limit = SMTP_SIZE_LIMIT
