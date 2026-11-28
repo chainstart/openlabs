@@ -1511,9 +1511,9 @@ _SUPPLY_KEYS = frozenset({
 })
 _REMOVED_SUPPLY_KEYS = frozenset({
     "line_facts", "borderline_relative_margin", "reference_wait_max", "line_block_max_days",
-    "capability_screen", "data_screen", "pilot", "pilot_core_hours_max", "pilot_max_threads",
-    "pilot_max_concurrent", "pilot_max_attempts", "target_memory", "scout_skip_empty_queue",
-    "scout_backoff_max_hours",
+    "capability_screen", "data_screen", "pilot", "pilot_enabled", "pilot_core_hours_max",
+    "pilot_max_threads", "pilot_max_concurrent", "pilot_max_attempts", "target_memory",
+    "scout_skip_empty_queue", "scout_backoff_max_hours", "prescreen_runners",
 })
 
 

@@ -19,22 +19,14 @@ Lifecycle::
                                        ready_queue -> in_review   (release pipeline: a post-ready
                                                                    change needs a full review)
 
-Reopening a frozen topic, or one the admission gate rejected or held, is a new
-proposal with a new ``topic_id`` whose card declares ``reopens``; the new topic
-records ``supersedes``. A held topic, or one rejected for a fixable reason, may
-instead come back once as a revision card (``revises``; the new topic records
-``revision_of`` and ``supersedes``) that the gate checks only against the
-recorded reopen conditions.
+Reopening a frozen or judged-rejected topic is a new proposal with a new ``topic_id``
+whose proposal declares ``reopens``; the new topic records ``supersedes``.
 
-Two guarded moves leave ``rejected`` (ledger schema v2): a hold whose only
-blocker was its research line's environment returns to ``proposed`` for the
-gate, or straight to ``admitted`` when the gate had already admitted it, once
-the line is ready (``release_held_topic``). Two guarded moves leave ``frozen``:
-``frozen -> active`` when the topic's recorded line-level ``auto_reopen``
-conditions all hold (``reopen.py``), and ``frozen -> in_review`` when an operator
-grants a topic frozen in review for a procedural reason one more text revision of
-its manuscript (``program reopen-grant``, ``reopen.grant_operator_reopen``); the
-pre-registration is unchanged either way.
+Two guarded moves leave ``frozen``: ``frozen -> active`` when the topic's recorded
+line-level ``auto_reopen`` conditions all hold (``reopen.py``), and
+``frozen -> in_review`` when an operator grants a topic frozen in review for a
+procedural reason one more text revision of its manuscript
+(``program reopen-grant``, ``reopen.grant_operator_reopen``).
 """
 
 from __future__ import annotations
@@ -86,15 +78,11 @@ TRANSITIONS: dict[str | None, frozenset[str]] = {
     # (formal fix, support citation) is beyond the delta review and needs a full one.
     "ready_queue": frozenset({"submitted", "in_review", "active"}),
     "submitted": frozenset(),
-    # Only the guarded hold releases below leave ``rejected``.
-    "rejected": frozenset({"proposed", "admitted"}),
+    "rejected": frozenset(),
     # Only an automatic reopen or an operator's text-revision grant (``reopen.py``) leaves
-    # ``frozen``; every other reopening is a new card that declares ``reopens``.
+    # ``frozen``; every other reopening is a new proposal that declares ``reopens``.
     "frozen": frozenset({"active", "in_review"}),
 }
-# Transitions allowed only with these reasons (see ``release_held_topic``).
-HOLD_RELEASE_FOR_REVIEW = "hold_released_for_review"
-HOLD_RELEASE_ADMITTED = "hold_released_admitted"
 # A frozen topic whose recorded line-level reopen conditions all hold (``reopen.py``).
 AUTO_REOPEN_REASON = "auto_reopen_conditions_met"
 # An operator granted a topic frozen in review one more text revision (``reopen.py``).
@@ -107,11 +95,24 @@ DELIVERY_RECONCILE_REASON = "delivery_receipt_reconciled"
 GUARDED_TRANSITIONS: dict[tuple[str, str], frozenset[str]] = {
     ("ready_queue", "active"): frozenset({"delivered_revision_requested"}),
     ("admitted", "frozen"): frozenset({LEGACY_ARCHIVE_REASON}),
-    ("rejected", "proposed"): frozenset({HOLD_RELEASE_FOR_REVIEW}),
-    ("rejected", "admitted"): frozenset({HOLD_RELEASE_ADMITTED}),
     ("frozen", "active"): frozenset({AUTO_REOPEN_REASON}),
     ("frozen", "in_review"): frozenset({OPERATOR_REOPEN_REASON}),
 }
+# Converged supply rejection codes (2026-11-28 supply simplification).
+REJECTION_PROPOSAL_INVALID = "proposal_invalid"
+REJECTION_DATA_RESTRICTED = "data_restricted"
+REJECTION_BUDGET_EXCEEDED = "budget_exceeded"
+REJECTION_DUPLICATE_TOPIC = "duplicate_topic"
+REJECTION_REVIEW_NO_GO = "review_no_go"
+REJECTION_REVIEW_UNDECIDED = "review_undecided"
+SUPPLY_REJECTION_REASONS = (
+    REJECTION_PROPOSAL_INVALID,
+    REJECTION_DATA_RESTRICTED,
+    REJECTION_BUDGET_EXCEEDED,
+    REJECTION_DUPLICATE_TOPIC,
+    REJECTION_REVIEW_NO_GO,
+    REJECTION_REVIEW_UNDECIDED,
+)
 # Statuses that hold one of the ``max_active_topics`` research slots.
 # ``admitted`` is a reservation: the topic passed the admission gate but its
 # campaign is not materialized yet, so it must already count against capacity.
@@ -155,13 +156,16 @@ TOPIC_FIELDS = (
     "supersedes",
     # Research-program pipeline metadata (absent from ledgers written before it).
     "program_project_id",
+    "research_line",
+    "queue_entry_id",
+    "needs_registration",
     "source_task_id",
     "proposer_provider",
-    # The task whose model wrote the card's content: the scout, also for a card
-    # a light-tier repair task returned (the repair only fixes format errors).
     "proposer_task_id",
     "card_path",
     "card_errors",
+    "card_check",
+    "venue_grade",
     "routine_fallback",
     "cost_estimate",
     "admission",
@@ -172,8 +176,7 @@ TOPIC_FIELDS = (
     # Release pipeline state between ready and delivery (stage, attempts, last error).
     "release",
     "delivery_repair",
-    # Admission policy v2 (absent from older ledgers): one automatic repair of a
-    # format-invalid card, and one revision of a held or fixably rejected topic.
+    # Legacy policy v2 fields kept readable for historical ledger entries.
     "card_repair",
     "repair_of",
     "revision",
@@ -182,24 +185,25 @@ TOPIC_FIELDS = (
     # automatic reopens done so far (``reopen.py``; absent from older ledgers).
     "delivered_revision",
     "auto_reopen",
-    # Operator text-revision grants of a frozen topic (``reopen.grant_operator_reopen``):
-    # {"scope", "slot_exempt", "grants": [{"at", "by", "reason", "scope", "seat"}]}.
+    # Operator text-revision grants of a frozen topic (``reopen.grant_operator_reopen``).
     "reopen_grant",
     "history",
 )
-# Rejections that judged the topic on its merits. A card with the same
-# fingerprint is a duplicate of such a topic and may only come back through a
-# card that declares ``reopens``. Format or bookkeeping rejections
-# (``card_invalid``, ``duplicate_fingerprint``, ``admission_undecided``, ...)
-# do not block a corrected resubmission.
+# Rejections that judged the topic on its merits (or hard-rejected its data source).
+# A proposal with the same fingerprint or queue_entry_id is a duplicate of such a topic
+# and may only come back with ``reopens``. Format/bookkeeping rejections
+# (``proposal_invalid``, ``duplicate_topic``, ``review_undecided``, ...) do not block
+# a corrected resubmission.
 JUDGED_REJECTION_REASONS = frozenset(
     {
+        REJECTION_REVIEW_NO_GO,
+        REJECTION_DATA_RESTRICTED,
+        # Legacy judged reasons kept so historical ledger entries stay recognized.
         "admission_rejected",
         "admission_hold",
         "data_access_not_confirmed",
         "not_computational_only",
         "cost_not_proportionate",
-        # NC funnel (2026-11-25, nc_funnel.JUDGED): the topic fell short of the NC aim.
         "card_near_duplicate",
         "card_prescreen_failed",
         "card_kill_test_failed",
@@ -242,7 +246,9 @@ def _source_list(value: Any) -> list[str]:
     for item in items:
         if isinstance(item, Mapping):
             item = (
-                item.get("source_id")
+                item.get("id_or_url")
+                or item.get("catalog_id")
+                or item.get("source_id")
                 or item.get("id")
                 or item.get("doi")
                 or item.get("url")
@@ -254,22 +260,44 @@ def _source_list(value: Any) -> list[str]:
     return sorted(normalized)
 
 
-def topic_fingerprint(question: Any, data_sources: Any, primary_endpoint: Any) -> str:
-    """Hash of normalized question text, data-source identifiers and primary endpoint."""
+def topic_fingerprint(
+    question: Any,
+    data_sources: Any,
+    primary_endpoint: Any = None,
+    *,
+    research_line: Any = None,
+) -> str:
+    """Deterministic topic fingerprint.
+
+    For simplified proposals (no ``primary_endpoint``), hashes
+    ``(normalize(research_line), normalize(question), sorted(data_sources))``.
+    When a legacy ``primary_endpoint`` is supplied without ``research_line``, keeps
+    the historical ``(question, data_sources, endpoint)`` digest.
+    """
 
     question_text = normalize_text(question)
-    if isinstance(primary_endpoint, Mapping):
-        # Key order of a structured endpoint block must not change the identity.
-        primary_endpoint = json.dumps(primary_endpoint, sort_keys=True, ensure_ascii=False)
-    endpoint_text = normalize_text(primary_endpoint)
     if not question_text:
         raise TopicLedgerError("topic question is required for a fingerprint")
-    if not endpoint_text:
-        raise TopicLedgerError("topic primary_endpoint is required for a fingerprint")
     sources = _source_list(data_sources)
     if not sources:
         raise TopicLedgerError("topic data source identifiers are required for a fingerprint")
-    payload = {"question": question_text, "data_sources": sources, "endpoint": endpoint_text}
+    if primary_endpoint is not None and research_line is None:
+        if isinstance(primary_endpoint, Mapping):
+            primary_endpoint = json.dumps(primary_endpoint, sort_keys=True, ensure_ascii=False)
+        endpoint_text = normalize_text(primary_endpoint)
+        if not endpoint_text:
+            raise TopicLedgerError("topic primary_endpoint is required for a fingerprint")
+        payload: dict[str, Any] = {
+            "question": question_text,
+            "data_sources": sources,
+            "endpoint": endpoint_text,
+        }
+    else:
+        payload = {
+            "research_line": normalize_text(research_line),
+            "question": question_text,
+            "data_sources": sources,
+        }
     return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
 
 
@@ -882,9 +910,8 @@ def transition_topic(
 
 # Fields an automatic decision may set on a topic without changing its status.
 NOTE_FIELDS = frozenset(
-    {"delivered_revision", "awaiting_owner_review", "handoff", "paper_id", "release", "delivery_repair", "card_repair", "revision",
-     # A retried line admission precheck (program_flow.retry_held_prechecks).
-     "card_check", "venue_grade"}
+    {"delivered_revision", "awaiting_owner_review", "handoff", "paper_id", "release",
+     "delivery_repair", "card_check", "venue_grade", "needs_registration"}
 )
 
 
@@ -954,6 +981,11 @@ def record_topic_note(
     return written
 
 
+def _topic_queue_entry(topic: Mapping[str, Any]) -> str | None:
+    value = str(topic.get("queue_entry_id") or "").strip()
+    return value or None
+
+
 def propose_topic(
     ledger: TopicLedger,
     card: Mapping[str, Any],
@@ -962,16 +994,12 @@ def propose_topic(
     decided_by: str,
     metadata: Mapping[str, Any] | None = None,
 ) -> TopicDecision:
-    """Register a topic card as ``proposed``, or record it as ``rejected``.
+    """Register a topic proposal as ``proposed``, or record it as ``rejected``.
 
-    Card fields: ``domain``, ``question``, ``data_sources`` (or ``data_source``),
-    ``primary_endpoint``; optional ``topic_id``, ``target_tier``, ``reopens`` (the
-    frozen topic id being reopened) and ``reopen_basis`` ({type, description}).
-    A card whose fingerprint equals an existing topic's (including a topic the
-    admission gate rejected or held) is rejected as a duplicate unless it
-    validly reopens that frozen or judged-rejected topic. ``metadata`` sets
-    pipeline fields (``source_task_id``, ``proposer_provider``, ...) on a new
-    topic.
+    A proposal whose fingerprint or same-line ``queue_entry_id`` collides with an
+    existing non-superseded topic (including judged rejections) is rejected as
+    ``duplicate_topic`` unless it declares ``reopens`` pointing to that frozen or
+    judged-rejected topic.
     """
 
     if not decided_by:
@@ -980,19 +1008,28 @@ def propose_topic(
     if not domain:
         raise TopicLedgerError("topic card domain is required")
     question = str(card.get("question") or "").strip()
+    meta = _metadata_fields(metadata)
+    line = str(meta.get("research_line") or card.get("research_line") or "").strip() or None
+    queue_entry_id = str(meta.get("queue_entry_id") or card.get("queue_entry_id") or "").strip() or None
+    use_legacy_fp = (
+        card.get("primary_endpoint") is not None
+        and not card.get("brief")
+        and line is None
+    )
     fingerprint = topic_fingerprint(
         question,
         card.get("data_sources", card.get("data_source")),
-        card.get("primary_endpoint"),
+        card.get("primary_endpoint") if use_legacy_fp else None,
+        research_line=None if use_legacy_fp else line,
     )
     digest = card_sha256(card)
     topic_id = str(card.get("topic_id") or f"topic-{digest[:16]}")
     if not _TOPIC_ID.fullmatch(topic_id):
         raise TopicLedgerError(f"invalid topic_id {topic_id!r}")
     reopens = str(card.get("reopens") or "").strip() or None
-    revises = str(card.get("revises") or "").strip() or None
     now = utc_now()
     entries: list[dict[str, Any]] = []
+    duplicate_of_ids: list[str] = []
     with ledger.transaction() as document:
         existing = find_topic(document, topic_id)
         if existing is not None:
@@ -1001,31 +1038,34 @@ def propose_topic(
                     f"topic {topic_id} already exists with a different card"
                 )
             snapshot = copy.deepcopy(existing)
-            # Lifecycle entries only: notes (``kind``) are not transitions.
             entries = [entry for entry in snapshot.get("history") or [] if "to" in entry]
             changed = False
         else:
             rejection = ""
-            duplicates: list[str] = []
             if reopens is not None:
-                rejection = _reopen_problem(document, reopens, card.get("reopen_basis"))
-            if not rejection and revises is not None:
-                rejection = _revision_problem(document, revises, card.get("condition_responses"))
+                rejection = _reopen_problem(document, reopens)
             if not rejection:
                 for other in document["topics"]:
-                    if other.get("fingerprint") != fingerprint:
-                        continue
                     if other.get("status") == "rejected" and not judged_rejection(other):
                         continue
-                    if other.get("topic_id") in {reopens, revises}:
+                    if other.get("topic_id") == reopens:
                         continue
                     if other.get("status") in {"frozen", "rejected"} and _superseded(
                         document, other
                     ):
                         continue
-                    duplicates.append(str(other["topic_id"]))
-                if duplicates:
-                    rejection = "duplicate_fingerprint"
+                    same_fp = other.get("fingerprint") == fingerprint
+                    other_queue = _topic_queue_entry(other)
+                    same_queue = (
+                        queue_entry_id is not None
+                        and other_queue is not None
+                        and other_queue.casefold() == queue_entry_id.casefold()
+                        and str(other.get("research_line") or "").strip() == str(line or "")
+                    )
+                    if same_fp or same_queue:
+                        duplicate_of_ids.append(str(other["topic_id"]))
+                if duplicate_of_ids:
+                    rejection = REJECTION_DUPLICATE_TOPIC
             topic = _new_topic(topic_id)
             topic.update(
                 {
@@ -1034,16 +1074,19 @@ def propose_topic(
                     "fingerprint": fingerprint,
                     "target_tier": card.get("target_tier"),
                     "card_sha256": digest,
-                    "supersedes": (reopens or revises) if not rejection else None,
-                    "revision_of": revises if not rejection else None,
+                    "supersedes": reopens if not rejection else None,
                 }
             )
-            topic.update(_metadata_fields(metadata))
+            if line:
+                topic["research_line"] = line
+            if queue_entry_id:
+                topic["queue_entry_id"] = queue_entry_id
+            topic.update(meta)
             document["topics"].append(topic)
             _, proposed = _apply_transition(
                 topic,
                 "proposed",
-                reason="topic_card_submitted",
+                reason="topic_proposal_submitted",
                 decided_by=decided_by,
                 evidence=[],
                 updates={},
@@ -1063,15 +1106,25 @@ def propose_topic(
                 entries.append(rejected)
             snapshot = copy.deepcopy(topic)
             changed = True
-    duplicate_of: tuple[str, ...] = ()
+    duplicate_of = tuple(duplicate_of_ids)
     for entry in entries:
         extra: dict[str, Any] = {"card_sha256": digest, "supersedes": snapshot.get("supersedes")}
-        if entry.get("to") == "rejected" and entry.get("reason") == "duplicate_fingerprint":
-            duplicate_of = tuple(
-                str(topic["topic_id"])
-                for topic in ledger.read()["topics"]
-                if topic.get("fingerprint") == fingerprint and topic.get("topic_id") != topic_id
-            )
+        if entry.get("to") == "rejected" and entry.get("reason") == REJECTION_DUPLICATE_TOPIC:
+            if not duplicate_of:
+                duplicate_of = tuple(
+                    str(other["topic_id"])
+                    for other in ledger.read()["topics"]
+                    if other.get("topic_id") != topic_id
+                    and (
+                        other.get("fingerprint") == fingerprint
+                        or (
+                            queue_entry_id is not None
+                            and (_topic_queue_entry(other) or "").casefold()
+                            == queue_entry_id.casefold()
+                            and str(other.get("research_line") or "").strip() == str(line or "")
+                        )
+                    )
+                )
             extra["duplicate_of"] = list(duplicate_of)
         _record_topic_event(db, snapshot, entry, extra)
     last = entries[-1] if entries else {}
@@ -1089,6 +1142,8 @@ _METADATA_FIELDS = frozenset(
     {
         "program_project_id",
         "research_line",
+        "queue_entry_id",
+        "needs_registration",
         "source_task_id",
         "proposer_provider",
         "proposer_task_id",
@@ -1098,8 +1153,6 @@ _METADATA_FIELDS = frozenset(
         "routine_fallback",
         "cost_estimate",
         "admission",
-        "card_repair",
-        "repair_of",
     }
 )
 
@@ -1135,28 +1188,24 @@ def record_rejected_card(
     decided_by: str,
     errors: Iterable[str],
     metadata: Mapping[str, Any] | None = None,
-    reason: str = "card_invalid",
+    reason: str = REJECTION_PROPOSAL_INVALID,
 ) -> TopicDecision:
-    """Record a structurally invalid card as ``proposed -> rejected (card_invalid)``.
-
-    The topic keeps the list of failed checks in ``card_errors``. Its fingerprint
-    is stored when it can be computed, but an invalid card never blocks a
-    corrected resubmission. ``reason`` names another mechanical rejection (a failed
-    line precheck: ``card_precheck_failed``); it is never a judged rejection.
-    """
+    """Record a mechanically rejected proposal as ``proposed -> rejected (<reason>)``."""
 
     if not decided_by:
         raise TopicLedgerError("decided_by (deciding task id) is required")
     problems = [str(item) for item in errors if str(item).strip()]
     if not problems:
-        raise TopicLedgerError("an invalid card needs at least one error")
+        raise TopicLedgerError("a rejected proposal needs at least one error")
+    meta = _metadata_fields(metadata)
+    line = str(meta.get("research_line") or card.get("research_line") or "").strip() or None
     digest = card_sha256(card)
     topic_id = f"topic-{digest[:16]}"
     try:
         fingerprint: str | None = topic_fingerprint(
             card.get("question"),
             card.get("data_sources", card.get("data_source")),
-            card.get("primary_endpoint"),
+            research_line=line,
         )
     except TopicLedgerError:
         fingerprint = None
@@ -1177,10 +1226,12 @@ def record_rejected_card(
                     "card_sha256": digest,
                 }
             )
-            topic.update(_metadata_fields(metadata))
+            if line:
+                topic["research_line"] = line
+            topic.update(meta)
             topic["card_errors"] = problems
             document["topics"].append(topic)
-            for status, step in (("proposed", "topic_card_submitted"),
+            for status, step in (("proposed", "topic_proposal_submitted"),
                                  ("rejected", reason)):
                 _, entry = _apply_transition(
                     topic, status, reason=step, decided_by=decided_by, evidence=[],
@@ -1220,7 +1271,7 @@ def _superseded(document: Mapping[str, Any], topic: Mapping[str, Any]) -> bool:
     )
 
 
-def _reopen_problem(document: Mapping[str, Any], reopens: str, basis: Any) -> str:
+def _reopen_problem(document: Mapping[str, Any], reopens: str) -> str:
     target = find_topic(document, reopens)
     if target is None:
         return "reopens_unknown_topic"
@@ -1228,104 +1279,7 @@ def _reopen_problem(document: Mapping[str, Any], reopens: str, basis: Any) -> st
         return "reopens_topic_not_frozen"
     if _superseded(document, target):
         return "reopens_topic_already_superseded"
-    if not isinstance(basis, Mapping):
-        return "reopen_basis_missing"
-    kind = str(basis.get("type") or "")
-    if kind not in REOPEN_CONDITION_TYPES or not str(basis.get("description") or "").strip():
-        return "reopen_basis_invalid"
-    declared = {str(item.get("type")) for item in target.get("reopen_conditions") or []}
-    if declared and kind not in declared:
-        return "reopen_basis_not_declared_by_frozen_topic"
     return ""
-
-
-# Reopen-condition types that a revision card cannot answer: the control plane
-# releases these holds itself once the line's environment is ready.
-AUTOMATIC_REOPEN_TYPES = frozenset({"line_environment_ready"})
-
-
-def revision_eligible(topic: Mapping[str, Any]) -> bool:
-    """Whether a judged topic may come back once as a revision card (``revises``).
-
-    Holds qualify unless every recorded condition is one the control plane
-    releases itself; a rejection qualifies when the gate (``admission.revisable``)
-    or a recorded decision (``revision.eligible``) called its defect fixable. A
-    revision card's own hold or rejection does not open a second revision.
-    """
-
-    if topic.get("status") != "rejected" or topic.get("revision_of"):
-        return False
-    marker = topic.get("revision") if isinstance(topic.get("revision"), Mapping) else {}
-    if marker.get("eligible") is False:
-        return False
-    reason = last_rejection_reason(topic)
-    if reason == "admission_hold":
-        kinds = {str(item.get("type")) for item in topic.get("reopen_conditions") or []
-                 if isinstance(item, Mapping)}
-        return bool(kinds - AUTOMATIC_REOPEN_TYPES)
-    if reason in JUDGED_REJECTION_REASONS:
-        admission = topic.get("admission") if isinstance(topic.get("admission"), Mapping) else {}
-        return marker.get("eligible") is True or admission.get("revisable") is True
-    return False
-
-
-def _revision_problem(document: Mapping[str, Any], revises: str, responses: Any) -> str:
-    target = find_topic(document, revises)
-    if target is None:
-        return "revises_unknown_topic"
-    if not revision_eligible(target):
-        return "revises_topic_not_revisable"
-    for other in document.get("topics") or []:
-        if other.get("revision_of") == revises and other.get("topic_id") != revises:
-            return "revises_topic_already_revised"
-    conditions = list(target.get("reopen_conditions") or [])
-    answered = {
-        item.get("condition") for item in responses or [] if isinstance(item, Mapping)
-    }
-    wanted = {
-        index for index, item in enumerate(conditions)
-        if str((item or {}).get("type")) not in AUTOMATIC_REOPEN_TYPES
-    }
-    if wanted - answered:
-        return "revision_misses_conditions:" + ",".join(str(i) for i in sorted(wanted - answered))
-    return ""
-
-
-def release_held_topic(
-    ledger: TopicLedger,
-    topic_id: str,
-    *,
-    db: FactoryDB,
-    to_status: str,
-    decided_by: str,
-    evidence: Any = None,
-    updates: Mapping[str, Any] | None = None,
-) -> TopicDecision:
-    """``rejected (admission_hold) -> proposed | admitted`` once the hold's blocker is gone.
-
-    ``proposed`` sends the topic back to the gate (its attempts restart);
-    ``admitted`` applies an admission the gate had already made. Each topic is
-    released at most once.
-    """
-
-    topic = ledger.topic(topic_id)
-    if topic is None:
-        raise TopicLedgerError(f"unknown topic {topic_id}")
-    if last_rejection_reason(topic) != "admission_hold":
-        raise TopicLedgerError(f"topic {topic_id} is not held")
-    if any(entry.get("reason") in {HOLD_RELEASE_FOR_REVIEW, HOLD_RELEASE_ADMITTED}
-           for entry in topic.get("history") or []):
-        raise TopicLedgerError(f"topic {topic_id} was already released from a hold")
-    reason = HOLD_RELEASE_ADMITTED if to_status == "admitted" else HOLD_RELEASE_FOR_REVIEW
-    values = dict(updates or {})
-    if to_status == "proposed":
-        values.setdefault("admission_attempts", [])
-    else:
-        values.setdefault("admitted_at", utc_now())
-    return transition_topic(
-        ledger, topic_id, to_status, db=db, reason=reason, decided_by=decided_by,
-        evidence=evidence, updates=values,
-    )
 
 
 def admit_topic(
@@ -1340,6 +1294,7 @@ def admit_topic(
     evidence: Any = None,
     target_tier: Any = None,
     admission: Any = None,
+    needs_registration: Any = None,
     queue_when_full: bool = False,
 ) -> TopicDecision:
     """``proposed -> admitted`` if a slot is free and admissions are not paused.
@@ -1374,6 +1329,8 @@ def admit_topic(
             "admitted_at": utc_now(),
             **({"target_tier": target_tier} if target_tier is not None else {}),
             **({"admission": copy.deepcopy(admission)} if admission is not None else {}),
+            **({"needs_registration": copy.deepcopy(needs_registration)}
+               if needs_registration is not None else {}),
         },
     )
 
@@ -1388,8 +1345,9 @@ def reject_topic(
     evidence: Any = None,
     reopen_conditions: Iterable[Mapping[str, Any]] = (),
     admission: Any = None,
+    needs_registration: Any = None,
 ) -> TopicDecision:
-    """``proposed -> rejected``; a hold records its ``reopen_conditions``."""
+    """``proposed -> rejected``."""
 
     updates: dict[str, Any] = {}
     conditions = _reopen_conditions(reopen_conditions)
@@ -1397,6 +1355,8 @@ def reject_topic(
         updates["reopen_conditions"] = conditions
     if admission is not None:
         updates["admission"] = copy.deepcopy(admission)
+    if needs_registration is not None:
+        updates["needs_registration"] = copy.deepcopy(needs_registration)
     return transition_topic(
         ledger, topic_id, "rejected", db=db, reason=reason, decided_by=decided_by,
         evidence=evidence, updates=updates,
